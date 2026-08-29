@@ -1185,10 +1185,49 @@
     const event=await p.publishNip29Authed(room.relay,{kind,created_at:Math.floor(Date.now()/1000),content:text,tags});return{...event,rumorId:event.id,ms:Number(event.created_at)*1000};
   }
   async function publishCordMessage(p,room,channelName,text,extraTags=[],kind=9){return room&&room.protocol==='nip29'?publishNip29Message(p,room,channelName,text,extraTags,kind):publishCordNative(p,room,channelName,text,extraTags,kind);}
+  /* A CHANNEL THE CONTROL SET DOES NOT CONTAIN IS A STALE NAME, NOT A REFUSED MEMBERSHIP.
+   *
+   * `room.channels` is saved to localStorage and `applyControl` only replaces it when a control
+   * fetch yields something, so a room can keep a channel that the community has since renamed,
+   * removed, or that a partial fetch once produced. `refreshActiveChannel` then picks that channel
+   * BY NAME out of the saved list and hands its id to the reader, which builds its readable set
+   * from the control events and from nothing else — so it refuses, correctly, with "channel is not
+   * readable with this membership".
+   *
+   * That reads as a permissions problem and is a bookkeeping one, and because the caller runs on a
+   * live timer it repeated for ever: the room never syncs and the console fills up. Reported
+   * verbatim, with the whole stack, from a live tick.
+   *
+   * So: re-derive the channel list from the control set we are about to read WITH, and move to a
+   * channel that is actually in it. Only called when the id is already known to be missing, so an
+   * ordinary tick pays nothing. An empty readable set is "could not ask" — leave everything alone
+   * and let the next tick retry, exactly as the control fetch itself does. */
+  function reconcileChannels(reader,bundle,controlWraps,room,wantName){
+    let info=null; try{ info=reader.inspectControl(bundle,controlWraps||[]); }catch(_){ return null; }
+    const live=((info&&info.channels)||[]).filter(c=>c&&c.name);
+    if(!live.length) return null;
+    room.channels=live.map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys}));
+    return room.channels.find(c=>c.name===wantName)||room.channels[0];
+  }
+  /* Read the channel, and repair the saved list rather than throwing on every tick. The repair is
+   * announced on screen — silently moving somebody to a different channel is worse than the error,
+   * because the messages they were looking at simply stop. */
+  async function readChat(p,reader,bundle,controlWraps,room,channel,wraps){
+    try{ return await reader.inspectChat(bundle,controlWraps,channel.id,wraps); }
+    catch(e){
+      if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
+      const fixed=reconcileChannels(reader,bundle,controlWraps,room,channel.name);
+      if(!fixed) throw e;
+      const rooms=saved(),i=rooms.findIndex(r=>roomIdentity(r)===roomIdentity(room));
+      if(i>=0){ rooms[i].channels=room.channels; save(rooms); }
+      if(fixed.name!==channel.name){ state.channel=fixed.name; if(p&&p.toast)p.toast('#'+channel.name+' is no longer in this community — showing #'+fixed.name); }
+      return await reader.inspectChat(bundle,controlWraps,fixed.id,wraps);
+    }
+  }
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
-    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8,signal:ownRoomReads(roomIdentity(room)),purpose:'concord room live '+loadKey,minInterval:60000});await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);const opened=await reader.inspectChat(bundle,controlWraps,channel.id,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){const next=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)),viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
+    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8,signal:ownRoomReads(roomIdentity(room)),purpose:'concord room live '+loadKey,minInterval:60000});await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);const opened=await readChat(p,reader,bundle,controlWraps,room,channel,wraps||[]),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]); for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} if(changed){const next=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)),viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
     }catch(e){console.warn('Concord live sync failed',e);}finally{liveBusy=false;}
   }
   async function refreshRoomMetadata(p){
@@ -1575,7 +1614,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,iconRef,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

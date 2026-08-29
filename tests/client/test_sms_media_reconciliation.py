@@ -27,4 +27,9 @@ def test_transient_attachment_failure_is_not_cached_for_the_session():
 def test_old_apk_cannot_silently_claim_historical_mms_is_complete():
     assert '&& S.mmsAudited' in SMS
     assert 'Update PosterChan on this phone to copy older picture and video messages' in SMS
-    assert "_blossom_v9" in SMS
+    # The VERSION, not a version. Pinned literally, this stopped checking anything the moment the
+    # latch was bumped to v10 — which is precisely when a re-audit matters most, because every v9
+    # phone had finished with an archive that held no attachments at all.
+    import re as _re
+    assert _re.search(r"HWM_BLOSSOM = \(\) => HWM\(\) \+ '_blossom_v\d+'", SMS), \
+        "the completion latch moved and this assertion stopped checking anything"

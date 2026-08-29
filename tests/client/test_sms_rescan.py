@@ -19,6 +19,7 @@ Run: venv-unified/bin/python -m pytest tests/client/test_sms_rescan.py
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -58,6 +59,20 @@ def mms_files(res):
 
 
 @unittest.skipIf(not NODE, "no node on this node")
+
+def _current_blossom_latch():
+    """The completion latch the SHIPPED code reads, not a version typed in here.
+
+    This test file pins several OLD versions on purpose — each one is a device state somebody was
+    actually stuck in — but the "already done, so do nothing" case must always mean the CURRENT
+    marker. Typed in, it silently stops testing anything the moment the latch is bumped, which is
+    exactly what happened at v10: the assertion still passed a phone that migrates nothing because
+    it was pinning a key the code no longer reads."""
+    src = open(os.path.join(ROOT, "static", "js", "client", "sms.js"), encoding="utf-8").read()
+    m = re.search(r"HWM_BLOSSOM = \(\) => HWM\(\) \+ '([^']+)'", src)
+    assert m, "the completion latch moved and this test stopped checking anything"
+    return m.group(1)
+
 class AStuckCompletionMarker(unittest.TestCase):
 
     def test_v7_reaudits_mms_through_the_dedicated_provider_pager(self):
@@ -173,10 +188,25 @@ class AStuckCompletionMarker(unittest.TestCase):
         """THE BUG, stated as the thing the user sees. The latch is set, so the whole history is
         skipped and not one picture reaches encrypted storage — with no error anywhere."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
-        res = run(rows, {ME + "_blossom_v9": "1", ME + "_oldest_first_v1": "1", ME: str(NOW)},
-                  ["phoneLoad", "migrateAll"])
+        res = run(rows, {ME + _current_blossom_latch(): "1", ME + "_oldest_first_v1": "1",
+                         ME: str(NOW)}, ["phoneLoad", "migrateAll"])
         self.assertEqual(mms_files(res), [],
                          "the latch did not actually block the migration — this test proves nothing")
+
+
+    def test_v9_done_is_reaudited_because_v9_archived_no_attachments(self):
+        """WHY v10 EXISTS. Every phone that reached "done" under v9 published an archive with NO
+        ATTACHMENTS IN IT — `withMmsParts` was called on the live branch only, so the back-fill read
+        bare rows and filed picture messages carrying no `att` key at all. Measured on the reporting
+        account: 2,676 documents, 1,775 flagged `mms:true`, not one with an attachment.
+
+        Those devices are the ones that need the fix most and are exactly the ones that return early
+        on the old marker. Without the bump the repair underneath them can never run, and there is
+        nothing on screen to say so."""
+        rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 4)]
+        res = run(rows, {ME + "_blossom_v9": "1", ME: str(NOW)}, ["phoneLoad", "migrateAll"])
+        self.assertEqual(len(mms_files(res)), 3,
+                         "a phone marked done by v9 — with a pictureless archive — was left alone")
 
     def test_v8_done_is_reaudited_and_old_apk_cannot_write_v9_done(self):
         """The combined provider can omit old MMS. Only the independent listMms walk proves them."""
