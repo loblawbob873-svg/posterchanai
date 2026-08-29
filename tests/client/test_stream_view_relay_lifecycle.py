@@ -23,7 +23,7 @@ def test_switching_from_streams_aborts_damus_and_nos_lol_sockets(tmp_path):
     assert "if(VIEW==='streams')_stopStreamsReads()" in APP
     assert "{signal:readSignal}" in APP
     assert "readSignal&&readSignal.aborted" in APP
-    stale_sweep = APP.split("async function _sweepStaleOwnLive()", 1)[1].split("function _streamStatus", 1)[0]
+    stale_sweep = APP.split("async function _sweepStaleOwnLive()", 1)[1].split("async function _maybeOfferAnnounce", 1)[0]
     assert "Relay.queryFrom(STREAM_RELAYS" not in stale_sweep
     assert "Relay.query([{ kinds:[30311], authors:[ME.pubkey] }])" in stale_sweep
 
