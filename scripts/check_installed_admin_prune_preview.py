@@ -98,6 +98,10 @@ async def main():
 
     frame = await admin_frame()
     ever_off = False
+    ever_wrong_route = False
+    ever_lost_host = False
+    ever_lost_focus = False
+    ever_lost_owner = False
     async with CDP(parent["webSocketDebuggerUrl"]) as outer, CDP(frame["webSocketDebuggerUrl"]) as inner:
         ready = await inner.eval(r"""(async()=>{
           const auth=await Promise.race([window.__pcAdminAuth,new Promise(r=>setTimeout(()=>r(false),5000))]);
@@ -116,6 +120,12 @@ async def main():
         for _ in range(360):
             state = await outer.eval(PARENT_STATE)
             ever_off |= not (state["on"] and state["root"] and state["osClass"])
+            # A recovered final frame is not enough. The regression was a transient repaint while
+            # the request was active, so sample every invariant in the same loop as shell survival.
+            ever_wrong_route |= state["view"] != "admin"
+            ever_lost_host |= not (state["host"] and state["adminWindow"])
+            ever_lost_focus |= not state["focused"]
+            ever_lost_owner |= state["ownerView"] != "admin"
             result = await inner.eval(r"""(()=>{const b=document.querySelector('#relayPruneDryBtn'),
               s=document.querySelector('#relayPruneStatus');return {disabled:!!(b&&b.disabled),
               text:String((s&&s.textContent)||'')}})()""")
@@ -128,6 +138,10 @@ async def main():
         state = await outer.eval(PARENT_STATE)
         assert complete and not failed, "Preview auto-clean did not complete successfully"
         assert not ever_off, "Preview auto-clean exposed Classic mode while its dry run was active"
+        assert not ever_wrong_route, "Preview auto-clean temporarily left the Admin route"
+        assert not ever_lost_host, "Preview auto-clean temporarily lost its Admin window host"
+        assert not ever_lost_focus, "Preview auto-clean temporarily lost its focused window"
+        assert not ever_lost_owner, "Preview auto-clean temporarily changed its Settings-window owner"
         assert state == {"on": True, "root": True, "osClass": True, "view": "admin",
                          "host": True, "adminWindow": True, "focused": True,
                          "ownerView": "admin"}, state

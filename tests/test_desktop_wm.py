@@ -191,14 +191,16 @@ server.listen(sock,async()=>{delete process.env.SWAYSOCK;delete process.env.I3SO
         self.assertIn("[con_id=11] focus", cmds)
         self.assertIn("[con_id=12] kill", cmds)
 
-    def test_placing_a_window_makes_it_floating_first(self):
+    def test_placing_a_window_commits_floating_and_geometry_atomically(self):
         """Position and size mean nothing to a TILED window — the layout owns it, and the move is
-        silently a no-op. A desktop that places windows has to say so first."""
+        silently a no-op. The commands must share one compositor transaction so a terminal never
+        paints the temporary floating geometry between focus and its final hosted size."""
         out = self.run_js("await wm.place(11, 100, 50, 800, 600);")
         cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
-        self.assertEqual(cmds[0], "[con_id=11] floating enable", cmds)
-        self.assertIn("[con_id=11] resize set 800 600", cmds)
-        self.assertIn("[con_id=11] move absolute position 100 50", cmds)
+        geometry = [c for c in cmds if "con_id=11" in c]
+        self.assertEqual(len(geometry), 1, geometry)
+        self.assertEqual(geometry[0], "[con_id=11] floating enable, resize set 800 600, "
+                         "move absolute position 100 50")
 
     def test_restoring_a_hidden_terminal_is_one_atomic_geometry_command(self):
         """A show followed by three separate placement commands exposes scratchpad geometry to
@@ -258,8 +260,9 @@ server.listen(sock,async()=>{delete process.env.SWAYSOCK;delete process.env.I3SO
         out = self.run_js("out.ok = await wm.snap(11, 'right');")
         self.assertTrue(out["ok"])
         cmds = [s["payload"] for s in out["seen"] if s["type"] == 0]
-        self.assertIn("[con_id=11] resize set 960 1008", cmds)
-        self.assertIn("[con_id=11] move absolute position 960 0", cmds)
+        geometry = [c for c in cmds if "con_id=11" in c]
+        self.assertEqual(geometry, ["[con_id=11] floating enable, resize set 960 1008, "
+                                    "move absolute position 960 0"])
 
     def test_events_arrive_on_their_own_socket(self):
         """sway will not answer ordinary requests on a subscribed connection, so a shell that

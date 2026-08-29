@@ -250,6 +250,7 @@
     status: '', statusKind: '',
     busy: false,
   };
+  let _gitDiffSeq = 0;
 
   const doc = () => (S.active >= 0 && S.open[S.active]) || null;
   const dirty = (d) => !!d && d.text !== d.disk;
@@ -455,7 +456,7 @@
       catch(e){status((e&&e.message)||'Could not open that folder','err');return false;}
       S.hostRoot=path;S.cwd=t.path||path;S.root=path;S.gate='';
       S.tree=(t.entries||[]).map(e=>({name:e.name,path:e.path,dir:!!e.dir,lang:langOf(e.name)}));
-      S.treeErr='';S.open=[];S.active=-1;S.gitOpen=false;S.gitDiff=null;S.git=null;
+      S.treeErr='';S.open=[];S.active=-1;S.gitOpen=false;cancelGitDiff();S.git=null;
       _incoming=true;
       save(true);
       if(inView())paint();
@@ -486,6 +487,25 @@
         if(action === 'pull') await loadTree(S.cwd);
         status(action + ' complete', 'ok');
       }catch(e){ status((e && e.message) || (action + ' failed'), 'err'); }
+    }
+
+    /* Diff requests can resolve out of order, and changing back to Explorer does not cancel fetch.
+     * Only the latest still-visible request may own the editor pane; otherwise a slow diff for A
+     * replaces a newer B diff, or reappears over the editor after Explorer was selected. */
+    function cancelGitDiff(){ _gitDiffSeq++; S.gitDiff=null; }
+    async function loadGitDiff(path){
+      const seq=++_gitDiffSeq;
+      S.gitDiff={path,text:'',error:'',busy:true}; paint();
+      try{
+        const d=S.hostRoot&&window.pcHost&&pcHost.gitDiff ? await pcHost.gitDiff(S.hostRoot,path)
+          : await api('/git/diff?path='+encodeURIComponent(path));
+        if(seq!==_gitDiffSeq || !S.gitOpen) return false;
+        S.gitDiff={path,text:d.diff||'',error:'',busy:false};
+      }catch(e){
+        if(seq!==_gitDiffSeq || !S.gitOpen) return false;
+        S.gitDiff={path,text:'',error:e.message||String(e),busy:false};
+      }
+      paint();return true;
     }
 
     /* A DOCUMENT THAT IS NOT A FILE ON THIS NODE.
@@ -1058,7 +1078,7 @@
       document.querySelectorAll('[data-code-view]').forEach(b=>b.addEventListener('click',()=>{
         const git=b.dataset.codeView==='git';
         S.gitOpen=git;
-        if(!git)S.gitDiff=null;
+        if(!git)cancelGitDiff();
         save(true);
         paint();
         if(git)loadGit();
@@ -1071,12 +1091,7 @@
         gitAct(a,path?[path]:[],msg);
       }));
       document.querySelectorAll('[data-git-diff]').forEach(b=>b.addEventListener('click',async()=>{
-        const path=b.dataset.gitDiff;
-        S.gitDiff={path,text:'',error:'',busy:true}; paint();
-        try{ const d=S.hostRoot&&window.pcHost&&pcHost.gitDiff ? await pcHost.gitDiff(S.hostRoot,path)
-          : await api('/git/diff?path='+encodeURIComponent(path)); S.gitDiff={path,text:d.diff||'',error:'',busy:false}; }
-        catch(e){ S.gitDiff={path,text:'',error:e.message||String(e),busy:false}; }
-        paint();
+        await loadGitDiff(b.dataset.gitDiff);
       }));
       document.querySelectorAll('[data-git-restore]').forEach(b=>b.addEventListener('click',async()=>{
         const path=b.dataset.gitRestore;
@@ -1086,10 +1101,10 @@
          * visibly mounted until somebody clicked Explorer or another file. The disk restore had
          * succeeded while Code still showed the discarded patch — exactly the kind of stale UI
          * that makes a destructive Source Control button impossible to trust. */
-        if(S.gitDiff && S.gitDiff.path===path) S.gitDiff=null;
+        if(S.gitDiff && S.gitDiff.path===path) cancelGitDiff();
         await gitAct('restore',[path]);
       }));
-      on('#pcc-diff-close','click',()=>{S.gitDiff=null;paint();});
+      on('#pcc-diff-close','click',()=>{cancelGitDiff();paint();});
 
       const ta = $('#pcc-ta');
       if(ta){
@@ -1252,6 +1267,8 @@
       openHostFolder,
       _state: S,
       _missingPathError: missingPathError,
+      _loadGitDiff: loadGitDiff,
+      _cancelGitDiff: cancelGitDiff,
       _highlight: highlight,
       _langOf: langOf,
     };

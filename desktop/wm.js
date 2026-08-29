@@ -341,11 +341,14 @@ class WM {
   async place(id, x, y, w, h){
     let at={x,y,w,h};
     try{ at=clampRectToOutputs(at,await this.outputs()); }catch(_){}
-    await this.floating(id, true);
-    await this.command('[con_id=' + Number(id) + '] resize set '
-                       + Math.round(at.w) + ' ' + Math.round(at.h));
-    return this.command('[con_id=' + Number(id) + '] move absolute position '
-                        + Math.round(at.x) + ' ' + Math.round(at.y));
+    /* One Sway transaction, for the same reason restore() above is one.  `floating enable` may
+     * assign the client's remembered/default floating geometry; sent separately, Foot receives
+     * and damages that intermediate size before the next IPC round trip applies the hosted body.
+     * Sustained Codex/Claude output makes that extra configure visible as a full-window flash.
+     * A comma chain is committed together and never exposes the throwaway framebuffer size. */
+    return this.command('[con_id=' + Number(id) + '] floating enable, resize set '
+      + Math.round(at.w) + ' ' + Math.round(at.h) + ', move absolute position '
+      + Math.round(at.x) + ' ' + Math.round(at.y));
   }
 
   /* Commit a cross-output handoff INSIDE the destination output. Moving a floating container to a
@@ -395,7 +398,6 @@ class WM {
       height=parts[0]==='top'?hh:h-hh;
       if(parts[0]==='bottom')y+=hh;
     }else if(zone!=='max') return false;
-    await this.command('[con_id='+Number(id)+'] floating enable');
     return this.place(id,x,y,w,height);
   }
 

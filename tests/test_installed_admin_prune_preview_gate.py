@@ -27,6 +27,14 @@ def test_installed_gate_proves_desktop_route_host_and_window_ownership_survive()
     assert "ownerView" in GATE
 
 
+def test_installed_gate_checks_route_host_focus_and_owner_during_the_whole_dry_run():
+    start = GATE.index("for _ in range(360):")
+    loop = GATE[start:GATE.index("result = await inner.eval", start)]
+    for invariant in ("ever_wrong_route", "ever_lost_host", "ever_lost_focus", "ever_lost_owner"):
+        assert invariant in loop
+        assert f"assert not {invariant}" in GATE
+
+
 def test_installed_gate_returns_to_the_same_settings_owner_after_preview():
     assert "RETURN_SETTINGS" in GATE
     assert "PCOS.routeView('settings')" in GATE

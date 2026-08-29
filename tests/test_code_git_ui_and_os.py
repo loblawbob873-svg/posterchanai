@@ -37,7 +37,7 @@ def test_code_activity_rail_can_always_return_to_working_directory():
     assert 'data-code-view="git"' in CODE
     assert 'aria-label="Working Directory"' in CODE
     assert "S.gitOpen=git" in CODE
-    assert "if(!git)S.gitDiff=null" in CODE
+    assert "if(!git)cancelGitDiff()" in CODE
     assert ".pcc-activity" in CSS
 
 
@@ -87,6 +87,15 @@ def test_modified_file_opens_diff_in_the_editor_pane():
     assert ".pcc-diff-view" in CSS
 
 
+def test_changed_file_diff_requests_cannot_repaint_out_of_order():
+    run = subprocess.run(
+        ["node", str(ROOT / "tests/client/code_diff_race_sim.js")],
+        cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "code diff request ownership runtime: ok" in run.stdout
+
+
 def test_each_changed_file_has_a_confirmed_discard_action():
     assert 'data-git-restore="' in CODE
     assert "Discard every change" in CODE
@@ -101,7 +110,7 @@ def test_discard_closes_the_visible_diff_before_the_git_refresh_repaints():
     """
     handler = CODE[CODE.index("document.querySelectorAll('[data-git-restore]')"):]
     handler = handler[:handler.index("on('#pcc-diff-close'")]
-    assert handler.index("S.gitDiff=null") < handler.index("await gitAct('restore',[path])")
+    assert handler.index("cancelGitDiff()") < handler.index("await gitAct('restore',[path])")
     assert "grid-template-columns:minmax(0,1fr) 36px 36px" in CSS
 
 
