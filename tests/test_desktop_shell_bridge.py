@@ -203,7 +203,7 @@ class Bridge(unittest.TestCase):
         self.assertIn("destination frame geometry is outside output", self.main)
         self.assertIn("await ops.rollback()", open(os.path.join(ROOT, "desktop/native-handoff.js"), encoding="utf-8").read())
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
-        self.assertIn("pcWM.handoff(id,handoff)", client)
+        self.assertIn("pcWM.handoff(id,handoff,", client)
         self.assertIn("killNative:false,preserveFocus:true", client)
 
     def test_posterchan_frames_can_be_handed_to_an_adjacent_display(self):

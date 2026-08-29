@@ -22236,8 +22236,8 @@
        * pushing after a close RAISES ONE AGAIN: close() pauses the audio, the 'pause' event lands a
        * moment later, and its state update would rebuild the very notification the close just took
        * down. `_nativeOff` is cleared by play(), which is the only thing that should bring it back. */
-      if(!this.cur || this._nativeOff) return;
-      const P=_capPlugin('MusicControls','update'); if(!P) return;
+      if(!this.cur || this._nativeOff) return Promise.resolve(false);
+      const P=_capPlugin('MusicControls','update'); if(!P) return Promise.resolve(false);
       const m=FilesIdx.meta(this.cur), d=_audioEl?_audioEl.duration:0;
       try{
         const r=P.update({ title:(m&&m.name)||'Track', artist:'PosterChan',
@@ -22249,9 +22249,9 @@
          * the other end at all: without it a player whose notification was taken down some other way
          * would keep trying a background foreground-service start every 15s, for ever, and every one
          * of those is refused. */
-        if(r&&r.then) r.then(()=>{ this._nativeUp=true; }, ()=>{ this._nativeUp=false; });
-        else this._nativeUp=true;
-      }catch(_){}
+        if(r&&r.then) return r.then(()=>{ this._nativeUp=true; return true; }, ()=>{ this._nativeUp=false; return false; });
+        this._nativeUp=true; return Promise.resolve(true);
+      }catch(_){ this._nativeUp=false; return Promise.resolve(false); }
     },
     /* Launched by the widget — OR by the service, when a press went unanswered and it woke the app to
      * get it performed (MusicService.revive). Both put the same extra on the same launch intent, so
@@ -22342,7 +22342,14 @@
       try{ const u=await trackUrl(sha);
         if(this.cur!==sha) return;   // a newer ⏭/⏮ superseded this load while we awaited the URL —
                                      // don't clobber _audioEl.src (that's the "skip plays the wrong song" bug)
-        this._loading=false; _audioEl.src=u; await _audioEl.play();
+        this._loading=false; _audioEl.src=u;
+        /* Establish Android's foreground MediaSession BEFORE sound starts. Previously onplay fired
+         * the native update asynchronously after play() succeeded; a quick HOME in that gap made
+         * Android refuse the background FGS start, leaving the WebView process unprotected and the
+         * track liable to die when the native launcher replaced the app surface. A native failure
+         * is deliberately non-fatal: browser/PWA playback has no plugin and must still proceed. */
+        await Promise.race([this._nativePush(), new Promise(resolve=>setTimeout(()=>resolve(false),600))]);
+        await _audioEl.play();
         /* …and pick up where this device left off, for a resume that nobody is looking at (a car
          * button, a Bluetooth connection). AFTER play(), because currentTime is only settable once
          * the track is seekable and a value set before that is silently dropped. */
@@ -24560,9 +24567,14 @@
    * so this is the standard picker plus a fetch of what was picked.
    */
   async function _mailBlossomPicker(onPick){
-    blossomPicker(null, async ({url, type, ext}) => {
-      const name = decodeURIComponent((url.split('?')[0].split('/').pop() || 'file'))
-                 + (ext && !/\.[a-z0-9]{1,8}$/i.test(url.split('?')[0]) ? '.' + ext : '');
+    blossomPicker(null, async ({url, type, ext, name: pickedName}) => {
+      /* The Blossom URL is normally content-addressed (`/<sha>`), not a filename.  The picker has
+       * already reconciled the original name from FilesIdx; discarding it renamed every mail
+       * attachment to a 64-character hash even though the user had tapped a clearly named tile.
+       * Keep the URL leaf only as the fallback for old/unindexed rows. */
+      const leaf = String(pickedName || '').trim()
+                || decodeURIComponent((url.split('?')[0].split('/').pop() || 'file'));
+      const name = leaf + (ext && !/\.[a-z0-9]{1,8}$/i.test(leaf) ? '.' + ext : '');
       try{
         toast('fetching…');
         const r = await fetch(url);

@@ -129,6 +129,17 @@ def test_mobile_picker_identifies_each_file_beside_a_real_preview():
     assert ".bp-explorer .bp-pick-card .fname" in CSS
 
 
+def test_mail_keeps_the_filename_selected_in_the_file_picker():
+    """Blossom URLs are hashes. Email must use the reconciled FilesIdx name returned by the picker
+    or Annual-report.pdf arrives as a 64-character content hash despite its named picker tile."""
+    start = APP.index("async function _mailBlossomPicker(")
+    mail = APP[start:APP.index("/* Keyboard for the mail client", start)]
+    assert "name: pickedName" in mail
+    assert "String(pickedName || '').trim()" in mail
+    assert "const name = leaf +" in mail
+    assert "onPick({ name, type:" in mail
+
+
 def test_picker_recovers_video_mime_from_index_or_filename_before_filtering():
     picker = APP[APP.index("function blossomPicker(ta, onPick, opts={})"):
                  APP.index("// ---------- Pics:")]

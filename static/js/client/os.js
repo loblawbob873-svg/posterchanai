@@ -6984,8 +6984,16 @@
               if(p.state && PCTerm.acceptHandoff) PCTerm.acceptHandoff(p.state);
               else if(p.terminalSid && PCTerm.adoptSession) PCTerm.adoptSession(p.terminalSid);
             }
-            if(p.view==='websearch' && p.state && window.PCWebSearch && PCWebSearch.acceptHandoff)
-              PCWebSearch.acceptHandoff(p.state);
+            if(p.view==='websearch' && p.state){
+              /* Web Search is lazy-loaded. A cold destination receives this event before
+               * websearch.js exists; dropping its module state there recreates a correctly titled
+               * frame with the destination renderer's old Social contents. Keep the one-shot until
+               * the module installs its API, exactly as the lazy Concord receiver below does. */
+              window.__pcWebSearchHandoff=p.state;
+              if(window.PCWebSearch && PCWebSearch.acceptHandoff){
+                PCWebSearch.acceptHandoff(p.state);delete window.__pcWebSearchHandoff;
+              }
+            }
             if(p.messagesTab==='concord' && p.state){
               /* Concord is lazy-loaded. On a cold destination renderer it does not exist until
                * switchView below appends concord.js, so calling acceptHandoff only here silently

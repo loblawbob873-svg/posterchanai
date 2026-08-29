@@ -51,6 +51,19 @@ def test_plugin_is_registered_and_named_the_same_on_both_sides():
     assert "_capPlugin('MusicControls','stop')" in APPJS
 
 
+def test_initial_audio_waits_for_foreground_media_session_before_playing():
+    """A fast HOME must not beat the first foreground-service update after audio starts."""
+    play = APPJS[APPJS.index("async play(sha, opts)"):]
+    play = play[:play.index("toggle(){")]
+    prime = play.index("await Promise.race([this._nativePush()")
+    audible = play.index("await _audioEl.play()", prime)
+    assert prime < audible
+    push = APPJS[APPJS.index("_nativePush(){"):APPJS.index("consumeLaunch(){")]
+    assert "return r.then(" in push
+    assert "return Promise.resolve(false)" in push
+    assert "setTimeout(()=>resolve(false),600)" in play
+
+
 def test_foreground_service_is_declared_the_way_android_14_requires():
     assert "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" in MANIFEST
     svc = re.search(r"<service\b[^>]*\.music\.MusicService[^>]*>", MANIFEST, re.S)
@@ -114,7 +127,7 @@ def test_the_native_push_waits_for_something_to_actually_play():
     one Android is most likely to refuse outright."""
     push = re.search(r"_nativePush\(\)\{(.*?)\n    \},", APPJS, re.S)
     assert push, "MusicPlayer._nativePush() moved — re-point this test"
-    assert re.search(r"if\(!this\.cur\b[^)]*\)\s*return;", push.group(1))
+    assert re.search(r"if\(!this\.cur\b[^)]*\)\s*return(?:\s+Promise\.resolve\(false\))?;", push.group(1))
 
 
 def test_closing_the_player_takes_the_notification_with_it():

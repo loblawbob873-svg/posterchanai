@@ -611,6 +611,12 @@
       search(q){ S.q = q || ''; S.reader = null; if(window.__PC.switchView) window.__PC.switchView('websearch');
                  runSearch(false); },
     };
+    /* Monitor handoff can be the event that first loads this module on a renderer. Consume the
+     * state synchronously before app.js's script-onload callback performs the first render. */
+    if(window.__pcWebSearchHandoff){
+      try{window.PCWebSearch.acceptHandoff(window.__pcWebSearchHandoff);}
+      finally{delete window.__pcWebSearchHandoff;}
+    }
   }
   init();
 })();

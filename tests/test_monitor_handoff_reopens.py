@@ -107,6 +107,18 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         self.assertIn("const appPath = terminal || websearch || music ? ''", payload,
                       "the destination would adopt the PTY and then route it back to Social")
 
+    def test_cold_web_search_destination_consumes_state_before_first_render(self):
+        receive = self.os[self.os.index("if(pcWM.onHandoffFrame"):
+                               self.os.index("if(pcWM.onPreviewFrame")]
+        self.assertIn("window.__pcWebSearchHandoff=p.state", receive)
+        self.assertIn("delete window.__pcWebSearchHandoff", receive)
+        web = open(os.path.join(ROOT, "static/js/client/websearch.js"), encoding="utf-8").read()
+        api = web.index("window.PCWebSearch = {")
+        consume = web.index("if(window.__pcWebSearchHandoff)")
+        self.assertLess(api, consume)
+        self.assertIn("window.PCWebSearch.acceptHandoff(window.__pcWebSearchHandoff)", web[consume:])
+        self.assertIn("delete window.__pcWebSearchHandoff", web[consume:])
+
     def test_music_launcher_returns_its_real_window_for_monitor_handoff(self):
         """__music is an action alias, but the destination needs the window openDoc created.
 
