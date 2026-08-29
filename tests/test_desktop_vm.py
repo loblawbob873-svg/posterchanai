@@ -181,6 +181,19 @@ const fs=require('fs'),os=require('os'),path=require('path'),v=require('./deskto
         self.assertIn('<details class="vmui-advanced">', ui)
         self.assertIn('Eject installer and use installed system', ui)
 
+    def test_hardware_settings_replace_the_machine_list_and_errors_can_go_back(self):
+        ui = (ROOT / "static" / "js" / "client" / "os.js").read_text()
+        css = (ROOT / "static" / "css" / "client.css").read_text()
+        start = ui.index("const closeHardware=()=>")
+        editor = ui[start:ui.index("$('[data-vm-new]'", start)]
+        self.assertIn("vmroot.classList.add('vmui-editing')", editor)
+        self.assertIn("vmroot.classList.remove('vmui-editing')", editor)
+        self.assertIn("try{d=await pcVM.details(name);}", editor)
+        failure = editor[editor.index("if(!d.ok)"):editor.index('<section class="vmui-section">')]
+        self.assertIn("data-vme-close", failure)
+        self.assertIn("onclick=closeHardware", failure)
+        self.assertIn(".vmui.vmui-editing>.vmui-list{display:none}", css)
+
     def test_viewer_cannot_pin_itself_over_the_desktop(self):
         sway = (ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell" / "files" / "sway.config").read_text()
         self.assertIn('[app_id="virt-viewer"] fullscreen disable, sticky disable', sway)

@@ -1,8 +1,10 @@
 """Persistent PosterChanOS taskbar pins."""
 from pathlib import Path
+import subprocess
 
 
 SRC = (Path(__file__).parents[1] / "static/js/client/os.js").read_text()
+SIM = Path(__file__).parent / "client" / "taskbar_native_move_runtime.js"
 
 
 def test_layout_document_keeps_bounded_namespaced_pins():
@@ -46,6 +48,12 @@ def test_taskbar_move_recovers_snapped_geometry_and_escape_restores_the_zone():
     assert "if(old.snap)unsnap(w)" in body
     assert "if(old.snap)snapTo(w,old.snap)" in body
     assert "left:old.left,top:old.top" in body
+
+
+def test_native_taskbar_move_arms_before_compositor_focus_at_runtime():
+    run = subprocess.run(["node", str(SIM)], capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "native taskbar Move holds" in run.stdout
 
 
 def test_adopted_native_task_gets_move_and_close_without_an_ephemeral_pin():

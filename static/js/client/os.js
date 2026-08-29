@@ -1957,7 +1957,7 @@
       <div class="vmui-formacts"><button class="btn btn-ghost" data-vm-cancel>Cancel</button><button class="btn" data-vm-create>Create and start</button></div></div>
       <div class="vmui-note"><b>Your machines stay private.</b> Their disks are stored inside this PosterChanOS account’s home folder.</div>
       <div class="vmui-edit" data-vm-edit hidden></div><div class="vmui-list"><div class="os-pop-none">Loading virtual machines…</div></div></div>`;
-    const form=$('.vmui-create',w.slot),list=$('.vmui-list',w.slot);let dead=false,busy=false;
+    const vmroot=$('.vmui',w.slot),form=$('.vmui-create',w.slot),list=$('.vmui-list',w.slot);let dead=false,busy=false;
     const say=s=>{try{PC().toast(s);}catch(_){}};
     const paint=async()=>{if(dead||busy)return;busy=true;try{const r=await pcVM.list();if(dead)return;
       if(!r.available){list.innerHTML=`<div class="vmui-empty"><b>Virtualization is unavailable</b><span>${enc(r.error||'libvirt could not be reached')}</span></div>`;return;}
@@ -1976,13 +1976,14 @@
         const ok=await PC().uiConfirm(`Delete ${n} and its virtual disk?`,{ok:'Delete',danger:true,owner:w.body});
         if(!ok)return;const r=await pcVM.remove(n,true);if(!r.ok)say(r.error||'Delete failed');paint();});
     }catch(e){list.innerHTML='<div class="vmui-empty"><b>Could not read virtual machines</b></div>';}finally{busy=false;}};
-    const editHardware=async(name)=>{const box=$('[data-vm-edit]',w.slot);if(!box)return;box.hidden=false;box.innerHTML='<div class="spinner"></div>';const d=await pcVM.details(name);if(!d.ok){box.innerHTML='<div class="vmui-empty">'+enc(d.error||'Could not read VM hardware')+'</div>';return;}
+    const closeHardware=()=>{const box=$('[data-vm-edit]',w.slot);if(box){box.hidden=true;box.innerHTML='';}if(vmroot)vmroot.classList.remove('vmui-editing');};
+    const editHardware=async(name)=>{const box=$('[data-vm-edit]',w.slot);if(!box)return;if(vmroot)vmroot.classList.add('vmui-editing');box.hidden=false;box.innerHTML='<div class="spinner"></div>';let d;try{d=await pcVM.details(name);}catch(e){d={ok:false,error:String(e&&e.message||e)}}if(!d.ok){box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>${enc(d.error||'Could not read VM hardware')}</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>`;$('[data-vme-close]',box).onclick=closeHardware;return;}
       box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>Turn the machine off before changing hardware.</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>
         <section class="vmui-section"><h3>Performance</h3><div class="vmui-spec"><label>Memory (MB)<input class="input" data-vme-ram type="number" min="512" value="${enc(d.ramMiB)}"></label><label>Processors<input class="input" data-vme-cpu type="number" min="1" value="${enc(d.cpus)}"></label><label class="vmui-check"><input data-vme-auto type="checkbox" ${d.autostart?'checked':''}> Start automatically</label></div><div class="vmui-formacts"><button class="btn" data-vme-save>Save settings</button></div></section>
         <section class="vmui-section"><h3>Startup and installation media</h3><div class="vmui-spec"><label>Start from<select class="input" data-vme-boot><option value="disk" ${d.bootOrder==='disk'?'selected':''}>Installed system (virtual disk)</option><option value="cdrom" ${d.bootOrder==='cdrom'?'selected':''}>Installer ISO</option></select></label></div><p>When installation finishes, eject the ISO. The next start will use the installed system automatically.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-iso>Change installer ISO…</button><button class="btn" data-vme-eject>Eject installer and use installed system</button></div></section>
         <details class="vmui-advanced"><summary>Advanced hardware</summary><p>Add storage or networking, or enable relative mouse capture for games that require it.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-disk>Add virtual disk…</button><button class="btn btn-ghost" data-vme-net>Add network adapter (${enc(d.networks)})</button><button class="btn btn-ghost" data-vme-mouse>${d.gamingMouse?'Mouse capture is on — turn off':'Enable gaming mouse capture'}</button></div></details>
         <div class="tty-state vmui-state" data-vme-state aria-live="polite"></div>`;
-      const state=t=>{const x=$('[data-vme-state]',box);if(x)x.textContent=t||'';};$('[data-vme-close]',box).onclick=()=>{box.hidden=true;box.innerHTML='';};
+      const state=t=>{const x=$('[data-vme-state]',box);if(x)x.textContent=t||'';};$('[data-vme-close]',box).onclick=closeHardware;
       $('[data-vme-save]',box).onclick=async()=>{const r=await pcVM.update(name,{ramMiB:Number($('[data-vme-ram]',box).value),cpus:Number($('[data-vme-cpu]',box).value),autostart:$('[data-vme-auto]',box).checked,bootOrder:$('[data-vme-boot]',box).value});state(r.ok?'VM settings saved':r.error);if(r.ok)paint();};
       $('[data-vme-disk]',box).onclick=async()=>{const gib=Number(prompt('New disk size in GB','40'));if(!gib)return;const r=await pcVM.addDisk(name,gib);state(r.ok?'Disk added':r.error);};
       $('[data-vme-iso]',box).onclick=async()=>{const p=await pcVM.pickIso();if(!p)return;const r=await pcVM.changeIso(name,p);state(r.ok?'Installation disc changed':r.error);};
@@ -2784,6 +2785,10 @@
    * next pointer movement picks the window up by its centre; click commits, Escape restores it. */
   function taskbarMove(w){
     if(!w||!w.el)return;
+    /* Native focus takes compositor input away from this renderer. Arm the same hold used by a
+     * title-bar drag BEFORE focusWin, or Firefox receives focus and the taskbar Move gesture loses
+     * every document-level pointer event before its listeners are installed. */
+    if(w.native != null)_natFocusHold=true;
     if(w.min)focusWin(w);else focusWin(w,false);
     /* A maximised/snapped frame has no room to move: its width consumes the desktop, so the clamp
      * below resolves every pointer position to the same edge. Recover its saved normal rectangle

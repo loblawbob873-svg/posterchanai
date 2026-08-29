@@ -35,7 +35,8 @@ const focusWin=w=>{focused.push(w.title);wins.forEach(x=>x.el.classList.s.delete
   w.el.classList.add('focused');w.min=false;};
 const make=(title,focus,min=false)=>({title,view:title.toLowerCase(),icon:'i-grid',min,
   el:new El('osw'+(focus?' focused':'')),body:new El('feed')});
-const wins=[make('Terminal',true),make('Web Search',false,true),make('Social',false)];
+const wins=[make('Terminal',true),make('Web Search',false,true),make('Social',false),
+  Object.assign(make('Firefox',false),{native:41,view:'native:41'})];
 const start=source.indexOf('  let _altSwitch=null;');
 const end=source.indexOf('  // ---- snapping',start);
 if(start<0||end<0)throw new Error('switcher implementation missing');
@@ -45,7 +46,7 @@ function ok(name,value){if(!value)throw new Error(name);console.log('  ok   '+na
 __cycleWindows('next');
 let overlay=document.body.children.find(x=>x.classList.contains('os-alt-switch'));
 ok('centered switcher is drawn',!!overlay);
-ok('all titled windows including minimised are represented',overlay.children.length===3);
+ok('all titled windows including minimised/native are represented',overlay.children.length===4);
 ok('one card is visibly selected',overlay.children.filter(x=>x.classList.contains('selected')).length===1);
 ok('every card has preview and title',overlay.children.every(x=>x.children.length===2));
 listeners.keydown[0]({key:'Escape',preventDefault(){},stopPropagation(){}});
@@ -56,6 +57,10 @@ overlay=document.body.children.find(x=>x.classList.contains('os-alt-switch'));
 listeners.keyup[0]({key:'Alt'});
 ok('Alt release commits the highlighted window',focused.at(-1)==='Social');
 ok('commit removes the chooser',!document.body.children.includes(overlay));
+__cycleWindows('next');
+overlay=document.body.children.find(x=>x.classList.contains('os-alt-switch'));
+listeners.keyup[0]({key:'Alt'});
+ok('native Firefox participates in the visual switcher',focused.at(-1)==='Firefox');
 __cycleWindows('next');
 setTimeout(()=>{
   ok('end of one monitor hands Alt+Tab to the adjacent monitor',crossed.join(',')==='next');
