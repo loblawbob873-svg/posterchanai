@@ -2546,7 +2546,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 #music-player.mp-mini .mp-eq.on{animation:mppulse 1.1s infinite}
 @keyframes mppulse{0%,100%{filter:drop-shadow(0 0 2px var(--cyan,#0ff))}50%{filter:drop-shadow(0 0 10px var(--cyan,#0ff))}}
 #music-player.mp-mini .mp-title{flex:1;min-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#eaf0ff;font-size:12px}
-#music-player.mp-mini button{color:var(--cyan,#0ff);font-size:15px}
+#music-player.mp-mini button{color:var(--cyan,#0ff);font-size:15px;min-width:40px;min-height:40px;padding:0;display:inline-grid;place-items:center;border-radius:50%}
 /* THE PHONE'S MUSIC APP — the same player, at the size of the screen.
  *
  * EVERY rule here excludes .mp-mini, because the minimised player carries BOTH classes

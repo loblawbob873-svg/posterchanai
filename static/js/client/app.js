@@ -22488,9 +22488,10 @@
         d.classList.add('hidden'); return;
       } const m=this.cur?FilesIdx.meta(this.cur):null; const name=(m&&m.name)||'—';
       const playing=_audioEl && !_audioEl.paused; const pl=this._loading?'…':(playing?'⏸':'▶');
+      const playLabel=this._loading?'Loading track':(playing?'Pause':'Play');
       if(this.min){
         d.className='mp mp-mini'+(playing?' playing':'');
-        d.innerHTML=`<span class="mp-eq${playing?' on':''}">🎵</span><span class="mp-title" title="${enc(name)}">${enc(name)}</span><button class="mp-play">${pl}</button><button class="mp-exp" title="Expand"><svg class="ic x-ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>`;
+        d.innerHTML=`<span class="mp-eq${playing?' on':''}">🎵</span><span class="mp-title" title="${enc(name)}">${enc(name)}</span><button class="mp-play" title="${playLabel}" aria-label="${playLabel}">${pl}</button><button class="mp-exp" title="Expand" aria-label="Expand player"><svg class="ic x-ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>`;
       } else {
         d.className='mp'+(playing?' playing':'');
         d.innerHTML=`<div class="mp-scan"></div><div class="mp-head"><span class="mp-logo">🎵 NEON PLAYER</span><button class="mp-min" title="Minimize"><svg class="ic x-ic" aria-hidden="true"><use href="#i-minimize"></use></svg></button><button class="mp-close" title="Close"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>
