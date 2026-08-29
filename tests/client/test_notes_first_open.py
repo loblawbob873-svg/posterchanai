@@ -21,7 +21,7 @@ class CoreAppsOpenReliably(unittest.TestCase):
         self.assertIn("_withModule('notes.js', 'PCNotes'", self.app)
 
     def test_notes_paints_the_shell_before_decrypting_the_cache(self):
-        load = self.notes[self.notes.index("async function _loadCache()"):]
+        load = self.notes[self.notes.index("async function _loadCache("):]
         load = load[:load.index("async function refresh()")]
         self.assertLess(load.index("_paint();"), load.index("await _absorb"))
         self.assertIn("n === 1", load)
@@ -29,7 +29,7 @@ class CoreAppsOpenReliably(unittest.TestCase):
     def test_network_backfill_progressively_reveals_the_library(self):
         refresh = self.notes[self.notes.index("async function refresh()"):
                              self.notes.index("function _stamp()")]
-        self.assertIn("await _absorb(_lib, live, n =>", refresh)
+        self.assertRegex(refresh, r"await _absorb\((?:_lib|lib), live, n =>")
         self.assertIn("n % 12 === 0", refresh)
 
     def test_background_focus_cannot_resize_the_terminal_pty(self):

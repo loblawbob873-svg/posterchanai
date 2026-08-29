@@ -45,7 +45,7 @@ const dollars = selector => {
   }
   return found;
 };
-const calls = {toasts:[], notified:0, group:0, mentions:[], wraps:[], profiles:[]};
+const calls = {toasts:[], notified:0, group:0, mentions:[], wraps:[], publishTargets:[], queryTargets:[], profiles:[], discoveryOpened:0, discoveryClosed:0};
 let activeView = 'concord';
 const JOIN_URL='https://armada.buzz/invite/naddr1pppp#abc_DEF';
 const JOIN_BUNDLE={community_id:'1'.repeat(64),owner:'2'.repeat(64),owner_salt:'3'.repeat(64),
@@ -93,11 +93,11 @@ window.__PC = {
   copyValue:value=>{ calls.copied=value; },
   openProfile:pk=>{ calls.profiles.push(pk); },
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
-  relaySubscribe:()=>({close(){}}),
+  relaySubscribe:()=>{calls.discoveryOpened++;return{close(){calls.discoveryClosed++;}};},
   relayQuery:async filters=>relayFixtures(filters),
-  relayQueryFrom:async(_relays,filters)=>relayFixtures(filters),
+  relayQueryFrom:async(relays,filters)=>{calls.queryTargets.push([...relays]);return relayFixtures(filters);},
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
-  relayPublish:async()=>({ok:true}), relayPublishTo:async(_relays,event)=>{calls.wraps.push(event);return 1;},
+  relayPublish:async()=>({ok:true}), relayPublishTo:async(relays,event)=>{calls.publishTargets.push([...relays]);calls.wraps.push(event);return 1;},
   publish:async()=>({}),
   switchView:()=>{ throw new Error('Communities tab used the desktop app router'); },
   switchMessagesTab:view=>{ calls.messagesTab=view; activeView=view; },
@@ -403,6 +403,22 @@ await control('cc-create-go').click();
 const rooms=JSON.parse(data.get('pc.concord.invites'));
 if(rooms.length!==1 || rooms[0].local || !rooms[0].url || !rooms[0].channels || rooms[0].channels[0].private!==false || rooms[0].name!=='Runtime Test' || rooms[0].icon!=='🚀') throw new Error('relay create flow failed');
 
+// Discover owns its live public subscription only while that surface is visible. Entering a room
+// must close it, and all ensuing history traffic must name only the relay carried by the bundle.
+const openedBeforeDiscover=calls.discoveryOpened,closedBeforeDiscover=calls.discoveryClosed;
+control('cc-discovery').click();
+if(calls.discoveryOpened!==openedBeforeDiscover+1)throw new Error('Discover did not open its public relay subscription');
+const roomButton=dollars('[data-cc-server]').find(b=>b.dataset.ccServer==='0');
+if(!roomButton)throw new Error('Discover did not render the joined room control');
+const queriesBeforeRoom=calls.queryTargets.length;
+await roomButton.onclick();
+if(calls.discoveryClosed!==closedBeforeDiscover+1)throw new Error('active room left the Discover relay subscription open');
+await new Promise(resolve=>setTimeout(resolve,10));
+const roomRelaySet=PCConcord.roomRelays(rooms[0].cord.bundle);
+const activeRoomQueries=calls.queryTargets.slice(queriesBeforeRoom);
+if(activeRoomQueries.some(relays=>relays.some(relay=>!roomRelaySet.includes(relay))))
+  throw new Error('active room queried outside its bundle relay: '+JSON.stringify(activeRoomQueries));
+
 control('cc-edit-icon').click();
 control('cc-icon-value').value='https://example.test/room.png';
 await control('cc-icon-save').click();
@@ -576,12 +592,15 @@ afterIntentionalFocus.focus();
 // selected before the repaint, and the eventual message must carry its Nostr p tag.
 afterIntentionalFocus.setSelectionRange(afterIntentionalFocus.value.length,afterIntentionalFocus.value.length);
 await afterIntentionalFocus.onkeydown({key:'Tab',ctrlKey:false,metaKey:false,preventDefault(){}});
+const publishesBeforeReply=calls.publishTargets.length;
 await afterIntentionalFocus.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
 if(calls.lastChat?.kind!==1111 || !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===permanentId) ||
    !calls.lastChat.tags.some(t=>t[0]==='p'&&t[1]==='b'.repeat(64)) ||
    !calls.lastChat.tags.some(t=>t[0]==='imeta'&&t.some(x=>String(x).includes(draftUrl))) ||
    control('cc-input').value!=='')
   throw new Error('successful draft send did not preserve reply/mention/attachment tags or clear once');
+if(!calls.publishTargets.slice(publishesBeforeReply).some(relays=>JSON.stringify(relays)===JSON.stringify(roomRelaySet)))
+  throw new Error('reply send did not target the room bundle relay: '+JSON.stringify(calls.publishTargets.slice(publishesBeforeReply)));
 replaceComposerOnWrite=false;
 
 PCConcord.render();

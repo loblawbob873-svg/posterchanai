@@ -32,6 +32,7 @@
     loading:false, error:'',
     sync:null,                 // /config payload for the phone panel
     scroll:0,
+    owner:'', loadGen:0,
   };
 
   function init(){
@@ -40,6 +41,8 @@
     const { $, $$, enc, toast, modal, closeModal, authFetch, ensureAiSession, uiConfirm } = PC;
 
     const inView = () => window.__PC.VIEW === 'calendar';
+    const owner = () => { try{ return ((PC.me && PC.me()) || PC.ME || {}).pubkey || ''; }
+                         catch(_){ return ''; } };
     const scroller = () => document.body.classList.contains('embed')
       ? (document.scrollingElement || document.documentElement) : $('#feed');
 
@@ -436,18 +439,24 @@
           tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
         });
       },
+      _key(which){ const me = owner(); return me ? which + ':' + me : ''; },
       async save(cals, items){
-        try{ await this._tx('readwrite', st => st.put({ cals, items, at: Date.now() }, 'snapshot')); }
+        const key = this._key('snapshot'); if(!key) return;
+        try{ await this._tx('readwrite', st => st.put({ cals, items, at: Date.now() }, key)); }
         catch(_){ /* a full or unavailable IDB must never fail a load that worked */ }
       },
       async read(){
-        try{ return await this._tx('readonly', st => st.get('snapshot')); }
+        const key = this._key('snapshot'); if(!key) return null;
+        try{ return await this._tx('readonly', st => st.get(key)); }
         catch(_){ return null; }
       },
-      async clear(){ try{ await this._tx('readwrite', st => st.delete('snapshot')); }catch(_){} },
+      async clear(){ const key=this._key('snapshot'); if(!key)return;
+        try{ await this._tx('readwrite', st => st.delete(key)); }catch(_){} },
       // The pending WRITES, kept beside the snapshot in the same store — one database, one upgrade.
-      async saveQ(q){ try{ await this._tx('readwrite', st => st.put(q, 'queue')); }catch(_){} },
-      async readQ(){ try{ return await this._tx('readonly', st => st.get('queue')); }catch(_){ return []; } },
+      async saveQ(q){ const key=this._key('queue'); if(!key)return;
+        try{ await this._tx('readwrite', st => st.put(q, key)); }catch(_){} },
+      async readQ(){ const key=this._key('queue'); if(!key)return [];
+        try{ return await this._tx('readonly', st => st.get(key)); }catch(_){ return []; } },
     };
 
     /* THE OFFLINE WRITE QUEUE — the half the read cache does not cover.
@@ -543,6 +552,12 @@
     }
 
     async function load(){
+      const mine = owner(), gen = ++S.loadGen;
+      if(mine !== S.owner){
+        S.owner = mine; S.ready = false; S.loading = false; S.enabled = null; S.cals = []; S.cal = '';
+        S.items = {}; S.sync = null; S.cached = false; S.error = ''; S.rev++;
+      }
+      const stale = () => gen !== S.loadGen || mine !== owner();
       S.loading = true; S.error = '';
       paint();
       // The Nostr layer rides its own socket and its own clock: fired here, drawn when it lands,
@@ -553,27 +568,34 @@
         loadNostr();
       }
       try{
-        S.sync = await api('/api/calendar/config');
+        const sync = await api('/api/calendar/config');
+        if(stale()) return;
+        S.sync = sync;
         // The config call reaching the server IS the proof that it is reachable, so this is the
         // cheapest correct moment to drain — before the read, so what comes back already includes it.
         try{ const n = await CalQueue.flush();
+             if(stale()) return;
              if(n) toast(n === 1 ? 'an event you made offline has synced'
                                  : n + ' events you made offline have synced'); }catch(_){}
         S.enabled = !!S.sync.enabled;
         if(!S.enabled){ S.loading = false; paint(); return; }
         const r = await api('/api/calendar/calendars');
-        S.cals = r.calendars || [];
-        if(!S.cal || !S.cals.some(c => c.id === S.cal)) S.cal = (S.cals[0] || {}).id || '';
+        if(stale()) return;
+        const cals = r.calendars || [];
         const items = {};
-        for(const c of S.cals){
+        for(const c of cals){
           try{ items[c.id] = (await api('/api/calendar/items?cal=' + encodeURIComponent(c.id))).items || []; }
           catch(_){ items[c.id] = []; }
+          if(stale()) return;
         }
+        S.cals = cals;
+        if(!S.cal || !S.cals.some(c => c.id === S.cal)) S.cal = (S.cals[0] || {}).id || '';
         S.items = items;
         S.rev++;                        // invalidates the occurrence index
         S.cached = false;
         CalCache.save(S.cals, items);   // fire and forget: a cache write must not slow a load down
       }catch(e){
+        if(stale()) return;
         // 404 is the server being off, which is a state to explain rather than an error to report.
         S.enabled = /off on this node/i.test((e && e.message) || '') ? false : S.enabled;
         // A failure WITH a cache behind it is not a failure worth a red box: the month you are
@@ -582,6 +604,7 @@
           ? 'showing your saved calendar — could not reach the server'
           : ((e && e.message) || 'could not load your calendars');
       }finally{
+        if(stale()) return;
         S.loading = false; S.ready = true; paint();
         // After the data, never before: pushWidget reads S.items, and pushing an empty set would
         // blank a correct widget for as long as the load took.
@@ -1146,6 +1169,11 @@
 
     // ---- the view ----------------------------------------------------------------------------
     function render(){
+      const mine = owner();
+      if(mine !== S.owner){
+        S.owner = mine; ++S.loadGen; S.ready = false; S.loading = false; S.enabled = null; S.cals = []; S.cal = '';
+        S.items = {}; S.sync = null; S.cached = false; S.error = ''; S.rev++;
+      }
       if(!S.month) S.month = firstOf(new Date());
       if(!S.sel) S.sel = todayKey();
       paint();

@@ -47,7 +47,11 @@
       const r = await authFetch(path, opts);
       let body = null;
       try{ body = await r.json(); }catch(_){}
-      if(!r.ok) throw new Error((body && (body.detail || body.error)) || ('HTTP ' + r.status));
+      if(!r.ok){
+        const e = new Error((body && (body.detail || body.error)) || ('HTTP ' + r.status));
+        e.status = r.status;
+        throw e;
+      }
       return body || {};
     }
     const jput = (p, o) => api(p, { method:'PUT', headers:{'Content-Type':'application/json'},

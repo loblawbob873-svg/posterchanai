@@ -24356,9 +24356,10 @@
     if(!V) return [];
     const out = [];
     try{
-      const bs = await fetch('/api/contacts/books').then(r => r.ok ? r.json() : {books:[]});
+      try{ await ensureAiSession(); }catch(_){}
+      const bs = await __PC.authFetch('/api/contacts/books').then(r => r.ok ? r.json() : {books:[]});
       for(const b of (bs.books || [])){
-        const r = await fetch('/api/contacts/cards?book=' + encodeURIComponent(b.id));
+        const r = await __PC.authFetch('/api/contacts/cards?book=' + encodeURIComponent(b.id));
         if(!r.ok) continue;
         for(const rec of ((await r.json()).cards || [])){
           let c; try{ c = V.parse(rec.ics || ''); }catch(_){ continue; }
@@ -24595,10 +24596,17 @@
 
   const Mail = {
     unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
-    async api(path, opts){ const r=await fetch('/api/mail'+path, opts); if(!r.ok) throw new Error('http '+r.status); return r.json(); },
+    async api(path, opts={}){
+      try{ await ensureAiSession(); }catch(_){}
+      const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{})}});
+      if(!r.ok) throw new Error('http '+r.status); return r.json();
+    },
     async render(root){
       this.root=root; root.innerHTML='<div class="mail-loading"><div class="spinner"></div></div>';
       try{ const a=await this.api('/accounts'); this.accounts=a.accounts||[]; }catch(_){ this.accounts=[]; }
+      /* The mail request yields. The shared feed may have moved to Notes, Terminal, or another OS
+       * window while it was in flight; a late 401/empty response must not paint Mail there. */
+      if(!root.isConnected||this.root!==root||VIEW!=='mail'||root.closest('#feed')!==$('#feed'))return;
       if(!this.accounts.length){
         /* The nostr-mail expectation gap, answered where it forms: "Mobile still asking me to set
          * up an email — I just want to use nmail." An email ACCOUNT is nostr-mail's transport; the

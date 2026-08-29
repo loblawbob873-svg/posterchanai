@@ -180,6 +180,7 @@
   // In-memory library, rebuilt from the relay/cache. `notes` and `folders` are keyed by id.
   let _lib = null;          // {notes:Map, folders:Map}
   let _loading = null;
+  let _owner = '';
   let _sel = null;          // id of the open note
   /* A brand-new note does not exist in `_lib.notes` until its first save has been signed.
    * Keep that editor model separately meanwhile. A relay refresh may repaint the Notes shell in
@@ -200,12 +201,22 @@
    * throttled, or merely slow — must leave the local library alone. That asymmetry is the anti-wipe
    * rule this codebase keeps relearning. */
   async function load(force){
+    const who = (ME() && ME().pubkey) || '';
+    if(who !== _owner){
+      _owner = who; _lib = null; _loading = null; _sel = null; _draft = null;
+      _filter = { folder:FOLDER_ALL, q:'', tag:'' };
+    }
     if(_lib && !force) return _lib;
-    if(!_loading) _loading = _loadCache().finally(()=>{ _loading=null; });
+    if(!_loading){
+      const mine = who;
+      const job = _loadCache(mine);
+      const wrapped = job.finally(()=>{ if(_loading === wrapped) _loading=null; });
+      _loading = wrapped;
+    }
     return _loading;
   }
 
-  async function _loadCache(){
+  async function _loadCache(mine){
     const lib = { notes:new Map(), folders:new Map(), gone:new Map() };
     let cached = [];
     try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
@@ -213,9 +224,11 @@
      * complete shell (including Compose) paints immediately. With a remote signer every encrypted
      * record is a round trip; the old first repaint at 60 decryptions made opening Notes look hung.
      * Repaint after the first successful record, then in small batches while the rest unlock. */
+    if(mine !== _owner) return _lib;
     _lib = lib;
     _paint();
-    await _absorb(lib, cached, n => { if(n === 1 || n % 12 === 0){ _lib = lib; _paint(); } });
+    await _absorb(lib, cached, n => { if(mine === _owner && (n === 1 || n % 12 === 0)){ _lib = lib; _paint(); } });
+    if(mine !== _owner) return _lib;
     _lib = lib;
     return _lib;
   }
@@ -225,12 +238,14 @@
   let _refreshing = false;
   async function refresh(){
     if(_refreshing || !_lib) return;
+    const mine = _owner, lib = _lib;
     _refreshing = true;
     try{
       const live = await Relay().query([FILTER()]);
+      if(mine !== _owner || lib !== _lib) return;
       if(live && live.length){
         const before = _stamp();
-        await _absorb(_lib, live, n => {
+        await _absorb(lib, live, n => {
           if((n === 1 || n % 12 === 0) && PC.VIEW === 'notes' && !_dirty) _paint();
         });
         if(_stamp() !== before && PC.VIEW === 'notes' && !_dirty) _paint();

@@ -25,6 +25,24 @@ CSS = (ROOT / "static" / "css" / "client.css").read_text()
 
 
 class ViewTests(unittest.TestCase):
+    def test_mail_api_uses_the_authenticated_session(self):
+        """A signed-in browser may authenticate through the app bearer rather than a cookie. A
+        bare fetch turns a real mailbox into the dishonest 'No mail accounts' empty state."""
+        start = APP.index("    async api(path, opts={})")
+        body = APP[start:APP.index("    async render(root)", start)]
+        self.assertIn("await ensureAiSession()", body)
+        self.assertIn("credentials:'include'", body)
+        self.assertIn("'Authorization':'Bearer '+_aiToken", body)
+
+    def test_late_mail_response_cannot_overwrite_another_app(self):
+        """The accounts request yields while desktop windows share/move #feed. Its continuation
+        must prove Mail still owns the mounted root before drawing an empty inbox or mailbox."""
+        start = APP.index("    async render(root)")
+        body = APP[start:APP.index("    draw(){", start)]
+        for guard in ("!root.isConnected", "this.root!==root", "VIEW!=='mail'",
+                      "root.closest('#feed')!==$('#feed')"):
+            self.assertIn(guard, body)
+
     def test_mail_is_a_view_the_router_knows(self):
         self.assertIn("if (VIEW==='mail') return renderMailView();", APP)
         self.assertIn("function renderMailView()", APP)

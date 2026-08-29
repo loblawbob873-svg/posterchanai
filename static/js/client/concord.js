@@ -49,7 +49,7 @@
   }
   const state={ community:null, channel:null };
   let replyTarget=null, reactionTarget=null, mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false;
-  let discovered=[], discoveryStarted=false, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
+  let discovered=[], discoveryStarted=false, discoverySubscription=null, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
   let discoveryPaintPending=false;
   let membershipViewer='';const membershipDocs=new Map();
   let nip29Busy=false,nip29RetryTimer=null,webxdcHydrationEpoch=0;
@@ -600,7 +600,11 @@
     const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); discovered.slice(0,24).forEach(item=>hydrateDiscoveredIcon(p,item)); paintDiscovery(); };
     const onEose=()=>{ discoveryLoaded=true; paintDiscovery(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
-    try{ p.relaySubscribe(filters,{onEvent,onEose,live:true}); if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2}).then(events=>{events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
+    try{ discoverySubscription=p.relaySubscribe(filters,{onEvent,onEose,live:true})||null; if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
+  }
+  function stopDiscovery(){
+    const subscription=discoverySubscription;discoverySubscription=null;discoveryStarted=false;
+    if(subscription&&typeof subscription.close==='function')try{subscription.close();}catch(_){}
   }
   async function hydrateInvite(p,url){
     if(!window.PosterCord||!p.relayQueryFrom)throw new Error('CORD protocol is unavailable');
@@ -667,8 +671,8 @@
   }
   async function syncNip29Memberships(p,viewer){
     if(state.community!=null||nip29Busy||!viewer.pubkey)return;nip29Busy=true;let recovered=false;
-    try{const membership=await nip29Memberships(p,viewer),byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
-      const found=[];for(const [relay,listed] of byRelay){const metas=await nip29Metadata(p,relay,listed.map(g=>g.id)),metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
+    try{const membership=await nip29Memberships(p,viewer);if(state.community!=null)return;const byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
+      const found=[];for(const [relay,listed] of byRelay){if(state.community!=null)return;const metas=await nip29Metadata(p,relay,listed.map(g=>g.id));if(state.community!=null)return;const metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
       if(found.length){const rooms=saved();let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id,i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){rooms.push(room);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){save(rooms);backgroundRender();}}
     }catch(e){console.warn('NIP-29 membership sync failed',e);}finally{nip29Busy=false;clearTimeout(nip29RetryTimer);if(state.community==null)nip29RetryTimer=setTimeout(()=>syncNip29Memberships(p,p.viewer?p.viewer():viewer),recovered?60000:5000);}
   }
@@ -752,6 +756,7 @@
     try{
       if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}
       const candidates=await membershipEvents(p,viewer.pubkey);
+      if(state.community!=null)return;
       // Armada has emitted both kinds and may leave several list shards on relays. Decode every
       // valid snapshot: choosing one newest event can hide communities stored in another shard.
       const entries=new Map(),tombs=new Map(),decrypted=[];
@@ -776,6 +781,7 @@
       const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)); if(!live.length)return;
       const rooms=saved(); let changed=false;
       for(const e of live){
+        if(state.community!=null)return;
         const current=e.current||{},url=inviteRefUrl(e.invite_ref),
               i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url);
         // Armada's vault `current` is a CONTROL SNAPSHOT (owner/root/relays/name), not the complete
@@ -791,7 +797,7 @@
           window.PosterCordReader.inspectControl(bundle,[]);
         }catch(_){
           if(!url)continue;
-          try{hydrated=await hydrateInvite(p,url);bundle=mergeArmadaBundle(hydrated.cord.bundle,current);}
+          try{hydrated=await hydrateInvite(p,url);if(state.community!=null)return;bundle=mergeArmadaBundle(hydrated.cord.bundle,current);}
           catch(__){continue;}
         }
         const channels=(bundle.channels||[]).map(c=>({name:c.name||'private',private:true,id:c.id}))
@@ -1048,6 +1054,7 @@
     if(state.community==null){
       startDiscovery(p);syncArmadaMemberships(p,viewer);syncNip29Memberships(p,viewer);
     }else{
+      stopDiscovery();
       clearTimeout(membershipRetryTimer);membershipRetryTimer=null;
       clearTimeout(nip29RetryTimer);nip29RetryTimer=null;
     }
