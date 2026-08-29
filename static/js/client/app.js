@@ -21448,12 +21448,54 @@
     }
     return mk;
   }
+  /* A DRIVE KEY CROSSES MORE REALMS THAN ORDINARY WEBCRYPTO INPUT: browser-extension messages,
+   * Electron/native bridges, remote signers and persisted JSON. Structured clone normally keeps a
+   * Uint8Array, but JSON adapters turn it into an Array, a Node Buffer envelope, numeric-keyed
+   * object or base64 string; some adapters return an already imported CryptoKey. Passing any of
+   * those except BufferSource straight to importKey is the reported
+   * `SubtleCrypto.importKey: Argument 2 is not an object`, before AES can even say wrong key.
+   *
+   * Normalize at the ONE crypto boundary, strictly. A malformed value never mints a replacement
+   * and never reaches a drive save; it fails with the same badKey marker used by wrapped-key
+   * recovery. CryptoKeys remain non-extractable and are reused without exporting them. */
+  function _masterKeyInput(mk){
+    const cryptoKey = mk && mk.type==='secret' && mk.algorithm && mk.algorithm.name==='AES-GCM'
+      && mk.constructor && mk.constructor.name==='CryptoKey';
+    if(cryptoKey) return mk;
+    let u=null;
+    const bytes=a=>Array.isArray(a) && a.length===32
+      && a.every(n=>Number.isInteger(n)&&n>=0&&n<=255) ? Uint8Array.from(a) : null;
+    if(mk instanceof Uint8Array) u=mk;
+    else if(typeof ArrayBuffer!=='undefined' && mk instanceof ArrayBuffer) u=new Uint8Array(mk);
+    else if(typeof ArrayBuffer!=='undefined' && ArrayBuffer.isView && ArrayBuffer.isView(mk))
+      u=new Uint8Array(mk.buffer,mk.byteOffset,mk.byteLength);
+    else if(Array.isArray(mk)) u=bytes(mk);
+    else if(mk && Array.isArray(mk.data)) u=bytes(mk.data); // Buffer.toJSON()
+    else if(typeof mk==='string'){
+      try{ const s=mk.replace(/-/g,'+').replace(/_/g,'/'); u=_b64u8(s+'==='.slice((s.length+3)%4)); }
+      catch(_){ u=null; }
+    }else if(mk && typeof mk==='object'){
+      const keys=Object.keys(mk).filter(k=>/^\d+$/.test(k)).sort((a,b)=>+a-+b);
+      if(keys.length) u=bytes(keys.map(k=>mk[k]));
+    }
+    const valid=u && u.length===32;
+    if(!valid){ const e=new TypeError('drive master key is not 32 raw bytes'); e.badKey=true; throw e; }
+    return u;
+  }
+  async function _masterCryptoKey(mk, usage){
+    const input=_masterKeyInput(mk);
+    if(input && input.constructor && input.constructor.name==='CryptoKey'){
+      if(!input.usages || !input.usages.includes(usage)) throw new TypeError('drive master key cannot '+usage);
+      return input;
+    }
+    return crypto.subtle.importKey('raw',input,'AES-GCM',false,[usage]);
+  }
   async function _masterEncrypt(mk, plain, iv){ iv = iv || crypto.getRandomValues(new Uint8Array(12));
-    const ck=await crypto.subtle.importKey('raw',mk,'AES-GCM',false,['encrypt']);
+    const ck=await _masterCryptoKey(mk,'encrypt');
     const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},ck,plain));
     const out=new Uint8Array(12+ct.length); out.set(iv,0); out.set(ct,12); return out; }
   async function _masterDecrypt(mk, blob){ const iv=blob.slice(0,12), ct=blob.slice(12);
-    const ck=await crypto.subtle.importKey('raw',mk,'AES-GCM',false,['decrypt']);
+    const ck=await _masterCryptoKey(mk,'decrypt');
     return new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv},ck,ct)); }
   // Already-imported check (resume a bulk import): match a source file by name+size.
   /* Is this song ALREADY in the library? The index is not enough to answer that, because an index

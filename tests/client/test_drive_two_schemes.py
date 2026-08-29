@@ -58,7 +58,9 @@ def _fn(src, name):
 
 def _run(body):
     src = open(APP, encoding="utf-8").read()
-    helpers = "\n".join(_fn(src, n) for n in ("_b64u8", "_aesDecrypt", "_masterDecrypt", "_driveDecrypt"))
+    helpers = "\n".join(_fn(src, n) for n in
+                        ("_b64u8", "_aesDecrypt", "_masterKeyInput", "_masterCryptoKey",
+                         "_masterDecrypt", "_driveDecrypt"))
     prog = textwrap.dedent(
         """
         const crypto = require('crypto').webcrypto;

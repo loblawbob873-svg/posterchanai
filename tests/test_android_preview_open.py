@@ -32,8 +32,15 @@ def test_native_open_is_private_bounded_and_cleans_previous_preview():
     assert 'getExternal' not in PLUGIN
 
 
+def test_oversized_native_preview_is_rejected_before_base64_allocation():
+    assert 'MAX_ENCODED = ((MAX + 2) / 3) * 4' in PLUGIN
+    guard=PLUGIN.index('if(encoded.length()>MAX_ENCODED)')
+    decode=PLUGIN.index('Base64.decode(encoded,Base64.DEFAULT)')
+    assert guard < decode
+
+
 def test_pdf_viewer_failure_retains_save_or_share_fallback():
-    block=PREVIEW[PREVIEW.index('async function openElsewhere'):PREVIEW.index('async function renderPdf')]
+    block=PREVIEW[PREVIEW.index('async function openElsewhere'):PREVIEW.index('function renderPdf')]
     assert "capPlugin('OpenFile','open')" in block
     assert "if(opened&&opened.ok)return 'opened'" in block
     assert 'PC().saveBlobAs' in block

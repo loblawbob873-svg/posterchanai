@@ -224,14 +224,29 @@ pending.then(()=>console.log(JSON.stringify(added))).catch(e=>{console.error(e);
         self.assertIn("setTimeout", loader)
         self.assertIn("_pdfjs = null", loader)
         self.assertIn("PDF renderer timed out", loader)
-        render = src[src.index("async function renderPdf"):
-                     src.index("var _open", src.index("async function renderPdf"))]
+        render = src[src.index("function renderPdf"):
+                     src.index("var _open", src.index("function renderPdf"))]
         self.assertIn("pv-pdf-native", render)
         self.assertIn("openElsewhere(blob, name)", render)
         fallback = src[src.index("function openElsewhere"):
-                       src.index("async function renderPdf")]
+                       src.index("function renderPdf")]
         self.assertIn("saveBlobAs", fallback)
         self.assertIn("document.pdf", fallback)
+
+    def test_closing_a_pdf_cancels_rendering_and_destroys_the_document(self):
+        """A closed long PDF must not keep rendering pages and allocating canvases off-screen."""
+        src = _read("static/js/client/preview.js")
+        render = src[src.index("function renderPdf"):
+                     src.index("var _open", src.index("function renderPdf"))]
+        self.assertIn("if (task && task.cancel) task.cancel()", render)
+        self.assertIn("if (pdf && pdf.destroy) pdf.destroy()", render)
+        self.assertIn("if (stopped) return", render)
+        mount = src[src.index("function mount("):src.index("function open(file)")]
+        self.assertIn("cleanup = renderPdf(host, blob, name)", mount)
+        self.assertIn("return cleanup", mount)
+        close = src[src.index("var done = function"):
+                    src.index("var onKey", src.index("var done = function"))]
+        self.assertIn("mountCleanup()", close)
 
     def test_the_download_never_uses_a_bare_anchor(self):
         """The APK's WebView ignores a programmatic download and the desktop's app:// origin refuses

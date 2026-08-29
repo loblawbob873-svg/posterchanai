@@ -119,15 +119,25 @@
     });
   }
 
-  async function renderPdf(host, blob, name) {
+  function renderPdf(host, blob, name) {
     var box = host.querySelector('.pv-pdf-pages');
-    if (!box) return;
-    try {
+    if (!box) return function () {};
+    var stopped = false, task = null, pdf = null;
+    var cancel = function () {
+      stopped = true;
+      try { if (task && task.cancel) task.cancel(); } catch (_) {}
+      try { if (pdf && pdf.destroy) pdf.destroy(); } catch (_) {}
+    };
+    (async function () { try {
       var lib = await loadPdfJs();
-      var pdf = await lib.getDocument({ data: await blob.arrayBuffer() }).promise;
+      if (stopped) return;
+      pdf = await lib.getDocument({ data: await blob.arrayBuffer() }).promise;
+      if (stopped) { cancel(); return; }
       box.innerHTML = '';
       for (var n = 1; n <= pdf.numPages; n++) {
+        if (stopped) return;
         var page = await pdf.getPage(n);
+        if (stopped) return;
         var base = page.getViewport({ scale: 1 });
         var available = Math.max(280, Math.min(1200, (box.clientWidth || 800) - 20));
         var viewport = page.getViewport({ scale: Math.min(2.25, available / base.width) });
@@ -143,16 +153,19 @@
         canvas.style.height = Math.ceil(viewport.height) + 'px';
         canvas.setAttribute('aria-label', 'Page ' + n);
         box.appendChild(canvas);
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport,
-          transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0] }).promise;
+        task = page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport,
+          transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0] });
+        await task.promise; task = null;
       }
     } catch (e) {
+      if (stopped) return;
       box.innerHTML = '<div class="empty pv-pdf-fallback">Could not render this PDF.<br>'
         + H((e && e.message) || e)
         + '<br><button class="btn primary pv-pdf-native">Open or save in another app</button></div>';
       var native = box.querySelector('.pv-pdf-native');
       if (native) native.onclick = function () { openElsewhere(blob, name); };
-    }
+    } })();
+    return cancel;
   }
 
   var _open = null;          // the one live preview: { url, close }
@@ -226,6 +239,7 @@
   function mount(host, name, mime, size, kind, url, shut, blob) {
     host.innerHTML = bodyHTML(name, mime, size, kind);
     var q = function (s) { return host.querySelector(s); };
+    var cleanup = function () {};
 
     if (kind === 'image') {
       var img = q('.pv-img'), rot = 0, actual = false;
@@ -265,7 +279,7 @@
        * assigning a blob URL alone can leave the old, empty media resource selected. */
       try { av.load(); } catch (_) {}
     } else if (kind === 'pdf') {
-      renderPdf(host, blob, name);
+      cleanup = renderPdf(host, blob, name);
     }
 
     var dl = q('.pv-dl');
@@ -280,6 +294,7 @@
         .catch(function (e) { toast('could not save: ' + ((e && e.message) || e)); });
     };
     var x = q('.pv-x'); if (x) x.onclick = shut;
+    return cleanup;
   }
 
   /**
@@ -307,8 +322,9 @@
     close();                                  // one at a time; the previous URL is revoked by its own close
     var url = URL.createObjectURL(blob);
     var key = 'pv:' + Math.random().toString(36).slice(2, 9);
-    var shut = function () {}, transferring = false;
+    var shut = function () {}, transferring = false, mountCleanup = function () {};
     var done = function () {
+      try { mountCleanup(); } catch (_) {}
       /* STOP THE SOUND. A <video> detached from the document keeps playing in Chromium until it is
        * garbage collected, so closing the window left a voice coming out of nowhere. */
       try {
@@ -346,7 +362,7 @@
           };
           w.handoffCancel = function () { transferring = false; };
         }
-        mount(host, name, mime, blob.size, kind, url, shut, blob);
+        mountCleanup = mount(host, name, mime, blob.size, kind, url, shut, blob);
         _open = { key: key, close: shut, host: host };
         root.addEventListener('keydown', onKey, true);
         return true;
@@ -359,7 +375,7 @@
     sheet.className = 'pv-sheet pv-host';
     document.body.appendChild(sheet);
     shut = function () { try { sheet.remove(); } catch (_) {} done(); };
-    mount(sheet, name, mime, blob.size, kind, url, shut, blob);
+    mountCleanup = mount(sheet, name, mime, blob.size, kind, url, shut, blob);
     _open = { key: key, close: shut };
     root.addEventListener('keydown', onKey, true);
     return true;

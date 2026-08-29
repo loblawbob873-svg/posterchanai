@@ -20,6 +20,11 @@ import java.io.FileOutputStream;
 @CapacitorPlugin(name = "OpenFile")
 public final class OpenFilePlugin extends Plugin {
   private static final int MAX = 32 * 1024 * 1024;
+  /* Reject before Base64.decode allocates another full byte array. The Capacitor bridge already
+   * materialises the encoded String, but an oversized document must not double its memory cost and
+   * OOM the app merely to discover that it exceeds MAX. Callers produce canonical Base64 without
+   * whitespace, so ceil(MAX / 3) groups of four is the exact largest accepted encoding. */
+  private static final int MAX_ENCODED = ((MAX + 2) / 3) * 4;
 
   @PluginMethod public void open(PluginCall call) {
     final String encoded=call.getString("data", ""),mime=call.getString("mime", "application/pdf"),
@@ -27,6 +32,7 @@ public final class OpenFilePlugin extends Plugin {
     getActivity().runOnUiThread(() -> {
       File out=null;
       try {
+        if(encoded.length()>MAX_ENCODED)throw new IllegalArgumentException("file is empty or too large");
         byte[] bytes=Base64.decode(encoded,Base64.DEFAULT);
         if(bytes.length==0||bytes.length>MAX)throw new IllegalArgumentException("file is empty or too large");
         File dir=new File(getContext().getCacheDir(),"preview-open");
