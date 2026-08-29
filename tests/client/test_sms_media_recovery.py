@@ -583,6 +583,27 @@ class TheArchiveIsBuiltFromTheReadThatCarriesAttachments(unittest.TestCase):
         self.assertIn("just a text", bodies,
                       "the text message was deleted by the picture's de-duplication: %r" % (bodies,))
 
+    def test_a_message_the_phone_still_has_comes_back_from_a_wrong_tombstone(self):
+        """THE OTHER HALF OF THE DELETION BUG. Fixing the cause stops the next one; it does nothing
+        for the 392 messages already struck, which stay hidden on the device that struck them —
+        with the row sitting in the provider the whole time.
+
+        A deliberate delete removes the message from the PHONE first and only tombstones what is
+        genuinely gone from it. So a provider row that is still here, carrying a tombstone, is not a
+        deletion anybody meant — and the handset is the authority on whether its own message
+        exists."""
+        row = msg(11, addr="+15550100", body="struck by mistake", incoming=True)
+        # A REAL tombstone: EMPTY content, not an encrypted empty string. `ev` seals its payload,
+        # so ev(doc, "") is a perfectly ordinary document carrying "" — absorb never reads it as a
+        # deletion, and a fixture like that proves nothing.
+        tomb = dict(ev("pcai:sms:%024d" % 11, ""), content="")
+        res = run(isPhone=True, rows=[row], relay=[tomb],
+                  steps=["load", "phoneLoad", "settle"])
+        bodies = sorted(t for th in res["threads"] for t in th.get("bodies", []))
+        self.assertIn("struck by mistake", bodies,
+                      "a message the phone still holds stayed hidden behind a bad tombstone: %r"
+                      % (res["docs"],))
+
     def test_two_reads_that_disagree_about_the_message_are_not_paired(self):
         """Two reads of ONE provider row carry that row's own timestamp. Anything else is a
         coincidence, and acting on a coincidence here publishes a tombstone for a real message."""

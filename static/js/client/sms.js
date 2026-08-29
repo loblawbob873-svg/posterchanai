@@ -1770,7 +1770,22 @@
         if(old.parts[i].thumb) local.parts[i].thumb = old.parts[i].thumb;
         if(old.parts[i].nothumb) local.parts[i].nothumb = 1;
       }
-      S.msgs.set(r.doc, Object.assign({}, old || {}, local));
+      const merged = Object.assign({}, old || {}, local);
+      /* THE HANDSET IS THE AUTHORITY ON WHETHER ITS OWN MESSAGE EXISTS.
+       *
+       * A tombstone is kept as a MARKER so a cached copy read back later cannot walk over the hole
+       * and restore something deleted on purpose — but a deliberate delete removes the message
+       * from the PHONE FIRST and only tombstones what is genuinely gone from it (see the delete
+       * flow). So a provider row that is still here, carrying a tombstone, is not a deletion
+       * somebody meant: it is one that was published in error.
+       *
+       * That is not hypothetical. A de-duplication keyed on the provider row id — which is NOT
+       * unique across `content://sms` and `content://mms` — published 748 tombstones and took 392
+       * real messages out of one account's archive. Fixing the cause stops the next one; without
+       * this, every message already struck stays hidden on the device that struck it, for ever,
+       * with the row sitting in the provider the whole time. */
+      if(merged.gone) delete merged.gone;
+      S.msgs.set(r.doc, merged);
       total++;
     }
     S.mmsRefused = mmsRef;
