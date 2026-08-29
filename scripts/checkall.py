@@ -72,6 +72,10 @@ if not os.path.exists(PY):
 #            browser port/profile, so an external installed process can deliberately name its port.
 # ---------------------------------------------------------------------------------------------
 CHECKS = {
+    # Security release gate: deletion from HEAD is insufficient for a private signing key. This
+    # requires a full clone, reports object ID + historical path only, and intentionally remains
+    # red while any private signing container is reachable from any ref.
+    "check_no_android_signing_history": dict(group="unit", secs=120, serial=True),
     # --- need a live instance -------------------------------------------------------------------
     "check_auth_gate":                 dict(group="live", secs=300),
     "check_client_icon_themes":        dict(group="live", secs=600),
