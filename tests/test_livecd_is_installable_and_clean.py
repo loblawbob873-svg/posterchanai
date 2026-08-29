@@ -860,6 +860,13 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
     def test_there_is_a_way_in_that_is_not_the_menu(self):
         self.assertIn('elif [ "$1" = "install-live" ]; then', self.src)
 
+    def test_installer_can_remount_media_detached_by_dracut(self):
+        """A booted squashfs may have no /run/initramfs/live after switch-root."""
+        self.assertIn("/run/posterchan-live-media", self.fn)
+        self.assertIn('type="$(blkid -s TYPE -o value "$dev"', self.fn)
+        self.assertIn('[ "$type" = iso9660 ] || [ "$type" = udf ]', self.fn)
+        self.assertIn('sudo mount -o ro "$dev" "$media"', self.fn)
+
     def test_success_is_gated_on_the_final_encrypted_boot_chain(self):
         """The bootloader can succeed and a later phase can still replace one of its files. The
         finalizer must inspect what the firmware will actually use before it locks root."""

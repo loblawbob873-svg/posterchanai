@@ -1072,6 +1072,25 @@ liveISOinstall() {
 	for d in /run/initramfs/live /run/rootfsbase /mnt/cdrom /media/cdrom; do
 		[ -d "$d/boot" ] && { LIVEDIR="$d"; break; }
 	done
+	# dracut may detach the optical filesystem after pivoting to the squashfs overlay.  In that
+	# perfectly valid live boot `/run/rootfsbase` exists, but it intentionally has no /boot and the
+	# paths above are absent.  Find and mount the read-only installer medium rather than telling the
+	# user an image which just booted has no kernel.  Only ISO/UDF filesystems are candidates, so an
+	# installed disk can never be mistaken for the source medium.
+	if [ -z "$LIVEDIR" ]; then
+		local media dev type
+		media=/run/posterchan-live-media
+		for dev in $(blkid -o device 2>/dev/null); do
+			type="$(blkid -s TYPE -o value "$dev" 2>/dev/null)"
+			[ "$type" = iso9660 ] || [ "$type" = udf ] || continue
+			sudo mkdir -p "$media"
+			if ! mountpoint -q "$media"; then
+				sudo mount -o ro "$dev" "$media" >/dev/null 2>&1 || continue
+			fi
+			if [ -d "$media/boot" ]; then LIVEDIR="$media"; break; fi
+			sudo umount "$media" >/dev/null 2>&1 || true
+		done
+	fi
 	# The squashfs itself may carry /boot -- it is a copy of the machine the ISO was built on -- and
 	# that is the better source when it is there, because it is the kernel this userland was built
 	# against rather than the one the disc happens to boot with.
