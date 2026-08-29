@@ -39,8 +39,12 @@ const distributed=await window.PCConcord.membershipEvents({
   relayQuery:async()=>[poolEvent],
   relayQueryFrom:async(relays,_filters,options)=>{queries.push({relays,options});return[legacyEvent];},
 },hex('9'));
-if(!distributed.some(e=>e.id===poolEvent.id)||!distributed.some(e=>e.id===legacyEvent.id))
-  throw new Error('distributed pool/legacy relay membership snapshots were not unioned');
-if(!queries.length||!queries.every(q=>q.relays.includes('wss://relay.ditto.pub')&&q.relays.includes('wss://relay.damus.io')&&q.options.allowBlocked&&q.options.failureCooldown>=1800000))
-  throw new Error('legacy membership sources were omitted or lack a bounded long circuit');
+if(!distributed.some(e=>e.id===poolEvent.id)||distributed.some(e=>e.id===legacyEvent.id)||queries.length)
+  throw new Error('normal membership startup opened external recovery relays despite a pool hit');
+const recovered=await window.PCConcord.membershipEvents({
+  relayQuery:async()=>[],
+  relayQueryFrom:async(relays,_filters,options)=>{queries.push({relays,options});return[legacyEvent];},
+},hex('9'),{external:true,legacyRecovery:true});
+if(!recovered.some(e=>e.id===legacyEvent.id)||!queries.length||!queries.every(q=>q.relays.includes('wss://relay.ditto.pub')&&q.relays.includes('wss://relay.damus.io')&&q.options.allowBlocked&&q.options.failureCooldown>=1800000))
+  throw new Error('explicit legacy recovery omitted its bounded long circuit');
 console.log('vector membership runtime ok');

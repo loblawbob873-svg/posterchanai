@@ -703,17 +703,22 @@
   function foldNip29History(events,p,groupId){const scoped=events.filter(e=>(e.tags||[]).some(t=>t[0]==='h'&&t[1]===groupId)).sort((a,b)=>Number(a.created_at)-Number(b.created_at)),deletions=[],deleted=new Set(),byId=new Map(),reactions=[];for(const e of scoped){if(e.kind===5){deletions.push(e);continue;}if(e.kind===7){reactions.push(e);continue;}if(![9,10,11,12,1111].includes(e.kind))continue;const pr=p.profOf?p.profOf(e.pubkey):{};byId.set(e.id,{id:e.id,pubkey:e.pubkey,by:pr.display_name||pr.name||e.pubkey.slice(0,12)+'…',text:e.content,at:Number(e.created_at)*1000,kind:e.kind,tags:e.tags||[],reactions:{},reactionIds:{},remote:true});}const reactionById=new Map(reactions.map(e=>[e.id,e]));for(const deletion of deletions)for(const t of deletion.tags||[])if(t[0]==='e'){const target=byId.get(t[1])||reactionById.get(t[1]);if(target&&target.pubkey===deletion.pubkey)deleted.add(t[1]);}for(const id of deleted)byId.delete(id);for(const e of reactions){if(deleted.has(e.id))continue;const target=((e.tags||[]).find(t=>t[0]==='e')||[])[1],m=byId.get(target);if(!m)continue;const emoji=e.content==='+'?'👍':e.content||'👍';(m.reactions[emoji]||(m.reactions[emoji]=[])).push(e.pubkey);(m.reactionIds[emoji]||(m.reactionIds[emoji]={}))[e.pubkey]=e.id;}for(const m of byId.values())if(m.kind===1111){const target=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(target)m.reply={id:target.id,by:target.by,text:target.text};}return [...byId.values()].sort((a,b)=>a.at-b.at);}
   async function nip29History(p,room){const events=await nip29RelayQuery(p,room.relay,[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],limit:500}],10000);return foldNip29History(events,p,room.groupId);}
   async function hydrateNip29Room(p,index){const rooms=saved(),room=rooms[index];if(!room||room.protocol!=='nip29')return;const messages=await nip29History(p,room),storeId=channelStoreId(room,'general');markRemoteStore(storeId);saveTestMessages(storeId,messages);room.nip29Hydrated=true;rooms[index]=room;save(rooms);if(state.community===index)backgroundRender();}
-  async function membershipEvents(p,pubkey,{external=true,signal=null}={}){
+  async function membershipEvents(p,pubkey,{external=true,legacyRecovery=false,signal=null}={}){
     /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
        relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
        13302 vault look absent and a fresh browser showed no communities. 13302 is CORD-02's released
        replaceable vault; the addressable migration is queried separately as a compatibility source. */
     const query=async filter=>{
       let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([filter])||[]:[];}catch(_){}
-      const [pool,remote]=await Promise.all([
-        p.relayQuery?Promise.resolve(p.relayQuery([filter],8000)).catch(()=>[]):[],
-        external&&p.relayQueryFrom?Promise.resolve(p.relayQueryFrom([...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS],[filter],{timeout:8000,max:6,signal,purpose:'concord armada memberships '+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':''),minInterval:1800000,allowBlocked:true,failureCooldown:1800000})).catch(()=>[]):[],
-      ]);
+      const pool=p.relayQuery?await Promise.resolve(p.relayQuery([filter],8000)).catch(()=>[]):[];
+      /* Cache and the user's connected relay are authoritative enough for normal startup. Opening
+         every Armada compatibility relay before painting a saved room made Concord slow and filled
+         Firefox with failed Damus/Ditto/Vector sockets. External recovery is a fallback only. The
+         two historically blocked relays are reserved for an explicit recovery action. */
+      const local=[...(cached||[]),...(pool||[])].filter(e=>e&&e.id);
+      const recoveryRelays=legacyRecovery?[...CORD_RELAYS,...LEGACY_RECOVERY_RELAYS]:CORD_RELAYS;
+      const remote=!local.length&&external&&p.relayQueryFrom
+        ?await Promise.resolve(p.relayQueryFrom(recoveryRelays,[filter],{timeout:8000,max:legacyRecovery?6:4,signal,purpose:'concord armada memberships '+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':''),minInterval:1800000,allowBlocked:legacyRecovery,failureCooldown:1800000})).catch(()=>[]):[];
       return [...new Map([...(cached||[]),...(pool||[]),...(remote||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
     };
     const released=await query({kinds:[13302],authors:[pubkey],limit:1});
@@ -781,7 +786,7 @@
     try{
       if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}
       const activeRecovery=localOnly==='recovery',signal=localOnly&&!activeRecovery?null:discoveryAbortController&&discoveryAbortController.signal;
-      const candidates=await membershipEvents(p,viewer.pubkey,{external:!localOnly||activeRecovery,signal});
+      const candidates=await membershipEvents(p,viewer.pubkey,{external:!localOnly||activeRecovery,legacyRecovery:activeRecovery,signal});
       if(state.community!=null&&!localOnly)return;
       // Armada has emitted both kinds and may leave several list shards on relays. Decode every
       // valid snapshot: choosing one newest event can hide communities stored in another shard.
