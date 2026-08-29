@@ -346,7 +346,21 @@
   }
   /* One archived document, opened. The signer is asked only when the envelope is not already
    * known; `openMessageBody` is unchanged and still returns an inline envelope verbatim. */
-  async function archiveEnvelope(ev){
+  /* SHARED IN FLIGHT, because two passes over the same archive is the ordinary state of affairs:
+   * the cold-load drain walks the local cache while `refresh` walks the relay's answer, and those
+   * are the SAME documents. Keyed on the immutable event id and dropped the moment it settles, so
+   * nothing is remembered and a transient signer refusal stays retryable. */
+  const _envInFlight = new Map();
+  function archiveEnvelope(ev){
+    const key = String((ev && ev.id) || '');
+    if(key && _envInFlight.has(key)) return _envInFlight.get(key);
+    const work = _archiveEnvelope(ev);
+    if(!key) return work;
+    _envInFlight.set(key, work);
+    work.then(() => _envInFlight.delete(key), () => _envInFlight.delete(key));
+    return work;
+  }
+  async function _archiveEnvelope(ev){
     const id = String((ev && ev.id) || '');
     if(id){ const hit = await envRead(id); if(hit) return hit; }
     const env = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
@@ -380,17 +394,45 @@
   /* Bounded fan-out. Failures are CARRIED, not thrown: absorb's own catch decides whether an error
    * is permanent (and blacklists that exact version) or transient (and must stay retryable), and
    * moving that decision in here would give one damaged row a second, differently-behaved path. */
+  /* TWO STAGES, TWO WIDTHS — because they are bounded by different things.
+   *
+   * MEASURED: the relay hands over all 2,161 of an account's archive events in under a second, and
+   * Postgres answers the query in 62ms. The eight-to-sixteen seconds Texts takes to open is spent
+   * entirely in here, opening each message ONE BODY AT A TIME through a six-lane gate.
+   *
+   * That gate is six because a NIP-07 extension denies concurrent decrypt prompts and says nothing
+   * — a real bug this project has already paid for. But only the ENVELOPE step touches a signer.
+   * Once it is open (or cached, which after the first visit it is), the rest is an HTTP GET of an
+   * immutable content-addressed blob and an AES pass: network-bound, not signer-bound, and safe to
+   * widen. Keeping both behind one gate meant the extension's limit was throttling the network for
+   * everybody, including accounts with a local key that has no such limit. */
+  const BODY_LANES = 16;
   async function openArchiveBatch(list){
     const out = new Map(), queue = list.slice();
     if(!queue.length) return out;
-    const lane = async () => {
-      while(queue.length){
-        const ev = queue.shift();
-        try{ out.set(ev, {obj: await openArchiveDoc(ev)}); }
+    const envelopes = new Map();
+    const stage = (n, work) => Promise.all(Array.from({length: Math.max(1, Math.min(n, queue.length))}, work));
+    /* Stage one: the signer, narrow. */
+    const pending = queue.slice();
+    await stage(OPEN_LANES, async () => {
+      while(pending.length){
+        const ev = pending.shift();
+        try{ envelopes.set(ev, await archiveEnvelope(ev)); }
         catch(err){ out.set(ev, {err}); }
       }
-    };
-    await Promise.all(Array.from({length: Math.min(OPEN_LANES, queue.length)}, lane));
+    });
+    /* Stage two: the drive, wide. */
+    const bodies = queue.filter(ev => envelopes.has(ev));
+    await stage(BODY_LANES, async () => {
+      while(bodies.length){
+        const ev = bodies.shift(), envelope = envelopes.get(ev);
+        try{
+          const obj = await openMessageBody(envelope);
+          if(obj && typeof obj === 'object' && envelope && envelope.blob) obj._blob = envelope.blob;
+          out.set(ev, {obj});
+        }catch(err){ out.set(ev, {err}); }
+      }
+    });
     return out;
   }
 

@@ -182,7 +182,7 @@ class OpeningTheArchiveIsFannedOut(unittest.TestCase):
         that shape, so the writer has to refuse it — and the reader has to refuse it too, or a row
         left by some other build is handed to openMessageBody as though it were a body."""
         js = (ROOT / "static" / "js" / "client" / "sms.js").read_text(encoding="utf-8")
-        writer = js.split("async function archiveEnvelope", 1)[1].split("async function openArchiveDoc", 1)[0]
+        writer = js.split("async function _archiveEnvelope", 1)[1].split("async function openArchiveDoc", 1)[0]
         self.assertIn("/^[0-9a-f]{64}$/i.test(String(env.blob || ''))", writer,
                       "the envelope cache writes something that is not a blob pointer")
         reader = js.split("async function envRead", 1)[1].split("function envWrite", 1)[0]
