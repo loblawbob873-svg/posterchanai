@@ -53,14 +53,21 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o pion-turn .
 FROM alpine:3.20 AS streamdl
 ARG TARGETARCH
 ARG MEDIAMTX_VERSION=v1.19.2
+ARG MEDIAMTX_SHA256_AMD64=f9c601cc303ceca8fad2883917b022882672c5bc56311e92dbceb16e5f20c60c
+ARG MEDIAMTX_SHA256_ARM64=562f419912a8668c18216a9e8c95359ec82fbb754e4a44e2953ef62b98eec688
+ARG MEDIAMTX_SHA256_ARMV7=de0afed5ba33df231a6c3321207b4a906f1da9be7ce8b3efac008928e982ca6d
 # Best-effort: a yanked/renamed upstream release must NOT break the whole image build. On failure we
 # leave an empty /mediamtx placeholder; stream_service treats a 0-byte binary as "not installed" (no-op),
 # and the operator can install it later via install.sh --stream. Streaming is opt-in anyway.
 RUN apk add --no-cache curl tar && { \
       case "${TARGETARCH:-amd64}" in \
-        amd64) MTXARCH=amd64 ;; arm64) MTXARCH=arm64 ;; arm) MTXARCH=armv7 ;; *) MTXARCH=amd64 ;; \
+        amd64) MTXARCH=amd64; MTXSHA="$MEDIAMTX_SHA256_AMD64" ;; \
+        arm64) MTXARCH=arm64; MTXSHA="$MEDIAMTX_SHA256_ARM64" ;; \
+        arm) MTXARCH=armv7; MTXSHA="$MEDIAMTX_SHA256_ARMV7" ;; \
+        *) echo "unsupported MediaMTX architecture: ${TARGETARCH}" >&2; exit 1 ;; \
       esac && \
       curl -fsSL "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_${MTXARCH}.tar.gz" -o /tmp/m.tgz && \
+      echo "$MTXSHA  /tmp/m.tgz" | sha256sum -c - && \
       tar -xzf /tmp/m.tgz -C /tmp mediamtx && install -m 0755 /tmp/mediamtx /mediamtx ; \
     } || { echo "WARN: mediamtx download failed — streaming disabled in this image (install.sh --stream to add it)"; : > /mediamtx ; }
 

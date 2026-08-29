@@ -142,14 +142,15 @@ if [ "$portal_stale" -eq 1 ]; then
   systemctl --user try-restart xdg-desktop-portal-wlr.service xdg-desktop-portal.service >/dev/null 2>&1 || true
 fi
 
-# Portage owns /usr/bin/posterchan. Older LiveOS images and the standalone updater installed the
-# wrapper in /usr/local/bin instead; keep that as a fallback, but never let a stale local copy
-# shadow the package that was just upgraded. That stale wrapper reset Wayland to `auto`, which is
-# why a direct launch fixed the laptop Super key and the normal launcher broke it again.
-if [ -x /usr/bin/posterchan ]; then
-  PC_DESKTOP_LAUNCHER=/usr/bin/posterchan
-else
+# The desktop ebuild and the standalone updater both install the canonical wrapper in
+# /usr/local/bin. Some older images still have a package-owned /usr/bin copy; preferring it after
+# an upgrade relaunches the old wrapper on Ctrl+Alt+Backspace even though Portage successfully
+# replaced /opt/posterchan and /usr/local/bin/posterchan. Keep /usr/bin only as a legacy fallback
+# for images which have not acquired the canonical wrapper yet.
+if [ -x /usr/local/bin/posterchan ]; then
   PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan
+else
+  PC_DESKTOP_LAUNCHER=/usr/bin/posterchan
 fi
 
 # In a SPICE guest the viewer and guest must agree on one framebuffer size. Without the guest agent

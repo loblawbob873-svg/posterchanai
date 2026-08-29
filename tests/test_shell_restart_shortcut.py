@@ -43,8 +43,12 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     assert "posterchan-shell-start.lock" in start
     assert start.count('"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&-') == 2
     assert start.count('>>"$SHELL_LOG" 2>&1 &') == 2
-    assert "PC_DESKTOP_LAUNCHER=/usr/bin/posterchan" in start
-    assert "PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan" in start
+    local = start.index("if [ -x /usr/local/bin/posterchan ]")
+    canonical = start.index("PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan", local)
+    legacy = start.index("PC_DESKTOP_LAUNCHER=/usr/bin/posterchan", canonical)
+    assert local < canonical < legacy, (
+        "a legacy /usr/bin wrapper must not shadow the package/updater-owned /usr/local wrapper"
+    )
     # Restart only the canonical shell.  A broad /opt/posterchan match also catches installed
     # diagnostic/verifier instances and lets an update test tear down the user's real desktop.
     assert "candidates=$requested" in restart

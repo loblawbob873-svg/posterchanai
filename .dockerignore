@@ -15,6 +15,7 @@ posterchanai.db
 posterchanai.db-*
 data/
 models/
+.run/
 *.gguf
 *.safetensors
 
