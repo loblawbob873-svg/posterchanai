@@ -103,3 +103,14 @@ def test_completed_folder_upload_refresh_is_not_deferred_to_a_timer():
     upload = upload[: upload.index("// ---- Music:")]
     assert "if(VIEW==='blossom') renderBlossom();" in upload
     assert "setTimeout(()=>{ if(VIEW==='blossom')" not in upload
+
+
+def test_completed_upload_is_remembered_before_the_network_refresh():
+    upload = APP[APP.index("async function uploadFilesSeq(files)") :]
+    upload = upload[: upload.index("// ---- Music:")]
+    assert "_rememberUploadedBlob(sha,url,files[i])" in upload
+    helper = APP[APP.index("function _rememberUploadedBlob(") :]
+    helper = helper[: helper.index("async function uploadFilesSeq(")]
+    assert "_filesGridList=old.filter" in helper
+    assert "_blobHave.add(sha)" in helper
+    assert "_blobSizes.set(sha,row.size)" in helper

@@ -24,13 +24,16 @@ const context={console,Set,Promise,Math,Date,
     (f.name==='a.jpg'?'a':'b').repeat(64);},_shaFromUrl:u=>u.split('/').pop(),
   _signUploadBatch:async()=>null,_blossomDenied:()=>false,requestBlossomAccess:()=>{},
   uploadEncFile:async()=>{},uploadMusicTrack:async()=>{},_refreshBlobHave:async()=>{},
-  _looksAudio:()=>false,_musicHasSrc:()=>false,enc:String,$:()=>null,
+  _looksAudio:()=>false,_musicHasSrc:()=>false,enc:String,$:()=>null,mediaServer:()=>"https://blossom.test",
   setTimeout:f=>{f();return 1},VIEW:'blossom',renderBlossom:()=>calls.renders++};
 vm.createContext(context);
 vm.runInContext(`let _filesFolder=null,_uploadCancel=false,_uploading=0,_uploadBatchAuth=null;
+let _filesGridList=null,_blobHave=new Set(),_blobSizes=new Map();
 ${fn('function _uploadTargetFolder(')}
+${fn('function _rememberUploadedBlob(')}
 ${fn('async function uploadFilesSeq(')}
-globalThis.run=uploadFilesSeq;globalThis.uploading=()=>_uploading;`,context);
+globalThis.run=uploadFilesSeq;globalThis.uploading=()=>_uploading;
+globalThis.visible=()=>_filesGridList;globalThis.have=()=>_blobHave;globalThis.sizes=()=>_blobSizes;`,context);
 
 (async()=>{
   const files=[{name:'a.jpg',type:'image/jpeg',size:10,webkitRelativePath:'Pictures/a.jpg'},
@@ -42,6 +45,11 @@ globalThis.run=uploadFilesSeq;globalThis.uploading=()=>_uploading;`,context);
   if(JSON.stringify(calls.batch)!==JSON.stringify(['begin','end']))throw new Error('batch did not commit: '+calls.batch);
   if(context.uploading()!==0)throw new Error('upload remained busy after completion');
   if(calls.renders!==1)throw new Error('Blossom did not refresh after completion');
+  const visible=context.visible();
+  if(visible.length!==2||visible.some(b=>!b.url||!b.name||!b.type))
+    throw new Error('completed uploads were not added to the visible listing: '+JSON.stringify(visible));
+  if(visible.some(b=>!context.have().has(b.sha256)||context.sizes().get(b.sha256)!==b.size))
+    throw new Error('blob presence/size caches were not updated with the visible listing');
   if(!calls.toasts.some(x=>/Done.*2 added/.test(x)))throw new Error('no completion summary: '+calls.toasts);
   console.log('installed folder upload completion holds');
 })().catch(e=>{console.error(e&&e.stack||e);process.exitCode=1});

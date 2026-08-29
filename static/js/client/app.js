@@ -12370,11 +12370,19 @@
     const av = NO_IMAGES ? LOGO : (p.picture || LOGO);   // data saver: hold quoted/reply-context avatars too
     const handle = niceNip05(p.nip05) || ('@'+npubOf(o.pubkey).slice(4,12));
     const mp = mediaParts(o.content, o);
+    /* A quote is a second rendering of the SOURCE event, so its warning belongs to that event too.
+     * Checking the outer note would expose warned media whenever a safe post quoted it; wrapping all
+     * quotes would hide ordinary media. Apply the same NIP-36/hashtag gate as noteCard, locally. */
+    const cwTag=(o.tags||[]).find(t=>t[0]==='content-warning');
+    const cw=BLUR_NSFW && (!!cwTag || isSensitive(o));
+    const cwReason=cwTag ? String(cwTag[1]||'').trim() : (cw?'NSFW':'');
     return `<div class="quoted" data-open="${o.id}">
       <div class="hd"><img class="qav" src="${enc(av)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${o.pubkey}">${emojiName(o.pubkey,name)}</span><span class="vchk" data-pk="${o.pubkey}"></span><span class="handle">${enc(handle)}</span><span class="time">${timeAgo(o.created_at)}</span></div>
+      ${cw?`<div class="cw-wrap cw-on"><div class="cw-reveal" onclick="event.stopPropagation();var w=this.parentElement;w.classList.remove('cw-on');this.remove();">${_cwRevealInner(cwReason)}</div><div class="cw-inner">`:''}
       ${mp.mediaFirst?mp.gallery:''}
       <div class="txt">${applyEmojis(linkify(stripQuoteRef(mp.text, o)), o)}</div>
-      ${mp.mediaFirst?'':mp.gallery}</div>`; }
+      ${mp.mediaFirst?'':mp.gallery}
+      ${cw?`</div></div>`:''}</div>`; }
   // NIP-10 parent e-tag of a reply: the explicit `reply` marker, else `root`, else the last e-tag.
   // Returns the WHOLE tag so its relay hint (t[2]) can be used to fetch an off-relay parent.
   function replyParentTag(ev){
@@ -20951,6 +20959,20 @@
     if(current) return below ? (current+'/'+below) : current;
     return below ? (selected+'/'+below) : selected;
   }
+  /* A successful PUT is already proof that this blob exists. Do not make its visibility depend on
+   * the follow-up /list request being fast or immediately consistent: renderPublicFiles paints this
+   * cache first, then replaces it with the server's authoritative listing when that arrives. This is
+   * especially important for a folder chosen from Home, where no listing has been fetched yet. */
+  function _rememberUploadedBlob(sha, url, file){
+    if(!sha) return;
+    const row={sha256:sha, url:url||mediaServer().replace(/\/$/,'')+'/'+sha,
+      name:(file&&file.name)||'', type:(file&&file.type)||'', size:+(file&&file.size)||0,
+      uploaded:Math.floor(Date.now()/1000)};
+    const old=Array.isArray(_filesGridList)?_filesGridList:[];
+    _filesGridList=old.filter(b=>b&&b.sha256!==sha).concat(row);
+    if(_blobHave) _blobHave.add(sha);
+    _blobSizes.set(sha,row.size);
+  }
   async function uploadFilesSeq(files){
     files=files.filter(Boolean); if(!files.length) return;
     const folder=_filesFolder, music=folder==='Music';   // capture: navigating mid-upload won't misfile
@@ -21028,7 +21050,8 @@
         } else {
           if(stat) stat.textContent='uploading…';
           const url=await uploadBlob(files[i]); const sha=_shaFromUrl(url);
-          if(sha) FilesIdx.setFile(sha, {name:files[i].name, folder:_targetFolders[i], mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
+          if(sha){ FilesIdx.setFile(sha, {name:files[i].name, folder:_targetFolders[i], mime:files[i].type||'', size:files[i].size, ts:Math.floor(Date.now()/1000)});
+            _rememberUploadedBlob(sha,url,files[i]); }
           ok++; if(stat){ stat.textContent='✓'; stat.className='up-stat ok'; }
           if(++done%25===0){ await FilesIdx.endBatch(); FilesIdx.beginBatch(); }
         }
