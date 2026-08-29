@@ -89,3 +89,16 @@ def test_every_major_settings_category_is_a_distinct_page_not_a_combined_jump_ta
     assert 'data-settings-page="${key}"' in render
     for combined in ('data-jump="sound"', 'data-jump="network"', 'data-jump="bluetooth"'):
         assert combined not in render
+
+
+def test_installation_media_is_a_coherent_settings_page_in_both_bridge_states():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    page = render[render.index('<section data-liveusb data-settings-page="liveusb"'):
+                  render.index('</section>', render.index('<section data-liveusb data-settings-page="liveusb"'))]
+    # The page identity must not live inside the native-bridge conditional: otherwise real desktop
+    # installs lose the heading while unsupported/web sessions display it.
+    assert page.index('<header class="os-set-pagehead">') < page.index('${window.pcLiveUSB?')
+    assert '<h2>Installation media</h2>' in page
+    assert '<div class="os-liveusb os-set-card">' in page
+    assert 'Build an ISO first, then safely select where to write it.' in page
