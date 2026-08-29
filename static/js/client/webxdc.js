@@ -41,6 +41,9 @@
     const KIND_REALTIME = 20932;       // NIP-DC realtime data (EPHEMERAL: relays forward, store nothing)
     const MIME = 'application/x-webxdc';
     const MIME_VENDOR = 'application/vnd.webxdc+zip';
+    /* Other Webxdc clients also publish this non-vendor spelling. All three identify the same
+     * archive; dropping this one made their games disappear from cards and the directory. */
+    const MIME_STANDARD = 'application/webxdc+zip';
     /* Bounded local trace: enough to locate startup failures without collecting packet contents. */
     const _rtDiagnostics=[];
     function rtDiagnostic(stage,detail){const row={at:Date.now(),stage:String(stage||''),detail:String(detail||'').slice(0,240)};_rtDiagnostics.push(row);if(_rtDiagnostics.length>80)_rtDiagnostics.shift();try{localStorage.setItem('pc_webxdc_rt_diag',JSON.stringify(_rtDiagnostics));}catch(_){}try{console.warn('[webxdc realtime]',row.stage,row.detail);}catch(_){}return row;}
@@ -48,7 +51,7 @@
     function canonicalXdcUrl(url){ const raw=String(url||''),lower=raw.toLowerCase(); for(let at=lower.lastIndexOf('.xdc');at>=0;at=lower.lastIndexOf('.xdc',at-1)){const next=raw[at+4];if(next===undefined||next==='?'||next==='#'||/\s/.test(next))return raw.slice(0,at+4);} return raw; }
     async function deriveUrlTopic(url,messageId){ const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`webxdc-url-realtime-v1:${canonicalXdcUrl(url)}:${messageId}`))); return base32Topic(bytes); }
     function mintTopic(){ return base32Topic(crypto.getRandomValues(new Uint8Array(32))); }
-    const isWebxdcMime = value => { const mime=String(value||'').toLowerCase();return mime===MIME||mime===MIME_VENDOR; };
+    const isWebxdcMime = value => { const mime=String(value||'').toLowerCase().trim();return mime===MIME||mime===MIME_VENDOR||mime===MIME_STANDARD; };
     /* 256 MB. Not a guess: the published Half-Life port is 178 MB, because it ships the three demo
      * campaigns (dayone.zip 75 MB, hldm.zip 62 MB, uplink.zip 29 MB) beside a 3.7 MB Xash wasm. A cap
      * sized for "a zip of HTML and sprites" refuses the most impressive app in the ecosystem, and the
@@ -1876,6 +1879,11 @@
     const GAL_LIMIT = 300;         // apps per source; the network carries ~10 today
     const GAL_UPDATES = 500;       // moves sampled for the play counts
     const GAL_NOTES = 2000;        // cached notes scanned for source (3) — the cache is smaller than this
+    /* Discovery must not depend on the signed-in account's chosen relay pool. A custom/private pool
+     * quite reasonably carries none of the public 1063 announcements; logged out the default relay
+     * showed games, then signing in made the exact same directory empty. Supplement the pool from
+     * the public PosterChan relay without changing or persisting the user's relay selection. */
+    const GAL_RELAYS = ['wss://relay.poster.place/'];
     /* How long the list stays warm. Generous on purpose: a directory of posted apps changes about
      * once a week, and the cost of being stale is a tile arriving late, while the cost of being
      * eager is a relay round trip every time somebody clicks the window. Refresh is right there. */
@@ -1949,8 +1957,24 @@
          * instruction from the poll composer would have produced nothing, with no error anywhere. */
         let net = [];
         try{
-          net = await Relay.query([{ kinds:[1063], '#m':[MIME,MIME_VENDOR], limit:GAL_LIMIT },
+          net = await Relay.query([{ kinds:[1063], '#m':[MIME,MIME_VENDOR,MIME_STANDARD], limit:GAL_LIMIT },
                                    { kinds:[1, 1068, 1111, 1621], '#t':['webxdc'], limit:GAL_LIMIT }], 9000) || [];
+        }catch(_){}
+        try{
+          if(Relay.queryFrom){
+            let publicNet=await Relay.queryFrom(GAL_RELAYS,
+              [{ kinds:[1063], '#m':[MIME,MIME_VENDOR,MIME_STANDARD], limit:GAL_LIMIT },
+               { kinds:[1,1068,1111,1621], '#t':['webxdc'], limit:GAL_LIMIT }],
+              {timeout:6000,max:GAL_RELAYS.length,exact:true});
+            /* queryFrom deliberately returns unverified relay input. A directory tile chooses code
+             * to download, so accepting a forged announcement here would be much worse than an
+             * empty grid. Verify the supplemental batch exactly like the managed relay pool. */
+            if(publicNet&&publicNet.length&&Relay.worker&&Relay.worker.call){
+              const checked=await Relay.worker.call('verifyBatch',{events:publicNet});
+              publicNet=publicNet.filter((_,i)=>checked&&checked[i]&&checked[i].valid);
+            }else publicNet=[];
+            if(publicNet&&publicNet.length)net=net.concat(publicNet);
+          }
         }catch(_){}
         soak(net);
         // Keep what the network taught us: this is also the only path by which an app posted on
@@ -2140,7 +2164,7 @@
     function attach(ta){
       const inp = document.createElement('input');
       inp.type = 'file';
-      inp.accept = '.xdc,application/x-webxdc,application/zip';
+      inp.accept = '.xdc,application/x-webxdc,application/webxdc+zip,application/vnd.webxdc+zip,application/zip';
       inp.style.display = 'none';
       document.body.appendChild(inp);
       inp.onchange = async () => {
@@ -2220,7 +2244,7 @@
                                        if(!isFinite(v) || v < 0 || v >= 0.9) return 'give a number 0-0.89';
                                        try{ localStorage.setItem('pc_xdc_dead', String(v)); }catch(e){}
                                        return 'deadzone ' + v + ' — reopen the game'; },
-                        MIME, KIND_UPDATE, Session, __liveKey: _liveKey };
+                        MIME, MIME_STANDARD, MIME_VENDOR, KIND_UPDATE, Session, __liveKey: _liveKey };
 
     /* THE APK'S CONTROLLER, PATCHED IN FROM ANDROID.
      *

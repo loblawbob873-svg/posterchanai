@@ -69,7 +69,7 @@ def _node(script):
     return json.loads(out.stdout.decode() or "null")
 
 
-def gallery(net=(), cache=(), updates=(), view="xdc"):
+def gallery(net=(), cache=(), updates=(), view="xdc", public_net=()):
     """Run the SHIPPED galLoad against stub relay + cache, and report what the grid would show.
 
     `net` is what the relays answer, `cache` what this device already holds, `updates` the kind-4932
@@ -77,7 +77,7 @@ def gallery(net=(), cache=(), updates=(), view="xdc"):
     tested — a single blob of events could not tell a cache-only app from a networked one.
     """
     boot = f"""
-      const NET = {json.dumps(list(net))}, CACHE = {json.dumps(list(cache))};
+      const NET = {json.dumps(list(net))}, PUBLIC = {json.dumps(list(public_net))}, CACHE = {json.dumps(list(cache))};
       const UPD = {json.dumps(list(updates))};
       const match = (evs, f) => evs.filter(e => {{
         if(f.kinds && !f.kinds.includes(e.kind)) return false;
@@ -96,7 +96,9 @@ def gallery(net=(), cache=(), updates=(), view="xdc"):
                  decorateProfiles(){{}}, openThread(){{}}, apiBase:()=>'https://example.com' }},
         Store: {{ query: fs => fs.flatMap(f => match(CACHE, f)), saveEvent: e => {{ saved.push(e.id); }} }},
         Relay: {{ query: async (fs) => fs.flatMap(f => f.kinds && f.kinds.includes(4932)
-                                                       ? match(UPD, f) : match(NET, f)) }},
+                                                       ? match(UPD, f) : match(NET, f)),
+                  queryFrom: async (_urls,fs) => fs.flatMap(f => match(PUBLIC,f)),
+                  worker: {{ call: async (_method,args) => args.events.map(() => ({{valid:true}})) }} }},
       }};
       global.Relay = window.Relay; global.Store = window.Store;
       global.document = {{ addEventListener(){{}}, querySelectorAll:()=>[], getElementById:()=>null,
@@ -136,6 +138,12 @@ class Sources(unittest.TestCase):
     def test_a_hashtagged_post_is_found(self):
         r = gallery(net=[note("u3")])
         self.assertEqual(r["keys"], ["u3"])
+
+    def test_signed_in_private_pool_still_discovers_public_games(self):
+        """Signing in may replace the pool with user relays. Public discovery must stay identical."""
+        r = gallery(net=[], public_net=[f1063("public-game", "Dino")])
+        self.assertEqual(r["keys"], ["public-game"])
+        self.assertIn("public-game-1063", r["saved"])
 
     def test_the_cache_finds_a_post_no_query_could(self):
         """A note published before app.js started tagging `t webxdc`: unindexed, so the ONLY way it
@@ -364,6 +372,12 @@ class Wiring(unittest.TestCase):
         fn = fn[:fn.index("\n  }") + 4]
         self.assertIn("out.push(['t', 'webxdc'])", fn)
         self.assertIn("m application/x-webxdc", fn)
+
+    def test_directory_queries_all_ecosystem_mimes(self):
+        src = WEBXDC_JS.read_text(encoding="utf-8")
+        query = src[src.index("net = await Relay.query") : src.index("soak(net)")]
+        self.assertIn("MIME_STANDARD", query)
+        self.assertIn("MIME_VENDOR", query)
 
     def test_the_view_is_reachable_from_every_surface(self):
         """A view with no door is the shape Folder Sync shipped in: all the code, no way in."""

@@ -177,6 +177,14 @@ class AttachmentParsing(unittest.TestCase):
         self.assertEqual(got["uuid"], "FBSTBOCHXLXTUPWPCLPAGBZDFNBSK5HKMTTMTVAKHY2EGNJFYMLQ")
         self.assertEqual(got["name"], "Quake III Arena (OpenArena)")
 
+    def test_standard_mime_is_not_invisible(self):
+        ev = {"kind": 1, "id": "standard-mime", "content": "", "tags": [[
+            "imeta", "url https://blossom.example.com/standard.xdc",
+            "m application/webxdc+zip", "webxdc shared-room"]]}
+        got = self.app_of(ev)
+        self.assertEqual(got["url"], "https://blossom.example.com/standard.xdc")
+        self.assertEqual(got["uuid"], "shared-room")
+
     def test_current_topic_wins_over_legacy_alias(self):
         ev = {"id": "msg", "kind": 1, "content": "", "tags": [[
             "imeta", "url https://x.org/app.xdc", "m application/vnd.webxdc+zip",

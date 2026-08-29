@@ -64,7 +64,8 @@
      * 1063 announcement, which is what a directory is actually built from, stays. */
     if (ev.kind === 1063){
       for (const t of ev.tags || []) if (t && t[0] === 'm' &&
-          String(t[1] || '').toLowerCase() === 'application/x-webxdc') return true;
+          ['application/x-webxdc','application/webxdc+zip','application/vnd.webxdc+zip']
+            .includes(String(t[1] || '').toLowerCase().trim())) return true;
       return false;
     }
     if (ev.kind !== 30078) return false;
