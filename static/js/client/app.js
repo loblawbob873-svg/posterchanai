@@ -1208,9 +1208,39 @@
   };
 
   // ---------- signer abstraction ----------
+  function _guardSignerNip44(s){
+    if(!s) return s;
+    const reject = e => { const p=Promise.reject(e); p.catch(()=>{}); return p; };
+    const rawEnc=s.nip44enc, rawDec=s.nip44dec;
+    if(rawEnc) s.nip44enc=(peer,value)=>{
+      const text=typeof value==='string'?value:'';
+      const bytes=new TextEncoder().encode(text).length;
+      if(bytes<1||bytes>65535){
+        const e=new Error(`NIP-44 encrypt refused ${bytes} bytes in ${s.mode||'unknown'} signer (must be 1..65535; store large data as an attachment)`);
+        e.nip44={op:'encrypt',bytes,mode:s.mode||''}; return reject(e);
+      }
+      return rawEnc(peer,text);
+    };
+    if(rawDec) s.nip44dec=(peer,value)=>{
+      const text=typeof value==='string'?value:'';
+      const bytes=new TextEncoder().encode(text).length;
+      if(bytes<1){
+        const e=new Error(`NIP-44 decrypt refused empty ciphertext in ${s.mode||'unknown'} signer (caller must discard the corrupt event)`);
+        e.nip44={op:'decrypt',bytes,mode:s.mode||''}; return reject(e);
+      }
+      return rawDec(peer,text);
+    };
+    // External signers build NIP-17 through these methods too; otherwise their closures bypass the
+    // very abstraction core callers and submodules share. Local mode keeps its worker's atomic wrap.
+    if(s.mode!=='local'&&s.nip44enc&&s.nip44dec){
+      s.nip17wrap=(peer,text)=>_nip17wrapVia(s.pubkey,(p,pt)=>s.nip44enc(p,pt),tpl=>s.signEvent(tpl),peer,text);
+      s.nip17unwrap=wrap=>_nip17unwrapVia((p,ct)=>s.nip44dec(p,ct),wrap);
+    }
+    return s;
+  }
   function makeSigner(mode, pubkey){
     if (mode === 'nip55'){   // Amber (or any NIP-55 signer) on this phone — key stays in the signer app
-      return {
+      return _guardSignerNip44({
         mode, pubkey,
         signEvent: (tpl) => Nip55.signEvent(tpl),
         nip04enc: (peer, txt) => Nip55.nip04enc(peer, txt),
@@ -1220,7 +1250,7 @@
         nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip55.nip44dec(p,ct), wrap),
         nip44dec: (peer, ct) => Nip55.nip44dec(peer, ct),
         nip44enc: (peer, text) => Nip55.nip44enc(peer, text),
-      };
+      });
     }
     if (mode === 'nip07'){
       const X = _extGate;
@@ -1260,10 +1290,10 @@
         s.nip44dec = dec;
         s.nip44enc = enc;
       }
-      return s;
+      return _guardSignerNip44(s);
     }
     if (mode === 'nip46'){   // Amber / remote signer (NIP-46): the user's key stays in the signer
-      return {
+      return _guardSignerNip44({
         mode, pubkey,
         signEvent: (tpl) => Nip46.signEvent(tpl),
         nip04enc: (peer, txt) => Nip46.nip04enc(peer, txt),
@@ -1273,9 +1303,9 @@
         nip17unwrap: (wrap) => _nip17unwrapVia((p,ct)=>Nip46.nip44dec(p,ct), wrap),
         nip44dec: (peer, ct) => Nip46.nip44dec(peer, ct),
         nip44enc: (peer, text) => Nip46.nip44enc(peer, text),
-      };
+      });
     }
-    return {  // local key — crypto in the worker
+    return _guardSignerNip44({  // local key — crypto in the worker
       mode, pubkey,
       signEvent: (tpl) => Relay.worker.call('sign', { event: tpl }),
       nip04enc: (peer, txt) => Relay.worker.call('nip04enc', { peer, text: txt }).then(r=>r.ct),
@@ -1285,7 +1315,7 @@
       // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
       nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text, tags: InstEmoji.tagsFor(text, [['p', peer]]) }),
       nip17unwrap: (wrap) => Relay.worker.call('nip17unwrap', { wrap }).then(r=>r.rumor),
-    };
+    });
   }
   // build + sign an event from a template
   // Standard tag enrichment applied to every event this client emits — shared by publish() and the

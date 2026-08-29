@@ -34,3 +34,10 @@ def test_public_app_crypto_boundary_rejects_invalid_nip44_before_every_signer_mo
     assert "NIP-44 encrypt refused ${bytes} bytes (must be 1..65535)" in export
     assert export.count("new TextEncoder().encode") >= 2
     assert export.count("p.catch(()=>{})") >= 2
+
+
+def test_news_background_read_save_observes_async_publish_failure():
+    news=(ROOT/'static/js/client/news.js').read_text()
+    line=next(line for line in news.splitlines() if '_readSaveT = setTimeout' in line)
+    assert 'Promise.resolve(publish(' in line
+    assert '.catch(()=>{})' in line

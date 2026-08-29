@@ -135,7 +135,10 @@
       while(_readIds.length > READ_CAP){ _readSet.delete(_readIds.shift()); }
       try{ _lsSet('read', JSON.stringify(_readIds)); }catch(_){}
       clearTimeout(_readSaveT);
-      _readSaveT = setTimeout(()=>{ try{ publish(30078, JSON.stringify(_readIds), [['d', READ_D]]); }catch(_){} }, 5000);
+      // publish() is asynchronous: a surrounding try/catch only catches a synchronous call-site
+      // error and leaves signer/relay rejections as global `unhandledrejection` events. News read
+      // receipts are background best-effort state, so explicitly observe that promise.
+      _readSaveT = setTimeout(()=>{ try{ Promise.resolve(publish(30078, JSON.stringify(_readIds), [['d', READ_D]])).catch(()=>{}); }catch(_){} }, 5000);
     }
 
     // ---- feed list: local cache first, then hydrate from the relay ----
