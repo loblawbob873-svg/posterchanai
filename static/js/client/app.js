@@ -19510,12 +19510,15 @@
      * Select-all / Select-none / count / actions bar, and two grammars for one screen reads as
      * broken ("the select button is inconsistent with the entire blossom UI"). Same classes, same
      * order, same icons; only the delete's LABEL differs, because here it means every device. */
-    const _ssAll = fileItems.length && fileItems.every(it => _syncSel.has((_syncPath?_syncPath+'/':'')+it.name));
+    /* Search results can come from any depth below the current folder, so their manifest path is
+     * authoritative. Rebuilding it from the current folder plus basename makes two different
+     * subtrees look unselected even after every visible result was selected. */
+    const _ssAll = !!fileItems.length && fileItems.every(it => _syncSel.has(it.path));
     /* NO SELECT-AND-DELETE-EVERYWHERE BAR IN THE TRASH. Its one action publishes a deletion, and
      * every file here is already deleted — pressing it would tell the other devices to delete files
      * they have already deleted, which is how a wave of stale tombstones starts. */
     const selbar = (canEdit && !_inTrash) ? `<div class="sync-selbar">
-        <button class="btn btn-ghost small" id="ss-all">${_ssAll?'\u2611':'\u2610'} Select all${fileItems.length?' ('+fileItems.length+')':''}</button>
+        <button class="btn btn-ghost small" id="ss-all" aria-pressed="${_ssAll?'true':'false'}">${_ssAll?'\u2611 Deselect all':'\u2610 Select all'}${fileItems.length?' ('+fileItems.length+')':''}</button>
         <button class="btn btn-ghost small" id="ss-none"${_syncSel.size?'':' disabled'}><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg>Select none</button>
         <span class="muted small" id="ss-count" style="margin:0 4px">${_syncSel.size?_syncSel.size+' selected':'none selected'}</span>
         <button class="btn btn-neon small" id="ss-del"${_syncSel.size ? '' : ' disabled'} style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete on every device</button>
@@ -19567,6 +19570,12 @@
       const c = $('#ss-count', grid); if(c) c.textContent = _syncSel.size ? _syncSel.size + ' selected' : 'none selected';
       const d2 = $('#ss-del', grid); if(d2) d2.disabled = !_syncSel.size;
       const n2 = $('#ss-none', grid); if(n2) n2.disabled = !_syncSel.size;
+      const a2 = $('#ss-all', grid); if(a2){
+        const every = !!fileItems.length && fileItems.every(it => _syncSel.has(it.path));
+        a2.setAttribute('aria-pressed', every ? 'true' : 'false');
+        a2.textContent = (every ? '\u2611 Deselect all' : '\u2610 Select all')
+          + (fileItems.length ? ' (' + fileItems.length + ')' : '');
+      }
     });
     /* selmode follows the DRIVE's grammar: having a selection IS the mode — no toggle. */
     _syncSelOn = _syncSel.size > 0;

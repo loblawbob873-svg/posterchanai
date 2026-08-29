@@ -200,6 +200,15 @@ console.log('a desktop monitor handoff transfers the live blob and playback befo
   check('destination preserves video audio and rate',destinationVideo.volume===.4&&destinationVideo.muted&&destinationVideo.playbackRate===1.5);
   check('old transfer URL was replaced, not leaked',global.URL._live===1);
   P.close();delete window.PCOS;
+  console.log('a failed cross-renderer blob fetch remains a visible recoverable document');
+  let fallbackWindow=null;
+  window.PCOS={isOn:()=>true,openDoc(){fallbackWindow={slot:slot()};return fallbackWindow;},
+    documentWindow(){},closeDoc(){}};
+  const oldFetch=global.fetch;global.fetch=async()=>{throw new Error('foreign blob store');};
+  check('failed destination fetch opens recovery Preview',await P.acceptHandoff(state)===true);
+  check('recovery Preview is a real document window',!!fallbackWindow&&fallbackWindow.slot.classList.contains('pv-win'));
+  check('recovery document is renderable plain text',global.URL._lastType==='text/plain');
+  global.fetch=oldFetch;P.close();delete window.PCOS;
   console.log(failures ? '\nFAILED ' + failures : '\nOK  preview holds');
   process.exitCode=failures?1:0;
 })().catch(e=>{console.error(e&&e.stack||e);process.exitCode=1;});

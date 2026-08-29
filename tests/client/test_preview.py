@@ -50,6 +50,14 @@ class PreviewSim(unittest.TestCase):
         send = osjs[osjs.index("function sendFrameHandoff"):osjs.index("function rearmFrameHandoffDestination")]
         self.assertIn("typeof w.handoffCancel==='function'", send)
 
+    def test_failed_cross_renderer_blob_fetch_opens_recovery_document(self):
+        preview = _read("static/js/client/preview.js")
+        accept = preview[preview.index("async function acceptHandoff"):
+                         preview.index("root.PCPreview =")]
+        self.assertIn("preview bytes unavailable", accept)
+        self.assertIn("Reopen the file from Files", accept)
+        self.assertIn("return open({ name:String(s.name || 'Preview'), mime:'text/plain'", accept)
+
 
 class PreviewIsReachable(unittest.TestCase):
     """A viewer nothing opens is a file in a directory."""

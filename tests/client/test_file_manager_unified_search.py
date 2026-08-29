@@ -40,6 +40,22 @@ def test_every_source_has_explicit_select_all_and_none():
     assert 'class="btn btn-ghost small hf-none"' in HOST
 
 
+def test_synced_select_all_uses_real_subtree_paths_and_announces_toggle():
+    synced = APP[APP.index("const _ssAll ="):APP.index("const trashbar", APP.index("const _ssAll ="))]
+    assert "fileItems.every(it => _syncSel.has(it.path))" in synced
+    assert "(_syncPath?_syncPath+'/':'')+it.name" not in synced
+    assert 'aria-pressed="${_ssAll?' in synced
+    assert "Deselect all" in synced
+
+
+def test_selecting_last_synced_checkbox_refreshes_select_all_state():
+    click = APP[APP.index("$$('.syncbox', grid)"):
+                APP.index("/* selmode follows", APP.index("$$('.syncbox', grid)"))]
+    assert "fileItems.every(it => _syncSel.has(it.path))" in click
+    assert "a2.setAttribute('aria-pressed'" in click
+    assert "a2.textContent" in click
+
+
 def test_details_view_has_a_real_date_column_and_cell():
     assert "['modified','Date created']" in APP
     assert 'class="fx-mod"' in APP

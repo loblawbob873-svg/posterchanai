@@ -1706,15 +1706,25 @@
     /* Displays is one settings page, not the gatekeeper for every page. A missing/crashed display
        bridge must not also erase Appearance, Power and About. Degrade this page locally. */
     let outs=[], power={}, system={}, displayError='',powerError='',systemError='';
-    try{ outs=window.pcDisplays?await pcDisplays.status():(displayError='Display controls are unavailable on this device.',[]); }
-    catch(e){ outs=[];displayError='Could not read displays: '+String(e&&e.message||e); }
-    if(!alive()) return;
-    try{ power=window.pcPower?await pcPower.status():(powerError='Power controls are unavailable on this device.',{}); }
-    catch(e){ power={};powerError='Could not read power settings: '+String(e&&e.message||e); }
-    if(!alive()) return;
-    try{ system=window.pcSystem?await pcSystem.snapshot(false):(systemError='System information is unavailable on this device.',{}); }
-    catch(e){ system={};systemError='Could not read system information: '+String(e&&e.message||e); }
-    if(!alive()) return;
+    /* Each page owns its own bridge. Waiting for displays, power and system information before
+       drawing Appearance or Installation media made those genuinely separate sections share one
+       failure mode: a hung display daemon left the whole Settings app on a spinner. Read only what
+       the selected page needs; changing categories below reruns this renderer for the new owner. */
+    if(_osSettingsPage==='displays'){
+      try{ outs=window.pcDisplays?await pcDisplays.status():(displayError='Display controls are unavailable on this device.',[]); }
+      catch(e){ outs=[];displayError='Could not read displays: '+String(e&&e.message||e); }
+      if(!alive()) return;
+    }
+    if(_osSettingsPage==='power'){
+      try{ power=window.pcPower?await pcPower.status():(powerError='Power controls are unavailable on this device.',{}); }
+      catch(e){ power={};powerError='Could not read power settings: '+String(e&&e.message||e); }
+      if(!alive()) return;
+    }
+    if(_osSettingsPage==='about'){
+      try{ system=window.pcSystem?await pcSystem.snapshot(false):(systemError='System information is unavailable on this device.',{}); }
+      catch(e){ system={};systemError='Could not read system information: '+String(e&&e.message||e); }
+      if(!alive()) return;
+    }
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
       const hz=m=>Math.round((+m.refresh||0)/1000*1000)/1000;
       return {name:o.name,label:[o.make,o.model].filter(Boolean).join(' ')||o.name,enabled:!!o.active,
@@ -1890,10 +1900,10 @@
       };
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>jump(b.dataset.jump,b));
       host.querySelectorAll('[data-open-control]').forEach(b=>b.onclick=()=>jump(b.dataset.openControl,b));
-      host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;draw();});
+      host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;renderSystemSettings();});
       const mobile=host.querySelector('[data-settings-mobile]');if(mobile)mobile.onchange=()=>{
         const [kind,value]=String(mobile.value||'').split(':',2);
-        if(kind==='page'){_osSettingsPage=value;draw();}else if(kind==='jump')jump(value,mobile);
+        if(kind==='page'){_osSettingsPage=value;renderSystemSettings();}else if(kind==='jump')jump(value,mobile);
       };
     };
     draw();

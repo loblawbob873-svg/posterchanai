@@ -352,7 +352,20 @@
   async function acceptHandoff(state) {
     var s = state && typeof state === 'object' ? state : {};
     if (!s.preview || !/^blob:/i.test(String(s.url || ''))) return false;
-    var response = await fetch(String(s.url)), blob = await response.blob();
+    var response, blob;
+    try {
+      response = await fetch(String(s.url));
+      if (!response || ('ok' in response && !response.ok)) throw new Error('preview bytes unavailable');
+      blob = await response.blob();
+    } catch (_) {
+      /* A monitor is a separate renderer. If its blob URL store cannot read the source renderer's
+       * URL, the source frame has already transferred ownership and will close. Silently rejecting
+       * here leaves no document at all (the reported black/empty Preview window). Keep a real,
+       * closable Preview document explaining recovery instead of manufacturing a dead frame. */
+      var note = new Blob(['This preview could not be moved to this monitor. Reopen the file from Files.'],
+                          { type:'text/plain' });
+      return open({ name:String(s.name || 'Preview'), mime:'text/plain', blob:note });
+    }
     try { URL.revokeObjectURL(String(s.url)); } catch (_) {}
     var opened = open({ name:String(s.name || 'Preview'), mime:String(s.mime || blob.type || ''), blob:blob });
     var media = s.media, host = _open && _open.host;
