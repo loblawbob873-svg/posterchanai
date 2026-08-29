@@ -40,6 +40,20 @@ def test_mac_css_is_chrome_only_and_preserves_input_and_stacking():
     assert ".native-stashed" not in mac and ".native-fullscreen-frame" not in mac
 
 
+def test_mac_style_is_a_desktop_experience_not_only_traffic_lights():
+    mac = CSS[CSS.index("/* Optional macOS desktop experience"):
+              CSS.index("@media(max-width:1180px)", CSS.index("/* Optional macOS desktop experience"))]
+    for surface in (".os-root.os-style-mac::before", ".os-root.os-style-mac::after",
+                    ".os-root.os-style-mac .os-bar", ".os-root.os-style-mac .os-tray",
+                    ".os-root.os-style-mac .os-startmenu", ".os-root.os-style-mac .os-desk",
+                    ".os-root.os-style-mac .os-icon", ".os-root.os-style-mac .osw-body"):
+        assert surface in mac, surface + " is missing from the desktop theme"
+    assert "backdrop-filter:blur(24px)" in mac
+    assert "transform:translateX(-50%)" in mac
+    assert "position:fixed" in mac, "the tray was not moved into the top menu bar"
+    assert "floating Dock" in mac
+
+
 def test_style_is_device_global_and_not_copied_during_monitor_handoff():
     payload = JS[JS.index("function handoffPayload") : JS.index("function sendFrameHandoff")]
     assert "STYLE_KEY" not in payload and "osDesktopStyle" not in payload

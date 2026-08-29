@@ -113,3 +113,13 @@ def test_installation_media_can_copy_the_exact_selected_or_built_iso_path():
     assert "if(p)setIso(p)" in page
     assert "if(s&&s.path)setIso(s.path)" in page
     assert "PC().copyValue(iso.value,'ISO path copied','Copy this ISO path:')" in page
+
+
+def test_every_system_settings_icon_exists_in_the_shared_sprite():
+    import re
+    sprite = (ROOT / "static" / "js" / "client" / "sprite.js").read_text()
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    referenced = {'i-' + name for name in re.findall(r"iconSvg\('([^']+)'", render)}
+    defined = set(re.findall(r'<symbol id="([^"]+)"', sprite))
+    assert referenced <= defined, f"missing settings icons: {sorted(referenced - defined)}"

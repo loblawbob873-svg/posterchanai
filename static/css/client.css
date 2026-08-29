@@ -7437,10 +7437,35 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   transition:none!important}
 .os-root.os-fx-off .osw:not(.osw-document),.os-root.os-fx-off .osw-bar{background:var(--panel)}
 @media(prefers-reduced-motion:reduce){.os-root.os-fx .osw{transition:none}}
-/* Optional macOS-style presentation. The same DOM/buttons/taskbar and inline z-order remain in
-   charge; only chrome order, radii and paint change, so switching styles cannot recreate a window. */
-.os-root.os-style-mac .osw{border-radius:15px}
-.os-root.os-style-mac .osw-bar{padding:0 10px;gap:7px;background:color-mix(in srgb,var(--panel2) 94%,transparent)}
+/* Optional macOS desktop experience. It remains presentation-only (changing it never recreates an
+   app), but it is a DESKTOP layout, not three coloured buttons: a top menu material, floating Dock,
+   top-right status area, Launchpad-like Start panel, Finder-spaced icons and layered window chrome. */
+.os-root.os-style-mac{--mac-menu-h:30px;--mac-dock-h:66px;--mac-glass:rgba(31,34,42,.72);
+  --mac-line:rgba(255,255,255,.18);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",
+  "Helvetica Neue",sans-serif;background:#17202d}
+.os-root.os-style-mac::before{content:'';position:absolute;z-index:305;inset:0 0 auto;height:var(--mac-menu-h);
+  border-bottom:1px solid rgba(255,255,255,.14);background:rgba(22,25,31,.72);
+  -webkit-backdrop-filter:blur(24px) saturate(145%);backdrop-filter:blur(24px) saturate(145%);
+  box-shadow:0 1px 12px rgba(0,0,0,.22);pointer-events:none}
+.os-root.os-style-mac::after{content:'●  PosterChan     File     Edit     View     Window     Help';
+  position:absolute;z-index:306;inset:0 auto auto 13px;height:var(--mac-menu-h);display:flex;
+  align-items:center;color:rgba(255,255,255,.94);font-size:12px;font-weight:600;letter-spacing:-.1px;
+  white-space:pre;pointer-events:none;text-shadow:0 1px 2px #0008}
+.os-root.os-style-mac .os-desk{padding-top:var(--mac-menu-h);padding-bottom:calc(var(--mac-dock-h) + 18px)}
+.os-root.os-style-mac .os-icons{padding-top:42px;padding-bottom:90px}
+.os-root.os-style-mac .os-icon{border-radius:10px;text-shadow:0 1px 3px #000,0 2px 8px #000b}
+.os-root.os-style-mac .os-icon:hover,.os-root.os-style-mac .os-icon.selected{
+  background:rgba(255,255,255,.15);box-shadow:inset 0 0 0 1px rgba(255,255,255,.13)}
+.os-root.os-style-mac .osw{border:1px solid var(--mac-line);border-radius:13px;
+  background:rgba(34,37,45,.88);box-shadow:0 26px 72px rgba(0,0,0,.48),0 2px 9px rgba(0,0,0,.34);
+  transition:box-shadow .15s ease,border-color .15s ease,filter .15s ease}
+.os-root.os-style-mac .osw:not(.focused){border-color:rgba(255,255,255,.09);filter:saturate(.84) brightness(.91);
+  box-shadow:0 13px 38px rgba(0,0,0,.34)}
+.os-root.os-style-mac .osw.focused{border-color:rgba(255,255,255,.22);
+  box-shadow:0 30px 86px rgba(0,0,0,.55),0 1px 0 rgba(255,255,255,.12) inset}
+.os-root.os-style-mac .osw-bar{height:37px;padding:0 10px;gap:7px;
+  background:linear-gradient(180deg,rgba(74,77,86,.92),rgba(48,51,59,.9));
+  border-bottom:1px solid rgba(0,0,0,.36)}
 .os-root.os-style-mac .osw-btns{order:-1;gap:7px;margin-inline-end:2px}
 .os-root.os-style-mac .osw-b[data-w="min"],
 .os-root.os-style-mac .osw-b[data-w="max"],
@@ -7451,10 +7476,53 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .osw-b[data-w="close"]:hover{background:#ff766f}
 .os-root.os-style-mac .osw-b[data-w="min"]:hover{background:#ffd05c}
 .os-root.os-style-mac .osw-b[data-w="max"]:hover{background:#50da65}
+.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="close"]::after{content:'×';color:#68110d;font-size:10px}
+.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="min"]::after{content:'−';color:#765200;font-size:10px}
+.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="max"]::after{content:'+';color:#075d1b;font-size:10px}
 .os-root.os-style-mac .osw-ai,.os-root.os-style-mac .osw-monitor{width:27px;height:28px}
-.os-root.os-style-mac .osw-title{text-align:center;padding-inline-end:54px}
-.os-root.os-style-mac .os-bar{border-top:1px solid color-mix(in srgb,var(--line) 72%,transparent);border-radius:16px 16px 0 0}
-.os-root.os-style-mac .os-task,.os-root.os-style-mac .os-start{border-radius:12px}
+.os-root.os-style-mac .osw-ico{display:none}
+.os-root.os-style-mac .osw-title{text-align:center;padding-inline-end:60px;color:rgba(255,255,255,.9);
+  font-size:12px;font-weight:600}
+.os-root.os-style-mac .osw-body{background:rgba(20,23,29,.94)}
+.os-root.os-style-mac .osw.osw-document,.os-root.os-style-mac .osw.osw-document.focused{
+  border-radius:13px;border-color:rgba(255,255,255,.2);box-shadow:0 28px 78px rgba(0,0,0,.48)}
+.os-root.os-style-mac .osw.osw-document .osw-bar{background:linear-gradient(#ececec,#d5d5d5);
+  border-bottom-color:#aaa}.os-root.os-style-mac .osw.osw-document .osw-title{color:#272727}
+/* The ordinary full-width bottom taskbar becomes a real floating Dock. The status controls remain
+   usable in the menu bar instead of wasting a second strip at the bottom. */
+.os-root.os-style-mac .os-bar{position:absolute;z-index:309;left:50%;right:auto;bottom:10px;
+  width:max-content;max-width:calc(100% - 28px);height:58px;min-height:58px;padding:5px 9px;
+  border:1px solid rgba(255,255,255,.22);border-radius:17px;background:rgba(51,55,65,.66);
+  box-shadow:0 14px 38px rgba(0,0,0,.46),inset 0 1px rgba(255,255,255,.12);
+  -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+  transform:translateX(-50%);overflow:visible}
+.os-root.os-style-mac .os-start{width:48px;height:48px;border-radius:12px;border:0;background:transparent}
+.os-root.os-style-mac .os-start img{width:38px;height:38px;border-radius:10px}
+.os-root.os-style-mac .os-tasks{flex:none;max-width:min(68vw,900px);gap:5px;padding-inline-start:7px;
+  border-inline-start:1px solid rgba(255,255,255,.22)}
+.os-root.os-style-mac .os-task{position:relative;flex-basis:48px;width:48px;height:48px;border-radius:12px;
+  border:0;background:transparent;transition:transform .13s ease,background .13s ease}
+.os-root.os-style-mac .os-task:hover{background:rgba(255,255,255,.13);transform:translateY(-7px) scale(1.12)}
+.os-root.os-style-mac .os-task.on{background:rgba(255,255,255,.1);box-shadow:none}
+.os-root.os-style-mac .os-task.on::after{content:'';position:absolute;bottom:-4px;width:4px;height:4px;
+  border-radius:50%;background:#fff;box-shadow:0 0 5px #fff8}
+.os-root.os-style-mac .os-task .ic{width:27px;height:27px;color:#f4f6fa}
+.os-root.os-style-mac .os-tray{position:fixed;z-index:307;inset:0 9px auto auto;height:var(--mac-menu-h);
+  gap:7px;color:#fff}.os-root.os-style-mac .os-tray button{height:26px;border-radius:6px;background:transparent}
+.os-root.os-style-mac .os-tray button:hover{background:rgba(255,255,255,.14)}
+.os-root.os-style-mac .os-clock{align-items:flex-end;padding:0 6px}.os-root.os-style-mac .os-clock span{display:none}
+.os-root.os-style-mac .os-clock b{font-size:11.5px;color:#fff}
+.os-root.os-style-mac .os-startmenu{left:50%;bottom:82px;width:min(720px,calc(100vw - 30px));
+  max-height:min(680px,calc(100vh - 130px));border:1px solid rgba(255,255,255,.22);border-radius:22px;
+  background:rgba(35,39,48,.82);box-shadow:0 28px 85px rgba(0,0,0,.55);
+  -webkit-backdrop-filter:blur(30px) saturate(150%);backdrop-filter:blur(30px) saturate(150%);
+  transform:translateX(-50%)}
+.os-root.os-style-mac .os-startmenu .os-app,.os-root.os-style-mac .os-startmenu button{border-radius:13px}
+.os-root.os-style-mac .os-context,.os-root.os-style-mac .os-notifications,.os-root.os-style-mac .os-netfly{
+  border-color:rgba(255,255,255,.2);background:rgba(35,39,48,.84);
+  -webkit-backdrop-filter:blur(26px);backdrop-filter:blur(26px);box-shadow:0 22px 65px #0008}
+@media(max-width:1180px){.os-root.os-style-mac::after{content:'●  PosterChan     File     View     Window'}
+  .os-root.os-style-mac .os-tray{gap:3px}.os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 .osw.osw-document,.osw.osw-document.focused{border-color:#4b5563;border-radius:4px;

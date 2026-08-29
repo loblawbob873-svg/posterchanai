@@ -37,6 +37,13 @@ const joined=validate([
 ],wideLive);
 assert.strictEqual(joined[1].x,3840, 'small horizontal gaps become pointer walls');
 
+const scaledSeam=validate([
+ {name:'eDP-1',enabled:true,x:0,y:0,mode:'1920x1080@60Hz',scale:1.25,transform:'normal'},
+ {name:'DP-1',enabled:true,x:1920,y:0,mode:'2560x1440@144Hz',scale:1,transform:'normal'}
+],live);
+assert.strictEqual(scaledSeam[1].x,1536,
+  'changing monitor zoom must preserve the seam so the pointer can cross outputs');
+
 (async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pc-display-'));
  const seen=[]; const wm={outputs:async()=>JSON.parse(JSON.stringify(live)),command:async c=>seen.push(c)};

@@ -1781,7 +1781,7 @@
         ${window.pcDisplays?`<div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
           <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}</section></section>
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
-        <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Keep PosterChan's current desktop or use optional macOS-style window chrome.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
+        <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Choose PosterChan's desktop or a complete macOS-style layout with a menu bar, floating Dock, launcher and matching windows.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
         <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Shadows, restrained transparency and short visual transitions. This never changes window focus or placement.</span></div><select data-window-effects aria-label="Window effects"><option value="full" ${settings().get(FX_KEY,'full')!=='off'?'selected':''}>Modern</option><option value="off" ${settings().get(FX_KEY,'full')==='off'?'selected':''}>Low power / off</option></select></section></section>
         ${[['sound','volume','Sound','Output, input, and application volume.','Open sound controls'],
            ['network','wifi','Network','Wi-Fi and wired network connections.','Open network controls'],
@@ -1887,12 +1887,14 @@
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
         const disk=live.querySelector('[data-live-disk]'), stat=live.querySelector('[data-live-status]');
         const copy=live.querySelector('[data-live-copy]');
+        const buildButton=live.querySelector('[data-live-build]');
         const setIso=path=>{iso.value=String(path||'');copy.disabled=!iso.value};
         const refresh=async()=>{ try{
           const ds=await pcLiveUSB.devices();
           disk.innerHTML='<option value="">Choose a removable drive</option>'+ds.map(d=>
             `<option value="${enc(d.path)}" ${d.mounted?'disabled':''}>${enc(d.path+' · '+(d.model||'USB drive')+' · '+Math.round(d.size/1073741824)+' GB'+(d.mounted?' · mounted':''))}</option>`).join('');
           const s=await pcLiveUSB.status(); stat.textContent=(s.message||'Ready')+(s.output?'\n\n'+s.output.slice(-5000):'');
+          buildButton.disabled=!!s.running;
           /* The builder and writer are one workflow. Keep the exact backend-selected output path in
            * the write field so finishing an ISO does not make somebody browse back to the folder
            * they selected a few minutes earlier. It is still never written until a removable disk
@@ -1904,7 +1906,17 @@
         live.querySelector('[data-live-dir]').onclick=async()=>{const p=await pcLiveUSB.pickDir();if(p)out.value=p};
         live.querySelector('[data-live-pick]').onclick=async()=>{const p=await pcLiveUSB.pickISO();if(p)setIso(p)};
         copy.onclick=()=>{if(iso.value)PC().copyValue(iso.value,'ISO path copied','Copy this ISO path:')};
-        live.querySelector('[data-live-build]').onclick=async e=>{try{e.target.disabled=true;const s=await pcLiveUSB.build(out.value,live.querySelector('[data-live-home]').checked);if(s&&s.path)setIso(s.path);stat.textContent='Building ISO…';refresh();}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
+        buildButton.onclick=async()=>{buildButton.disabled=true;try{
+          const s=await pcLiveUSB.build(out.value,live.querySelector('[data-live-home]').checked);
+          if(s&&s.path)setIso(s.path);stat.textContent='Building ISO…';await refresh();
+        }catch(x){
+          /* IPC can reject after the privileged process has already started (or a second click can
+           * race a stale renderer). The backend job is authoritative: never tell the user a live
+           * build failed when it is actually compressing the image. */
+          let active=null;try{active=await pcLiveUSB.status()}catch(_){}
+          if(active&&active.kind==='build'&&active.running){if(active.path)setIso(active.path);stat.textContent=active.message||'Building ISO…';}
+          else PC().toast(String(x&&x.message||x));
+        }finally{try{const s=await pcLiveUSB.status();buildButton.disabled=!!s.running}catch(_){buildButton.disabled=false}}};
         live.querySelector('[data-live-burn]').onclick=async e=>{if(!iso.value||!disk.value)return PC().toast('Choose an ISO and an unmounted USB drive');
           const ok=await PC().uiConfirm('Everything on '+disk.value+' will be overwritten. Write this ISO?',{ok:'Erase and write USB'});if(!ok)return;
           try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);stat.textContent='Writing USB… do not unplug it';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};

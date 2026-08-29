@@ -25,6 +25,12 @@ def test_built_iso_path_flows_straight_into_the_usb_writer():
     assert "if(s.kind==='build'&&s.path&&(s.running||s.ok))setIso(s.path)" in UI
 
 
+def test_running_build_is_authoritative_and_cannot_be_double_started():
+    assert "buildButton.disabled=!!s.running" in UI
+    assert "active&&active.kind==='build'&&active.running" in UI
+    assert "never tell the user a live" in UI
+
+
 def test_backend_returns_the_exact_iso_path_when_build_starts(tmp_path):
     sudo = tmp_path / "sudo"
     sudo.write_text("#!/bin/sh\nexit 0\n")

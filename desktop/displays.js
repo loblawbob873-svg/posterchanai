@@ -67,6 +67,27 @@ function validate(layout, actual){
     return {w:Math.round(w),h:Math.round(h)};
   };
   const overlap=(a0,a1,b0,b1)=>Math.min(a1,b1)>Math.max(a0,b0);
+  /* Scaling changes an output's logical width/height. Sway does not move its neighbours with it:
+   * two displays that touched at x=1920 become separated by a pointer-blocking gap when the first
+   * display is changed to 125% (its logical edge moves to 1536). Preserve an existing seam when
+   * the user changed scale without explicitly rearranging either monitor. */
+  const liveActive=actual.filter(o=>o&&o.active), liveMinX=Math.min(...liveActive.map(o=>(o.rect&&o.rect.x)||0));
+  const liveMinY=Math.min(...liveActive.map(o=>(o.rect&&o.rect.y)||0));
+  for(const cur of enabled){
+    const curLive=byName.get(cur.name)||{}, cr=curLive.rect||{};
+    for(const other of enabled){
+      if(other===cur) continue;
+      const otherLive=byName.get(other.name)||{}, or=otherLive.rect||{}, os=size(other);
+      const oldCx=(Number(cr.x)||0)-liveMinX, oldCy=(Number(cr.y)||0)-liveMinY;
+      const oldOx=(Number(or.x)||0)-liveMinX, oldOy=(Number(or.y)||0)-liveMinY;
+      if(cur.x===oldCx && other.x===oldOx && oldCx===oldOx+(Number(or.width)||0) &&
+          overlap(oldCy,oldCy+(Number(cr.height)||0),oldOy,oldOy+(Number(or.height)||0)))
+        cur.x=other.x+os.w;
+      if(cur.y===oldCy && other.y===oldOy && oldCy===oldOy+(Number(or.height)||0) &&
+          overlap(oldCx,oldCx+(Number(cr.width)||0),oldOx,oldOx+(Number(or.width)||0)))
+        cur.y=other.y+os.h;
+    }
+  }
   for(const cur of enabled){
     const cs=size(cur); let bestX=null,bestY=null;
     for(const other of enabled){

@@ -168,6 +168,8 @@
        (No backticks anywhere in this file: the sprite is one JS template literal, so a backtick in
        a comment ends it and EVERY icon in the client disappears with nothing in any log. It did.) -->
   <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.6 9.1a14 14 0 0 1 18.8 0"/><path d="M5.9 12.6a9.2 9.2 0 0 1 12.2 0"/><path d="M9.1 16.1a4.5 4.5 0 0 1 5.8 0"/><circle cx="12" cy="19.3" r="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-bluetooth" viewBox="0 0 24 24"><path d="M12 3.2v17.6l5.8-5.2L6.2 8.4 12 3.2z"/><path d="M6.2 15.6l11.6-7.2"/></symbol>
+  <symbol id="i-drive" viewBox="0 0 24 24"><rect x="3.2" y="4.2" width="17.6" height="15.6" rx="2.2"/><path d="M3.2 14.2h17.6"/><circle cx="16.8" cy="17" r="1" fill="currentColor" stroke="none"/><path d="M7 17h5"/></symbol>
   <symbol id="i-wifi-low" viewBox="0 0 24 24"><path d="M2.6 9.1a14 14 0 0 1 18.8 0" opacity=".25"/><path d="M5.9 12.6a9.2 9.2 0 0 1 12.2 0" opacity=".25"/><path d="M9.1 16.1a4.5 4.5 0 0 1 5.8 0"/><circle cx="12" cy="19.3" r="1" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-wifi-mid" viewBox="0 0 24 24"><path d="M2.6 9.1a14 14 0 0 1 18.8 0" opacity=".25"/><path d="M5.9 12.6a9.2 9.2 0 0 1 12.2 0"/><path d="M9.1 16.1a4.5 4.5 0 0 1 5.8 0"/><circle cx="12" cy="19.3" r="1" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M9.1 16.1a4.5 4.5 0 0 1 5.8 0"/><path d="M5.9 12.6a9.2 9.2 0 0 1 4.4-2.5"/><path d="M2.6 9.1a14 14 0 0 1 10.6-3.9"/><circle cx="12" cy="19.3" r="1" fill="currentColor" stroke="none"/><path d="M3.4 3.4l17.2 17.2"/></symbol>
