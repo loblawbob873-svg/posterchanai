@@ -239,6 +239,7 @@ global.Store = { query: filters => {
 global.Relay = {
   async query(filters){
     if(opt.relayDown) throw new Error('no relay');
+    if(opt.relayQueryDelay) await new Promise(r => setTimeout(r, Number(opt.relayQueryDelay)));
     // An UNREACHABLE relay and an EMPTY one are different answers, and the archive must treat them
     // differently — this is the switch that lets a test show it.
     if(opt.relayEmpty) return [];

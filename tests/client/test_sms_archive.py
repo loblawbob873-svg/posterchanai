@@ -106,6 +106,18 @@ class ColdArchiveFailures(unittest.TestCase):
         self.assertIn("loaded", res["feedHtml"])
         self.assertNotIn('class="spinner"', res["feedHtml"])
 
+    def test_empty_web_cache_waits_for_existing_relay_archive(self):
+        """A WebUI profile may have no local Store copy.  Its first render must include the relay
+        archive even when an extension signer/network makes that query slower than the route turn;
+        a detached refresh paints a convincing empty inbox and relies on a later lifecycle event."""
+        archived = ev("pcai:sms:relay-only", {"address": "+15550100", "body": "still here",
+                                                "date": 1, "incoming": True})
+        res = run(isPhone=False, cached=[], relay=[archived], relayQueryDelay=40,
+                  steps=["render"])
+        self.assertEqual(res["docs"], ["pcai:sms:relay-only"])
+        self.assertTrue(any("still here" in bodies for bodies in
+                            (thread["bodies"] for thread in res["threads"])))
+
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class Mirror(unittest.TestCase):

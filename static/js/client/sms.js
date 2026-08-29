@@ -610,7 +610,13 @@
          * detached tail become window.unhandledrejection and replace Texts with "action failed". */
       }).finally(() => { _cacheDrain = null; });
     }
-    refresh();
+    /* An empty browser cache is the ordinary WebUI startup after a cache eviction or a new
+     * profile.  Do not let the route complete as an empty inbox while its only authoritative copy
+     * is still being fetched/decrypted from the relay.  This was especially visible with the
+     * Firefox extension signer: its NIP-44 round trips made the detached refresh lose the initial
+     * paint race, so an existing archive looked entirely empty until another lifecycle refresh.
+     * refresh() already contains relay failures and folds results into (never over) local state. */
+    await refresh();
     })();
     try{ return await _loadingArchive; }
     finally{ S.loading=false; _loadingArchive=null; }
