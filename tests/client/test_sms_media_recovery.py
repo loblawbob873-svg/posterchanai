@@ -586,7 +586,7 @@ class TheMigrationIsBoundedPerVisit(unittest.TestCase):
                   steps=["phoneLoad", "migrateAll"])
         published = len(res["published"])
         self.assertGreater(published, 0, "the migration did nothing at all")
-        self.assertLessEqual(published, 600,
+        self.assertLessEqual(published, 200,
                              "one foreground published %d messages — the phone belongs to the sweep "
                              "for as long as that takes" % (published,))
 
@@ -596,6 +596,6 @@ class TheMigrationIsBoundedPerVisit(unittest.TestCase):
         res = run(isPhone=True, generatedPictures=900, migrationBatch=60,
                   steps=["phoneLoad", "migrateAll", "migrateAll"])
         first = next(c for c in res["calls"] if c[0] == "migrateAll")
-        self.assertTrue(len(res["published"]) > 600,
+        self.assertTrue(len(res["published"]) > 120,
                         "a second visit added nothing: %d published" % (len(res["published"]),))
         self.assertIsNotNone(first)

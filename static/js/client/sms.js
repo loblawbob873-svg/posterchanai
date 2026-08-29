@@ -2100,7 +2100,13 @@
        * A batch is 60 rows, so this is ~600 per foreground. It resumes exactly where it stopped —
        * the queue is derived from what is unarchived, not from a cursor — so a long history still
        * completes, over several visits, without ever owning the app. */
-      const MAX_BATCHES = 10;
+      /* SMALL, AND IT STAYS SMALL. Ten batches (~600 rows) was still enough to make the handset
+       * glitch: each row is an encrypted upload AND a relay write, and a phone doing six hundred
+       * of those is not a phone anybody can read a text on. Two batches is ~120 rows per visit —
+       * visible progress, invisible cost — and the queue is derived from what is unarchived, so
+       * the next visit continues exactly where this one stopped. A backlog is allowed to take a
+       * week; the screen is not allowed to stutter. */
+      const MAX_BATCHES = 2;
       for(let batch=0; batch<MAX_BATCHES; batch++){
         const r = await mirror({fullMigration:true, limit:60});
         total += Number(r && r.published) || 0;
@@ -2118,8 +2124,11 @@
           return {published:total, remaining:r.remaining, failed:(r && r.failed) || 0,
                   skipped:'message migration stopped making progress'};
         lastRemaining = r.remaining;
-        /* Let rendering/input and Android lifecycle callbacks run between upload batches. */
-        await new Promise(resolve => setTimeout(resolve, 0));
+        /* LET THE PHONE BE A PHONE BETWEEN BATCHES. `setTimeout(0)` yields the microtask queue and
+         * nothing else — the next batch starts on the very next frame and the WebView never gets a
+         * chance to draw, scroll or accept a tap. A real pause is what makes a background copy feel
+         * like one. */
+        await new Promise(resolve => setTimeout(resolve, 400));
       }
       /* Not an error and not a stall: the bound above was reached with work still to do, and the
        * next foreground picks it up. Said plainly so the screen does not report a problem. */

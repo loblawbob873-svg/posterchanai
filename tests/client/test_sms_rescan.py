@@ -65,9 +65,16 @@ class AStuckCompletionMarker(unittest.TestCase):
         timeline omitted old MMS. The independent provider walk must still upload each part and
         publish a portable sha for Web/OS, even when the prior release marked migration complete."""
         rows = [picture(i, NOW - (1000 + i) * 60000) for i in range(1, 406)]
+        # BOUNDED PER VISIT, AND IT MUST STILL CONVERGE. A visit copies ~120 rows and stops: each
+        # row is an encrypted upload AND a relay write, and a handset doing hundreds of those is
+        # not a phone anybody can read a text on — reported as Texts glitching. So the contract is
+        # no longer "one call finishes the history", it is "every call makes progress and the
+        # history completes over several". Driven here the way a person drives it: open Texts,
+        # again, and again.
         res = run(rows, {ME + "_blossom_v7": "1", ME: str(NOW)},
-                  ["phoneLoad", "migrateAll"], {"combinedOmitsMms": True})
-        self.assertEqual(len(mms_files(res)), 405)
+                  ["phoneLoad"] + ["migrateAll"] * 5, {"combinedOmitsMms": True})
+        self.assertEqual(len(mms_files(res)), 405,
+                         "the migration stopped making progress across repeated visits")
         self.assertGreaterEqual(sum(1 for c in res["calls"] if c[0] == "listMms"), 2,
                                 "MMS-only strict-before paging did not cross its first page")
         part_shas = [sha for thread in res["threads"] for row in thread["partShas"] for sha in row]
