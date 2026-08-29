@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "static", "js", "client", "app.js")
@@ -93,6 +94,13 @@ def _run(page, width=800, height=600):
             fh.write(page)
         res = subprocess.run(
             [CHROME, "--headless", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
+             # A full client suite has several Chrome harnesses. Without a private profile this
+             # invocation may attach to a still-shutting-down default-profile browser; its DOM is
+             # ours, but compositor/IntersectionObserver work never begins and the result is the
+             # characteristic false measurement `000000`. Force an independent browser process
+             # and make dump-dom flush the compositor stage which delivers the first observation.
+             "--user-data-dir=" + os.path.join(tmp, "profile"),
+             "--run-all-compositor-stages-before-draw",
              f"--window-size={width},{height}", "--virtual-time-budget=15000",
              "--dump-dom", "file://" + path],
             capture_output=True, text=True, timeout=180).stdout
@@ -103,6 +111,18 @@ def _run(page, width=800, height=600):
         return json.loads(html.unescape(m.group(1)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+class VideoMountHarnessIsolation(unittest.TestCase):
+    def test_each_measurement_gets_a_private_profile_and_compositor_flush(self):
+        """The full-suite-only 000000 result must not regress to a shared Chrome lifecycle."""
+        dom = '<pre id="out">[["initial","100000"]]</pre>'
+        with mock.patch.object(subprocess, "run", return_value=mock.Mock(stdout=dom)) as run:
+            self.assertEqual(_run("<p>fixture</p>"), [["initial", "100000"]])
+        argv = run.call_args.args[0]
+        profiles = [arg for arg in argv if arg.startswith("--user-data-dir=")]
+        self.assertEqual(len(profiles), 1)
+        self.assertIn("--run-all-compositor-stages-before-draw", argv)
 
 
 @unittest.skipUnless(CHROME, "no chrome on this node")
