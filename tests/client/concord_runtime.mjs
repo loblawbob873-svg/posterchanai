@@ -406,6 +406,12 @@ if(rooms.length!==1 || rooms[0].local || !rooms[0].url || !rooms[0].channels || 
 // Discover owns its live public subscription only while that surface is visible. Entering a room
 // must close it, and all ensuing history traffic must name only the relay carried by the bundle.
 const openedBeforeDiscover=calls.discoveryOpened,closedBeforeDiscover=calls.discoveryClosed;
+const ordinaryRelayQueryFrom=window.__PC.relayQueryFrom;let abortedDiscoveryReads=0;
+window.__PC.relayQueryFrom=(relays,filters,options={})=>{
+  calls.queryTargets.push([...relays]);
+  if(!options.signal)return Promise.resolve(relayFixtures(filters));
+  return new Promise(resolve=>options.signal.addEventListener('abort',()=>{abortedDiscoveryReads++;resolve([]);},{once:true}));
+};
 control('cc-discovery').click();
 if(calls.discoveryOpened!==openedBeforeDiscover+1)throw new Error('Discover did not open its public relay subscription');
 const roomButton=dollars('[data-cc-server]').find(b=>b.dataset.ccServer==='0');
@@ -414,6 +420,8 @@ const queriesBeforeRoom=calls.queryTargets.length;
 await roomButton.onclick();
 if(calls.discoveryClosed!==closedBeforeDiscover+1)throw new Error('active room left the Discover relay subscription open');
 await new Promise(resolve=>setTimeout(resolve,10));
+window.__PC.relayQueryFrom=ordinaryRelayQueryFrom;
+if(!abortedDiscoveryReads)throw new Error('active room did not abort its open Discover one-shot relay sockets');
 const roomRelaySet=PCConcord.roomRelays(rooms[0].cord.bundle);
 const activeRoomQueries=calls.queryTargets.slice(queriesBeforeRoom);
 if(activeRoomQueries.some(relays=>relays.some(relay=>!roomRelaySet.includes(relay))))

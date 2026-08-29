@@ -26550,8 +26550,15 @@
     // making it poll — its own request for one may have arrived before we had anything to give.
     try{ _sendAdminToken(); }catch(_){} }
   async function ensureAiSession(){
-    if(_aiAuth) return _aiAuth;
+    /* AUTH METADATA IS NOT A CREDENTIAL. A browser can keep this in memory after the server was
+     * restarted (cookie gone), and older/login-degraded responses could supply `user` without an
+     * access token. Returning that cached object sends the protected request tokenless forever:
+     * settings and /api/mail/accounts both 401, while no new nostr-login POST appears in the log.
+     * A usable cached session always has the bearer minted by nostr-login; otherwise re-prove the
+     * key and rebuild both the cookie and bearer. */
+    if(_aiAuth && _aiToken) return _aiAuth;
     if(_aiAuthP) return _aiAuthP;   // dedupe concurrent callers (e.g. the 2.5s warm + a click) → one sign(), one login
+    if(_aiAuth && !_aiToken) _aiAuth=null;
     _aiAuthP = (async()=>{
       try{
         const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership

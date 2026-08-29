@@ -743,18 +743,21 @@
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
     // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false } = {}){
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null } = {}){
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
        * that relay even when it is also present in the shared pool. */
       const targets = [...new Set((urls||[]).filter(Boolean))].filter(u => exact || !this._conns.has(u)).slice(0, max);
-      if (!targets.length) return Promise.resolve([]);
+      if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);
       return Promise.all(targets.map(u => new Promise(resolve => {
         let ws, done = false, tm; const got = [];
+        const abort = () => fin();
         const fin = () => { if (done) return; done = true; clearTimeout(tm);
+          if (signal) signal.removeEventListener('abort', abort);
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
           resolve(got); };
+        if (signal){ if (signal.aborted) return fin(); signal.addEventListener('abort', abort, {once:true}); }
         try { ws = new WebSocket(u); } catch(_){ return fin(); }
         tm = setTimeout(fin, timeout);
         ws.onopen = () => { try{ ws.send(JSON.stringify(['REQ', subId, ...filters])); }catch(_){ fin(); } };

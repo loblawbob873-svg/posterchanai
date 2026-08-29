@@ -52,3 +52,30 @@ def test_external_call_signaling_is_verified_delivered_and_closed(tmp_path):
     assert result["hasTargets"] is True
     assert result["published"] == 1
     assert result["outbound"] == ["EVENT", {"id": "out"}]
+
+
+def test_one_shot_external_query_closes_immediately_when_owner_aborts(tmp_path):
+    driver = tmp_path / "abort-query.js"
+    driver.write_text(textwrap.dedent(f"""
+      class FakeWS {{
+        constructor(url){{this.url=url;this.readyState=0;FakeWS.all.push(this);}}
+        send(){{}}
+        close(){{this.readyState=3;this.closed=true;}}
+      }}
+      FakeWS.all=[];
+      global.WebSocket=FakeWS;global.window=global;global.self=global;
+      global.document={{hidden:false,addEventListener(){{}}}};global.navigator={{onLine:true}};
+      global.location={{origin:'https://app.test',protocol:'https:'}};
+      global.Worker=class {{ postMessage(){{}} }};
+      require({json.dumps(str(RELAY))});
+      const owner=new AbortController();
+      const pending=Relay.queryFrom(['wss://relay.ditto.pub','wss://relay.damus.io'],
+        [{{kinds:[1]}}],{{timeout:60000,max:2,exact:true,signal:owner.signal}});
+      const before=FakeWS.all.map(ws=>ws.closed===true);
+      owner.abort();
+      pending.then(events=>console.log(JSON.stringify({{before,events,closed:FakeWS.all.map(ws=>ws.closed===true)}})));
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout.strip())
+    assert result == {"before": [False, False], "events": [], "closed": [True, True]}

@@ -18,12 +18,12 @@
     const own=[...new Set((bundle&&bundle.relays||[]).map(normalizeRelay).filter(Boolean))];
     return (own.length?own:CORD_RELAYS).slice(0,8);
   }
-  async function cordQuery(p,relays,filters,{timeout=8000,max=8}={}){
+  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null}={}){
     /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
        otherwise opening a room can silently omit the newest wraps from whichever relay is connected. */
     const jobs=[];
     if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
-    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max})));
+    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal})));
     const settled=await Promise.allSettled(jobs),ok=settled.filter(result=>result.status==='fulfilled');
     if(jobs.length&&!ok.length)throw settled[0].reason;
     const batches=ok.map(result=>result.value||[]),byId=new Map();
@@ -49,7 +49,7 @@
   }
   const state={ community:null, channel:null };
   let replyTarget=null, reactionTarget=null, mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false;
-  let discovered=[], discoveryStarted=false, discoverySubscription=null, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
+  let discovered=[], discoveryStarted=false, discoverySubscription=null, discoveryAbortController=null, discoveryLoaded=false, membershipBusy=false, membershipRetryTimer=null;
   let discoveryPaintPending=false;
   let membershipViewer='';const membershipDocs=new Map();
   let nip29Busy=false,nip29RetryTimer=null,webxdcHydrationEpoch=0;
@@ -591,6 +591,8 @@
   }
   function startDiscovery(p){
     if(discoveryStarted||state.community!=null||!p.relaySubscribe)return; discoveryStarted=true;
+    discoveryAbortController=typeof AbortController==='function'?new AbortController():null;
+    const signal=discoveryAbortController&&discoveryAbortController.signal;
     const bySigner=new Map();
     /* Some relay pools replay their in-memory result set synchronously from subscribe(). Calling
      * render() from each callback re-entered the launch render (or replaced the home DOM hundreds
@@ -600,13 +602,14 @@
     const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); discovered.slice(0,24).forEach(item=>hydrateDiscoveredIcon(p,item)); paintDiscovery(); };
     const onEose=()=>{ discoveryLoaded=true; paintDiscovery(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
-    try{ discoverySubscription=p.relaySubscribe(filters,{onEvent,onEose,live:true})||null; if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
+    try{ discoverySubscription=p.relaySubscribe(filters,{onEvent,onEose,live:true})||null; if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2,signal}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
   }
   function stopDiscovery(){
     const subscription=discoverySubscription;discoverySubscription=null;discoveryStarted=false;
+    const aborter=discoveryAbortController;discoveryAbortController=null;if(aborter)aborter.abort();
     if(subscription&&typeof subscription.close==='function')try{subscription.close();}catch(_){}
   }
-  async function hydrateInvite(p,url){
+  async function hydrateInvite(p,url,signal=null){
     if(!window.PosterCord||!p.relayQueryFrom)throw new Error('CORD protocol is unavailable');
     const parts=inviteParts(url); if(!parts)throw new Error('that is not a Concord invite link');
     const decoded=window.PosterCord.openInvite;
@@ -615,7 +618,7 @@
     const parsed=window.PosterCord.inviteDetails(url);
     const filter=[{kinds:[33301],authors:[parsed.linkSigner],'#d':[''],limit:100}];
     const relays=[...new Set([...(parsed&&parsed.bootstrapRelays||[]),...CORD_RELAYS])];
-    const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,8000):[],p.relayQueryFrom(relays,filter,{timeout:10000,max:200})]);
+    const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,8000):[],p.relayQueryFrom(relays,filter,{timeout:10000,max:200,signal})]);
     /* A link signer may issue many bundles with the same replaceable d-tag. The invite fragment opens
        exactly one of them, which is not necessarily the newest. Try every relay result instead of
        handing openInvite the set (whose legacy implementation picked index zero). */
@@ -632,9 +635,9 @@
     if(!item||item.icon||discoveryIconLoads.has(item.naddr)||!window.PosterCordReader||!p.relayQueryFrom)return;
     discoveryIconLoads.add(item.naddr);
     try{
-      const room=await hydrateInvite(p,item.url),bundle=room.cord.bundle,reader=window.PosterCordReader;
+      const signal=discoveryAbortController&&discoveryAbortController.signal,room=await hydrateInvite(p,item.url,signal);if(signal&&signal.aborted)return;const bundle=room.cord.bundle,reader=window.PosterCordReader;
       const seed=reader.inspectControl(bundle,[]),relays=roomRelays(bundle);
-      const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});
+      const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,signal});
       const info=reader.inspectControl(bundle,wraps||[]);
       item.name=info.name||item.name; item.description=info.description||item.description;
       if(info.icon)item.icon=typeof info.icon==='string'?info.icon:await decryptImagePointer(info.icon);
@@ -650,10 +653,10 @@
     }else if(tag[0]==='r'){const relay=normalizeRelay(tag[1]);if(relay)relays.push(relay);}}
     return {groups:[...new Map(groups.map(g=>[g.relay+'\0'+g.id,g])).values()],relays:[...new Set(relays)]};
   }
-  async function nip29Memberships(p,viewer){
+  async function nip29Memberships(p,viewer,signal=null){
     if(!viewer.pubkey)return {groups:[],relays:[]};
     const filters=[{kinds:[10009],authors:[viewer.pubkey],limit:8}],relays=[...new Set([...(p.relayUrls?p.relayUrls():[]),...CORD_RELAYS])],
-      [pool,listed]=await Promise.all([p.relayQuery?p.relayQuery(filters,8000):[],p.relayQueryFrom?p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true}):[]]),
+      [pool,listed]=await Promise.all([p.relayQuery?p.relayQuery(filters,8000):[],p.relayQueryFrom?p.relayQueryFrom(relays,filters,{timeout:8000,max:12,exact:true,signal}):[]]),
       queried=[...new Map([...(pool||[]),...(listed||[])].map(e=>[e.id,e])).values()],events=p.verifyRelayEvents?await p.verifyRelayEvents(queried):[],
       event=events.sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)))[0];
     if(!event)return {groups:[],relays:[]};
@@ -662,24 +665,25 @@
     if(ciphertext){const methods=/\?iv=/.test(ciphertext)?['nip04dec','nip44dec']:['nip44dec','nip04dec'];for(const method of methods){if(!p[method])continue;try{const privateTags=JSON.parse(await p[method](viewer.pubkey,ciphertext));if(Array.isArray(privateTags))all.push(...privateTags);break;}catch(_){}}}
     return nip29MembershipTags(all);
   }
-  async function nip29RelayQuery(p,relay,filters,timeout=8000){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await p.relayQueryFrom([relay],filters,{timeout,max:1,exact:true})||[];return await p.verifyRelayEvents(events);}
-  async function nip29Metadata(p,relay,groupIds=[]){
+  async function nip29RelayQuery(p,relay,filters,timeout=8000,signal=null){if(!p.relayQueryFrom||!p.verifyRelayEvents)throw new Error('verified listed relay queries are unavailable');const events=await p.relayQueryFrom([relay],filters,{timeout,max:1,exact:true,signal})||[];return await p.verifyRelayEvents(events);}
+  async function nip29Metadata(p,relay,groupIds=[],signal=null){
     const filter={kinds:[39000],limit:200};if(groupIds.length)filter['#d']=groupIds;
-    const events=await nip29RelayQuery(p,relay,[filter]),newest=new Map(),requested=new Set(groupIds);
+    const events=await nip29RelayQuery(p,relay,[filter],8000,signal),newest=new Map(),requested=new Set(groupIds);
     for(const event of events){if(Number(event.kind)!==39000)continue;const id=String(((event.tags||[]).find(t=>t[0]==='d')||[])[1]||'');if(!id||(requested.size&&!requested.has(id)))continue;const old=newest.get(id);if(!old||Number(event.created_at)>Number(old.created_at))newest.set(id,event);}
     return [...newest].map(([id,event])=>{let meta={};try{meta=JSON.parse(event.content||'{}');}catch(_){}const tags=Object.fromEntries((event.tags||[]).filter(t=>['name','about','picture'].includes(t[0])).map(t=>[t[0],t[1]]));return{id,relay,name:String(tags.name||meta.name||meta.display_name||id),description:String(tags.about||meta.about||meta.description||''),icon:normalizeIcon(tags.picture||meta.picture||meta.icon||''),source:event};});
   }
   async function syncNip29Memberships(p,viewer){
     if(state.community!=null||nip29Busy||!viewer.pubkey)return;nip29Busy=true;let recovered=false;
-    try{const membership=await nip29Memberships(p,viewer);if(state.community!=null)return;const byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
-      const found=[];for(const [relay,listed] of byRelay){if(state.community!=null)return;const metas=await nip29Metadata(p,relay,listed.map(g=>g.id));if(state.community!=null)return;const metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
+    const signal=discoveryAbortController&&discoveryAbortController.signal;
+    try{const membership=await nip29Memberships(p,viewer,signal);if((signal&&signal.aborted)||state.community!=null)return;const byRelay=new Map();for(const g of membership.groups){if(!byRelay.has(g.relay))byRelay.set(g.relay,[]);byRelay.get(g.relay).push(g);}
+      const found=[];for(const [relay,listed] of byRelay){if(state.community!=null)return;const metas=await nip29Metadata(p,relay,listed.map(g=>g.id),signal);if(state.community!=null)return;const metaById=new Map(metas.map(m=>[m.id,m]));for(const g of listed){const meta=metaById.get(g.id)||g;found.push({...meta,id:g.id,relay,name:g.name||meta.name||g.id});}}recovered=found.length>0;
       if(found.length){const rooms=saved();let changed=false;for(const g of found){const identity='nip29:'+g.relay+'#'+g.id,i=rooms.findIndex(r=>roomIdentity(r)===identity),room={protocol:'nip29',communityId:identity,naddr:identity,groupId:g.id,relay:g.relay,name:g.name||g.id,description:g.description||'',icon:g.icon||'',channels:[{name:'general',id:g.id,private:false}],local:false};if(i<0){rooms.push(room);changed=true;}else if(rooms[i].protocol==='nip29'&&JSON.stringify(rooms[i])!==JSON.stringify({...rooms[i],...room})){rooms[i]={...rooms[i],...room};changed=true;}}if(changed){save(rooms);backgroundRender();}}
     }catch(e){console.warn('NIP-29 membership sync failed',e);}finally{nip29Busy=false;clearTimeout(nip29RetryTimer);if(state.community==null)nip29RetryTimer=setTimeout(()=>syncNip29Memberships(p,p.viewer?p.viewer():viewer),recovered?60000:5000);}
   }
   function foldNip29History(events,p,groupId){const scoped=events.filter(e=>(e.tags||[]).some(t=>t[0]==='h'&&t[1]===groupId)).sort((a,b)=>Number(a.created_at)-Number(b.created_at)),deletions=[],deleted=new Set(),byId=new Map(),reactions=[];for(const e of scoped){if(e.kind===5){deletions.push(e);continue;}if(e.kind===7){reactions.push(e);continue;}if(![9,10,11,12,1111].includes(e.kind))continue;const pr=p.profOf?p.profOf(e.pubkey):{};byId.set(e.id,{id:e.id,pubkey:e.pubkey,by:pr.display_name||pr.name||e.pubkey.slice(0,12)+'…',text:e.content,at:Number(e.created_at)*1000,kind:e.kind,tags:e.tags||[],reactions:{},reactionIds:{},remote:true});}const reactionById=new Map(reactions.map(e=>[e.id,e]));for(const deletion of deletions)for(const t of deletion.tags||[])if(t[0]==='e'){const target=byId.get(t[1])||reactionById.get(t[1]);if(target&&target.pubkey===deletion.pubkey)deleted.add(t[1]);}for(const id of deleted)byId.delete(id);for(const e of reactions){if(deleted.has(e.id))continue;const target=((e.tags||[]).find(t=>t[0]==='e')||[])[1],m=byId.get(target);if(!m)continue;const emoji=e.content==='+'?'👍':e.content||'👍';(m.reactions[emoji]||(m.reactions[emoji]=[])).push(e.pubkey);(m.reactionIds[emoji]||(m.reactionIds[emoji]={}))[e.pubkey]=e.id;}for(const m of byId.values())if(m.kind===1111){const target=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(target)m.reply={id:target.id,by:target.by,text:target.text};}return [...byId.values()].sort((a,b)=>a.at-b.at);}
   async function nip29History(p,room){const events=await nip29RelayQuery(p,room.relay,[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],limit:500}],10000);return foldNip29History(events,p,room.groupId);}
   async function hydrateNip29Room(p,index){const rooms=saved(),room=rooms[index];if(!room||room.protocol!=='nip29')return;const messages=await nip29History(p,room),storeId=channelStoreId(room,'general');markRemoteStore(storeId);saveTestMessages(storeId,messages);room.nip29Hydrated=true;rooms[index]=room;save(rooms);if(state.community===index)backgroundRender();}
-  async function membershipEvents(p,pubkey,{external=true}={}){
+  async function membershipEvents(p,pubkey,{external=true,signal=null}={}){
     /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
        relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
        13302 vault look absent and a fresh browser showed no communities. 13302 is CORD-02's released
@@ -688,7 +692,7 @@
       let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([filter])||[]:[];}catch(_){}
       const [pool,remote]=await Promise.all([
         p.relayQuery?Promise.resolve(p.relayQuery([filter],8000)).catch(()=>[]):[],
-        external&&p.relayQueryFrom?Promise.resolve(p.relayQueryFrom(CORD_RELAYS,[filter],{timeout:8000,max:4})).catch(()=>[]):[],
+        external&&p.relayQueryFrom?Promise.resolve(p.relayQueryFrom(CORD_RELAYS,[filter],{timeout:8000,max:4,signal})).catch(()=>[]):[],
       ]);
       return [...new Map([...(cached||[]),...(pool||[]),...(remote||[])].filter(e=>e&&e.id).map(e=>[e.id,e])).values()];
     };
@@ -756,7 +760,8 @@
     let recovered=false;
     try{
       if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}
-      const candidates=await membershipEvents(p,viewer.pubkey,{external:!localOnly});
+      const signal=localOnly?null:discoveryAbortController&&discoveryAbortController.signal;
+      const candidates=await membershipEvents(p,viewer.pubkey,{external:!localOnly,signal});
       if(state.community!=null&&!localOnly)return;
       // Armada has emitted both kinds and may leave several list shards on relays. Decode every
       // valid snapshot: choosing one newest event can hide communities stored in another shard.
