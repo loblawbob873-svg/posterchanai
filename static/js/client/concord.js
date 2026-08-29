@@ -14,9 +14,11 @@
     /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
        otherwise opening a room can silently omit the newest wraps from whichever relay is connected. */
     const jobs=[];
-    if(p.relayQuery)jobs.push(Promise.resolve(p.relayQuery(filters,timeout)).catch(()=>[]));
-    if(p.relayQueryFrom)jobs.push(Promise.resolve(p.relayQueryFrom(relays,filters,{timeout,max})).catch(()=>[]));
-    const batches=await Promise.all(jobs),byId=new Map();
+    if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
+    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max})));
+    const settled=await Promise.allSettled(jobs),ok=settled.filter(result=>result.status==='fulfilled');
+    if(jobs.length&&!ok.length)throw settled[0].reason;
+    const batches=ok.map(result=>result.value||[]),byId=new Map();
     for(const ev of batches.flat())if(ev&&ev.id)byId.set(ev.id,ev);
     return [...byId.values()];
   }
@@ -329,7 +331,7 @@
     const out=[];
     for(const tag of (m&&m.tags||[])){
       const f=imetaFields(tag),mime=String(f.m||'').toLowerCase();
-      if(f['encryption-algorithm']||mime==='application/x-webxdc'||mime==='application/vnd.webxdc+zip'||!/^https:\/\//i.test(f.url||''))continue;
+      if(f['encryption-algorithm']||mime==='application/x-webxdc'||mime==='application/webxdc+zip'||mime==='application/vnd.webxdc+zip'||!/^https:\/\//i.test(f.url||''))continue;
       if(!/^[\w.+-]+\/[\w.+-]+$/.test(mime))continue;
       out.push({url:f.url,mime,name:String(f.name||'attachment').slice(0,120)});
     }
@@ -429,7 +431,7 @@
   }
   function webxdcOf(m,room,channelName){
     const channel=(room&&room.channels||[]).find(c=>c.name===(channelName||'general')),protocol=room&&room.protocol==='nip29'?'nip29':(room&&room.cord?'concord2':''),scope=protocol==='nip29'?`nip29|${room.relay}|${room.groupId}`:(protocol==='concord2'&&channel&&channel.id?`concord2|${channel.id}`:''),transport=protocol?{protocol,room:roomIdentity(room),channel:channelName||'general',channelId:channel&&channel.id,relay:room.relay,groupId:room.groupId}:null;
-    for(const t of (m&&m.tags||[]).slice(0,100)){ if(t[0]!=='imeta')continue; const f={}; for(let i=1;i<Math.min(t.length,30);i++){ const s=String(t[i]||'').slice(0,4096),j=s.indexOf(' '); if(j>0)f[s.slice(0,j)]=s.slice(j+1); } const mime=(f.m||'').toLowerCase();/* `webxdc-topic` is the current Armada/Vector Iroh lobby contract and wins over the legacy alias if both are present. */if((mime==='application/vnd.webxdc+zip'||mime==='application/x-webxdc')&&/^https?:\/\//i.test(f.url||'')){const explicit=f['webxdc-topic']||f.webxdc||'';return {url:f.url,sha:f.x||'',uuid:explicit,urlTopicMessageId:explicit?'':messageId(m),name:(f.summary||f.name||'Mini app').slice(0,80),transport};} }
+    for(const t of (m&&m.tags||[]).slice(0,100)){ if(t[0]!=='imeta')continue; const f={}; for(let i=1;i<Math.min(t.length,30);i++){ const s=String(t[i]||'').slice(0,4096),j=s.indexOf(' '); if(j>0)f[s.slice(0,j)]=s.slice(j+1); } const mime=(f.m||'').toLowerCase();/* `webxdc-topic` is the current Armada/Vector Iroh lobby contract and wins over the legacy alias if both are present. */if((mime==='application/vnd.webxdc+zip'||mime==='application/webxdc+zip'||mime==='application/x-webxdc')&&/^https?:\/\//i.test(f.url||'')){const explicit=f['webxdc-topic']||f.webxdc||'';return {url:f.url,sha:f.x||'',uuid:explicit,urlTopicMessageId:explicit?'':messageId(m),name:(f.summary||f.name||'Mini app').slice(0,80),transport};} }
     /* Bare links have no attachment tag to carry a minted topic. Armada/Vector derive it from the
      * canonical URL plus this message id; deriving from room scope silently creates a private lobby. */
     const url=(String(m&&m.text||'').slice(0,200000).match(/https?:\/\/[^\s<>]+\.xdc(?:\?[^\s<>]*)?/i)||[])[0]; return url?{url,sha:'',uuid:'',urlTopicMessageId:messageId(m),name:'Mini app',transport}:null;
@@ -855,19 +857,21 @@
       };
       /* Paint the encrypted on-device copy before opening sockets. This is the offline/reload path,
        * and also prevents relay latency from looking like an empty room. */
+      let cachedChannelCount=0,cachedHistoryRendered=false;
       if(controlWraps.length){
-        applyControl(controlWraps);
+        cachedChannelCount=applyControl(controlWraps);
         const selected=state.channel||'general',ordered=[...(room.channels||[])].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
         /* Decrypt only the newest page first and paint the selected channel immediately. Loading
          * 5,000 envelopes for every channel before the first render made a healthy encrypted cache
          * look indistinguishable from a relay miss, and could exhaust an Android WebView renderer. */
         for(const channel of ordered){
           const wraps=await cachedEnvelopePage(envelopeCacheKey(loadKey,channel.id),300);
-          if(wraps.length)await applyChannel(channel,wraps);
+          if(wraps.length){await applyChannel(channel,wraps);if(channel.name===selected)cachedHistoryRendered=true;}
           if(channel.name===selected&&state.community===index)backgroundRender();
         }
         if(state.community===index)backgroundRender();
       }
+      try{
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
       controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
       const channelCount=applyControl(controlWraps);
@@ -886,6 +890,13 @@
       /* Explicit room/channel handlers own the initial jump to latest. A network refresh finishing
        * later must preserve a reader who has deliberately scrolled up meanwhile. */
       if(stillSelected)backgroundRender();
+      }catch(e){
+        /* Cached control plus selected-channel history is a usable room, even when every live relay
+         * path is temporarily down. Leave this renderer view unmarked so the next click retries the
+         * network refresh, but do not turn a successful offline room open into a failure toaster. */
+        if(cachedChannelCount&&cachedHistoryRendered){console.warn('Concord room refresh failed; using cached history',e);return;}
+        throw e;
+      }
     })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
   }
   async function publishCordNative(p,room,channelName,text,extraTags=[],kind=9){
@@ -1138,9 +1149,9 @@
     const acceptMention=(i=mentionIndex)=>{ const match=mentionToken(),choice=mentionChoices[i]; if(!match||!choice)return false; const handle=choice.name.replace(/\s+/g,'_'),end=input.selectionStart,start=end-match[1].length-1;mentionRecipients.set(handle.toLowerCase(),choice.pk);input.setRangeText('@'+handle+' ',start,end,'end'); closeMentions();syncMentionState(); input.focus(); return true; };
     if(input&&input.addEventListener)input.addEventListener('input',drawMentions);
     const attach=$('#cc-attach'), file=$('#cc-file');
-    const insertBlossomAttachment=({url,type,ext})=>{ if(!url||!input)return; const mime=String(type||'application/octet-stream'),raw=String(url).split(/[?#]/)[0].split('/').pop()||'file',name=raw+(ext&&!raw.includes('.')?'.'+ext:''); let tag=['imeta',`url ${url}`,`m ${mime}`,`name ${name.slice(0,120)}`]; if(mime==='application/x-webxdc'||mime==='application/vnd.webxdc+zip'){const topic=mintWebxdcTopic();tag.push(`webxdc-topic ${topic}`,`webxdc ${topic}`,`summary ${name.replace(/\.xdc$/i,'').slice(0,80)}`);} pendingAttachments.set(url,tag); input.value+=(input.value&&!/\s$/.test(input.value)?' ':'')+url; input.dispatchEvent(new Event('input',{bubbles:true})); input.focus(); };
+    const insertBlossomAttachment=({url,type,ext})=>{ if(!url||!input)return; const mime=String(type||'application/octet-stream'),raw=String(url).split(/[?#]/)[0].split('/').pop()||'file',name=raw+(ext&&!raw.includes('.')?'.'+ext:''); let tag=['imeta',`url ${url}`,`m ${mime}`,`name ${name.slice(0,120)}`]; if(mime==='application/x-webxdc'||mime==='application/webxdc+zip'||mime==='application/vnd.webxdc+zip'){const topic=mintWebxdcTopic();tag.push(`webxdc-topic ${topic}`,`webxdc ${topic}`,`summary ${name.replace(/\.xdc$/i,'').slice(0,80)}`);} pendingAttachments.set(url,tag); input.value+=(input.value&&!/\s$/.test(input.value)?' ':'')+url; input.dispatchEvent(new Event('input',{bubbles:true})); input.focus(); };
     if(attach&&file)attach.onclick=()=>{ if(!p.blossomPicker||!p.modal){file.click();return;} p.modal(`<h3>Attach to #${p.enc(state.channel||'general')}</h3><p class="muted">Choose a new file from this device or reuse one from Files.</p><div class="cc-attach-choices"><button class="btn btn-ghost" id="cc-attach-device">From device</button><button class="btn btn-neon" id="cc-attach-blossom">📁 Files</button></div>`,root=>{ const local=root.querySelector('#cc-attach-device'),blossom=root.querySelector('#cc-attach-blossom'); local.onclick=()=>{p.closeModal();file.click();}; blossom.onclick=()=>{p.closeModal();p.blossomPicker(null,insertBlossomAttachment,{title:'📁 Attach from Files'});}; }); };
-    const uploadAttachments=async files=>{ for(const f of files){ if(f.size>20*1024*1024){ p.toast(f.name+' is too large (20 MB max)'); continue; } try{ p.toast('uploading '+f.name+'…'); const isXdc=/\.xdc$/i.test(f.name)||f.type==='application/x-webxdc'||f.type==='application/vnd.webxdc+zip',bytes=isXdc?new Uint8Array(await f.arrayBuffer()):null,url=await p.uploadBlob(f,{keep:true}),mime=isXdc?'application/vnd.webxdc+zip':String(f.type||'application/octet-stream'),tag=['imeta',`url ${url}`,`m ${mime}`,`name ${String(f.name||'file').slice(0,120)}`]; if(isXdc){ const sha=bytesHex(await crypto.subtle.digest('SHA-256',bytes)),topic=mintWebxdcTopic(),name=f.name.replace(/\.xdc$/i,'').slice(0,80);tag.push(`x ${sha}`,`webxdc-topic ${topic}`,`webxdc ${topic}`,`summary ${name}`); }pendingAttachments.set(url,tag); input.value+=(input.value&&!/\s$/.test(input.value)?' ':'')+url; input.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){ p.toast('could not attach '+f.name); } } };
+    const uploadAttachments=async files=>{ for(const f of files){ if(f.size>20*1024*1024){ p.toast(f.name+' is too large (20 MB max)'); continue; } try{ p.toast('uploading '+f.name+'…'); const isXdc=/\.xdc$/i.test(f.name)||f.type==='application/x-webxdc'||f.type==='application/webxdc+zip'||f.type==='application/vnd.webxdc+zip',bytes=isXdc?new Uint8Array(await f.arrayBuffer()):null,url=await p.uploadBlob(f,{keep:true}),mime=isXdc?'application/vnd.webxdc+zip':String(f.type||'application/octet-stream'),tag=['imeta',`url ${url}`,`m ${mime}`,`name ${String(f.name||'file').slice(0,120)}`]; if(isXdc){ const sha=bytesHex(await crypto.subtle.digest('SHA-256',bytes)),topic=mintWebxdcTopic(),name=f.name.replace(/\.xdc$/i,'').slice(0,80);tag.push(`x ${sha}`,`webxdc-topic ${topic}`,`webxdc ${topic}`,`summary ${name}`); }pendingAttachments.set(url,tag); input.value+=(input.value&&!/\s$/.test(input.value)?' ':'')+url; input.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){ p.toast('could not attach '+f.name); } } };
     if(file&&input)file.onchange=async()=>{ await uploadAttachments([...file.files]); file.value=''; };
     if(input)input.onpaste=event=>{ const images=[...(event.clipboardData&&event.clipboardData.items||[])].filter(item=>item.kind==='file'&&String(item.type||'').startsWith('image/')).map(item=>item.getAsFile&&item.getAsFile()).filter(Boolean); if(!images.length)return; event.preventDefault(); void uploadAttachments(images); };
     const members=$('#cc-members'); if(members)members.onclick=()=>{if(!window.matchMedia||window.matchMedia('(max-width:820px)').matches){$('#cc-members-dialog').classList.remove('hidden');return;}const pane=$('.cc-members-pane');if(!pane)return;const hide=localStorage.getItem('pc.concord.members.hidden')!=='1';pane.classList.toggle('hidden',hide);localStorage.setItem('pc.concord.members.hidden',hide?'1':'0');};

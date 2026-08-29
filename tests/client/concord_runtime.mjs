@@ -260,6 +260,36 @@ if(!slowIconStarted||!feed.innerHTML.includes('joined history'))
   throw new Error('cached Concord history waited for the encrypted community icon');
 releaseSlowIcon();await slowHydration;
 data.delete('pc.concord.invites');concordEnvelopeCache.clear();
+
+// Opening a room is still successful when its encrypted control/history cache is valid but every
+// live relay path fails synchronously (the desktop bridge's disconnected/not-ready failure shape).
+// The failed refresh must remain retryable, while a room with no usable cache must stay honest.
+const offlineRoom={communityId:'offline-cached',naddr:'offline-cached',name:'Offline cached room',channels:[{name:'general',id:'joined-general'}],cord:{bundle:{...JOIN_BUNDLE}}};
+data.set('pc.concord.invites',JSON.stringify([offlineRoom]));
+concordEnvelopeCache.set(JSON.stringify(['offline-cached','control']),[{id:'offline-control',kind:1059,created_at:1}]);
+concordEnvelopeCache.set(JSON.stringify(['offline-cached','joined-general']),[{id:'offline-chat',kind:1059,created_at:2}]);
+let offlineQueries=0;
+const offlinePC={...window.__PC,
+  relayQuery(){offlineQueries++;throw new Error('relay bridge offline');},
+  relayQueryFrom(){offlineQueries++;throw new Error('relay bridge offline');},
+};
+const cachedToastCount=calls.toasts.length;
+if(!await PCConcord.activateJoinedRoom(offlinePC,0,false,'offline-cached') || !feed.innerHTML.includes('joined history'))
+  throw new Error('valid cached Concord room did not open through a failed live refresh');
+if(calls.toasts.length!==cachedToastCount)
+  throw new Error('failed live refresh showed a false room-history warning over valid cache');
+const firstOfflineQueries=offlineQueries;
+if(!await PCConcord.activateJoinedRoom(offlinePC,0,false,'offline-cached') || offlineQueries<=firstOfflineQueries)
+  throw new Error('cached Concord room did not retry its failed live refresh on the next click');
+
+const uncachedRoom={communityId:'offline-uncached',naddr:'offline-uncached',name:'Offline uncached room',channels:[{name:'general',id:'joined-general'}],cord:{bundle:{...JOIN_BUNDLE}}};
+data.set('pc.concord.invites',JSON.stringify([uncachedRoom]));concordEnvelopeCache.clear();
+const uncachedToastCount=calls.toasts.length;
+if(await PCConcord.activateJoinedRoom(offlinePC,0,false,'offline-uncached'))
+  throw new Error('uncached Concord room claimed a successful open while relays were unavailable');
+if(calls.toasts.length!==uncachedToastCount+1 || !calls.toasts.at(-1).includes('relay bridge offline'))
+  throw new Error('uncached Concord relay failure was hidden from the user');
+data.delete('pc.concord.invites');concordEnvelopeCache.clear();
 const legacyNonce=crypto.getRandomValues(new Uint8Array(12));
 const legacyCipher=await crypto.subtle.encrypt({name:'AES-GCM',iv:legacyNonce},iconCryptoKey,iconPlain);
 const legacyPointer={...iconPointer,nonce:hex(legacyNonce)};

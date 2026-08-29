@@ -15938,7 +15938,7 @@
       out.push(['imeta', ...parts]);
     }
     // One `t`, however many apps are in the post, and only when there is one.
-    if(out.some(t => t.includes('m application/x-webxdc')||t.includes('m application/vnd.webxdc+zip'))) out.push(['t', 'webxdc']);
+    if(out.some(t => t.includes('m application/x-webxdc')||t.includes('m application/webxdc+zip')||t.includes('m application/vnd.webxdc+zip'))) out.push(['t', 'webxdc']);
     return out;
   }
   // ---- Blossom access (request-to-upload) ----
