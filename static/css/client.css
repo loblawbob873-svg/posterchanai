@@ -9400,3 +9400,15 @@ audio.sms-att-img{min-width:220px}
 .pv-pdf-pages{width:100%;display:flex;flex-direction:column;align-items:center;gap:10px;min-height:100%}
 .pv-pdf-page{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 2px 12px #0008}
 @media(max-width:640px){.pv-bar{padding:6px 8px;gap:6px}.pv-name{font-size:.95em}}
+
+/* Concord threads. A reply count on a root, and the bar that says you are inside one.
+   Deliberately built from the tokens the rest of Concord already uses — a thread is the same
+   conversation seen from closer up, not a different surface. */
+.cc-thread-open{font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--cc-line,#2a2f3a);
+  background:transparent;color:var(--cc-accent,#7aa2f7);cursor:pointer;white-space:nowrap}
+.cc-thread-open:hover{background:var(--cc-hover,rgba(122,162,247,.12))}
+.cc-thread-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;
+  border-bottom:1px solid var(--cc-line,#2a2f3a)}
+.cc-thread-bar button{background:transparent;border:0;color:inherit;cursor:pointer;font-size:13px;padding:2px 6px}
+.cc-thread-bar b{font-size:13px}
+.cc-thread-bar span{opacity:.7;font-size:12px}

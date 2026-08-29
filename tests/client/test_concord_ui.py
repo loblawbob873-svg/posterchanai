@@ -187,7 +187,11 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert "localStorage.setItem('pc.concord.active',String(index))" in CONCORD
     assert 'mobileChatOpen=false, mobileDrawerOpen=false, discoveryOpen=false' in CONCORD
     assert "discoveryOpen=true; state.community=null" in CONCORD
-    assert "state.channel=channel; mobileChatOpen=true; mobileDrawerOpen=false" in CONCORD
+    # `state.thread=null` joined this line: a thread belongs to one channel, and left set
+    # across a move its filter matches nothing and the new channel looks empty — which reads
+    # as lost messages rather than a stale filter. The drill-in rule itself is unchanged.
+    assert ("state.channel=channel; state.thread=null; replyTarget=null; "
+            "mobileChatOpen=true; mobileDrawerOpen=false") in CONCORD
     assert "mobileChatOpen=false; mobileDrawerOpen=false; render()" in CONCORD
     assert 'id="cc-home" title="Your rooms"' in CONCORD
     assert 'id="cc-discovery" title="Discover public communities"' in CONCORD
