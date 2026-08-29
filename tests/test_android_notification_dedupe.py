@@ -6,11 +6,10 @@ PUSH = (ROOT / "mobile/android/app/src/main/java/place/poster/app/push/PushEvent
 APP = (ROOT / "static/js/client/app.js").read_text(errors="replace")
 
 
-def test_gcompat_push_defers_to_visible_webview_notification_owner():
-    assert 'if (!"call".equals(type) && place.poster.app.sms.AppVisible.is()) return;' in PUSH
-    assert PUSH.index("AppVisible.is()) return") < PUSH.index(
-        "show(ctx, title, body, type, eventTag, route)"
-    )
+def test_gcompat_push_is_not_dropped_just_because_the_app_is_visible():
+    on_message = PUSH[PUSH.index("public void onMessage"):PUSH.index("public static void show")]
+    assert "AppVisible.is()" not in on_message
+    assert "show(ctx, title, body, type, eventTag, route)" in on_message
 
 
 def test_live_and_gcompat_delivery_share_one_android_replacement_tag():
@@ -19,5 +18,7 @@ def test_live_and_gcompat_delivery_share_one_android_replacement_tag():
     assert "tag:'nostr-'+ev.id" in ping
 
 
-def test_calls_remain_native_even_while_main_activity_is_visible():
-    assert 'if (!"call".equals(type)' in PUSH
+def test_calls_and_messages_both_reach_the_native_builder():
+    on_message = PUSH[PUSH.index("public void onMessage"):PUSH.index("public static void show")]
+    assert "show(ctx, title, body, type, eventTag, route)" in on_message
+    assert "return;" not in on_message

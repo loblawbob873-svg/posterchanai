@@ -59,12 +59,10 @@ public class PushEventService extends PushService {
             // default beats swallowing it, which would look exactly like a delivery failure.
         }
         // gCompat/UnifiedPush and the visible WebView relay are two delivery paths for the SAME
-        // Nostr event.  While the Activity is visible the WebView owns notification classification
-        // and calls PushPlugin.notify itself; drawing this push too produced the paired
-        // "mentioned you" / "replied to you" notifications reported by phone users.
-        if (!"call".equals(type) && place.poster.app.sms.AppVisible.is()) return;
-        // If the Activity crossed into the background between the two deliveries, use the same
-        // event-id tag as the WebView so Android replaces the first card instead of stacking two.
+        // Nostr event. Never discard one merely because MainActivity is visible: visibility does
+        // not prove that the WebView received, classified or announced this event, and doing so
+        // silently lost pushes while the app happened to be on screen. Both paths use the same
+        // event-id tag, so Android replaces the duplicate card while distinct events coexist.
         show(ctx, title, body, type, eventTag, route);
     }
 

@@ -28,6 +28,7 @@ import java.io.InputStream;
 import java.util.List;
 
 import place.poster.app.MainActivity;
+import place.poster.app.sms.ThreadListActivity;
 import place.poster.app.ui.PcTheme;
 import place.poster.app.ui.PcThemeStore;
 
@@ -148,6 +149,35 @@ public class LauncherDeviceTest {
                 assertTrue("the grid drew nothing", g.getAdapter().getCount() > 0);
             });
         } finally {
+            s.close();
+        }
+    }
+
+    @Test
+    public void tappingTextsFromTheLauncherOpensTheNativeThreadListNotTheLastWebView() throws Exception {
+        HomeRoles.enableLauncherComponent(ctx, true);
+        Instrumentation inst = InstrumentationRegistry.getInstrumentation();
+        Instrumentation.ActivityMonitor monitor = inst.addMonitor(
+                ThreadListActivity.class.getName(), null, false);
+        ActivityScenario<HomeActivity> s = ActivityScenario.launch(HomeActivity.class);
+        try {
+            s.onActivity(a -> {
+                try {
+                    java.lang.reflect.Method open = HomeActivity.class.getDeclaredMethod(
+                            "open", AppShelf.Entry.class);
+                    open.setAccessible(true);
+                    open.invoke(a, AppShelf.Entry.ours(HomeTiles.VIEW_TEXTS, "Texts", false));
+                } catch (Exception e) {
+                    throw new AssertionError("the real Texts launcher press failed", e);
+                }
+            });
+            android.app.Activity opened = inst.waitForMonitorWithTimeout(monitor, 5_000L);
+            assertNotNull("Texts left the previously displayed WebView (for example News) on top",
+                    opened);
+            assertTrue("Texts opened the wrong Android activity", opened instanceof ThreadListActivity);
+            opened.finish();
+        } finally {
+            inst.removeMonitor(monitor);
             s.close();
         }
     }
