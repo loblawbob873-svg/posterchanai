@@ -29,7 +29,30 @@ from app.services.nostr.nostr_service import decode_seckey
 import hashlib
 
 db = SessionLocal()
-u = db.query(User).filter(User.nostr_nsec.isnot(None)).first()
+# WHOSE ARCHIVE. `.first()` is not "the user" — this deployment has several accounts holding an
+# nsec, and taking the first one silently measured somebody else's history for a whole session:
+# a confident "2,676 documents, not one attachment" about an account nobody had asked about.
+# Pass a user id, or a username/npub prefix; with nothing, print the choices and stop.
+_who = None
+for a in sys.argv[1:]:
+    if not a.isdigit():
+        _who = a
+        break
+_users = db.query(User).filter(User.nostr_nsec.isnot(None)).all()
+if _who is None and len(_users) > 1:
+    print("several accounts hold a key — name one (id or username):")
+    for x in _users:
+        print("  %s  %s" % (x.id, getattr(x, "username", "") or ""))
+    sys.exit(2)
+u = None
+for x in _users:
+    if _who is None or str(x.id) == _who or _who.lower() in str(getattr(x, "username", "")).lower():
+        u = x
+        break
+if u is None:
+    print("no account matched %r" % _who)
+    sys.exit(2)
+print("account: %s (%s)" % (u.id, getattr(u, "username", "") or ""))
 sk = decode_seckey(u.nostr_nsec); pk = pubkey_from_seckey(sk).hex()
 
 def signed(kind, content, tags):
@@ -53,7 +76,7 @@ rows = db.execute(sqltext(
   "WHERE e.kind=30078 AND e.pubkey=:pk AND t.value LIKE 'pcai:sms:%' "
   "ORDER BY e.created_at DESC"), {"pk": pk}).fetchall()
 
-N = int(sys.argv[1]) if len(sys.argv) > 1 else 400
+N = next((int(a) for a in sys.argv[1:] if a.isdigit()), 400)
 aes = AESGCM(mk)
 tot=mms=withatt=withsha=witherr=fetchfail=0
 errs = collections.Counter()
