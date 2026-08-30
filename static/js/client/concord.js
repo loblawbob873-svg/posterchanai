@@ -1342,32 +1342,51 @@
     const key=roomIdentity(room)+'\n'+String(channel&&channel.id||'');
     if(chatSub&&chatSubKey===key)return;
     stopChatLive();
-    const authors=(channel&&channel.streamPubkeys)||[];
-    if(!p||!p.relaySubscribe||!authors.length)return;
+    const nip29=room&&room.protocol==='nip29',authors=(channel&&channel.streamPubkeys)||[];
+    const R=window.Relay;
+    if(!p||!R||!R.subscribe||!R.subscribeFrom||(!nip29&&!authors.length))return;
     chatSubKey=key;
     /* A small look-back, not none: between the room's opening history read and this subscription
      * being armed there is a gap, and a message that lands inside it would otherwise wait for the
      * next tick — which is the very delay this exists to remove. */
     const since=Math.max(0,Math.floor(Date.now()/1000)-180);
     const onEvent=ev=>{
-      if(!ev||Number(ev.kind)!==1059||chatSubKey!==key)return;
+      if(!ev||chatSubKey!==key)return;
+      if(nip29){if(![5,7,9,10,11,12,1111].includes(Number(ev.kind)))return;}
+      else if(Number(ev.kind)!==1059)return;
       chatBuffer.push(ev);
       if(chatFlush)return;
       chatFlush=setTimeout(()=>{chatFlush=null;void flushChatLive(p,key);},350);
     };
-    try{ chatSub=p.relaySubscribe([{kinds:[1059],authors,since}],{onEvent,live:true})||null; }
-    catch(_){ chatSubKey=''; }
+    const urls=nip29?[room.relay]:roomRelays(room&&room.cord&&room.cord.bundle),
+      filters=nip29?[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],since}]:[{kinds:[1059],authors,since}];
+    try{
+      const pooled=R.subscribe(filters,{onEvent,live:true}),external=R.subscribeFrom(urls,filters,{onEvent,timeout:0});
+      const close=()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
+      chatSub={close,pooled,external};
+      const gates=[];
+      if(R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
+      if(external.hasTargets&&external.ready)gates.push(external.ready.then(ok=>{if(!ok)throw new Error('external room relay did not open');}));
+      if(gates.length)void Promise.any(gates).catch(e=>{if(chatSubKey===key){console.warn('Concord live room subscription could not open',e);stopChatLive();}});
+    }catch(e){ chatSubKey='';console.warn('Concord live room subscription failed',e); }
   }
   async function flushChatLive(p,key){
     const wraps=chatBuffer;chatBuffer=[];
     if(!wraps.length||chatSubKey!==key)return;
     const rooms=saved(),room=rooms[state.community];
     const channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general'));
-    const bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
-    if(!room||!channel||!bundle||!reader)return;
+    if(!room||!channel)return;
     /* THE VIEW MOVED WHILE THOSE BYTES WERE IN FLIGHT. Without this the events of the channel you
      * just left are merged into the store of the one you just opened. */
     if(roomIdentity(room)+'\n'+String(channel.id||'')!==key)return;
+    if(room.protocol==='nip29'){
+      const prior=testMessages(channelStoreId(room,channel.name)),needsContext=wraps.some(ev=>[5,7].includes(Number(ev.kind))),
+        incoming=needsContext?await nip29History(p,room):foldNip29History(wraps,p,room.groupId),merged=needsContext?incoming:mergeRelayMessages(prior,incoming);
+      if(JSON.stringify(merged)!==JSON.stringify(prior)){saveTestMessages(channelStoreId(room,channel.name),merged);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());}
+      return;
+    }
+    const bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
+    if(!bundle||!reader)return;
     const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);
     if(!controlWraps)return;
     const storeId=channelStoreId(room,channel.name);
@@ -1433,6 +1452,8 @@
       if(room.url&&(!room.cord||!room.cord.bundle)){room={...room,...await hydrateInvite(p,room.url)};rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity);if(at<0)return false;rooms[at]=room;save(rooms);index=at;if(roomIdentity(rooms[state.community])===identity){state.community=at;render();}}
       if(room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,index,identity);
       else if(room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,index);
+      room=saved()[state.community];const liveChannel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general'));
+      if(room&&liveChannel)startChatLive(p,room,liveChannel);
       roomLoadNotices.delete(roomIdentity(room));return true;
     }catch(e){
       if(room.protocol==='nip29'){rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity);if(at>=0){rooms[at].nip29Hydrated=false;save(rooms);}}
@@ -1448,6 +1469,8 @@
       if(room.cord&&!hydratedRoomViews.has(identity))await hydrateRoomStreams(p,index,identity);
       else if(room.cord)await refreshActiveChannel(p);
       else if(room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,index);
+      const active=saved()[state.community],liveChannel=active&&(active.channels||[]).find(c=>c.name===(state.channel||'general'));
+      if(active&&liveChannel)startChatLive(p,active,liveChannel);
     }catch(e){roomLoadWarning(p,identity,'could not refresh community: ',e);}
   }
   function wake(){resumeRequested=true;}
