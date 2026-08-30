@@ -417,7 +417,12 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert "notifyMentions(p,current,messages,viewer,me,state.channel||'general')" in CONCORD
     assert 'route:notificationRoute(room,channel,m)' in CONCORD and 'concord-mention-' in CONCORD
     assert "mentionSeenKey(room,channel)" in CONCORD
-    assert "room.naddr+':'+channel" in CONCORD
+    # EVERY MENTION IS ITS OWN NOTIFICATION. The tag was room.naddr + channel, so a second mention
+    # in the same channel REPLACED the first — reported as "I see 1 notification, I have way more
+    # than 1" — and a room with no naddr (NIP-29, or joined by community id) tagged every mention
+    # in every room `concord-mention-undefined:general`, collapsing them all into one.
+    assert "roomIdentity(room)+':'+channel+':'+messageId(m)" in CONCORD
+    assert "room.naddr+':'+channel" not in CONCORD
     assert "const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')" in CONCORD
     assert "mentionRecipients.set(handle.toLowerCase(),choice.pk)" in CONCORD
     assert "mentionTags.push(['P',pk],['p',pk])" in CONCORD

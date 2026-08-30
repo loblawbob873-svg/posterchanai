@@ -737,7 +737,7 @@
       const body=String(m.text||''),fromMe=m.pubkey===viewer.pubkey;
       const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')&&String(t[1]||'')===viewer.pubkey);
       const mentioned=!fromMe&&(tagged||textMentionsViewer(body,handles));
-      if((Number(m.at)||0)>seen&&mentioned&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${body}`,{tag:'concord-mention-'+room.naddr+':'+channel,route:notificationRoute(room,channel,m)});
+      if((Number(m.at)||0)>seen&&mentioned&&p.osNotify) p.osNotify(`Mention in #${channel}`,`${m.by||'Someone'}: ${body}`,{tag:'concord-mention-'+roomIdentity(room)+':'+channel+':'+messageId(m),route:notificationRoute(room,channel,m)});
     }
     if(newest>seen)localStorage.setItem(key,String(newest));
   }
@@ -1205,7 +1205,19 @@
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
       controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
       const channelCount=applyControl(controlWraps);
-      if(!channelCount)throw new Error('the control stream returned no readable channels');
+      if(!channelCount){
+        /* SAY WHAT WAS ACTUALLY MEASURED. "the control stream returned no readable channels" is
+         * true and useless: it is the same sentence whether no relay answered, every relay answered
+         * with nothing, or the answers could not be opened with this membership — three different
+         * problems with three different fixes. Reported from a phone as one line I could not act on
+         * and could not reproduce, for every room at once.
+         *
+         * The numbers are cheap and they are the whole diagnosis: relays tried, wraps held after
+         * the fetch, and how many of those were new. */
+        throw new Error('no channels readable yet — ' + (relays||[]).length + ' relay(s) asked, '
+          + (controlWraps||[]).length + ' control event(s) held, '
+          + (fetchedControl||[]).length + ' new');
+      }
       const selected=state.channel||'general',networkOrder=[...room.channels].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
       const fetchChannel=async channel=>{
         const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),
