@@ -5923,6 +5923,19 @@
       rows.push({ label: 'Line the icons up', run: () => lineUp() });
     rows.push({ label: 'Add a widget…', run: () => widgetPicker() });
     rows.push({ label: 'Change background…', run: () => wallpaperPicker() });
+    /* THE DESKTOP STYLE SHIPPED AND COULD NOT BE TURNED ON FROM A BROWSER.
+     * Its only control is System Settings → Appearance, whose start-menu entry is gated on
+     * `window.pcDisplays` — an Electron preload bridge. So in the desktop app the macOS layout is
+     * reachable and in a browser it is not, which is indistinguishable from never having shipped:
+     * asked for repeatedly, present in the build, invisible to the person asking. The style is
+     * presentation (`STYLE_KEY`'s own comment says so), not hardware, so it also belongs on the
+     * personalization surface that exists everywhere. Both controls write the same key and call the
+     * same applier, so they cannot drift. */
+    rows.push({ label: settings().get(STYLE_KEY,'posterchan')==='mac'
+                  ? 'Use the PosterChan desktop' : 'Use the macOS-style desktop',
+                run: () => { const mac = settings().get(STYLE_KEY,'posterchan')==='mac';
+                             settings().set(STYLE_KEY, mac ? 'posterchan' : 'mac');
+                             applyDesktopStyle(); } });
     rows.push({ sep: true });
     rows.push({ label: 'Restore the default layout', run: async () => {
       const ask = PC().uiConfirm;

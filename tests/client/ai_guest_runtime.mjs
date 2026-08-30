@@ -2,7 +2,7 @@ import fs from 'node:fs';
 const app=fs.readFileSync(new URL('../../static/js/client/app.js',import.meta.url),'utf8');
 const authStart=app.indexOf('  let _aiAuth = null;');
 const authEnd=app.indexOf('  // In-app Admin:',authStart);
-const aiStart=app.indexOf('  async function renderAI(){');
+const aiStart=app.indexOf('  async function renderAI(');
 const aiEnd=app.indexOf('  async function requestAiAccess(){',aiStart);
 const shipped=app.slice(authStart,authEnd)+app.slice(aiStart,aiEnd);
 globalThis.window=globalThis;globalThis.ME=null;globalThis.VIEW='ai';

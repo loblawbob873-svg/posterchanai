@@ -35,7 +35,8 @@ window.PosterCordReader = {
 const p = {
   toast: noop, profOf: () => ({}), enc: s => String(s), $: () => null,
   viewer: () => ({pubkey:'c'.repeat(64), profile:{}}), isView: () => true,
-  relaySubscribe: () => ({close(){}}),
+  /* A subId STRING, the way relay.js really answers — never an object with .close(). */
+  relaySubscribe: () => 'sub-warn-once', relayClose: noop,
   relayQuery: async () => [], relayQueryFrom: async () => [], verifyRelayEvents: async e => e,
 };
 
