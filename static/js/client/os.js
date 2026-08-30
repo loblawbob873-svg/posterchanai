@@ -105,6 +105,7 @@
     const was=root.classList.contains('os-style-mac');
     const mac=settings().get(STYLE_KEY,'posterchan')==='mac';
     root.classList.toggle('os-style-mac',mac);
+    placeDesktopTray();
     /* Menu and Dock safe areas change the measured desk. Reflow existing objects after layout has
      * committed; otherwise switching style leaves windows/widgets clamped to the previous height. */
     if(was!==mac&&desk)requestAnimationFrame(()=>{
@@ -6001,14 +6002,31 @@
     const run=(name,fn)=>{const b=menu.querySelector('[data-mac-menu="'+name+'"]');if(b)b.onclick=e=>{
       e.stopPropagation();try{fn();}catch(_){PC().toast&&PC().toast('that desktop action is unavailable');}
     }};
-    run('posterchan',()=>toggleStart());
-    run('settings',()=>openSystemSettings());
+    run('settings',()=>{openLauncherApp('settings');const d=$('#os-mac-posterchan',root);if(d)d.open=false;});
+    run('system-settings',()=>{openSystemSettings();const d=$('#os-mac-posterchan',root);if(d)d.open=false;});
     run('tasks',()=>openTaskManager());
     run('view',()=>toggleFull());
   }
 
+  /* In macOS mode the status area is top-bar furniture, not Dock content. Merely making a tray
+   * `position:fixed` is not enough: transformed/filtered ancestors create a new fixed containing
+   * block and flex still sizes the descendant as part of the Dock. Move the actual node between
+   * the shell root and taskbar so connectivity, machine controls and time cannot consume Dock
+   * width. Switching back restores the ordinary single taskbar structure. */
+  function placeDesktopTray(){
+    if(!root||!bar)return;
+    let tray=$('.os-tray',bar)||$('.os-tray',root);
+    if(!tray)return;
+    const host=root.classList.contains('os-style-mac')?root:bar;
+    if(tray.parentElement!==host)host.appendChild(tray);
+  }
+
   function drawBar(){
     if(!bar) return;
+    /* A preceding macOS draw leaves its tray beside the Dock. The markup below creates the one new
+     * tray for this frame, so discard the old detached instance first instead of accumulating
+     * clocks and relay watchers across focus changes. */
+    $$('.os-tray',root).filter(x=>x.parentElement!==bar).forEach(x=>x.remove());
     // Remember whether the search box had the caret BEFORE the rebuild throws the element away.
     try{ barFocused = barFocused || (document.activeElement && document.activeElement.id === 'os-q-bar'); }catch(_){}
     const t = new Date();
@@ -6163,6 +6181,7 @@
     });
     $$('.os-native-max',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.snap(Number(b.dataset.id),'max')).catch(()=>{}); });
     $$('.os-native-close',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.close(Number(b.dataset.id))).catch(()=>{}); });
+    placeDesktopTray();
   }
 
   // ---- notification centre ---------------------------------------------------------------------
@@ -7013,8 +7032,9 @@
     applyDesktopEffects();
     applyDesktopStyle();
     root.innerHTML = `<nav class="os-mac-menu" id="os-mac-menu" aria-label="Desktop menu">
-      <button data-mac-menu="posterchan" aria-label="Open PosterChan menu">● <b>PosterChan</b></button>
-      <button data-mac-menu="settings">System Settings</button>
+      <details class="os-mac-appmenu" id="os-mac-posterchan"><summary aria-label="Open PosterChan menu">● <b>PosterChan</b></summary>
+        <div class="os-mac-dropdown" role="menu"><button role="menuitem" data-mac-menu="settings">Settings</button>
+          <button role="menuitem" data-mac-menu="system-settings">System Settings</button></div></details>
       <button data-mac-menu="tasks">Task Manager</button>
       <button data-mac-menu="view">Full Screen</button>
     </nav><div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>`;

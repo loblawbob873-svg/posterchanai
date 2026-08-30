@@ -7449,12 +7449,20 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   box-shadow:0 1px 12px rgba(0,0,0,.22);pointer-events:none}
 .os-mac-menu{display:none}
 .os-root.os-style-mac .os-mac-menu{position:absolute;z-index:308;inset:0 min(430px,42vw) auto 7px;
-  height:var(--mac-menu-h);display:flex;align-items:center;gap:1px;overflow:hidden;white-space:nowrap}
+  height:var(--mac-menu-h);display:flex;align-items:center;gap:1px;overflow:visible;white-space:nowrap}
 .os-root.os-style-mac .os-mac-menu button{flex:0 0 auto;height:26px;padding:0 8px;border:0;border-radius:6px;
   background:transparent;color:rgba(255,255,255,.94);font:500 12px/1 -apple-system,BlinkMacSystemFont,
   "SF Pro Text","Helvetica Neue",sans-serif;cursor:pointer;text-shadow:0 1px 2px #0008}
 .os-root.os-style-mac .os-mac-menu button:hover,.os-root.os-style-mac .os-mac-menu button:focus-visible{
   background:rgba(255,255,255,.16);outline:0}.os-root.os-style-mac .os-mac-menu button:first-child{font-weight:600}
+.os-root.os-style-mac .os-mac-appmenu{position:relative;height:30px;color:#fff}
+.os-root.os-style-mac .os-mac-appmenu summary{height:26px;padding:0 8px;display:flex;align-items:center;gap:5px;
+  border-radius:6px;cursor:pointer;list-style:none;font-size:12px;text-shadow:0 1px 2px #0008}
+.os-root.os-style-mac .os-mac-appmenu summary::-webkit-details-marker{display:none}
+.os-root.os-style-mac .os-mac-appmenu[open] summary,.os-root.os-style-mac .os-mac-appmenu summary:hover{background:rgba(255,255,255,.16)}
+.os-root.os-style-mac .os-mac-dropdown{position:absolute;z-index:360;top:28px;left:0;width:190px;padding:5px;
+  border:1px solid rgba(255,255,255,.2);border-radius:8px;background:rgba(38,41,49,.96);box-shadow:0 15px 36px #0008}
+.os-root.os-style-mac .os-mac-dropdown button{display:block;width:100%;height:30px;text-align:left;padding:0 10px}
 /* Make the desk itself the usable rectangle. Widgets, free icons, window clamps and pointer hit tests
    all measure this element, so margins reserve the menu/Dock in one place instead of merely painting
    padding over a full-height coordinate system and clipping anything placed at its bottom edge. */
@@ -7518,7 +7526,20 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .os-task.on{background:rgba(255,255,255,.1);box-shadow:none}
 .os-root.os-style-mac .os-task.on::after{content:'';position:absolute;bottom:-4px;width:4px;height:4px;
   border-radius:50%;background:#fff;box-shadow:0 0 5px #fff8}
-.os-root.os-style-mac .os-task .ic{width:27px;height:27px;color:#f4f6fa}
+/* macOS mode gets an icon language of its own. Native applications keep their real desktop-file
+   artwork, clipped to the rounded-square mask used by the Dock. PosterChan's monochrome sprite
+   fallbacks become coloured squircle tiles rather than bare Windows-style line glyphs. */
+.os-root.os-style-mac .os-task>.os-app-ic{width:39px;height:39px;display:block;object-fit:cover;
+  border-radius:10px;box-shadow:0 2px 7px #0007,0 1px 0 rgba(255,255,255,.25) inset}
+.os-root.os-style-mac .os-task>.ic{box-sizing:border-box;width:39px;height:39px;padding:8px;border-radius:10px;
+  color:#fff;background:linear-gradient(145deg,#58a9ff,#0969d7);box-shadow:0 2px 7px #0007,
+  0 1px 0 rgba(255,255,255,.28) inset}
+.os-root.os-style-mac .os-task:nth-child(4n+2)>.ic{background:linear-gradient(145deg,#b37cff,#7042d7)}
+.os-root.os-style-mac .os-task:nth-child(4n+3)>.ic{background:linear-gradient(145deg,#ff9768,#e24c39)}
+.os-root.os-style-mac .os-task:nth-child(4n)>.ic{background:linear-gradient(145deg,#58d39a,#16815c)}
+/* The top-right status area is menu-bar furniture: compact monochrome symbols, never Dock tiles. */
+.os-root.os-style-mac .os-tray .ic,.os-root.os-style-mac .os-tray-group svg{width:16px;height:16px;color:#fff}
+.os-root.os-style-mac .os-tray-group{height:26px;padding:0 5px;border:0;background:transparent;color:#fff}
 .os-root.os-style-mac .os-tray{position:fixed;z-index:307;inset:0 9px auto auto;height:var(--mac-menu-h);
   gap:7px;color:#fff}.os-root.os-style-mac .os-tray button{height:26px;border-radius:6px;background:transparent}
 .os-root.os-style-mac .os-tray button:hover{background:rgba(255,255,255,.14)}

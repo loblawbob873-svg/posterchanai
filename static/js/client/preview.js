@@ -265,12 +265,19 @@
       var av = q(kind === 'video' ? '.pv-vid' : '.pv-aud');
       av.src = url;
       var state = q('.pv-media-state');
-      av.onloadedmetadata = function () { if (state) state.remove(); };
+      var stalled = kind === 'video' ? setTimeout(function () {
+        var b = q('.pv-body');
+        if (b) b.innerHTML = '<div class="empty">This video did not start on this device.'
+          + '<br>Download it and open it in another player.</div>';
+      }, 12000) : 0;
+      var mediaDone = function () { if (stalled) { clearTimeout(stalled); stalled = 0; } };
+      av.onloadedmetadata = function () { mediaDone(); if (state) state.remove(); };
       /* A CODEC THIS BROWSER CANNOT PLAY MUST SAY SO. A <video> handed a container it cannot decode
        * (an .mkv or an .avi almost anywhere, HEVC in Firefox) fires `error` and then shows a black
        * rectangle with dead controls, which reads as a broken player rather than an unsupported
        * file - and on the drive that is a file somebody may have only one copy of. */
       av.onerror = function () {
+        mediaDone();
         var b = q('.pv-body');
         if (b) b.innerHTML = '<div class="empty">This browser cannot play that format.'
           + '<br>Download it and open it in a real player.</div>';
@@ -278,6 +285,7 @@
       /* Explicit load matters in Android WebView and after a desktop document window is recycled:
        * assigning a blob URL alone can leave the old, empty media resource selected. */
       try { av.load(); } catch (_) {}
+      cleanup = function () { mediaDone(); try { av.pause(); av.removeAttribute('src'); av.load(); } catch (_) {} };
     } else if (kind === 'pdf') {
       cleanup = renderPdf(host, blob, name);
     }

@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,10 +58,15 @@ def test_mac_style_is_a_desktop_experience_not_only_traffic_lights():
 def test_mac_menu_is_accessible_real_controls_wired_to_existing_actions():
     enter = JS[JS.index("function enter()") : JS.index("function exit(")]
     assert 'aria-label="Desktop menu"' in enter
-    for key in ("posterchan", "settings", "tasks", "view"):
+    for key in ("settings", "system-settings", "tasks", "view"):
         assert f'data-mac-menu="{key}"' in enter
+    assert 'class="os-mac-appmenu"' in enter
+    assert enter.count('>System Settings</button>') == 1
+    menu_css = CSS[CSS.index(".os-root.os-style-mac .os-mac-menu{"):
+                   CSS.index(".os-root.os-style-mac .os-mac-menu button{")]
+    assert "overflow:visible" in menu_css
     wire = function("wireMacMenu")
-    for action in ("toggleStart()", "openSystemSettings()", "openTaskManager()", "toggleFull()"):
+    for action in ("openLauncherApp('settings')", "openSystemSettings()", "openTaskManager()", "toggleFull()"):
         assert action in wire
     assert "pointer-events:none" not in wire
 
@@ -85,6 +91,28 @@ def test_mac_dock_does_not_capture_or_duplicate_the_top_tray():
                mac.index(".os-root.os-style-mac .os-clock")]
     assert "position:fixed" in tray
     assert "inset:0 9px auto auto" in tray
+    place = function("placeDesktopTray")
+    assert "root.classList.contains('os-style-mac')?root:bar" in place
+    assert "host.appendChild(tray)" in place
+    draw = function("drawBar")
+    assert "placeDesktopTray();" in draw
+
+
+def test_mac_mode_has_theme_specific_dock_and_status_icons():
+    mac = CSS[CSS.index("/* Optional macOS desktop experience"):
+              CSS.index("@media(max-width:1180px)", CSS.index("/* Optional macOS desktop experience"))]
+    assert ".os-root.os-style-mac .os-task>.os-app-ic" in mac
+    assert ".os-root.os-style-mac .os-task>.ic" in mac
+    assert "border-radius:10px" in mac and "linear-gradient(145deg" in mac
+    assert ".os-root.os-style-mac .os-tray-group" in mac
+    assert "compact monochrome symbols" in mac
+
+
+def test_tray_reparenting_executes_in_both_desktop_styles():
+    run = subprocess.run(["node", "tests/client/mac_tray_sim.js"], cwd=ROOT,
+                         text=True, capture_output=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "structurally separate" in run.stdout
 
 
 def test_style_change_reflows_windows_and_widgets_to_the_new_work_area():
