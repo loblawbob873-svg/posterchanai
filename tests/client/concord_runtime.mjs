@@ -45,7 +45,7 @@ const dollars = selector => {
   }
   return found;
 };
-const calls = {toasts:[], notified:0, group:0, mentions:[], wraps:[], publishTargets:[], queryTargets:[], profiles:[], discoveryOpened:0, discoveryClosed:0};
+const calls = {toasts:[], notified:0, group:0, mentions:[], wraps:[], publishTargets:[], queryTargets:[], profiles:[], discoveryOpened:0, discoveryClosed:0, discoveryOpenIds:[]};
 let activeView = 'concord';
 const JOIN_URL='https://armada.buzz/invite/naddr1pppp#abc_DEF';
 const JOIN_BUNDLE={community_id:'1'.repeat(64),owner:'2'.repeat(64),owner_salt:'3'.repeat(64),
@@ -93,7 +93,15 @@ window.__PC = {
   copyValue:value=>{ calls.copied=value; },
   openProfile:pk=>{ calls.profiles.push(pk); },
   osNotify:(title,body,opts)=>{ calls.mentions.push({title,body,opts}); },
-  relaySubscribe:(_filters,handlers)=>{calls.discoveryOpened++;calls.discoveryHandlers=handlers;return{close(){calls.discoveryClosed++;}};},
+  /* A subId STRING and a relayClose, because that is what app.js's PC surface actually provides.
+   The old fake returned {close(){…}} and counted the call, so `discoveryClosed` proved a close
+   that never happened in a browser: Relay.subscribe answers a string and concord's
+   `typeof sub.close === 'function'` guard was false every time. */
+relaySubscribe:(_filters,handlers)=>{calls.discoveryOpened++;calls.discoveryHandlers=handlers;
+                                     const id='sub'+calls.discoveryOpened;calls.discoveryOpenIds.push(id);return id;},
+relayClose:id=>{if(typeof id!=='string')throw new Error('relayClose got a '+typeof id);
+                if(!calls.discoveryOpenIds.includes(id))throw new Error('closed an unknown sub: '+id);
+                calls.discoveryClosed++;},
   relayQuery:async filters=>relayFixtures(filters),
   relayQueryFrom:async(relays,filters,options={})=>{calls.queryTargets.push([...relays]);calls.queryOptions=(calls.queryOptions||[]).concat(options);return relayFixtures(filters);},
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,

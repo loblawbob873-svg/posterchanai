@@ -19,6 +19,27 @@
    * global compatibility set to every read/write caused a room open to spray sockets at unrelated
    * relays and could report a successful send on a default relay Armada never reads. Defaults are
    * bootstrap fallback only for old bundles which carry no usable relay. */
+  /* NORMALISE A SUBSCRIPTION TO A CLOSER, at the call site that still has `p`.
+   *
+   * The three subscription APIs here return three different things and only one of them is an
+   * object: `Relay.subscribe` (via `p.relaySubscribe`) answers a subId STRING, `Relay.subscribeFrom`
+   * answers a FUNCTION that closes itself, and nothing answers `{close(){}}`. Both stop paths
+   * nevertheless tested `typeof sub.close === 'function'` — false for a string, every time — so the
+   * chat and discovery subscriptions were never closed. A leaked live REQ is not idle: it stays open
+   * on every relay in the pool, and relays cap concurrent subscriptions per connection, so after
+   * enough channel switches a freshly opened room cannot get a live subscription at all and drops to
+   * the 4-second poller. That is the "rooms are not reliably live" report.
+   *
+   * The tests could not see it because their `relaySubscribe` fakes returned `{close(){}}` and then
+   * counted the close — a fixture asserting the opposite of the real contract. Hence
+   * tests/client/test_relay_subscription_contract.py, which checks the fakes against relay.js. */
+  function subCloser(p,sub){
+    if(!sub)return null;
+    if(typeof sub==='function')return sub;                       // subscribeFrom's own closer
+    if(typeof sub.close==='function')return ()=>{sub.close();};   // an object, if one ever appears
+    if(typeof sub==='string')return ()=>{if(p&&p.relayClose)p.relayClose(sub);};
+    return null;
+  }
   function roomRelays(bundle){
     const own=[...new Set((bundle&&bundle.relays||[]).map(normalizeRelay).filter(Boolean))];
     return (own.length?own:CORD_RELAYS).slice(0,8);
@@ -787,12 +808,12 @@
     const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); paintDiscovery(); };
     const onEose=()=>{ discoveryLoaded=true; paintDiscovery(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
-    try{ discoverySubscription=p.relaySubscribe(filters,{onEvent,onEose,live:true})||null; if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2,signal,purpose:'concord discover listings'}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
+    try{ discoverySubscription=subCloser(p,p.relaySubscribe(filters,{onEvent,onEose,live:true})); if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2,signal,purpose:'concord discover listings'}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
   }
   function stopDiscovery(){
     const subscription=discoverySubscription;discoverySubscription=null;discoveryStarted=false;
     const aborter=discoveryAbortController;discoveryAbortController=null;if(aborter)aborter.abort();
-    if(subscription&&typeof subscription.close==='function')try{subscription.close();}catch(_){}
+    if(subscription)try{subscription();}catch(_){}
   }
   async function hydrateInvite(p,url,signal=null){
     if(!window.PosterCord||!p.relayQueryFrom)throw new Error('CORD protocol is unavailable');
@@ -1336,7 +1357,7 @@
   function stopChatLive(){
     const sub=chatSub;chatSub=null;chatSubKey='';chatBuffer=[];
     if(chatFlush){clearTimeout(chatFlush);chatFlush=null;}
-    if(sub&&typeof sub.close==='function')try{sub.close();}catch(_){}
+    if(sub)try{sub();}catch(_){}
   }
   function startChatLive(p,room,channel){
     const key=roomIdentity(room)+'\n'+String(channel&&channel.id||'');
@@ -1355,7 +1376,7 @@
       if(chatFlush)return;
       chatFlush=setTimeout(()=>{chatFlush=null;void flushChatLive(p,key);},350);
     };
-    try{ chatSub=p.relaySubscribe([{kinds:[1059],authors,since}],{onEvent,live:true})||null; }
+    try{ chatSub=subCloser(p,p.relaySubscribe([{kinds:[1059],authors,since}],{onEvent,live:true})); }
     catch(_){ chatSubKey=''; }
   }
   async function flushChatLive(p,key){

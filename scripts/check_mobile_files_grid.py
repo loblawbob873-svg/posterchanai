@@ -5,7 +5,11 @@ import http.server
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VIEWPORTS = ((360, 780), (412, 915))
-PORT = 9503
+# The runner hands every check its own port (checkall.py: PORT_BASE + index) because the
+# browser checks run CONCURRENTLY. Hardcoded, two of them running at once bind the same HTTP
+# server port and attach to the same Chrome — the bug that made four checks share 9473. The
+# literal stays as the standalone-run default.
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9503)
 
 PAGE = r'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/static/css/client.css"><body>

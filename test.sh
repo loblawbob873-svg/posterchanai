@@ -21,6 +21,18 @@ for a in "$@"; do
   fi
 done
 
+# The venv, found from a GIT WORKTREE too. A worktree has no venv-unified/ of its own — it is not a
+# tracked file — so this used to fall through to a bare `python3` with no websockets, and 45 of the
+# 85 checks then reported "websockets not installed" or a red ModuleNotFoundError. The whole board
+# printed in eight seconds and looked like a suite that had run. `git rev-parse --git-common-dir`
+# resolves to the MAIN checkout's .git from inside any worktree, so its parent holds the venv.
 PY=venv-unified/bin/python
-[ -x "$PY" ] || PY=python3
+if [ ! -x "$PY" ]; then
+  COMMON=$(git rev-parse --git-common-dir 2>/dev/null || true)
+  if [ -n "$COMMON" ] && [ -x "$(dirname "$COMMON")/venv-unified/bin/python" ]; then
+    PY="$(dirname "$COMMON")/venv-unified/bin/python"
+  else
+    PY=python3   # Docker and a bare pip install both run with the active interpreter; checkall.py
+  fi             # says so out loud if that interpreter cannot actually run a check.
+fi
 exec "$PY" scripts/checkall.py "$@"

@@ -4240,7 +4240,16 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
         out = _cap_drafts(merged.values())
         await store.put_doc(port, sk, "pcai:drafts", {"drafts": out})
         return JSONResponse({"ok": True, "drafts": out})
-    doc = await store.get_doc(port, "pcai:drafts", seckey=sk)
+    # STRICT on the LOAD half too. `Drafts.pull()` merges the answer with what this device holds and
+    # writes the union to localStorage, so a loose read that answers [] for an unreachable relay is
+    # harmless here — but it is one behaviour change away from not being, and the endpoint has no
+    # way to say "I could not ask" otherwise. The client already ignores anything that is not
+    # `r.ok`, so a refusal costs a round trip and leaves the local copy exactly as it was.
+    try:
+        doc = await store.get_doc(port, "pcai:drafts", seckey=sk, strict=True)
+    except Exception as e:
+        logger.warning("[client] drafts: cannot read drafts for %s: %s", pk[:12], e)
+        return JSONResponse({"ok": False, "error": "drafts unavailable"}, status_code=503)
     drafts = doc.get("drafts", []) if isinstance(doc, dict) else []
     return JSONResponse({"ok": True, "drafts": drafts if isinstance(drafts, list) else []})
 
@@ -5211,7 +5220,19 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
         # A kept key rides the answer so the sender adopts NOW — waiting for its next pull leaves a
         # window in which it keeps sealing new uploads with the key that just lost.
         return JSONResponse({"ok": True, "mk": mk_kept} if mk_kept else {"ok": True})
-    doc = await store.get_doc(port, "pcai:files-index", seckey=sk)
+    # STRICT — and this is the read that makes the CLIENT's existing guard work rather than a change
+    # of behaviour. `_pull()` in app.js sets `_pullOk` (which is what permits the next save) only on
+    # `r.ok`, and it treats an ok response carrying no index as "server has no index at all — a
+    # fresh drive, safe to save". A loose read answers exactly that for an unreachable relay, so the
+    # one branch written to mean "this account is new" was also being reached by "I could not ask",
+    # and the next save then replaced a full drive index with an empty default. That is the wipe
+    # `scripts/restore_files_index.py` exists to undo. Answering 503 instead leaves `_pullOk` false,
+    # which is precisely the state the client already refuses to write from.
+    try:
+        doc = await store.get_doc(port, "pcai:files-index", seckey=sk, strict=True)
+    except Exception as e:
+        logger.warning("[client] files-index: cannot read the index for %s: %s", pk[:12], e)
+        return JSONResponse({"ok": False, "error": "index unavailable"}, status_code=503)
     return JSONResponse({"ok": True, "index": doc if isinstance(doc, dict) else {}})
 
 

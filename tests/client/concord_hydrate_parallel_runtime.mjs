@@ -42,7 +42,11 @@ const asked = [];
 const p = {
   toast: noop, profOf: () => ({}), enc: s => String(s), $: () => null,
   viewer: () => ({pubkey:'c'.repeat(64), profile:{}}), isView: () => true,
-  relaySubscribe: () => ({close(){}}),
+  // A subId string + relayClose, matching app.js's real PC surface (see
+  // tests/client/test_relay_subscription_contract.py — a fake with a contract the real module does
+  // not have is how the never-closed Concord subscriptions stayed invisible).
+  relaySubscribe: () => 'sub-hydrate',
+  relayClose: () => {},
   relayQuery: async () => [],
   relayQueryFrom: async (relays, filters) => {
     const authors = (filters && filters[0] && filters[0].authors) || [];

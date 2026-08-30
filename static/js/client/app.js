@@ -34775,6 +34775,14 @@
        calls it directly has a copy button that silently does nothing on two of three platforms. */
     copyValue,
     relaySubscribe: (filters, handlers) => Relay.subscribe(filters, handlers),
+    /* The other half of relaySubscribe, and it was MISSING — which is why nothing outside app.js
+     * could close a pooled subscription at all. `Relay.subscribe` answers a subId STRING, so
+     * concord.js's `typeof sub.close === 'function'` guard was false every time and both its live
+     * subscriptions (chat and discovery) stayed open for the life of the page. Every channel switch
+     * left another REQ running on every relay, and relays cap concurrent subscriptions — so past
+     * that cap a newly opened room gets no live subscription at all and falls back to the 4s
+     * poller. "Joined rooms are not reliably live." */
+    relayClose: subId => Relay.close(subId),
     relayPublish: ev => Relay.publish(ev),
     relayPublishTo: (relays, ev) => Relay.publishTo(relays, ev),
     relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev),

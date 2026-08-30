@@ -49,10 +49,21 @@ window.PosterCordReader = {
   },
 };
 
-let subFilters = null, subLive = null, onEvent = null, closed = 0;
+let subFilters = null, subLive = null, onEvent = null, closed = 0, openIds = [];
+/* THE FAKE RETURNS WHAT THE REAL ONE RETURNS: a subId STRING, closed through `relayClose`.
+ *
+ * It used to answer `{close(){ closed++; }}` and the assertion at the bottom then PROVED a close
+ * path that could never run — `Relay.subscribe` answers a string, so concord's
+ * `typeof sub.close === 'function'` guard was false every time and the subscription was never
+ * closed. A fixture with a contract the real module does not have is worse than no fixture: it
+ * turns the leak into evidence that there is no leak. tests/client/test_relay_subscription_contract.py
+ * is what stops one drifting back. */
 const p = {
   relaySubscribe: (filters, h) => { subFilters = filters; subLive = h && h.live; onEvent = h && h.onEvent;
-                                    return {close(){ closed++; }}; },
+                                    const id = 'sub' + (openIds.length + 1); openIds.push(id); return id; },
+  relayClose: id => { if (typeof id !== 'string') throw new Error('relayClose got a ' + typeof id);
+                      if (!openIds.includes(id)) throw new Error('closed an unknown sub: ' + id);
+                      closed++; },
   relayQuery: async () => { throw new Error('the live path must not poll'); },
   relayQueryFrom: async () => { throw new Error('the live path must not poll'); },
   verifyRelayEvents: async e => e, profOf: () => ({}), toast: noop,

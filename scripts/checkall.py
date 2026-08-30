@@ -54,9 +54,69 @@ import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PY = str(ROOT / "venv-unified" / "bin" / "python")
-if not os.path.exists(PY):
-    PY = sys.executable
+
+
+def _interpreter(root=None):
+    """The venv that has the checks' dependencies — found from a GIT WORKTREE too.
+
+    `root` is a parameter so this can be tested against a REAL git worktree in a temp directory
+    (tests/test_check_suite_runs_in_a_worktree.py). Tested only against the live ROOT it would pass
+    in the main checkout — where the bug does not happen — and go on failing everywhere it does.
+
+    A worktree has no `venv-unified/` of its own: the venv lives in the main checkout and is not a
+    tracked file, so `.claude/worktrees/<name>/venv-unified` does not exist. The old two-liner fell
+    straight through to `sys.executable` — a bare system python with no `websockets` — and the whole
+    browser half of the suite then reported SKIP ("websockets not installed") or a red
+    ModuleNotFoundError. Measured on this box: 45 of 85 checks did not run, the board printed in
+    EIGHT SECONDS, and it looked like a suite that had executed.
+
+    That is the worst possible shape for a release gate, and it fires in exactly the situation the
+    gate matters most: an agent or a person working in a worktree, where "I ran the tests" is
+    answered by a board that checked almost nothing. `git rev-parse --git-common-dir` points at the
+    main checkout's `.git` from inside any worktree, so its parent is where the venv actually is.
+    """
+    root = pathlib.Path(root) if root is not None else ROOT
+    cands = [root / "venv-unified" / "bin" / "python"]
+    try:
+        common = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=str(root),
+                                capture_output=True, text=True, timeout=10)
+        if common.returncode == 0:
+            main = (root / common.stdout.strip()).resolve().parent
+            cands.append(main / "venv-unified" / "bin" / "python")
+    except Exception:
+        pass
+    for c in cands:
+        if os.path.exists(c):
+            return str(c)
+    # Docker and a bare `pip install -r requirements.txt` both run the checks with the ACTIVE
+    # interpreter and no venv directory, which is legitimate — so this stays a fallback rather than
+    # an error. `_warn_if_interpreter_cannot_check()` is what stops it being a silent one.
+    return sys.executable
+
+
+PY = _interpreter()
+
+
+def _interpreter_is_equipped():
+    """Can the chosen interpreter actually run a browser check? Returns (ok, missing-module).
+
+    `websockets` is the one, and deliberately the ONLY one asked for: it is what every check that
+    drives a browser or a relay imports, and "websockets not installed" is verbatim what 30-odd of
+    them printed while skipping. The browser itself is driven over CDP, so the `playwright` PYTHON
+    package is not a dependency here even though a playwright-installed Chrome is what gets driven
+    — demanding it made this probe report a broken interpreter that had just run a check to
+    completion. Asked by RUNNING the interpreter, not by importing here: the checks are
+    subprocesses, and this process's own imports say nothing about theirs.
+    """
+    try:
+        r = subprocess.run([PY, "-c", "import websockets"],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            return True, ""
+        m = re.search(r"No module named '([^']+)'", r.stderr or "")
+        return False, (m.group(1) if m else (r.stderr or "").strip()[:80])
+    except Exception as e:
+        return False, str(e)[:80]
 
 # ---------------------------------------------------------------------------------------------
 # What cannot be inferred from the filename. Everything absent from here is assumed to be a
@@ -552,6 +612,22 @@ def main():
               + ", ".join(r["name"] for r in unreg))
         say("  Add an entry if it needs a live instance or longer than "
               f"{DEFAULT_SECS}s, or it will fail here for the wrong reason.")
+
+    # THE INTERPRETER, SAID OUT LOUD — last, where the verdict is read.
+    #
+    # Every "websockets not installed" skip and every ModuleNotFoundError above has ONE cause when
+    # it happens in bulk, and it is not the code under test: this run is driving a python that
+    # cannot import what a check needs. From a git worktree that used to be silent and total — 45
+    # of 85 checks gone, a board in eight seconds, and nothing on screen naming the interpreter.
+    equipped, missing = _interpreter_is_equipped()
+    if not equipped:
+        say(f"\n{C['red']}{C['bold']}THE CHECKS RAN UNDER AN INTERPRETER THAT CANNOT RUN THEM"
+            f"{C['off']}")
+        say(f"  interpreter: {PY}")
+        say(f"  missing:     {missing}")
+        say("  Every skip and ModuleNotFoundError above is this, not the code. Point it at the "
+            "venv that\n  has the dependencies (venv-unified/bin/python), or install them here. "
+            "Until then this\n  board is not a release gate.")
 
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps(

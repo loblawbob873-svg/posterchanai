@@ -139,7 +139,9 @@ async def main():
     except Exception as e:
         print(f"{BASE} unreachable: {e}"); return 2
 
-    prof = "/tmp/pc-dmvideo-check"
+    # Per-run — see checkall.py PC_CHECK_PROFILE. Two concurrent Chromes cannot share one
+    # profile directory without one of them dying on a lock.
+    prof = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-dmvideo-check"
     shutil.rmtree(prof, ignore_errors=True)
     p = subprocess.Popen([CHROME, "--headless=new", f"--remote-debugging-port={PORT}",
                           f"--user-data-dir={prof}", "--no-first-run", "--no-sandbox",

@@ -154,7 +154,10 @@ def main():
         return 2
     server = ThreadingHTTPServer(("127.0.0.1", PORT), lambda *a, **k: Handler(*a, directory=ROOT, **k))
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    profile = "/tmp/pc-concord-mobile-check"
+    # Per-run, because the browser checks run CONCURRENTLY: two Chromes on one profile
+    # directory corrupt it and one dies on a lock, intermittently — which reads as a flaky
+    # feature rather than a flaky harness. The literal is the standalone-run default.
+    profile = os.environ.get("PC_CHECK_PROFILE") or "/tmp/pc-concord-mobile-check"
     shutil.rmtree(profile, ignore_errors=True)
     proc = subprocess.Popen([chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
                              f"--remote-debugging-port={DEBUG}", f"--user-data-dir={profile}", "about:blank"],

@@ -4,7 +4,11 @@ import asyncio, json, os, re, shutil, subprocess, tempfile, urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "static/js/client/app.js")
-PORT = 9497
+# The runner hands every check its own port (checkall.py: PORT_BASE + index) because the
+# browser checks run CONCURRENTLY. Hardcoded, two of them running at once bind the same HTTP
+# server port and attach to the same Chrome — the bug that made four checks share 9473. The
+# literal stays as the standalone-run default.
+PORT = int(os.environ.get("PC_CHECK_PORT") or 9497)
 VIEWPORTS = ((360, 780), (412, 915))
 
 
