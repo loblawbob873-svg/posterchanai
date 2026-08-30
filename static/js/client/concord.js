@@ -1366,8 +1366,19 @@
     let info=null; try{ info=reader.inspectControl(bundle,controlWraps||[]); }catch(_){ return null; }
     const live=((info&&info.channels)||[]).filter(c=>c&&c.name);
     if(!live.length) return null;
-    room.channels=live.map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys}));
-    return room.channels.find(c=>c.name===wantName)||room.channels[0];
+    /* IT LOOKS UP AN ID. IT DOES NOT REWRITE THE ROOM.
+     *
+     * This used to replace `room.channels` with whatever this control read yielded, and readChat
+     * persisted that. A control read is often PARTIAL — some events back, not all, which is the
+     * ordinary case on a slow relay — so one stale id was enough to DELETE every channel that
+     * partial read did not mention. Those channels then reported "channel is not readable with this
+     * membership", for ever, and the community looked empty. Reported on Android and then on the
+     * desktop, and it got worse the more retries I added, because every retry was another chance to
+     * overwrite the list with less of it.
+     *
+     * And only BY NAME. Falling back to the first live channel silently moved somebody to a
+     * different conversation and called it a repair. */
+    return live.find(c=>c.name===wantName)||null;
   }
   /* Read the channel, and repair the saved list rather than throwing on every tick. The repair is
    * announced on screen — silently moving somebody to a different channel is worse than the error,
@@ -1378,8 +1389,8 @@
       if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
       const fixed=reconcileChannels(reader,bundle,controlWraps,room,channel.name);
       if(!fixed) throw e;
-      const rooms=saved(),i=rooms.findIndex(r=>roomIdentity(r)===roomIdentity(room));
-      if(i>=0){ rooms[i].channels=room.channels; save(rooms); }
+      /* Nothing is persisted here: the repair is an id lookup for THIS read, and the saved
+       * channel list belongs to applyControl, which sees the whole control stream. */
       if(fixed.name!==channel.name){ state.channel=fixed.name; if(p&&p.toast)p.toast('#'+channel.name+' is no longer in this community — showing #'+fixed.name); }
       return await reader.inspectChat(bundle,controlWraps,fixed.id,wraps);
     }

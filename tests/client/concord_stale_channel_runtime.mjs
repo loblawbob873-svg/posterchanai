@@ -60,9 +60,38 @@ if (!(opened && (opened.messages || []).length))
 if (!asked.includes('chan-NEW'))
   throw new Error('it never retried against the channel the community actually has: ' + asked.join(','));
 
+/* THE REPAIR IS AN ID LOOKUP FOR THIS READ. IT MUST NOT REWRITE THE ROOM.
+ *
+ * It used to replace room.channels with whatever THIS control read yielded, and persist that. A
+ * control read is often PARTIAL — some events back, not all, the ordinary case on a slow relay — so
+ * one stale id was enough to delete every channel that read did not mention. Those channels then
+ * reported "channel is not readable with this membership" for ever and the community looked empty. */
 const after = JSON.parse(localStorage.getItem('pc.concord.invites'))[0];
-if (!(after.channels || []).some(c => c.id === 'chan-NEW'))
-  throw new Error('the stale channel list was not repaired on disk: ' + JSON.stringify(after.channels));
+if ((after.channels || []).length !== 1 || after.channels[0].id !== 'chan-OLD')
+  throw new Error('the repair rewrote the saved channel list: ' + JSON.stringify(after.channels));
+
+/* AND A PARTIAL CONTROL SET MUST NOT COST A ROOM ITS OTHER CHANNELS. */
+{
+  const many = {protocol:'cord', name:'Big', communityId:'cid-many', naddr:'cid-many',
+    channels:[{name:'general', id:'g1', streamPubkeys:['b'.repeat(64)]},
+              {name:'random',  id:'r1', streamPubkeys:['b'.repeat(64)]},
+              {name:'dev',     id:'d1', streamPubkeys:['b'.repeat(64)]}],
+    cord:{bundle:BUNDLE}};
+  store['pc.concord.invites'] = JSON.stringify([many]);
+  const partial = {
+    /* Only ONE channel came back this time. */
+    inspectControl: () => ({name:'Big', channels:[{id:'g2', name:'general', streamPubkeys:['b'.repeat(64)]}],
+                            controlPubkeys:['b'.repeat(64)]}),
+    inspectChat: async (b, w, id) => {
+      if (id !== 'g2') throw new Error('channel is not readable with this membership');
+      return {messages:[], reactions:[], reactionUrls:[], pollVotes:[]};
+    },
+  };
+  await api.readChat(p, partial, BUNDLE, [{id:'ctrl-1'}], many, many.channels[0], []);
+  const kept = JSON.parse(localStorage.getItem('pc.concord.invites'))[0];
+  if ((kept.channels || []).length !== 3)
+    throw new Error('a partial control read deleted channels: ' + JSON.stringify(kept.channels));
+}
 
 /* AND A GENUINELY UNREADABLE COMMUNITY STILL SAYS SO. An empty control set is "could not ask" —
    repairing from it would replace a real channel list with nothing. */
