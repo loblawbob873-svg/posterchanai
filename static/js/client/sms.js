@@ -1171,8 +1171,24 @@
         let sha = '';
         try{ sha = await archivePart(p); }
         catch(e){
-          p.err = String((e && e.message) || e).slice(0, 160);
-          if(!p.err) p.err = 'the attachment could not be read';
+          /* A FAILED RE-READ MUST NEVER ERASE A COPY WE ALREADY STORED.
+           *
+           * `archivePart` re-reads a part whenever it still wants a preview for it — an image with
+           * a hash but no thumbnail is re-read on every sweep — and the provider is allowed to
+           * refuse the second time even though it answered the first. `sha` was then left empty and
+           * the document was republished carrying an ERROR in place of the hash it already had, so
+           * a picture or video that had been playing for days turned back into "not backed up" and
+           * the browser reported no supported source. Measured across two sweeps on the reporting
+           * account: with_real_media 187 -> 177 while attachments_refused went 3 -> 13, the same ten.
+           *
+           * The bytes are still in the drive under that hash — nothing about a failed provider read
+           * makes them less valid — so keep it, and say nothing about a failure that costs the
+           * reader nothing. */
+          if(/^[0-9a-f]{64}$/i.test(String(p.sha || ''))) sha = p.sha;
+          else {
+            p.err = String((e && e.message) || e).slice(0, 160);
+            if(!p.err) p.err = 'the attachment could not be read';
+          }
         }
         const att = { ct: p.ct, name: p.name, bytes: p.bytes, sha: sha || '', thumb: p.thumb || '' };
         // Only when it is true: an absent key keeps an ordinary picture message's document
