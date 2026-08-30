@@ -7512,11 +7512,11 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .os-tray button:hover{background:rgba(255,255,255,.14)}
 .os-root.os-style-mac .os-clock{align-items:flex-end;padding:0 6px}.os-root.os-style-mac .os-clock span{display:none}
 .os-root.os-style-mac .os-clock b{font-size:11.5px;color:#fff}
-.os-root.os-style-mac .os-startmenu{left:50%;bottom:82px;width:min(720px,calc(100vw - 30px));
-  max-height:min(680px,calc(100vh - 130px));border:1px solid rgba(255,255,255,.22);border-radius:22px;
+.os-root.os-style-mac .os-startmenu{left:50%;bottom:82px;width:min(780px,calc(100vw - 30px));
+  height:min(920px,calc(100vh - 78px));max-height:calc(100vh - 78px);border:1px solid rgba(255,255,255,.22);border-radius:22px;
   background:rgba(35,39,48,.82);box-shadow:0 28px 85px rgba(0,0,0,.55);
   -webkit-backdrop-filter:blur(30px) saturate(150%);backdrop-filter:blur(30px) saturate(150%);
-  transform:translateX(-50%)}
+  transform:translate(-50%,0)}
 .os-root.os-style-mac .os-startmenu .os-app,.os-root.os-style-mac .os-startmenu button{border-radius:13px}
 .os-root.os-style-mac .os-context,.os-root.os-style-mac .os-notifications,.os-root.os-style-mac .os-netfly{
   border-color:rgba(255,255,255,.2);background:rgba(35,39,48,.84);
