@@ -108,7 +108,10 @@
     /* Menu and Dock safe areas change the measured desk. Reflow existing objects after layout has
      * committed; otherwise switching style leaves windows/widgets clamped to the previous height. */
     if(was!==mac&&desk)requestAnimationFrame(()=>{
-      for(const w of wins){if(w.max||w.snap)snapTo(w,w.max?'max':w.snap);else keepFrameReachable(w);}
+      /* Reflow is geometry maintenance, not user activation. Focusing every snapped window here
+       * made the last window in `wins` steal focus whenever the Dock/menu metrics changed; native
+       * surfaces then fought the window the user was dragging. */
+      for(const w of wins){if(w.max||w.snap)snapTo(w,w.max?'max':w.snap,{focus:false});else keepFrameReachable(w);}
       drawWidgets();try{nsync();}catch(_){}
     });
   }
@@ -1463,11 +1466,10 @@
     if(extra){
       try{
         const opened=extra.act();
-        /* Music is a real document window hidden behind a launcher action. A monitor handoff calls
-           openApp('__music') on the destination; throwing away openDoc's return made the receiver
-           stop before geometry/UI restoration, leaving a black frame and only the global player
-           button. Other extras remain actions and intentionally return no window. */
-        return view==='__music'&&opened ? opened : null;
+        /* EXTRAS that create managed windows must return that window during a monitor handoff.
+           Discarding it made the receiver withhold its ACK after already opening the destination;
+           Task Manager, VMs, Remote Desktop and Settings could consequently vanish or duplicate. */
+        return opened || null;
       }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} return null; }
     }
     const existing = wins.find(w => sameAppWindow(w.view, view));
@@ -1712,6 +1714,7 @@
   function openSystemSettings(){
     const w=openDoc('os-settings', 'System Settings', 'i-gear', renderSystemSettings, false, true);
     if(w){ w.rerun=true; w.isolated=true; }
+    return w;
   }
 
   let _osSettingsPage='displays';
@@ -3093,7 +3096,7 @@
    * unmaximizing removes the border". The border is drawn, and an application-sized surface is
    * parked on top of it. It was hidden this long because a manual resize ends in a gesture, which
    * does sync — only the maximise BUTTON, which is a click, went unreported. */
-  function snapTo(w, z){
+  function snapTo(w, z, options){
     const css = rectOf(z);
     if(!css) return;
     keepRect(w);
@@ -3102,7 +3105,7 @@
     w.el.classList.toggle('maximised', w.max);
     w.el.classList.add('snapped');
     Object.assign(w.el.style, css);
-    focusWin(w);
+    if(!options || options.focus!==false) focusWin(w);
     if(w.native != null){
       /* CSS geometry settles after this stack. Invalidate the old compositor rectangle and perform
        * a full placement on the next frame; otherwise a right/left tile can retain Firefox's old
