@@ -499,7 +499,10 @@ async def drive(url):
         print("SKIP  no Chrome")
         return 2
     desktop = Browser(PORT, PROFILE, "desktop")
-    phone = Browser(PORT + 1, PROFILE + "-b", "phone")
+    # The SECOND browser jumps clear of the runner's allocation band (PORT_BASE + one per
+    # job), the way check_concord_mobile does. PORT + 1 is the next job's port exactly, which
+    # collides only under ./test.sh and never when this check is run on its own.
+    phone = Browser(PORT + 1000, PROFILE + "-b", "phone")
     problems = []
     try:
         if not await desktop.start(chrome) or not await phone.start(chrome):

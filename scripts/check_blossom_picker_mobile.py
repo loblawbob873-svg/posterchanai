@@ -8,7 +8,12 @@ APP = os.path.join(ROOT, "static/js/client/app.js")
 # browser checks run CONCURRENTLY. Hardcoded, two of them running at once bind the same HTTP
 # server port and attach to the same Chrome — the bug that made four checks share 9473. The
 # literal stays as the standalone-run default.
-PORT = int(os.environ.get("PC_CHECK_PORT") or 9497)
+# The runner hands every check ONE port (checkall.py: PORT_BASE + index) and it is the BROWSER's.
+# Deriving the CDP endpoint as PORT+1 lands on the NEXT job's allocation — a collision that appears
+# only under `./test.sh`, never standalone. The static server binds port 0 instead: the OS picks a
+# free one, and nothing has to be reserved for it.
+CDP_PORT = int(os.environ.get("PC_CHECK_PORT") or 9497)
+PORT = 0            # filled in from the listening socket once the server is bound
 VIEWPORTS = ((360, 780), (412, 915))
 
 
@@ -61,13 +66,13 @@ async def run():
             if self.path=='/': self.send_response(200);self.send_header('Content-Type','text/html');self.end_headers();self.wfile.write(html.encode());return
             self.path=self.path.split('?',1)[0]; return super().do_GET()
     import threading, http.server
-    os.chdir(ROOT); srv=http.server.ThreadingHTTPServer(('127.0.0.1',PORT),H); threading.Thread(target=srv.serve_forever,daemon=True).start()
-    proc=subprocess.Popen([chrome,'--headless=new','--no-sandbox',f'--remote-debugging-port={PORT+1}',f'--user-data-dir={td.name}','about:blank'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    os.chdir(ROOT); srv=http.server.ThreadingHTTPServer(('127.0.0.1',0),H);PORT=srv.server_address[1]; threading.Thread(target=srv.serve_forever,daemon=True).start()
+    proc=subprocess.Popen([chrome,'--headless=new','--no-sandbox',f'--remote-debugging-port={CDP_PORT}',f'--user-data-dir={td.name}','about:blank'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     try:
         tab=None
         for _ in range(40):
             try:
-                tabs=json.load(urllib.request.urlopen(f'http://127.0.0.1:{PORT+1}/json/list'))
+                tabs=json.load(urllib.request.urlopen(f'http://127.0.0.1:{CDP_PORT}/json/list'))
                 tab=next(t for t in tabs if t.get('type')=='page' and not t.get('url','').startswith('chrome-extension:'));break
             except Exception: await asyncio.sleep(.2)
         async with websockets.connect(tab['webSocketDebuggerUrl']) as ws:

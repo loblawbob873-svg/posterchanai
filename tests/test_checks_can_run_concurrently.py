@@ -35,6 +35,11 @@ NO_PORT_NEEDED = {
 }
 
 
+def _code_lines(src):
+    """The file with comment LINES dropped — line-based, never a block regex over the whole file."""
+    return "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+
+
 def _browser_checks():
     out = []
     for name in sorted(os.listdir(SCRIPTS)):
@@ -69,6 +74,37 @@ class BrowserChecksAreConcurrencySafe(unittest.TestCase):
                          "checkall runs them CONCURRENTLY, so two of them — or one of them and "
                          "anything else on the box — bind the same port and attach to the same "
                          "Chrome: %s" % "; ".join(bad))
+
+    def test_no_check_derives_a_second_port_by_arithmetic(self):
+        """ONE port is allocated per job, and `PORT+1` is the NEXT job's.
+
+        This is not hypothetical: fixing the two hardcoded ports above, I left them deriving
+        Chrome's debugging endpoint as `PORT+1` while binding the static server on PC_CHECK_PORT
+        itself — trading a fixed-port clash for a neighbour clash, which is strictly worse because
+        it appears only under `./test.sh` and never standalone. Both scripts passed on their own and
+        failed in the suite, and the first version of THIS file could not see it, because it only
+        asked whether the variable was read.
+
+        A check that needs a second listener binds port 0 and asks the socket what it got.
+        """
+        # An offset only collides if it lands inside the band the runner hands out — PORT_BASE plus
+        # one per job. A deliberate large jump (+1000) clears it; +1 is the next job exactly.
+        SAFE_OFFSET = 500
+        bad = []
+        for name, src in _browser_checks():
+            # COMMENTS STRIPPED. Both scripts fixed for this very bug carry a comment explaining
+            # "deriving the CDP endpoint as PORT+1 lands on the next job's allocation" — and the
+            # first version of this test flagged them for the sentence describing the fix. A test
+            # that cannot be made green without deleting its own explanation is one people turn off.
+            code = _code_lines(src)
+            for m in re.finditer(r"(?:CDP_)?PORT\s*([+-])\s*(\d+)", code):
+                if int(m.group(2)) < SAFE_OFFSET:
+                    bad.append("%s (PORT %s %s)" % (name, m.group(1), m.group(2)))
+        self.assertEqual([], sorted(set(bad)),
+                         "these checks derive a second port by offsetting their allocated one by "
+                         "less than %d, which lands on another job's port under concurrency: %s.\n"
+                         "Bind port 0 and read back srv.server_address[1], or jump clear of the "
+                         "allocation band." % (SAFE_OFFSET, "; ".join(sorted(set(bad)))))
 
     def test_no_check_uses_a_fixed_profile_directory(self):
         """Two Chromes on one profile dir corrupt it and one dies on a lock, intermittently — the
