@@ -1372,7 +1372,15 @@
       const gates=[];
       if(R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
       if(external.hasTargets&&external.ready)gates.push(external.ready.then(ok=>{if(!ok)throw new Error('external room relay did not open');}));
-      if(gates.length)void Promise.any(gates).catch(e=>{if(chatSubKey===key){console.warn('Concord live room subscription could not open',e);stopChatLive();}});
+      /* WARN, NEVER TEAR DOWN. Neither gate can prove a subscription is dead: the managed
+       * pool legitimately does not carry a room's own invite relays (so waitForSubscription
+       * times out at 8s on a live subscription), and external.ready only reports what this
+       * browser managed to dial. Closing on that killed the live stream a few seconds after
+       * every room open, and because stopChatLive() clears chatSubKey the 4s tick re-armed it
+       * — reopening sockets to up to eight relays, waiting 8s, and tearing them down again,
+       * for as long as the room was on screen. Unconfirmed simply falls back to the history
+       * refresh, which is what carried the room before these gates existed. */
+      if(gates.length)void Promise.any(gates).catch(e=>{if(chatSubKey===key)console.warn('Concord live room subscription is unconfirmed; leaving it open',e);});
     }catch(e){ chatSubKey='';console.warn('Concord live room subscription failed',e); }
   }
   async function flushChatLive(p,key){
