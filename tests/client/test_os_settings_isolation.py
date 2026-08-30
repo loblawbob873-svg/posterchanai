@@ -123,3 +123,19 @@ def test_every_system_settings_icon_exists_in_the_shared_sprite():
     referenced = {'i-' + name for name in re.findall(r"iconSvg\('([^']+)'", render)}
     defined = set(re.findall(r'<symbol id="([^"]+)"', sprite))
     assert referenced <= defined, f"missing settings icons: {sorted(referenced - defined)}"
+
+
+def test_missing_displays_show_one_state_instead_of_empty_control_boxes():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    assert "${rows.length?`<div class=\"os-display-map\"" in render
+    assert "No displays were detected. Reconnect a display" in render
+
+
+def test_mac_experience_themes_system_settings_content_not_only_window_buttons():
+    css = (ROOT / "static" / "css" / "client.css").read_text()
+    for marker in (".os-root.os-style-mac .os-settings",
+                   ".os-root.os-style-mac .os-set-nav",
+                   ".os-root.os-style-mac .os-set-main",
+                   ".os-root.os-style-mac .os-set-card"):
+        assert marker in css

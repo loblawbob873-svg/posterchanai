@@ -90,7 +90,9 @@ def test_backend_uses_argument_arrays_not_a_shell():
     assert "shell:true" not in src.replace(" ", "")
     assert "another LiveUSB job is already running" in src
     assert "the selected removable disk is no longer available" in src
-    assert "of='+target" in src
+    assert "allowed.stablePath" in src
+    assert "readlink -f" in src and "lsblk -n -o MOUNTPOINTS" in src
+    assert "actual\" = \"$expected" in src
 
 
 def test_iso_build_survives_the_desktop_process_and_recovers_status():
@@ -146,3 +148,53 @@ def test_detached_supervisor_records_fast_success(tmp_path):
 def test_pid_identity_rejects_reused_process(tmp_path):
     js = "process.stdout.write(String(require('./desktop/liveusb')._alive({pid:process.pid,procStart:'definitely-wrong',token:'no-such-token'})))"
     assert subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True) == "false"
+
+
+def test_stale_orphan_lock_is_reclaimed(tmp_path):
+    state, out = tmp_path / "state", tmp_path / "images"
+    state.mkdir(); out.mkdir()
+    lock = state / "liveusb-job.lock"
+    lock.write_text("orphan")
+    os.utime(lock, (1, 1))
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nexit 0\n"); sudo.chmod(0o755)
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env)
+    assert _wait_status(state)["ok"] is True
+
+
+def test_recent_unowned_lock_is_not_stolen(tmp_path):
+    state, out = tmp_path / "state", tmp_path / "images"
+    state.mkdir(); out.mkdir()
+    (state / "liveusb-job.lock").write_text("launch-in-progress")
+    sudo = tmp_path / "sudo"; sudo.write_text("#!/bin/sh\nexit 0\n"); sudo.chmod(0o755)
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    p = subprocess.run(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert p.returncode != 0 and "already running" in p.stderr
+
+
+def test_launcher_rechecks_exact_lock_token_before_spawning():
+    src = (ROOT / "desktop/liveusb.js").read_text()
+    claim = src.index("LiveUSB launch ownership changed")
+    spawn = src.index("spawn(process.execPath")
+    assert claim < spawn
+
+
+def test_lost_lock_between_supervisor_spawn_and_claim_never_runs_child(tmp_path):
+    import time
+    state, out, invoked = tmp_path / "state", tmp_path / "images", tmp_path / "invoked"
+    out.mkdir()
+    sudo = tmp_path / "sudo"
+    sudo.write_text(f"#!/bin/sh\ntouch {invoked}\nexit 0\n"); sudo.chmod(0o755)
+    env = {**os.environ, "NODE_ENV": "test", "PC_SUDO": str(sudo),
+           "PC_LIVEUSB_STATE_DIR": str(state), "PC_LIVEUSB_TEST_BEFORE_CLAIM_MS": "500"}
+    p = subprocess.Popen(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)],
+                         cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    lock = state / "liveusb-job.lock"
+    deadline = time.time() + 3
+    while not lock.exists() and time.time() < deadline: time.sleep(.01)
+    lock.write_text("new-owner")
+    _, err = p.communicate(timeout=5)
+    assert p.returncode != 0 and "ownership changed before claim" in err
+    time.sleep(.15)
+    assert not invoked.exists(), "an unclaimed supervisor must never invoke sudo/dd"

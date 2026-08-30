@@ -7521,6 +7521,29 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .os-context,.os-root.os-style-mac .os-notifications,.os-root.os-style-mac .os-netfly{
   border-color:rgba(255,255,255,.2);background:rgba(35,39,48,.84);
   -webkit-backdrop-filter:blur(26px);backdrop-filter:blur(26px);box-shadow:0 22px 65px #0008}
+/* Settings belongs to the selected desktop experience too. Keep its content coherent with the
+   macOS window chrome instead of dropping a cyberpunk-black application inside a glass window. */
+.os-root.os-style-mac .os-settings{background:#e9e9eb;color:#202124}
+.os-root.os-style-mac .os-set-nav{background:rgba(238,238,241,.9);border-right-color:#c7c7ca;
+  box-shadow:none}.os-root.os-style-mac .os-set-nav button{color:#4b4c50}
+.os-root.os-style-mac .os-set-nav button.on,.os-root.os-style-mac .os-set-nav button:hover{
+  background:#0a84ff;color:#fff}
+.os-root.os-style-mac .os-set-main{background:linear-gradient(180deg,#f7f7f8,#e9e9eb)}
+.os-root.os-style-mac .os-set-pagehead>div{background:#0a84ff;color:#fff;box-shadow:0 3px 9px #0067c755}
+.os-root.os-style-mac .os-set-pagehead p,.os-root.os-style-mac .os-set-cardhead span,
+.os-root.os-style-mac .os-set-control>div>span,.os-root.os-style-mac .os-set-control output{color:#68696e}
+.os-root.os-style-mac .os-set-card,.os-root.os-style-mac .os-setting-row,
+.os-root.os-style-mac .os-liveusb{background:rgba(255,255,255,.82)!important;border-color:#c9c9cc;
+  box-shadow:0 1px 3px #0002}
+.os-root.os-style-mac .os-display-map{background:#d7d7da;border-color:#b6b6ba}
+.os-root.os-style-mac .os-display-controls,.os-root.os-style-mac .os-liveusb-grid>div{
+  background:#f7f7f8;border-color:#cdcdcf}
+.os-root.os-style-mac .os-set-control select,.os-root.os-style-mac .os-display-controls select,
+.os-root.os-style-mac .os-liveusb-grid select,.os-root.os-style-mac .os-path-pick input{
+  background:#fff;color:#202124;border-color:#b9b9bd}
+.os-root.os-style-mac .os-liveusb-status{background:#f4f4f5;color:#3a3b3e;border-color:#cacacd}
+.os-root.os-style-mac .os-about-grid{background:#ceced1}.os-root.os-style-mac .os-about-grid>div{background:#fff}
+.os-root.os-style-mac .empty{color:#68696e}
 @media(max-width:1180px){.os-root.os-style-mac::after{content:'●  PosterChan     File     View     Window'}
   .os-root.os-style-mac .os-tray{gap:3px}.os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
