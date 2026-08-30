@@ -8400,14 +8400,38 @@
   }
 
   // ---------- bookmarks timeline ----------
+  /* BOOKMARKS ARE THE ONE VIEW THAT IS CERTAIN TO BE CACHED — you bookmarked those posts by
+   * LOOKING at them — and it was written as a spinner in front of a network chain: blank the feed,
+   * await the relay, paint at the very bottom. Reported as "taking forever to load, circle black
+   * screen". Two separate reasons it could sit there for ever, and the fix needs both.
+   *
+   * The REQ went to whatever socket happened to exist. A REQ written to a CONNECTING socket is
+   * dropped in silence (`relay.js _send`), so nothing ever answers and nothing ever repaints —
+   * `Relay.ready()` is what the timeline, the profile and the notification flush already wait for.
+   *
+   * And the paint was behind the fetch even for posts already in the Store, so ONE missing id could
+   * hide every bookmark that was right there. Held posts are painted before the first await now,
+   * and the fetch fills in the rest behind them. The COLD path is deliberately unchanged: with
+   * nothing held there is nothing honest to show, and a spinner beats an empty list that claims the
+   * bookmarks are gone. */
   async function renderBookmarks(){
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    const feed=$('#feed');
     const ids=[...BOOKMARKS];
     if(!ids.length){ feed.innerHTML='<div class="empty">No bookmarks yet. Tap 🔖 on a post to save it here.</div>'; return; }
+    const held=()=>ids.map(id=>Store.get(id)).filter(Boolean).sort((a,b)=>b.created_at-a.created_at);
+    const first=held();
+    if(first.length){ feed.innerHTML=first.map(noteHtml).join(''); hydrate(feed); }
+    else feed.innerHTML='<div class="spinner"></div>';
     const missing=ids.filter(id=>!Store.get(id));
-    if(missing.length){ try{ const evs=await Relay.query([{ ids:missing }]); evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){} }
+    if(missing.length){
+      try{ await Relay.ready(8000); }catch(_){}
+      try{ const evs=await Relay.query([{ ids:missing }]); evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); }); }catch(_){}
+    }
     if(VIEW!=='bookmarks') return;   // user navigated away while fetching
-    const notes=ids.map(id=>Store.get(id)).filter(Boolean).sort((a,b)=>b.created_at-a.created_at);
+    const notes=held();
+    /* Only repaint when the answer actually changed, or the first paint was the spinner — a
+     * needless second innerHTML throws away scroll position and every hydrated card. */
+    if(notes.length===first.length && first.length) return;
     feed.innerHTML = notes.length ? notes.map(noteHtml).join('')
       : '<div class="empty">Couldn\'t load your bookmarked posts from the relay.</div>';
     hydrate(feed);

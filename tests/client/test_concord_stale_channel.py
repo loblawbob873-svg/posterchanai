@@ -75,8 +75,14 @@ class StaleChannelIsRepaired(unittest.TestCase):
         src = open(CONCORD, encoding="utf-8").read()
         hydrate = src[src.index("async function hydrateRoomStreams("):]
         hydrate = hydrate[:hydrate.index("async function publishCordNative(")]
-        loop = hydrate[hydrate.index("for(const channel of ordered)"):]
-        loop = loop[:loop.index("if(roomIdentity(saved()[state.community])===identity)backgroundRender();")]
-        self.assertIn("not readable with this membership", loop,
+        # The replay is `replayCached` now — it was lifted out of the serial loop when the cached
+        # half stopped waiting for every channel in the room (test_concord_cached_prefetch.py).
+        # Anchor on the function, not on the loop that used to hold it.
+        replay = hydrate[hydrate.index("const replayCached=async channel=>{"):]
+        replay = replay[:replay.index("const [cachedHead,...cachedRest]=ordered;")]
+        self.assertIn("not readable with this membership", replay,
                       "the cached replay no longer tolerates an unreadable channel — one stale "
                       "channel id takes the whole room again, on every open")
+        self.assertIn("cachedStale.push(channel.name)", replay,
+                      "the unreadable channel is no longer recorded, so a half-empty room cannot "
+                      "say which channel it could not read")

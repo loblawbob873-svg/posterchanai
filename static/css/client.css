@@ -7502,25 +7502,33 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .osw-btns{order:-1;gap:7px;margin-inline-end:2px}
 .os-root.os-style-mac .osw-b[data-w="min"],
 .os-root.os-style-mac .osw-b[data-w="max"],
-.os-root.os-style-mac .osw-b[data-w="close"]{width:13px;height:13px;border-radius:50%;font-size:0}
+.os-root.os-style-mac .osw-b[data-w="close"]{width:14px;height:14px;border-radius:50%;font-size:0;
+  /* CENTRED, AND BIG ENOUGH TO READ. The dot carried `font-size:0` and each glyph set its own 10px
+     with no centring, so the x/-/+ landed off-centre in a 13px circle and were reported unreadable.
+     macOS draws these at roughly two thirds of the dot; 11px bold in 14px is that, and the flex box
+     is what actually puts them in the middle. */
+  display:flex;align-items:center;justify-content:center;line-height:1}
 .os-root.os-style-mac .osw-b[data-w="close"]{order:-3;background:#ff5f57}
 .os-root.os-style-mac .osw-b[data-w="min"]{order:-2;background:#febc2e}
 .os-root.os-style-mac .osw-b[data-w="max"]{order:-1;background:#28c840}
 .os-root.os-style-mac .osw-b[data-w="close"]:hover{background:#ff766f}
 .os-root.os-style-mac .osw-b[data-w="min"]:hover{background:#ffd05c}
 .os-root.os-style-mac .osw-b[data-w="max"]:hover{background:#50da65}
-.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="close"]::after{content:'×';color:#68110d;font-size:10px}
-.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="min"]::after{content:'−';color:#765200;font-size:10px}
-.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="max"]::after{content:'+';color:#075d1b;font-size:10px}
+.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="close"]::after{content:'×';color:#68110d;font-size:11px;font-weight:700;line-height:1}
+.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="min"]::after{content:'−';color:#765200;font-size:11px;font-weight:700;line-height:1}
+.os-root.os-style-mac .osw-btns:hover .osw-b[data-w="max"]::after{content:'+';color:#075d1b;font-size:11px;font-weight:700;line-height:1}
 .os-root.os-style-mac .osw-ai{width:27px;height:28px}
 .os-root.os-style-mac .osw-ico{display:none}
 .os-root.os-style-mac .osw-title{text-align:center;padding-inline-end:60px;color:var(--mac-ink);
   font-size:12px;font-weight:600}
 .os-root.os-style-mac .osw-body{background:var(--mac-solid)}
+/* A DOCUMENT WINDOW IS STILL A WINDOW. `osw-document` (Preview, Office, Email) exists for a WINDOW
+   POLICY — neutral chrome, maximised on open — and had also been given a hard-coded light grey
+   titlebar here. That was invisible while every macOS surface was a fixed dark glass; now that the
+   chrome follows the palette, Email was the one window wearing somebody else's decoration, which is
+   exactly how it was reported. It keeps the class and the policy and inherits the same bar. */
 .os-root.os-style-mac .osw.osw-document,.os-root.os-style-mac .osw.osw-document.focused{
-  border-radius:13px;border-color:rgba(255,255,255,.2);box-shadow:0 28px 78px rgba(0,0,0,.48)}
-.os-root.os-style-mac .osw.osw-document .osw-bar{background:linear-gradient(#ececec,#d5d5d5);
-  border-bottom-color:#aaa}.os-root.os-style-mac .osw.osw-document .osw-title{color:#272727}
+  border-radius:13px;border-color:var(--mac-line);box-shadow:0 28px 78px rgba(0,0,0,.48)}
 /* The ordinary full-width bottom taskbar becomes a real floating Dock. The status controls remain
    usable in the menu bar instead of wasting a second strip at the bottom. */
 .os-root.os-style-mac .os-bar{position:absolute;z-index:309;left:0;right:0;bottom:10px;margin-inline:auto;

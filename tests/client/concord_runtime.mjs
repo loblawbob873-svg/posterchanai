@@ -292,12 +292,24 @@ const originalCachePage=window.PCConcordCache.page;let releaseLaterPage;
 window.PCConcordCache.page=async(key,opts)=>String(key).includes('joined-later')
   ? await new Promise(resolve=>{releaseLaterPage=()=>resolve({events:concordEnvelopeCache.get(key)||[]});})
   : originalCachePage.call(window.PCConcordCache,key,opts);
-let coldRelayQueries=0;const coldPC={...window.__PC,relayQuery:async()=>{coldRelayQueries++;return[];},relayQueryFrom:async()=>{coldRelayQueries++;return[];}};
+/* WHAT THIS ASKS IS "was the cached channel on screen before the first socket", and it has to be
+   recorded AT the first query rather than counted afterwards. The count used to be read after the
+   paint loop and required it to still be ZERO — which only held because the cached replay was one
+   serial loop over EVERY channel, so the network could not start until `joined-later` (deliberately
+   hung below) released. That is the bug, not the contract: one slow cache page blocked the entire
+   relay backfill. The prefetch runs behind the room now, so the network starts as soon as the OPEN
+   channel is painted, and a count is a race. Recording whether the paint had happened when the
+   first query went out asks the original question exactly. */
+let coldRelayQueries=0,coldPaintedAtFirstQuery=null;
+const coldNoteQuery=()=>{ if(coldPaintedAtFirstQuery===null)
+    coldPaintedAtFirstQuery=feed.innerHTML.includes('joined history joined-lounge');
+  coldRelayQueries++; return []; };
+const coldPC={...window.__PC,relayQuery:async()=>coldNoteQuery(),relayQueryFrom:async()=>coldNoteQuery()};
 const coldOpen=PCConcord.activateJoinedRoom(coldPC,0,false,'no-general');
 for(let i=0;i<20&&!feed.innerHTML.includes('joined history joined-lounge');i++)await new Promise(resolve=>setTimeout(resolve,5));
 if(!feed.innerHTML.includes('#lounge')||!feed.innerHTML.includes('joined history joined-lounge'))
   throw new Error('cold cached Armada room did not paint its real first channel immediately');
-if(coldRelayQueries!==0)throw new Error('relay backfill started before cached room history painted');
+if(coldPaintedAtFirstQuery===false)throw new Error('relay backfill started before cached room history painted');
 releaseLaterPage();await coldOpen;window.PCConcordCache.page=originalCachePage;
 data.delete('pc.concord.invites');concordEnvelopeCache.clear();
 

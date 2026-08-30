@@ -1199,8 +1199,9 @@
         /* Decrypt only the newest page first and paint the selected channel immediately. Loading
          * 5,000 envelopes for every channel before the first render made a healthy encrypted cache
          * look indistinguishable from a relay miss, and could exhaust an Android WebView renderer. */
-        for(const channel of ordered){
+        const replayCached=async channel=>{
           const wraps=await cachedEnvelopePage(envelopeCacheKey(loadKey,channel.id),300);
+          if(!wraps.length)return;
           /* ONE UNREADABLE CHANNEL MUST NOT COST THE ROOM, AND HERE IT COST IT FOR EVER.
            *
            * This replay is the ON-DISK cache, so it is deterministic: a saved channel the control
@@ -1212,19 +1213,46 @@
            *
            * The network half already treats a channel that will not load as recorded-and-skipped
            * (`stalled`, left to the live tick). The cached half now does the same. */
-          if(wraps.length){
-            try{ await applyChannel(channel,wraps); if(channel.name===selected)cachedHistoryRendered=true; }
-            catch(e){ if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
-                      cachedStale.push(channel.name); }
-          }
-          if(channel.name===selected&&roomIdentity(saved()[state.community])===identity)backgroundRender();
+          try{ await applyChannel(channel,wraps); if(channel.name===selected)cachedHistoryRendered=true; }
+          catch(e){ if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
+                    cachedStale.push(channel.name); }
+        };
+        /* ONLY THE CHANNEL ON SCREEN IS ON THE CRITICAL PATH — the cached half never learned what
+         * the network half below already knows.
+         *
+         * This was one serial loop over EVERY channel, each decrypting a 300-envelope page before
+         * the next began, and the network pass could not start until all of it had finished. It is
+         * NIP-44 on the main thread: measured against Soapbox's community on real data, a 300-wrap
+         * page costs ~560ms, so its thirteen channels spent five to seven seconds decrypting twelve
+         * conversations nobody had opened — before the first relay was asked. That is the whole
+         * "Concord is slow to open a room", and it gets WORSE the longer the app is used, because
+         * the cache it re-reads is the thing that grows. Armada is not doing anything cleverer here;
+         * it simply is not doing this.
+         *
+         * The rest is prefetch, so it runs behind the room instead of in front of it, yielding
+         * between channels so the renderer can paint, and stops if the reader leaves. Switching to a
+         * channel it has not reached yet is still instant-ish: `refreshActiveChannel` fetches
+         * whichever channel is actually open, and with no prior messages its `since` is 0. */
+        const [cachedHead,...cachedRest]=ordered;
+        if(cachedHead){
+          await replayCached(cachedHead);
+          if(roomIdentity(saved()[state.community])===identity)backgroundRender();
         }
-        if(roomIdentity(saved()[state.community])===identity)backgroundRender();
-        /* Named, not counted, and not reported to the reader: the network pass below re-reads these
-         * with a fresh control set and usually resolves them, so a toast here would announce a
-         * problem that is about to fix itself. It is in the console because the next report of a
-         * half-empty room should say WHICH channel. */
-        if(cachedStale.length)console.warn('Concord: cached history unreadable for',cachedStale.join(', '),'— retrying over the network');
+        if(cachedRest.length)void (async()=>{
+          for(const channel of cachedRest){
+            await new Promise(resolve=>setTimeout(resolve,0));
+            if(roomIdentity(saved()[state.community])!==identity)return;
+            /* A prefetch that fails is a channel that will be read when it is opened, never a
+             * reason to break the room somebody is already looking at. */
+            try{ await replayCached(channel); }catch(_){ }
+          }
+          if(roomIdentity(saved()[state.community])===identity)backgroundRender();
+          /* Named, not counted, and not reported to the reader: the network pass re-reads these
+           * with a fresh control set and usually resolves them, so a toast here would announce a
+           * problem that is about to fix itself. It is in the console because the next report of a
+           * half-empty room should say WHICH channel. */
+          if(cachedStale.length)console.warn('Concord: cached history unreadable for',cachedStale.join(', '),'— retrying over the network');
+        })();
       }
       try{
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
