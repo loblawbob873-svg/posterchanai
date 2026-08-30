@@ -1154,7 +1154,12 @@
       let controlWraps=await cachedEnvelopes(controlKey);
       const applyControl=wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
       const applyChannel=async(channel,wraps)=>{
-        const opened=await reader.inspectChat(bundle,controlWraps||[],channel.id,wraps||[]);
+        /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
+         * from the control events and from nothing else, so a saved channel whose id the control
+         * set does not carry is refused with "channel is not readable with this membership" — and
+         * readChat is the one place that re-derives the id by NAME before giving up. Calling the
+         * reader raw here is what made hydration the only path in this file without that repair. */
+        const opened=await readChat(p,reader,bundle,controlWraps||[],room,channel,wraps||[]);
         const reactions=new Map(opened.reactions||[]),reactionIds=new Map(opened.reactionIds||[]),reactionUrls=new Map(opened.reactionUrls||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{},rs={},ri={},ru={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people;for(const [emoji,entries] of reactionIds.get(m.id)||[])ri[emoji]=Object.fromEntries(entries);for(const [emoji,url] of reactionUrls.get(m.id)||[])ru[emoji]=url; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:rs,reactionIds:ri,reactionUrls:ru,remote:true}; });
         const msgById=new Map(msgs.map(m=>[m.id,m])); for(const m of msgs){if(m.kind!==1111)continue;const parentId=((m.tags||[]).find(t=>t[0]==='e')||[])[1],parent=msgById.get(parentId);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text};}
         const storeId=channelStoreId(room,channel.name);markRemoteStore(storeId);const prior=testMessages(storeId);
@@ -1176,7 +1181,7 @@
       };
       /* Paint the encrypted on-device copy before opening sockets. This is the offline/reload path,
        * and also prevents relay latency from looking like an empty room. */
-      let cachedChannelCount=0,cachedHistoryRendered=false;
+      let cachedChannelCount=0,cachedHistoryRendered=false;const cachedStale=[];
       if(controlWraps.length){
         cachedChannelCount=applyControl(controlWraps);
         /* Control metadata is enough to replace the saved placeholder channel list. Paint it now,
@@ -1196,10 +1201,30 @@
          * look indistinguishable from a relay miss, and could exhaust an Android WebView renderer. */
         for(const channel of ordered){
           const wraps=await cachedEnvelopePage(envelopeCacheKey(loadKey,channel.id),300);
-          if(wraps.length){await applyChannel(channel,wraps);if(channel.name===selected)cachedHistoryRendered=true;}
+          /* ONE UNREADABLE CHANNEL MUST NOT COST THE ROOM, AND HERE IT COST IT FOR EVER.
+           *
+           * This replay is the ON-DISK cache, so it is deterministic: a saved channel the control
+           * set does not carry threw "channel is not readable with this membership" out of the
+           * whole job on every single open, and the rescue below could not catch it because it
+           * needs `cachedHistoryRendered`, which is set on the line that just threw. The reader
+           * saw "could not refresh community: channel is not readable with this membership" every
+           * time they clicked a room they are a member of, with no way out but clearing storage.
+           *
+           * The network half already treats a channel that will not load as recorded-and-skipped
+           * (`stalled`, left to the live tick). The cached half now does the same. */
+          if(wraps.length){
+            try{ await applyChannel(channel,wraps); if(channel.name===selected)cachedHistoryRendered=true; }
+            catch(e){ if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
+                      cachedStale.push(channel.name); }
+          }
           if(channel.name===selected&&roomIdentity(saved()[state.community])===identity)backgroundRender();
         }
         if(roomIdentity(saved()[state.community])===identity)backgroundRender();
+        /* Named, not counted, and not reported to the reader: the network pass below re-reads these
+         * with a fresh control set and usually resolves them, so a toast here would announce a
+         * problem that is about to fix itself. It is in the console because the next report of a
+         * half-empty room should say WHICH channel. */
+        if(cachedStale.length)console.warn('Concord: cached history unreadable for',cachedStale.join(', '),'— retrying over the network');
       }
       try{
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));

@@ -396,6 +396,40 @@ DRIVE = r"""(async () => {
       same:JSON.stringify(before)===JSON.stringify(after)};
     for(const w of [term,social])w?.querySelector('.osw-x')?.click();await sleep(100);
   }
+
+  /* SEVERAL WINDOWS OPEN AT ONCE MUST STAY THEMSELVES.
+   *
+   * Every feature paints into one shared `#feed`, and a window is a frame that borrows it. That is
+   * the whole mechanism, and it is why "windows turn into other windows" is the failure this shell
+   * has: focus the wrong one, hand `#feed` to the wrong frame, or repaint from `w.view` when the
+   * window was showing something else, and a window is suddenly another app.
+   *
+   * Four windows, focused round-robin, each asked what it IS after every focus. */
+  {
+    const views = ['global', 'notifications', 'calendar', 'terminal'];
+    for(const v of views){ PCOS.routeView(v); await sleep(220); }
+    const opened = PCOS.windows().map(w => w.view);
+    out.multi = { opened, drift: [], feedOwners: [] };
+    for(let round = 0; round < 2; round++){
+      for(const v of views){
+        const w = [...document.querySelectorAll('.osw')]
+          .find(el => (PCOS.windows()[[...document.querySelectorAll('.osw')].indexOf(el)]||{}).view === v);
+        const frame = w || document.querySelector('.osw');
+        frame?.querySelector('.osw-body')?.dispatchEvent(
+          new PointerEvent('pointerdown', {bubbles:true, pointerId: 300 + round}));
+        await sleep(180);
+        /* EXACTLY ONE ELEMENT MAY CARRY #feed, and it must be the focused frame's body. */
+        out.multi.feedOwners.push(document.querySelectorAll('#feed').length);
+        const now = PCOS.windows();
+        const same = now.length === opened.length &&
+                     now.every((x, i) => x.view === opened[i]);
+        if(!same) out.multi.drift.push({round, focused: v, now: now.map(x => x.view)});
+      }
+    }
+    out.multi.finalViews = PCOS.windows().map(w => w.view);
+    for(const el of [...document.querySelectorAll('.osw')]) el.querySelector('.osw-x')?.click();
+    await sleep(150);
+  }
   const nb = document.querySelector('#os-new');
   out.hasNew = !!nb;
   if (nb) nb.click();
@@ -1720,6 +1754,23 @@ async def drive(url):
                 if concord.get("bodyH", 0) < 200 or concord.get("bodyGap", 999) > 4:
                     problems.append((label, "concord-inner-gap",
                                      f"Concord body did not fill its frame: {concord}"))
+
+                # SEVERAL WINDOWS OPEN AT ONCE MUST STAY THEMSELVES.
+                mw = r.get("multi") or {}
+                if mw.get("drift"):
+                    problems.append((label, "windows-became-other-windows",
+                                     "focusing one window changed what another one IS: %r"
+                                     % (mw["drift"][:3],)))
+                if mw.get("opened") and mw.get("finalViews") != mw.get("opened"):
+                    problems.append((label, "windows-became-other-windows",
+                                     "the open windows changed identity across focus: opened %r, "
+                                     "ended %r" % (mw.get("opened"), mw.get("finalViews"))))
+                # #feed is the mechanism: exactly one element may carry it, ever.
+                bad_feed = [n for n in (mw.get("feedOwners") or []) if n != 1]
+                if bad_feed:
+                    problems.append((label, "feed-not-handed-over",
+                                     "with several windows open, #feed was on %r elements"
+                                     % (sorted(set(bad_feed)),)))
 
                 ft = r.get("socialTerminalFocus") or {}
                 if not (ft.get("socialSnap") == "left" and ft.get("terminalSnap") == "right"

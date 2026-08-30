@@ -44,3 +44,39 @@ class StaleChannelIsRepaired(unittest.TestCase):
                       "the live tick no longer goes through the repair")
         self.assertNotIn("reader.inspectChat(", tick,
                          "the live tick calls the reader directly again — the repair is bypassed")
+
+    def test_hydration_goes_through_the_repair_too(self):
+        """THE LIVE TICK WAS FIXED AND HYDRATION WAS NOT, WHICH IS WHY IT CAME BACK.
+
+        Reported as two sentences that are one bug:
+
+            "every time I choose a room i am a member of: could not refresh community"
+            "room history is not readbale with this membership"
+
+        `hydrateRoomStreams` replays the ON-DISK envelope cache before it opens a socket, and its
+        `applyChannel` called `reader.inspectChat` directly — the only read left in the file that
+        skipped `readChat`, i.e. the only one with no id-repair. A saved channel the control set
+        does not carry threw straight out of the whole job, and because the source is a cache the
+        throw is deterministic: same failure on every open, for ever.
+        """
+        src = open(CONCORD, encoding="utf-8").read()
+        hydrate = src[src.index("async function hydrateRoomStreams("):]
+        hydrate = hydrate[:hydrate.index("async function publishCordNative(")]
+        self.assertIn("readChat(p,reader,bundle,controlWraps", hydrate,
+                      "hydration no longer goes through the repair")
+        self.assertNotIn("reader.inspectChat(", hydrate,
+                         "hydration calls the reader directly again — the repair is bypassed")
+
+    def test_one_unreadable_cached_channel_does_not_abort_the_room(self):
+        """The repair cannot help when the control set genuinely lacks the channel, and then the
+        question is what the ROOM does. The network half already records such a channel and moves
+        on; the cached half threw, and its own rescue below could not catch it because that rescue
+        needs `cachedHistoryRendered` — set on the very line that threw."""
+        src = open(CONCORD, encoding="utf-8").read()
+        hydrate = src[src.index("async function hydrateRoomStreams("):]
+        hydrate = hydrate[:hydrate.index("async function publishCordNative(")]
+        loop = hydrate[hydrate.index("for(const channel of ordered)"):]
+        loop = loop[:loop.index("if(roomIdentity(saved()[state.community])===identity)backgroundRender();")]
+        self.assertIn("not readable with this membership", loop,
+                      "the cached replay no longer tolerates an unreadable channel — one stale "
+                      "channel id takes the whole room again, on every open")

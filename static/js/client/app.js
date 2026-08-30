@@ -1377,7 +1377,28 @@
       const letter = kind===10005 ? 'e' : 'p';
       const outP=(tags||[]).filter(t=>t[0]===letter&&t[1]).length;
       const label = kind===3?'follows':kind===10000?'mute':'joined-channels';
-      const known=ClientSettings.get(kind===3?'followsCount':kind===10000?'mutedUsersCount':'pubChatsCount',0)||0;
+      /* "WHAT WE KNOW" CANNOT BE ONLY localStorage, OR THE GUARD RATCHETS ITSELF OFF.
+       *
+       * `followsCount` is written by whatever was last adopted, so ONE bad read that shrinks the
+       * list also shrinks the number this guard measures against — and once it is small, every
+       * subsequent short publish is under the threshold and sails through. Reported as "the people
+       * I follow keeps getting reset to only 2 despite following them back over and over": the
+       * first loss disables the very thing that would have prevented the second.
+       *
+       * A DEVICE WITH NO localStorage AT ALL is the same hole with a different cause and it is not
+       * hypothetical — a fresh profile, a cleared WebView, a new install all read 0, which is below
+       * the floor, so the guard is off exactly when the client is least sure of itself.
+       *
+       * The Store is the other witness and it is a local relay: whatever kind-3 this client has
+       * actually SEEN is in it. Take the larger of the two. A number that only rises is right here
+       * because the guard's question is "could this be a wipe?", and the honest answer comes from
+       * the biggest list we have ever held, not the most recent one we were handed. */
+      let known=ClientSettings.get(kind===3?'followsCount':kind===10000?'mutedUsersCount':'pubChatsCount',0)||0;
+      try{
+        const held=(Store.query([{authors:[ME.pubkey],kinds:[kind],limit:1}])||[])
+                     .sort((a,b)=>b.created_at-a.created_at)[0];
+        if(held){ const n=(held.tags||[]).filter(t=>t[0]===letter&&t[1]).length; if(n>known) known=n; }
+      }catch(_){}
       if(known>=8 && outP < Math.floor(known/2)){
         toast('safety: refused to erase your '+label+' list — reload and try again');
         throw new Error('replaceable-list shrink guard: '+outP+'<'+known);
@@ -5819,6 +5840,7 @@
   // clear-all, which we honour) — so cross-device removals propagate normally.
   function _persistMutes(){ const u=[...MUTED].filter(p=>p!==ME.pubkey);
     ClientSettings.set('mutedUsers', u); ClientSettings.set('mutedWords', [...MUTED_WORDS]); ClientSettings.set('mutedThreads', [...MUTED_THREADS]); ClientSettings.set('mutedUsersCount', u.length); }
+  let _followShrinkWarned=false;   // one line per session, not one per refresh
   function _persistFollows(){ const f=[...FOLLOWS].filter(p=>p!==ME.pubkey);
     ClientSettings.set('followsCache', f); ClientSettings.set('followsCount', f.length); }
   async function fetchFollows(){
@@ -5826,7 +5848,26 @@
     let ev=null; try{ const l=await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]); ev=l.sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
     // Adopt the relay's list ONLY when it returned an event (respects unfollows). No event = timeout /
     // not-yet-synced → keep the seeded cache rather than shrinking to empty.
-    if(ev){ FOLLOWS = new Set(ev.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1])); _persistFollows(); }
+    /* ADOPTING A DRASTICALLY SHORTER LIST IS THE READ-SIDE OF THE WIPE, and it was the half with no
+     * guard. `publish()` has refused a near-empty republish for a long time; this line would take
+     * one in through the front door — replace FOLLOWS wholesale, then `_persistFollows()` writes
+     * the small number into `followsCount`, which is the number publish()'s guard measures against.
+     * So one short read disarmed the guard and made every later short write legal: "keeps getting
+     * reset to only 2 despite following them back over and over".
+     *
+     * The shrink rule is deliberately the SAME as the write guard's, so the two halves cannot
+     * disagree about what counts as a wipe. A genuine mass-unfollow from another device is refused
+     * by this too — that is the accepted cost, and it is said out loud rather than applied silently,
+     * because the failure it replaces was silent and irreversible. */
+    if(ev){
+      const incoming=new Set(ev.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
+      const held=[...FOLLOWS].filter(p=>p!==ME.pubkey).length;
+      if(held>=8 && incoming.size < Math.floor(held/2)){
+        if(!_followShrinkWarned){ _followShrinkWarned=true;
+          toast('kept your '+held+' follows — a relay answered with only '+incoming.size); }
+        console.warn('[follows] refused a shrinking read:',incoming.size,'<',held,'from',ev.id);
+      } else { FOLLOWS = incoming; _persistFollows(); }
+    }
     FOLLOWS.add(ME.pubkey);
     // Prefetch follows' profiles for @-autocomplete — but NOT in data saver: pulling ~hundreds of kind-0
     // profiles (avatars + bios) up front is a big bandwidth hit on a throttled load, and the whole point of
@@ -26858,7 +26899,7 @@
     }catch(_){}
   }
   let _aiAuth = null;   // cached {can_ai, is_admin, username} for this session
-  let _aiAuthP=null;
+  let _aiAuthP=null, _aiAuthPAt=0;   // the in-flight login, and when it started — see ensureAiSession
   let _aiToken='';      // bearer token from nostr-login; needed for the chat WS in the bundled app, where the
                         // session cookie is on the remote instance and can't be read from document.cookie
   // Hand it to the bundled-app fetch shim, which attaches it as `Authorization: Bearer` to every request
@@ -26872,7 +26913,7 @@
     // The admin frame may already be loaded and waiting (it is preloaded hidden), so push rather than
     // making it poll — its own request for one may have arrived before we had anything to give.
     try{ _sendAdminToken(); }catch(_){} }
-  async function ensureAiSession(){
+  async function ensureAiSession(opts){
     /* AUTH METADATA IS NOT A CREDENTIAL. A browser can keep this in memory after the server was
      * restarted (cookie gone), and older/login-degraded responses could supply `user` without an
      * access token. Returning that cached object sends the protected request tokenless forever:
@@ -26880,11 +26921,28 @@
      * A usable cached session always has the bearer minted by nostr-login; otherwise re-prove the
      * key and rebuild both the cookie and bearer. */
     if(_aiAuth && _aiToken) return _aiAuth;
-    if(_aiAuthP) return _aiAuthP;   // dedupe concurrent callers (e.g. the 2.5s warm + a click) → one sign(), one login
+    /* DEDUPE, BUT NEVER LATCH. Two callers arriving together must share one sign() and one login —
+     * that is what stops an external signer prompting twice. What it must NOT do is make the FIRST
+     * attempt the only attempt: `_aiAuthP` was set before the work and cleared only in a `finally`,
+     * so an attempt that is merely slow (a remote signer answering after a relay restart, a request
+     * destroyed while a socket redialled) owned the view for as long as it took — and every later
+     * caller, including the Retry button, adopted the same pending promise and could do nothing.
+     *
+     * Reported as "AI Chat is just a spinning circle", then "it finally loaded" minutes later, on a
+     * LOCAL nsec as well as the built-in signer — which is the tell that the wait was never really
+     * about the signer being asked, but about who was allowed to ask again.
+     *
+     * `force` is a person pressing Retry: it declines to adopt and starts its own attempt. */
+    if(_aiAuthP && !(opts && opts.force)) return _aiAuthP;
     // Guest/boot smoke routes have no identity to prove. Fail deliberately before building tags or
     // touching ME.pubkey; callers can render a login-required state and no protected request leaves.
     if(!ME || !ME.pubkey) throw new Error('sign in with a Nostr account to start an app session');
     if(_aiAuth && !_aiToken) _aiAuth=null;
+    /* Declared BEFORE the attempt, not after. `signer.signEvent` can throw synchronously (a null
+     * signer is a TypeError), and then catch+finally run before the assignment below would — a
+     * temporal-dead-zone ReferenceError that would replace the real error with a confusing one on
+     * exactly the path that is supposed to explain itself. */
+    let mine=null;
     _aiAuthP = (async()=>{
       try{
         const auth = await sign(27235, 'ai-login', [['p', ME.pubkey]]);   // prove key ownership
@@ -26901,8 +26959,12 @@
         try{ out.cause=e; }catch(_){}
         throw out;                                             // callers MUST NOT continue tokenless
       }
-      finally{ _aiAuthP=null; }
+      /* Only ever retire OUR OWN attempt. With `force` a second attempt can be running, and a
+       * blanket `_aiAuthP=null` here would let the abandoned first one clear the live second — so
+       * the next caller would start a THIRD, which on an external signer is a third prompt. */
+      finally{ if(_aiAuthP===mine) { _aiAuthP=null; _aiAuthPAt=0; } }
     })();
+    mine=_aiAuthP; _aiAuthPAt=Date.now();
     return _aiAuthP;
   }
   // In-app Admin: the standalone admin panel embedded in the client (same-origin, the Nostr-login
@@ -27009,20 +27071,53 @@
       else feed.innerHTML='<div class="empty">Admin session unavailable — log in with your admin Nostr key.</div>';
     });
   }
-  async function renderAI(){
+  /* Name the half that is being waited on. `ME.mode` is set wherever the signer is built, so this
+   * states what was chosen and never guesses. Deliberately vague about WHY it is slow: the client
+   * cannot see inside an extension or a phone, and inventing a reason is how a wait becomes a
+   * misdiagnosis. */
+  function _signerLabel(){
+    switch((ME&&ME.mode)||''){
+      case 'nip07': return 'your browser extension';
+      case 'nip46': return 'your remote signer';
+      case 'nip55': return 'your signing app';
+      case 'local': return 'this device\u2019s key';
+      default: return 'your signer';
+    }
+  }
+  async function renderAI(opts){
     const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
+    /* A BARE SPINNER IS NOT A STATE, IT IS THE ABSENCE OF ONE. This wait ends at a signer, which
+     * can legitimately take tens of seconds — a remote signer re-sending a request destroyed while
+     * its socket redialled, a phone the user has not picked up yet. All of that is fine; what was
+     * not fine is that the screen said nothing about it and offered no way out, so "slow" and
+     * "broken" looked identical and were reported as the same bug.
+     *
+     * So: leave the spinner alone for the first few seconds (most sessions start well inside that
+     * and a flash of explanatory text would be noise), then say what is being waited for and offer
+     * a start-over that ACTUALLY starts over — `force`, because plain Retry adopted the very
+     * promise it was meant to escape. Nothing here cancels the attempt in flight: if the signer
+     * answers late, that session is still good. */
+    const slow=setTimeout(()=>{
+      if(VIEW!=='ai' || !feed.isConnected || !feed.querySelector('.spinner')) return;
+      feed.innerHTML=`<div class="ai-view ai-gate"><div class="spinner"></div>
+        <p class="muted">${enc('Starting your app session — waiting for '+_signerLabel()+'…')}</p>
+        <button class="btn btn-ghost" id="ai-session-restart">Start over</button></div>`;
+      const b=$('#ai-session-restart'); if(b) b.onclick=()=>renderAI({force:true});
+    }, 6000);
     let a;
-    try{ a=await ensureAiSession(); }
+    try{ a=await ensureAiSession(opts); }
     catch(e){
+      clearTimeout(slow);
       if(VIEW!=='ai') return;
       const guest=!ME||!ME.pubkey;
       feed.innerHTML=`<div class="ai-view ai-gate"><h2><svg class="ic h-ic" aria-hidden="true"><use href="#i-ai"></use></svg>PosterChan AI</h2>
         <p class="muted">${enc(guest?'Sign in with a Nostr account to use AI.':((e&&e.message)||'Could not start an AI session.'))}</p>
         ${guest?'<button class="btn btn-neon" id="ai-signin">Sign in</button>':'<button class="btn btn-ghost" id="ai-session-retry">Retry</button>'}</div>`;
       const b=$(guest?'#ai-signin':'#ai-session-retry');
-      if(b) b.onclick=()=>guest?showAuthGate():renderAI();
+      if(b) b.onclick=()=>guest?showAuthGate():renderAI({force:true});
       return;
     }
+    clearTimeout(slow);
     if(VIEW!=='ai') return;
     if(a.error){ feed.innerHTML='<div class="empty">Could not start an AI session — try again.</div>'; return; }
     if(a.can_ai){ return aiMount(feed); }
