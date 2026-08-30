@@ -41,6 +41,15 @@
   function landView(v){
     const go = () => {
       try{ if(window.PCOS && PCOS.mobileLanding) PCOS.mobileLanding(); }catch(_){}
+      /* AN OPEN SHEET IS NOT PART OF WHERE YOU ARE GOING.
+       *
+       * The More menu is a modal, so it survived the view switch: leave it open, press another
+       * launcher tile, and the app came forward on the right view with the More menu still over it
+       * — reported as "if you have the More menu open, then open another launcher app, you see the
+       * More menu". A launch is somebody asking for a destination, so whatever was covering the
+       * last one is dismissed. Only here: an ordinary in-app navigation must not close a sheet the
+       * person just opened. */
+      try{ const PC=window.__PC; if(PC&&PC.closeModal)PC.closeModal(); }catch(_){}
       if(v === '__feed_top'){
         /* "Home twice" means the feed the person was actually using.  Hard-coding `global`
          * silently switched a Home/Social user to Nostrverse (or targeted a hidden tab), which on

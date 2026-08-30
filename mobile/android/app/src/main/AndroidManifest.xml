@@ -227,6 +227,7 @@
              own — the launcher's Messages tile and the role picker both reach it this way. -->
         <activity
             android:name=".sms.ThreadListActivity"
+            android:taskAffinity="place.poster.app.texts"
             android:exported="true"
             android:theme="@style/PcAppTheme"
             android:label="@string/sms_title"
@@ -378,6 +379,7 @@
              a web page or an email open here. -->
         <activity
             android:name=".phone.DialerActivity"
+            android:taskAffinity="place.poster.app.phone"
             android:exported="true"
             android:theme="@style/PcAppTheme"
             android:label="@string/tel_title"

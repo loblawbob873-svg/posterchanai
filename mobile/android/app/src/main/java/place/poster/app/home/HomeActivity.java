@@ -971,10 +971,23 @@ public class HomeActivity extends Activity implements DeskView.Host {
         openApp(e.view);
     }
 
+    /**
+     * Open one of the launcher's OWN screens — Phone, Texts — as its own app.
+     *
+     * FLAG_ACTIVITY_NEW_TASK FINDS A TASK BY AFFINITY, and every one of these used to share the
+     * default affinity with MainActivity, which is singleTask. So they all lived in one task, and
+     * starting one while another was on top brought that TASK forward and showed whatever was at
+     * the top of it: "if I open phone, then go home and choose texts, I see Phone". Nothing threw,
+     * the animation was right, and the wrong app was on screen.
+     *
+     * Each now has its own taskAffinity in the manifest, the way HomeActivity already did, so
+     * NEW_TASK finds ITS task. CLEAR_TOP is the second half: with the activity already somewhere in
+     * that task, it comes forward instead of a second copy stacking on it.
+     */
     private void startNative(String className) {
         try {
             startActivity(new Intent().setClassName(getPackageName(), className)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP));
         } catch (Throwable t) { toast(getString(R.string.home_cannot_open)); }
     }
 
