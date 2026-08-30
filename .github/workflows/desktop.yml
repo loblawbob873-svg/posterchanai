@@ -319,7 +319,7 @@ jobs:
           # specification, and therefore proves that Electron found and executed the JS entrypoint
           # inside app.asar (ENOENT / unsupported ASAR entry execution has a different result).
           set +e
-          ELECTRON_RUN_AS_NODE=1 dist/linux-unpacked/posterchan \
+          ELECTRON_RUN_AS_NODE=1 dist/linux-unpacked/posterchan-desktop \
             dist/linux-unpacked/resources/app.asar/liveusb-runner.js
           runner_rc=$?
           set -e

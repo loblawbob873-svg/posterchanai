@@ -108,7 +108,7 @@ def test_linux_package_executes_the_runner_from_inside_asar():
     """CI must exercise the same Electron/ASAR entry path used by an installed desktop."""
     workflow = (ROOT / ".github/workflows/desktop.yml").read_text()
     assert "resources/app.asar/liveusb-runner.js" in workflow
-    assert "ELECTRON_RUN_AS_NODE=1 dist/linux-unpacked/posterchan" in workflow
+    assert "ELECTRON_RUN_AS_NODE=1 dist/linux-unpacked/posterchan-desktop" in workflow
     assert 'test "$runner_rc" -eq 125' in workflow
 
 
