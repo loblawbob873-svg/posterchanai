@@ -90,11 +90,19 @@ class TheRealContract(unittest.TestCase):
 
 class EveryFakeMatchesIt(unittest.TestCase):
 
-    FAKE = re.compile(r"relaySubscribe\s*:\s*(.{0,200})", re.S)
+    # BOTH surfaces, because a fixture may stub either end of the same call: `relaySubscribe` on the
+    # PC bridge, or `subscribe` on a `window.Relay` stub. concord.js drives the first for discovery
+    # and the second for chat, so a scan that knew only one name would silently stop covering half
+    # the module the moment a fixture switched — which is exactly what happened here.
+    FAKE = re.compile(r"\b(?:relaySubscribe|subscribe)\s*:\s*(.{0,200})", re.S)
+    # A `subscribe:` that is not a relay stub. Named so the scan cannot be widened into noise.
+    NOT_A_RELAY_FAKE = {"osshell_foot_output_runtime.js"}
 
     def _fakes(self):
         found = []
         for name, src in _client_test_sources():
+            if name in self.NOT_A_RELAY_FAKE:
+                continue
             code = _code_lines(src)
             for m in self.FAKE.finditer(code):
                 found.append((name, m.group(1)))
@@ -133,26 +141,39 @@ class EveryFakeMatchesIt(unittest.TestCase):
 
 
 class ConcordClosesWhatItOpens(unittest.TestCase):
-    """The consumer side, checked by name — concord is the only module that subscribes and the one
-    the leak was found in."""
+    """The consumer side. Concord is the only module that holds long-lived subscriptions and is
+    where the leak was found — in BOTH of its stop paths, fixed in two separate passes.
+
+    The rule is not "never use a .close() method": both paths now legitimately BUILD an object with
+    one, which is a perfectly good way to normalise a handle. The rule is that the raw return of a
+    subscribe call — a subId string — must never be the thing a stop path is left holding, because
+    every stop path here closes by calling `.close()` on what it was given, and a string has none.
+    """
 
     CONCORD = os.path.join(ROOT, "static", "js", "client", "concord.js")
 
-    def test_neither_stop_path_branches_on_a_close_method(self):
-        src = _code_lines(open(self.CONCORD, encoding="utf-8").read())
-        self.assertNotIn("typeof sub.close==='function'", src.replace(" ", ""),
-                         "stopChatLive still tests for a .close() method the handle does not have")
-        self.assertNotIn("typeofsubscription.close==='function'", src.replace(" ", ""),
-                         "stopDiscovery still tests for a .close() method the handle does not have")
+    def _src(self):
+        return _code_lines(open(self.CONCORD, encoding="utf-8").read()).replace(" ", "")
 
-    def test_both_subscriptions_go_through_the_normaliser(self):
-        """`subCloser` is what turns whichever of the three shapes came back into one closer. Both
-        call sites must use it, or the one that does not is the one that leaks."""
-        src = _code_lines(open(self.CONCORD, encoding="utf-8").read())
-        self.assertIn("function subCloser(", src, "the subscription normaliser is gone")
-        self.assertEqual(2, src.count("subCloser(p,p.relaySubscribe("),
-                         "expected both the chat and discovery subscriptions to be normalised; "
-                         "found %d" % src.count("subCloser(p,p.relaySubscribe("))
+    def test_no_stop_path_is_left_holding_a_raw_subscription_id(self):
+        src = self._src()
+        bad = [name for name, pat in (
+            ("the discovery subscription", "discoverySubscription=p.relaySubscribe("),
+            ("the chat subscription", "chatSub=p.relaySubscribe("),
+            ("the chat subscription", "chatSub=R.subscribe("),
+        ) if pat in src]
+        self.assertEqual([], bad,
+                         "%s stores the raw return of a subscribe call. That is a subId STRING, and "
+                         "the stop path closes by calling .close() on it — which a string does not "
+                         "have, so the subscription is never closed and its REQ stays open on every "
+                         "relay for the life of the page." % ", ".join(sorted(set(bad))))
+
+    def test_both_stop_paths_still_close_something(self):
+        """A stop path that stopped closing at all would satisfy the rule above vacuously."""
+        src = self._src()
+        for fn, marker in (("stopDiscovery", "subscription.close()"),
+                           ("stopChatLive", "sub.close()")):
+            self.assertIn(marker, src, "%s no longer closes its subscription" % fn)
 
 
 if __name__ == "__main__":

@@ -19,27 +19,6 @@
    * global compatibility set to every read/write caused a room open to spray sockets at unrelated
    * relays and could report a successful send on a default relay Armada never reads. Defaults are
    * bootstrap fallback only for old bundles which carry no usable relay. */
-  /* NORMALISE A SUBSCRIPTION TO A CLOSER, at the call site that still has `p`.
-   *
-   * The three subscription APIs here return three different things and only one of them is an
-   * object: `Relay.subscribe` (via `p.relaySubscribe`) answers a subId STRING, `Relay.subscribeFrom`
-   * answers a FUNCTION that closes itself, and nothing answers `{close(){}}`. Both stop paths
-   * nevertheless tested `typeof sub.close === 'function'` — false for a string, every time — so the
-   * chat and discovery subscriptions were never closed. A leaked live REQ is not idle: it stays open
-   * on every relay in the pool, and relays cap concurrent subscriptions per connection, so after
-   * enough channel switches a freshly opened room cannot get a live subscription at all and drops to
-   * the 4-second poller. That is the "rooms are not reliably live" report.
-   *
-   * The tests could not see it because their `relaySubscribe` fakes returned `{close(){}}` and then
-   * counted the close — a fixture asserting the opposite of the real contract. Hence
-   * tests/client/test_relay_subscription_contract.py, which checks the fakes against relay.js. */
-  function subCloser(p,sub){
-    if(!sub)return null;
-    if(typeof sub==='function')return sub;                       // subscribeFrom's own closer
-    if(typeof sub.close==='function')return ()=>{sub.close();};   // an object, if one ever appears
-    if(typeof sub==='string')return ()=>{if(p&&p.relayClose)p.relayClose(sub);};
-    return null;
-  }
   function roomRelays(bundle){
     const own=[...new Set((bundle&&bundle.relays||[]).map(normalizeRelay).filter(Boolean))];
     return (own.length?own:CORD_RELAYS).slice(0,8);
@@ -808,12 +787,17 @@
     const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); paintDiscovery(); };
     const onEose=()=>{ discoveryLoaded=true; paintDiscovery(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
-    try{ discoverySubscription=subCloser(p,p.relaySubscribe(filters,{onEvent,onEose,live:true})); if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2,signal,purpose:'concord discover listings'}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
+    /* `p.relaySubscribe` answers a subId STRING, and stopDiscovery below can only close
+     * something with a `.close()` method — so held raw, the discovery subscription was never
+     * closed and its REQ stayed open on every relay for the life of the page. Wrapped here the
+     * way startChatLive wraps its own handle. */
+    try{ const _dsub=p.relaySubscribe(filters,{onEvent,onEose,live:true});
+         discoverySubscription=_dsub?{close:()=>{if(p.relayClose)p.relayClose(_dsub);}}:null; if(p.relayQueryFrom)p.relayQueryFrom(DISCOVER_RELAYS,filters,{timeout:6000,max:2,signal,purpose:'concord discover listings'}).then(events=>{if(state.community!=null)return;events.forEach(onEvent);onEose();}); }catch(_){ discoveryLoaded=true; }
   }
   function stopDiscovery(){
     const subscription=discoverySubscription;discoverySubscription=null;discoveryStarted=false;
     const aborter=discoveryAbortController;discoveryAbortController=null;if(aborter)aborter.abort();
-    if(subscription)try{subscription();}catch(_){}
+    if(subscription&&typeof subscription.close==='function')try{subscription.close();}catch(_){}
   }
   async function hydrateInvite(p,url,signal=null){
     if(!window.PosterCord||!p.relayQueryFrom)throw new Error('CORD protocol is unavailable');
@@ -1357,38 +1341,57 @@
   function stopChatLive(){
     const sub=chatSub;chatSub=null;chatSubKey='';chatBuffer=[];
     if(chatFlush){clearTimeout(chatFlush);chatFlush=null;}
-    if(sub)try{sub();}catch(_){}
+    if(sub&&typeof sub.close==='function')try{sub.close();}catch(_){}
   }
   function startChatLive(p,room,channel){
     const key=roomIdentity(room)+'\n'+String(channel&&channel.id||'');
     if(chatSub&&chatSubKey===key)return;
     stopChatLive();
-    const authors=(channel&&channel.streamPubkeys)||[];
-    if(!p||!p.relaySubscribe||!authors.length)return;
+    const nip29=room&&room.protocol==='nip29',authors=(channel&&channel.streamPubkeys)||[];
+    const R=window.Relay;
+    if(!p||!R||!R.subscribe||!R.subscribeFrom||(!nip29&&!authors.length))return;
     chatSubKey=key;
     /* A small look-back, not none: between the room's opening history read and this subscription
      * being armed there is a gap, and a message that lands inside it would otherwise wait for the
      * next tick — which is the very delay this exists to remove. */
     const since=Math.max(0,Math.floor(Date.now()/1000)-180);
     const onEvent=ev=>{
-      if(!ev||Number(ev.kind)!==1059||chatSubKey!==key)return;
+      if(!ev||chatSubKey!==key)return;
+      if(nip29){if(![5,7,9,10,11,12,1111].includes(Number(ev.kind)))return;}
+      else if(Number(ev.kind)!==1059)return;
       chatBuffer.push(ev);
       if(chatFlush)return;
       chatFlush=setTimeout(()=>{chatFlush=null;void flushChatLive(p,key);},350);
     };
-    try{ chatSub=subCloser(p,p.relaySubscribe([{kinds:[1059],authors,since}],{onEvent,live:true})); }
-    catch(_){ chatSubKey=''; }
+    const urls=nip29?[room.relay]:roomRelays(room&&room.cord&&room.cord.bundle),
+      filters=nip29?[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],since}]:[{kinds:[1059],authors,since}];
+    try{
+      const pooled=R.subscribe(filters,{onEvent,live:true}),external=R.subscribeFrom(urls,filters,{onEvent,timeout:0});
+      const close=()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
+      chatSub={close,pooled,external};
+      const gates=[];
+      if(R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
+      if(external.hasTargets&&external.ready)gates.push(external.ready.then(ok=>{if(!ok)throw new Error('external room relay did not open');}));
+      if(gates.length)void Promise.any(gates).catch(e=>{if(chatSubKey===key){console.warn('Concord live room subscription could not open',e);stopChatLive();}});
+    }catch(e){ chatSubKey='';console.warn('Concord live room subscription failed',e); }
   }
   async function flushChatLive(p,key){
     const wraps=chatBuffer;chatBuffer=[];
     if(!wraps.length||chatSubKey!==key)return;
     const rooms=saved(),room=rooms[state.community];
     const channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general'));
-    const bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
-    if(!room||!channel||!bundle||!reader)return;
+    if(!room||!channel)return;
     /* THE VIEW MOVED WHILE THOSE BYTES WERE IN FLIGHT. Without this the events of the channel you
      * just left are merged into the store of the one you just opened. */
     if(roomIdentity(room)+'\n'+String(channel.id||'')!==key)return;
+    if(room.protocol==='nip29'){
+      const prior=testMessages(channelStoreId(room,channel.name)),needsContext=wraps.some(ev=>[5,7].includes(Number(ev.kind))),
+        incoming=needsContext?await nip29History(p,room):foldNip29History(wraps,p,room.groupId),merged=needsContext?incoming:mergeRelayMessages(prior,incoming);
+      if(JSON.stringify(merged)!==JSON.stringify(prior)){saveTestMessages(channelStoreId(room,channel.name),merged);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());}
+      return;
+    }
+    const bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
+    if(!bundle||!reader)return;
     const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);
     if(!controlWraps)return;
     const storeId=channelStoreId(room,channel.name);
@@ -1454,6 +1457,8 @@
       if(room.url&&(!room.cord||!room.cord.bundle)){room={...room,...await hydrateInvite(p,room.url)};rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity);if(at<0)return false;rooms[at]=room;save(rooms);index=at;if(roomIdentity(rooms[state.community])===identity){state.community=at;render();}}
       if(room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,index,identity);
       else if(room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,index);
+      room=saved()[state.community];const liveChannel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general'));
+      if(room&&liveChannel)startChatLive(p,room,liveChannel);
       roomLoadNotices.delete(roomIdentity(room));return true;
     }catch(e){
       if(room.protocol==='nip29'){rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity);if(at>=0){rooms[at].nip29Hydrated=false;save(rooms);}}
@@ -1469,6 +1474,8 @@
       if(room.cord&&!hydratedRoomViews.has(identity))await hydrateRoomStreams(p,index,identity);
       else if(room.cord)await refreshActiveChannel(p);
       else if(room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,index);
+      const active=saved()[state.community],liveChannel=active&&(active.channels||[]).find(c=>c.name===(state.channel||'general'));
+      if(active&&liveChannel)startChatLive(p,active,liveChannel);
     }catch(e){roomLoadWarning(p,identity,'could not refresh community: ',e);}
   }
   function wake(){resumeRequested=true;}

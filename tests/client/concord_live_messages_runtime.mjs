@@ -49,21 +49,15 @@ window.PosterCordReader = {
   },
 };
 
-let subFilters = null, subLive = null, onEvent = null, closed = 0, openIds = [];
-/* THE FAKE RETURNS WHAT THE REAL ONE RETURNS: a subId STRING, closed through `relayClose`.
- *
- * It used to answer `{close(){ closed++; }}` and the assertion at the bottom then PROVED a close
- * path that could never run — `Relay.subscribe` answers a string, so concord's
- * `typeof sub.close === 'function'` guard was false every time and the subscription was never
- * closed. A fixture with a contract the real module does not have is worse than no fixture: it
- * turns the leak into evidence that there is no leak. tests/client/test_relay_subscription_contract.py
- * is what stops one drifting back. */
+let subFilters = null, subLive = null, onEvent = null, externalEvent = null, closed = 0, externalClosed = 0;
+const externalEvents=[];
+window.Relay = {
+  subscribe: (filters, h) => { subFilters=filters;subLive=h&&h.live;onEvent=h&&h.onEvent;return 'real-string-sub-id'; },
+  subscribeFrom: (urls, filters, h) => { externalEvent=h&&h.onEvent;externalEvents.push(externalEvent);const close=()=>{externalClosed++;};close.hasTargets=true;close.ready=Promise.resolve(true);return close; },
+  waitForSubscription: async () => false,
+  close: id => { if(id!=='real-string-sub-id')throw new Error('wrong managed subscription id');closed++; },
+};
 const p = {
-  relaySubscribe: (filters, h) => { subFilters = filters; subLive = h && h.live; onEvent = h && h.onEvent;
-                                    const id = 'sub' + (openIds.length + 1); openIds.push(id); return id; },
-  relayClose: id => { if (typeof id !== 'string') throw new Error('relayClose got a ' + typeof id);
-                      if (!openIds.includes(id)) throw new Error('closed an unknown sub: ' + id);
-                      closed++; },
   relayQuery: async () => { throw new Error('the live path must not poll'); },
   relayQueryFrom: async () => { throw new Error('the live path must not poll'); },
   verifyRelayEvents: async e => e, profOf: () => ({}), toast: noop,
@@ -83,9 +77,10 @@ if (String((f.authors || [])[0]) !== 'b'.repeat(64))
 
 /* A BURST IS ONE BATCH. Opening a wrap is real cryptography; per event on the main thread is how a
    busy channel becomes a stutter. */
-onEvent({id:'w1', kind:1059});
-onEvent({id:'w2', kind:1059});
-onEvent({id:'w3', kind:1059});
+/* Deliver on the invite relay handle. The managed pool deliberately reports not-ready above. */
+externalEvent({id:'w1', kind:1059});
+externalEvent({id:'w2', kind:1059});
+externalEvent({id:'w3', kind:1059});
 if (timers.length !== 1)
   throw new Error('three arrivals scheduled ' + timers.length + ' flushes, not one');
 onEvent({id:'ignored', kind:1});          // not a wrap
@@ -105,5 +100,28 @@ if (texts.length !== 3)
 /* SWITCHING CHANNELS CLOSES THE OLD STREAM, or the channel you left feeds the one you opened. */
 api.startChatLive(p, ROOM, {name:'other', id:'chan-2', streamPubkeys:['d'.repeat(64)]});
 if (!closed) throw new Error('switching channels left the old subscription open');
+if (!externalClosed) throw new Error('switching channels left the external room socket open');
+const timerCount=timers.length;
+externalEvents[0]({id:'late-old-room',kind:1059});
+if(timers.length!==timerCount)throw new Error('a stale room callback scheduled a flush after close');
+
+/* NIP-29 uses public group events rather than encrypted kind-1059 wraps, but it needs the same
+   managed+invite-relay lifecycle and must update without leaving and re-entering the room. */
+const NIP={protocol:'nip29',name:'Public group',naddr:'nip-room',groupId:'group-1',relay:'wss://groups.example',
+           nip29Hydrated:true,channels:[{name:'general',id:'general'}]};
+store['pc.concord.invites']=JSON.stringify([NIP]);
+api.__testState({community:0,channel:'general'});
+api.startChatLive(p,NIP,NIP.channels[0]);
+const nipFilter=subFilters[0];
+for(const kind of [5,7,9,10,11,12,1111])if(!(nipFilter.kinds||[]).includes(kind))
+  throw new Error('NIP-29 live filter omitted kind '+kind);
+if(JSON.stringify(nipFilter['#h'])!==JSON.stringify(['group-1']))
+  throw new Error('NIP-29 live filter is not scoped to its group');
+externalEvent({id:'nip-msg',pubkey:'e'.repeat(64),kind:9,created_at:2,content:'live nip29',tags:[['h','group-1']]});
+timers[timers.length-1]();
+for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
+const nipSaved=api.__testMessages('nip-room');
+if(!nipSaved.some(m=>m.id==='nip-msg'&&m.text==='live nip29'))
+  throw new Error('pushed NIP-29 message did not reach its store: '+JSON.stringify(nipSaved));
 
 console.log('concord live messages runtime ok');
