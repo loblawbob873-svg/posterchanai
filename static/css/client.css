@@ -7543,6 +7543,23 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .os-tray{position:fixed;z-index:307;inset:0 9px auto auto;height:var(--mac-menu-h);
   gap:7px;color:#fff}.os-root.os-style-mac .os-tray button{height:26px;border-radius:6px;background:transparent}
 .os-root.os-style-mac .os-tray button:hover{background:rgba(255,255,255,.14)}
+/* THE MACHINE'S OWN TRAY IN THE MENU BAR. `#os-shell` is filled by osshell.js — wifi, battery,
+   volume, power — and it had NO macOS rules at all, so its chips kept taskbar sizing (a 48px bar)
+   inside a 30px menu bar and kept `color:var(--text)`, which on a light theme is dark text on the
+   dark glass of the menu bar. Reported as the wifi/power widget displaying weird and cut off.
+
+   Sized to the same 26px as the relay light and the bell beside it, so the row reads as one row —
+   which is the rule the chip styling already states for the PosterChan taskbar, applied to the bar
+   this style actually has. */
+.os-root.os-style-mac .os-sys{gap:2px;max-width:46vw;overflow:hidden}
+.os-root.os-style-mac .os-sys .os-chip{height:26px;display:inline-flex;align-items:center;
+  padding:0 6px;font-size:12px;line-height:1;color:#fff;border-color:transparent;border-radius:6px;
+  background:transparent}
+.os-root.os-style-mac .os-sys .os-chip:hover{background:rgba(255,255,255,.14);border-color:transparent}
+/* A reading that could not be taken stays marked as unknown — dimmed against the menu bar rather
+   than against the taskbar's palette, or it reads as an ordinary value. */
+.os-root.os-style-mac .os-sys .os-chip.os-unknown{color:rgba(255,255,255,.62)}
+.os-root.os-style-mac .os-sys .ic,.os-root.os-style-mac .os-sys svg{width:15px;height:15px;color:#fff}
 .os-root.os-style-mac .os-clock{align-items:flex-end;padding:0 6px}.os-root.os-style-mac .os-clock span{display:none}
 .os-root.os-style-mac .os-clock b{font-size:11.5px;color:#fff}
 .os-root.os-style-mac .os-startmenu{left:50%;bottom:82px;width:min(780px,calc(100vw - 30px));
