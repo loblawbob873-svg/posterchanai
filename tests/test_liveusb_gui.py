@@ -38,7 +38,7 @@ def test_backend_returns_the_exact_iso_path_when_build_starts(tmp_path):
     out = tmp_path / "images"
     out.mkdir()
     js = "process.stdout.write(JSON.stringify(require('./desktop/liveusb').build(process.argv[1],false)))"
-    env = {**os.environ, "PC_SUDO": str(sudo)}
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(tmp_path / "state")}
     got = json.loads(subprocess.check_output(["node", "-e", js, str(out)], cwd=ROOT, env=env))
     assert Path(got["path"]).parent == out
     assert Path(got["path"]).name.startswith("posterchan-live-")
@@ -53,7 +53,8 @@ def test_gui_build_cannot_publish_before_runtime_release_gates(tmp_path):
     out = tmp_path / "images"
     out.mkdir()
     js = "require('./desktop/liveusb').build(process.argv[1],false)"
-    env = {**os.environ, "PC_SUDO": str(sudo), "PC_TEST_ARGS": str(invoked)}
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_TEST_ARGS": str(invoked),
+           "PC_LIVEUSB_STATE_DIR": str(tmp_path / "state")}
     subprocess.check_call(["node", "-e", js, str(out)], cwd=ROOT, env=env)
 
     args = invoked.read_text().splitlines()
@@ -87,3 +88,11 @@ def test_backend_uses_argument_arrays_not_a_shell():
     assert "another LiveUSB job is already running" in src
     assert "the selected removable disk is no longer available" in src
     assert "of='+target" in src
+
+
+def test_iso_build_survives_the_desktop_process_and_recovers_status():
+    src = (ROOT / "desktop/liveusb.js").read_text()
+    assert "detached:true" in src and "p.unref()" in src
+    assert "liveusb-job.json" in src and "liveusb-job.log" in src
+    assert "recover();" in src
+    assert "stdio:['ignore',fd,fd]" in src
