@@ -102,7 +102,18 @@
   }
   function applyDesktopStyle(){
     if(!root) return;
-    root.classList.toggle('os-style-mac',settings().get(STYLE_KEY,'posterchan')==='mac');
+    const was=root.classList.contains('os-style-mac');
+    const mac=settings().get(STYLE_KEY,'posterchan')==='mac';
+    root.classList.toggle('os-style-mac',mac);
+    /* Menu and Dock safe areas change the measured desk. Reflow existing objects after layout has
+     * committed; otherwise switching style leaves windows/widgets clamped to the previous height. */
+    if(was!==mac&&desk)requestAnimationFrame(()=>{
+      /* Reflow is geometry maintenance, not user activation. Focusing every snapped window here
+       * made the last window in `wins` steal focus whenever the Dock/menu metrics changed; native
+       * surfaces then fought the window the user was dragging. */
+      for(const w of wins){if(w.max||w.snap)snapTo(w,w.max?'max':w.snap,{focus:false});else keepFrameReachable(w);}
+      drawWidgets();try{nsync();}catch(_){}
+    });
   }
   const fits = () => window.innerWidth >= MIN_WIDTH;
 
@@ -1339,9 +1350,10 @@
    * a display disappearing mid-gesture) must never leave only a sliver of the title bar behind. */
   function keepFrameReachable(w){
     if(!w || !w.el) return;
+    const area=snapWorkArea();
     const at=NAT().clampLocalRect({x:parseFloat(w.el.style.left),y:parseFloat(w.el.style.top),
       w:w.el.offsetWidth||parseFloat(w.el.style.width),h:w.el.offsetHeight||parseFloat(w.el.style.height)},
-      {width:vwL(),height:vhL()-TASKBAR},{width:MIN_W,height:MIN_H,gap:12});
+      area,{width:MIN_W,height:MIN_H,gap:12});
     Object.assign(w.el.style,{left:at.x+'px',top:at.y+'px',width:at.w+'px',height:at.h+'px'});
     if(!w.snap&&!w.max)w.rect={x:at.x,y:at.y,w:at.w,h:at.h};
   }
@@ -1454,11 +1466,10 @@
     if(extra){
       try{
         const opened=extra.act();
-        /* Music is a real document window hidden behind a launcher action. A monitor handoff calls
-           openApp('__music') on the destination; throwing away openDoc's return made the receiver
-           stop before geometry/UI restoration, leaving a black frame and only the global player
-           button. Other extras remain actions and intentionally return no window. */
-        return view==='__music'&&opened ? opened : null;
+        /* EXTRAS that create managed windows must return that window during a monitor handoff.
+           Discarding it made the receiver withhold its ACK after already opening the destination;
+           Task Manager, VMs, Remote Desktop and Settings could consequently vanish or duplicate. */
+        return opened || null;
       }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} return null; }
     }
     const existing = wins.find(w => sameAppWindow(w.view, view));
@@ -1703,6 +1714,7 @@
   function openSystemSettings(){
     const w=openDoc('os-settings', 'System Settings', 'i-gear', renderSystemSettings, false, true);
     if(w){ w.rerun=true; w.isolated=true; }
+    return w;
   }
 
   let _osSettingsPage='displays';
@@ -1716,7 +1728,7 @@
     host.innerHTML='<div class="spinner"></div>';
     /* Displays is one settings page, not the gatekeeper for every page. A missing/crashed display
        bridge must not also erase Appearance, Power and About. Degrade this page locally. */
-    let outs=[], power={}, system={}, displayError='',powerError='',systemError='';
+    let outs=[], power={}, system={}, machineIdentity='', displayError='',powerError='',systemError='',identityError='';
     /* Each page owns its own bridge. Waiting for displays, power and system information before
        drawing Appearance or Installation media made those genuinely separate sections share one
        failure mode: a hung display daemon left the whole Settings app on a spinner. Read only what
@@ -1734,6 +1746,11 @@
     if(_osSettingsPage==='about'){
       try{ system=window.pcSystem?await pcSystem.snapshot(false):(systemError='System information is unavailable on this device.',{}); }
       catch(e){ system={};systemError='Could not read system information: '+String(e&&e.message||e); }
+      if(!alive()) return;
+    }
+    if(_osSettingsPage==='users'){
+      try{ machineIdentity=window.pcOS&&pcOS.identity?await pcOS.identity():''; }
+      catch(e){ identityError='Could not read the local session identity: '+String(e&&e.message||e); }
       if(!alive()) return;
     }
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
@@ -1771,13 +1788,13 @@
         <option value="page:liveusb" ${_osSettingsPage==='liveusb'?'selected':''}>Installation media</option>
       </select></label><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
         <section class="os-set-card"><div class="os-set-cardhead"><b>Monitor arrangement</b><span>Drag each numbered screen to match its physical position on your desk.</span></div>
-        ${displayError?`<div class="empty">${enc(displayError)}</div>`:''}<div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
+        ${displayError?`<div class="empty">${enc(displayError)}</div>`:''}${rows.length?`<div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
           `<button class="os-display ${i===selected?'selected':''} ${r.enabled?'':'off'}" data-i="${i}"
            style="left:${20+(r.x-minX)*scale}px;top:${20+(r.y-minY)*scale}px;width:${Math.max(90,r.w*scale)}px;height:${Math.max(60,r.h*scale)}px">
            <b>${i+1}</b><span>${enc(r.label)}</span><small>${r.w} × ${r.h}</small></button>`).join('')}</div>
         <div class="os-display-controls"></div>
         ${window.pcDisplays?`<div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
-          <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}</section></section>
+          <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}`:`${displayError?'':`<div class="empty">No displays were detected. Reconnect a display, then reopen Settings.</div>`}`}</section></section>
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
         <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Choose PosterChan's desktop or a complete macOS-style layout with a menu bar, floating Dock, launcher and matching windows.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
         <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Shadows, restrained transparency and short visual transitions. This never changes window focus or placement.</span></div><select data-window-effects aria-label="Window effects"><option value="full" ${settings().get(FX_KEY,'full')!=='off'?'selected':''}>Modern</option><option value="off" ${settings().get(FX_KEY,'full')==='off'?'selected':''}>Low power / off</option></select></section></section>
@@ -1798,10 +1815,13 @@
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section></section>
-        <section data-settings-page="users" ${_osSettingsPage==='users'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('user')}</div><span><h2>Users</h2><p>Accounts allowed to sign in to this computer.</p></span></header>
-          <section class="os-set-card"><div class="os-set-cardhead"><b>Local accounts</b><span>User administration is unavailable in this session. Existing accounts are unchanged.</span></div></section></section>
+        <section data-settings-page="users" ${_osSettingsPage==='users'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('user')}</div><span><h2>Users</h2><p>The signed-in PosterChan identity and the private operating-system session attached to it.</p></span></header>
+          ${identityError?`<div class="empty">${enc(identityError)}</div>`:''}<section class="os-set-card os-user-account"><div class="os-user-avatar">${iconSvg('user')}</div><div><span>Current account</span><b>${enc((me()&&((me().profile&&me().profile.name)||me().name))||'PosterChan user')}</b><code>${enc(machineIdentity||((me()&&me().pubkey)||'No local OS identity'))}</code></div></section>
+          <div class="os-set-actions"><button class="btn" data-user-profile ${PC().openProfile?'':'disabled'}>Open profile</button><button class="btn primary" data-user-switch ${PC().accountMenu?'':'disabled'}>Switch account</button></div></section>
         <section data-settings-page="updates" ${_osSettingsPage==='updates'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('refresh')}</div><span><h2>Updates</h2><p>Operating-system and installed application updates.</p></span></header>
-          <section class="os-set-card"><div class="os-set-cardhead"><b>System updates</b><span>Update controls are unavailable in this session. No update has been started.</span></div></section></section>
+          <section class="os-set-card os-update-status"><div class="os-set-ready">Automatic</div><div><b>PosterChan updates itself safely</b><span>The desktop downloads signed application updates in the background and offers installation only after the download is complete. PosterChanOS system updates are installed by its guarded updater and restart the desktop when idle.</span></div></section>
+          <section class="os-about-grid os-set-card"><div><span>Running build</span><b><code>${enc(String(window.__PC_BUILD||'unknown').slice(0,16))}</code></b></div><div><span>Update channel</span><b>${window.pcShell?'Desktop automatic':'Web deployment'}</b></div></section>
+          <div class="os-set-actions"><button class="btn" data-update-reload>Reload current build</button></div></section>
         <section data-settings-page="about" ${_osSettingsPage==='about'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('chart')}</div><span><h2>About</h2><p>Hardware and session information for this computer.</p></span></header>
         ${systemError?`<div class="empty">${enc(systemError)}</div>`:''}
         <section class="os-set-card os-about-grid">
@@ -1892,7 +1912,7 @@
           disk.innerHTML='<option value="">Choose a removable drive</option>'+ds.map(d=>
             `<option value="${enc(d.path)}" ${d.mounted?'disabled':''}>${enc(d.path+' · '+(d.model||'USB drive')+' · '+Math.round(d.size/1073741824)+' GB'+(d.mounted?' · mounted':''))}</option>`).join('');
           const s=await pcLiveUSB.status(); stat.textContent=(s.message||'Ready')+(s.output?'\n\n'+s.output.slice(-5000):'');
-          buildButton.disabled=!!s.running;
+          buildButton.disabled=!!(s.running||s.launching);
           /* The builder and writer are one workflow. Keep the exact backend-selected output path in
            * the write field so finishing an ISO does not make somebody browse back to the folder
            * they selected a few minutes earlier. It is still never written until a removable disk
@@ -1912,9 +1932,9 @@
            * race a stale renderer). The backend job is authoritative: never tell the user a live
            * build failed when it is actually compressing the image. */
           let active=null;try{active=await pcLiveUSB.status()}catch(_){}
-          if(active&&active.kind==='build'&&active.running){if(active.path)setIso(active.path);stat.textContent=active.message||'Building ISO…';}
+          if(active&&active.kind==='build'&&(active.running||active.launching)){if(active.path)setIso(active.path);stat.textContent=active.message||'Building ISO…';}
           else PC().toast(String(x&&x.message||x));
-        }finally{try{const s=await pcLiveUSB.status();buildButton.disabled=!!s.running}catch(_){buildButton.disabled=false}}};
+        }finally{try{const s=await pcLiveUSB.status();buildButton.disabled=!!(s.running||s.launching)}catch(_){buildButton.disabled=false}}};
         live.querySelector('[data-live-burn]').onclick=async e=>{if(!iso.value||!disk.value)return PC().toast('Choose an ISO and an unmounted USB drive');
           const ok=await PC().uiConfirm('Everything on '+disk.value+' will be overwritten. Write this ISO?',{ok:'Erase and write USB'});if(!ok)return;
           try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);stat.textContent='Writing USB… do not unplug it';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
@@ -1927,6 +1947,11 @@
       };
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>jump(b.dataset.jump,b));
       host.querySelectorAll('[data-open-control]').forEach(b=>b.onclick=()=>jump(b.dataset.openControl,b));
+      const userProfile=host.querySelector('[data-user-profile]');if(userProfile)userProfile.onclick=()=>PC().openProfile&&PC().openProfile();
+      const switcher=host.querySelector('[data-user-switch]');if(switcher)switcher.onclick=()=>PC().accountMenu&&PC().accountMenu(switcher);
+      const reload=host.querySelector('[data-update-reload]');if(reload)reload.onclick=()=>{
+        if(window.pcShell&&pcShell.retry)pcShell.retry();else location.reload();
+      };
       host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;renderSystemSettings();});
       const mobile=host.querySelector('[data-settings-mobile]');if(mobile)mobile.onchange=()=>{
         const [kind,value]=String(mobile.value||'').split(':',2);
@@ -3071,7 +3096,7 @@
    * unmaximizing removes the border". The border is drawn, and an application-sized surface is
    * parked on top of it. It was hidden this long because a manual resize ends in a gesture, which
    * does sync — only the maximise BUTTON, which is a click, went unreported. */
-  function snapTo(w, z){
+  function snapTo(w, z, options){
     const css = rectOf(z);
     if(!css) return;
     keepRect(w);
@@ -3080,7 +3105,7 @@
     w.el.classList.toggle('maximised', w.max);
     w.el.classList.add('snapped');
     Object.assign(w.el.style, css);
-    focusWin(w);
+    if(!options || options.focus!==false) focusWin(w);
     if(w.native != null){
       /* CSS geometry settles after this stack. Invalidate the old compositor rectangle and perform
        * a full placement on the next frame; otherwise a right/left tile can retain Firefox's old
@@ -3442,11 +3467,11 @@
       snap:w.snap || null, max:!!w.max, rect:w.rect ? Object.assign({},w.rect) : null,
       snapped:w.el.classList.contains('snapped'), maximised:w.el.classList.contains('maximised') };
     let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
-        previewDir='', previewAt=0, crossDir='', crossSamples=0;
+        previewDir='', previewAt=0, crossDir='', crossSamples=0, nativePaintAt=Date.now();
     hideLayouts();
     /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
      * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
-    _natGesture(w, true);
+    if(nativeWins().length) _natGesture(w, true);
     /* A drag must not be able to outlive the button. Three ways it could, all of which end with the
      * window glued to the cursor because `up` never ran:
      *   - the browser starts its OWN drag of the title text/icon, which stops sending pointer events
@@ -3466,7 +3491,12 @@
       /* Recompute the HTML overlay after every painted pointer frame. A Terminal may begin clear
        * of Firefox and cross it mid-drag; retaining only the press-time rectangle lets the native
        * surface intercept the pointer as soon as their paths meet. */
-      if(nativeWins().length) _natGesture(w, true);
+      /* nsync begins with a compositor snapshot. Doing that at display refresh rate while a large
+       * Communities window is transformed floods IPC/GET_TREE and makes the frame visibly jump.
+       * Pointer capture remains with this title bar; 25Hz is ample to update which native surface
+       * intersects it, and the unthrottled calls at press/release preserve exact endpoints. */
+      const now=Date.now();
+      if(nativeWins().length && now-nativePaintAt>=40){nativePaintAt=now;_natGesture(w,true);}
     };
     const edgeDirection = (e) => {
       if(!e) return '';
@@ -3549,7 +3579,7 @@
       // bar stays on screen and above the taskbar.
       const gx=gxOf(e), gy=gyOf(e);
       curX = ox + (gx - ssx) / k;
-      curY = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (gy - ssy) / k));
+      curY = Math.max(0, Math.min(snapWorkArea().height - 34, oy + (gy - ssy) / k));
       /* A monitor is another renderer, so pointer capture cannot carry DOM events across its
        * boundary. Reaching an outside edge while dragging a native app requests a compositor
        * hand-off on release; the adjacent shell adopts it and supplies the new frame. */
@@ -3697,8 +3727,9 @@
       if(hadButtons && e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
       const left=Math.max(0,parseFloat(w.el.style.left)||0);
       const top=Math.max(0,parseFloat(w.el.style.top)||0);
-      nw = Math.max(MIN_W,Math.min(vwL()-left-12,ow + (e.clientX - sx) / k));
-      nh = Math.max(MIN_H,Math.min(vhL()-TASKBAR-top-12,oh + (e.clientY - sy) / k));
+      const area=snapWorkArea();
+      nw = Math.max(MIN_W,Math.min(area.width-left-12,ow + (e.clientX - sx) / k));
+      nh = Math.max(MIN_H,Math.min(area.height-top-12,oh + (e.clientY - sy) / k));
       if(!raf) raf = requestAnimationFrame(paint);
     };
     let ended = false;
@@ -5963,6 +5994,19 @@
               <i aria-hidden="true">⌃</i></button>`;
   }
 
+  /* The macOS menu bar is real shell furniture, not words painted by a pseudo-element. Every item
+   * invokes an existing, already-guarded desktop action and remains reachable by keyboard. */
+  function wireMacMenu(){
+    const menu=$('#os-mac-menu',root);if(!menu)return;
+    const run=(name,fn)=>{const b=menu.querySelector('[data-mac-menu="'+name+'"]');if(b)b.onclick=e=>{
+      e.stopPropagation();try{fn();}catch(_){PC().toast&&PC().toast('that desktop action is unavailable');}
+    }};
+    run('posterchan',()=>toggleStart());
+    run('settings',()=>openSystemSettings());
+    run('tasks',()=>openTaskManager());
+    run('view',()=>toggleFull());
+  }
+
   function drawBar(){
     if(!bar) return;
     // Remember whether the search box had the caret BEFORE the rebuild throws the element away.
@@ -6968,8 +7012,14 @@
     root.className = 'os-root';
     applyDesktopEffects();
     applyDesktopStyle();
-    root.innerHTML = '<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>';
+    root.innerHTML = `<nav class="os-mac-menu" id="os-mac-menu" aria-label="Desktop menu">
+      <button data-mac-menu="posterchan" aria-label="Open PosterChan menu">● <b>PosterChan</b></button>
+      <button data-mac-menu="settings">System Settings</button>
+      <button data-mac-menu="tasks">Task Manager</button>
+      <button data-mac-menu="view">Full Screen</button>
+    </nav><div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>`;
     document.body.appendChild(root);
+    wireMacMenu();
     /* Kept for old Sway configs during their first session after an upgrade. Current installs use
      * Alt+Return, which cannot produce a trailing bare-Super release. */
     let _suppressStartUntil = 0;

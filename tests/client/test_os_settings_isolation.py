@@ -91,6 +91,24 @@ def test_every_major_settings_category_is_a_distinct_page_not_a_combined_jump_ta
         assert combined not in render
 
 
+def test_users_and_updates_are_functional_pages_not_placeholder_cards():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    for marker in ("await pcOS.identity()", "data-user-profile", "data-user-switch",
+                   "PC().openProfile", "PC().accountMenu", "data-update-reload",
+                   "window.__PC_BUILD", "pcShell.retry"):
+        assert marker in render
+    assert "User administration is unavailable in this session" not in render
+    assert "Update controls are unavailable in this session" not in render
+
+
+def test_mac_desktop_themes_the_system_settings_document_too():
+    css = (ROOT / "static" / "css" / "client.css").read_text()
+    for selector in (".os-root.os-style-mac .os-settings{", ".os-root.os-style-mac .os-set-nav{",
+                     ".os-root.os-style-mac .os-set-main{", ".os-root.os-style-mac .os-set-card,"):
+        assert selector in css
+
+
 def test_installation_media_is_a_coherent_settings_page_in_both_bridge_states():
     render = OS[OS.index("async function renderSystemSettings()"):
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
@@ -123,3 +141,19 @@ def test_every_system_settings_icon_exists_in_the_shared_sprite():
     referenced = {'i-' + name for name in re.findall(r"iconSvg\('([^']+)'", render)}
     defined = set(re.findall(r'<symbol id="([^"]+)"', sprite))
     assert referenced <= defined, f"missing settings icons: {sorted(referenced - defined)}"
+
+
+def test_missing_displays_show_one_state_instead_of_empty_control_boxes():
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    assert "${rows.length?`<div class=\"os-display-map\"" in render
+    assert "No displays were detected. Reconnect a display" in render
+
+
+def test_mac_experience_themes_system_settings_content_not_only_window_buttons():
+    css = (ROOT / "static" / "css" / "client.css").read_text()
+    for marker in (".os-root.os-style-mac .os-settings",
+                   ".os-root.os-style-mac .os-set-nav",
+                   ".os-root.os-style-mac .os-set-main",
+                   ".os-root.os-style-mac .os-set-card"):
+        assert marker in css

@@ -7447,12 +7447,19 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   border-bottom:1px solid rgba(255,255,255,.14);background:rgba(22,25,31,.72);
   -webkit-backdrop-filter:blur(24px) saturate(145%);backdrop-filter:blur(24px) saturate(145%);
   box-shadow:0 1px 12px rgba(0,0,0,.22);pointer-events:none}
-.os-root.os-style-mac::after{content:'●  PosterChan     File     Edit     View     Window     Help';
-  position:absolute;z-index:306;inset:0 auto auto 13px;height:var(--mac-menu-h);display:flex;
-  align-items:center;color:rgba(255,255,255,.94);font-size:12px;font-weight:600;letter-spacing:-.1px;
-  white-space:pre;pointer-events:none;text-shadow:0 1px 2px #0008}
-.os-root.os-style-mac .os-desk{padding-top:var(--mac-menu-h);padding-bottom:calc(var(--mac-dock-h) + 18px)}
-.os-root.os-style-mac .os-icons{padding-top:42px;padding-bottom:90px}
+.os-mac-menu{display:none}
+.os-root.os-style-mac .os-mac-menu{position:absolute;z-index:308;inset:0 min(430px,42vw) auto 7px;
+  height:var(--mac-menu-h);display:flex;align-items:center;gap:1px;overflow:hidden;white-space:nowrap}
+.os-root.os-style-mac .os-mac-menu button{flex:0 0 auto;height:26px;padding:0 8px;border:0;border-radius:6px;
+  background:transparent;color:rgba(255,255,255,.94);font:500 12px/1 -apple-system,BlinkMacSystemFont,
+  "SF Pro Text","Helvetica Neue",sans-serif;cursor:pointer;text-shadow:0 1px 2px #0008}
+.os-root.os-style-mac .os-mac-menu button:hover,.os-root.os-style-mac .os-mac-menu button:focus-visible{
+  background:rgba(255,255,255,.16);outline:0}.os-root.os-style-mac .os-mac-menu button:first-child{font-weight:600}
+/* Make the desk itself the usable rectangle. Widgets, free icons, window clamps and pointer hit tests
+   all measure this element, so margins reserve the menu/Dock in one place instead of merely painting
+   padding over a full-height coordinate system and clipping anything placed at its bottom edge. */
+.os-root.os-style-mac .os-desk{margin-top:var(--mac-menu-h);margin-bottom:calc(var(--mac-dock-h) + 18px)}
+.os-root.os-style-mac .os-icons{padding-top:12px;padding-bottom:6px}
 .os-root.os-style-mac .os-icon{border-radius:10px;text-shadow:0 1px 3px #000,0 2px 8px #000b}
 .os-root.os-style-mac .os-icon:hover,.os-root.os-style-mac .os-icon.selected{
   background:rgba(255,255,255,.15);box-shadow:inset 0 0 0 1px rgba(255,255,255,.13)}
@@ -7490,15 +7497,20 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   border-bottom-color:#aaa}.os-root.os-style-mac .osw.osw-document .osw-title{color:#272727}
 /* The ordinary full-width bottom taskbar becomes a real floating Dock. The status controls remain
    usable in the menu bar instead of wasting a second strip at the bottom. */
-.os-root.os-style-mac .os-bar{position:absolute;z-index:309;left:50%;right:auto;bottom:10px;
+.os-root.os-style-mac .os-bar{position:absolute;z-index:309;left:0;right:0;bottom:10px;margin-inline:auto;
   width:max-content;max-width:calc(100% - 28px);height:58px;min-height:58px;padding:5px 9px;
-  border:1px solid rgba(255,255,255,.22);border-radius:17px;background:rgba(51,55,65,.66);
+  border:1px solid rgba(255,255,255,.22);border-radius:17px;background:rgba(51,55,65,.92);
   box-shadow:0 14px 38px rgba(0,0,0,.46),inset 0 1px rgba(255,255,255,.12);
-  -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
-  transform:translateX(-50%);overflow:visible}
+  /* A filtered ancestor becomes the containing block for position:fixed descendants. The tray is
+     intentionally fixed in the top menu, but these filters trapped it inside the 58px Dock and
+     compressed Start, search, tasks, volume, network and clock into one overlapping strip. Keep
+     the Dock opaque enough for readability and leave fixed positioning rooted at the desktop. */
+  -webkit-backdrop-filter:none;backdrop-filter:none;
+  transform:none;overflow:visible}
+.os-root.os-style-mac .os-qbox{display:none}
 .os-root.os-style-mac .os-start{width:48px;height:48px;border-radius:12px;border:0;background:transparent}
 .os-root.os-style-mac .os-start img{width:38px;height:38px;border-radius:10px}
-.os-root.os-style-mac .os-tasks{flex:none;max-width:min(68vw,900px);gap:5px;padding-inline-start:7px;
+.os-root.os-style-mac .os-tasks{flex:0 1 auto;min-width:0;max-width:min(68vw,900px);gap:5px;padding-inline-start:7px;
   border-inline-start:1px solid rgba(255,255,255,.22)}
 .os-root.os-style-mac .os-task{position:relative;flex-basis:48px;width:48px;height:48px;border-radius:12px;
   border:0;background:transparent;transition:transform .13s ease,background .13s ease}
@@ -7512,17 +7524,41 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .os-tray button:hover{background:rgba(255,255,255,.14)}
 .os-root.os-style-mac .os-clock{align-items:flex-end;padding:0 6px}.os-root.os-style-mac .os-clock span{display:none}
 .os-root.os-style-mac .os-clock b{font-size:11.5px;color:#fff}
-.os-root.os-style-mac .os-startmenu{left:50%;bottom:82px;width:min(720px,calc(100vw - 30px));
-  max-height:min(680px,calc(100vh - 130px));border:1px solid rgba(255,255,255,.22);border-radius:22px;
+.os-root.os-style-mac .os-startmenu{left:50%;bottom:82px;width:min(780px,calc(100vw - 30px));
+  height:min(920px,calc(100vh - 78px));max-height:calc(100vh - 78px);border:1px solid rgba(255,255,255,.22);border-radius:22px;
   background:rgba(35,39,48,.82);box-shadow:0 28px 85px rgba(0,0,0,.55);
   -webkit-backdrop-filter:blur(30px) saturate(150%);backdrop-filter:blur(30px) saturate(150%);
-  transform:translateX(-50%)}
+  transform:translate(-50%,0)}
 .os-root.os-style-mac .os-startmenu .os-app,.os-root.os-style-mac .os-startmenu button{border-radius:13px}
 .os-root.os-style-mac .os-context,.os-root.os-style-mac .os-notifications,.os-root.os-style-mac .os-netfly{
   border-color:rgba(255,255,255,.2);background:rgba(35,39,48,.84);
   -webkit-backdrop-filter:blur(26px);backdrop-filter:blur(26px);box-shadow:0 22px 65px #0008}
-@media(max-width:1180px){.os-root.os-style-mac::after{content:'●  PosterChan     File     View     Window'}
-  .os-root.os-style-mac .os-tray{gap:3px}.os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
+/* Settings belongs to the selected desktop experience too. Keep its content coherent with the
+   macOS window chrome instead of dropping a cyberpunk-black application inside a glass window. */
+.os-root.os-style-mac .os-settings{background:#e9e9eb;color:#202124}
+.os-root.os-style-mac .os-set-nav{background:rgba(238,238,241,.9);border-right-color:#c7c7ca;
+  box-shadow:none}.os-root.os-style-mac .os-set-nav button{color:#4b4c50}
+.os-root.os-style-mac .os-set-nav button.on,.os-root.os-style-mac .os-set-nav button:hover{
+  background:#0a84ff;color:#fff}
+.os-root.os-style-mac .os-set-main{background:linear-gradient(180deg,#f7f7f8,#e9e9eb)}
+.os-root.os-style-mac .os-set-pagehead>div{background:#0a84ff;color:#fff;box-shadow:0 3px 9px #0067c755}
+.os-root.os-style-mac .os-set-pagehead p,.os-root.os-style-mac .os-set-cardhead span,
+.os-root.os-style-mac .os-set-control>div>span,.os-root.os-style-mac .os-set-control output{color:#68696e}
+.os-root.os-style-mac .os-set-card,.os-root.os-style-mac .os-setting-row,
+.os-root.os-style-mac .os-liveusb{background:rgba(255,255,255,.82)!important;border-color:#c9c9cc;
+  box-shadow:0 1px 3px #0002}
+.os-root.os-style-mac .os-display-map{background:#d7d7da;border-color:#b6b6ba}
+.os-root.os-style-mac .os-display-controls,.os-root.os-style-mac .os-liveusb-grid>div{
+  background:#f7f7f8;border-color:#cdcdcf}
+.os-root.os-style-mac .os-set-control select,.os-root.os-style-mac .os-display-controls select,
+.os-root.os-style-mac .os-liveusb-grid select,.os-root.os-style-mac .os-path-pick input{
+  background:#fff;color:#202124;border-color:#b9b9bd}
+.os-root.os-style-mac .os-liveusb-status{background:#f4f4f5;color:#3a3b3e;border-color:#cacacd}
+.os-root.os-style-mac .os-about-grid{background:#ceced1}.os-root.os-style-mac .os-about-grid>div{background:#fff}
+.os-root.os-style-mac .empty{color:#68696e}
+@media(max-width:1180px){.os-root.os-style-mac .os-mac-menu{inset-inline-end:min(390px,46vw)}
+  .os-root.os-style-mac .os-mac-menu button{padding-inline:6px}.os-root.os-style-mac .os-tray{gap:3px}
+  .os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 .osw.osw-document,.osw.osw-document.focused{border-color:#4b5563;border-radius:4px;
@@ -7574,7 +7610,11 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* While a window is being dragged it is moved with a transform on the compositor, so promote it to
    its own layer and stop hit-testing its contents — on a tablet the pointer-events work alone was
    showing up in the gesture. Both are removed on release. */
-.osw.dragging{will-change:transform}
+.osw.dragging{will-change:transform;transition:none!important;
+  /* Sampling a full-screen blurred backdrop again for every transformed Communities frame is a
+     multi-megapixel repaint on each pointer event. Preserve the glass effect at rest; while the
+     pointer is down use the same opaque panel so movement follows the cursor without flashing. */
+  -webkit-backdrop-filter:none!important;backdrop-filter:none!important;background:var(--panel)!important}
 /* No text/icon selection on the title bar: a native drag of the title steals the gesture, the
    browser stops sending pointer events, and the window ends up glued to the cursor. */
 .osw-bar{user-select:none;-webkit-user-select:none}
@@ -9227,6 +9267,10 @@ audio.sms-att-img{min-width:220px}
 .os-set-actions{display:flex;align-items:center;gap:10px;margin-top:16px}
 .os-set-control{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 17px;border:1px solid var(--line)}.os-set-control>div{display:flex;flex-direction:column;gap:4px}.os-set-control>div>span,.os-set-control output{color:var(--muted);font-size:12px}.os-set-control>label{display:flex;align-items:center;gap:10px}.os-set-control input[type=range]{width:min(240px,28vw)}.os-set-control select{min-width:150px;padding:8px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:7px}.os-set-switch span{min-width:24px}.os-about-grid{display:grid;grid-template-columns:repeat(2,minmax(140px,1fr));gap:1px;padding:0;overflow:hidden;background:var(--line)}.os-about-grid>div{display:flex;flex-direction:column;gap:5px;padding:16px;background:var(--panel)}.os-about-grid span{color:var(--muted);font-size:12px}
 .os-set-widget-list{margin-top:12px}.os-set-widget-addhead{margin-top:22px}.os-set-widget-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:8px;margin-top:12px}.os-set-widget-grid .os-wgt-pick{width:100%;min-height:68px}.os-set-widget .danger{color:#ff8f9a}
+.os-user-account,.os-update-status{display:flex;align-items:center;gap:16px}.os-user-account>div:nth-child(2),.os-update-status>div:nth-child(2){display:flex;min-width:0;flex-direction:column;gap:5px}.os-user-account code{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}.os-user-avatar{display:grid;place-items:center;flex:0 0 52px;height:52px;border-radius:50%;background:rgba(var(--accent-rgb),.16);color:var(--accent)}.os-user-avatar .ic{width:28px;height:28px}.os-update-status span{color:var(--muted);font-size:12px;line-height:1.5}.os-update-status .os-set-ready{flex:none}
+/* System Settings belongs to the selected desktop experience too; otherwise macOS chrome framed a
+   second, unrelated cyberpunk application. Keep these overrides scoped to this isolated document. */
+.os-root.os-style-mac .os-settings{background:#ececf0;color:#1d1d1f}.os-root.os-style-mac .os-set-nav{background:rgba(224,224,229,.92);border-right-color:#c6c6ca;box-shadow:none}.os-root.os-style-mac .os-set-nav button{color:#55555c}.os-root.os-style-mac .os-set-nav button.on,.os-root.os-style-mac .os-set-nav button:hover{background:#0a84ff;color:#fff}.os-root.os-style-mac .os-set-main{background:#f5f5f7}.os-root.os-style-mac .os-set-pagehead>div{background:#0a84ff;color:#fff}.os-root.os-style-mac .os-set-pagehead p,.os-root.os-style-mac .os-set-cardhead span,.os-root.os-style-mac .os-set-control>div>span,.os-root.os-style-mac .os-about-grid span,.os-root.os-style-mac .os-update-status span{color:#6e6e73}.os-root.os-style-mac .os-set-card,.os-root.os-style-mac .os-setting-row{background:#fff!important;border-color:#d2d2d7;box-shadow:0 1px 2px #0000000d}.os-root.os-style-mac .os-about-grid{background:#d2d2d7}.os-root.os-style-mac .os-about-grid>div{background:#fff}.os-root.os-style-mac .os-set-control select{background:#fff;color:#1d1d1f;border-color:#c7c7cc}.os-root.os-style-mac .os-display-controls{background:#fff;border-color:#d2d2d7}.os-root.os-style-mac .os-set-ready{background:#dff7e5;color:#167534}
 .os-liveusb{background:#11151d}
 .os-liveusb-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.os-liveusb-head>div{display:flex;flex-direction:column;gap:4px}.os-liveusb-head span{color:var(--muted);font-size:12px}
 .os-liveusb-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}.os-liveusb-grid>div{display:flex;flex-direction:column;gap:12px;padding:15px;border:1px solid #2a303c;border-radius:10px;background:#0b0e14}.os-liveusb-grid h3{margin:0;font-size:16px}.os-liveusb-grid label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:12px}.os-liveusb-grid label:has(input[type=checkbox]){display:block}.os-liveusb-grid select{width:100%;padding:8px;background:#111722;color:var(--text);border:1px solid var(--line);border-radius:6px}.os-path-pick{display:flex;gap:7px}.os-path-pick input{flex:1;min-width:0}.os-liveusb .danger{border-color:#9b4050;color:#ff91a5}.os-liveusb-status{min-height:38px;max-height:120px;margin:14px 0 0;padding:10px;overflow:auto;white-space:pre-wrap;background:#080a0f;border:1px solid #252a35;border-radius:7px;color:#aab3c4}

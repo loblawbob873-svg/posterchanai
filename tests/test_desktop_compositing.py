@@ -40,3 +40,11 @@ def test_effect_choice_is_global_not_part_of_cross_monitor_window_identity():
     payload = JS[JS.index("function handoffPayload") : JS.index("function sendFrameHandoff")]
     assert "osCompositing" not in payload and "FX_KEY" not in payload
     assert "applyDesktopEffects()" in JS
+
+
+def test_dragging_temporarily_disables_full_window_blur_and_transitions():
+    start = CSS.index(".osw.dragging{")
+    rule = CSS[start:CSS.index("}", start) + 1]
+    assert "will-change:transform" in rule
+    assert "transition:none!important" in rule
+    assert "backdrop-filter:none!important" in rule

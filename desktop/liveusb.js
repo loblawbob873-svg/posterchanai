@@ -10,21 +10,50 @@ let job = { kind:'', running:false, ok:false, message:'', started:0, finished:0,
 const STATE_DIR = process.env.PC_LIVEUSB_STATE_DIR || path.join(process.env.XDG_STATE_HOME || path.join(process.env.HOME||'', '.local/state'), 'posterchan');
 const STATE_FILE = path.join(STATE_DIR, 'liveusb-job.json');
 const LOG_FILE = path.join(STATE_DIR, 'liveusb-job.log');
+const LOCK_FILE = path.join(STATE_DIR, 'liveusb-job.lock');
+const RUNNER = path.join(__dirname,'liveusb-runner.js');
 
 function save(){try{fs.mkdirSync(STATE_DIR,{recursive:true,mode:0o700});const tmp=STATE_FILE+'.new';
   fs.writeFileSync(tmp,JSON.stringify(job),{mode:0o600});fs.renameSync(tmp,STATE_FILE);}catch(_){}}
-function alive(pid){if(!Number.isInteger(+pid)||+pid<2)return false;try{process.kill(+pid,0);return true;}catch(_){return false;}}
+function procStart(pid){try{const s=fs.readFileSync('/proc/'+pid+'/stat','utf8'),end=s.lastIndexOf(')');
+  return end>=0?s.slice(end+2).split(' ')[19]||'':'';}catch(_){return '';}}
+function alive(old){const pid=Number(old&&old.pid);if(!Number.isInteger(pid)||pid<2)return false;
+  try{process.kill(pid,0);}catch(_){return false;}
+  const start=procStart(pid);if(old.procStart&&start!==String(old.procStart))return false;
+  try{if(old.token&&!fs.readFileSync('/proc/'+pid+'/cmdline','utf8').includes(old.token))return false;}catch(_){if(process.platform==='linux')return false;}
+  return true;}
 function recover(){try{const old=JSON.parse(fs.readFileSync(STATE_FILE,'utf8'));if(!old||!old.kind)return;
-  old.running=alive(old.pid);
-  if(!old.running&&!old.finished){old.finished=Date.now();old.ok=old.kind==='build'&&!!old.path&&fs.existsSync(old.path);
-    old.message=old.ok?'ISO finished':old.kind+' stopped before it finished';}
+  if(old.launching&&Date.now()-Number(old.started||0)<10000){job=Object.assign(job,old);return;}
+  old.running=alive(old);
+  /* The supervisor can exit between its child returning and the atomic state rename. Give that
+   * tiny handoff a grace period; otherwise a status poll can overwrite its real exit code. */
+  if(!old.running&&!old.finished&&Date.now()-Number(old.started||0)<2000){job=Object.assign(job,old);job.running=true;return;}
+  if(!old.running&&!old.finished){old.finished=Date.now();old.ok=false;old.launching=false;
+    old.message=old.kind+' stopped before it finished';job=Object.assign(job,old);save();
+    try{if(fs.readFileSync(LOCK_FILE,'utf8')===old.token)fs.unlinkSync(LOCK_FILE);}catch(_){}return;}
   job=Object.assign(job,old);
+  if(old.finished)try{if(fs.readFileSync(LOCK_FILE,'utf8')===old.token)fs.unlinkSync(LOCK_FILE);}catch(_){}
 }catch(_){}}
+
+function acquireLock(token){
+  fs.mkdirSync(STATE_DIR,{recursive:true,mode:0o700});
+  for(let n=0;n<2;n++)try{const fd=fs.openSync(LOCK_FILE,'wx',0o600);fs.writeFileSync(fd,token);fs.closeSync(fd);return;}
+  catch(e){
+    if(n)throw new Error('another LiveUSB job is already running');
+    let recent=true;try{recent=Date.now()-fs.statSync(LOCK_FILE).mtimeMs<10000;}catch(_){}
+    let owner=null;try{owner=JSON.parse(fs.readFileSync(STATE_FILE,'utf8'));}catch(_){}
+    if(recent||(owner&&fs.readFileSync(LOCK_FILE,'utf8')===owner.token&&(owner.launching||alive(owner))))
+      throw new Error('another LiveUSB job is already running');
+    try{fs.unlinkSync(LOCK_FILE);}catch(_){}
+  }
+}
 
 function run(bin,args,ms){ return new Promise((resolve,reject)=>execFile(bin,args,{timeout:ms||8000},(e,out,err)=>{
   if(e)return reject(new Error(String(err||e.message||e).trim().split('\n').pop())); resolve(String(out||''));
 })); }
 function flatten(rows,out=[]){ for(const r of rows||[]){out.push(r);flatten(r.children,out);} return out; }
+function stableDevicePath(target){try{return fs.readdirSync('/dev/disk/by-id').filter(n=>!n.includes('-part'))
+  .map(n=>path.join('/dev/disk/by-id',n)).find(n=>{try{return fs.realpathSync(n)===target;}catch(_){return false;}})||'';}catch(_){return '';}}
 
 async function devices(){
   const raw=await run(LSBLK,['-J','-b','-o','NAME,PATH,TYPE,SIZE,RM,TRAN,MOUNTPOINTS,MODEL']);
@@ -33,22 +62,34 @@ async function devices(){
   return roots.filter(x=>x.type==='disk' && (Number(x.rm)===1 || x.tran==='usb'))
     .filter(x=>!root || (root.path!==x.path && !flatten([x]).some(y=>y.path===root.path)))
     .map(x=>({path:x.path,name:x.name,size:Number(x.size)||0,model:String(x.model||'').trim(),
-      mounted:flatten([x]).some(y=>(y.mountpoints||[]).some(Boolean))}));
+      stablePath:stableDevicePath(x.path),mounted:flatten([x]).some(y=>(y.mountpoints||[]).some(Boolean))}));
 }
 function launch(kind,bin,args,env,meta){
   recover();
-  if(job.running)throw new Error('another LiveUSB job is already running');
-  job=Object.assign({kind,running:true,ok:false,message:kind==='build'?'Building ISO…':'Writing USB…',started:Date.now(),finished:0,output:'',path:''},meta||{});
-  fs.mkdirSync(STATE_DIR,{recursive:true,mode:0o700});
-  const fd=fs.openSync(LOG_FILE,'w',0o600);
+  if(job.running||job.launching)throw new Error('another LiveUSB job is already running');
+  const token=require('crypto').randomBytes(18).toString('hex');
+  acquireLock(token);
+  job=Object.assign({kind,running:false,launching:true,ok:false,message:kind==='build'?'Starting ISO build…':'Starting USB write…',
+    started:Date.now(),finished:0,output:'',path:'',token,pid:0,procStart:'',exitCode:null},meta||{});save();
+  /* A stale-lock reclaimer may have won while this launcher was descheduled. Never spawn unless
+   * this exact token still owns the lock. */
+  try{if(fs.readFileSync(LOCK_FILE,'utf8')!==token)throw new Error('LiveUSB launch ownership changed');}
+  catch(e){job.launching=false;job.finished=Date.now();job.message=String(e.message||e);save();throw e;}
+  fs.writeFileSync(LOG_FILE,'',{mode:0o600});
   /* The ISO build outlives this Electron renderer and even a package-triggered desktop restart.
-   * Pipes die with their parent and can SIGPIPE a healthy mksquashfs; a detached process writing a
-   * state-owned log has neither failure mode. */
-  const p=spawn(bin,args,{env:Object.assign({},process.env,env||{}),stdio:['ignore',fd,fd],detached:true});
-  fs.closeSync(fd);job.pid=p.pid;save();p.unref();
-  p.on('error',e=>{job.running=false;job.finished=Date.now();job.message=e.message;save();});
-  p.on('close',code=>{job.running=false;job.finished=Date.now();job.ok=code===0;
-    job.message=code===0?(kind==='build'?'ISO finished':'USB finished — eject it safely'):(kind+' failed (exit '+code+')');save();});
+   * A detached supervisor, rather than the build itself, records the real exit code atomically so
+   * a replacement UI never guesses success from a stale or partial ISO file. */
+  const spec={state:STATE_FILE,log:LOG_FILE,lock:LOCK_FILE,token,kind,bin,args,env:env||{}};
+  let p;
+  try{p=spawn(process.execPath,[RUNNER,Buffer.from(JSON.stringify(spec)).toString('base64')],{
+    env:Object.assign({},process.env,{ELECTRON_RUN_AS_NODE:'1'}),stdio:'ignore',detached:true});}
+  catch(e){try{fs.unlinkSync(LOCK_FILE);}catch(_){}job.launching=false;job.finished=Date.now();job.message=String(e.message||e);save();throw e;}
+  if(process.env.NODE_ENV==='test'&&Number(process.env.PC_LIVEUSB_TEST_BEFORE_CLAIM_MS)>0)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(process.env.PC_LIVEUSB_TEST_BEFORE_CLAIM_MS));
+  try{if(fs.readFileSync(LOCK_FILE,'utf8')!==token)throw new Error('LiveUSB launch ownership changed before claim');}
+  catch(e){try{p.kill();}catch(_){}throw e;}
+  job.pid=p.pid;job.procStart=procStart(p.pid);job.running=true;job.launching=false;
+  job.message=kind==='build'?'Building ISO…':'Writing USB…';save();p.unref();
   return status();
 }
 function build(outDir,includeHome){
@@ -71,8 +112,14 @@ async function burn(iso,target){
   const allowed=(await devices()).find(x=>x.path===target);
   if(!allowed)throw new Error('the selected removable disk is no longer available');
   if(allowed.mounted)throw new Error('eject or unmount every partition on '+target+' first');
-  return launch('burn',SUDO,['-n','dd','if='+image,'of='+target,'bs=4M','iflag=fullblock','oflag=direct','conv=fsync','status=progress']);
+  if(!allowed.stablePath)throw new Error('this disk has no stable hardware identity; reconnect it before writing');
+  /* Resolve the by-id link and recheck mounts as root immediately before dd opens the device. A
+   * mutable /dev/sdX captured earlier must never become a different disk between scan and write. */
+  const guard='set -eu; p="$1"; expected="$2"; image="$3"; actual="$(readlink -f -- "$p")"; '
+    +'[ "$actual" = "$expected" ]; ! lsblk -n -o MOUNTPOINTS -- "$actual" | grep -q "[^[:space:]]"; '
+    +'exec dd "if=$image" "of=$actual" bs=4M iflag=fullblock oflag=direct conv=fsync status=progress';
+  return launch('burn',SUDO,['-n','sh','-c',guard,'posterchan-liveusb',allowed.stablePath,target,image]);
 }
 function status(){recover();try{job.output=fs.readFileSync(LOG_FILE,'utf8').slice(-24000);}catch(_){}
   return Object.assign({},job);}
-module.exports={devices,build,burn,status,flatten};
+module.exports={devices,build,burn,status,flatten,_alive:alive,_stableDevicePath:stableDevicePath};

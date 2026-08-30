@@ -119,15 +119,20 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         self.assertIn("window.PCWebSearch.acceptHandoff(window.__pcWebSearchHandoff)", web[consume:])
         self.assertIn("delete window.__pcWebSearchHandoff", web[consume:])
 
-    def test_music_launcher_returns_its_real_window_for_monitor_handoff(self):
-        """__music is an action alias, but the destination needs the window openDoc created.
+    def test_window_launchers_return_their_real_window_for_monitor_handoff(self):
+        """EXTRAS are action aliases, but the destination needs the window each action created.
 
         Discarding it makes the handoff receiver take its `if(!w)return` branch, producing the
         reported black Music window with only the unrelated floating transport left visible.
         """
         start = self.os.index("function openApp(")
         body = self.os[start:self.os.index("function windowAIContext", start)]
-        self.assertIn("return view==='__music'&&opened ? opened : null", body)
+        self.assertIn("return opened || null", body)
+        for opener in ("openSystemSettings", "openTaskManager", "openVmManager",
+                       "openRemoteDesktop"):
+            start = self.os.index("function " + opener + "(")
+            end = self.os.index("\n  }", start)
+            self.assertIn("return w", self.os[start:end], opener + " discards its managed window")
         receive = self.os[self.os.index("if(pcWM.onHandoffFrame"):
                                self.os.index("if(pcWM.onPreviewFrame")]
         self.assertIn("const w=reconstructHandoffWindow(p)", receive)

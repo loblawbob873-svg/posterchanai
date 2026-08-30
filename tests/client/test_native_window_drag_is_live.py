@@ -22,6 +22,15 @@ def test_dragging_keeps_native_surface_live_and_coalesces_position_moves():
     assert "if(w.native == null) window.addEventListener('blur', cancel)" in drag
 
 
+def test_large_html_drag_does_not_snapshot_the_compositor_every_animation_frame():
+    src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    drag = src[src.index("function startDrag"):src.index("function startResize")]
+    paint = drag[drag.index("const paint = () =>"):drag.index("const edgeDirection")]
+    assert "nativePaintAt=Date.now()" in drag
+    assert "now-nativePaintAt>=40" in paint
+    assert "nativePaintAt=now;_natGesture(w,true)" in paint
+
+
 def test_cancelled_drag_restores_geometry_and_never_snaps_or_hands_off():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     drag = src[src.index("function startDrag"):src.index("function startResize")]
@@ -287,7 +296,8 @@ def test_resized_and_rejected_handoff_windows_stay_inside_the_desktop():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     assert "function keepFrameReachable(w)" in src
     resize = src[src.index("function startResize"):src.index("// ---- desktop, taskbar")]
-    assert "vwL()-left-12" in resize
-    assert "vhL()-TASKBAR-top-12" in resize
+    assert "const area=snapWorkArea()" in resize
+    assert "area.width-left-12" in resize
+    assert "area.height-top-12" in resize
     send = src[src.index("function sendFrameHandoff"):src.index("function nativeHandoffPlacement", src.index("function sendFrameHandoff"))]
     assert "keepFrameReachable(w)" in send

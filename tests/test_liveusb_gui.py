@@ -26,8 +26,8 @@ def test_built_iso_path_flows_straight_into_the_usb_writer():
 
 
 def test_running_build_is_authoritative_and_cannot_be_double_started():
-    assert "buildButton.disabled=!!s.running" in UI
-    assert "active&&active.kind==='build'&&active.running" in UI
+    assert "buildButton.disabled=!!(s.running||s.launching)" in UI
+    assert "active&&active.kind==='build'&&(active.running||active.launching)" in UI
     assert "never tell the user a live" in UI
 
 
@@ -56,7 +56,10 @@ def test_gui_build_cannot_publish_before_runtime_release_gates(tmp_path):
     env = {**os.environ, "PC_SUDO": str(sudo), "PC_TEST_ARGS": str(invoked),
            "PC_LIVEUSB_STATE_DIR": str(tmp_path / "state")}
     subprocess.check_call(["node", "-e", js, str(out)], cwd=ROOT, env=env)
-
+    import time
+    deadline = time.time() + 3
+    while not invoked.exists() and time.time() < deadline:
+        time.sleep(.02)
     args = invoked.read_text().splitlines()
     assert "PC_ISO_CLEAN=y" in args
     assert "PC_ISO_PUBLISH=n" in args
@@ -87,7 +90,9 @@ def test_backend_uses_argument_arrays_not_a_shell():
     assert "shell:true" not in src.replace(" ", "")
     assert "another LiveUSB job is already running" in src
     assert "the selected removable disk is no longer available" in src
-    assert "of='+target" in src
+    assert "allowed.stablePath" in src
+    assert "readlink -f" in src and "lsblk -n -o MOUNTPOINTS" in src
+    assert "actual\" = \"$expected" in src
 
 
 def test_iso_build_survives_the_desktop_process_and_recovers_status():
@@ -95,4 +100,126 @@ def test_iso_build_survives_the_desktop_process_and_recovers_status():
     assert "detached:true" in src and "p.unref()" in src
     assert "liveusb-job.json" in src and "liveusb-job.log" in src
     assert "recover();" in src
-    assert "stdio:['ignore',fd,fd]" in src
+    runner = (ROOT / "desktop/liveusb-runner.js").read_text()
+    assert "stdio:['ignore',fd,fd]" in runner
+
+
+def test_linux_package_executes_the_runner_from_inside_asar():
+    """CI must exercise the same Electron/ASAR entry path used by an installed desktop."""
+    workflow = (ROOT / ".github/workflows/desktop.yml").read_text()
+    assert "resources/app.asar/liveusb-runner.js" in workflow
+    assert "ELECTRON_RUN_AS_NODE=1 dist/linux-unpacked/posterchan-desktop" in workflow
+    assert 'test "$runner_rc" -eq 125' in workflow
+
+
+def _wait_status(state, timeout=5):
+    import time
+    js = "process.stdout.write(JSON.stringify(require('./desktop/liveusb').status()))"
+    env = {**os.environ, "PC_LIVEUSB_STATE_DIR": str(state)}
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, env=env))
+        if not got.get("running") and not got.get("launching") and got.get("finished"):
+            return got
+        time.sleep(.05)
+    raise AssertionError("detached LiveUSB supervisor did not record a terminal state")
+
+
+def test_fresh_process_recovers_real_supervisor_exit_status(tmp_path):
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nsleep .2\nexit 7\n")
+    sudo.chmod(0o755)
+    out, state = tmp_path / "images", tmp_path / "state"
+    out.mkdir()
+    # A stale artifact must never turn a failed new build into success.
+    from datetime import datetime
+    (out / f"posterchan-live-{datetime.now():%Y%m%d}.iso").write_bytes(b"partial")
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env)
+    got = _wait_status(state)
+    assert got["ok"] is False and got["exitCode"] == 7
+    assert "exit 7" in got["message"]
+
+
+def test_supervisor_finishes_after_its_launcher_has_exited(tmp_path):
+    marker = tmp_path / "child-finished"
+    sudo = tmp_path / "sudo"
+    sudo.write_text(f"#!/bin/sh\nsleep .4\ntouch {marker}\nexit 0\n")
+    sudo.chmod(0o755)
+    out, state = tmp_path / "images", tmp_path / "state"
+    out.mkdir()
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    # check_call returning is the launcher process exiting; the delayed helper must still be pending.
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env)
+    assert not marker.exists(), "helper completed before launcher exit, so survival was not exercised"
+    running = json.loads((state / "liveusb-job.json").read_text())
+    assert running["running"] is True and running["finished"] == 0
+    got = _wait_status(state)
+    assert marker.exists() and got["ok"] is True and got["exitCode"] == 0
+
+
+def test_detached_supervisor_records_fast_success(tmp_path):
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nexit 0\n")
+    sudo.chmod(0o755)
+    out, state = tmp_path / "images", tmp_path / "state"
+    out.mkdir()
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env)
+    got = _wait_status(state)
+    assert got["ok"] is True and got["exitCode"] == 0
+
+
+def test_pid_identity_rejects_reused_process(tmp_path):
+    js = "process.stdout.write(String(require('./desktop/liveusb')._alive({pid:process.pid,procStart:'definitely-wrong',token:'no-such-token'})))"
+    assert subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True) == "false"
+
+
+def test_stale_orphan_lock_is_reclaimed(tmp_path):
+    state, out = tmp_path / "state", tmp_path / "images"
+    state.mkdir(); out.mkdir()
+    lock = state / "liveusb-job.lock"
+    lock.write_text("orphan")
+    os.utime(lock, (1, 1))
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nexit 0\n"); sudo.chmod(0o755)
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env)
+    assert _wait_status(state)["ok"] is True
+
+
+def test_recent_unowned_lock_is_not_stolen(tmp_path):
+    state, out = tmp_path / "state", tmp_path / "images"
+    state.mkdir(); out.mkdir()
+    (state / "liveusb-job.lock").write_text("launch-in-progress")
+    sudo = tmp_path / "sudo"; sudo.write_text("#!/bin/sh\nexit 0\n"); sudo.chmod(0o755)
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    p = subprocess.run(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert p.returncode != 0 and "already running" in p.stderr
+
+
+def test_launcher_rechecks_exact_lock_token_before_spawning():
+    src = (ROOT / "desktop/liveusb.js").read_text()
+    claim = src.index("LiveUSB launch ownership changed")
+    spawn = src.index("spawn(process.execPath")
+    assert claim < spawn
+
+
+def test_lost_lock_between_supervisor_spawn_and_claim_never_runs_child(tmp_path):
+    import time
+    state, out, invoked = tmp_path / "state", tmp_path / "images", tmp_path / "invoked"
+    out.mkdir()
+    sudo = tmp_path / "sudo"
+    sudo.write_text(f"#!/bin/sh\ntouch {invoked}\nexit 0\n"); sudo.chmod(0o755)
+    env = {**os.environ, "NODE_ENV": "test", "PC_SUDO": str(sudo),
+           "PC_LIVEUSB_STATE_DIR": str(state), "PC_LIVEUSB_TEST_BEFORE_CLAIM_MS": "500"}
+    p = subprocess.Popen(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)],
+                         cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    lock = state / "liveusb-job.lock"
+    deadline = time.time() + 3
+    while not lock.exists() and time.time() < deadline: time.sleep(.01)
+    lock.write_text("new-owner")
+    _, err = p.communicate(timeout=5)
+    assert p.returncode != 0 and "ownership changed before claim" in err
+    time.sleep(.15)
+    assert not invoked.exists(), "an unclaimed supervisor must never invoke sudo/dd"

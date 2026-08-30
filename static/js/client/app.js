@@ -4598,7 +4598,10 @@
       }; }
     _maybeIosInstallHint();   // iPhone-only "Add to Home Screen" cue (no-op everywhere else)
     bumpDraft();   // show the saved-drafts count on the nav badge
-    Drafts.pull();   // sync drafts from the encrypted Nostr event (cross-device)
+    // The local draft count is already painted above.  Do not ask an external signer for the shared
+    // self-proof in the critical startup path: that prompt competes with the first app the person
+    // actually opened (Files/Music in particular) and can make its content look stuck.  Cross-device
+    // reconciliation starts after the relay has hydrated the signed-in identity below.
     // Run initial queries only once the relay socket is open (otherwise the REQs are dropped
     // and profiles/follows never resolve — names would show as raw npubs).
     const _deepLink = _entityFromPath();   // /<npub>, /<nevent>, /users/<name> → open it once the relay's up
@@ -4616,6 +4619,7 @@
       restoreMediaServer();   // restore the synced media server (kind-10063/10096) — must run AFTER the
                               // relay is connected (this fires on onReady), else the query returns nothing
       restoreClientPrefsNostr();   // restore Nostr-synced client prefs (data-saver / tap-to-load images)
+      setTimeout(()=>{ try{ Drafts.pull(); }catch(_){} }, 1200);   // local drafts already painted; sync off the critical path
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions(); startCallSignaling();
@@ -16969,17 +16973,19 @@
     _refreshBlobHave().then(paint).catch(()=>{});
     /* …and once the index is trustworthy, clear out anything cached for a track that no longer
      * exists. Once per session, after a pull, never on the first paint from a cold cache. */
+    // One signed drive read, shared by repaint and offline-cache cleanup.  Starting pull() in both
+    // branches used to issue two /files-index requests (and decrypt the same index twice) because
+    // _pullDone cannot become true until the first request finishes.
+    const indexReady = FilesIdx.ensure();
     if(!_musicSwept){
       _musicSwept = true;
-      Promise.resolve(FilesIdx._pullDone ? null : FilesIdx.pull())
-        .then(()=>MusicOffline.sweep()).then(n=>{ if(n && document.getElementById('ma-lib')) paint(); })
+      indexReady.then(ok=>ok ? MusicOffline.sweep() : 0)
+        .then(n=>{ if(n && document.getElementById('ma-lib')) paint(); })
         .catch(()=>{});
     }
-    if(!FilesIdx._pullDone){
-      // …and once the index arrives from the relay, repaint. Never HIDES anything that was already
-      // showing — paint() is a full re-render from a strictly better-informed index.
-      FilesIdx.pull().then(paint).catch(()=>{});
-    }
+    // …and once the index arrives from the relay, repaint. Never HIDES anything that was already
+    // showing — paint() is a full re-render from a strictly better-informed index.
+    indexReady.then(ok=>{ if(ok && document.getElementById('ma-lib')) paint(); }).catch(()=>{});
     const b=(sel,fn)=>{ const el=$(sel,feed); if(el) el.onclick=fn; };
     b('#ma-prev',()=>MusicPlayer.prev());
     b('#ma-next',()=>MusicPlayer.next());
@@ -17272,7 +17278,7 @@
     // proved the server has none). _pullBlocked = the server HAS an index we could not read — the one
     // state in which writing anything would destroy it. The three are not the same thing, and
     // conflating _pullDone with "we have the index" is what wiped a drive's folders: see _save/_gc.
-    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulling:false, _ensuring:null, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
+    data: { folders: ['Music'], files: {}, encFolders: [] }, _pulling:false, _pullP:null, _ensuring:null, _pullDone:false, _pullOk:false, _pullBlocked:false, _t:null, mk:null, _mkWrapped:null, _batch:false, _lastIndexSha:null, _indexShas:new Set(), _dirty:false, _saving:false,
     // Derived drive summaries use this revision instead of walking a multi-thousand-file index on
     // every repaint. It changes whenever local or pulled state is materialised.
     _rev:0,
@@ -17490,6 +17496,7 @@
       return j;
     },
     async pull(){
+      if(this._pullP) return this._pullP;
       this._pulling = true;
       /* `_pulling` is cleared in a FINALLY, not at the end of the try.
        *
@@ -17498,8 +17505,9 @@
        * On that path `_pulling` was left TRUE for ever, and it is the flag `_ensureMK` checks before
        * deciding to pull the drive's key: one slow signer, and the drive could not be read again
        * until the page was reloaded. Same shape as the latch above, one line further in. */
-      try{ return await this._pull(); }
-      finally{ this._pulling = false; }
+      this._pullP = this._pull();
+      try{ return await this._pullP; }
+      finally{ this._pulling = false; this._pullP = null; }
     },
     async _pull(){
       try{ const auth=await selfProof();
@@ -22450,9 +22458,19 @@
       if(!('mediaSession' in navigator)) return;
       try{
         const m=this.cur?FilesIdx.meta(this.cur):null;
-        if(window.MediaMetadata) navigator.mediaSession.metadata=new MediaMetadata({
-          title:(m&&m.name)||'Track', artist:'PosterChan', album:'Library',
-          artwork:[{src:LOGO, sizes:'512x512', type:'image/png'}] });
+        if(window.MediaMetadata){
+          const metadata={title:(m&&m.name)||'Track',artist:'PosterChan',album:'Library'};
+          /* Chromium's MediaImage loader rejects Electron's app:// scheme. _media runs on every
+           * position heartbeat, so supplying the packaged relative logo produced a fresh console
+           * error and failed image load every second. The native Android session does not use this
+           * field; on ordinary HTTPS clients retain the artwork, and packaged Desktop omits only
+           * the unsupported browser-MediaSession image. */
+          try{const art=new URL(LOGO,location.href);
+            if(art.protocol==='http:'||art.protocol==='https:'||art.protocol==='data:')
+              metadata.artwork=[{src:art.href,sizes:'512x512',type:'image/png'}];
+          }catch(_){}
+          navigator.mediaSession.metadata=new MediaMetadata(metadata);
+        }
         navigator.mediaSession.playbackState=(_audioEl && !_audioEl.paused)?'playing':'paused';
         /* WHERE WE ARE IN THE TRACK. Without this a car's display has a title and nothing else: no
          * elapsed time, no remaining time, and a scrubber many head units disable outright because
