@@ -583,6 +583,37 @@ class TheArchiveIsBuiltFromTheReadThatCarriesAttachments(unittest.TestCase):
         self.assertIn("just a text", bodies,
                       "the text message was deleted by the picture's de-duplication: %r" % (bodies,))
 
+    def test_a_whole_phone_load_keeps_every_message(self):
+        """THE PHONE PATH, AT A SIZE A PHONE ACTUALLY HAS.
+
+        `loadFromPhone` is the half that only runs on a handset — the two provider walks, the
+        de-duplication between them, and the merge into the store. It is where a text message was
+        deleted for sharing a row id with a picture, and where a tombstoned message has to come
+        back. Every test around it drove one or two rows, which is exactly the size at which a
+        de-duplication bug cannot show.
+
+        500 provider rows across 25 conversations, every fifth a picture message whose attachments
+        the combined timeline drops. Nothing may be lost and nothing may be merged."""
+        rows = []
+        for n in range(1, 501):
+            r = msg(n, addr="+1555%04d" % (n % 25), body="m%d" % n, incoming=bool(n % 2))
+            r["date"] = NOW - (500 - n) * 60000
+            if n % 5 == 0:
+                r["mms"] = True
+                r["parts"] = [{"id": 9000 + n, "ct": "image/jpeg",
+                               "name": "p%d.jpg" % n, "bytes": 2048}]
+            rows.append(r)
+        res = run(isPhone=True, rows=rows, combinedDropsParts=True,
+                  parts={str(9000 + n): {"data": "eA=="} for n in range(5, 501, 5)},
+                  steps=["phoneLoad", "settle"])
+        live = [d for d in res["docs"] if d.startswith("pcai:sms:")]
+        self.assertEqual(len(live), 500,
+                         "the phone load lost or merged messages: kept %d of 500" % len(live))
+        self.assertEqual(len(res["threads"]), 25,
+                         "conversations were merged or split: %r" % ([t["key"] for t in res["threads"]],))
+        self.assertEqual(sum(t["n"] for t in res["threads"]), 500,
+                         "the threads do not add up to the messages the provider gave")
+
     def test_a_message_the_phone_still_has_comes_back_from_a_wrong_tombstone(self):
         """THE OTHER HALF OF THE DELETION BUG. Fixing the cause stops the next one; it does nothing
         for the 392 messages already struck, which stay hidden on the device that struck them —
