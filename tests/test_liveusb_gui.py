@@ -104,6 +104,14 @@ def test_iso_build_survives_the_desktop_process_and_recovers_status():
     assert "stdio:['ignore',fd,fd]" in runner
 
 
+def test_linux_package_executes_the_runner_from_inside_asar():
+    """CI must exercise the same Electron/ASAR entry path used by an installed desktop."""
+    workflow = (ROOT / ".github/workflows/desktop.yml").read_text()
+    assert "resources/app.asar/liveusb-runner.js" in workflow
+    assert "ELECTRON_RUN_AS_NODE=1 dist/linux-unpacked/posterchan" in workflow
+    assert 'test "$runner_rc" -eq 125' in workflow
+
+
 def _wait_status(state, timeout=5):
     import time
     js = "process.stdout.write(JSON.stringify(require('./desktop/liveusb').status()))"
@@ -131,6 +139,23 @@ def test_fresh_process_recovers_real_supervisor_exit_status(tmp_path):
     got = _wait_status(state)
     assert got["ok"] is False and got["exitCode"] == 7
     assert "exit 7" in got["message"]
+
+
+def test_supervisor_finishes_after_its_launcher_has_exited(tmp_path):
+    marker = tmp_path / "child-finished"
+    sudo = tmp_path / "sudo"
+    sudo.write_text(f"#!/bin/sh\nsleep .4\ntouch {marker}\nexit 0\n")
+    sudo.chmod(0o755)
+    out, state = tmp_path / "images", tmp_path / "state"
+    out.mkdir()
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    # check_call returning is the launcher process exiting; the delayed helper must still be pending.
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env)
+    assert not marker.exists(), "helper completed before launcher exit, so survival was not exercised"
+    running = json.loads((state / "liveusb-job.json").read_text())
+    assert running["running"] is True and running["finished"] == 0
+    got = _wait_status(state)
+    assert marker.exists() and got["ok"] is True and got["exitCode"] == 0
 
 
 def test_detached_supervisor_records_fast_success(tmp_path):

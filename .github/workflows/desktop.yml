@@ -314,6 +314,19 @@ jobs:
           test -x dist/linux-unpacked/resources/tor/tor/tor || {
             echo "::error::packaged Tor is not executable — first-run would fail with EACCES"; exit 1;
           }
+          # liveusb.js launches this exact path through the packaged Electron binary with
+          # ELECTRON_RUN_AS_NODE.  Exit 125 is the runner's deliberate response to a missing job
+          # specification, and therefore proves that Electron found and executed the JS entrypoint
+          # inside app.asar (ENOENT / unsupported ASAR entry execution has a different result).
+          set +e
+          ELECTRON_RUN_AS_NODE=1 dist/linux-unpacked/posterchan \
+            dist/linux-unpacked/resources/app.asar/liveusb-runner.js
+          runner_rc=$?
+          set -e
+          test "$runner_rc" -eq 125 || {
+            echo "::error::packaged Electron could not execute liveusb-runner.js from app.asar (exit $runner_rc)"
+            exit 1
+          }
           ver="$(node -p "require('./package.json').version")"
           # zstd: in the base system on the machines that consume this (the live image already needs
           # it for its squashfs), and far quicker to unpack than xz on a first boot.
