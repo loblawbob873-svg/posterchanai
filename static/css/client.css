@@ -7447,12 +7447,19 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   border-bottom:1px solid rgba(255,255,255,.14);background:rgba(22,25,31,.72);
   -webkit-backdrop-filter:blur(24px) saturate(145%);backdrop-filter:blur(24px) saturate(145%);
   box-shadow:0 1px 12px rgba(0,0,0,.22);pointer-events:none}
-.os-root.os-style-mac::after{content:'●  PosterChan     File     Edit     View     Window     Help';
-  position:absolute;z-index:306;inset:0 auto auto 13px;height:var(--mac-menu-h);display:flex;
-  align-items:center;color:rgba(255,255,255,.94);font-size:12px;font-weight:600;letter-spacing:-.1px;
-  white-space:pre;pointer-events:none;text-shadow:0 1px 2px #0008}
-.os-root.os-style-mac .os-desk{padding-top:var(--mac-menu-h);padding-bottom:calc(var(--mac-dock-h) + 18px)}
-.os-root.os-style-mac .os-icons{padding-top:42px;padding-bottom:90px}
+.os-mac-menu{display:none}
+.os-root.os-style-mac .os-mac-menu{position:absolute;z-index:308;inset:0 min(430px,42vw) auto 7px;
+  height:var(--mac-menu-h);display:flex;align-items:center;gap:1px;overflow:hidden;white-space:nowrap}
+.os-root.os-style-mac .os-mac-menu button{flex:0 0 auto;height:26px;padding:0 8px;border:0;border-radius:6px;
+  background:transparent;color:rgba(255,255,255,.94);font:500 12px/1 -apple-system,BlinkMacSystemFont,
+  "SF Pro Text","Helvetica Neue",sans-serif;cursor:pointer;text-shadow:0 1px 2px #0008}
+.os-root.os-style-mac .os-mac-menu button:hover,.os-root.os-style-mac .os-mac-menu button:focus-visible{
+  background:rgba(255,255,255,.16);outline:0}.os-root.os-style-mac .os-mac-menu button:first-child{font-weight:600}
+/* Make the desk itself the usable rectangle. Widgets, free icons, window clamps and pointer hit tests
+   all measure this element, so margins reserve the menu/Dock in one place instead of merely painting
+   padding over a full-height coordinate system and clipping anything placed at its bottom edge. */
+.os-root.os-style-mac .os-desk{margin-top:var(--mac-menu-h);margin-bottom:calc(var(--mac-dock-h) + 18px)}
+.os-root.os-style-mac .os-icons{padding-top:12px;padding-bottom:6px}
 .os-root.os-style-mac .os-icon{border-radius:10px;text-shadow:0 1px 3px #000,0 2px 8px #000b}
 .os-root.os-style-mac .os-icon:hover,.os-root.os-style-mac .os-icon.selected{
   background:rgba(255,255,255,.15);box-shadow:inset 0 0 0 1px rgba(255,255,255,.13)}
@@ -7490,12 +7497,12 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   border-bottom-color:#aaa}.os-root.os-style-mac .osw.osw-document .osw-title{color:#272727}
 /* The ordinary full-width bottom taskbar becomes a real floating Dock. The status controls remain
    usable in the menu bar instead of wasting a second strip at the bottom. */
-.os-root.os-style-mac .os-bar{position:absolute;z-index:309;left:50%;right:auto;bottom:10px;
+.os-root.os-style-mac .os-bar{position:absolute;z-index:309;left:0;right:0;bottom:10px;margin-inline:auto;
   width:max-content;max-width:calc(100% - 28px);height:58px;min-height:58px;padding:5px 9px;
   border:1px solid rgba(255,255,255,.22);border-radius:17px;background:rgba(51,55,65,.66);
   box-shadow:0 14px 38px rgba(0,0,0,.46),inset 0 1px rgba(255,255,255,.12);
   -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
-  transform:translateX(-50%);overflow:visible}
+  transform:none;overflow:visible}
 .os-root.os-style-mac .os-start{width:48px;height:48px;border-radius:12px;border:0;background:transparent}
 .os-root.os-style-mac .os-start img{width:38px;height:38px;border-radius:10px}
 .os-root.os-style-mac .os-tasks{flex:none;max-width:min(68vw,900px);gap:5px;padding-inline-start:7px;
@@ -7544,8 +7551,9 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .os-liveusb-status{background:#f4f4f5;color:#3a3b3e;border-color:#cacacd}
 .os-root.os-style-mac .os-about-grid{background:#ceced1}.os-root.os-style-mac .os-about-grid>div{background:#fff}
 .os-root.os-style-mac .empty{color:#68696e}
-@media(max-width:1180px){.os-root.os-style-mac::after{content:'●  PosterChan     File     View     Window'}
-  .os-root.os-style-mac .os-tray{gap:3px}.os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
+@media(max-width:1180px){.os-root.os-style-mac .os-mac-menu{inset-inline-end:min(390px,46vw)}
+  .os-root.os-style-mac .os-mac-menu button{padding-inline:6px}.os-root.os-style-mac .os-tray{gap:3px}
+  .os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 .osw.osw-document,.osw.osw-document.focused{border-color:#4b5563;border-radius:4px;

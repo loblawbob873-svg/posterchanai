@@ -102,7 +102,15 @@
   }
   function applyDesktopStyle(){
     if(!root) return;
-    root.classList.toggle('os-style-mac',settings().get(STYLE_KEY,'posterchan')==='mac');
+    const was=root.classList.contains('os-style-mac');
+    const mac=settings().get(STYLE_KEY,'posterchan')==='mac';
+    root.classList.toggle('os-style-mac',mac);
+    /* Menu and Dock safe areas change the measured desk. Reflow existing objects after layout has
+     * committed; otherwise switching style leaves windows/widgets clamped to the previous height. */
+    if(was!==mac&&desk)requestAnimationFrame(()=>{
+      for(const w of wins){if(w.max||w.snap)snapTo(w,w.max?'max':w.snap);else keepFrameReachable(w);}
+      drawWidgets();try{nsync();}catch(_){}
+    });
   }
   const fits = () => window.innerWidth >= MIN_WIDTH;
 
@@ -1339,9 +1347,10 @@
    * a display disappearing mid-gesture) must never leave only a sliver of the title bar behind. */
   function keepFrameReachable(w){
     if(!w || !w.el) return;
+    const area=snapWorkArea();
     const at=NAT().clampLocalRect({x:parseFloat(w.el.style.left),y:parseFloat(w.el.style.top),
       w:w.el.offsetWidth||parseFloat(w.el.style.width),h:w.el.offsetHeight||parseFloat(w.el.style.height)},
-      {width:vwL(),height:vhL()-TASKBAR},{width:MIN_W,height:MIN_H,gap:12});
+      area,{width:MIN_W,height:MIN_H,gap:12});
     Object.assign(w.el.style,{left:at.x+'px',top:at.y+'px',width:at.w+'px',height:at.h+'px'});
     if(!w.snap&&!w.max)w.rect={x:at.x,y:at.y,w:at.w,h:at.h};
   }
@@ -3562,7 +3571,7 @@
       // bar stays on screen and above the taskbar.
       const gx=gxOf(e), gy=gyOf(e);
       curX = ox + (gx - ssx) / k;
-      curY = Math.max(0, Math.min(vhL() - TASKBAR - 34, oy + (gy - ssy) / k));
+      curY = Math.max(0, Math.min(snapWorkArea().height - 34, oy + (gy - ssy) / k));
       /* A monitor is another renderer, so pointer capture cannot carry DOM events across its
        * boundary. Reaching an outside edge while dragging a native app requests a compositor
        * hand-off on release; the adjacent shell adopts it and supplies the new frame. */
@@ -3710,8 +3719,9 @@
       if(hadButtons && e.pointerType !== 'touch' && (e.buttons || 0) === 0){ up(); return; }
       const left=Math.max(0,parseFloat(w.el.style.left)||0);
       const top=Math.max(0,parseFloat(w.el.style.top)||0);
-      nw = Math.max(MIN_W,Math.min(vwL()-left-12,ow + (e.clientX - sx) / k));
-      nh = Math.max(MIN_H,Math.min(vhL()-TASKBAR-top-12,oh + (e.clientY - sy) / k));
+      const area=snapWorkArea();
+      nw = Math.max(MIN_W,Math.min(area.width-left-12,ow + (e.clientX - sx) / k));
+      nh = Math.max(MIN_H,Math.min(area.height-top-12,oh + (e.clientY - sy) / k));
       if(!raf) raf = requestAnimationFrame(paint);
     };
     let ended = false;
@@ -5976,6 +5986,19 @@
               <i aria-hidden="true">⌃</i></button>`;
   }
 
+  /* The macOS menu bar is real shell furniture, not words painted by a pseudo-element. Every item
+   * invokes an existing, already-guarded desktop action and remains reachable by keyboard. */
+  function wireMacMenu(){
+    const menu=$('#os-mac-menu',root);if(!menu)return;
+    const run=(name,fn)=>{const b=menu.querySelector('[data-mac-menu="'+name+'"]');if(b)b.onclick=e=>{
+      e.stopPropagation();try{fn();}catch(_){PC().toast&&PC().toast('that desktop action is unavailable');}
+    }};
+    run('posterchan',()=>toggleStart());
+    run('settings',()=>openSystemSettings());
+    run('tasks',()=>openTaskManager());
+    run('view',()=>toggleFull());
+  }
+
   function drawBar(){
     if(!bar) return;
     // Remember whether the search box had the caret BEFORE the rebuild throws the element away.
@@ -6981,8 +7004,14 @@
     root.className = 'os-root';
     applyDesktopEffects();
     applyDesktopStyle();
-    root.innerHTML = '<div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>';
+    root.innerHTML = `<nav class="os-mac-menu" id="os-mac-menu" aria-label="Desktop menu">
+      <button data-mac-menu="posterchan" aria-label="Open PosterChan menu">● <b>PosterChan</b></button>
+      <button data-mac-menu="settings">System Settings</button>
+      <button data-mac-menu="tasks">Task Manager</button>
+      <button data-mac-menu="view">Full Screen</button>
+    </nav><div class="os-desk" id="os-desk"></div><div class="os-bar" id="os-bar"></div>`;
     document.body.appendChild(root);
+    wireMacMenu();
     /* Kept for old Sway configs during their first session after an upgrade. Current installs use
      * Alt+Return, which cannot produce a trailing bare-Super release. */
     let _suppressStartUntil = 0;
