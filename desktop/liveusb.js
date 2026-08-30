@@ -10,14 +10,26 @@ let job = { kind:'', running:false, ok:false, message:'', started:0, finished:0,
 const STATE_DIR = process.env.PC_LIVEUSB_STATE_DIR || path.join(process.env.XDG_STATE_HOME || path.join(process.env.HOME||'', '.local/state'), 'posterchan');
 const STATE_FILE = path.join(STATE_DIR, 'liveusb-job.json');
 const LOG_FILE = path.join(STATE_DIR, 'liveusb-job.log');
+const LOCK_FILE = path.join(STATE_DIR, 'liveusb-job.lock');
+const RUNNER = path.join(__dirname,'liveusb-runner.js');
 
 function save(){try{fs.mkdirSync(STATE_DIR,{recursive:true,mode:0o700});const tmp=STATE_FILE+'.new';
   fs.writeFileSync(tmp,JSON.stringify(job),{mode:0o600});fs.renameSync(tmp,STATE_FILE);}catch(_){}}
-function alive(pid){if(!Number.isInteger(+pid)||+pid<2)return false;try{process.kill(+pid,0);return true;}catch(_){return false;}}
+function procStart(pid){try{return fs.readFileSync('/proc/'+pid+'/stat','utf8').split(' ')[21]||'';}catch(_){return '';}}
+function alive(old){const pid=Number(old&&old.pid);if(!Number.isInteger(pid)||pid<2)return false;
+  try{process.kill(pid,0);}catch(_){return false;}
+  const start=procStart(pid);if(old.procStart&&start!==String(old.procStart))return false;
+  try{if(old.token&&!fs.readFileSync('/proc/'+pid+'/cmdline','utf8').includes(old.token))return false;}catch(_){if(process.platform==='linux')return false;}
+  return true;}
 function recover(){try{const old=JSON.parse(fs.readFileSync(STATE_FILE,'utf8'));if(!old||!old.kind)return;
-  old.running=alive(old.pid);
-  if(!old.running&&!old.finished){old.finished=Date.now();old.ok=old.kind==='build'&&!!old.path&&fs.existsSync(old.path);
-    old.message=old.ok?'ISO finished':old.kind+' stopped before it finished';}
+  if(old.launching&&Date.now()-Number(old.started||0)<10000){job=Object.assign(job,old);return;}
+  old.running=alive(old);
+  /* The supervisor can exit between its child returning and the atomic state rename. Give that
+   * tiny handoff a grace period; otherwise a status poll can overwrite its real exit code. */
+  if(!old.running&&!old.finished&&Date.now()-Number(old.started||0)<2000){job=Object.assign(job,old);job.running=true;return;}
+  if(!old.running&&!old.finished){old.finished=Date.now();old.ok=false;old.launching=false;
+    old.message=old.kind+' stopped before it finished';job=Object.assign(job,old);save();
+    try{if(fs.readFileSync(LOCK_FILE,'utf8')===old.token)fs.unlinkSync(LOCK_FILE);}catch(_){}return;}
   job=Object.assign(job,old);
 }catch(_){}}
 
@@ -37,18 +49,25 @@ async function devices(){
 }
 function launch(kind,bin,args,env,meta){
   recover();
-  if(job.running)throw new Error('another LiveUSB job is already running');
-  job=Object.assign({kind,running:true,ok:false,message:kind==='build'?'Building ISO…':'Writing USB…',started:Date.now(),finished:0,output:'',path:''},meta||{});
+  if(job.running||job.launching)throw new Error('another LiveUSB job is already running');
   fs.mkdirSync(STATE_DIR,{recursive:true,mode:0o700});
-  const fd=fs.openSync(LOG_FILE,'w',0o600);
+  const token=require('crypto').randomBytes(18).toString('hex');
+  let lock;
+  try{lock=fs.openSync(LOCK_FILE,'wx',0o600);fs.writeFileSync(lock,token);fs.closeSync(lock);}
+  catch(e){try{if(lock)fs.closeSync(lock);}catch(_){}throw new Error('another LiveUSB job is already running');}
+  job=Object.assign({kind,running:false,launching:true,ok:false,message:kind==='build'?'Starting ISO build…':'Starting USB write…',
+    started:Date.now(),finished:0,output:'',path:'',token,pid:0,procStart:'',exitCode:null},meta||{});save();
+  fs.writeFileSync(LOG_FILE,'',{mode:0o600});
   /* The ISO build outlives this Electron renderer and even a package-triggered desktop restart.
-   * Pipes die with their parent and can SIGPIPE a healthy mksquashfs; a detached process writing a
-   * state-owned log has neither failure mode. */
-  const p=spawn(bin,args,{env:Object.assign({},process.env,env||{}),stdio:['ignore',fd,fd],detached:true});
-  fs.closeSync(fd);job.pid=p.pid;save();p.unref();
-  p.on('error',e=>{job.running=false;job.finished=Date.now();job.message=e.message;save();});
-  p.on('close',code=>{job.running=false;job.finished=Date.now();job.ok=code===0;
-    job.message=code===0?(kind==='build'?'ISO finished':'USB finished — eject it safely'):(kind+' failed (exit '+code+')');save();});
+   * A detached supervisor, rather than the build itself, records the real exit code atomically so
+   * a replacement UI never guesses success from a stale or partial ISO file. */
+  const spec={state:STATE_FILE,log:LOG_FILE,lock:LOCK_FILE,token,kind,bin,args,env:env||{}};
+  let p;
+  try{p=spawn(process.execPath,[RUNNER,Buffer.from(JSON.stringify(spec)).toString('base64')],{
+    env:Object.assign({},process.env,{ELECTRON_RUN_AS_NODE:'1'}),stdio:'ignore',detached:true});}
+  catch(e){try{fs.unlinkSync(LOCK_FILE);}catch(_){}job.launching=false;job.finished=Date.now();job.message=String(e.message||e);save();throw e;}
+  job.pid=p.pid;job.procStart=procStart(p.pid);job.running=true;job.launching=false;
+  job.message=kind==='build'?'Building ISO…':'Writing USB…';save();p.unref();
   return status();
 }
 function build(outDir,includeHome){
@@ -75,4 +94,4 @@ async function burn(iso,target){
 }
 function status(){recover();try{job.output=fs.readFileSync(LOG_FILE,'utf8').slice(-24000);}catch(_){}
   return Object.assign({},job);}
-module.exports={devices,build,burn,status,flatten};
+module.exports={devices,build,burn,status,flatten,_alive:alive};

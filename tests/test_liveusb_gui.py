@@ -26,8 +26,8 @@ def test_built_iso_path_flows_straight_into_the_usb_writer():
 
 
 def test_running_build_is_authoritative_and_cannot_be_double_started():
-    assert "buildButton.disabled=!!s.running" in UI
-    assert "active&&active.kind==='build'&&active.running" in UI
+    assert "buildButton.disabled=!!(s.running||s.launching)" in UI
+    assert "active&&active.kind==='build'&&(active.running||active.launching)" in UI
     assert "never tell the user a live" in UI
 
 
@@ -56,7 +56,10 @@ def test_gui_build_cannot_publish_before_runtime_release_gates(tmp_path):
     env = {**os.environ, "PC_SUDO": str(sudo), "PC_TEST_ARGS": str(invoked),
            "PC_LIVEUSB_STATE_DIR": str(tmp_path / "state")}
     subprocess.check_call(["node", "-e", js, str(out)], cwd=ROOT, env=env)
-
+    import time
+    deadline = time.time() + 3
+    while not invoked.exists() and time.time() < deadline:
+        time.sleep(.02)
     args = invoked.read_text().splitlines()
     assert "PC_ISO_CLEAN=y" in args
     assert "PC_ISO_PUBLISH=n" in args
@@ -95,4 +98,51 @@ def test_iso_build_survives_the_desktop_process_and_recovers_status():
     assert "detached:true" in src and "p.unref()" in src
     assert "liveusb-job.json" in src and "liveusb-job.log" in src
     assert "recover();" in src
-    assert "stdio:['ignore',fd,fd]" in src
+    runner = (ROOT / "desktop/liveusb-runner.js").read_text()
+    assert "stdio:['ignore',fd,fd]" in runner
+
+
+def _wait_status(state, timeout=5):
+    import time
+    js = "process.stdout.write(JSON.stringify(require('./desktop/liveusb').status()))"
+    env = {**os.environ, "PC_LIVEUSB_STATE_DIR": str(state)}
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        got = json.loads(subprocess.check_output(["node", "-e", js], cwd=ROOT, env=env))
+        if not got.get("running") and not got.get("launching") and got.get("finished"):
+            return got
+        time.sleep(.05)
+    raise AssertionError("detached LiveUSB supervisor did not record a terminal state")
+
+
+def test_fresh_process_recovers_real_supervisor_exit_status(tmp_path):
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nsleep .2\nexit 7\n")
+    sudo.chmod(0o755)
+    out, state = tmp_path / "images", tmp_path / "state"
+    out.mkdir()
+    # A stale artifact must never turn a failed new build into success.
+    from datetime import datetime
+    (out / f"posterchan-live-{datetime.now():%Y%m%d}.iso").write_bytes(b"partial")
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env)
+    got = _wait_status(state)
+    assert got["ok"] is False and got["exitCode"] == 7
+    assert "exit 7" in got["message"]
+
+
+def test_detached_supervisor_records_fast_success(tmp_path):
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/sh\nexit 0\n")
+    sudo.chmod(0o755)
+    out, state = tmp_path / "images", tmp_path / "state"
+    out.mkdir()
+    env = {**os.environ, "PC_SUDO": str(sudo), "PC_LIVEUSB_STATE_DIR": str(state)}
+    subprocess.check_call(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)], cwd=ROOT, env=env)
+    got = _wait_status(state)
+    assert got["ok"] is True and got["exitCode"] == 0
+
+
+def test_pid_identity_rejects_reused_process(tmp_path):
+    js = "process.stdout.write(String(require('./desktop/liveusb')._alive({pid:process.pid,procStart:'definitely-wrong',token:'no-such-token'})))"
+    assert subprocess.check_output(["node", "-e", js], cwd=ROOT, text=True) == "false"

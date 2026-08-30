@@ -1892,7 +1892,7 @@
           disk.innerHTML='<option value="">Choose a removable drive</option>'+ds.map(d=>
             `<option value="${enc(d.path)}" ${d.mounted?'disabled':''}>${enc(d.path+' · '+(d.model||'USB drive')+' · '+Math.round(d.size/1073741824)+' GB'+(d.mounted?' · mounted':''))}</option>`).join('');
           const s=await pcLiveUSB.status(); stat.textContent=(s.message||'Ready')+(s.output?'\n\n'+s.output.slice(-5000):'');
-          buildButton.disabled=!!s.running;
+          buildButton.disabled=!!(s.running||s.launching);
           /* The builder and writer are one workflow. Keep the exact backend-selected output path in
            * the write field so finishing an ISO does not make somebody browse back to the folder
            * they selected a few minutes earlier. It is still never written until a removable disk
@@ -1912,9 +1912,9 @@
            * race a stale renderer). The backend job is authoritative: never tell the user a live
            * build failed when it is actually compressing the image. */
           let active=null;try{active=await pcLiveUSB.status()}catch(_){}
-          if(active&&active.kind==='build'&&active.running){if(active.path)setIso(active.path);stat.textContent=active.message||'Building ISO…';}
+          if(active&&active.kind==='build'&&(active.running||active.launching)){if(active.path)setIso(active.path);stat.textContent=active.message||'Building ISO…';}
           else PC().toast(String(x&&x.message||x));
-        }finally{try{const s=await pcLiveUSB.status();buildButton.disabled=!!s.running}catch(_){buildButton.disabled=false}}};
+        }finally{try{const s=await pcLiveUSB.status();buildButton.disabled=!!(s.running||s.launching)}catch(_){buildButton.disabled=false}}};
         live.querySelector('[data-live-burn]').onclick=async e=>{if(!iso.value||!disk.value)return PC().toast('Choose an ISO and an unmounted USB drive');
           const ok=await PC().uiConfirm('Everything on '+disk.value+' will be overwritten. Write this ISO?',{ok:'Erase and write USB'});if(!ok)return;
           try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);stat.textContent='Writing USB… do not unplug it';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
