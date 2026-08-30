@@ -1716,7 +1716,7 @@
     host.innerHTML='<div class="spinner"></div>';
     /* Displays is one settings page, not the gatekeeper for every page. A missing/crashed display
        bridge must not also erase Appearance, Power and About. Degrade this page locally. */
-    let outs=[], power={}, system={}, displayError='',powerError='',systemError='';
+    let outs=[], power={}, system={}, machineIdentity='', displayError='',powerError='',systemError='',identityError='';
     /* Each page owns its own bridge. Waiting for displays, power and system information before
        drawing Appearance or Installation media made those genuinely separate sections share one
        failure mode: a hung display daemon left the whole Settings app on a spinner. Read only what
@@ -1734,6 +1734,11 @@
     if(_osSettingsPage==='about'){
       try{ system=window.pcSystem?await pcSystem.snapshot(false):(systemError='System information is unavailable on this device.',{}); }
       catch(e){ system={};systemError='Could not read system information: '+String(e&&e.message||e); }
+      if(!alive()) return;
+    }
+    if(_osSettingsPage==='users'){
+      try{ machineIdentity=window.pcOS&&pcOS.identity?await pcOS.identity():''; }
+      catch(e){ identityError='Could not read the local session identity: '+String(e&&e.message||e); }
       if(!alive()) return;
     }
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
@@ -1798,10 +1803,13 @@
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section></section>
-        <section data-settings-page="users" ${_osSettingsPage==='users'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('user')}</div><span><h2>Users</h2><p>Accounts allowed to sign in to this computer.</p></span></header>
-          <section class="os-set-card"><div class="os-set-cardhead"><b>Local accounts</b><span>User administration is unavailable in this session. Existing accounts are unchanged.</span></div></section></section>
+        <section data-settings-page="users" ${_osSettingsPage==='users'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('user')}</div><span><h2>Users</h2><p>The signed-in PosterChan identity and the private operating-system session attached to it.</p></span></header>
+          ${identityError?`<div class="empty">${enc(identityError)}</div>`:''}<section class="os-set-card os-user-account"><div class="os-user-avatar">${iconSvg('user')}</div><div><span>Current account</span><b>${enc((me()&&((me().profile&&me().profile.name)||me().name))||'PosterChan user')}</b><code>${enc(machineIdentity||((me()&&me().pubkey)||'No local OS identity'))}</code></div></section>
+          <div class="os-set-actions"><button class="btn" data-user-profile ${PC().openProfile?'':'disabled'}>Open profile</button><button class="btn primary" data-user-switch ${PC().accountMenu?'':'disabled'}>Switch account</button></div></section>
         <section data-settings-page="updates" ${_osSettingsPage==='updates'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('refresh')}</div><span><h2>Updates</h2><p>Operating-system and installed application updates.</p></span></header>
-          <section class="os-set-card"><div class="os-set-cardhead"><b>System updates</b><span>Update controls are unavailable in this session. No update has been started.</span></div></section></section>
+          <section class="os-set-card os-update-status"><div class="os-set-ready">Automatic</div><div><b>PosterChan updates itself safely</b><span>The desktop downloads signed application updates in the background and offers installation only after the download is complete. PosterChanOS system updates are installed by its guarded updater and restart the desktop when idle.</span></div></section>
+          <section class="os-about-grid os-set-card"><div><span>Running build</span><b><code>${enc(String(window.__PC_BUILD||'unknown').slice(0,16))}</code></b></div><div><span>Update channel</span><b>${window.pcShell?'Desktop automatic':'Web deployment'}</b></div></section>
+          <div class="os-set-actions"><button class="btn" data-update-reload>Reload current build</button></div></section>
         <section data-settings-page="about" ${_osSettingsPage==='about'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('chart')}</div><span><h2>About</h2><p>Hardware and session information for this computer.</p></span></header>
         ${systemError?`<div class="empty">${enc(systemError)}</div>`:''}
         <section class="os-set-card os-about-grid">
@@ -1927,6 +1935,11 @@
       };
       host.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>jump(b.dataset.jump,b));
       host.querySelectorAll('[data-open-control]').forEach(b=>b.onclick=()=>jump(b.dataset.openControl,b));
+      const userProfile=host.querySelector('[data-user-profile]');if(userProfile)userProfile.onclick=()=>PC().openProfile&&PC().openProfile();
+      const switcher=host.querySelector('[data-user-switch]');if(switcher)switcher.onclick=()=>PC().accountMenu&&PC().accountMenu(switcher);
+      const reload=host.querySelector('[data-update-reload]');if(reload)reload.onclick=()=>{
+        if(window.pcShell&&pcShell.retry)pcShell.retry();else location.reload();
+      };
       host.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{_osSettingsPage=b.dataset.page;renderSystemSettings();});
       const mobile=host.querySelector('[data-settings-mobile]');if(mobile)mobile.onchange=()=>{
         const [kind,value]=String(mobile.value||'').split(':',2);
