@@ -193,8 +193,29 @@
       const title = String(w.title || '').trim();
       if(!title) continue;
       const low=app.toLowerCase();
-      const same=(x,y)=>x===y || x.startsWith(y+'-') || x.startsWith(y+'.') || x.startsWith(y+'_')
-                              || y.startsWith(x+'-') || y.startsWith(x+'.') || y.startsWith(x+'_');
+      /* A REVERSE-DNS APP ID AND A BINARY NAME ARE THE SAME PROGRAM.
+       *
+       * The compositor reports `org.telegram.desktop` and `org.mozilla.firefox`; the scanned
+       * .desktop entry matches on `telegram-desktop` and `firefox`. Neither is a prefix of the
+       * other with a separator, so this found nothing for the two most-used apps on the machine and
+       * every one of their windows fell through to `icon:'grid'` — the generic square, on both
+       * themes. The start menu had exactly this bug once and was fixed by resolving a real icon;
+       * the TASKBAR then threw that icon away because the window could not be matched to the app.
+       *
+       * Compared as token sets with the parts that name no program removed, so `firefox` matches
+       * `org.mozilla.firefox` and `telegram-desktop` matches `org.telegram.desktop`, while
+       * `org.gnome.Calculator` still does not match `gnome-calendar`. */
+      const GENERIC=new Set(['org','com','net','io','dev','app','desktop','gnome','kde','freedesktop']);
+      const toks=v=>String(v||'').toLowerCase().split(/[.\-_\s]+/).filter(t=>t&&!GENERIC.has(t));
+      const same=(x,y)=>{
+        if(!x||!y) return false;
+        if(x===y || x.startsWith(y+'-') || x.startsWith(y+'.') || x.startsWith(y+'_')
+                 || y.startsWith(x+'-') || y.startsWith(x+'.') || y.startsWith(x+'_')) return true;
+        const a=toks(x), b=toks(y);
+        if(!a.length || !b.length) return false;
+        const [small,big]=a.length<=b.length?[a,b]:[b,a];
+        return small.every(t=>big.includes(t));
+      };
       const meta=(_apps||[]).find(a=>same(String(a.match||'').toLowerCase(),low));
       rows.push({ id: w.id, app, title, focused: !!w.focused, stashed: !!w.stashed,
                   iconUri:meta ? String(meta.iconUri||'') : '', icon:'grid',
