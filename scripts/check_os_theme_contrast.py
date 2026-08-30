@@ -24,6 +24,16 @@ anything, and the default (dark) theme looks perfect, which is the theme every o
 WCAG AA for body text is 4.5:1; the floor here is 3.0, which is the large-text bar and generous —
 the failures this exists for are around 1.2, not around 4.
 
+  theme-ignored          a desktop style whose chrome does not follow the palette at all
+
+CONTRAST ALONE CANNOT ASK THAT SECOND QUESTION, and the macOS style is why the row exists. It was
+authored as a fixed dark glass — a #17202d desk, rgba(31,34,42,.72) surfaces, white text — so
+choosing it replaced the user's theme with somebody else's. White on near-black scores ~15:1 on
+EVERY theme, so it passed contrast perfectly while ignoring the palette completely; and this check
+only ever ran the default style, so it never even looked. `theme-ignored` compares the chrome's
+painted backdrop against the theme's own --bg and fails when they are further apart than
+MAX_THEME_DRIFT in luminance — the one measurement that separates "unreadable" from "wrong colours".
+
 Exit 0 = clean, 1 = problems (printed), 2 = could not run (no Chrome / no websockets).
 """
 import asyncio
@@ -69,6 +79,15 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
     <div class="os-pop-b"><button class="os-pop-row"><span class="os-pop-nm">home-wifi</span>
       <span class="os-pop-sig">88%</span></button></div>
     <div class="os-pop-f"><button class="os-pop-btn">More</button></div></div>
+  <!-- The macOS chrome: a menu bar, the machine's own tray chip, the clock and a window title.
+       All four sit on GLASS, which is the surface that used to be a fixed dark grey. -->
+  <div class="os-mac-menu"><button>PosterChan</button><button>File</button></div>
+  <div class="os-tray"><div class="os-sys"><button class="os-chip">Wi-Fi</button></div>
+    <div class="os-clock"><b>10:42</b><span>Sun</span></div></div>
+  <div class="osw focused" style="left:80px;top:80px;width:420px;height:220px">
+    <div class="osw-bar"><div class="osw-btns"><button class="osw-b" data-w="close"></button></div>
+      <span class="osw-title">Documents</span></div>
+    <div class="osw-body"></div></div>
 </div></body></html>"""
 
 # Contrast is measured against the first ANCESTOR that actually paints — a transparent panel over a
@@ -125,10 +144,43 @@ MEASURE = r"""(() => {
              display: cs.display, opacity: Number(cs.opacity),
              w: Math.round(r.width), h: Math.round(r.height) };
   };
-  return { startmenu: read('#os-applist .os-app'),
-           taskbar:   read('.os-tasks .os-task'),
-           traypop:   read('.os-pop .os-pop-row') };
+  const out = { startmenu: read('#os-applist .os-app'),
+                taskbar:   read('.os-tasks .os-task'),
+                traypop:   read('.os-pop .os-pop-row') };
+  /* The macOS surfaces are measured ONLY under that style: without the class they are display:none
+     (`.os-mac-menu{display:none}`), and reading a hidden element would report every theme broken. */
+  if (document.getElementById('os-root').classList.contains('os-style-mac')) {
+    out.macmenu   = read('.os-mac-menu button');
+    out.macchip   = read('.os-sys .os-chip');
+    out.macclock  = read('.os-clock b');
+    out.macwindow = read('.osw .osw-title');
+  }
+  /* The theme's OWN base colour, read from the custom property rather than from any painted
+     element, so it is the same question whichever desktop style is on. */
+  out.themeBg = { raw: parse(getComputedStyle(document.documentElement)
+                     .getPropertyValue('--bg').trim()).slice(0,3).join(',') };
+  return out;
 })()"""
+
+
+# How far the chrome may sit from the theme's own background, in relative luminance.
+# NOT a light/dark verdict: Windows 98's palette is mid-grey (--bg #c0c0c0, --bg2 #b8b8b0) and
+# straddles any 0.5 line by 8/255, so a side-of-the-divide test failed it three times for a
+# difference nobody can see. Distance asks the real question. Measured: the old hard-coded glass sat
+# ~0.9 from every light theme; the theme-derived one sits under 0.1 on all nine.
+MAX_THEME_DRIFT = 0.35
+
+
+def _lum(rgb):
+    """Relative luminance — the same sRGB curve the in-page measurement uses."""
+    try:
+        r, g, b = [int(x) for x in str(rgb).split(",")[:3]]
+    except Exception:
+        return 0.0
+    def c(v):
+        v /= 255.0
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * c(r) + 0.7152 * c(g) + 0.0722 * c(b)
 
 
 def serve():
@@ -199,28 +251,46 @@ async def drive(problems):
         if not await js("!!document.querySelector('#os-applist .os-app')"):
             print("SKIP  the harness page did not render")
             return 2
-        for theme in THEMES:
-            await js("document.documentElement." + ("removeAttribute('data-theme')"
-                                                    if theme == "cyberpunk"
-                                                    else "setAttribute('data-theme','%s')" % theme))
-            await asyncio.sleep(0.25)
-            got = await js(MEASURE)
-            if not isinstance(got, dict) or got.get("__throw"):
-                problems.append(f"{theme}: measurement did not evaluate ({got})")
-                continue
-            for name, res in got.items():
-                if res.get("missing"):
-                    problems.append(f"{theme}: {name}: the row is not in the page at all")
+        # BOTH DESKTOP STYLES, because the macOS one was written as a fixed dark glass and this
+        # check only ever ran the default. White on near-black scores ~15:1 on every theme, so the
+        # style could ignore the palette completely and still pass — which is exactly what it did.
+        for style in ("posterchan", "mac"):
+            await js("document.getElementById('os-root').classList.%s('os-style-mac')"
+                     % ("add" if style == "mac" else "remove"))
+            for theme in THEMES:
+                label = theme if style == "posterchan" else f"{theme}/mac"
+                await js("document.documentElement." + ("removeAttribute('data-theme')"
+                                                        if theme == "cyberpunk"
+                                                        else "setAttribute('data-theme','%s')" % theme))
+                await asyncio.sleep(0.25)
+                got = await js(MEASURE)
+                if not isinstance(got, dict) or got.get("__throw"):
+                    problems.append(f"{label}: measurement did not evaluate ({got})")
                     continue
-                if res["display"] == "none" or res["h"] == 0 or res["opacity"] < 0.2:
-                    problems.append(f"hidden-row {theme}: {name} computes to "
-                                    f"display:{res['display']} h:{res['h']}px "
-                                    f"opacity:{res['opacity']} — a full menu that draws as empty")
-                if res["ratio"] < MIN_RATIO:
-                    problems.append(f"{name}-unreadable {theme}: {res['ratio']}:1 "
-                                    f"(text {res['fg']} on {res['bg']}) — below the {MIN_RATIO}:1 "
-                                    "floor. A hard-coded colour that ignores the theme reads as a "
-                                    "blank panel.")
+                base = got.pop("themeBg", {}).get("raw") or "0,0,0"
+                for name, res in got.items():
+                    if res.get("missing"):
+                        problems.append(f"{label}: {name}: the row is not in the page at all")
+                        continue
+                    if res["display"] == "none" or res["h"] == 0 or res["opacity"] < 0.2:
+                        problems.append(f"hidden-row {label}: {name} computes to "
+                                        f"display:{res['display']} h:{res['h']}px "
+                                        f"opacity:{res['opacity']} — a full menu that draws as empty")
+                    # Does this surface live on the same side of the divide as the theme?
+                    # Asked of the styled chrome only: the default desktop IS the palette.
+                    if style == "mac" and name.startswith("mac") and not res.get("missing"):
+                        drift = abs(_lum(res["bg"]) - _lum(base))
+                        if drift > MAX_THEME_DRIFT:
+                            problems.append(
+                                f"theme-ignored {label}: {name} paints {res['bg']} while the theme's "
+                                f"--bg is {base} — {drift:.2f} apart in luminance, over the "
+                                f"{MAX_THEME_DRIFT} ceiling. Choosing a desktop style must not "
+                                "replace the palette.")
+                    if res["ratio"] < MIN_RATIO:
+                        problems.append(f"{name}-unreadable {label}: {res['ratio']}:1 "
+                                        f"(text {res['fg']} on {res['bg']}) — below the "
+                                        f"{MIN_RATIO}:1 floor. A hard-coded colour that ignores the "
+                                        "theme reads as a blank panel.")
     return 1 if problems else 0
 
 

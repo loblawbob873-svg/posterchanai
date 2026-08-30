@@ -6,6 +6,9 @@ rules for that container at all: its chips kept the sizing meant for a 48px task
 `color:var(--text)`, which on a light theme is dark text on the dark glass of the menu bar.
 
 Reported as the wifi/power widget displaying weird and cut off.
+
+The menu bar has since stopped being a fixed dark glass and now derives from the palette, so the
+fix moved with it: the chips name the bar's own ink token rather than a literal white.
 """
 import re
 from pathlib import Path
@@ -27,13 +30,23 @@ def test_the_machine_tray_chips_fit_the_menu_bar():
     assert "line-height:1" in chip, chip
 
 
-def test_the_chips_are_legible_on_the_dark_menu_bar():
-    """`.os-chip{color:var(--text)}` wins over the menu bar's inherited white. On a light theme
-    that is dark text on dark glass — the widget is there and unreadable."""
+def test_the_chips_are_legible_against_the_menu_bar_they_sit_in():
+    """The chip must be coloured for THE MENU BAR, never left on whatever it inherits.
+
+    Originally that meant a literal `color:#fff`, because the bar was a fixed dark glass on every
+    theme; `.os-chip{color:var(--text)}` then put dark text on dark glass under a light theme and
+    the widget was there and unreadable.
+
+    The bar is no longer fixed — it is `var(--mac-glass)` = `--panel2`, the theme's own panel — so
+    the ink is `--mac-ink` = `--text`, which is the pairing the palette itself guarantees. The rule
+    that survives both designs is the one asserted here: the chip names the menu bar's OWN ink
+    token, so text and surface can never again be chosen independently. Whether the pair is actually
+    readable is measured, not asserted from a string: check_os_theme_contrast.py reads `macchip` on
+    all nine themes under this style."""
     chip = _rule(".os-root.os-style-mac .os-sys .os-chip")
-    assert "color:#fff" in chip, chip
+    assert "color:var(--mac-ink)" in chip, chip
     unknown = _rule(".os-root.os-style-mac .os-sys .os-chip.os-unknown")
-    assert "255,255,255" in unknown, "an unreadable reading must stay marked against THIS bar"
+    assert "var(--muted)" in unknown, "an unreadable reading must stay marked against THIS bar"
 
 
 def test_the_tray_cannot_grow_across_the_menu_bar():
