@@ -80,6 +80,9 @@ N = next((int(a) for a in sys.argv[1:] if a.isdigit()), 400)
 aes = AESGCM(mk)
 tot=mms=withatt=withsha=witherr=fetchfail=0
 errs = collections.Counter()
+cts = collections.Counter()
+vidsample = []
+verified = []
 sel = rows if N >= len(rows) else (rows[:N//2] + rows[-(N//2):])
 for (content,) in sel:
     try: env = json.loads(nip44.decrypt_self(sk, content))
@@ -100,7 +103,24 @@ for (content,) in sel:
         withatt += 1
         if any(a.get("sha") for a in att): withsha += 1
         for a in att:
+            cts[str(a.get("ct") or "(none)")] += 1
+            if str(a.get("ct") or "").startswith("video") and len(vidsample) < 3: vidsample.append(a)
+            if os.environ.get("PC_CENSUS_VERIFY") and a.get("sha") and str(a.get("ct") or "").startswith("video"):
+                try:
+                    raw = urllib.request.urlopen("http://127.0.0.1:3051/blossom/" + a["sha"], timeout=30).read()
+                    plain = aes.decrypt(raw[:12], raw[12:], None)
+                    ok = len(plain) == int(a.get("bytes") or -1) and plain[4:8] == b"ftyp"
+                    verified.append((a["sha"][:10], len(plain), int(a.get("bytes") or -1), plain[4:8].decode("latin1"), ok))
+                except Exception as e:
+                    verified.append((a["sha"][:10], "FETCH/DECRYPT FAILED", type(e).__name__, "", False))
             if a.get("err"): witherr += 1; errs[a["err"][:70]] += 1
+if os.environ.get("PC_CENSUS_VERIFY"):
+    bad = [v for v in verified if not v[-1]]
+    print("videos verified: %d, BAD: %d" % (len(verified), len(bad)))
+    for v in bad[:10]: print("   ", v)
+if os.environ.get("PC_CENSUS_TYPES"):
+    print("attachment content types:", json.dumps(cts.most_common(12), indent=1))
+    print("sample video attachments:", json.dumps(vidsample, indent=1)[:700])
 print(json.dumps({"sampled": tot, "of_docs": len(rows), "blob_fetch_failed": fetchfail,
                   "mms_flagged": mms, "with_attachment_list": withatt,
                   "with_real_media": withsha, "attachments_refused": witherr,
