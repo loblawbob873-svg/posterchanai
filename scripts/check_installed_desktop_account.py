@@ -77,12 +77,17 @@ class CDP:
 
 
 async def choose_authenticated_page():
-    pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
-             if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
-    for page in pages:
-        async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-            if await cdp.eval("!!(window.__PC && __PC.me && __PC.me())"):
-                return page
+    # CDP becomes reachable before the installed renderer has restored IndexedDB and the OS-backed
+    # identity. A one-shot probe made a healthy signed-in package look logged out on slower disks.
+    # Poll the actual identity instead; never substitute a guest/throwaway identity in current mode.
+    for _ in range(100):
+        pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
+                 if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
+        for page in pages:
+            async with CDP(page["webSocketDebuggerUrl"]) as cdp:
+                if await cdp.eval("!!(window.__PC && __PC.me && __PC.me())"):
+                    return page
+        await asyncio.sleep(0.2)
     raise RuntimeError("no authenticated installed PosterChan page is attached")
 
 
@@ -219,7 +224,12 @@ def native_files_check(directory):
         await new Promise(r=>setTimeout(r,1000));
         if(!window.pcHost||!window.PCHostFiles)throw new Error('installed native Files bridge is absent');
         PCHostFiles.enter(PATH);
-        const entry=document.querySelector('.fx-home-tile[data-hosthome],.folder-chip[data-host]');
+        // querySelector() follows DOM order, not selector order. The sidebar Home chip appears
+        // first and deliberately resets PCHostFiles.at(), so selecting the union used to erase the
+        // disposable fixture path and test the person's home directory instead. Prefer the landing
+        // tile, whose contract is to resume an already selected machine path.
+        const entry=document.querySelector('.fx-home-tile[data-hosthome]')
+          ||document.querySelector('.folder-chip[data-host]');
         if(!entry)throw new Error('This computer is not reachable from Files');
         entry.click();
         for(let i=0;i<40&&!document.querySelector('#host-pane .file-card[data-p]');i++)
@@ -330,8 +340,11 @@ async def main():
     if office_only and not os.environ.get("PC_INSTALLED_TEST_NSEC_FILE"):
         raise RuntimeError("office-only mode requires the bounded throwaway diagnostic account")
     supplied_fixture = os.environ.get("PC_INSTALLED_FIXTURE_DIR", "")
-    if supplied_fixture and not supplied_fixture.startswith("/tmp/posterchan-installed-files-"):
-        raise RuntimeError("PC_INSTALLED_FIXTURE_DIR must be a disposable /tmp/posterchan-installed-files-* path")
+    diagnostic_fixture = re.fullmatch(
+        r"/tmp/pc-installed-diagnostic\.[a-z0-9]{12,64}/files", supplied_fixture)
+    if supplied_fixture and not (supplied_fixture.startswith("/tmp/posterchan-installed-files-")
+                                 or diagnostic_fixture):
+        raise RuntimeError("PC_INSTALLED_FIXTURE_DIR must be inside a disposable verifier domain")
     fixture_context = (contextlib.nullcontext(supplied_fixture) if supplied_fixture else
                        tempfile.TemporaryDirectory(prefix="posterchan-installed-files-"))
     with fixture_context as fixture_dir:

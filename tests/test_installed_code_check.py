@@ -39,3 +39,12 @@ def test_installed_code_gate_serializes_results_across_workspace_repaints():
     assert 'async def wait_value' in SRC
     assert 'file_selector = json.dumps' in SRC
     assert "await cdp.eval(\"document.querySelector('[data-code-view=" in EMBEDDED
+
+
+def test_installed_code_gate_activates_desktop_and_uses_owning_navigation():
+    assert "PCOS.toggle" in SRC
+    assert "PCOS.isOn()" in SRC
+    assert "document.querySelector('#os-root')" in SRC
+    assert "document.body.classList.contains('os-on')" in SRC
+    assert "await __PC.switchView('code')" in SRC
+    assert "synthetic ``element.click()``" in SRC

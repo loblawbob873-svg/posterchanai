@@ -586,3 +586,65 @@ The optional laptop at `.154` accepted SSH transport but returned no output even
 runtime therefore remain **unverified**; no update or diagnostic mutation was attempted there.
 Physical laptop/multi-monitor use, native Firefox/Telegram behavior, physical Android, carrier MMS,
 external providers and physical USB boot also remain open and are not inferred from `.102`.
+
+## 2026-08-29 Desktop 1.0.1306 / Android 1.0.2031 boundary
+
+Application commit `da062f00229a7ebd43b7fc5b76d7918c32ec4da7` is the current packaged boundary.
+Overlay-only commit `0641c5587` pins that artifact and does not change the packaged application.
+This evidence updates artifact identity and the named installed/package gates; it does not silently
+promote physical, account-dependent, native-application, carrier, external-provider or ISO work.
+
+| Requirement | Current authoritative evidence | State / remaining boundary |
+|---|---|---|
+| Immutable Desktop / Gentoo | Desktop workflow `33288503459` passed Linux, Windows, macOS and publish for exact `da062f002`. Release `desktop-v1.0.1306` is 153,385,585 bytes with SHA-256 `756820bc1c4d251efbb81cd10d8dce973c629d137d1011c589b8244810604f41`. Public overlay revision `993dd9aeea729fc03dd14ae4f3dd3c12c5c1c706` resolves and verifies that immutable release | Exact artifact and public pin verified |
+| Installed identity | Normal `update-posterchan` installed Desktop 1.0.1306 and shell 1.0.20260830024327 on both `.102` and `.154`. Each canonical shell was activated once; the replacement processes started at 20:46 local time. The package-owned `.102` ASAR SHA-256 is `db8c0cb1b00dd0967ed6216a6a23de0ae86206461c24b828e0290cf2df599ac4` | Installed identity verified on both authorized Gentoo machines |
+| Files / Preview / Office | The installed ASAR passed open-with selection, directory drop/upload completion, This Computer video, responsive Files layouts, image/video/PDF/audio rendering, bundled PDF.js, generic MP4 correction, stalled-video bounded recovery, media cleanup/handoff, and Office/Email document-workspace routing | Installed package/runtime behavior verified. Authenticated current-account index/root completeness, real folder-upload visibility and a current Collabora edit/save/readback remain open |
+| Code / Terminal / window package | The installed ASAR passed native staged and rename Git diff/restore, Code UI, native ancestry, bounded Wayland clipboard, visual Alt+Tab and cross-output focus contracts. A second visible shell must not be used for diagnostics: doing so briefly produced a split Classic/Desktop laptop surface. The probe was killed, its disposable profile removed, and a live 1920×1080 capture proved the one original shell and complete desktop returned | Package behavior verified; current attached-renderer Code/Terminal focus interaction and the exhaustive live every-app/native-app matrix remain open |
+| macOS desktop option | Runtime tests execute tray reparenting in both styles. The installed `.102` capture shows only application icons in the bottom-centre Dock, with machine status, relay, notification and clock controls separately in the top-right menu. Pointer-driven installed interaction opened the PosterChan dropdown, then opened its Settings and System Settings entries as distinct correctly titled windows; the bar has no duplicate standalone System Settings item | Installed layout and both menu actions verified. Exhaustive multi-monitor/theme rollback interaction remains open |
+| Signed Android artifact | Android workflow `33288503451` published `place.poster.app` 1.0.2031 (versionCode 2031), 21,491,466 bytes, SHA-256 `ba8e2d17025005f76154a837d774c10bbc0c2879c4ed5359c4d7df3658f7f696`, from exact `da062f002`. Signature Scheme v3 verifies with the intentional rotated RSA-4096 certificate SHA-256 `c696595f4ffa6e5f9f010fb0d9faedda2faffa42ba38338163381227f935b31b`; the release carries the documented Android 9+ lineage artifact and separate Android 8 reinstall artifact | Exact signed artifact identified; physical upgrade/install compatibility remains open |
+| Android background Music | Exact-head emulator workflow `33288503450` passed. Its independently downloaded XML reports **83 tests, zero failures, errors or skips**. `MusicBackgroundDeviceTest.aRealMusicPlayerTrackKeepsAdvancingAfterHome` passed in 3.794s and `tabletDesktopStateSurvivesHomeAndRotationInBothTasks` passed in 5.183s. The release APK manifest contains `FOREGROUND_SERVICE_MEDIA_PLAYBACK` and `MusicService` with media-playback foreground type; DEX inspection contains the notification, revive, task-removal and media-command implementation | Exact APK/package and API-34 runtime verified. Audible physical/OEM playback after Home, Bluetooth, notification controls and physical phone/tablet lifecycle remain open because no ADB device was attached |
+| Final ISO | Available local ISOs predate this package boundary | Rebuild only after the remaining installed/live gates, then boot, install, eject, reboot, verify and publish; all remain open |
+
+No aggregate checkbox is closed solely by this section. In particular, the current-account Files and
+Office interactions, attached-renderer Code focus, native Firefox/Telegram and every-app handoff,
+physical Android, carrier SMS/MMS, external document providers, sustained terminal repaint, final
+full suite, graphical LiveCD installation and physical USB boot remain separate required evidence.
+
+### 2026-08-29 isolated installed-account verification
+
+The installed-account verifier now runs the package in a token-bounded headless Sway compositor and
+an isolated copy of the signed-in Desktop profile.  It cannot tile a second shell into the live
+desktop, and its cleanup validates the exact `/tmp/pc-installed-diagnostic.installedacct12` domain
+before removing anything.  This replaces the visible second-shell method that caused the temporary
+Classic/Desktop split on the laptop.
+
+The exact installed Desktop 1.0.1306 package passed on both authorized Gentoo machines:
+
+* Desktop `.102`: the server and decrypted client index both reported **6,704 files**.  Both locally
+  mapped synced roots agreed independently across the account collapse-guard count, decrypted
+  manifest and native scan: **11,954 / 11,954 / 11,954** and **5,813 / 5,813 / 5,813**, with zero
+  skipped paths.  A remote disposable `.conf` fixture offered Code and host-open actions, its image
+  fixture opened in Preview, and the real Collabora editor accepted, saved and returned a sentinel
+  through WOPI.
+* Laptop `.154`: the same **6,704** server/client encrypted index equality passed.  It exposes the
+  same two account synced roots but has no local mappings, so no false local-manifest equality is
+  claimed.  The remote native open-with/Preview fixture and real Collabora edit/save/readback also
+  passed.
+
+This closes the current-account index/root-completeness and current Collabora edit/save/readback
+evidence gaps for the installed package.  A destructive real folder upload was deliberately not
+performed against the person's account; the isolated packaged folder-upload completion gate remains
+the evidence for that mutation path.  Attached canonical-renderer Code/Terminal focus, exhaustive
+native-app movement, physical Android/OEM behavior and the final ISO remain open.
+
+The same isolated installed-package compositor subsequently exercised PosterChan Code on `.102`
+and `.154`.  On both machines it opened a disposable native Git project, showed the modified file,
+rendered the exact before/after diff, confirmed Restore, proved the working tree clean, returned to
+Explorer, and switched focus between distinct Code and Terminal windows without either inheriting
+the other's content class or losing full-height sizing.  The verifier now invokes the owning
+`__PC.switchView('code')` navigation operation: a synthetic click had selected the CSS-hidden
+Classic sidebar inside Desktop mode and was itself reproducing the Classic/Desktop ownership fault.
+The test now requires Desktop mode, `#os-root`, and `body.os-on` before exercising Code.  Installed
+Code/Git/diff/restore and isolated managed Code/Terminal focus are therefore verified on both current
+Gentoo packages.  Exhaustive interaction in the already-running canonical renderer remains part of
+the broader every-app/native-app movement matrix rather than being inferred from this bounded gate.
