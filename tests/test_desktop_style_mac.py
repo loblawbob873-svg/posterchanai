@@ -74,6 +74,19 @@ def test_mac_menu_dock_and_widgets_use_separate_safe_rectangles():
     assert "inset:0 min(430px,42vw) auto 7px" in mac
 
 
+def test_mac_dock_does_not_capture_or_duplicate_the_top_tray():
+    mac = CSS[CSS.index("/* Optional macOS desktop experience"):
+              CSS.index("@media(max-width:1180px)", CSS.index("/* Optional macOS desktop experience"))]
+    dock = mac[mac.index(".os-root.os-style-mac .os-bar{"):
+               mac.index(".os-root.os-style-mac .os-start{")]
+    assert "backdrop-filter:none" in dock
+    assert ".os-root.os-style-mac .os-qbox{display:none}" in dock
+    tray = mac[mac.index(".os-root.os-style-mac .os-tray{"):
+               mac.index(".os-root.os-style-mac .os-clock")]
+    assert "position:fixed" in tray
+    assert "inset:0 9px auto auto" in tray
+
+
 def test_style_change_reflows_windows_and_widgets_to_the_new_work_area():
     apply = function("applyDesktopStyle")
     for marker in ("requestAnimationFrame", "snapTo(w", "keepFrameReachable(w)", "drawWidgets()"):

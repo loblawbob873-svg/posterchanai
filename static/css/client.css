@@ -7499,13 +7499,18 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    usable in the menu bar instead of wasting a second strip at the bottom. */
 .os-root.os-style-mac .os-bar{position:absolute;z-index:309;left:0;right:0;bottom:10px;margin-inline:auto;
   width:max-content;max-width:calc(100% - 28px);height:58px;min-height:58px;padding:5px 9px;
-  border:1px solid rgba(255,255,255,.22);border-radius:17px;background:rgba(51,55,65,.66);
+  border:1px solid rgba(255,255,255,.22);border-radius:17px;background:rgba(51,55,65,.92);
   box-shadow:0 14px 38px rgba(0,0,0,.46),inset 0 1px rgba(255,255,255,.12);
-  -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+  /* A filtered ancestor becomes the containing block for position:fixed descendants. The tray is
+     intentionally fixed in the top menu, but these filters trapped it inside the 58px Dock and
+     compressed Start, search, tasks, volume, network and clock into one overlapping strip. Keep
+     the Dock opaque enough for readability and leave fixed positioning rooted at the desktop. */
+  -webkit-backdrop-filter:none;backdrop-filter:none;
   transform:none;overflow:visible}
+.os-root.os-style-mac .os-qbox{display:none}
 .os-root.os-style-mac .os-start{width:48px;height:48px;border-radius:12px;border:0;background:transparent}
 .os-root.os-style-mac .os-start img{width:38px;height:38px;border-radius:10px}
-.os-root.os-style-mac .os-tasks{flex:none;max-width:min(68vw,900px);gap:5px;padding-inline-start:7px;
+.os-root.os-style-mac .os-tasks{flex:0 1 auto;min-width:0;max-width:min(68vw,900px);gap:5px;padding-inline-start:7px;
   border-inline-start:1px solid rgba(255,255,255,.22)}
 .os-root.os-style-mac .os-task{position:relative;flex-basis:48px;width:48px;height:48px;border-radius:12px;
   border:0;background:transparent;transition:transform .13s ease,background .13s ease}
@@ -7605,7 +7610,11 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* While a window is being dragged it is moved with a transform on the compositor, so promote it to
    its own layer and stop hit-testing its contents — on a tablet the pointer-events work alone was
    showing up in the gesture. Both are removed on release. */
-.osw.dragging{will-change:transform}
+.osw.dragging{will-change:transform;transition:none!important;
+  /* Sampling a full-screen blurred backdrop again for every transformed Communities frame is a
+     multi-megapixel repaint on each pointer event. Preserve the glass effect at rest; while the
+     pointer is down use the same opaque panel so movement follows the cursor without flashing. */
+  -webkit-backdrop-filter:none!important;backdrop-filter:none!important;background:var(--panel)!important}
 /* No text/icon selection on the title bar: a native drag of the title steals the gesture, the
    browser stops sending pointer events, and the window ends up glued to the cursor. */
 .osw-bar{user-select:none;-webkit-user-select:none}

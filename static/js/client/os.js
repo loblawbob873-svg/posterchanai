@@ -3467,11 +3467,11 @@
       snap:w.snap || null, max:!!w.max, rect:w.rect ? Object.assign({},w.rect) : null,
       snapped:w.el.classList.contains('snapped'), maximised:w.el.classList.contains('maximised') };
     let curX = ox, curY = oy, zone = '', handoff = '', raf = 0, lastMove = ev,
-        previewDir='', previewAt=0, crossDir='', crossSamples=0;
+        previewDir='', previewAt=0, crossDir='', crossSamples=0, nativePaintAt=Date.now();
     hideLayouts();
     /* Native apps follow the frame with position-only compositor moves. Resizing/re-floating on
      * every frame is still avoided; `_natGesture` makes nsync choose pcWM.move until release. */
-    _natGesture(w, true);
+    if(nativeWins().length) _natGesture(w, true);
     /* A drag must not be able to outlive the button. Three ways it could, all of which end with the
      * window glued to the cursor because `up` never ran:
      *   - the browser starts its OWN drag of the title text/icon, which stops sending pointer events
@@ -3491,7 +3491,12 @@
       /* Recompute the HTML overlay after every painted pointer frame. A Terminal may begin clear
        * of Firefox and cross it mid-drag; retaining only the press-time rectangle lets the native
        * surface intercept the pointer as soon as their paths meet. */
-      if(nativeWins().length) _natGesture(w, true);
+      /* nsync begins with a compositor snapshot. Doing that at display refresh rate while a large
+       * Communities window is transformed floods IPC/GET_TREE and makes the frame visibly jump.
+       * Pointer capture remains with this title bar; 25Hz is ample to update which native surface
+       * intersects it, and the unthrottled calls at press/release preserve exact endpoints. */
+      const now=Date.now();
+      if(nativeWins().length && now-nativePaintAt>=40){nativePaintAt=now;_natGesture(w,true);}
     };
     const edgeDirection = (e) => {
       if(!e) return '';
