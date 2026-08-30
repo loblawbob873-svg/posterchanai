@@ -1200,11 +1200,25 @@
           fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
         await cacheEnvelopes(cacheKey,fetched);await applyChannel(channel,wraps);
       };
-      /* THE CHANNEL ON SCREEN FIRST, ALONE — it is the only one anybody is waiting for, and it is
-       * allowed to throw: failing to load the conversation somebody just opened is worth saying
-       * out loud. Everything after it is prefetch. */
+      /* THE CHANNEL ON SCREEN FIRST — it is the only one anybody is waiting for.
+       *
+       * IT USED TO BE ALLOWED TO THROW, on the reasoning that failing to load the conversation
+       * somebody just opened is worth saying out loud. On a desktop that is true. On a PHONE it is
+       * the ordinary case — one relay slow past the six-second window is enough — and the throw took
+       * the whole hydration with it: the toast said "could not refresh room history" AND the room
+       * showed no messages at all, because every other channel behind it was abandoned and the
+       * control set was never applied. Reported from the APK as exactly those two things together.
+       *
+       * So it is recorded like any other channel now. What is left is the honest report at the
+       * bottom: a room where NOTHING could be read still says so, once, and a room that got some of
+       * itself shows what it got. */
       const head=networkOrder[0];
-      if(head){ await fetchChannel(head); if(roomIdentity(saved()[state.community])===identity)backgroundRender(); }
+      let headFailed=false;
+      if(head){
+        try{ await fetchChannel(head); }
+        catch(_){ headFailed=true; }
+        if(roomIdentity(saved()[state.community])===identity)backgroundRender();
+      }
       /* …AND THE REST CONCURRENTLY, BECAUSE THIS USED TO BE ONE SERIAL QUEUE.
        *
        * Every channel waited on the previous channel's relay round trip, so a ten-channel community
@@ -1224,7 +1238,13 @@
           catch(_){ stalled.push(channel.name); }
         }
       }));
+      if(headFailed && head) stalled.unshift(head.name);
       room.cord.stalled=stalled;
+      /* NOTHING AT ALL IS STILL WORTH SAYING. A room that reached no channel and holds no cached
+       * history is empty on screen with no explanation, which is the failure this whole path keeps
+       * being reported as. A room that got even one channel is not that, and must not toast. */
+      if(stalled.length>=networkOrder.length && !cachedHistoryRendered)
+        throw new Error('no channel in this community could be read yet — retrying');
       room.cord.hydrated=true;hydratedRoomViews.add(identity);if(!persistRoom())return;
       /* A relay answer may return after the reader chose another community. Persisting the fetched
        * room is still useful, but repainting/scrolling the new room is not. Notification launches

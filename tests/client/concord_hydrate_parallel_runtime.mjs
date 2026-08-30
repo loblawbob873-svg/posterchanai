@@ -39,6 +39,7 @@ window.PosterCordReader = {
 
 let inFlight = 0, peak = 0;
 const asked = [];
+let failFirst = false;   // the channel on screen is the one the relay will not answer for
 const p = {
   toast: noop, profOf: () => ({}), enc: s => String(s), $: () => null,
   viewer: () => ({pubkey:'c'.repeat(64), profile:{}}), isView: () => true,
@@ -47,7 +48,10 @@ const p = {
   // not have is how the never-closed Concord subscriptions stayed invisible).
   relaySubscribe: () => 'sub-hydrate',
   relayClose: () => {},
-  relayQuery: async () => [],
+  /* cordQuery asks the shared pool AND the room's own relays, and only fails when BOTH do — so a
+     fixture whose pool always answers can never make a channel fail. In the failFirst scenario the
+     pool is down too, which is what a phone on a bad connection actually looks like. */
+  relayQuery: async () => { if (failFirst) throw new Error('pool down'); return []; },
   relayQueryFrom: async (relays, filters) => {
     const authors = (filters && filters[0] && filters[0].authors) || [];
     asked.push(authors.join(','));
@@ -55,7 +59,10 @@ const p = {
     await new Promise(r => setTimeout(r, 5));
     inFlight--;
     /* ONE CHANNEL THE RELAY WILL NOT ANSWER FOR. */
-    if (asked.length === 3) throw new Error('relay refused');
+    /* The FIRST request is the control stream; the second is the channel on screen. Failing
+       request one would be a room with no control set, which is a different case entirely. */
+    if (failFirst && asked.length === 2) throw new Error('relay refused');
+    if (!failFirst && asked.length === 3) throw new Error('relay refused');
     return [];
   },
   verifyRelayEvents: async e => e,
@@ -78,5 +85,40 @@ if (peak < 2)
 if (asked.length < CHANNELS.length)
   throw new Error('a failing channel abandoned the ones behind it: asked ' + asked.length +
                   ' of ' + CHANNELS.length);
+
+/* THE CHANNEL ON SCREEN IS THE ONE THAT FAILS — the ordinary case on a phone, where one relay past
+   the six-second window is enough. It used to throw out of hydrateRoomStreams, which produced BOTH
+   halves of the APK report at once: the toast said "could not refresh room history" and the room
+   showed no messages, because every channel behind it was abandoned and the control set was never
+   applied. */
+{
+  store['pc.concord.invites'] = JSON.stringify([{...ROOM, communityId:'cid-2', naddr:'cid-2'}]);
+  api.__testState({community:0, channel:'c0'});
+  failFirst = true; asked.length = 0;
+  let threw = null;
+  try { await api.hydrateRoomStreams(p, 0, 'cid-2'); } catch (e) { threw = e; }
+  if (threw)
+    throw new Error('one slow channel still took the whole room: ' + threw.message);
+  if (asked.length < CHANNELS.length)
+    throw new Error('the channels behind the failing one were abandoned: asked ' + asked.length);
+  const saved2 = JSON.parse(localStorage.getItem('pc.concord.invites'))[0];
+  if (!(saved2.channels || []).length)
+    throw new Error('the room lost its channels when the open one failed');
+  if (!(saved2.cord.stalled || []).includes('c0'))
+    throw new Error('the channel that failed was not recorded as stalled: ' +
+                    JSON.stringify(saved2.cord.stalled));
+}
+
+/* …AND A ROOM WHERE NOTHING CAN BE READ STILL SAYS SO. Silence there is a community that is simply
+   empty on screen with no explanation, which is the other half of the same report. */
+{
+  store['pc.concord.invites'] = JSON.stringify([{...ROOM, communityId:'cid-3', naddr:'cid-3'}]);
+  api.__testState({community:0, channel:'c0'});
+  asked.length = 0;
+  const dead = {...p, relayQueryFrom: async () => { throw new Error('relay down'); }};
+  let threw2 = null;
+  try { await api.hydrateRoomStreams(dead, 0, 'cid-3'); } catch (e) { threw2 = e; }
+  if (!threw2) throw new Error('a room that could read nothing at all reported success');
+}
 
 console.log('concord hydrate parallel runtime ok');
