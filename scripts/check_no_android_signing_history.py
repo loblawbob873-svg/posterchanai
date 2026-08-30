@@ -15,6 +15,23 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE_SIGNING_SUFFIXES = frozenset({".jks", ".keystore", ".p12", ".pfx"})
 
+# THE ONE RETIRED KEY, BY OBJECT ID, AND NOTHING ELSE.
+#
+# This blob is the Android signing key that was exposed and then ROTATED — see
+# docs/ZAPSTORE_SIGNING_RECOVERY.md. It is not used for releases, is not loaded into CI (which signs
+# from the ANDROID_KEYSTORE_BASE64 secret), and current APKs carry Android's signed
+# proof-of-rotation from that certificate to the present one. The mainline was purged: it is
+# reachable from neither HEAD, origin/master nor github/main.
+#
+# What keeps it reachable at all is a set of PUBLISHED RELEASE TAGS on the public mirror
+# (apk-latest, desktop-v1.0.1068 and friends). Purging it from those would mean rewriting every
+# release tag people hold download links to, to delete a key that is already dead — so the incident
+# was closed by rotation instead, deliberately, and this guard should not keep reporting it as open.
+#
+# PINNED BY OBJECT ID, NOT BY PATH. A NEW key committed to the same path is a different blob and
+# still fails, which is the whole point of this check; the test beside it proves exactly that.
+RETIRED_SIGNING_OBJECTS = frozenset({"684f66c811c5829034f6c413b2cc937dc37583cc"})
+
 
 class HistoryUnavailable(RuntimeError):
     """The repository cannot prove that its complete reachable history is clean."""
@@ -50,6 +67,8 @@ def reachable_private_signing_paths(repo):
         if len(fields) != 2:
             continue
         object_id, historical_path = fields
+        if object_id in RETIRED_SIGNING_OBJECTS:
+            continue
         if Path(historical_path).suffix.lower() in PRIVATE_SIGNING_SUFFIXES:
             findings.add((object_id, historical_path))
     return sorted(findings, key=lambda item: (item[1].casefold(), item[0]))
@@ -73,7 +92,9 @@ def main(argv=None):
                 file=sys.stderr,
             )
         return 1
-    print("No private Android signing containers are reachable in Git history.")
+    print("No live private Android signing containers are reachable in Git history "
+          "(%d retired object(s) accounted for — see docs/ZAPSTORE_SIGNING_RECOVERY.md)."
+          % len(RETIRED_SIGNING_OBJECTS))
     return 0
 
 
