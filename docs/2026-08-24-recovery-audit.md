@@ -609,3 +609,30 @@ No aggregate checkbox is closed solely by this section. In particular, the curre
 Office interactions, attached-renderer Code focus, native Firefox/Telegram and every-app handoff,
 physical Android, carrier SMS/MMS, external document providers, sustained terminal repaint, final
 full suite, graphical LiveCD installation and physical USB boot remain separate required evidence.
+
+### 2026-08-29 isolated installed-account verification
+
+The installed-account verifier now runs the package in a token-bounded headless Sway compositor and
+an isolated copy of the signed-in Desktop profile.  It cannot tile a second shell into the live
+desktop, and its cleanup validates the exact `/tmp/pc-installed-diagnostic.installedacct12` domain
+before removing anything.  This replaces the visible second-shell method that caused the temporary
+Classic/Desktop split on the laptop.
+
+The exact installed Desktop 1.0.1306 package passed on both authorized Gentoo machines:
+
+* Desktop `.102`: the server and decrypted client index both reported **6,704 files**.  Both locally
+  mapped synced roots agreed independently across the account collapse-guard count, decrypted
+  manifest and native scan: **11,954 / 11,954 / 11,954** and **5,813 / 5,813 / 5,813**, with zero
+  skipped paths.  A remote disposable `.conf` fixture offered Code and host-open actions, its image
+  fixture opened in Preview, and the real Collabora editor accepted, saved and returned a sentinel
+  through WOPI.
+* Laptop `.154`: the same **6,704** server/client encrypted index equality passed.  It exposes the
+  same two account synced roots but has no local mappings, so no false local-manifest equality is
+  claimed.  The remote native open-with/Preview fixture and real Collabora edit/save/readback also
+  passed.
+
+This closes the current-account index/root-completeness and current Collabora edit/save/readback
+evidence gaps for the installed package.  A destructive real folder upload was deliberately not
+performed against the person's account; the isolated packaged folder-upload completion gate remains
+the evidence for that mutation path.  Attached canonical-renderer Code/Terminal focus, exhaustive
+native-app movement, physical Android/OEM behavior and the final ISO remain open.

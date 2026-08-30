@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = (ROOT / "scripts/check_installed_desktop_account.py").read_text(encoding="utf-8")
+RUNNER = (ROOT / "scripts/run_installed_desktop_account.sh").read_text(encoding="utf-8")
 
 
 def test_installed_account_gate_uses_loopback_cdp_and_requires_authentication():
@@ -11,6 +12,21 @@ def test_installed_account_gate_uses_loopback_cdp_and_requires_authentication():
     assert "no authenticated installed PosterChan page" in SCRIPT
     assert "SKIP installed Electron is not attached" in SCRIPT
     assert "sys.exit(2)" in SCRIPT
+    assert "for _ in range(100)" in SCRIPT
+    assert "await asyncio.sleep(0.2)" in SCRIPT
+
+
+def test_installed_account_runner_is_headless_isolated_and_bounded():
+    assert "WLR_BACKENDS=headless" in RUNNER
+    assert "WLR_HEADLESS_OUTPUTS=1" in RUNNER
+    assert "PC_DIAGNOSTIC_TOKEN" in RUNNER
+    assert "--pc-diagnostic-swaysock" in RUNNER
+    assert "--remote-debugging-address=127.0.0.1" in RUNNER
+    assert "/tmp/pc-installed-diagnostic.installedacct12" in RUNNER
+    assert "refusing cleanup outside the fixed diagnostic domain" in RUNNER
+    assert "cp -a" in RUNNER and "$source/." in RUNNER and "$profile/" in RUNNER
+    assert "-maxdepth 1 -name 'Singleton*' -delete" in RUNNER
+    assert 'PC_INSTALLED_FIXTURE_DIR="$fixture"' in RUNNER
 
 
 def test_office_only_runtime_uses_a_real_throwaway_login_and_fails_closed():
@@ -55,7 +71,8 @@ def test_installed_account_gate_checks_real_blossom_render_without_reading_names
 def test_installed_account_gate_clicks_disposable_native_files_and_cleans_them():
     assert 'TemporaryDirectory(prefix="posterchan-installed-files-")' in SCRIPT
     assert 'PCHostFiles.enter(PATH)' in SCRIPT
-    assert ".fx-home-tile[data-hosthome],.folder-chip[data-host]" in SCRIPT
+    assert "document.querySelector('.fx-home-tile[data-hosthome]')" in SCRIPT
+    assert "||document.querySelector('.folder-chip[data-host]')" in SCRIPT
     assert "posterchan-installed.conf" in SCRIPT
     assert '"code" in native_files["confChoices"]' in SCRIPT
     assert '"host" in native_files["confChoices"]' in SCRIPT
