@@ -7479,7 +7479,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .osw-btns:hover .osw-b[data-w="close"]::after{content:'×';color:#68110d;font-size:10px}
 .os-root.os-style-mac .osw-btns:hover .osw-b[data-w="min"]::after{content:'−';color:#765200;font-size:10px}
 .os-root.os-style-mac .osw-btns:hover .osw-b[data-w="max"]::after{content:'+';color:#075d1b;font-size:10px}
-.os-root.os-style-mac .osw-ai,.os-root.os-style-mac .osw-monitor{width:27px;height:28px}
+.os-root.os-style-mac .osw-ai{width:27px;height:28px}
 .os-root.os-style-mac .osw-ico{display:none}
 .os-root.os-style-mac .osw-title{text-align:center;padding-inline-end:60px;color:rgba(255,255,255,.9);
   font-size:12px;font-weight:600}

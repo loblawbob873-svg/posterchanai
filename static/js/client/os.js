@@ -1496,7 +1496,6 @@
          <span class="osw-title">${enc(label)}</span>
          <span class="osw-btns">
            <button class="osw-b osw-ai" data-w="ai" draggable="true" title="Ask AI about this window" aria-label="Ask AI about this window">&#10024;</button>
-           ${window.pcWM&&pcWM.handoffFrame?'<button class="osw-b osw-monitor" data-w="monitor" title="Move to other monitor" aria-label="Move to other monitor">&#8644;</button>':''}
            <button class="osw-b" data-w="min" title="Minimise" aria-label="Minimise">–</button>
            <button class="osw-b" data-w="max" title="Maximise" aria-label="Maximise">▢</button>
            <button class="osw-b osw-x" data-w="close" title="Close" aria-label="Close">✕</button>
@@ -1524,7 +1523,6 @@
       e.stopPropagation();
       const a = b.dataset.w;
       if(a === 'ai') toggleWindowAI(w, b, e);
-      else if(a === 'monitor') moveToOtherMonitor(w, b);
       else if(a === 'close') closeWin(w);
       else if(a === 'max') toggleMax(w);
       else minimise(w);
@@ -3382,14 +3380,6 @@
     }catch(_){return false;}
   }
 
-  async function tryMonitorDirections(run,recover){
-    for(const direction of ['right','left','down','up']){
-      if(await Promise.resolve(run(direction)).catch(()=>false))return true;
-    }
-    try{ recover(); }catch(_){}
-    return false;
-  }
-
   function nativeHandoffPlacement(w,direction){
     if(!w||!w.el)return {direction:String(direction||'')};
     const horizontal=/left|right/.test(direction),width=w.el.offsetWidth,height=w.el.offsetHeight;
@@ -3397,26 +3387,6 @@
     const cross=horizontal?top/Math.max(1,vhL()-TASKBAR-height):left/Math.max(1,vwL()-width);
     return {direction:String(direction||''),width,height,overflow:0,
       cross:Math.max(0,Math.min(1,cross))};
-  }
-
-  /* A cross-output drag is convenient when Chromium reports virtual-desktop pointer coordinates.
-   * Some Wayland/Electron combinations clamp them at the renderer edge, making an overflow gesture
-   * physically impossible. The title-bar control is the deterministic path: try every adjacent
-   * direction and stop as soon as the desktop main process identifies another shell surface. */
-  async function moveToOtherMonitor(w,button){
-    if(button)button.disabled=true;
-    try{
-      const result=await tryMonitorDirections(async direction=>{
-        const moved=w.native!=null&&pcWM.handoff
-          ? await Promise.resolve(pcWM.handoff(w.native,direction,nativeHandoffPlacement(w,direction))).catch(()=>false)
-          : await sendFrameHandoff(w,direction,0,false);
-        if(moved&&w.native!=null&&wins.includes(w))closeWin(w,{killNative:false,preserveFocus:true});
-        return moved;
-      },()=>{keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();});
-      if(result)return true;
-      try{PC().toast('No other monitor is available');}catch(_){}
-      return false;
-    }finally{if(button&&button.isConnected)button.disabled=false;}
   }
 
   /* Keyboard monitor movement names a direction, unlike the title-bar button which probes every
@@ -7783,7 +7753,6 @@
                   __handoffDocumentKind: handoffDocumentKind,
                   __shouldSelectMessagesTab: shouldSelectMessagesTab,
                   __selectedMessagesTab: selectedMessagesTab,
-                  __tryMonitorDirections: tryMonitorDirections,
                   __rearmFrameHandoffDestination: rearmFrameHandoffDestination,
                   /* The launcher's own list, for the same reason: "a row switched off in Settings →
                    * Sidebar is gone from the desktop too" is invisible when it is wrong — you get a

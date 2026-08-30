@@ -113,18 +113,15 @@ def test_cross_output_native_drop_geometry_reaches_destination_ack_frame():
     assert receiver.index("Object.assign(w.el.style") < receiver.index("pcWM.nativeHandoffAck(token,rect)")
 
 
-def test_button_and_keyboard_native_handoff_preserve_managed_frame_geometry():
+def test_keyboard_native_handoff_preserves_managed_frame_geometry():
     src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     helper = src[src.index("function nativeHandoffPlacement"):
-                 src.index("async function moveToOtherMonitor")]
+                 src.index("async function moveWindowToMonitor")]
     assert "width=w.el.offsetWidth,height=w.el.offsetHeight" in helper
     assert "cross:Math.max(0,Math.min(1,cross))" in helper
-    button = src[src.index("async function moveToOtherMonitor"):
-                 src.index("async function moveWindowToMonitor")]
     keyboard = src[src.index("async function moveWindowToMonitor"):
                    src.index("function startDrag")]
     call = "pcWM.handoff(w.native,direction,nativeHandoffPlacement(w,direction))"
-    assert call in button
     assert call in keyboard
     receiver = src[src.index("pcWM.onNativeHandoffPrepare(async"):
                    src.index("if(!_nativeHandoffOff", src.index("pcWM.onNativeHandoffPrepare(async"))]
@@ -292,5 +289,5 @@ def test_resized_and_rejected_handoff_windows_stay_inside_the_desktop():
     resize = src[src.index("function startResize"):src.index("// ---- desktop, taskbar")]
     assert "vwL()-left-12" in resize
     assert "vhL()-TASKBAR-top-12" in resize
-    send = src[src.index("function sendFrameHandoff"):src.index("/* A cross-output drag", src.index("function sendFrameHandoff"))]
+    send = src[src.index("function sendFrameHandoff"):src.index("function nativeHandoffPlacement", src.index("function sendFrameHandoff"))]
     assert "keepFrameReachable(w)" in send

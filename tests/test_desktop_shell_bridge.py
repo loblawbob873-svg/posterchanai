@@ -224,8 +224,7 @@ class Bridge(unittest.TestCase):
         self.assertIn("PCWebSearch.acceptHandoff(p.state)", client)
         self.assertIn("ui:captureHandoffUI(w)", client)
         self.assertIn("restoreHandoffUI(w,p.ui)", client)
-        self.assertIn('data-w="monitor"', client)
-        self.assertIn("for(const direction of ['right','left','down','up'])", client)
+        self.assertNotIn('data-w="monitor"', client)
         self.assertIn("terminalSid:terminal", client)
 
     def test_every_posterchan_app_uses_the_generic_state_preserving_handoff(self):
