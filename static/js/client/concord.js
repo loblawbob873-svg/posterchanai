@@ -1230,14 +1230,33 @@
        * unset — so the whole room was fetched again on the next click, which made the next failure
        * likelier and the room slower still. A channel that would not load is recorded and left to
        * the live tick, which fetches whatever channel is actually open. */
+      /* THE REST IS PREFETCH, AND PREFETCH IS NOT WORTH WAITING FOR.
+       *
+       * This was awaited, so opening a room blocked until every channel in it had been fetched —
+       * thirteen relay round trips on the Soapbox community before it was usable, while the person
+       * was looking at ONE channel. Measured here: a one-channel room ready in five seconds, a
+       * thirteen-channel room not ready in eighty.
+       *
+       * Nothing is lost by letting it run behind: `refreshActiveChannel` fetches whatever channel
+       * is actually open on its next tick, and with no prior messages its `since` is 0 — the full
+       * history. So a channel that has not been prefetched yet fills the moment somebody opens it,
+       * which is the only moment it matters. */
       const queue=networkOrder.slice(1),stalled=[];
-      await Promise.all(Array.from({length:Math.min(4,queue.length)},async()=>{
+      const prefetch=Promise.all(Array.from({length:Math.min(4,queue.length)},async()=>{
         for(;;){
           const channel=queue.shift(); if(!channel)return;
           try{ await fetchChannel(channel); }
           catch(_){ stalled.push(channel.name); }
         }
-      }));
+      })).then(()=>{
+        /* Recorded when it finishes, not before — `stalled` is what the room reports about itself. */
+        const latest=saved(),at=latest.findIndex(x=>roomIdentity(x)===identity);
+        if(at>=0&&latest[at].cord){ latest[at].cord.stalled=stalled; save(latest); }
+      },()=>{});
+      /* Awaited only when the open channel itself failed: then the prefetch is the only thing that
+       * can still tell us whether this community is reachable at all, and the report below needs
+       * that answer rather than an empty list. */
+      if(headFailed) await prefetch;
       if(headFailed && head) stalled.unshift(head.name);
       room.cord.stalled=stalled;
       /* NOTHING AT ALL IS STILL WORTH SAYING. A room that reached no channel and holds no cached

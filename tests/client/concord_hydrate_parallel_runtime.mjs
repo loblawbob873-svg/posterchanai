@@ -23,7 +23,10 @@ vm.runInNewContext(src, {window, document, console, setTimeout:(f,ms)=>{queueMic
   clearTimeout:noop, URL, atob, crypto:{}, localStorage, sessionStorage:{getItem:()=>null, setItem:noop}});
 const api = window.PCConcord;
 
-const CH = n => ({name:'c'+n, id:'id'+n, streamPubkeys:['b'.repeat(64)]});
+/* Each channel gets its OWN stream key, so a fake relay can refuse exactly one of them — which is
+   the case that matters: the channel on screen is slow, the rest are fine. */
+const KEY = n => String(n).repeat(64).slice(0, 64);
+const CH = n => ({name:'c'+n, id:'id'+n, streamPubkeys:[KEY(n)]});
 const CHANNELS = [CH(0), CH(1), CH(2), CH(3), CH(4), CH(5)];
 const BUNDLE = {community_id:'a'.repeat(64), channels:[], relays:['wss://r.example']};
 const ROOM = {protocol:'cord', name:'Armada Room', communityId:'cid-1', naddr:'cid-1',
@@ -51,7 +54,11 @@ const p = {
   /* cordQuery asks the shared pool AND the room's own relays, and only fails when BOTH do — so a
      fixture whose pool always answers can never make a channel fail. In the failFirst scenario the
      pool is down too, which is what a phone on a bad connection actually looks like. */
-  relayQuery: async () => { if (failFirst) throw new Error('pool down'); return []; },
+  relayQuery: async (filters) => {
+    const authors = (filters && filters[0] && filters[0].authors) || [];
+    if (failFirst && authors.includes(KEY(0))) throw new Error('pool down');
+    return [];
+  },
   relayQueryFrom: async (relays, filters) => {
     const authors = (filters && filters[0] && filters[0].authors) || [];
     asked.push(authors.join(','));
@@ -59,9 +66,9 @@ const p = {
     await new Promise(r => setTimeout(r, 5));
     inFlight--;
     /* ONE CHANNEL THE RELAY WILL NOT ANSWER FOR. */
-    /* The FIRST request is the control stream; the second is the channel on screen. Failing
-       request one would be a room with no control set, which is a different case entirely. */
-    if (failFirst && asked.length === 2) throw new Error('relay refused');
+    /* Refuse ONE named channel — the one on screen — rather than everything. cordQuery only fails
+       when the pool AND the room relays both do, so the pool refuses that same channel below. */
+    if (failFirst && authors.includes(KEY(0))) throw new Error('relay refused');
     if (!failFirst && asked.length === 3) throw new Error('relay refused');
     return [];
   },
@@ -115,10 +122,48 @@ if (asked.length < CHANNELS.length)
   store['pc.concord.invites'] = JSON.stringify([{...ROOM, communityId:'cid-3', naddr:'cid-3'}]);
   api.__testState({community:0, channel:'c0'});
   asked.length = 0;
-  const dead = {...p, relayQueryFrom: async () => { throw new Error('relay down'); }};
+  /* BOTH transports down. cordQuery fails only when the pool and the room's relays both do; a
+     pool that answers with an empty list is a relay saying "nothing here", which is a different
+     thing and must not raise anything. */
+  const dead = {...p, relayQuery: async () => { throw new Error('pool down'); },
+                      relayQueryFrom: async () => { throw new Error('relay down'); }};
   let threw2 = null;
   try { await api.hydrateRoomStreams(dead, 0, 'cid-3'); } catch (e) { threw2 = e; }
   if (!threw2) throw new Error('a room that could read nothing at all reported success');
+}
+
+/* OPENING A ROOM MUST NOT WAIT FOR EVERY CHANNEL IN IT.
+ *
+ * Only one channel is being looked at. Awaiting the rest made a thirteen-channel community cost
+ * thirteen relay round trips before it was usable, while a one-channel room was ready in five
+ * seconds — the "Concord is slow" report, worst on exactly the big Armada rooms.
+ *
+ * Nothing is lost: refreshActiveChannel fetches whatever channel is actually open on its next tick,
+ * and with no prior messages its `since` is 0, so an un-prefetched channel fills the moment
+ * somebody opens it. */
+{
+  store['pc.concord.invites'] = JSON.stringify([{...ROOM, communityId:'cid-4', naddr:'cid-4'}]);
+  api.__testState({community:0, channel:'c0'});
+  failFirst = false; asked.length = 0;
+  const slow = {...p, relayQueryFrom: async (relays, filters) => {
+    const authors = (filters && filters[0] && filters[0].authors) || [];
+    asked.push(authors.join(','));
+    /* Only the PREFETCHED channels are slow. The control stream and the channel on screen are
+       legitimately blocking — a room cannot open without them — so making them slow here would
+       measure the fixture rather than the change. */
+    const prefetched = CHANNELS.slice(1).some(c => authors.includes(c.streamPubkeys[0]));
+    await new Promise(r => setTimeout(r, prefetched ? 400 : 5));
+    return [];
+  }};
+  const t0 = Date.now();
+  await api.hydrateRoomStreams(slow, 0, 'cid-4');
+  const openedIn = Date.now() - t0;
+  const fetchedByThen = asked.length;
+  if (fetchedByThen >= CHANNELS.length + 1)
+    throw new Error('opening the room waited for every channel (' + fetchedByThen + ' fetches, ' +
+                    openedIn + 'ms) — a big community is unusable until all of them answer');
+  if (openedIn > 350)
+    throw new Error('opening the room took ' + openedIn + 'ms; only the open channel is needed');
 }
 
 console.log('concord hydrate parallel runtime ok');
