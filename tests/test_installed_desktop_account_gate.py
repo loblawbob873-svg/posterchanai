@@ -27,6 +27,8 @@ def test_installed_account_runner_is_headless_isolated_and_bounded():
     assert "cp -a" in RUNNER and "$source/." in RUNNER and "$profile/" in RUNNER
     assert "-maxdepth 1 -name 'Singleton*' -delete" in RUNNER
     assert 'PC_INSTALLED_FIXTURE_DIR="$fixture"' in RUNNER
+    assert "PC_INSTALLED_CODE_ROOT=\"$code_root\"" in RUNNER
+    assert "check_installed_code_focus.py" in RUNNER
 
 
 def test_office_only_runtime_uses_a_real_throwaway_login_and_fails_closed():

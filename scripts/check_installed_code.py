@@ -73,10 +73,27 @@ async def main():
     page = await choose_page()
     async with CDP(page["webSocketDebuggerUrl"]) as cdp:
         try:
-            # Exercise the real installed navigation control. Calling PCOS.routeView directly only
-            # asks the window manager to focus/create a frame; it does not run switchView's owning
-            # renderer continuation and can leave the diagnostic on Social.
-            opened = await cdp.eval("(()=>{const b=document.querySelector('[data-view=\"code\"]');if(!b)return false;b.click();return true;})()")
+            desktop = await cdp.eval(r"""(async()=>{
+              for(let i=0;i<100&&!(window.PCOS&&PCOS.toggle&&window.__PC);i++)
+                await new Promise(r=>setTimeout(r,100));
+              if(!(window.PCOS&&PCOS.toggle))return {on:false,root:false,body:false};
+              if(!PCOS.isOn())PCOS.toggle();
+              for(let i=0;i<80&&!PCOS.isOn();i++)await new Promise(r=>setTimeout(r,100));
+              return {on:PCOS.isOn(),root:!!document.querySelector('#os-root'),
+                body:document.body.classList.contains('os-on')};
+            })()""")
+            if not desktop or not all(desktop.values()):
+                raise RuntimeError("installed PosterChanOS desktop mode did not activate: " + str(desktop))
+            # Require the real navigation control, then invoke the same owning switchView operation
+            # its handler calls. A CSS-hidden classic sidebar still has ``hidden == false`` while
+            # Desktop mode is active, so synthetic ``element.click()`` could select that parked
+            # control and race the shell repaint. switchView is the product navigation operation;
+            # unlike PCOS.routeView alone it also runs the renderer continuation.
+            opened = await cdp.eval(r"""(async()=>{
+              if(!document.querySelector('[data-view="code"]'))return false;
+              if(!(window.__PC&&__PC.switchView))return false;
+              await __PC.switchView('code');return true;
+            })()""")
             if not opened:
                 raise RuntimeError("installed Code navigation control is missing")
             await asyncio.sleep(1)
@@ -111,6 +128,15 @@ async def main():
                       "diff": "-const installedCode = false;" in diff and "+const installedCode = true;" in diff,
                       "restore": restore, "clean": clean, "diffClosed": diff_closed,
                       "explorerBack": explorer_back}
+            if not all(result.values()):
+                result["ownership"] = await cdp.eval(r"""(()=>({
+                  view:window.__PC&&__PC.VIEW, codeReady:!!window.PCCode,
+                  feeds:[...document.querySelectorAll('#feed')].map(e=>e.className),
+                  slots:[...document.querySelectorAll('.osw-slot')].map(e=>e.className),
+                  windows:[...document.querySelectorAll('.osw')].map(w=>({
+                    title:(w.querySelector('.osw-title')||{}).textContent||'',
+                    focused:w.classList.contains('focused'),native:w.classList.contains('osw-native')}))
+                }))()""")
             assert result and all(result.values()), result
         finally:
             await cdp.eval(CLEANUP + "(" + json.dumps(root) + ")")

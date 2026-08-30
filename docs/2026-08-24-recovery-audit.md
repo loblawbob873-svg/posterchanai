@@ -636,3 +636,15 @@ evidence gaps for the installed package.  A destructive real folder upload was d
 performed against the person's account; the isolated packaged folder-upload completion gate remains
 the evidence for that mutation path.  Attached canonical-renderer Code/Terminal focus, exhaustive
 native-app movement, physical Android/OEM behavior and the final ISO remain open.
+
+The same isolated installed-package compositor subsequently exercised PosterChan Code on `.102`
+and `.154`.  On both machines it opened a disposable native Git project, showed the modified file,
+rendered the exact before/after diff, confirmed Restore, proved the working tree clean, returned to
+Explorer, and switched focus between distinct Code and Terminal windows without either inheriting
+the other's content class or losing full-height sizing.  The verifier now invokes the owning
+`__PC.switchView('code')` navigation operation: a synthetic click had selected the CSS-hidden
+Classic sidebar inside Desktop mode and was itself reproducing the Classic/Desktop ownership fault.
+The test now requires Desktop mode, `#os-root`, and `body.os-on` before exercising Code.  Installed
+Code/Git/diff/restore and isolated managed Code/Terminal focus are therefore verified on both current
+Gentoo packages.  Exhaustive interaction in the already-running canonical renderer remains part of
+the broader every-app/native-app movement matrix rather than being inferred from this bounded gate.

@@ -4,9 +4,9 @@
 set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-host=${1:?usage: run_installed_desktop_account.sh user@host [office|full|current]}
+host=${1:?usage: run_installed_desktop_account.sh user@host [office|full|current|code]}
 mode=${2:-office}
-case "$mode" in office|full|current) ;; *) echo "mode must be office, full, or current" >&2; exit 2;; esac
+case "$mode" in office|full|current|code) ;; *) echo "mode must be office, full, current, or code" >&2; exit 2;; esac
 
 token=installedacct12
 root=/tmp/pc-installed-diagnostic.$token
@@ -14,6 +14,7 @@ runtime=$root/runtime
 profile=$root/profile
 key=$root/test.nsec
 fixture=$root/files
+code_root=/tmp/pc-code-installed.$token
 port=${PC_CHECK_PORT:-9223}
 tunnel_pid=
 
@@ -33,6 +34,10 @@ remote_cleanup() {
     if [ -r \"\$root/sway.pid\" ]; then kill \"\$(sed -n '1p' \"\$root/sway.pid\")\" 2>/dev/null || :; fi
     find \"\$root\" -depth -mindepth 1 -delete 2>/dev/null || :
     rmdir \"\$root\" 2>/dev/null || :
+    code_root='$code_root'
+    [ \"\$code_root\" = '/tmp/pc-code-installed.installedacct12' ] || exit 3
+    find \"\$code_root\" -depth -mindepth 1 -delete 2>/dev/null || :
+    rmdir \"\$code_root\" 2>/dev/null || :
   " >/dev/null 2>&1 || :
 }
 
@@ -70,7 +75,7 @@ ssh -o BatchMode=yes "$host" "
   root='$root'; runtime='$runtime'; profile='$profile'
   mkdir -p \"\$runtime\" \"\$profile\"
   chmod 700 \"\$root\" \"\$runtime\" \"\$profile\"
-  if [ '$mode' = current ]; then
+  if [ '$mode' = current ] || [ '$mode' = code ]; then
     source=\"\$HOME/.config/posterchan-desktop\"
     [ -d \"\$source\" ] || { echo 'installed Desktop profile is absent' >&2; exit 4; }
     cp -a \"\$source/.\" \"\$profile/\"
@@ -81,6 +86,20 @@ ssh -o BatchMode=yes "$host" "
   echo \$! >\"\$root/sway.pid\"
 "
 scp -q -r "$fixture" "$host:$root/"
+if [ "$mode" = code ]; then
+  ssh -o BatchMode=yes "$host" "
+    code_root='$code_root'
+    [ \"\$code_root\" = '/tmp/pc-code-installed.installedacct12' ] || exit 3
+    mkdir -p \"\$code_root\"
+    git -C \"\$code_root\" init -q
+    git -C \"\$code_root\" config user.name 'PosterChan verifier'
+    git -C \"\$code_root\" config user.email 'verifier@invalid'
+    printf '%s\n' 'const installedCode = false;' >\"\$code_root/changed.js\"
+    git -C \"\$code_root\" add changed.js
+    git -C \"\$code_root\" commit -qm fixture
+    printf '%s\n' 'const installedCode = true;' >\"\$code_root/changed.js\"
+  "
+fi
 
 socket=
 i=0
@@ -131,7 +150,11 @@ if [ "$mode" = office ]; then
 elif [ "$mode" = full ]; then
   PC_CHECK_PORT="$port" PC_INSTALLED_TEST_NSEC_FILE="$key" PC_INSTALLED_FIXTURE_DIR="$fixture" \
     "$repo/.venv/bin/python" "$repo/scripts/check_installed_desktop_account.py"
-else
+elif [ "$mode" = current ]; then
   PC_CHECK_PORT="$port" PC_INSTALLED_FIXTURE_DIR="$fixture" "$repo/.venv/bin/python" \
     "$repo/scripts/check_installed_desktop_account.py"
+else
+  PC_CHECK_PORT="$port" PC_INSTALLED_CODE_ROOT="$code_root" "$repo/.venv/bin/python" \
+    "$repo/scripts/check_installed_code.py"
+  PC_CHECK_PORT="$port" "$repo/.venv/bin/python" "$repo/scripts/check_installed_code_focus.py"
 fi
