@@ -121,6 +121,16 @@ def test_the_native_push_is_not_gated_on_the_browser_api():
     assert push < guard, "the native push must run before the browser-API guard"
 
 
+def test_packaged_desktop_does_not_retry_unsupported_app_scheme_artwork_each_second():
+    body = re.search(r"_media\(\)\{(.*?)\n    \},", APPJS, re.S)
+    assert body, "MusicPlayer._media() moved — re-point this test"
+    body = body.group(1)
+    assert "new URL(LOGO,location.href)" in body
+    assert "art.protocol==='http:'||art.protocol==='https:'||art.protocol==='data:'" in body
+    assert "metadata.artwork=" in body
+    assert "artwork:[{src:LOGO" not in body
+
+
 def test_the_native_push_waits_for_something_to_actually_play():
     """update() raises a foreground service. Called with no current track it would put a notification
     on screen for a player that has never played — and a background foreground-service start is the

@@ -22458,9 +22458,19 @@
       if(!('mediaSession' in navigator)) return;
       try{
         const m=this.cur?FilesIdx.meta(this.cur):null;
-        if(window.MediaMetadata) navigator.mediaSession.metadata=new MediaMetadata({
-          title:(m&&m.name)||'Track', artist:'PosterChan', album:'Library',
-          artwork:[{src:LOGO, sizes:'512x512', type:'image/png'}] });
+        if(window.MediaMetadata){
+          const metadata={title:(m&&m.name)||'Track',artist:'PosterChan',album:'Library'};
+          /* Chromium's MediaImage loader rejects Electron's app:// scheme. _media runs on every
+           * position heartbeat, so supplying the packaged relative logo produced a fresh console
+           * error and failed image load every second. The native Android session does not use this
+           * field; on ordinary HTTPS clients retain the artwork, and packaged Desktop omits only
+           * the unsupported browser-MediaSession image. */
+          try{const art=new URL(LOGO,location.href);
+            if(art.protocol==='http:'||art.protocol==='https:'||art.protocol==='data:')
+              metadata.artwork=[{src:art.href,sizes:'512x512',type:'image/png'}];
+          }catch(_){}
+          navigator.mediaSession.metadata=new MediaMetadata(metadata);
+        }
         navigator.mediaSession.playbackState=(_audioEl && !_audioEl.paused)?'playing':'paused';
         /* WHERE WE ARE IN THE TRACK. Without this a car's display has a title and nothing else: no
          * elapsed time, no remaining time, and a scrubber many head units disable outright because
