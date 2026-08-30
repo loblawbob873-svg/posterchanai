@@ -19,7 +19,7 @@ def test_webxdc_destination_reopens_game_before_generic_document_fallback():
     receive = OS[OS.index("if(pcWM.onHandoffFrame)"):
                  OS.index("if(pcWM.onPreviewFrame)")]
     special = receive.index("/^doc:webxdc:/.test")
-    generic = receive.index("const w=openApp(String(p.view)")
+    generic = receive.index("const w=reconstructHandoffWindow(p)")
     assert special < generic
     assert "PCWebxdc.acceptHandoff(p.state)" in receive
     assert "catch(()=>{});return;" in receive[special:generic]

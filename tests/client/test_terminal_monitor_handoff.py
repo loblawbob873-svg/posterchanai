@@ -34,7 +34,7 @@ def test_os_transfers_terminal_state_before_opening_destination_window():
     destination = src[src.index("if(pcWM.onHandoffFrame)"):src.index("if(pcWM.onPreviewFrame)")]
     assert "PCTerm.handoffState()" in payload
     assert "PCTerm.acceptHandoff(p.state)" in destination
-    assert destination.index("PCTerm.acceptHandoff(p.state)") < destination.index("const w=openApp")
+    assert destination.index("PCTerm.acceptHandoff(p.state)") < destination.index("const w=reconstructHandoffWindow(p)")
 
 
 def test_stale_messages_route_cannot_override_destination_terminal(tmp_path):

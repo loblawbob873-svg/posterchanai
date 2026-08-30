@@ -48,7 +48,7 @@ class PreviewSim(unittest.TestCase):
         receive = osjs[osjs.index("if(pcWM.onHandoffFrame)"):osjs.index("if(pcWM.onPreviewFrame)")]
         self.assertIn("typeof w.handoffState==='function'", payload)
         self.assertIn("PCPreview.acceptHandoff(p.state)", receive)
-        self.assertLess(receive.index("PCPreview.acceptHandoff(p.state)"), receive.index("const w=openApp"))
+        self.assertLess(receive.index("PCPreview.acceptHandoff(p.state)"), receive.index("const w=reconstructHandoffWindow(p)"))
         send = osjs[osjs.index("function sendFrameHandoff"):osjs.index("function rearmFrameHandoffDestination")]
         self.assertIn("typeof w.handoffCancel==='function'", send)
 

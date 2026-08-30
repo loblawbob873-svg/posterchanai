@@ -27,7 +27,7 @@ def test_document_identity_wins_over_internal_thread_view():
 
 def test_receiver_builds_document_before_routing_exact_post_path():
     receive = _block("if(pcWM.onHandoffFrame)", "if(pcWM.onPreviewFrame)")
-    create = "const w=openApp(String(p.view)"
+    create = "const w=reconstructHandoffWindow(p)"
     route = "PC().routePath && PC().routePath(String(p.path))"
     assert create in receive and route in receive
     assert receive.index(create) < receive.index(route)

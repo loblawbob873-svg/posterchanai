@@ -6579,29 +6579,33 @@
    * be liveable at forty a day. Browsers refuse audio until the page has been interacted with, and a
    * desktop restored from the remembered toggle has had no click yet, so a blocked play is swallowed
    * rather than thrown — the toast is the notification, the sound is the courtesy. */
-  let _ac = null;
   function ding(){
     if(!settings().get('osDing', true)) return;
     try{
       const AC = window.AudioContext || window.webkitAudioContext;
       if(!AC) return;
-      _ac = _ac || new AC();
-      if(_ac.state === 'suspended') _ac.resume().catch(() => {});
-      const t0 = _ac.currentTime;
-      const lp = _ac.createBiquadFilter();
+      /* A persistent AudioContext is advertised by Chromium as an active media session even after
+       * the one-second sound is silent. On Sway that becomes an idle inhibitor, so receiving a
+       * notification can keep both monitors awake indefinitely. A notification owns a short-lived
+       * context and closes it after its oscillators stop; Music uses its separate player. */
+      const ac = new AC();
+      if(ac.state === 'suspended') ac.resume().catch(() => {});
+      const t0 = ac.currentTime;
+      const lp = ac.createBiquadFilter();
       lp.type = 'lowpass'; lp.frequency.value = 1800;
-      const out = _ac.createGain();
+      const out = ac.createGain();
       out.gain.setValueAtTime(0.0001, t0);
       out.gain.exponentialRampToValueAtTime(0.075, t0 + 0.04);
       out.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.1);
-      lp.connect(out); out.connect(_ac.destination);
+      lp.connect(out); out.connect(ac.destination);
       [[523.25, 1], [783.99, 0.45]].forEach(([f, lvl]) => {
-        const o = _ac.createOscillator(), g = _ac.createGain();
+        const o = ac.createOscillator(), g = ac.createGain();
         o.type = 'triangle'; o.frequency.value = f;
         g.gain.value = lvl;
         o.connect(g); g.connect(lp);
         o.start(t0); o.stop(t0 + 1.2);
       });
+      setTimeout(()=>{try{ac.close()}catch(_){}},1350);
     }catch(_){ /* no audio here — the toast still is the notification */ }
   }
 

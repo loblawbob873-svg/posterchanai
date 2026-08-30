@@ -130,7 +130,7 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         self.assertIn("return view==='__music'&&opened ? opened : null", body)
         receive = self.os[self.os.index("if(pcWM.onHandoffFrame"):
                                self.os.index("if(pcWM.onPreviewFrame")]
-        self.assertIn("const w=openApp(String(p.view)", receive)
+        self.assertIn("const w=reconstructHandoffWindow(p)", receive)
         self.assertIn("if(!w) return", receive)
 
     def test_music_handoff_uses_the_reconstructible_launcher_not_a_generic_document(self):

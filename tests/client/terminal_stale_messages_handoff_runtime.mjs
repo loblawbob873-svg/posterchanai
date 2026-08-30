@@ -21,14 +21,14 @@ if(!mainForward.includes("String(p.view||'')==='messages'"))
   throw Error('main forwarded stale Messages selection for a non-Messages frame');
 const destination=os.slice(os.indexOf('if(pcWM.onHandoffFrame)'),os.indexOf('if(pcWM.onPreviewFrame)'));
 const accept=destination.indexOf('PCTerm.acceptHandoff(p.state)');
-const opened=destination.indexOf('const w=openApp');
+const opened=destination.indexOf('const w=reconstructHandoffWindow(p)');
 const reassert=destination.indexOf("if(p.view==='terminal')",opened);
 const route=destination.indexOf("PC().switchView&&PC().switchView('terminal')",reassert);
 if(!(accept>=0&&accept<opened&&opened<reassert&&reassert<route))
   throw Error('Terminal destination ordering does not adopt, open, then reassert Terminal');
 
 // Execute the destination ordering, including the stale renderer-global route. This deliberately
-// makes openApp inherit Concord, which was the installed symptom, and proves the post-open contract
+// makes generic reconstruction inherit Concord, which was the installed symptom, and proves the post-open contract
 // restores Terminal without changing or duplicating the three adopted sessions.
 const sent={view:'terminal',messagesTab:'',state:structuredClone(left.term)};
 right.term=structuredClone(sent.state);
