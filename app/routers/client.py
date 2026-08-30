@@ -4219,7 +4219,17 @@ async def drafts_sync(data: DraftsReq, db: Session = Depends(get_db)):
         # drafts only the first device had ("draft shows on phone, not desktop"). Union by id, newest
         # ts wins; a del:true tombstone with a fresh ts makes a deletion win. (Mirrors the client merge
         # in Drafts.pull, and the replaceable-list-wipe fix pattern.)
-        existing = await store.get_doc(port, "pcai:drafts", seckey=sk)
+        # STRICT, because the next thing this does is REPLACE the document. kind-30078 is
+        # replaceable, and a non-strict read answers the same empty result for "no drafts yet" and
+        # for "the relay did not answer" — merge onto the second and this write deletes every draft
+        # every other device had, with a 200 on the wire and nothing in any log. Same rule, and the
+        # same refusal, as the files-index save two hundred lines below.
+        try:
+            existing = await store.get_doc(port, "pcai:drafts", seckey=sk, strict=True)
+        except Exception as e:
+            logger.warning("[client] drafts: cannot read current drafts, refusing to write: %s", e)
+            return JSONResponse({"ok": False, "error": "drafts unavailable, not saved"},
+                                status_code=503)
         prev = existing.get("drafts", []) if isinstance(existing, dict) else []
         merged: dict = {}
         for d in [*(prev if isinstance(prev, list) else []), *data.drafts]:
