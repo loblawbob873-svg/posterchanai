@@ -181,6 +181,24 @@ console.log('an old Blossom MP4 returned as generic binary is playable');
   P.close();
 }
 
+console.log('a video whose codec never answers becomes a useful recovery view');
+{
+  const oldSetTimeout=global.setTimeout,oldClearTimeout=global.clearTimeout;
+  let stalled=null,cleared=false;
+  global.setTimeout=(fn,ms)=>{if(ms===12000){stalled=fn;return 12000;}return oldSetTimeout(fn,ms);};
+  global.clearTimeout=id=>{if(id===12000){cleared=true;return;}return oldClearTimeout(id);};
+  P.open({name:'stalled.mp4',mime:'video/mp4',blob:new global.Blob([])});
+  const host=global.document.body.children[0];
+  check('stalled video arms a bounded recovery timer',typeof stalled==='function');
+  stalled();
+  const body=host.querySelector('.pv-body');
+  check('stall explains recovery instead of leaving a black rectangle',
+        !!body&&/did not start/.test(body._html)&&/Download/.test(body._html));
+  P.close();
+  check('closing clears the stalled-media timer',cleared===true);
+  global.setTimeout=oldSetTimeout;global.clearTimeout=oldClearTimeout;
+}
+
 console.log('a desktop monitor handoff transfers the live blob and playback before source cleanup');
 (async()=>{
   let sourceWindow=null, destinationWindow=null, opens=0;

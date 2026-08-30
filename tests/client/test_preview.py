@@ -274,6 +274,12 @@ pending.then(()=>console.log(JSON.stringify(added))).catch(e=>{console.error(e);
         self.assertIn("av.load()", src)
         self.assertIn("Loading video", src)
 
+    def test_media_stall_has_a_bounded_download_recovery(self):
+        src = _read("static/js/client/preview.js")
+        self.assertIn("This video did not start on this device", src)
+        self.assertIn("}, 12000)", src)
+        self.assertIn("clearTimeout(stalled)", src)
+
 
 if __name__ == "__main__":
     unittest.main()
