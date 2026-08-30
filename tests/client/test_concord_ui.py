@@ -669,10 +669,20 @@ def test_armada_membership_refresh_preserves_hydrated_cache_and_clicks_restore_o
 
 
 def test_room_history_errors_are_coalesced_instead_of_toaster_spam():
+    """SAID ONCE, UNTIL IT WORKS — not once every thirty seconds.
+
+    This used to assert a 30s re-toast window, which is the behaviour it was written to prevent,
+    only slower: on a phone the condition LASTS — a community whose relays are unreachable is not a
+    passing blip — so the screen filled with "could not refresh room history" on a loop, over a room
+    the client was already retrying every four seconds. Reported as exactly that.
+
+    A DIFFERENT message must still speak, and the notice is cleared on success by the channel
+    handler below, so a room that recovers and breaks again says so again."""
     assert 'const roomLoadNotices=new Map()' in CONCORD
     warning = CONCORD.split('function roomLoadWarning', 1)[1].split(
         'function decodeMembershipLists', 1)[0]
-    assert 'now-old.at>30000' in warning
+    assert 'if(old&&old.message===message)return;' in warning, warning
+    assert 'now-old.at>' not in warning, "a time window re-toasts a condition nobody can act on"
     channel = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split(
         "$$('[data-cc-star]')", 1)[0]
     assert "roomLoadWarning(p,noticeKey,'could not refresh room history: ',e)" in channel

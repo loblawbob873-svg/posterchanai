@@ -988,9 +988,22 @@
     return next;
   }
   function sameJson(a,b){try{return JSON.stringify(a)===JSON.stringify(b);}catch(_){return false;}}
+  /* SAID ONCE, UNTIL IT WORKS.
+   *
+   * This re-toasted the same message for the same room every thirty seconds, for as long as the
+   * condition lasted. On a phone the condition lasts — a community whose relays are slow or
+   * unreachable is not a passing blip — so the screen filled with "could not refresh room history"
+   * on a loop, over a room the client was already retrying every four seconds. Reported as exactly
+   * that, over and over.
+   *
+   * A DIFFERENT message still speaks, and the notice is cleared on success (see the channel
+   * handler), so a room that recovers and then breaks again says so again. What is gone is the
+   * repetition of one unchanged fact nobody can act on. */
   function roomLoadWarning(p,key,prefix,error){
-    const message=String(error&&error.message||error),now=Date.now(),old=roomLoadNotices.get(key);
-    if(!old||old.message!==message||now-old.at>30000){roomLoadNotices.set(key,{message,at:now});p.toast(prefix+message);}
+    const message=String(error&&error.message||error),old=roomLoadNotices.get(key);
+    if(old&&old.message===message)return;
+    roomLoadNotices.set(key,{message,at:Date.now()});
+    p.toast(prefix+message);
   }
   function decodeMembershipLists(decrypted){
     /* Resolve addressable coordinates exactly as relays do, before unioning fragments. Without
@@ -1259,11 +1272,11 @@
       if(headFailed) await prefetch;
       if(headFailed && head) stalled.unshift(head.name);
       room.cord.stalled=stalled;
-      /* NOTHING AT ALL IS STILL WORTH SAYING. A room that reached no channel and holds no cached
-       * history is empty on screen with no explanation, which is the failure this whole path keeps
-       * being reported as. A room that got even one channel is not that, and must not toast. */
-      if(stalled.length>=networkOrder.length && !cachedHistoryRendered)
-        throw new Error('no channel in this community could be read yet — retrying');
+      /* NOTHING TO THROW HERE. A room that reached no channel yet is a room still loading on a
+       * slow radio, and the client is already retrying it every four seconds — raising made the
+       * caller toast "could not refresh room history" on a condition nobody can act on, over and
+       * over, which is exactly how this was reported from the phone. What the room could not read
+       * is recorded in `stalled` and shown where it belongs. */
       room.cord.hydrated=true;hydratedRoomViews.add(identity);if(!persistRoom())return;
       /* A relay answer may return after the reader chose another community. Persisting the fetched
        * room is still useful, but repainting/scrolling the new room is not. Notification launches
