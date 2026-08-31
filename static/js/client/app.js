@@ -16745,7 +16745,7 @@
   }
   async function _postShort(file, host){
     if(!file || !/^video\//.test(file.type||'')){ toast('pick a video'); return; }
-    const title=await uiPrompt('Give your short a title', ''); if(title===null) return;
+    const title=await uiPrompt('Give your short a title', { value: '' }); if(title===null) return;
     const st=document.createElement('div'); st.className='empty'; st.textContent='Uploading your short…';
     host.prepend(st);
     try{
@@ -17146,7 +17146,7 @@
       MusicPlayer._pl = to;   // the widget lists the same set — two pickers, one selection
       repaint(); });
     { const nb=$('#ma-plnew', root); if(nb) nb.onclick=async()=>{
-        const name = await uiPrompt('Name this playlist', '', 'New playlist'); if(!name) return;
+        const name = await uiPrompt('Name this playlist', { value: '', placeholder: 'New playlist' }); if(!name) return;
         const pl = await PL().create(name.trim());
         // create() returns null when the save did not happen — never navigate into one that is not
         // there, which is the whole reason it reports that rather than handing the object back.
@@ -17154,7 +17154,7 @@
         _musicPl = pl.id; repaint(); }; }
     { const rb=$('#ma-plren', root); if(rb) rb.onclick=async()=>{
         const cur = PL().get(_musicPl); if(!cur) return;
-        const name = await uiPrompt('Rename playlist', cur.name, cur.name); if(!name) return;
+        const name = await uiPrompt('Rename playlist', { value: cur.name, ok: 'Rename' }); if(!name) return;
         if(!await PL().rename(_musicPl, name.trim())) toast('couldn’t rename that playlist');
         repaint(); }; }
     { const db=$('#ma-pldel', root); if(db) db.onclick=async()=>{
@@ -17190,7 +17190,7 @@
         _musicPlRepaint();
       });
       $('#ma-pladdnew', root).onclick = async()=>{
-        const name = await uiPrompt('Name this playlist', '', 'New playlist'); if(!name) return;
+        const name = await uiPrompt('Name this playlist', { value: '', placeholder: 'New playlist' }); if(!name) return;
         const pl = await PL().create(name.trim(), [sha]);
         closeModal();
         toast(pl ? 'playlist created' : 'couldn’t save that playlist');
@@ -23145,7 +23145,7 @@
   async function renameBlob(sha, current){
     if(!sha) return;
     const cur = String(current || '');
-    const asked = await uiPrompt('Rename', cur, cur);
+    const asked = await uiPrompt('Rename', { value: cur, ok: 'Rename' });
     if(asked === null || asked === undefined) return;
     // Slashes would read as folders in a path and the index is flat; a name is a name.
     const name = String(asked).trim().replace(/[\/\\]+/g, '-').slice(0, 200);
@@ -27999,7 +27999,7 @@
   function voiceAddFromBlossom(){
     blossomPicker(null, async ({ url }) => {
       if(!url) return;
-      const name = await uiPrompt('Name this voice', '', 'e.g. me, narrator, gran');
+      const name = await uiPrompt('Name this voice', { value: '', placeholder: 'e.g. me, narrator, gran' });
       if(name === null) return;
       const nm = (name||'').trim().slice(0,40) || 'untitled';
       try{
@@ -28019,7 +28019,7 @@
   }
 
   async function voiceAdd(file){
-    const name = await uiPrompt('Name this voice', '', 'e.g. me, narrator, gran');
+    const name = await uiPrompt('Name this voice', { value: '', placeholder: 'e.g. me, narrator, gran' });
     if(name === null) return;
     const nm = (name||'').trim().slice(0,40) || 'untitled';
     try{

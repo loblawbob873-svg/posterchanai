@@ -3216,7 +3216,7 @@
       const known = recallPair(id, dir);
       if(known){ add(known); PC.toast('syncing “' + known + '” again'); return; }
       const guess = pairKey(dir.split(/[/\\]/).pop()) || 'Folder';
-      Promise.resolve(PC.uiPrompt('Name this folder — use the SAME name on your other devices.', guess))
+      Promise.resolve(PC.uiPrompt('Name this folder — use the SAME name on your other devices.', { value: guess, ok: 'Use this name' }))
         .then(ans => {
           const key = pairKey(ans || '');
           if(!key || key.length < 4) return;
@@ -3276,7 +3276,7 @@
          * meeting "Docs" on the phone is two folders, not one, and nothing later would explain why. */
         const key = pairKey(await PC.uiPrompt(
           'Name this folder. Use the SAME name on your other devices to sync them together — the '
-          + 'folder can be anywhere on each one.', guess) || '');
+          + 'folder can be anywhere on each one.', { value: guess, ok: 'Use this name' }) || '');
         if(!key) return;
         if(key.length < 4){ PC.toast('use at least 4 letters or digits'); return; }
         if(list2.some(x => keyOf(x) === key)){ PC.toast('“' + key + '” is already syncing on this '

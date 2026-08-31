@@ -215,7 +215,49 @@ def run(source: Path, timeout: int, interval: int, installed_disk: bool = False,
                     shutil.copy2(frame, evidence_dir / frame.name)
 
 
+# A GATE THAT NEEDS AN ARGUMENT NOBODY SUPPLIES IS NOT A GATE.
+#
+# This is the only check in the tree that boots a real PosterChanOS and proves its session comes up,
+# and it SKIPPED in every single suite run — `error: one of the arguments iso --disk is required`,
+# because checkall runs a check with no arguments and nothing ever supplied one. So installer
+# regressions reached a person's machine instead of a build, which is exactly how they were
+# reported: "the new installed system does not boot, no EFI entries", "why does this keep breaking".
+#
+# The target therefore comes from the environment when the command line does not carry it:
+#
+#   PC_LIVECD_ISO=/path/to.iso        the live image boots to a desktop
+#   PC_INSTALLED_DISK=/path/to.qcow2  a disk the installer produced boots with NO media attached
+#
+# Unset on a machine with no image is a SKIP (exit 2), never a pass — the same rule every other
+# environment-dependent check here follows. Both have now been run for real on hardware with KVM and
+# both passed; what was missing was ever running them.
+def _from_environment():
+    iso = os.environ.get("PC_LIVECD_ISO", "").strip()
+    disk = os.environ.get("PC_INSTALLED_DISK", "").strip()
+    return iso, disk
+
+
 def main() -> int:
+    import sys
+    if len(sys.argv) == 1:
+        iso, disk = _from_environment()
+        if not iso and not disk:
+            print("SKIP  no image to boot — set PC_LIVECD_ISO=<iso> and/or "
+                  "PC_INSTALLED_DISK=<qcow2>. Nothing was verified about installing or booting "
+                  "PosterChanOS; this is not a pass.")
+            return 2
+        for path in (iso, disk):
+            if path and not Path(path).is_file():
+                print("SKIP  %s does not exist" % path)
+                return 2
+        rc = 0
+        if iso:
+            sys.argv = [sys.argv[0], iso]
+            rc = main() or rc
+        if disk:
+            sys.argv = [sys.argv[0], "--disk", disk]
+            rc = main() or rc
+        return rc
     parser = argparse.ArgumentParser(description=__doc__)
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("iso", type=Path, nargs="?", help="LiveCD ISO to boot")
