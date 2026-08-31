@@ -230,9 +230,17 @@ def extract_xlsx_text(xlsx_base64: str, max_chars: int = 50000) -> Optional[str]
             
             sheet = wb[sheet_name]
             sheet_header = f"--- Sheet: {sheet_name} ---\n"
-            text_parts.append(sheet_header)
-            current_length += len(sheet_header)
-            
+            # WRITTEN LAZILY, with the first row that actually has data.
+            #
+            # Appended up front it was emitted for every sheet whether or not the sheet held
+            # anything — so an EMPTY workbook came back as "--- Sheet: Sheet1 ---", which is a
+            # non-empty string. Every caller here branches on truthiness, and the other four
+            # extractors return None for an empty document, so this one alone reported an
+            # unreadable file as a readable one that says nothing. The model is then asked to find
+            # a total in a sheet header. A blank workbook is a real upload: people export one by
+            # accident, and the useful answer is "there is nothing in this file".
+            header_written = False
+
             rows_processed = 0
             for row in sheet.iter_rows(values_only=True):
                 if rows_processed >= max_rows_per_sheet:
@@ -246,13 +254,19 @@ def extract_xlsx_text(xlsx_base64: str, max_chars: int = 50000) -> Optional[str]
                 if non_empty:
                     row_text = " | ".join(non_empty)
                     row_line = row_text + "\n"
-                    
+                    pending = len(row_line) + (0 if header_written else len(sheet_header))
+
                     # Check if adding this row would exceed limit
-                    if current_length + len(row_line) > max_chars:
+                    if current_length + pending > max_chars:
                         text_parts.append(f"\n[Document truncated at {current_length:,} characters...]")
                         current_length = max_chars + 1
                         break
-                    
+
+                    if not header_written:
+                        text_parts.append(sheet_header)
+                        current_length += len(sheet_header)
+                        header_written = True
+
                     text_parts.append(row_line)
                     current_length += len(row_line)
                     rows_processed += 1
