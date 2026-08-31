@@ -43,6 +43,53 @@ def _current():
     return names[0][len("posterchan-desktop-"):-len(".ebuild")], names[0]
 
 
+def _head_sha():
+    out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def _releases():
+    """Every desktop-v release with the commit it was BUILT FROM."""
+    # `gh release list --json targetCommitish` is not a thing — that field only exists on the REST
+    # payload (and on `release view`). Asking the API once is also one round trip instead of sixty.
+    out = subprocess.run(["gh", "api", f"repos/{REPO}/releases?per_page=100", "--paginate"],
+                         capture_output=True, text=True, timeout=180)
+    if out.returncode:
+        sys.exit(f"FAIL  could not list releases: {out.stderr.strip()[:200]}")
+    rows = []
+    for chunk in re.findall(r"\[.*?\]\s*(?=\[|$)", out.stdout, re.S) or [out.stdout]:
+        try:
+            data = json.loads(chunk)
+        except Exception:
+            continue
+        for r in data if isinstance(data, list) else []:
+            m = re.fullmatch(r"desktop-v(\d+\.\d+\.\d+)", str(r.get("tag_name") or ""))
+            if m:
+                rows.append((m.group(1), str(r.get("target_commitish") or "")))
+    return rows
+
+
+def _tag_for_commit(sha):
+    """THE BUILD MADE FROM THIS COMMIT — not the newest one that happens to exist.
+
+    This is the whole fix. `_newest_tag()` answers "the highest version published so far", and
+    `sync.sh` calls this script BEFORE it pushes — so the newest release is always the PREVIOUS
+    commit's build and the overlay shipped one deploy behind, for ever. Measured: emerge installed a
+    package correctly named 1.0.1326 whose bundled client was 63ccd0de, while CI had already
+    published 1.0.1327 from the commit being deployed. Every fix in that deploy was absent from
+    PosterChanOS, with a version number that looked right. "Why does desktop not work right then!"
+
+    Returns None when CI has not published for this commit YET, which is a real and ordinary state —
+    the caller must say so rather than silently falling back to something older.
+    """
+    if not sha:
+        return None
+    for version, commit in _releases():
+        if commit and commit.startswith(sha[:12]) or sha.startswith((commit or "x")[:12]):
+            return version
+    return None
+
+
 def _newest_tag():
     """The highest desktop-v<version> RELEASE — not `desktop-latest`, whose assets are deleted and
     re-created on every build."""
@@ -142,11 +189,30 @@ def main():
     args = [a for a in sys.argv[1:]]
     check_only = "--check" in args
     args = [a for a in args if not a.startswith("-")]
+    for_commit = "--for-commit" in sys.argv
     cur, cur_file = _current()
-    want = args[0] if args else _newest_tag()
+    head = _head_sha()
+
+    if args:
+        want = args[0]
+    elif for_commit:
+        want = _tag_for_commit(head)
+        if not want:
+            print(f"overlay pins : {cur}")
+            print(f"WAITING  no desktop build published for {head[:8]} yet — CI is still running, or "
+                  "its desktop job did not run for this commit.")
+            print("         PosterChanOS will keep installing the PREVIOUS bundle until it is.")
+            print("         Re-run this once the 'Desktop apps' workflow for that commit is green.")
+            return 3
+    else:
+        want = _newest_tag()
 
     print(f"overlay pins : {cur}")
     print(f"newest build : {want}")
+    built_from = dict((v, c) for v, c in _releases()).get(want, "")
+    if head and built_from and not (built_from.startswith(head[:12]) or head.startswith(built_from[:12])):
+        print(f"note         {want} was built from {built_from[:8]}, not from HEAD ({head[:8]}) — "
+              "the bundle it installs is that commit's client, whatever the version number says")
     if check_only:
         if cur != want:
             print(f"BEHIND  run without --check to move it to {want}")

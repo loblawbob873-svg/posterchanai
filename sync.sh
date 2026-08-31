@@ -180,6 +180,30 @@ else
     echo "[sync] overlay unchanged"
 fi
 
+# AND SAY WHETHER POSTERCHANOS WILL ACTUALLY GET THIS DEPLOY.
+#
+# The overlay pins a desktop version, and `bump_desktop_overlay.py` (run near the top of this
+# script, BEFORE the push) can only pin a build that already exists — which is the PREVIOUS commit's,
+# because CI has not built this one yet. So an installed machine emerges a package whose version
+# number is fresh and whose bundled client is a deploy old: measured, 1.0.1326 named correctly and
+# carrying 63ccd0de's client, with every fix in that deploy missing from the desktop and nothing
+# anywhere saying so. Reported as "why does desktop not work right then!".
+#
+# This cannot be fixed by reordering — the build takes ~15 minutes and a deploy must not block on
+# it — so the deploy REPORTS it instead of finishing quietly. The follow-up is one command, named
+# here so it does not have to be remembered.
+if [ -x venv-unified/bin/python ] || [ -x .venv/bin/python ]; then
+    _PY=venv-unified/bin/python; [ -x .venv/bin/python ] && _PY=.venv/bin/python
+    if ! "$_PY" scripts/bump_desktop_overlay.py --for-commit --check >/tmp/pc-overlay-head.log 2>&1; then
+        echo "[sync] ---------------------------------------------------------------"
+        echo "[sync] PosterChanOS is NOT yet on this commit's desktop bundle:"
+        sed 's/^/[sync]   /' /tmp/pc-overlay-head.log
+        echo "[sync] Once the 'Desktop apps' workflow for this commit is green, run:"
+        echo "[sync]   $_PY scripts/bump_desktop_overlay.py --for-commit && ./scripts/publish_overlay.sh"
+        echo "[sync] ---------------------------------------------------------------"
+    fi
+fi
+
 # Wait for any active GPU inference to finish before restarting.
 # Uses flock -n to test the same lock file the service uses.
 _wait_gpu_free() {
