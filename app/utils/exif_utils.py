@@ -1,5 +1,6 @@
 """Utility functions for EXIF metadata handling."""
 import logging
+import re
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -144,8 +145,17 @@ def _parse_exif_date(date_str: str) -> datetime | None:
     if not date_str:
         return None
     
-    # Remove timezone info for simplicity (just extract the date/time part)
-    date_str = date_str.split('+')[0].split('-')[0].strip()
+    # Strip a TRAILING TIMEZONE ONLY — never an arbitrary hyphen.
+    #
+    # This was `date_str.split('+')[0].split('-')[0]`, and the second split is the bug: a hyphen is
+    # the DATE SEPARATOR in half the formats listed below. "2024-01-15 14:23:45" was truncated to
+    # "2024", which nothing here can parse, so it returned None. Four of the eight format strings —
+    # every dash-dated one, including the two the docstring above promises ("2024-01-15 14:23:45"
+    # and "2024-01-15T14:23:45Z") — were unreachable.
+    #
+    # The failure is silent: restore_exif_timestamp gets None, gives up, and the photo keeps the
+    # mtime of when it was downloaded instead of when it was taken. That is the entire feature.
+    date_str = re.sub(r'(?:Z|[+-]\d{2}:?\d{2})\s*$', '', date_str.strip()).strip()
     
     # Try various date formats
     formats = [
