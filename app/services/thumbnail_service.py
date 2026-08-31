@@ -55,7 +55,20 @@ def get_thumbnail_path(user_path: Path, image_path: Path) -> Path:
     except ValueError:
         # Image is not within user directory, use filename hash
         relative_path = Path(image_path.name)
-    
+
+    # A `..` here would escape .thumbnails — and, with enough of them, the user directory.
+    # `relative_to` does NOT normalise, so an un-normalised caller path survives it intact:
+    # `<user>/a/../../../etc/x.jpg` yields `a/../../../etc/x.jpg`, and since that parent is
+    # appended to `.thumbnails/` below, the thumbnail would be written to `/srv/etc/`.
+    # No current caller can reach it (both pass paths that came from the filesystem — a
+    # server-generated save path, or an entry from a directory walk), so this is a guard rather
+    # than a fix for a live bug. It is here because "no caller does that today" is a property of
+    # the callers, not of this function, and this function is the one that builds the path.
+    # Falls back to the bare filename, which is already the answer for a path outside the user
+    # directory.
+    if any(part == '..' for part in relative_path.parts):
+        relative_path = Path(image_path.name)
+
     # Create a safe filename for thumbnail (use hash to avoid path issues)
     # Use relative path to preserve directory structure
     path_str = str(relative_path).replace('/', '_').replace('\\', '_')
@@ -63,9 +76,16 @@ def get_thumbnail_path(user_path: Path, image_path: Path) -> Path:
     if len(path_str) > 200:
         path_hash = hashlib.md5(path_str.encode()).hexdigest()
         path_str = path_hash + '_' + Path(relative_path).name
-    
-    # Change extension to .jpg for thumbnails
-    thumbnail_name = Path(path_str).stem + '.jpg'
+
+    # Change extension to .jpg for thumbnails — but KEEP THE ORIGINAL ONE IN THE NAME.
+    # Dropping it made `photo.jpg` and `photo.png` in one folder collide onto a single
+    # `.thumbnails/photo.jpg`: whichever was generated last won, and the other file showed the
+    # wrong picture in the browser. Same stem with different image extensions is an ordinary thing
+    # to have (an export beside its original), so this was reachable with no help from anybody.
+    # Thumbnails written under the old name are orphaned by this and regenerate on next view —
+    # `.thumbnails` is a cache, and every reader, writer and deleter derives its path from here.
+    source_suffix = Path(path_str).suffix.lstrip('.').lower()
+    thumbnail_name = Path(path_str).stem + (f'_{source_suffix}' if source_suffix else '') + '.jpg'
     
     # Create .thumbnails directory path
     thumbnails_dir = user_path / '.thumbnails'
