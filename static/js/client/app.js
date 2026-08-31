@@ -4788,6 +4788,11 @@
         const r=P.consumeLaunch(); if(r && r.then) r.then(x=>{ if(x && x.open) switchView('calendar'); }).catch(()=>{});
       }catch(_){} };
       _reCal();
+      /* Mail rides the resume signals for the reason documented all over this file: a backgrounded
+       * WebView delivers `visibilitychange` late or not at all, and Capacitor's `resume` comes from
+       * the Activity, which was never frozen. It is NOT called here at definition time — the login
+       * path already syncs, and `Mail` is declared further down this file. */
+      const _reMail=()=>{ try{ Mail.refreshIfStale(); }catch(_){} };
       // Register the foreground/resume listeners ONCE per page-load — startApp can re-run (guest→login without
       // reload), and without this guard each run leaks another set of listeners → duplicate share re-checks.
       // Warm share: the app is already running and gets foregrounded via onNewIntent — the send-intent plugin
@@ -4801,9 +4806,9 @@
          * again only after a reload. main.js pushes powerMonitor's 'resume'; _hiddenAt is stamped
          * back so _resumeRelay's own debounce is the only thing gating it. */
         try{ if(window.pcShell && window.pcShell.onWake)
-               window.pcShell.onWake(()=>{ _hiddenAt = 0; _resumeRelay(); }); }catch(_){}
+               window.pcShell.onWake(()=>{ _hiddenAt = 0; _resumeRelay(); _reMail(); }); }catch(_){}
         window.addEventListener('sendIntentReceived', _reShare);
-        document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ _reShare(); _reMusic(); _reCal(); } });
+        document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ _reShare(); _reMusic(); _reCal(); _reMail(); } });
         const _App=_capPlugin('App');
         /* _tlForeground() BELONGS HERE, beside _nativeResume(), because the pause half below is armed
          * from this listener too and the two must not disagree. It was armed from both signals and
@@ -4815,9 +4820,9 @@
          * onReconnect declines to repaint. Reported as "bring the app back and the timeline is empty".
          * Ordered before _nativeResume() to match the visibilitychange handler: the re-issued REQ goes
          * out first, and wake() re-sends live subs on reopen anyway. */
-        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _reCal(); _tlForeground(); _nativeResume(); });
+        if(_App && _App.addListener){ try{ _App.addListener('resume', ()=>{ _reShare(); _reMusic(); _reCal(); _reMail(); _tlForeground(); _nativeResume(); });
           _App.addListener('appStateChange', st=>{
-            if(st && st.isActive){ _reShare(); _reMusic(); _reCal(); _tlForeground(); _nativeResume();
+            if(st && st.isActive){ _reShare(); _reMusic(); _reCal(); _reMail(); _tlForeground(); _nativeResume();
               // Only if the snapshot is genuinely old: a resume is frequent and this must not become
               // a request every time the app is looked at.
               try{ if(window.PCCalendar) PCCalendar.widgetTick(12); }catch(_){} }
@@ -18318,6 +18323,27 @@
    * answers — so the chip is simply not drawn rather than drawn and broken. */
   let _hostOn = false;
   let _fxMobileSource = 'blossom';
+  /* GOING TO A FOLDER IS ONE ACTION, AND IT WAS WRITTEN TWICE.
+   *
+   * The sidebar chip did `_fxRemember(); …; _fxMobileSource='blossom'; _filesFolder=…` and the HOME
+   * TILE did the same thing minus those two. `_fxMobileSource` is what puts `mobile-on` on a pane,
+   * i.e. WHICH PANE IS VISIBLE on a narrow layout — so the tile moved the state and left the screen
+   * showing home. Reported as "once I am in home, I can't click to any other folder from Blossom or
+   * Synced folders", and on a phone that is the whole file manager: nothing happens, nothing logs,
+   * and the app looks frozen. `_fxRemember` was missing too, so Back had nothing to return to.
+   *
+   * Two call sites for one action drift the moment either is edited. There is one now. */
+  function _fxOpenFolder(name){
+    _fxRemember(); _syncRoot=''; _syncPath=''; _hostOn=false;
+    _fxMobileSource='blossom'; _filesFolder=name; renderBlossom();
+  }
+  function _fxOpenSynced(key){
+    _fxRemember(); _syncRoot=key; _syncPath=''; _hostOn=false;
+    _fxMobileSource='synced'; renderBlossom();
+  }
+  function _fxOpenComputer(){
+    _fxRemember(); _fxMobileSource='computer'; _openHostFiles();
+  }
   let _fxBlossomOpen = localStorage.getItem('pc.files.tree.blossom') !== '0';
   let _fxSyncedOpen = localStorage.getItem('pc.files.tree.synced') !== '0';
   let _fxComputerOpen = localStorage.getItem('pc.files.tree.computer') !== '0';
@@ -19198,38 +19224,52 @@
     $$('[data-files-mode]',r).forEach(b=>b.onclick=()=>{
       _filesAdminPk=null; _filesTab=b.dataset.filesMode; renderBlossom();
     });
+    /* A HEADING IN THE SIDEBAR IS A PLACE, NOT A DISCLOSURE TRIANGLE.
+     * These three used to only collapse their tree on a desktop, so clicking "Blossom", "Synced
+     * Folders" or "My Computer" from anywhere else in Files opened a list and left you standing
+     * where you were — reported three separate times as "clicking X does nothing", because from
+     * the outside a repaint of the same screen and a dead button are the same event. The phone had
+     * grown its own answer for two of the three (and "Blossom" landed on HOME rather than on
+     * Blossom). One rule now, both layouts: a heading takes you to that source and opens its tree;
+     * clicking the heading of the source you are ALREADY showing is what collapses it. */
     $$('[data-fxtoggle]',r).forEach(b=>b.onclick=()=>{
       const which=b.dataset.fxtoggle;
       const mobile = !!(window.matchMedia && matchMedia('(max-width:820px)').matches);
-      _fxMobileSource = which;
-      /* On desktop these headings collapse a tree. In the phone Locations drawer they are also the
-       * large, obvious source buttons. The old handler forced their tree open and immediately
-       * repainted the same screen, so tapping Blossom/My Computer visibly did NOTHING. Route the
-       * source on mobile; only Synced Folders stays an in-place disclosure because it has no single
-       * landing folder of its own. */
-      if(mobile && which==='blossom'){
-        _fxRemember(); _hostOn=false; _syncRoot=''; _syncPath=''; _filesFolder=null;
-        renderBlossom(); return;
-      }
-      if(mobile && which==='computer'){
-        _fxRemember(); _openHostFiles(); return;
+      const openNow = which==='blossom' ? _fxBlossomOpen : (which==='synced' ? _fxSyncedOpen : _fxComputerOpen);
+      /* "At" a source means standing on its ROOT, not merely somewhere inside it. Judged only by
+       * which source is showing, pressing "Blossom" from inside a folder took the collapse branch
+       * and left you in that folder — the original complaint, one level down. */
+      const atSource = which==='blossom' ? (!_hostOn && !_syncRoot && _filesFolder==='')
+                     : which==='synced'  ? (!!_syncRoot && !_syncPath)
+                     : which==='computer' ? !!_hostOn : false;
+      const remember = (open)=>localStorage.setItem('pc.files.tree.'+which,open?'1':'0');
+      if(which!=='blossom' && which!=='synced' && which!=='computer') return;
+      if(!atSource || !openNow){
+        remember(true);
+        if(which==='blossom'){ _fxBlossomOpen=true; _fxOpenFolder(''); return; }
+        if(which==='computer'){ _fxComputerOpen=true; _fxOpenComputer(); return; }
+        _fxSyncedOpen=true;
+        /* Synced Folders is the one heading with no landing folder of its own, so it lands on the
+         * first pair. With none loaded yet it still has to show something rather than nothing. */
+        const first = Array.isArray(_syncPairs) && _syncPairs.length ? _syncPairs[0].key : '';
+        if(first){ _fxOpenSynced(first); return; }
+        _fxMobileSource='synced'; renderBlossom(); return;
       }
       if(which==='blossom')_fxBlossomOpen=!_fxBlossomOpen;
       else if(which==='synced')_fxSyncedOpen=!_fxSyncedOpen;
-      else if(which==='computer')_fxComputerOpen=!_fxComputerOpen;
-      else return;
+      else _fxComputerOpen=!_fxComputerOpen;
       const open = which==='blossom' ? _fxBlossomOpen : (which==='synced' ? _fxSyncedOpen : _fxComputerOpen);
-      localStorage.setItem('pc.files.tree.'+which,open?'1':'0');
+      remember(open);
       if(mobile){
         b.setAttribute('aria-expanded',open?'true':'false');
         const tree=$(`[data-fxtree="${which}"]`,r); if(tree)tree.classList.toggle('hidden',!open);
-        const chev=b.querySelector('.chev'); if(chev)chev.textContent=open?'▾':'▸';
+        const chev=b.querySelector('.chev'); if(chev)chev.textContent=open?'\u25be':'\u25b8';
       }else renderBlossom();
     });
     /* EVERY move remembers where it came from, or Back only undoes the ones made from the crumbs —
      * which is the half of browsing nobody uses. */
-    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=''; _syncPath=''; _hostOn=false; _fxMobileSource='blossom'; _filesFolder=b.dataset.folder; renderBlossom(); });
-    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>{ _fxRemember(); _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; _fxMobileSource='synced'; renderBlossom(); });
+    $$('.folder-chip[data-folder]', r).forEach(b=> b.onclick=()=>_fxOpenFolder(b.dataset.folder));
+    $$('.folder-chip[data-synckey]', r).forEach(b=> b.onclick=()=>_fxOpenSynced(b.dataset.synckey));
     $$('.folder-chip[data-host]', r).forEach(b=> b.onclick=()=>_openHostFiles(true));
     /* The trash's own bindings live with the LISTING now that it is a folder, not here beside the
      * chips — a set of handlers left behind for markup that no longer renders is how a dead control
@@ -19960,10 +20000,8 @@
       try{ await FilesIdx.ensure(); await _ensureSyncPairs(); renderBlossom(); }
       catch(e){ rb.disabled=false; rb.textContent='Try again'; toast(String(e&&e.message||e)); }
     }; }
-    $$('.fx-home-tile[data-folder]', pane).forEach(b => b.onclick = () => {
-      _syncRoot=''; _syncPath=''; _hostOn=false; _filesFolder=b.dataset.folder; renderBlossom(); });
-    $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => {
-      _syncRoot=b.dataset.synckey; _syncPath=''; _hostOn=false; renderBlossom(); });
+    $$('.fx-home-tile[data-folder]', pane).forEach(b => b.onclick = () => _fxOpenFolder(b.dataset.folder));
+    $$('.fx-home-tile[data-synckey]', pane).forEach(b => b.onclick = () => _fxOpenSynced(b.dataset.synckey));
     $$('.fx-home-tile[data-hosthome]', pane).forEach(b => b.onclick = ()=>_openHostFiles());
   }
 
@@ -20024,7 +20062,27 @@
           }catch(e){ toast('could not open that: ' + ((e && e.message) || e)); }
           return;
         }
-        _openWithSheet(name || path, [{
+        /* OFFICE WAS MISSING FROM THIS CHOOSER ENTIRELY. A document on the drive and a document in
+         * a synced folder both had an Office button; a document on THIS COMPUTER offered only Code
+         * (which refuses a .odt as binary) and "hand it to the machine" — so from Home, clicking an
+         * .odt could not open it in the office suite this OS ships with. Same session machinery as
+         * the other two; only the writer differs, and it goes back as BYTES through `writeBytes`,
+         * because round-tripping a zip container through a string quietly destroys it. */
+        const officeChoice = (_officeable(name || path, mime) && window.pcHost && pcHost.read) ? [{
+          id:'office', icon:'📝', label:'PosterChan Office',
+          hint:'Edit it here — saves straight back to this computer',
+          run:async() => {
+            try{
+              const bytes = await pcHost.read(path, 128 * 1024 * 1024);
+              const nm = name || String(path).split('/').pop() || 'document';
+              const f = fileFromBytes(bytes, nm, mime || mimeForName(nm) || '');
+              await _officeSession(f, async (updated) => {
+                if(!(pcHost.writeBytes)) throw new Error('this build cannot save back to this computer');
+                await pcHost.writeBytes(path, new Uint8Array(await updated.arrayBuffer()), 0);
+              });
+            }catch(err){ toast('could not open in Office: ' + ((err && err.message) || err)); }
+          } }] : [];
+        _openWithSheet(name || path, officeChoice.concat([{
         id:'code', icon:'&lt;/&gt;', label:'PosterChan Code',
         hint:'Edit it here — saves straight back to this computer',
         run:async() => {
@@ -20042,7 +20100,7 @@
          * existed, and for most files it is still the answer. */
         { id:'host', icon:'🖥', label:'This computer',
           hint:'Hand it to whatever this machine opens that with',
-          run:() => { if(openHere) openHere(); } }]);
+          run:() => { if(openHere) openHere(); } }]));
       },
       toast, prompt: uiPrompt, confirm: uiConfirm,
     });
@@ -20611,6 +20669,13 @@
    * and write them back differently; everything in between — the WOPI session, the iframe, the
    * launch form, Save and Close — is the same, and two copies of it is two places to leak a token
    * or leave a session open. `saveBack(updatedFile)` is the only part that differs. */
+  function _sameBytes(a, b){
+    if(!a || !b) return false;
+    const x = new Uint8Array(a), y = new Uint8Array(b);
+    if(x.length !== y.length) return false;
+    for(let i = 0; i < x.length; i++) if(x[i] !== y[i]) return false;
+    return true;
+  }
   async function _officeSession(file, saveBack){
     let session=null;
     /* THE INSTANCE, EXPLICITLY. A bundled app (desktop `app://posterchan`, the APK's
@@ -20647,21 +20712,88 @@
         <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
         <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
           <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
-        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
+        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-ghost" id="office-pdf">Save as PDF</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
       const drop=async()=>{ try{ await fetch(B + '/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
       /* `wire` is handed how to shut whatever it was mounted in, so the Save and Close buttons do
        * not have to know which of the two they are living in. */
+      /* SAVE HAD TO **ASK** THE EDITOR TO SAVE, AND IT NEVER DID.
+       * The button waited 700ms and then downloaded the session document — but the only thing that
+       * ever writes that document is Collabora's own PutFile, which it sends when IT decides to
+       * (an autosave tick, or closing). Click Save promptly after typing and the fetch returned the
+       * bytes the session started with, so the upload succeeded, the drive index moved to a new
+       * hash, the toast said "document saved" and the file was unchanged. Reported as "clicking
+       * save when opening a blossom file did nothing" — and it did the same on a synced folder and
+       * on Download, since all three share this one handler.
+       * The WOPI post-message channel is the fix: `Action_Save` with Notify, then wait for the
+       * editor's `Action_Save_Resp` before reading. The wait is bounded and FALLS BACK to the old
+       * behaviour, because an editor that never answers must still save whatever it has written. */
+      const askEditorToSave = (root) => new Promise(resolve => {
+        const frame = $('.office-frame', root);
+        const win = frame && frame.contentWindow;
+        if(!win) return resolve(false);
+        let settled = false;
+        const finish = (ok) => {
+          if(settled) return; settled = true;
+          try{ window.removeEventListener('message', onMsg); }catch(_){}
+          clearTimeout(timer); resolve(ok);
+        };
+        const onMsg = (ev) => {
+          if(frame.contentWindow && ev.source !== frame.contentWindow) return;
+          let d = ev.data;
+          if(typeof d === 'string'){ try{ d = JSON.parse(d); }catch(_){ return; } }
+          if(!d || typeof d !== 'object') return;
+          if(d.MessageId === 'Action_Save_Resp') finish(true);
+        };
+        window.addEventListener('message', onMsg);
+        const post = (MessageId, Values) => {
+          try{ win.postMessage(JSON.stringify({MessageId, SendTime:Date.now(), Values:Values||{}}), '*'); }
+          catch(_){}
+        };
+        /* Collabora ignores host messages until it has been told the host is listening. It is sent
+         * again here rather than only on load, because a window can be re-wired after a repaint. */
+        post('Host_PostmessageReady');
+        post('Action_Save', {Notify:true, ExtendedData:'', DontTerminateEdit:true, DontSaveIfUnmodified:false});
+        const timer = setTimeout(()=>finish(false), 8000);
+      });
+      let origBytes = null;
+      try{ origBytes = await file.arrayBuffer(); }catch(_){ origBytes = null; }
       const wire = (root, shut) => {
         $('.office-launch',root).submit();
         $('#office-close',root).onclick=async()=>{ await drop(); shut(); };
+        /* Ours, not Collabora's — see the comment on `session_export` in app/routers/office.py for
+         * why its own File > Download as > PDF cannot work inside this app. `saveBlobAs` is the one
+         * path that saves a file in a browser, the desktop shell and the APK alike. */
+        const pdfBtn = $('#office-pdf',root);
+        if(pdfBtn) pdfBtn.onclick = async e => {
+          const b=e.currentTarget; b.disabled=true; b.textContent='Converting\u2026';
+          try{
+            await askEditorToSave(root);
+            await new Promise(res=>setTimeout(res,700));
+            const rr=await fetch(B + '/client/office/session/'+session.id+'/export/pdf?access_token='+encodeURIComponent(session.token));
+            if(!rr.ok) throw new Error('HTTP '+rr.status);
+            const blob=await rr.blob();
+            if(!blob.size) throw new Error('the converter returned nothing');
+            await saveBlobAs(blob, (file.name||'document').replace(/\.[^.]+$/,'') + '.pdf');
+          }catch(err){ toast('could not save a PDF: '+((err&&err.message)||err)); }
+          b.disabled=false; b.textContent='Save as PDF';
+        };
         $('#office-save',root).onclick=async e=>{
           const b=e.currentTarget; b.disabled=true; b.textContent='Saving\u2026';
           try{
-            // CODE writes through PutFile; a short delay lets its final force-save settle.
+            await askEditorToSave(root);
+            // Its PutFile lands just after the acknowledgement; a short settle covers both paths.
             await new Promise(res=>setTimeout(res,700));
             const rr=await fetch(B + '/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
             if(!rr.ok) throw new Error('saved document HTTP '+rr.status);
-            await saveBack(fileFromBytes(await rr.arrayBuffer(),file.name,file.type));
+            const bytes = await rr.arrayBuffer();
+            /* AND SAY SO WHEN THERE IS NOTHING TO SAVE. Uploading an unchanged document is not
+             * harmless here — it mints a second blob and re-points the drive index at it — and a
+             * "document saved" toast over bytes that never changed is precisely how the missing
+             * save handshake stayed invisible. Identical bytes now report themselves. */
+            if(_sameBytes(bytes, origBytes)){
+              await drop(); toast('no changes to save'); shut(); return;
+            }
+            await saveBack(fileFromBytes(bytes,file.name,file.type));
             await drop();
             toast('document saved'); shut();
           }catch(err){ toast('save failed: '+(err.message||err)); b.disabled=false; b.textContent='Save'; }
@@ -24555,7 +24687,12 @@
     // desktop's tray both read Mail.unread, and it only ever went up (sync adds; nothing subtracted).
     Mail.unread=0; bumpMail();
     const mounted=$('#mail-root', feed);
-    if(mounted && Mail.root===mounted) return;      // already up — never remount, never re-sync
+    /* Refresh BEHIND the list, never in front of it. The mounted list stays on screen and a stale
+     * mailbox fills in; a fresh one asks nothing. This is the "already up — never remount, never
+     * re-sync" rule kept for the REMOUNT (which would throw away scroll and the open message) and
+     * dropped for the SYNC, which was never the expensive half. */
+    try{ Mail.refreshIfStale(); }catch(_){}
+    if(mounted && Mail.root===mounted) return;      // already up — never remount
     feed.innerHTML='<div id="mail-root" class="mail-root"></div>';
     return Mail.render($('#mail-root',feed));
   }
@@ -25610,8 +25747,26 @@
       else if(opts.mode==='draft'){ const dr=opts.draft||{}; to=dr.to||''; cc=dr.cc||''; subj=(dr.subject==='(no subject)'?'':(dr.subject||'')); body=dr.body_text||''; draftUid=dr.uid||null;
         (dr.attachments||[]).forEach(a=>{ if(a&&a.b64) atts.push({name:a.name,type:a.type||'application/octet-stream',b64:a.b64}); }); }
       const titles={forward:'Forward', reply:'Reply', replyall:'Reply all', draft:'Draft'};
-      // From account: the message's account for reply/forward/draft, else the selected/active account.
-      const fromAcct=(opts.acct && opts.acct!=='__all')?opts.acct:(this.acct!=='__all'?this.acct:((this.accounts[0]||{}).email||''));
+      /* THE MESSAGE'S OWN ACCOUNT FOR REPLY/FORWARD — which this comment already promised and the
+       * code did not do.
+       *
+       * `/reply` and `/forward` use ONE account for two different jobs: the identity the mail is
+       * sent as, and the mailbox the ORIGINAL is looked up in by uid+folder. In the unified "All
+       * accounts" view `this.acct` is '__all', so this fell through to `accounts[0]` — a different
+       * mailbox from the one the message is actually in. The uid then resolves to nothing:
+       *
+       *     get_message_by_id: account=yummy@yummythai.restaurant, uid=1813, folder=INBOX.Archive
+       *     ERROR: Original message not found: yummy@yummythai.restaurant/1813
+       *
+       * and the composer says "send failed" with no clue that the wrong mailbox was searched. The
+       * message carries `account` (the unified list prints it on every row), so replying to
+       * something uses the mailbox it came from. A NEW message is unchanged: it still follows the
+       * From selector, which is where choosing an identity belongs. */
+      const msgAcct = (m && m.account) ? m.account : '';
+      const answering = opts.mode==='reply' || opts.mode==='replyall' || opts.mode==='forward';
+      const fromAcct=(answering && msgAcct) ? msgAcct
+        : (opts.acct && opts.acct!=='__all') ? opts.acct
+        : (this.acct!=='__all' ? this.acct : (msgAcct || (this.accounts[0]||{}).email||''));
       const fromSel=this.accounts.length>1
         ? `<label class="muted small mail-from">From <select class="input" id="cm-from">${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===fromAcct?' selected':''}>${enc(a.email)}</option>`).join('')}</select></label>`
         : `<div class="muted small" style="margin:-4px 0 8px">From: ${enc(fromAcct)}</div>`;
@@ -25619,7 +25774,13 @@
        * a full-height composer it sits below a body that grows — so on a long message, or a short
        * window, the primary button is the thing you have to go looking for. The footer keeps the
        * secondary actions, on one wrapping row so they line up instead of straddling two. */
+      /* STICKY, LIKE THE POST COMPOSER. A stray tap on the backdrop threw away a half-written
+       * email — the same loss `compose()` was made sticky for, on the one screen where the text is
+       * longest and least likely to exist anywhere else. The ✕ beside Send is what keeps that
+       * honest: a sheet that refuses the backdrop and shows no way out is a trap on a phone with no
+       * hardware Back button. Escape and Back still close it. */
       modal(`<div class="cm-head"><h3>✉️ ${titles[opts.mode]||'New message'}</h3><span class="spacer"></span>
+          <button class="modal-x" id="cm-close" title="Close" aria-label="Close">&#215;</button>
           <button class="btn btn-neon small" id="cm-send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg>Send</button></div>
         ${fromSel}
         <input class="input" id="cm-to" placeholder="To (comma-separated)" value="${enc(to)}" autocomplete="off">
@@ -25630,7 +25791,8 @@
         <div class="fld hidden" id="cm-nmail-row"><label class="muted small">Recipient's Nostr key (npub)<input class="input" id="cm-nmail-pk" placeholder="npub1\u2026" autocomplete="off" style="font-size:16px"></label>
           <label class="bg-chk muted small"><input type="checkbox" id="cm-nmail-dm" checked> Also notify them by Nostr DM (sends the subject)</label>
           <div class="muted small">The body is NIP-44-encrypted to this key; the subject stays readable. The recipient opens it with nostr-mail or PosterChan.</div></div>`,
-        box => box.classList.add('mail-compose-modal'));
+        box => box.classList.add('mail-compose-modal', 'modal-sticky'));
+      { const x=$('#cm-close'); if(x) x.onclick=()=>closeModal(); }
       const drawAtts=()=>{ const e=$('#cm-atts'); if(e) e.innerHTML=atts.map(a=>'📎 '+enc(a.name)).join('  '); };
       drawAtts();
       $('#cm-attach').onclick=()=>$('#cm-file').click();
@@ -25745,6 +25907,27 @@
     _pollT: 0,
     _lastSync: 0,          // sync() assigns this; declared so the staleness test below is not NaN
     POLL_MS: 10 * 60 * 1000,
+    /* "WHEN A USER OPENS THE APP, IT SHOULD REFRESH." It did not.
+     *
+     * The only catch-up was the poller's `visibilitychange` handler, and it is gated on the last
+     * check being POLL_MS (ten minutes) old — right for a tab switch, wrong for coming back to the
+     * app, which is the moment somebody is actually looking. Opening the Email view refreshed
+     * nothing at all: `renderMailView` returns early when the list is already mounted, and that
+     * early return is the common case.
+     *
+     * One rule in one place, so a resume, a widget press and opening the view cannot disagree about
+     * what "fresh enough" means. It never toasts and never blocks a paint: the list is already on
+     * screen from cache and this fills in behind it. */
+    FRESH_MS: 60 * 1000,
+    refreshIfStale(){
+      if(GUEST) return false;
+      if(navigator.onLine === false) return false;
+      if(this._syncing) return false;
+      if(!(this.accounts && this.accounts.length)) return false;
+      if(Date.now() - (this._lastSync || 0) < this.FRESH_MS) return false;
+      this.sync(false).catch(()=>{});               // non-manual → notifies rather than toasting
+      return true;
+    },
     startPolling(){
       if(this._pollT) return;                       // one timer per tab, not one per call
       const tick = () => {
@@ -25796,13 +25979,17 @@
   };
   function safePk(v){ try{ if(v.startsWith('npub')){const d=NT().nip19.decode(v); return d.data;} if(/^[0-9a-f]{64}$/i.test(v))return v.toLowerCase(); }catch(_){} return null; }
   function newDmModal(){
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-mail"></use></svg>New message</h3>
+    /* Sticky for the same reason as the two composers above: this one is a message to somebody,
+     * typed once, with no draft anywhere to recover it from. */
+    modal(`<h3 class="cmp-hd"><svg class="ic h-ic" aria-hidden="true"><use href="#i-mail"></use></svg>New message<button class="modal-x" id="dm-close" title="Close" aria-label="Close">&#215;</button></h3>
       <input class="input" id="dm-to" placeholder="@name, npub1…, or name@domain" autocomplete="off">
       <div id="dm-ac" class="mention-box hidden"></div>
       <textarea id="dm-body" placeholder="encrypted message… (paste an image to attach)"></textarea>
       <div class="dm-atts" id="dm-atts-new" hidden></div>
       <div class="row cmp-tools"><button class="btn btn-ghost small" id="dm-attach"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg>Attach</button><button class="btn btn-ghost small" id="dm-files"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>Files</button>${CFG.gif_enabled?`<button class="btn btn-ghost small" id="dm-gif"><svg class="ic b-ic" aria-hidden="true"><use href="#i-film"></use></svg>GIF</button>`:''}<input type="file" id="dm-file" multiple hidden><span class="spacer"></span><button class="btn btn-neon" id="dm-go">Send ▶</button></div>
       <div class="muted small" id="dm-status"></div>`, root=>{
+      root.classList.add('modal-sticky');
+      { const x=$('#dm-close',root); if(x) x.onclick=()=>closeModal(); }
       let toPk=null; const to=$('#dm-to',root), ac=$('#dm-ac',root), body=$('#dm-body',root);
       const _newSync=wireImgAttach(body, $('#dm-atts-new',root), {enc:true});   // paste-to-attach + preview strip here too
       to.addEventListener('input', ()=>{ const v=to.value.trim(); toPk=null;
@@ -26841,7 +27028,9 @@
     }catch(e){ toast('blossom access change failed'); }
   }
   function editProfile(p){
-    modal(`<h3>Edit profile</h3>
+    /* Sticky for the same reason as the composers: a bio and a set of links are typed once, exist
+     * nowhere else, and this sheet is a big target. The ✕ keeps it escapable. */
+    modal(`<h3 class="cmp-hd">Edit profile<button class="modal-x" id="pf-close" title="Close" aria-label="Close">&#215;</button></h3>
       <label class="fld">Display name<input class="input" id="pf-name" placeholder="your name" value="${enc(p.name||p.display_name||'')}"></label>
       <label class="fld">NIP-05 identifier<input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
@@ -26852,6 +27041,8 @@
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
       <div class="row"><button class="btn btn-cyan small" id="pf-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
+      root.classList.add('modal-sticky');
+      { const x=$('#pf-close',root); if(x) x.onclick=()=>closeModal(); }
       // This node may have ASSIGNED this account a NIP-05 at signup that its kind-0 never carried —
       // e.g. the signup publish lost the race with the first socket. The name is a public read, so
       // prefill the empty field with it: the verified handle is then one Save away instead of a

@@ -71,15 +71,48 @@ def test_mobile_picker_escape_closes_locations_before_the_picker():
     assert "_popKeys(bg, '#bp-grid .file-card', el=>el.click(), close)" not in picker
 
 
-def test_mobile_source_heads_navigate_instead_of_repainting_the_same_drawer():
+def test_source_heads_navigate_on_every_layout_not_only_on_a_phone():
+    """A HEADING IN THE SIDEBAR IS A PLACE, NOT A DISCLOSURE TRIANGLE.
+
+    This test used to assert the two `if(mobile && …)` branches, because the phone had grown an
+    answer the desktop never got: on a wide layout, clicking "Blossom", "Synced Folders" or "My
+    Computer" only collapsed a tree, so from anywhere else in Files those three buttons appeared
+    to do nothing. Reported three separate times in those words. The mobile branch was also wrong
+    in its own right — "Blossom" landed on HOME rather than on Blossom.
+
+    So the assertion moved from the branches to the RULE: every head reaches a shared navigator,
+    and the collapse is what happens when you click the head of the source already on screen.
+    """
     start = APP.index("function _fxBindSide(")
-    bind = APP[start:start + 7000]
-    assert "if(mobile && which==='blossom')" in bind
-    assert "_filesFolder=null" in bind
-    assert "if(mobile && which==='computer')" in bind
-    assert "_openHostFiles()" in bind
-    # Synced Folders is a disclosure and must visibly toggle without destroying the open drawer.
+    bind = APP[start:start + 8000]
+    head = bind[bind.index("$$('[data-fxtoggle]',r)"):]
+    head = head[:head.index("\n    });") + 8]
+    assert "_fxOpenFolder('')" in head, "the Blossom head does not go to Blossom"
+    assert "_fxOpenComputer()" in head, "the My Computer head does not open this computer"
+    assert "_fxOpenSynced(first)" in head, "the Synced Folders head lands on no folder"
+    # It only collapses once you are already looking at that source — otherwise it navigates.
+    assert "if(!atSource || !openNow){" in head
+    # And the phone still gets a visible toggle rather than a full repaint under an open drawer.
     assert "tree.classList.toggle('hidden',!open)" in bind
+
+
+def test_every_sidebar_folder_reaches_one_of_the_three_navigators():
+    """"Any time in files you click a folder on the left navbar, it should bring you to that
+    location, plain and simple" — so no click handler in the sidebar may move `_filesFolder`,
+    `_syncRoot` or `_hostOn` by hand. Each hand-rolled copy is a place the next edit can diverge,
+    which is exactly how the home tiles ended up missing `_fxMobileSource` and stranding the phone
+    on a screen it had just navigated away from."""
+    start = APP.index("function _fxBindSide(")
+    bind = APP[start:start + 8000]
+    for handler in ("$$('.folder-chip[data-folder]', r)", "$$('.folder-chip[data-synckey]', r)"):
+        assert handler in bind or handler.replace(", r)", ",r)") in bind, handler
+    # The navigators exist and each one sets the pane the phone reads.
+    for fn in ("function _fxOpenFolder(", "function _fxOpenSynced(", "function _fxOpenComputer("):
+        assert fn in APP, fn
+    body = APP[APP.index("function _fxOpenFolder("):APP.index("let _fxBlossomOpen")]
+    for piece in ("_fxRemember()", "_fxMobileSource='blossom'", "_fxMobileSource='synced'",
+                  "_fxMobileSource='computer'"):
+        assert piece in body, piece
 
 
 def test_my_computer_home_node_returns_to_home_after_browsing_a_folder():

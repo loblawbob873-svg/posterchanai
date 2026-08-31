@@ -23,7 +23,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 router = APIRouter(tags=["office"])
 
@@ -92,6 +92,12 @@ async def _accepted_exts() -> frozenset[str]:
 
 def enabled() -> bool:
     return os.getenv("POSTERCHANAI_OFFICE", "0").lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_name(value: str) -> str:
+    """A filename fit for a Content-Disposition header — no quotes, no newlines, no path."""
+    value = re.sub(r'[\r\n"\\/]+', "_", str(value)).strip() or "document"
+    return value[:120]
 
 
 def _safe_id(value: str) -> str:
@@ -248,6 +254,56 @@ def session_contents(file_id: str, access_token: str = Query(...)):
     meta = _authorize(file_id, access_token)
     return FileResponse(_dir(file_id) / "document", media_type="application/octet-stream",
                         filename=meta["name"])
+
+
+# "SAVE AS PDF" WAS COLLABORA'S OWN MENU ITEM, AND IN THIS APP IT COULD NOT WORK.
+#
+# CODE's File > Download as > PDF converts server-side and then hands the browser a DOWNLOAD from
+# inside a cross-origin iframe. The desktop shell and the APK both refuse that (the same reason
+# nothing here uses a bare `<a download>` — the WebView registers no DownloadListener and the
+# `app://` origin saves nothing), and even in a browser it lands outside the app with no name of
+# ours on it. So the click did nothing, silently, with the conversion having actually run.
+#
+# This is the same conversion, asked for by us: the SESSION's current bytes go to CODE's
+# `convert-to`, and the client hands the result to `saveBlobAs`, which is the one path that saves a
+# file in all three shells. The format list is an allowlist because this endpoint would otherwise
+# be a general-purpose conversion service reachable with one session token.
+_EXPORT = {"pdf": "application/pdf",
+           "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+           "odt": "application/vnd.oasis.opendocument.text",
+           "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+           "ods": "application/vnd.oasis.opendocument.spreadsheet",
+           "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+           "odp": "application/vnd.oasis.opendocument.presentation"}
+
+
+@router.get("/client/office/session/{file_id}/export/{fmt}")
+async def session_export(file_id: str, fmt: str, access_token: str = Query(...)):
+    meta = _authorize(file_id, access_token)
+    fmt = fmt.lower()
+    if fmt not in _EXPORT:
+        raise HTTPException(415, f"cannot export to .{fmt}")
+    source = _dir(file_id) / "document"
+    if not source.exists():
+        raise HTTPException(404, "this document is no longer open")
+    data = source.read_bytes()
+    last: Exception | None = None
+    # Same order, and for the same reason, as _discover: a configured service_root moves every path.
+    for root in (_SERVICE_ROOT, ""):
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(
+                    f"{_CODE}{root}/cool/convert-to/{fmt}",
+                    files={"data": (meta["name"], data, "application/octet-stream")})
+            response.raise_for_status()
+            if not response.content:
+                raise RuntimeError("the converter returned an empty document")
+            name = re.sub(r"\.[^.]+$", "", meta["name"]) or "document"
+            return Response(response.content, media_type=_EXPORT[fmt], headers={
+                "Content-Disposition": f'attachment; filename="{_safe_name(name)}.{fmt}"'})
+        except Exception as exc:
+            last = exc
+    raise HTTPException(503, f"could not convert this document: {last}")
 
 
 @router.delete("/client/office/session/{file_id}")

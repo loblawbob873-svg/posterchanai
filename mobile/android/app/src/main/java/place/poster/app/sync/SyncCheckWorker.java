@@ -102,20 +102,34 @@ public class SyncCheckWorker extends Worker {
   @NonNull
   @Override
   public Result doWork() {
-    Context ctx = getApplicationContext();
-    SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-    int changed = 0;
-    for (android.content.UriPermission up : ctx.getContentResolver().getPersistedUriPermissions()) {
-      if (!up.isReadPermission()) continue;
-      String key = "sig:" + up.getUri();
-      String now = signature(ctx, up.getUri());
-      if (now == null) continue;                       // unreadable this pass — say nothing
-      if (!now.equals(p.getString(key, null))) {
-        changed++;
-        p.edit().putString(key, now).apply();
+    /* A PERIODIC CHECK MUST NOT DIE OF ONE BAD PASS.
+     *
+     * Everything in here talks to the platform and every one of those calls can throw on a real
+     * phone: a SAF grant revoked since the folder was picked answers with SecurityException, and
+     * posting the notification needs POST_NOTIFICATIONS on Android 13+, which a person can turn off
+     * at any time. WorkManager catches a throwing doWork and marks it FAILED — so this does not end
+     * the process, it ends the background checking, quietly and for good, which is the harder
+     * failure to notice.
+     *
+     * `Result.success()` either way is deliberate: this worker only decides whether to post a
+     * "something changed" notification, so a pass it could not complete is a pass with nothing to
+     * say, not a reason to stop being scheduled. */
+    try {
+      Context ctx = getApplicationContext();
+      SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+      int changed = 0;
+      for (android.content.UriPermission up : ctx.getContentResolver().getPersistedUriPermissions()) {
+        if (!up.isReadPermission()) continue;
+        String key = "sig:" + up.getUri();
+        String now = signature(ctx, up.getUri());
+        if (now == null) continue;                     // unreadable this pass — say nothing
+        if (!now.equals(p.getString(key, null))) {
+          changed++;
+          p.edit().putString(key, now).apply();
+        }
       }
-    }
-    if (changed > 0) notifyChanged(ctx, changed);
+      if (changed > 0) notifyChanged(ctx, changed);
+    } catch (Throwable ignored) { }
     return Result.success();
   }
 

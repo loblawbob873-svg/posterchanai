@@ -81,6 +81,22 @@ if ! git clone -q "$URL" "$TMP/repo" 2>/dev/null; then
         rm -rf "$TMP/repo"
         mkdir -p "$TMP/repo"
         git -C "$TMP/repo" init -q -b main
+        # STARTING A NEW HISTORY IS A VISIBLE EVENT, NOT A FALLBACK DETAIL.
+        #
+        # Reaching here means neither the public URL nor the SSH path had a repository to build on,
+        # so this publish begins a history with no ancestor in common with the one every installed
+        # machine already has. Their next `emerge --sync` then prints
+        #
+        #     + 19bdb17...5107a59 main -> origin/main  (forced update)
+        #     fatal: refusing to merge unrelated histories
+        #
+        # and recovers by resetting — the sync completes, but it looks like the repository broke.
+        # It happened for real on 2026-08-31, because the nightly distfiles mirror had DELETED the
+        # overlay (see the --exclude note in admintools) and this fell through silently. Saying it
+        # out loud is the difference between a known consequence and a mystery on somebody's screen.
+        echo "[overlay] WARNING: no existing overlay to build on — starting a NEW history." >&2
+        echo "[overlay] Every installed machine will report 'refusing to merge unrelated" >&2
+        echo "[overlay] histories' ONCE on its next sync, then recover by resetting." >&2
     fi
 fi
 STAGE="$TMP/repo"

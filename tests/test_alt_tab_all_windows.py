@@ -50,7 +50,8 @@ def test_switcher_is_visible_staged_and_never_draws_an_empty_card():
     assert "className='os-alt-preview'" in body
     assert "iconSvg(w.icon||'i-grid')" in body
     assert "p.classList.add('empty')" in body
-    assert "setTimeout(()=>_closeAltSwitch(true),2500)" in body
+    # 2500ms committed and closed the chooser under anyone who paused to read it.
+    assert "setTimeout(()=>_closeAltSwitch(true),5000)" in body
     assert "scrollIntoView({block:'nearest',inline:'nearest'})" in body
     assert "pcWM.preview(key)" in body
     assert "s.nativePreviews" in body
@@ -92,7 +93,10 @@ def test_alt_tab_crosses_output_boundary_instead_of_wrapping_locally():
     start = CLIENT.index("let _altSwitch=null")
     body = CLIENT[start:CLIENT.index("// ---- snapping", start)]
     assert "pcWM.cycleOutput(direction)" in body
-    assert "cycleWindows(direction,true)" in body
+    # The OTHER output enters the same gesture from the tick, and that is the only `entering:true`
+    # left. It used to be reached a second way — a locally-refused handoff restarting the chooser at
+    # index 0 — which is what made a single-monitor wrap look like a crash.
+    assert "cycleWindows(p.slice(15),true)" in CLIENT
     assert "pc:cycle-enter:(next|previous)" in CLIENT
 
 
@@ -100,3 +104,38 @@ def test_visual_switcher_runtime_cycles_cancels_and_commits():
     run = subprocess.run(["node", str(SIM)], capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stdout + run.stderr
     assert "OK Alt+Tab switcher holds" in run.stdout
+
+
+ONE_MONITOR_SIM = ROOT / "tests/client/alt_tab_one_monitor_sim.js"
+
+
+def test_visual_switcher_holds_together_on_a_single_monitor():
+    """The branch every one-screen machine takes on every wrap, which no test had ever run.
+
+    `alt_tab_switcher_sim.js` hands the renderer a `cycleOutput` that always resolves TRUE. The main
+    process answers FALSE for a single output (`_shellSurfaces.size < 2`), and on that answer the
+    renderer had already removed the chooser — synchronously — before the IPC round trip came back
+    to say no, then rebuilt it from scratch at index 0. On a one-screen desk the switcher therefore
+    vanished on every wrap and the selection jumped back to the start instead of moving on by one,
+    and a gesture begun while the LAST window had focus drew nothing at all.
+
+    Reported as "alt tab is complete garbage and disappears each time you switch to a new window",
+    with every assertion in the multi-monitor sim green the whole time.
+    """
+    run = subprocess.run(["node", str(ONE_MONITOR_SIM)], capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK Alt+Tab holds on a single monitor" in run.stdout
+
+
+def test_the_chooser_is_not_taken_down_before_the_handoff_is_agreed():
+    """`cycleOutput` existing is not the same as there being a second monitor, and the answer is a
+    promise. Tearing the chooser down first is what made a refusal look like a crash."""
+    start = CLIENT.index("function cycleWindows(direction,entering){")
+    body = CLIENT[start:CLIENT.index("document.addEventListener('keyup'", start)]
+    handoff = body[body.index("const handoff="):body.index("if(!_altSwitch){")]
+    assert "_altSwitch===s" in handoff, "a stale gesture could tear down a newer chooser"
+    assert "moved&&" in handoff, "the chooser is removed without waiting for the other output"
+    assert "s.noHandoff=true" in handoff, "one IPC round trip per keypress on a single monitor"
+    # And the local move is drawn on every press, boundary or not.
+    assert "_altSwitch.index=(next+rows.length)%rows.length;" in body
+    assert "_leaveAltSwitch();Promise.resolve(pcWM.cycleOutput" not in body

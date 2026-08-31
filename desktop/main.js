@@ -1801,6 +1801,8 @@ ipcMain.handle('pc:host:pickFile', async (e, options) => {
 ipcMain.handle('pc:host:readText', (e, p) => { fsGuard(e); return hostfs().readText(String(p || '')); });
 ipcMain.handle('pc:host:writeText', (e, p, text, mtime) => { fsGuard(e);
   return hostfs().writeText(String(p || ''), String(text == null ? '' : text), Number(mtime) || 0); });
+ipcMain.handle('pc:host:writeBytes', (e, p, bytes, mtime) => { fsGuard(e);
+  return hostfs().writeBytes(String(p || ''), bytes, Number(mtime) || 0); });
 /* Searched from the start menu, so it is called while somebody is typing. Every bound lives in
  * hostfs.search; the only thing decided here is that the renderer does not get to raise them —
  * `limit` and `ms` are clamped there, and a page asking for a 10-minute walk of the whole disk on

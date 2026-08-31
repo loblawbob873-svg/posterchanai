@@ -274,3 +274,89 @@ class NativeWindowGeometry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(not NODE, "needs node")
+class TheCompositorIsTheAuthorityOnGeometryToo(unittest.TestCase):
+    """"Firefox is launching and it does not even fit in the PosterChan window."
+
+    MEASURED on the real desktop before this existed: a 1280x1624 HTML frame containing a 1394x867
+    Firefox. Its POSITION matched the frame to the pixel — that path had run — and its size had
+    never once been corrected. Forcing the surface to 600x400 in the wrong corner with `swaymsg`
+    left it there, uncorrected, indefinitely.
+
+    Two defects, and both had to be fixed: the desktop compared geometry against `_natSent`, its own
+    record of what it last ASKED for (so anything the compositor did without us was invisible — a
+    client restoring its session geometry, a sway keybinding), and nothing ever asked, because
+    `nsync` only ran on events the desktop generates itself.
+
+    The parked/hidden flag had already been given exactly this treatment, with a comment saying
+    "sway is the authority". Geometry, one field over, had not.
+    """
+    def js(self, body):
+        src = ("const N = require(%s);\nconst out = {};\n%s\n"
+               "process.stdout.write(JSON.stringify(out));" % (json.dumps(MOD), body))
+        r = subprocess.run([NODE, "-e", src], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        return json.loads(r.stdout)
+
+    WANT = "{x:448,y:199,w:1280,h:1624}"
+
+    def test_the_real_firefox_measurement_is_detected_as_drift(self):
+        got = self.js("out.p = N.driftPlan(%s, {x:447,y:199,w:1394,h:867}, null, 2);" % self.WANT)
+        self.assertTrue(got["p"]["replace"],
+                        "the exact geometry measured on the real desktop is not reported as drift")
+
+    def test_a_surface_sitting_where_we_put_it_is_left_alone(self):
+        got = self.js("out.p = N.driftPlan(%s, {x:448,y:199,w:1280,h:1624}, null, 2);" % self.WANT)
+        self.assertFalse(got["p"]["replace"])
+        self.assertIsNone(got["p"]["memo"], "an agreeing window must not carry give-up state")
+
+    def test_a_client_that_cannot_be_exact_is_tolerated_not_fought(self):
+        """A terminal resizes in whole character cells, so it can never be exactly the rectangle it
+        is asked for. An exact comparison would re-place it every few seconds for ever."""
+        got = self.js("out.p = N.driftPlan(%s, {x:449,y:200,w:1279,h:1623}, null, 2);" % self.WANT)
+        self.assertFalse(got["p"]["replace"])
+
+    def test_the_desktop_stops_arguing_after_two_corrections_at_the_same_target(self):
+        got = self.js(
+            "let memo = null, tries = [];"
+            "for (let i = 0; i < 5; i++) {"
+            "  const p = N.driftPlan(%s, {x:448,y:199,w:900,h:1624}, memo, 2);"
+            "  tries.push(p.replace); memo = p.memo; }"
+            "out.tries = tries;" % self.WANT)
+        self.assertEqual(got["tries"], [True, True, False, False, False],
+                         "a client refusing the size is either never corrected or fought for ever")
+
+    def test_a_new_target_gets_a_fresh_pair_of_attempts(self):
+        """Giving up is about ONE rectangle. Moving the frame is a new question."""
+        got = self.js(
+            "let memo = null;"
+            "for (let i = 0; i < 3; i++) memo = N.driftPlan(%s, {x:448,y:199,w:900,h:1624}, memo, 2).memo;"
+            "out.p = N.driftPlan({x:20,y:20,w:800,h:600}, {x:448,y:199,w:900,h:1624}, memo, 2);"
+            % self.WANT)
+        self.assertTrue(got["p"]["replace"])
+
+    def test_a_parked_window_and_an_unreadable_rect_are_never_drift(self):
+        """"I could not read it" is not "it moved" — the recurring rule in this codebase."""
+        got = self.js(
+            "out.hidden = N.driftPlan('hidden', {x:0,y:0,w:10,h:10}, null, 2);"
+            "out.norect = N.driftPlan(%s, null, null, 2);"
+            "out.nowant = N.driftPlan(null, {x:1,y:2,w:3,h:4}, null, 2);" % self.WANT)
+        self.assertFalse(got["hidden"]["replace"])
+        self.assertFalse(got["norect"]["replace"])
+        self.assertFalse(got["nowant"]["replace"])
+
+    def test_the_reconcile_is_wired_into_the_sync_and_something_drives_it(self):
+        with open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8") as handle:
+            src = handle.read()
+        start = src.index("async function nsync(){")
+        sync = src[start:start + 9000]
+        self.assertIn("NAT().driftPlan(", sync, "the authority check is never consulted")
+        self.assertIn("_natSent.delete(id)", sync, "drift is detected and then not acted on")
+        # A pure check nothing ever runs is the shape this bug already had once.
+        beat = src[src.index("function _natHeartbeatOn(){"):src.index("async function nsync(){")]
+        self.assertIn("setInterval", beat)
+        self.assertIn("nativeWins().length", beat, "it must cost nothing with no native app hosted")
+        self.assertIn("w.gesturing", beat, "a heartbeat must not fight a drag in progress")
+        self.assertIn("_natHeartbeatOn();", sync, "the heartbeat is defined but never started")

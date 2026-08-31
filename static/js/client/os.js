@@ -1599,6 +1599,23 @@
       clearTimeout(layoutT);
       layoutT = setTimeout(hideLayouts, 260);
     });
+    /* AND THE SAME ACTION WHERE PEOPLE LOOK FOR IT: right-click the title bar. The taskbar menu is
+     * the other home for it, but nobody hunts through the taskbar for something to do to the window
+     * they are already touching. */
+    $('.osw-bar', el).addEventListener('contextmenu', e => {
+      if(e.target.closest('.osw-b')) return;          // the buttons keep their own behaviour
+      e.preventDefault(); e.stopPropagation();
+      focusWin(w, false);
+      showCtx(e.clientX, e.clientY, [
+        {label:'Move to other display', run:()=>{moveToOtherMonitor(w);}},
+        {sep:true},
+        {label:'Snap left', run:()=>snapTo(w,'left')},
+        {label:'Snap right', run:()=>snapTo(w,'right')},
+        {label:w.max?'Restore':'Maximise', run:()=>toggleMax(w)},
+        {sep:true},
+        {label:'Close', run:()=>closeWin(w)}
+      ], $('.osw-bar', el));
+    });
     $('.osw-grip', el).addEventListener('pointerdown', e => { focusWin(w, false); startResize(w, e); });
     /* Just focus. The content of a background window is LIVE now (see snapshot/claimFeed), so the
      * card under the cursor carries its own handler and the click does what it says — no replaying
@@ -2174,13 +2191,54 @@
     const editHardware=async(name)=>{const box=$('[data-vm-edit]',w.slot);if(!box)return;if(vmroot)vmroot.classList.add('vmui-editing');box.hidden=false;box.innerHTML='<div class="spinner"></div>';let d;try{d=await pcVM.details(name);}catch(e){d={ok:false,error:String(e&&e.message||e)}}if(!d.ok){box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>${enc(d.error||'Could not read VM hardware')}</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>`;$('[data-vme-close]',box).onclick=closeHardware;return;}
       const cd=(d.disks||[]).find(x=>x.device==='cdrom'),iso=cd&&cd.source&&cd.source!=='-'?cd.source:'',isoName=iso.split(/[\\/]/).pop();
       box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>Turn the machine off before changing hardware.</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>
-        <section class="vmui-section"><h3>Performance</h3><div class="vmui-spec"><label>Memory (MB)<input class="input" data-vme-ram type="number" min="512" value="${enc(d.ramMiB)}"></label><label>Processors<input class="input" data-vme-cpu type="number" min="1" value="${enc(d.cpus)}"></label><label class="vmui-check"><input data-vme-auto type="checkbox" ${d.autostart?'checked':''}> Start automatically</label></div><div class="vmui-formacts"><button class="btn" data-vme-save>Save settings</button></div></section>
+        <section class="vmui-section"><h3>Performance</h3><div class="vmui-spec"><label>Memory (MB)<input class="input" data-vme-ram type="number" min="512" value="${enc(d.ramMiB)}"></label><label>Processors<input class="input" data-vme-cpu type="number" min="1" value="${enc(d.cpus)}"></label><label class="vmui-check"><input data-vme-auto type="checkbox" ${d.autostart?'checked':''}> Start automatically</label></div></section>
         <section class="vmui-section"><h3>Startup and installation media</h3><div class="vmui-spec"><label>Start from<select class="input" data-vme-boot><option value="disk" ${d.bootOrder==='disk'?'selected':''}>Installed system (virtual disk)</option><option value="cdrom" ${d.bootOrder==='cdrom'?'selected':''}>Installer ISO</option></select></label></div><p data-vme-media><b>Attached installer:</b> ${iso?`<span title="${enc(iso)}">${enc(isoName)}</span>`:'None'}</p><p>When installation finishes, eject the ISO. The next start will use the installed system automatically.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-iso>Change installer ISO…</button><button class="btn" data-vme-eject>Eject installer and use installed system</button></div></section>
         <details class="vmui-advanced"><summary>Advanced hardware</summary><p>Add storage or networking, or enable relative mouse capture for games that require it.</p><div class="vmui-actions vmui-actions-left"><button class="btn btn-ghost" data-vme-disk>Add virtual disk…</button><button class="btn btn-ghost" data-vme-net>Add network adapter (${enc(d.networks)})</button><button class="btn btn-ghost" data-vme-mouse>${d.gamingMouse?'Mouse capture is on — turn off':'Enable gaming mouse capture'}</button></div></details>
-        <div class="tty-state vmui-state" data-vme-state aria-live="polite"></div>`;
-      const state=t=>{const x=$('[data-vme-state]',box);if(x)x.textContent=t||'';};$('[data-vme-close]',box).onclick=closeHardware;$('[data-vme-eject]',box).disabled=!iso;
-      $('[data-vme-save]',box).onclick=async()=>{const r=await pcVM.update(name,{ramMiB:Number($('[data-vme-ram]',box).value),cpus:Number($('[data-vme-cpu]',box).value),autostart:$('[data-vme-auto]',box).checked,bootOrder:$('[data-vme-boot]',box).value});state(r.ok?'VM settings saved':r.error);if(r.ok)paint();};
-      $('[data-vme-disk]',box).onclick=async()=>{const gib=Number(prompt('New disk size in GB','40'));if(!gib)return;const r=await pcVM.addDisk(name,gib);state(r.ok?'Disk added':r.error);};
+        <div class="tty-state vmui-state" data-vme-state aria-live="polite"></div>
+        <div class="vmui-formacts vmui-formfoot"><button class="btn btn-ghost" data-vme-back>Back to machines</button><button class="btn" data-vme-save disabled>Save settings</button></div>`;
+      const state=t=>{const x=$('[data-vme-state]',box);if(x)x.textContent=t||'';};$('[data-vme-eject]',box).disabled=!iso;
+      /* WHAT SAVE ACTUALLY WRITES, IN ONE PLACE. It was read inline in the click handler, which is
+       * how the button came to sit in the middle of the form: it looks like it belongs to the
+       * section it is in, while it writes `bootOrder` from the section BELOW it. Change the boot
+       * order and the only Save is off the top of the screen, above the thing you just edited. */
+      const fields=()=>({ramMiB:Number($('[data-vme-ram]',box).value),cpus:Number($('[data-vme-cpu]',box).value),
+                         autostart:!!$('[data-vme-auto]',box).checked,bootOrder:$('[data-vme-boot]',box).value});
+      const clean=JSON.stringify(fields());
+      const saveBtn=$('[data-vme-save]',box);
+      /* Save is offered only when there is something to save, and an edit you have not saved is
+       * never thrown away in silence — leaving the form is the one moment it can be lost. */
+      const dirty=()=>JSON.stringify(fields())!==clean;
+      const sync=()=>{if(saveBtn)saveBtn.disabled=!dirty();};
+      box.querySelectorAll('[data-vme-ram],[data-vme-cpu],[data-vme-auto],[data-vme-boot]')
+         .forEach(el=>{el.oninput=sync;el.onchange=sync;});
+      const leave=async()=>{
+        if(dirty()){
+          const go=await PC().uiConfirm('Leave without saving your changes to '+name+'?',
+                                        {ok:'Discard changes',danger:true,owner:w.body});
+          if(!go)return;
+        }
+        closeHardware();
+      };
+      $('[data-vme-close]',box).onclick=leave;
+      const back=$('[data-vme-back]',box);if(back)back.onclick=leave;
+      if(saveBtn)saveBtn.onclick=async()=>{
+        /* Disabled for the round trip: `update` redefines the domain, and two of them racing is a
+         * libvirt error the user reads as "saving is broken". */
+        saveBtn.disabled=true;const label=saveBtn.textContent;saveBtn.textContent='Saving\u2026';
+        try{
+          const r=await pcVM.update(name,fields());
+          state(r.ok?'VM settings saved':(r.error||'Could not save these settings'));
+          if(r.ok){await editHardware(name);paint();return;}
+        }catch(e){state(String(e&&e.message||e));}
+        saveBtn.textContent=label;saveBtn.disabled=!dirty();
+      };
+      $('[data-vme-disk]',box).onclick=async()=>{
+        /* NEVER `prompt()`. A native dialog blocks the renderer, and in the Electron shell — which
+         * is the ONLY place this screen exists — that wedges the whole window with no way back.
+         * The rest of the client learned this long ago; this one call site was missed, and nothing
+         * was watching for it. */
+        const gib=Number(await PC().uiPrompt('New disk size in GB',{value:'40',ok:'Add disk',owner:w.body}));
+        if(!gib||!(gib>0))return;const r=await pcVM.addDisk(name,gib);state(r.ok?'Disk added':r.error);};
       $('[data-vme-iso]',box).onclick=async()=>{const p=await pcVM.pickIso();if(!p)return;const r=await pcVM.changeIso(name,p);if(r.ok){await editHardware(name);state('Installation disc changed');paint();}else state(r.error);};
       $('[data-vme-eject]',box).onclick=async()=>{const r=await pcVM.ejectIso(name);if(r.ok){await editHardware(name);state('Installation disc ejected — the next start boots from disk');paint();}else state(r.error);};
       $('[data-vme-net]',box).onclick=async()=>{const r=await pcVM.addNetwork(name);state(r.ok?'Network adapter added':r.error);};
@@ -2389,6 +2447,7 @@
    * only what changed. */
   const NAT = () => window.PCOSNative;
   let _natShell = null, _natShellAt = 0, _natSent = new Map(), _natBusy = false, _natAgain = false;
+  const _natDrift = new Map();   // per-window give-up state for NAT().driftPlan
 
   const nativeWins = () => wins.filter(w => w.native != null);
   function _nativePreview(w,data){
@@ -2592,7 +2651,28 @@
 
   /* One sync pass. Serialised rather than queued: while a drag is in flight this is called on every
    * frame, and letting two overlap means the compositor is sent the second-to-last position last. */
+  /* SOMETHING HAS TO ASK, OR THE AUTHORITY CHECK ABOVE NEVER RUNS.
+   *
+   * `nsync` was driven entirely by events this desktop generates — a drag, a snap, a window opening
+   * or closing, a style reflow. A native surface that changed on its OWN produces none of those, so
+   * on a real desktop a Firefox forced to 600x400 in the wrong corner sat there indefinitely, with
+   * no correction and nothing in any log. A slow heartbeat is the only thing that closes that loop.
+   * It costs one IPC round trip while a native app is hosted and nothing at all otherwise (both
+   * guards return before any work), and it stands aside during a gesture, where the pointer is the
+   * authority and the compositor is not. */
+  let _natBeat = 0;
+  function _natHeartbeatOn(){
+    if(_natBeat || !window.pcWM) return;
+    _natBeat = setInterval(() => {
+      try{
+        if(!nativeWins().length) return;
+        if(wins.some(w => w && (w.gesturing || w.nativeHandoffToken))) return;
+        nsync();
+      }catch(_){}
+    }, 2500);
+  }
   async function nsync(){
+    _natHeartbeatOn();
     if(!NAT() || !window.pcWM || !nativeWins().length) return;
     if(_natBusy){ _natAgain = true; return; }
     _natBusy = true;
@@ -2630,6 +2710,21 @@
          * for state split across two processes. */
         for(const x of list){
           if(x && x.stashed) _natSent.set(Number(x.id), 'hidden');
+        }
+        /* AND GEOMETRY IS SWAY'S TOO, NOT ONLY VISIBILITY — the same lesson, one field over.
+         * `_natSent` is what we ASKED for, so a window the compositor changed without us stayed
+         * wrong for ever: our frame had not moved, so the pass below had nothing to send. See
+         * NAT().driftPlan for the measurement that produced this, and for why it tolerates a few
+         * pixels and eventually stops arguing with a client that cannot take the size. */
+        for(const x of list){
+          const id = Number(x && x.id);
+          if(!Number.isFinite(id) || !_natSent.has(id)) continue;
+          const r = x && x.rect;
+          const plan = NAT().driftPlan(_natSent.get(id),
+            r ? { x:Number(r.x), y:Number(r.y), w:Number(r.width), h:Number(r.height) } : null,
+            _natDrift.get(id), 2);
+          if(plan.memo) _natDrift.set(id, plan.memo); else _natDrift.delete(id);
+          if(plan.replace) _natSent.delete(id);
         }
         /* AND THE SHELL MUST NOT BE FULLSCREEN WHILE IT IS HOSTING ANYTHING.
          *
@@ -3095,22 +3190,45 @@
     });
   }
   function _leaveAltSwitch(){const s=_altSwitch;if(!s)return;_altSwitch=null;clearTimeout(s.timer);if(s.el)try{s.el.remove();}catch(_){}}
+  /* HANDING THE GESTURE TO THE NEXT MONITOR MUST NOT COST THE CHOOSER ON A MACHINE THAT HAS ONE.
+   *
+   * Both boundary branches fired on `pcWM.cycleOutput` merely EXISTING — and the main process
+   * answers false for a single-output desktop (`_shellSurfaces.size < 2`), asynchronously. So on a
+   * one-screen machine every wrap ran `_leaveAltSwitch()` SYNCHRONOUSLY, took an IPC round trip to
+   * be told "no", and then built a brand-new chooser at index 0 with `entering:true`. The overlay
+   * visibly vanished and the selection jumped back to the start instead of moving on by one; the
+   * cached native previews went with it, so `grim` re-shot every card. And when the focused window
+   * happened to be the LAST row — which it is whenever you have just focused something — the very
+   * first press drew nothing at all before that round trip. Reported, accurately, as "alt tab is
+   * complete garbage and disappears each time you switch to a new window".
+   *
+   * Nothing caught it because the simulation's fake `cycleOutput` always resolved TRUE: the branch
+   * every single-monitor machine takes on every wrap had never once been executed by a test.
+   *
+   * The local move now happens FIRST and is always drawn, and the handoff is asked for behind it —
+   * tearing the chooser down only once another output has actually accepted the gesture. A refusal
+   * is remembered for the rest of the gesture, because monitors are not plugged in mid-Alt+Tab.
+   */
   function cycleWindows(direction,entering){
     const rows=_switchRows();if(!rows.length)return false;
     const step=direction==='previous'?-1:1;
+    const handoff=(s)=>{
+      if(!s||s.noHandoff||!pcWM.cycleOutput)return;
+      s.noHandoff=true;                    // ask at most once per gesture, whatever the answer
+      Promise.resolve(pcWM.cycleOutput(direction))
+        .then(moved=>{if(moved&&_altSwitch===s)_leaveAltSwitch();})
+        .catch(()=>{});
+    };
     if(!_altSwitch){
       const initial=rows.find(w=>w.el.classList.contains('focused')&&!w.min)||null;
       const current=rows.indexOf(initial);
       /* Each output has its own renderer and therefore its own `wins`. At the end of this output's
        * list, continue the SAME Alt+Tab gesture on the adjacent output instead of wrapping forever
        * and making Firefox/Telegram on that monitor unreachable. */
-      if(!entering&&current>=0&&((step>0&&current===rows.length-1)||(step<0&&current===0))&&pcWM.cycleOutput){
-        Promise.resolve(pcWM.cycleOutput(direction)).then(moved=>{if(!moved)cycleWindows(direction,true);}).catch(()=>cycleWindows(direction,true));
-        return true;
-      }
+      const atEnd=current>=0&&((step>0&&current===rows.length-1)||(step<0&&current===0));
       _altSwitch={rows,initial,index:current<0?(step>0?0:rows.length-1):
         entering?(step>0?0:rows.length-1):(current+step+rows.length)%rows.length,
-        el:null,timer:0,nativePreviews:new Map()};
+        el:null,timer:0,nativePreviews:new Map(),noHandoff:!!entering};
       toggleStart(false);hideCtx();
       /* The switcher belongs to this output's shell. Bring that surface forward while selection is
          staged; native targets are focused only on commit, otherwise their opaque surface would
@@ -3118,17 +3236,20 @@
       try{Promise.resolve(pcWM.windows()).then(list=>{const shell=(list||[]).find(x=>
         /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
         if(shell)return pcWM.focus(shell.id);}).catch(()=>{});}catch(_){}
+      if(!entering&&atEnd)handoff(_altSwitch);
     }else{
       _altSwitch.rows=rows;
       const next=_altSwitch.index+step;
-      if((next<0||next>=rows.length)&&pcWM.cycleOutput){
-        _leaveAltSwitch();Promise.resolve(pcWM.cycleOutput(direction)).then(moved=>{if(!moved)cycleWindows(direction,true);}).catch(()=>cycleWindows(direction,true));return true;
-      }
       _altSwitch.index=(next+rows.length)%rows.length;
+      if(next<0||next>=rows.length)handoff(_altSwitch);
     }
     _drawAltSwitch(_altSwitch);
     clearTimeout(_altSwitch.timer);
-    _altSwitch.timer=setTimeout(()=>_closeAltSwitch(true),2500);
+    /* THE SAFETY NET FOR A GESTURE WHOSE ALT RELEASE THIS SURFACE NEVER SEES — the press that opens
+     * the chooser arrives while a native window still holds keyboard focus, so no keyup reaches
+     * here. It has to be long enough to READ the list: at 2.5s the chooser committed and closed
+     * under anyone who paused to look, which is the other half of "it disappears". */
+    _altSwitch.timer=setTimeout(()=>_closeAltSwitch(true),5000);
     return true;
   }
   document.addEventListener('keyup',e=>{if(_altSwitch&&e.key==='Alt')_closeAltSwitch(true);},true);
@@ -3570,6 +3691,32 @@
     if(moved&&w.native!=null&&wins.includes(w))closeWin(w,{killNative:false,preserveFocus:true});
     if(!moved){keepFrameReachable(w);_natGesture(w,false);if(nativeWins().length)nsync();}
     return !!moved;
+  }
+
+  /* THE DETERMINISTIC WAY TO MOVE A WINDOW TO THE OTHER SCREEN, WHICH DID NOT EXIST.
+   *
+   * `handoffDirection` above says it plainly — "the title-bar Move-to-monitor action remains the
+   * deterministic path where Wayland clamps it" — and `moveWindowToMonitor` was written for it. But
+   * there was no title-bar button, no menu entry and no sway binding emitting `pc:move-output:*`,
+   * so nothing ever called it from a person. The ONLY way to move a window between displays was to
+   * drag it past the edge hard enough to produce virtual-desktop overflow, which is exactly the
+   * thing Wayland clamps: pointer capture pins clientX to this surface, so the gesture needs
+   * `realScreen` to have been established, the pointer to stay within 12px of the edge, AND more
+   * than 8px of overflow on two consecutive samples. On a good day it works. Reported three times
+   * about three different windows — Messages, Torrents, and now "terminal still don't let me move
+   * it across to the other monitor" — because it was never about the window.
+   *
+   * No new IPC: the renderer cannot enumerate outputs, and `moveWindowToMonitor` already answers
+   * false when there is no neighbour that way, so the neighbours are probed in turn — which is what
+   * the comment above always described the button as doing. */
+  async function moveToOtherMonitor(w){
+    if(!w || !wins.includes(w)) return false;
+    for(const direction of ['right','left','down','up']){
+      if(await moveWindowToMonitor(w, direction)) return true;
+    }
+    /* Saying nothing here is indistinguishable from the bug this replaces. */
+    try{ PC().toast('There is no other display to move this to'); }catch(_){}
+    return false;
   }
 
   function startDrag(w, ev){
@@ -6311,6 +6458,10 @@
         const w=nativeTasks.find(x=>String(x.id)===b.dataset.id); if(!w) return;
         showCtx(e.clientX,e.clientY,[
           {label:'Move',run:()=>nativeTaskbarMove(w)},
+          {label:'Move to other display',run:()=>{
+            const frame=nativeWins().find(x=>Number(x.native)===Number(w.id));
+            if(frame)moveToOtherMonitor(frame);
+          }},
           {label:'Snap left',run:()=>Promise.resolve(pcWM.snap(w.id,'left')).catch(()=>{})},
           {label:'Snap right',run:()=>Promise.resolve(pcWM.snap(w.id,'right')).catch(()=>{})},
           {label:'Maximize',run:()=>Promise.resolve(pcWM.snap(w.id,'max')).catch(()=>{})},
@@ -6328,6 +6479,7 @@
       }
       const actions=[];
       if(running)actions.push({label:'Move',run:()=>taskbarMove(running)},
+        {label:'Move to other display',run:()=>{moveToOtherMonitor(running);}},
         {label:'Close',run:()=>closeWin(running)},{sep:true});
       if(key){const pinned=pins.indexOf(key)>=0,cut=key.indexOf(':');actions.push({
         label:pinned?'Unpin from taskbar':'Pin to taskbar',
@@ -7322,8 +7474,22 @@
               if(w) snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8));
             }
             else if(/^pc:move-output:(left|right|up|down)$/.test(p)){
+              /* TWO SILENT NO-OPS LIVED HERE, AND BOTH READ AS "THE KEY DOES NOTHING".
+               *
+               * (1) With no PosterChan window focused — which is the state after clicking the
+               * desktop, or a native window — `find` returns undefined and the branch ended. (2)
+               * Asking for the output to the RIGHT of the right-hand monitor is a legitimate
+               * question with the answer "no", and `moveWindowToMonitor` returned false without a
+               * word. Measured on the real two-monitor desk: `send_tick pc:move-output:right`
+               * changed ten by fourteen pixels of clock and nothing else.
+               *
+               * Every renderer sees this tick, so only the one that HAS a focused window may speak
+               * — otherwise the other monitor's shell announces a failure for a key that was never
+               * aimed at it. The direction is honoured first, and a refusal falls back to the probe
+               * rather than stopping: what the person meant was "put this on the other screen". */
               const w=wins.find(x=>x.el.classList.contains('focused'));
-              if(w)moveWindowToMonitor(w,p.slice(15));
+              if(w)Promise.resolve(moveWindowToMonitor(w,p.slice(15)))
+                .then(moved=>{ if(!moved) moveToOtherMonitor(w); }).catch(()=>{});
             }
             else if(/^pc:move-native:\d+:(left|right|up|down)$/.test(p)){
               const parts=p.split(':'),id=Number(parts[2]),direction=parts[3];

@@ -325,6 +325,7 @@ function search(query, opts) {
  * because a bridge must not trust its caller.
  */
 const TEXT_MAX = 2 * 1024 * 1024;
+const BYTES_MAX = 128 * 1024 * 1024;   // matches the office router's own ceiling
 
 function readText(p){
   const abs = path.resolve(String(p || ''));
@@ -352,6 +353,29 @@ function writeText(p, text, mtime){
   }
   const data = Buffer.from(String(text == null ? '' : text), 'utf8');
   if(data.length > TEXT_MAX) throw new Error('that file is too big to save here');
+  const tmp = path.join(path.dirname(abs), '.pc-' + path.basename(abs) + '.tmp');
+  fs.writeFileSync(tmp, data);
+  try{ fs.renameSync(tmp, abs); }
+  catch(e){ try{ fs.unlinkSync(tmp); }catch(_){} throw e; }
+  const st = fs.statSync(abs);
+  return { path: abs, size: st.size, mtime: Math.round(st.mtimeMs) };
+}
+
+/* THE SAME ATOMIC WRITE, FOR BYTES. `writeText` cannot be reused for a document: an .odt is a ZIP,
+ * and round-tripping it through a JS string mangles it silently — the file saves, and LibreOffice
+ * then refuses to open what it wrote. Office editing of a file on this computer needs this; the
+ * text editor keeps `writeText` because its compare-and-swap is about a person's own retyping.
+ * `mtime` is the same compare-and-swap and for the same reason. */
+function writeBytes(p, bytes, mtime){
+  const abs = path.resolve(String(p || ''));
+  const st0 = fs.statSync(abs);                      // refuse to create a file this way
+  if(st0.isDirectory()) throw new Error('that is a folder');
+  if(mtime){
+    const cur = Math.round(st0.mtimeMs);
+    if(cur && Math.abs(cur - Number(mtime)) > 1000) throw new Error('changed-on-disk');
+  }
+  const data = Buffer.from(bytes || []);
+  if(data.length > BYTES_MAX) throw new Error('that file is too big to save here');
   const tmp = path.join(path.dirname(abs), '.pc-' + path.basename(abs) + '.tmp');
   fs.writeFileSync(tmp, data);
   try{ fs.renameSync(tmp, abs); }
@@ -422,5 +446,5 @@ async function gitAction(root,action,paths,message){
 }
 
 module.exports = { list, roots, search, trash, mkdir, rename, transfer, open, clean, parentOf, shape,
-  readText, writeText, gitStatus, gitDiff, gitAction,
+  readText, writeText, writeBytes, gitStatus, gitDiff, gitAction,
                    trashInfo, freeName, trashDir };

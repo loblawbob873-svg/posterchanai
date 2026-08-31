@@ -111,7 +111,18 @@ public class SyncService extends Service {
          * catch, and the user sees "isn't responding" or simply watches the app vanish. The
          * `startForeground` above must stay here — the platform gives us seconds and kills us for
          * missing them — but nothing after it may block. */
-        new Thread(new Runnable() { public void run() { decide(); } }, "pc-sync-start").start();
+        /* AND IT MUST NOT THROW OUT OF THAT THREAD. `decide()` is a wall of platform IPC —
+         * SharedPreferences, SAF grants, power and network policy — on a dozing device. Any of it
+         * can raise, and an exception escaping a bare Thread reaches Android's default handler,
+         * which ends the PROCESS: the app disappears while somebody is opening Folder Sync, with a
+         * "PosterChan keeps stopping" dialog and nothing to read. The service has already called
+         * startForeground by this point, so a decision it could not make is a sweep that does not
+         * run — never a reason to take the app down. */
+        new Thread(new Runnable() { public void run() {
+            try { decide(); }
+            catch (Throwable t) { try { android.util.Log.w("pc-sync", "start decision failed", t); }
+                                  catch (Throwable ignored) { } }
+        } }, "pc-sync-start").start();
         return START_NOT_STICKY;
     }
 

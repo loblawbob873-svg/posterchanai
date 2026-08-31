@@ -1305,12 +1305,24 @@ def send_email(
 
         logger.info(f"Sent email from {account.email} to {to}: {subject}")
 
-        # Save to Sent folder via IMAP
+        # SAVE IT WHERE THE APP LOOKS FOR IT.
+        #
+        # This filed the copy in the first of ["INBOX.Sent", "Sent", ...] that would SELECT, while
+        # the mail list resolves Sent through list_special_folders() — RFC 6154 \\Sent flags, the
+        # user's own override, then name heuristics. Two different answers to "which folder is
+        # Sent", and on a server that has more than one candidate they disagree: the message is
+        # delivered, filed, and invisible. Reported as "sent folder is not showing me the messages
+        # correctly, I have to search to find the email I sent today" — and the log said
+        # `Saved sent email to INBOX.Sent` the whole time, which is why it never looked like a bug
+        # in sending.
+        #
+        # The flagged mailbox is asked for FIRST, from this same connection, so no database session
+        # is needed here; the historical name list stays as the last resort for servers that
+        # advertise no special-use flags at all.
         try:
             imap = connect_imap(account)
             if imap:
-                # Try common sent folder names
-                sent_folders = ["INBOX.Sent", "Sent", "Sent Messages", "Sent Items", "[Gmail]/Sent Mail"]
+                sent_folders = _sent_folder_candidates(imap)
                 msg_bytes = msg.as_bytes()
 
                 for folder in sent_folders:
@@ -1662,6 +1674,37 @@ def set_folder_map(user_id: int, db: Session, account_email: str, mapping: dict)
     row.value = _json.dumps(full, separators=(",", ":"))
     db.commit()
     return full
+
+
+def _sent_folder_candidates(imap) -> list:
+    """Where a sent copy should go, best answer first, using only an open IMAP connection.
+
+    The mail LIST resolves Sent properly (special-use flags, the user's override, heuristics). The
+    SAVE used a fixed list of names and took whichever selected first, so on a server carrying both
+    `INBOX.Sent` and a `\\Sent`-flagged `Sent` the two halves chose differently and a sent message
+    landed where the app never lists. This puts the flagged mailbox at the front of the same list.
+    """
+    named = []
+    try:
+        status, rows = imap.list()
+        if status == "OK":
+            for raw in rows or []:
+                line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+                if "\\Sent" not in line:
+                    continue
+                # `(\HasNoChildren \Sent) "." "INBOX.Sent"` — the name is the last quoted field,
+                # or the trailing bare word on servers that do not quote it.
+                m = re.findall(r'"([^"]*)"', line)
+                name = m[-1] if m else line.split()[-1]
+                if name and name not in named:
+                    named.append(name)
+    except Exception as e:
+        logger.debug("[mail] special-use LIST for Sent failed: %s", e)
+    # The historical guesses, kept for servers that advertise no special-use flags at all.
+    for fallback in ("INBOX.Sent", "Sent", "Sent Messages", "Sent Items", "[Gmail]/Sent Mail"):
+        if fallback not in named:
+            named.append(fallback)
+    return named
 
 
 def list_special_folders(user_id: int, db: Session, account_email: str) -> dict:

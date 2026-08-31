@@ -289,7 +289,27 @@ public class FolderSyncPlugin extends Plugin {
   public void nativeReport(PluginCall call) {
     // Off the WebView thread: `SignerKey.have` is a Keystore lookup, and this is read from a panel
     // somebody opened — a stutter there is the same defect as one at startup, just less often.
-    getBridge().execute(() -> nativeReportNow(call));
+    /* AND THAT MOVE IS WHAT MADE IT ABLE TO KILL THE APP.
+     *
+     * Capacitor invokes a @PluginMethod inside its own try/catch and turns a throw into a rejected
+     * call. A Runnable handed to `getBridge().execute` runs LATER, on the bridge's handler thread,
+     * long after that try/catch has returned — so an exception here has no catch above it at all
+     * and Android's default handler ends the PROCESS. Every other background task in this file is
+     * wrapped; this one was not, and it is the one the Folder Sync screen calls as it paints
+     * (`_readNativeLast` in sync.js). That is "folder sync still not even opening on android, then
+     * I get the prompt to clear the cache for PosterChan": the screen asks what the last sweep did,
+     * the answer throws, and the app is gone before it can draw.
+     *
+     * The catch ANSWERS the call rather than only swallowing. A task that dies quietly leaves the
+     * JS promise pending for ever, which on this screen is a spinner that never resolves — the same
+     * report with a different shape, and the harder one to tell from a hang. */
+    getBridge().execute(() -> {
+      try { nativeReportNow(call); }
+      catch (Throwable t) {
+        try { call.reject("could not read the sweep report: " + t); }
+        catch (Throwable ignored) { }
+      }
+    });
   }
 
   private void nativeReportNow(PluginCall call) {
@@ -754,7 +774,7 @@ public class FolderSyncPlugin extends Plugin {
           }
         }
         call.resolve(ret);
-      } catch (Exception e) {
+      } catch (Throwable e) {
         call.reject("scan failed: " + e.getMessage());
       }
     });
@@ -790,7 +810,7 @@ public class FolderSyncPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("b64", Base64.encodeToString(fs(id).readAll(rel), Base64.NO_WRAP));
         call.resolve(ret);
-      } catch (Exception e) { call.reject("read failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("read failed: " + e.getMessage()); }
     });
   }
 
@@ -818,7 +838,7 @@ public class FolderSyncPlugin extends Plugin {
         }
         JSObject ret = new JSObject(); ret.put("rows", rows);
         call.resolve(ret);
-      } catch (Exception e) { call.reject("list trash failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("list trash failed: " + e.getMessage()); }
     });
   }
 
@@ -832,7 +852,7 @@ public class FolderSyncPlugin extends Plugin {
         ret.put("gone", r[0]);
         ret.put("parentAlive", r[1]);
         call.resolve(ret);
-      } catch (Exception e) {
+      } catch (Throwable e) {
         JSObject ret = new JSObject();
         ret.put("gone", false); ret.put("parentAlive", false);
         call.resolve(ret);
@@ -848,7 +868,7 @@ public class FolderSyncPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("sha", fs(id).sha256Of(rel));
         call.resolve(ret);
-      } catch (Exception e) { call.reject("hash failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("hash failed: " + e.getMessage()); }
     });
   }
 
@@ -872,7 +892,7 @@ public class FolderSyncPlugin extends Plugin {
         ret.put("b64", Base64.encodeToString(got, Base64.NO_WRAP));
         ret.put("len", got.length);
         call.resolve(ret);
-      } catch (Exception e) { call.reject("readPart failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("readPart failed: " + e.getMessage()); }
     });
   }
 
@@ -885,7 +905,7 @@ public class FolderSyncPlugin extends Plugin {
       try {
         fs(id).writePart(rel, off, Base64.decode(b64, Base64.DEFAULT));
         call.resolve(new JSObject());
-      } catch (Exception e) { call.reject("writePart failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("writePart failed: " + e.getMessage()); }
     });
   }
 
@@ -906,7 +926,7 @@ public class FolderSyncPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("sha", sha);
         call.resolve(ret);
-      } catch (Exception e) { call.reject("hashPart failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("hashPart failed: " + e.getMessage()); }
     });
   }
 
@@ -917,7 +937,7 @@ public class FolderSyncPlugin extends Plugin {
       try {
         fs(id).discardPart(rel);
         call.resolve(new JSObject());
-      } catch (Exception e) { call.reject("discardPart failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("discardPart failed: " + e.getMessage()); }
     });
   }
 
@@ -930,7 +950,7 @@ public class FolderSyncPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("size", fs(id).partSize(rel));
         call.resolve(ret);
-      } catch (Exception e) { call.reject("partSize failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("partSize failed: " + e.getMessage()); }
     });
   }
 
@@ -946,7 +966,7 @@ public class FolderSyncPlugin extends Plugin {
         ret.put("size", st[0]);
         ret.put("mtime", st[1]);
         call.resolve(ret);
-      } catch (Exception e) { call.reject(e.getMessage()); }
+      } catch (Throwable e) { call.reject(e.getMessage()); }
     });
   }
 
@@ -972,7 +992,7 @@ public class FolderSyncPlugin extends Plugin {
         ret.put("size", st[0]);
         ret.put("mtime", st[1]);
         call.resolve(ret);
-      } catch (Exception e) { call.reject("write failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("write failed: " + e.getMessage()); }
     });
   }
 
@@ -1016,7 +1036,7 @@ public class FolderSyncPlugin extends Plugin {
           }
         }
         call.resolve();
-      } catch (Exception e) { call.reject("move failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("move failed: " + e.getMessage()); }
     });
   }
 
@@ -1032,7 +1052,7 @@ public class FolderSyncPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("to", fs(id).trash(rel, when == null ? 0L : when));
         call.resolve(ret);
-      } catch (Exception e) { call.reject("delete failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("delete failed: " + e.getMessage()); }
     });
   }
 
@@ -1085,7 +1105,7 @@ public class FolderSyncPlugin extends Plugin {
         ret.put("removed", ok);
         ret.put("missing", false);
         call.resolve(ret);
-      } catch (Exception e) { call.reject("delete failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("delete failed: " + e.getMessage()); }
     });
   }
 
@@ -1125,7 +1145,7 @@ public class FolderSyncPlugin extends Plugin {
         ret.put("missing", missing);
         ret.put("failed", failed);
         call.resolve(ret);
-      } catch (Exception e) { call.reject("purge trash failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("purge trash failed: " + e.getMessage()); }
     });
   }
 
@@ -1165,7 +1185,7 @@ public class FolderSyncPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("removed", removed);
         call.resolve(ret);
-      } catch (Exception e) { call.reject("empty trash failed: " + e.getMessage()); }
+      } catch (Throwable e) { call.reject("empty trash failed: " + e.getMessage()); }
     });
   }
 

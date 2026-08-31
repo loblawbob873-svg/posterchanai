@@ -337,7 +337,12 @@ class ClickingTheFileIsHowYouOpenIt(unittest.TestCase):
         self.assertIn("u.openFile(p, nm, openHere, mime)", self.host,
                       "hostfiles does not pass the machine-open through to the chooser")
         self.assertIn("openFile: async (path, name, openHere, mime) =>", self.app)
-        seg = self.app[self.app.index("openFile: async (path, name, openHere, mime) =>"):][:2600]
+        # THE WHOLE FUNCTION, not a fixed number of characters. A 2600-char window read as "the
+        # chooser offers only the editor" the moment an Office entry was added ABOVE the machine
+        # one — a green-to-red flip caused entirely by the size of the slice, on a chooser that had
+        # in fact gained an option rather than lost one.
+        seg = self.app[self.app.index("openFile: async (path, name, openHere, mime) =>"):
+                       self.app.index("toast, prompt: uiPrompt, confirm: uiConfirm,")]
         self.assertIn("id:'host'", seg, "the chooser for a local file offers only the editor")
 
     def test_the_bridge_call_lives_in_the_file_that_knows_the_bridge(self):

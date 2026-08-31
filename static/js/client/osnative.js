@@ -119,7 +119,38 @@
     return prev.x !== next.x || prev.y !== next.y || prev.w !== next.w || prev.h !== next.h;
   }
 
-  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, stashPlan, changed };
+  /* WHAT THE COMPOSITOR ACTUALLY DID, VERSUS WHAT WE ASKED IT TO DO.
+   *
+   * The desktop judged a native surface's geometry against its own record of the last placement it
+   * sent. That record is INTENT, and read as truth it can disagree with sway for ever with nothing
+   * to resolve it — the same mistake already documented for the parked/hidden flag, made a second
+   * time one field over. Anything that moves or resizes a window without us is therefore permanent:
+   * Firefox restoring its own session geometry as it finishes starting, a sway keybinding, a client
+   * that resizes itself. Measured on a real desktop: a 1280x1624 HTML frame containing a 1394x867
+   * Firefox whose POSITION tracked the frame exactly and whose size was never once corrected —
+   * "Firefox is launching and it does not even fit in the PosterChan window".
+   *
+   * `tol` and the give-up count are both load-bearing. A terminal resizes in whole character cells
+   * and can NEVER be exactly the rectangle it is asked for, so an exact comparison would re-place
+   * it every few seconds for the life of the desktop — worse than being eight pixels out. After two
+   * corrections at the same target the current geometry is accepted until the target changes.
+   *
+   * `memo` is this window's give-up state and is returned rather than mutated, so the whole rule is
+   * one pure function the tests can drive.
+   */
+  function driftPlan(want, real, memo, tol){
+    const T = Math.max(0, Number(tol) || 0);
+    if(!want || want === 'hidden' || !real) return { replace:false, memo:memo || null };
+    const off = Math.abs(want.x - real.x) > T || Math.abs(want.y - real.y) > T
+             || Math.abs(want.w - real.w) > T || Math.abs(want.h - real.h) > T;
+    if(!off) return { replace:false, memo:null };          // agreed — forget any give-up memory
+    const again = !!(memo && memo.want && !changed(memo.want, want));
+    const tries = again ? (Number(memo.tries) || 0) : 0;
+    if(tries >= 2) return { replace:false, memo:{ want, tries } };
+    return { replace:true, memo:{ want, tries: tries + 1 } };
+  }
+
+  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, stashPlan, changed, driftPlan };
   root.PCOSNative = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

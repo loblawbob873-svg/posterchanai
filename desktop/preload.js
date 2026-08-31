@@ -339,6 +339,9 @@ if (isOurPage) {
     readText: (p) => ipcRenderer.invoke('pc:host:readText', String(p || '')),
     writeText: (p, text, mtime) => ipcRenderer.invoke('pc:host:writeText', String(p || ''),
                                                        String(text == null ? '' : text), Number(mtime) || 0),
+    // Office, editing a document on this computer: bytes, never a string (an .odt is a ZIP).
+    writeBytes: (p, bytes, mtime) => ipcRenderer.invoke('pc:host:writeBytes', String(p || ''),
+      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []), Number(mtime) || 0),
     gitStatus: (root) => ipcRenderer.invoke('pc:host:gitStatus', String(root||'')),
     gitDiff: (root, p) => ipcRenderer.invoke('pc:host:gitDiff', String(root||''), String(p||'')),
     gitAction: (root, action, paths, message) => ipcRenderer.invoke('pc:host:gitAction', String(root||''),
