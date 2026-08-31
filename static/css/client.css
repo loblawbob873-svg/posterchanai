@@ -9643,3 +9643,15 @@ audio.sms-att-img{min-width:220px}
 .cc-poll-label{position:relative;z-index:1;flex:1;min-width:0;overflow-wrap:anywhere}
 .cc-poll-count{position:relative;z-index:1;opacity:.7;font-size:12px;font-variant-numeric:tabular-nums}
 .cc-poll-foot{opacity:.7;font-size:12px}
+/* Printers (System Settings → Printers). One row per queue and per discovered device, sharing the
+   same shape so "what you have" and "what you could add" read as one list rather than two designs. */
+.os-printer-list,.os-printer-found{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.os-printer-found{padding-top:12px;border-top:1px solid var(--line)}
+.os-printer-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:11px 13px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
+.os-printer-row>div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.os-printer-row .muted{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.os-printer-acts{display:flex;gap:7px;flex:0 0 auto}
+/* A device URI is long and a phone is narrow: stack rather than squeeze the buttons off the edge. */
+@media(max-width:640px){.os-printer-row{flex-direction:column;align-items:stretch}
+  .os-printer-acts{justify-content:flex-end}}

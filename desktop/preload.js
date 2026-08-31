@@ -218,6 +218,21 @@ if (isOurPage) {
     radio: (on) => ipcRenderer.invoke('pc:net:radio', !!on),
   });
 
+  /* Printers. CUPS's own admin pages authenticate a system account through PAM, and a PosterChanOS
+   * identity account deliberately has no Unix password — so that UI can never be logged into on
+   * this OS. The shell drives the CUPS command-line tools through the NOPASSWD sudo grant the first
+   * owner already holds, the same way Displays and Power drive their hardware. */
+  contextBridge.exposeInMainWorld('pcPrinters', {
+    status: () => ipcRenderer.invoke('pc:printers:status'),
+    discover: () => ipcRenderer.invoke('pc:printers:discover'),
+    add: (spec) => ipcRenderer.invoke('pc:printers:add', spec && {
+      name: String(spec.name || ''), uri: String(spec.uri || ''),
+      description: String(spec.description || '') }),
+    setDefault: (name) => ipcRenderer.invoke('pc:printers:default', String(name || '')),
+    remove: (name) => ipcRenderer.invoke('pc:printers:remove', String(name || '')),
+    testPage: (name) => ipcRenderer.invoke('pc:printers:test', String(name || '')),
+  });
+
   contextBridge.exposeInMainWorld('pcPower', {
     status: () => ipcRenderer.invoke('pc:power:status'),
     /* A PERCENTAGE, and the main process clamps it — it can never reach 0, because on most panels

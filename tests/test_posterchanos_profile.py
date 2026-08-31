@@ -138,6 +138,14 @@ class PosterChanOSProfile(unittest.TestCase):
     # appearing in desktop/*.js fails this test, which is the whole mechanism.
     PKG_FOR = {
         "grim": "gui-apps/grim",
+        # The CUPS command line, which is how Settings → Printers works at all: this OS issues no
+        # Unix password, so CUPS's own web admin can never be logged into and the shell drives these
+        # instead. `net-print/cups` is already in BASE_PACKAGES; naming the binaries is what stops a
+        # future build dropping it and turning the whole panel into buttons that do nothing.
+        "lpstat": "net-print/cups",
+        "lpinfo": "net-print/cups",
+        "lpadmin": "net-print/cups",
+        "lp": "net-print/cups",
         "slurp": "gui-apps/slurp",
         "wl-copy": "gui-apps/wl-clipboard",
         # Same package. `wl-paste` is how a screenshot's "· copied" claim is CHECKED — Electron's

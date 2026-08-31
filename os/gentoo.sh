@@ -189,6 +189,10 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # ask. `xdg-desktop-portal-gtk` is the backend that answers it — GTK, which sway's own stack pulls
 # in regardless, and emphatically not webkit.
 #
+# PRINTING is `net-print/cups`, and the SHELL needs it rather than only the base system: Settings →
+# Printers drives lpstat/lpinfo/lpadmin/lp directly, because this OS issues no Unix password and
+# CUPS's own web admin authenticates one through PAM — it can never be logged into here. A build
+# without it is a Printers panel whose every button silently does nothing.
 # SCREENSHOTS are `gui-apps/grim` (+ `gui-apps/slurp` to choose an area). grim reads the
 # compositor's own output, so it captures everything on the screen INCLUDING the native app
 # surfaces a PosterChan window holds over a hole in the page — which Electron's own capturePage()
@@ -219,6 +223,7 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 POSTERCHANOS_PACKAGES="gui-wm/sway gui-apps/swaybg x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
+net-print/cups \
 x11-misc/xdg-utils \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \

@@ -1932,6 +1932,13 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
 const power = require('./power.js');
 const audio = require('./audio.js');
 
+const printers = require('./printers');
+ipcMain.handle('pc:printers:status', (e) => { fsGuard(e); return printers.status(); });
+ipcMain.handle('pc:printers:discover', (e) => { fsGuard(e); return printers.discover(); });
+ipcMain.handle('pc:printers:add', (e, spec) => { fsGuard(e); return printers.add(spec || {}); });
+ipcMain.handle('pc:printers:default', (e, n) => { fsGuard(e); return printers.setDefault(n); });
+ipcMain.handle('pc:printers:remove', (e, n) => { fsGuard(e); return printers.remove(n); });
+ipcMain.handle('pc:printers:test', (e, n) => { fsGuard(e); return printers.testPage(n); });
 ipcMain.handle('pc:power:status', (e) => { fsGuard(e); return power.status(); });
 ipcMain.handle('pc:power:brightness', (e, pct) => { fsGuard(e); return power.setBrightness(pct); });
 ipcMain.handle('pc:power:profile', (e, name) => { fsGuard(e); return power.setProfile(name); });

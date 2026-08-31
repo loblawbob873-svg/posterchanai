@@ -1819,6 +1819,7 @@
         <button data-page="displays" class="${_osSettingsPage==='displays'?'on':''}">${iconSvg('monitor')} Displays</button>
         <button data-page="appearance" class="${_osSettingsPage==='appearance'?'on':''}">${iconSvg('palette')} Appearance</button>
         <button data-page="sound" class="${_osSettingsPage==='sound'?'on':''}">${iconSvg('volume')} Sound</button>
+        ${window.pcPrinters?`<button data-page="printers" class="${_osSettingsPage==='printers'?'on':''}">${iconSvg('note')} Printers</button>`:''}
         <button data-page="network" class="${_osSettingsPage==='network'?'on':''}">${iconSvg('wifi')} Network</button>
         <button data-page="bluetooth" class="${_osSettingsPage==='bluetooth'?'on':''}">${iconSvg('bluetooth')} Bluetooth</button>
         <button data-page="power" class="${_osSettingsPage==='power'?'on':''}">${iconSvg('power')} Power &amp; brightness</button>
@@ -1829,7 +1830,7 @@
       </aside><main class="os-set-main"><label class="os-set-mobile-nav"><span>Settings category</span><select data-settings-mobile aria-label="Settings category">
         <option value="page:displays" ${_osSettingsPage==='displays'?'selected':''}>Displays</option>
         <option value="page:appearance" ${_osSettingsPage==='appearance'?'selected':''}>Appearance</option>
-        <option value="page:sound" ${_osSettingsPage==='sound'?'selected':''}>Sound</option><option value="page:network" ${_osSettingsPage==='network'?'selected':''}>Network</option><option value="page:bluetooth" ${_osSettingsPage==='bluetooth'?'selected':''}>Bluetooth</option>
+        <option value="page:sound" ${_osSettingsPage==='sound'?'selected':''}>Sound</option>${window.pcPrinters?`<option value="page:printers" ${_osSettingsPage==='printers'?'selected':''}>Printers</option>`:''}<option value="page:network" ${_osSettingsPage==='network'?'selected':''}>Network</option><option value="page:bluetooth" ${_osSettingsPage==='bluetooth'?'selected':''}>Bluetooth</option>
         <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
         <option value="page:users" ${_osSettingsPage==='users'?'selected':''}>Users</option><option value="page:updates" ${_osSettingsPage==='updates'?'selected':''}>Updates</option>
         <option value="page:about" ${_osSettingsPage==='about'?'selected':''}>About</option>
@@ -1852,6 +1853,10 @@
         <section data-settings-page="${key}" ${_osSettingsPage===key?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg(ic)}</div><span><h2>${title}</h2><p>${desc}</p></span></header>
           <section class="os-set-card"><div class="os-set-cardhead"><b>${title} controls</b><span>Controls open beside this Settings window and return here when closed.</span></div>
           ${window.PCOSShell&&PCOSShell.openControl?`<button class="btn primary os-set-open-control" data-open-control="${key}">${action}</button>`:`<div class="empty">${title} controls are unavailable on this device.</div>`}</section></section>`).join('')}
+        <section data-settings-page="printers" ${_osSettingsPage==='printers'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('note')}</div><span><h2>Printers</h2><p>Add a printer and print a test page.</p></span></header>${window.pcPrinters?`<div class="os-set-card" data-printers><div class="os-set-cardhead"><b>Printers on this computer</b><span>CUPS's own pages ask for a Unix password and a PosterChan identity account has none, so printers are managed here — using the administrator rights this account already holds.</span></div>
+          <div data-printer-list class="os-printer-list"><div class="empty">Loading…</div></div>
+          <div class="os-set-actions"><button class="btn" data-printer-refresh>Refresh</button><button class="btn primary" data-printer-find>Find printers</button><span class="muted" data-printer-status></span></div>
+          <div data-printer-found class="os-printer-found hidden"></div></div>`:`<div class="empty">Printer management is unavailable on this device.</div>`}</section>
         <section data-settings-page="power" ${_osSettingsPage==='power'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('power')}</div><span><h2>Power &amp; brightness</h2><p>Battery, performance, sleep, and display brightness.</p></span></header>
         ${powerError?`<div class="empty">${enc(powerError)}</div>`:''}
         ${power.brightness&&power.brightness.available?`<section class="os-setting-row os-set-control"><div><b>Brightness</b><span>${enc(power.brightness.name||'Built-in display')}</span></div><label><output data-bright-value>${enc(power.brightness.percent)}%</output><input data-brightness type="range" min="1" max="100" value="${enc(power.brightness.percent)}" aria-label="Display brightness"></label></section>`:''}
@@ -1948,6 +1953,70 @@
       const awake=host.querySelector('[data-keep-awake]'); if(awake)awake.onchange=async()=>{
         awake.disabled=true;try{await pcPower.setKeepAwake(awake.checked);const s=awake.parentElement.querySelector('span');if(s)s.textContent=awake.checked?'On':'Off';PC().toast(awake.checked?'Computer will stay awake':'Normal sleep behavior restored');}catch(e){awake.checked=!awake.checked;PC().toast(String(e&&e.message||e));}finally{awake.disabled=false;}
       };
+      /* PRINTERS. Everything here goes through pcPrinters, which runs the CUPS command-line tools
+       * under the NOPASSWD sudo grant this account already has — there is no password to ask for,
+       * which is the whole point: CUPS's own web UI authenticates a Unix account through PAM, and a
+       * PosterChan identity account deliberately has none. */
+      const prn=host.querySelector('[data-printers]');
+      if(prn && window.pcPrinters){
+        const listEl=prn.querySelector('[data-printer-list]'),
+              statEl=prn.querySelector('[data-printer-status]'),
+              foundEl=prn.querySelector('[data-printer-found]');
+        const say=t=>{ if(statEl)statEl.textContent=t||''; };
+        const draw=(s)=>{
+          if(!s || !s.available){
+            listEl.innerHTML='<div class="empty">'+enc((s&&s.reason)||'printing is unavailable')+'</div>';
+            return;
+          }
+          const rows=(s.printers||[]);
+          if(!rows.length){ listEl.innerHTML='<div class="empty">No printers yet — use “Find printers”.</div>'; return; }
+          listEl.innerHTML=rows.map(p=>`<div class="os-printer-row"><div><b>${enc(p.name)}</b>${p.name===s.defaultName?' <span class="muted small">· default</span>':''}<span class="muted small">${enc(p.state)} · ${enc(p.uri)}</span></div>
+            <span class="os-printer-acts">${p.name===s.defaultName?'':`<button class="btn" data-printer-setdefault="${enc(p.name)}">Make default</button>`}
+            <button class="btn" data-printer-test="${enc(p.name)}">Test page</button>
+            <button class="btn danger" data-printer-remove="${enc(p.name)}">Remove</button></span></div>`).join('');
+          /* Bound after every draw: these rows are replaced wholesale, and a handler attached to a
+             node that has been thrown away is a button that quietly does nothing. */
+          $$('[data-printer-setdefault]',listEl).forEach(b=>b.onclick=async()=>{
+            say('setting default…'); const r=await pcPrinters.setDefault(b.dataset.printerSetdefault);
+            say(r&&r.ok?'':(r&&r.error)||'could not set the default'); refresh(); });
+          $$('[data-printer-test]',listEl).forEach(b=>b.onclick=async()=>{
+            b.disabled=true; say('sending a test page…');
+            const r=await pcPrinters.testPage(b.dataset.printerTest); b.disabled=false;
+            say(r&&r.ok?'test page sent':(r&&r.error)||'the test page was not accepted'); });
+          $$('[data-printer-remove]',listEl).forEach(b=>b.onclick=async()=>{
+            if(PC().uiConfirm && !await PC().uiConfirm('Remove “'+b.dataset.printerRemove+'”?')) return;
+            say('removing…'); const r=await pcPrinters.remove(b.dataset.printerRemove);
+            say(r&&r.ok?'':(r&&r.error)||'could not remove it'); refresh(); });
+        };
+        const refresh=async()=>{ try{ draw(await pcPrinters.status()); }catch(e){ listEl.innerHTML='<div class="empty">'+enc(String(e&&e.message||e))+'</div>'; } };
+        const find=prn.querySelector('[data-printer-find]');
+        if(find)find.onclick=async()=>{
+          find.disabled=true; say('looking for printers…'); foundEl.classList.add('hidden');
+          let r=null; try{ r=await pcPrinters.discover(); }catch(e){ r={ok:false,error:String(e&&e.message||e)}; }
+          find.disabled=false;
+          const devs=(r&&r.devices)||[];
+          if(!devs.length){ say((r&&r.error)||'nothing answered — check the printer is on and on this network'); return; }
+          say(devs.length+' found');
+          foundEl.classList.remove('hidden');
+          foundEl.innerHTML=devs.map((d,i)=>`<div class="os-printer-row"><div><b>${enc(d.uri.split('://')[0])}</b><span class="muted small">${enc(d.uri)}</span></div>
+            <span class="os-printer-acts"><button class="btn primary" data-printer-add="${i}">Add</button></span></div>`).join('');
+          $$('[data-printer-add]',foundEl).forEach(b=>b.onclick=async()=>{
+            const d=devs[Number(b.dataset.printerAdd)]; if(!d)return;
+            /* The NAME is asked for, never derived from the URI: a CUPS queue name may not contain
+               spaces or '/', and a person should be able to call the thing in the hall "hall". */
+            const guess=(d.uri.split('/').pop()||'printer').replace(/[^A-Za-z0-9_-]/g,'-').slice(0,40)||'printer';
+            const name=await PC().uiPrompt('Name this printer', { value: guess, ok:'Add' });
+            if(name===null||name===undefined) return;
+            b.disabled=true; say('adding…');
+            const r2=await pcPrinters.add({ name:String(name).trim(), uri:d.uri, description:'' });
+            b.disabled=false;
+            say(r2&&r2.ok?'added':(r2&&r2.error)||'could not add it');
+            if(r2&&r2.ok){ foundEl.classList.add('hidden'); refresh(); }
+          });
+        };
+        const rf=prn.querySelector('[data-printer-refresh]'); if(rf)rf.onclick=refresh;
+        refresh();
+      }
       const live=host.querySelector('[data-liveusb]');
       if(live&&window.pcLiveUSB){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');

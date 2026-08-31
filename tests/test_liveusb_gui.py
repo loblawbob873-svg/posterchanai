@@ -212,14 +212,20 @@ def test_lost_lock_between_supervisor_spawn_and_claim_never_runs_child(tmp_path)
     sudo = tmp_path / "sudo"
     sudo.write_text(f"#!/bin/sh\ntouch {invoked}\nexit 0\n"); sudo.chmod(0o755)
     env = {**os.environ, "NODE_ENV": "test", "PC_SUDO": str(sudo),
-           "PC_LIVEUSB_STATE_DIR": str(state), "PC_LIVEUSB_TEST_BEFORE_CLAIM_MS": "500"}
+           # THREE SECONDS, NOT 500ms. The test has to overwrite the lock inside this window, and
+           # under the full suite — which runs checks concurrently — the poll below plus process
+           # scheduling can overrun half a second. The child then claims successfully, the expected
+           # error never appears, and the build goes red for load rather than for behaviour.
+           # Widening the window changes no assertion: the child must still notice the token moved.
+           "PC_LIVEUSB_STATE_DIR": str(state), "PC_LIVEUSB_TEST_BEFORE_CLAIM_MS": "3000"}
     p = subprocess.Popen(["node", "-e", "require('./desktop/liveusb').build(process.argv[1],false)", str(out)],
                          cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     lock = state / "liveusb-job.lock"
-    deadline = time.time() + 3
+    deadline = time.time() + 8
     while not lock.exists() and time.time() < deadline: time.sleep(.01)
+    assert lock.exists(), "the supervisor never took its lock, so this test proved nothing"
     lock.write_text("new-owner")
-    _, err = p.communicate(timeout=5)
+    _, err = p.communicate(timeout=20)
     assert p.returncode != 0 and "ownership changed before claim" in err
     time.sleep(.15)
     assert not invoked.exists(), "an unclaimed supervisor must never invoke sudo/dd"

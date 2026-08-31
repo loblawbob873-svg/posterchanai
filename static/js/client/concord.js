@@ -328,7 +328,17 @@
     if(!tokens.size)return [];
     return [...new Set((participants||[]).filter(pubkey=>{
       const profile=profileOf?profileOf(pubkey)||{}:{};
-      return [...mentionAliases(profile,pubkey)].some(alias=>tokens.has(alias));
+      /* THE SAME FALLBACK THE PICKER INSERTS, or its own suggestion cannot be typed back.
+       *
+       * `drawMentions` labels a participant `display_name || name || pubkey.slice(0,12)` and
+       * `acceptMention` writes that label into the box — so for anybody with no profile name the
+       * handle on screen is a 12-character pubkey prefix. This resolver built its aliases WITHOUT
+       * that fallback, and `mentionAliases` only ever carries the FULL 64-character key, so the
+       * prefix matched nothing: tab-completing tagged them (the picker records the handle in
+       * `mentionRecipients`), and typing the identical text by hand tagged nobody, silently. Two
+       * call sites, two different ideas of what a person is called. */
+      const fallback=String(profile.display_name||profile.name||String(pubkey||'').slice(0,12));
+      return [...mentionAliases(profile,pubkey,fallback)].some(alias=>tokens.has(alias));
     }))];
   }
   function textMentionsViewer(text,handles){
