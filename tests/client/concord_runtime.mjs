@@ -310,7 +310,15 @@ for(let i=0;i<20&&!feed.innerHTML.includes('joined history joined-lounge');i++)a
 if(!feed.innerHTML.includes('#lounge')||!feed.innerHTML.includes('joined history joined-lounge'))
   throw new Error('cold cached Armada room did not paint its real first channel immediately');
 if(coldPaintedAtFirstQuery===false)throw new Error('relay backfill started before cached room history painted');
-releaseLaterPage();await coldOpen;window.PCConcordCache.page=originalCachePage;
+/* WAIT FOR THE HELD PAGE TO BE ASKED FOR. `joined-later` is no longer read on the critical path:
+   the open channel paints from a small page and every other channel — and the head's full page —
+   are prefetched behind the room. So `releaseLaterPage` is assigned ASYNCHRONOUSLY now, and calling
+   it straight away threw `releaseLaterPage is not a function` in CI while passing locally, which is
+   a race, not a result. If it is never asked for at all there is nothing to release and the room
+   opened without it, which is the property under test anyway. */
+for(let i=0;i<80&&typeof releaseLaterPage!=='function';i++)await new Promise(r=>setTimeout(r,25));
+if(typeof releaseLaterPage==='function')releaseLaterPage();
+await coldOpen;window.PCConcordCache.page=originalCachePage;
 data.delete('pc.concord.invites');concordEnvelopeCache.clear();
 
 // Opening a room is still successful when its encrypted control/history cache is valid but every
