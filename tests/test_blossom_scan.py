@@ -448,8 +448,19 @@ class TheButtonTests(unittest.TestCase):
         self.assertIn("/api/admin/blossom/scan", self.js)
 
     def test_the_repair_asks_first_and_says_nothing_is_deleted_from_storage(self):
+        """`pcConfirm`, not the native `confirm` — the admin panel's dialogs were converted because
+        a native one opens a REAL window in the desktop shell (it split the screen in half from the
+        relay tab's prune button) and is suppressed outright in the APK's WebView, where the branch
+        behind it then never runs at all.
+
+        The `await` half is the one that matters here. `pcConfirm` returns a PROMISE: unawaited it
+        is a truthy object, so this repair would proceed unconditionally — and what it proceeds to
+        do is tombstone index entries on every device for ninety days. That is strictly worse than
+        the native dialog it replaced, so it is asserted rather than assumed."""
         seg = self.js[self.js.index("async function forget()"):]
-        self.assertIn("confirm(", seg)
+        self.assertIn("await pcConfirm(", seg,
+                      "the repair must ask through the panel's own dialog, and must await it")
+        self.assertNotIn("window.confirm(", seg)
         self.assertIn("Nothing is deleted from storage", seg)
 
     def test_the_repair_sends_the_list_the_scan_produced(self):
