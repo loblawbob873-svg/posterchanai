@@ -59,8 +59,21 @@
   const NOTIF_KINDS = new Set([1, 6, 7, 9735, 1984, 1111, 1621, 1617]);
   /* Read at most every few seconds, never per event: _isPinned runs inside eviction loops over the
      whole cache, and localStorage + JSON.parse per event is a real cost on a phone. */
+  /* TOLD, NOT GUESSED — and the guess was wrong for most people.
+   *
+   * This read `Session.load().pubkey`, and the saved session only carries one for `nip55`. An nsec
+   * login saves `{mode:'local', sk}` and an extension login saves `{mode:'nip07'}` — no pubkey at
+   * all. So the viewer resolved to '' , `_isNotifPin` answered false for every event, and pinning
+   * notifications did NOTHING for the two commonest logins. Reported from a phone signed in with an
+   * nsec as "showing only 2 notifications", which is the unpinned behaviour exactly.
+   *
+   * `window.ME` is not an option: the client keeps ME inside its own IIFE and os.js documents that
+   * window.ME is undefined. So the app SETS it at sign-in, and the session remains a fallback for
+   * the one mode that does record it. */
   let _mePk = '', _mePkAt = 0;
+  function setViewer(pk){ _mePk = String(pk || ''); _mePkAt = Date.now(); }
   function _pinnedViewer(){
+    if (_mePk) return _mePk;
     const now = Date.now();
     if (now - _mePkAt > 3000){ _mePkAt = now;
       try { _mePk = String((Session.load() || {}).pubkey || ''); } catch(_){ _mePk = ''; } }
@@ -134,6 +147,13 @@
     for (const t of ev.tags || []) if (t && t[0] === 'd' && typeof t[1] === 'string' &&
         (t[1].startsWith('pcai:note') || t[1].startsWith('pcai:pw') ||
          t[1].startsWith('pcai:sms') ||
+         /* `pcai:files-index` IS THE DRIVE. Every name, folder and encryption flag in Files comes
+            from this one document — a Blossom server keys on hashes and knows none of it — so
+            evicting it does not cost a cached listing, it costs the whole drive until a relay hands
+            it back. It was never on this list, and it survived only because the ordinary keep
+            budget happened to be big enough; the moment anything else took room, Files could not
+            see files that were all still there. Reported as exactly that. */
+         t[1].startsWith('pcai:files-index') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
          t[1] === 'pcai:desktop' || t[1] === 'pcai:agent-tasks' ||
          t[1] === 'pcai:dmkey' || t[1] === 'pcai:dmcache')) return true;
@@ -169,7 +189,9 @@
   /* Roughly what the Notifications view can page through, and far more than the 150 the
      subscription asks for on load. Same reasoning as XDC_PIN_MAX: generous against the real case,
      bounded against a stranger who p-tags you a hundred thousand times. */
-  const NOTIF_PIN_MAX = 800;
+  const NOTIF_PIN_MAX = 400;
+  /* HOW MANY OF THE LAST SPLIT WERE NOTIFICATIONS — see the ceiling note in _evictMem. */
+  let _notifPinned = 0;
   function _splitPinned(list){
     const pin = [], xdc = [], notif = [], rest = [];
     for (const ev of list){
@@ -177,6 +199,7 @@
       if (ev.kind === 1063) xdc.push(ev); else if (_isNotifPin(ev)) notif.push(ev); else pin.push(ev);
     }
     notif.sort((a,b)=>b.created_at-a.created_at);
+    _notifPinned = Math.min(notif.length, NOTIF_PIN_MAX);
     for (let i = 0; i < notif.length; i++) (i < NOTIF_PIN_MAX ? pin : rest).push(notif[i]);
     /* The capped pin. Newest announcements are kept pinned; the overflow is not DELETED, it simply
        rejoins the ordinary newest-N population and evicts like any other event — so an app that
@@ -194,11 +217,29 @@
   function _evictMem(){
     if (mem.events.size <= MEM_MAX + _pinCount) return;
     const [pin, rest] = _splitPinned([...mem.events.values()]);
-    _pinCount = pin.length;
+    /* THE CEILING RISES FOR DOCUMENTS, NEVER FOR NOTIFICATIONS.
+     *
+     * `MEM_MAX + _pinCount` exists so a large notebook does not hold the cache permanently over its
+     * limit and re-sort on every firehose event. It is a concession to data that CANNOT be refetched
+     * — a note, a vault item, an SMS archive — where evicting it loses it.
+     *
+     * A notification is not that: it is on the relay, and the subscription re-reads 150 of them on
+     * every load. Counting them here let 400-800 of them raise a phone's in-memory ceiling by up to
+     * a fifth, on top of keeping them all in full — and the screen that pays for that first is the
+     * heaviest one, Folder Sync, which was reported loading and then returning to the launcher: a
+     * WebView renderer killed for memory, which Android reports as the app closing rather than as
+     * anything the app can log. So notifications keep their protection from the eviction ORDER and
+     * are excluded from the BUDGET. */
+    _pinCount = pin.length - _notifPinned;
     if (rest.length <= MEM_KEEP) return;   // nothing worth trimming — don't pay for a reindex
     // Pinned events are kept in full and come OUT of the budget, but never take all of it: a large
     // notebook must not leave the timeline with nothing cached to render.
-    const arr = pin.concat(rest.slice(0, Math.max(MEM_KEEP - pin.length, 500)));
+    /* AND THE KEEP BUDGET IS COMPUTED THE SAME WAY, which is the half that actually hurt.
+     * `MEM_KEEP - pin.length` is how much ordinary cache survives a trim, and `pin` now contains
+     * notifications — so pinning hundreds of them SHRANK the room left for everything else by the
+     * same number. Everything else includes documents that are not on this list, and the drive
+     * index is one: Files went blind and could not list a drive that was perfectly intact. */
+    const arr = pin.concat(rest.slice(0, Math.max(MEM_KEEP - (pin.length - _notifPinned), 500)));
     mem.events.clear();
     for (const ev of arr) mem.events.set(ev.id, ev);
     _reindex();
@@ -475,5 +516,6 @@
     set(k, v){ const a = Settings.all(); a[k]=v; localStorage.setItem('pc_nostr_settings', JSON.stringify(a)); }
   };
 
+  Store.setViewer = setViewer;
   window.Store = Store; window.Session = Session; window.ClientSettings = Settings;
 })();

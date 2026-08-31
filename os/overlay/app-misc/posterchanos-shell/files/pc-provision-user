@@ -63,7 +63,12 @@ chmod 0700 "$HOME_DIR"
 # qemu:///session virtual machines. NOT wheel —
 # signing in with a key is not the same as being trusted with root, and a machine anyone may log
 # into must not hand every visitor sudo.
-for g in audio video input netdev render kvm i2c posterchan; do
+# `lp` and `lpadmin` are what make a PRINTER installable. CUPS is installed and running on every
+# PosterChanOS machine, its admin pages live on 127.0.0.1:631, and they ask for a system account in
+# the CUPS administrative group. Nobody was in it — `lpadmin` existed and was EMPTY — so the only
+# account on the machine was refused by the only printer UI there is. Reported as "how are users
+# supposed to install a printer".
+for g in audio video input netdev render kvm i2c posterchan lp lpadmin; do
   getent group "$g" >/dev/null 2>&1 && gpasswd -a "$USERNAME" "$g" >/dev/null 2>&1
 done
 

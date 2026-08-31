@@ -989,10 +989,36 @@
    *
    * FNV-1a, not a sum of char codes: 'notes' and 'stone' are the same sum, and anagram collisions
    * across a 360-slot space are exactly what a launcher full of short names would produce. */
+  /* SPREAD, NOT SCATTERED. A hash taken mod 360 is uniform in the long run and CLUMPY in the small
+   * one, and a launcher is the small one: measured on the real desktop, seventeen of thirty-seven
+   * apps landed between 175 and 260 — one indistinguishable blue band — which reads as "the icons
+   * all look the same" even though every value was different. Neighbouring hues are not different
+   * colours to a person scanning a grid.
+   *
+   * The hash therefore picks a SLOT in a fixed ring of well-separated macOS-ish hues rather than a
+   * raw degree. Twelve of them, 30 apart, so any two apps are either the same colour or visibly
+   * different — never almost the same. Repeats are fine and correct: macOS has several blue apps
+   * too. Still a pure function of the key, so an app keeps its colour for ever. */
+  /* TWELVE, EXACTLY 30 APART. Hand-picking "nice" hues put pairs 8-14 degrees apart — the very mud
+     this ring exists to avoid, and the test caught it. An even ring is the only way to guarantee
+     that any two apps are either the same colour or visibly different. Twelve rather than eighteen
+     because 20 degrees is still too close to read apart at icon size. */
+  const APP_HUES = [211, 241, 271, 301, 331, 1, 31, 61, 91, 121, 151, 181];
   function appHue(key){
     const str = String(key || ''); let h = 2166136261 >>> 0;
     for(let i = 0; i < str.length; i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
-    return h % 360;
+    /* An avalanche step before the slot is chosen. FNV's low bits carry the last character far too
+       directly, so `h % 18` over a launcher's worth of short names piled several apps onto one slot
+       purely because their names ended alike. Measured over the real view list, max-per-slot 8 -> 6
+       with the ring widened at the same time. */
+    /* `>>> 0` after EVERY xor, not just after the multiplies: `^` yields a SIGNED int32, so the last
+       one made h negative for half of all keys, `h % length` went negative, and the lookup returned
+       undefined — an icon with no colour at all. Caught because the test asserts the hue is an
+       integer in 0..359 rather than merely that it exists. */
+    h = (h ^ (h >>> 16)) >>> 0; h = Math.imul(h, 2246822507) >>> 0;
+    h = (h ^ (h >>> 13)) >>> 0; h = Math.imul(h, 3266489909) >>> 0;
+    h = (h ^ (h >>> 16)) >>> 0;
+    return APP_HUES[h % APP_HUES.length];
   }
   /* Stamped on the BUTTON, so the tile, its hover and its Dock reflection all read one value. The
    * key must be the app's durable identity — never a window id (a new one on every reopen) and
@@ -1926,6 +1952,21 @@
       if(live&&window.pcLiveUSB){
         const out=live.querySelector('[data-live-out]'), iso=live.querySelector('[data-live-iso]');
         const disk=live.querySelector('[data-live-disk]'), stat=live.querySelector('[data-live-status]');
+        /* SHOW THE NEWEST LINE, NOT THE OLDEST. The box is `max-height:120px;overflow:auto` and the
+         * text it is given is the TAIL of the log (`output.slice(-5000)`), but a <pre> keeps its
+         * scroll position — which is the top — so a build that is printing steadily looked frozen
+         * on whatever it happened to say 5,000 characters ago. Reported as looking broken, and from
+         * the outside it is indistinguishable from a job that has stopped.
+         *
+         * Stick to the bottom only when the reader is ALREADY there: scrolling up to read an error
+         * while a build runs must not be yanked back on the next poll. The 24px slack is one line's
+         * worth, so "near enough the end" still counts as following. */
+        const showTail=(text)=>{
+          if(!stat)return;
+          const following=stat.scrollHeight-stat.scrollTop-stat.clientHeight<24;
+          stat.textContent=text;
+          if(following)stat.scrollTop=stat.scrollHeight;
+        };
         const copy=live.querySelector('[data-live-copy]');
         const buildButton=live.querySelector('[data-live-build]');
         const setIso=path=>{iso.value=String(path||'');copy.disabled=!iso.value};
@@ -1933,7 +1974,7 @@
           const ds=await pcLiveUSB.devices();
           disk.innerHTML='<option value="">Choose a removable drive</option>'+ds.map(d=>
             `<option value="${enc(d.path)}" ${d.mounted?'disabled':''}>${enc(d.path+' · '+(d.model||'USB drive')+' · '+Math.round(d.size/1073741824)+' GB'+(d.mounted?' · mounted':''))}</option>`).join('');
-          const s=await pcLiveUSB.status(); stat.textContent=(s.message||'Ready')+(s.output?'\n\n'+s.output.slice(-5000):'');
+          const s=await pcLiveUSB.status(); showTail((s.message||'Ready')+(s.output?'\n\n'+s.output.slice(-5000):''));
           buildButton.disabled=!!(s.running||s.launching);
           /* The builder and writer are one workflow. Keep the exact backend-selected output path in
            * the write field so finishing an ISO does not make somebody browse back to the folder
@@ -1941,25 +1982,25 @@
            * is selected and the destructive confirmation is accepted. */
           if(s.kind==='build'&&s.path&&(s.running||s.ok))setIso(s.path);
           if(s.running) setTimeout(()=>{if(live.isConnected)refresh()},2000);
-        }catch(e){stat.textContent=String(e&&e.message||e)} };
+        }catch(e){showTail(String(e&&e.message||e))} };
         live.querySelector('[data-live-refresh]').onclick=refresh;
         live.querySelector('[data-live-dir]').onclick=async()=>{const p=await pcLiveUSB.pickDir();if(p)out.value=p};
         live.querySelector('[data-live-pick]').onclick=async()=>{const p=await pcLiveUSB.pickISO();if(p)setIso(p)};
         copy.onclick=()=>{if(iso.value)PC().copyValue(iso.value,'ISO path copied','Copy this ISO path:')};
         buildButton.onclick=async()=>{buildButton.disabled=true;try{
           const s=await pcLiveUSB.build(out.value,live.querySelector('[data-live-home]').checked);
-          if(s&&s.path)setIso(s.path);stat.textContent='Building ISO…';await refresh();
+          if(s&&s.path)setIso(s.path);showTail('Building ISO…');await refresh();
         }catch(x){
           /* IPC can reject after the privileged process has already started (or a second click can
            * race a stale renderer). The backend job is authoritative: never tell the user a live
            * build failed when it is actually compressing the image. */
           let active=null;try{active=await pcLiveUSB.status()}catch(_){}
-          if(active&&active.kind==='build'&&(active.running||active.launching)){if(active.path)setIso(active.path);stat.textContent=active.message||'Building ISO…';}
+          if(active&&active.kind==='build'&&(active.running||active.launching)){if(active.path)setIso(active.path);showTail(active.message||'Building ISO…');}
           else PC().toast(String(x&&x.message||x));
         }finally{try{const s=await pcLiveUSB.status();buildButton.disabled=!!(s.running||s.launching)}catch(_){buildButton.disabled=false}}};
         live.querySelector('[data-live-burn]').onclick=async e=>{if(!iso.value||!disk.value)return PC().toast('Choose an ISO and an unmounted USB drive');
           const ok=await PC().uiConfirm('Everything on '+disk.value+' will be overwritten. Write this ISO?',{ok:'Erase and write USB'});if(!ok)return;
-          try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);stat.textContent='Writing USB… do not unplug it';}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
+          try{e.target.disabled=true;await pcLiveUSB.burn(iso.value,disk.value);showTail('Writing USB… do not unplug it');}catch(x){PC().toast(String(x&&x.message||x))}finally{e.target.disabled=false}};
         refresh();
       }
       const jump=(k,anchor)=>{
@@ -2137,11 +2178,23 @@
     const w = wins.find(x => realFeed.parentElement === x.body);
     if(w){
       w.appView = v; try{ w.appPath = (PC().viewPath && PC().viewPath()) || ''; }catch(_){}
+      const wasTab = w.messagesTab;
       if(v==='messages'||v==='concord')w.messagesTab=v;
       /* Concord is selected inside the canonical Messages frame, after routing has already chosen
        * that frame. This render notification is therefore the authoritative place to apply its
-       * full three-pane workspace policy on tablets and on restored Direct Messages windows. */
-      if(v==='concord' && !w.max) snapTo(w,'max');
+       * full three-pane workspace policy on tablets and on restored Direct Messages windows.
+       *
+       * ON ENTERING THE TAB, AND NEVER AGAIN. `noteView` is a RENDER notification, and Concord
+       * re-renders on a four-second tick — so this re-applied `max` every four seconds for as long
+       * as the tab was open. Un-maximise the Messages window and it snapped back; drag it and it
+       * fought you; drag it toward another output and the handoff had a maximised window to move
+       * and the geometry was undone underneath it. Reported as exactly that: "can't be moved to
+       * another monitor, glitches and resists movement on the monitor it was on".
+       *
+       * A workspace policy is a decision about how a window OPENS. Once it is on screen the
+       * geometry belongs to the person dragging it, so this fires only on the transition INTO the
+       * tab — `wasTab` is read before the assignment above for that reason. */
+      if(v==='concord' && wasTab!=='concord' && !w.max) snapTo(w,'max');
     }
   }
 

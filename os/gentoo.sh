@@ -2133,7 +2133,9 @@ accounts() {
 	# The greeter normally hands the session to a per-npub account, but it is also the live image's
 	# desktop user. Give that live/repair session KVM access too, so the VM app does not change from
 	# “works installed” to “permission denied” merely because PosterChanOS is being tried from USB.
-	for g in audio video input netdev render kvm i2c; do
+	# lp/lpadmin: the live session must be able to add a printer too — trying PosterChanOS from USB
+	# and finding the printer UI refuses you is the same bug, just met sooner.
+	for g in audio video input netdev render kvm i2c lp lpadmin; do
 		getent group "$g" >/dev/null 2>&1 && gpasswd -a $SHELL_USER "$g" >/dev/null 2>&1
 	done
 	# One command, not ALL. Broad local administration is added only by finalizeInstall() on a

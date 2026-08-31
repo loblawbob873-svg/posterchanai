@@ -332,3 +332,87 @@ def file_operation(file_id: str, access_token: str = Query(...),
         else:
             raise HTTPException(501, "unsupported WOPI operation")
     return JSONResponse({})
+
+
+# --------------------------------------------------------------------------------------------
+# A BLANK DOCUMENT, BECAUSE THE EDITOR COULD ONLY EVER OPEN ONE THAT ALREADY EXISTED.
+#
+# `_officeSession` takes a file off the drive and hands it to CODE. There was no path that made a
+# file, so "create a new document" was not a slow or awkward flow — it was absent, and the only way
+# to start a spreadsheet was to already have a spreadsheet.
+#
+# OpenDocument rather than OOXML, and generated with the stdlib `zipfile` rather than a library.
+# An ODF file IS a zip with four small members, so this needs no dependency at all — which matters
+# because a new dep in requirements.txt is a node that does not start until somebody re-runs the
+# installer. python-docx/python-pptx are already present but write only two of the three types, and
+# CODE opens ODF natively.
+#
+# The `mimetype` member is FIRST and STORED UNCOMPRESSED. That is not a style choice: the ODF
+# specification requires it so a reader can identify the type from the first bytes, and a deflated
+# or later-placed mimetype is what makes an otherwise valid file open as a zip archive.
+_ODF_KINDS = {
+    "text": ("application/vnd.oasis.opendocument.text", "odt",
+             "<office:text><text:p/></office:text>"),
+    "spreadsheet": ("application/vnd.oasis.opendocument.spreadsheet", "ods",
+                    "<office:spreadsheet><table:table table:name=\"Sheet1\">"
+                    "<table:table-column/><table:table-row><table:table-cell/></table:table-row>"
+                    "</table:table></office:spreadsheet>"),
+    "presentation": ("application/vnd.oasis.opendocument.presentation", "odp",
+                     "<office:presentation><draw:page draw:name=\"page1\"/></office:presentation>"),
+}
+
+_ODF_NS = (
+    'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+    'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
+    'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" '
+    'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" '
+    'xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" '
+    'xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"'
+)
+
+
+def blank_document(kind: str) -> tuple[bytes, str, str]:
+    """Return (bytes, extension, mime) for an empty document of `kind`."""
+    import io
+    import zipfile
+
+    try:
+        mime, ext, body = _ODF_KINDS[kind]
+    except KeyError:
+        raise HTTPException(status_code=400, detail="unknown document kind")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        # First, and stored — see the note above.
+        z.writestr(zipfile.ZipInfo("mimetype"), mime, compress_type=zipfile.ZIP_STORED)
+        z.writestr("META-INF/manifest.xml",
+                   '<?xml version="1.0" encoding="UTF-8"?>'
+                   '<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:'
+                   'manifest:1.0" manifest:version="1.3">'
+                   f'<manifest:file-entry manifest:full-path="/" manifest:media-type="{mime}"/>'
+                   '<manifest:file-entry manifest:full-path="content.xml" '
+                   'manifest:media-type="text/xml"/>'
+                   '<manifest:file-entry manifest:full-path="styles.xml" '
+                   'manifest:media-type="text/xml"/>'
+                   '</manifest:manifest>')
+        z.writestr("content.xml",
+                   '<?xml version="1.0" encoding="UTF-8"?>'
+                   f'<office:document-content {_ODF_NS} office:version="1.3">'
+                   f'<office:body>{body}</office:body></office:document-content>')
+        z.writestr("styles.xml",
+                   '<?xml version="1.0" encoding="UTF-8"?>'
+                   f'<office:document-styles {_ODF_NS} office:version="1.3">'
+                   '<office:styles/></office:document-styles>')
+    return buf.getvalue(), ext, mime
+
+
+@router.get("/client/office/blank/{kind}")
+async def office_blank(kind: str):
+    """An empty document the caller can name, store on the drive and then open."""
+    data, ext, mime = blank_document(kind)
+    from fastapi.responses import Response
+    return Response(content=data, media_type=mime, headers={
+        "Content-Disposition": f'attachment; filename="untitled.{ext}"',
+        "X-Document-Extension": ext,
+        "Cache-Control": "no-store",
+    })

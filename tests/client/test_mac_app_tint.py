@@ -39,9 +39,32 @@ class AppColourIsTheAppsOwn(unittest.TestCase):
         self.assertTrue(self.got["anagram"],
                         "'notes' and 'stone' share a colour — that is the signature of a char-code "
                         "SUM, and a launcher is full of short names")
-        self.assertGreaterEqual(self.got["distinct"], self.got["total"] - 2,
-                                "only %d distinct colours for %d apps (%s)"
-                                % (self.got["distinct"], self.got["total"], self.got["hues"]))
+    def test_no_two_colours_are_almost_the_same(self):
+        """SEPARATION, not uniqueness — and this is the assertion that changed after looking at a
+        real desktop.
+
+        The first version hashed to a raw degree in 0..359 and asserted the hues were nearly all
+        distinct, which they were. On the actual machine seventeen of thirty-seven apps still landed
+        between 175 and 260: every value different, one indistinguishable blue band, reported as
+        "the desktop icons look the same". Adjacent hues are not different colours to a person
+        scanning a grid, so near-uniqueness was measuring the wrong thing.
+
+        The hash picks a slot in a ring of well-separated hues now. Two apps therefore share a
+        colour or differ visibly, never sit 4 degrees apart — and repeats are correct: macOS has
+        several blue apps too."""
+        used = sorted(set(self.got["hues"].values()))
+        close = [(a, b) for i, a in enumerate(used) for b in used[i + 1:] if abs(a - b) < 18]
+        self.assertEqual([], close,
+                         "these hues are too close to tell apart: %s" % close)
+
+    def test_no_single_colour_swallows_the_desktop(self):
+        counts = {}
+        for h in self.got["hues"].values():
+            counts[h] = counts.get(h, 0) + 1
+        worst = max(counts.values())
+        self.assertLessEqual(worst, max(4, self.got["total"] // 4),
+                             "%d of %d apps share one colour (%s) — the ring is not spreading them"
+                             % (worst, self.got["total"], counts))
 
 
 class DockDoesNotColourByPosition(unittest.TestCase):

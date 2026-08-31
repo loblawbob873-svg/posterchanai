@@ -14,6 +14,7 @@ The file is a browser IIFE, so it is loaded here in a `vm` context with a `windo
 shipped code, no port and no mock of the thing being tested.
 """
 import json
+from pathlib import Path
 import os
 import re
 import shutil
@@ -276,8 +277,42 @@ def test_a_stranger_cannot_mint_unevictable_rows():
         for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
         process.stdout.write(JSON.stringify({ kept: Store.query([{ '#p':['me'], limit:20000 }]).length }));
     """)
-    assert r["kept"] <= 900, f"the notification pin is unbounded: {r['kept']} kept"
-    assert r["kept"] >= 700, f"the cap threw away far more than it should: {r['kept']}"
+    assert r["kept"] <= 450, f"the notification pin is unbounded: {r['kept']} kept"
+    assert r["kept"] >= 350, f"the cap threw away far more than it should: {r['kept']}"
+
+
+def test_notifications_do_not_raise_the_memory_ceiling():
+    """A REFETCHABLE pin must not buy the cache more room, and this is the one that got shipped.
+
+    `_evictMem` allows `MEM_MAX + _pinCount` events before it trims, so a large notebook does not
+    sit permanently over the limit and re-sort on every firehose event. That concession is for data
+    that CANNOT be refetched — a note, a vault item, an SMS archive — where evicting it loses it.
+
+    Notifications are on the relay and the subscription re-reads 150 on every load, so counting them
+    let hundreds of them raise a PHONE's ceiling on top of keeping them all in full. The screen that
+    pays first is the heaviest one: Folder Sync was reported loading and then returning to the
+    launcher, which is a WebView renderer killed for memory — something Android reports as the app
+    closing and the app cannot log.
+
+    So the assertion is about the BUDGET, not the ordering: with the cache full of notifications the
+    resident count must still settle near MEM_KEEP, not MEM_KEEP plus the pins.
+    """
+    # ASSERTED AT THE SOURCE, AND HERE IS WHY, because a behavioural test was tried first and was
+    # WORSE THAN NONE: the cache oscillates between MEM_KEEP (3000) and MEM_MAX (4500), `_pinCount`
+    # is only refreshed by a split that has already run, and the first eviction therefore happens at
+    # 4500 whatever the pins are. Every load I chose settled inside that band and PASSED against
+    # both the fixed and the broken store. A green test that cannot fail is how this shipped in the
+    # first place, so the rule is asserted where it is unambiguous.
+    store = (Path(__file__).resolve().parents[1] / "static" / "js" / "client" / "store.js").read_text(
+        encoding="utf-8")
+    assert "_pinCount = pin.length - _notifPinned;" in store, (
+        "_evictMem counts notifications toward the memory budget again. `MEM_MAX + _pinCount` is a "
+        "concession for data that CANNOT be refetched — notes, vault items, the SMS archive. A "
+        "notification is on the relay and the subscription re-reads 150 of them on every load, so "
+        "counting it buys a PHONE hundreds of extra resident events on top of keeping them all in "
+        "full, and the screen that pays first is the heaviest one.")
+    assert "_notifPinned = Math.min(notif.length, NOTIF_PIN_MAX);" in store, (
+        "nothing measures how many pins were notifications, so the budget cannot exclude them")
 
 
 def test_your_own_posts_are_not_notifications():
@@ -292,3 +327,77 @@ def test_your_own_posts_are_not_notifications():
         process.stdout.write(JSON.stringify({ own: Store.query([{ authors:['me'], limit:5000 }]).length }));
     """)
     assert r["own"] < 40, f"your own posts are being pinned as notifications: {r['own']}/40 kept"
+
+
+def test_the_drive_index_survives_the_firehose():
+    """`pcai:files-index` IS the drive, and it was never pinned.
+
+    Every name, folder and encryption flag in Files comes from that one document — a Blossom server
+    keys on hashes and knows none of it. Evicting it does not cost a cached listing, it costs the
+    whole drive until a relay hands it back, and the screen shows an empty Files over an intact
+    account. Reported as "can't access or see my blossom files".
+
+    It survived until now only because the ordinary keep budget happened to be large enough. That is
+    not protection, it is luck, and the moment anything else took room in that budget the drive went
+    blind — which is exactly what pinning notifications did.
+    """
+    r = _run("""
+        const idx = i => ({ id:'fi'+i, pubkey:'me', kind:30078, created_at: 7000+i, sig:'x',
+                            tags:[['d','pcai:files-index']], content:'ct' });
+        Store.saveEvent(idx(0));
+        for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
+        process.stdout.write(JSON.stringify({
+          drive: Store.query([{ kinds:[30078], '#d':['pcai:files-index'], limit:5 }]).length }));
+    """)
+    assert r["drive"] == 1, ("the firehose evicted the drive index — Files then shows an empty "
+                             "drive over an account whose files are all still there")
+
+
+def test_pinned_notifications_do_not_shrink_the_room_left_for_everything_else():
+    """The keep budget is `MEM_KEEP - pin.length`, so anything added to `pin` takes room FROM the
+    unpinned population. That is the half that broke Files: the drive index is unpinned, and 800
+    notification pins took 800 events' worth of budget away from it."""
+    store = (Path(__file__).resolve().parents[1] / "static" / "js" / "client" / "store.js").read_text(
+        encoding="utf-8")
+    assert "MEM_KEEP - (pin.length - _notifPinned)" in store, (
+        "the keep budget counts notifications again, so pinning them shrinks the cache left for "
+        "every document that is NOT pinned")
+
+
+def test_an_nsec_login_still_pins_its_notifications():
+    """THE SESSION DOES NOT CARRY A PUBKEY FOR MOST LOGINS, and the first version of this pin read
+    one from it.
+
+    `Session.save({mode:'local', sk})` (an nsec) and `Session.save({mode:'nip07'})` (an extension)
+    record no pubkey at all — only `nip55` does. So the viewer resolved to '' and NOTHING was pinned
+    for the two commonest sign-ins. Reported from a phone signed in with an nsec as "showing only 2
+    notifications", which is exactly what the unpinned cache does.
+
+    The app sets the viewer explicitly now. This drives the shipped store the way the phone does:
+    a session with no pubkey, and Store.setViewer supplying it.
+    """
+    r = _run("""
+        ctx.localStorage.setItem('pc_nostr_session', JSON.stringify({mode:'local', sk:'deadbeef'}));
+        Store.setViewer('me');
+        const mention = i => ({ id:'m'+i, pubkey:'them', kind:1, created_at: 3000+i, sig:'x',
+                                tags:[['p','me']], content:'hey '+i });
+        for (let i = 0; i < 60; i++) Store.saveEvent(mention(i));
+        for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
+        process.stdout.write(JSON.stringify({ mine: Store.query([{ '#p':['me'], limit:5000 }]).length }));
+    """)
+    assert r["mine"] == 60, (
+        f"an nsec session kept {r['mine']}/60 notifications — the pin is reading a pubkey the "
+        "session does not have, so it protects nothing for anyone not signed in with nip55")
+
+
+def test_the_app_tells_the_store_who_is_signed_in():
+    """Every ME assignment must inform the Store, or a login mode added later silently loses its
+    notifications — the failure above, one sign-in method at a time."""
+    app = (Path(__file__).resolve().parents[1] / "static" / "js" / "client" / "app.js").read_text(
+        encoding="utf-8")
+    import re as _re
+    assignments = _re.findall(r"ME = \{ mode:[^;]*?\};", app)
+    assert len(assignments) >= 10, "ME assignments moved; this guard needs re-pointing"
+    missed = [a for a in assignments if "_tellStoreWhoIAm();" not in app[app.index(a):app.index(a) + len(a) + 30]]
+    assert not missed, ("these sign-in paths never tell the Store who signed in, so their "
+                        "notifications are not pinned: %s" % missed[:3])

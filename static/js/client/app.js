@@ -3686,7 +3686,7 @@
   // Public read-only session: no key, no signer. The guest sentinel ME (empty pubkey) keeps every
   // `ev.pubkey===ME.pubkey` comparison safely false, and publish() blocks writes → "log in to interact".
   function startGuest(){
-    ME = { mode:'guest', pubkey:'', npub:'' };
+    ME = { mode:'guest', pubkey:'', npub:'' }; _tellStoreWhoIAm();
     signer = null;
     startApp();
   }
@@ -3698,20 +3698,20 @@
       for(let i=0; i<20 && !window.nostr; i++) await new Promise(r=>setTimeout(r, 100));
       if (!window.nostr) throw new Error('extension gone');
       const pk = await window.nostr.getPublicKey();
-      signer = makeSigner('nip07', pk); ME = { mode:'nip07', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
+      signer = makeSigner('nip07', pk); ME = { mode:'nip07', pubkey: pk, npub: NT().nip19.npubEncode(pk) }; _tellStoreWhoIAm();
     } else if (s.mode === 'nip46'){
       const pk = await Nip46.resume(s);
-      signer = makeSigner('nip46', pk); ME = { mode:'nip46', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
+      signer = makeSigner('nip46', pk); ME = { mode:'nip46', pubkey: pk, npub: NT().nip19.npubEncode(pk) }; _tellStoreWhoIAm();
     } else if (s.mode === 'nip55'){
       // Resume WITHOUT calling the signer: the pubkey is public, so re-asking would foreground Amber on
       // every cold start just to be told something we already saved. The package + npub come back too,
       // which is what keeps later calls on the silent content-resolver path.
       if(!(await Nip55.probe())) throw new Error('signer app gone');
       Nip55.pkg = s.pkg || ''; Nip55.npub = s.npub || NT().nip19.npubEncode(s.pubkey);
-      signer = makeSigner('nip55', s.pubkey); ME = { mode:'nip55', pubkey: s.pubkey, npub: Nip55.npub };
+      signer = makeSigner('nip55', s.pubkey); ME = { mode:'nip55', pubkey: s.pubkey, npub: Nip55.npub }; _tellStoreWhoIAm();
     } else {
       const r = await Relay.worker.call('setKey', { sk: s.sk });
-      signer = makeSigner('local', r.pubkey); ME = { mode:'local', pubkey: r.pubkey, npub: NT().nip19.npubEncode(r.pubkey) };
+      signer = makeSigner('local', r.pubkey); ME = { mode:'local', pubkey: r.pubkey, npub: NT().nip19.npubEncode(r.pubkey) }; _tellStoreWhoIAm();
     }
     Session.save(s);
     // The login worked, so the boot-retry budget is spent on nothing. Cleared here rather than in
@@ -3828,7 +3828,7 @@
     if (!window.nostr){ authErr('No NIP-07 extension found (try Alby/nos2x).'); return; }
     try {
       const pk = await window.nostr.getPublicKey();
-      signer = makeSigner('nip07', pk); ME = { mode:'nip07', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
+      signer = makeSigner('nip07', pk); ME = { mode:'nip07', pubkey: pk, npub: NT().nip19.npubEncode(pk) }; _tellStoreWhoIAm();
       Session.save({ mode:'nip07' }); startApp();
     } catch(e){ authErr('extension declined'); }
   }
@@ -3842,7 +3842,7 @@
     try{
       const pk = await Nip55.getPublicKey();
       signer = makeSigner('nip55', pk);
-      ME = { mode:'nip55', pubkey: pk, npub: Nip55.npub || NT().nip19.npubEncode(pk) };
+      ME = { mode:'nip55', pubkey: pk, npub: Nip55.npub || NT().nip19.npubEncode(pk) }; _tellStoreWhoIAm();
       Session.save({ mode:'nip55', pubkey: pk, pkg: Nip55.pkg, npub: ME.npub });
       startApp();
     }catch(e){
@@ -3856,7 +3856,7 @@
 
   function amberErr(m){ const el=$('#amber-error'); if(el) el.textContent=m||''; }
   function finishAmberLogin(pk, session){
-    signer = makeSigner('nip46', pk); ME = { mode:'nip46', pubkey: pk, npub: NT().nip19.npubEncode(pk) };
+    signer = makeSigner('nip46', pk); ME = { mode:'nip46', pubkey: pk, npub: NT().nip19.npubEncode(pk) }; _tellStoreWhoIAm();
     Session.save(session);
     $('#auth-amber').classList.add('hidden'); $('#amber-nc-box').classList.add('hidden'); $('#auth-login').classList.remove('hidden');
     startApp();
@@ -4010,7 +4010,7 @@
     try{
       const k = await Relay.worker.call('decodeNsec', { nsec: j.nsec });
       await Relay.worker.call('setKey', { sk: k.sk });
-      signer = makeSigner('local', k.pubkey); ME = { mode:'local', pubkey: k.pubkey, npub: k.npub };
+      signer = makeSigner('local', k.pubkey); ME = { mode:'local', pubkey: k.pubkey, npub: k.npub }; _tellStoreWhoIAm();
       Session.save({ mode:'local', sk: k.sk });
       startApp();
       // A brand-new account gets told, once, where its key lives and how to take it with them —
@@ -4064,7 +4064,7 @@
     try {
       const r = await Relay.worker.call('decodeNsec', { nsec: v });
       await Relay.worker.call('setKey', { sk: r.sk });
-      signer = makeSigner('local', r.pubkey); ME = { mode:'local', pubkey: r.pubkey, npub: r.npub };
+      signer = makeSigner('local', r.pubkey); ME = { mode:'local', pubkey: r.pubkey, npub: r.npub }; _tellStoreWhoIAm();
       Session.save({ mode:'local', sk: r.sk }); startApp();
     } catch(e){ authErr('invalid nsec'); }
   }
@@ -4267,7 +4267,7 @@
     // captcha passed (or there was none) → set up the local session
     $('#signup-status').textContent = 'registering…';
     await Relay.worker.call('setKey', { sk: _gen.sk });
-    signer = makeSigner('local', _gen.pubkey); ME = { mode:'local', pubkey: _gen.pubkey, npub: _gen.npub };
+    signer = makeSigner('local', _gen.pubkey); ME = { mode:'local', pubkey: _gen.pubkey, npub: _gen.npub }; _tellStoreWhoIAm();
     Session.save({ mode:'local', sk: _gen.sk });
     if (res && !res.ok) toast('note: ' + (res.message||res.error||'could not auto-follow'));
     // claim a NIP-05 name on this node's identity server (proves key ownership with a self-signed
@@ -8414,6 +8414,10 @@
    * and the fetch fills in the rest behind them. The COLD path is deliberately unchanged: with
    * nothing held there is nothing honest to show, and a spinner beats an empty list that claims the
    * bookmarks are gone. */
+  /* Every ME assignment tells the Store, because the Store's notification pin needs to know whose
+   * mentions to protect and cannot reach ME (the client keeps it inside this IIFE). One helper
+   * rather than a literal per site: a login mode added later inherits it. */
+  function _tellStoreWhoIAm(){ try{ if(window.Store && Store.setViewer) Store.setViewer(ME && ME.pubkey); }catch(_){} }
   async function renderBookmarks(){
     const feed=$('#feed');
     const ids=[...BOOKMARKS];
@@ -18143,6 +18147,7 @@
              placeholder="🔍 Search files" aria-label="Search files" value="${enc(_filesQ)}">
       <div class="fx-views">
         ${canNewFolder ? `<button class="fx-newfolder" id="bl-newfolder" title="New folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg><span>New folder</span></button>` : ''}
+        ${canNewFolder ? `<button class="fx-newfolder" id="bl-newdoc" title="New document"><svg class="ic b-ic" aria-hidden="true"><use href="#i-note"></use></svg><span>New document</span></button>` : ''}
         <label class="fx-sort-wrap"><span>Sort by</span><select class="fx-sort" id="fx-sort" aria-label="Sort by">${_FX_COLS.map(([k,l])=>`<option value="${k}"${s.by===k?' selected':''}>${l}</option>`).join('')}</select></label>
         <button class="fx-sort-dir" id="fx-sort-dir" title="Reverse sort" aria-label="Reverse sort">${s.dir===1?'▲':'▼'}</button>
         <button class="fx-vw${v==='tiles'?' on':''}" data-view="tiles" title="Tiles" aria-label="Tiles"><svg class="ic b-ic" aria-hidden="true"><use href="#i-grid"></use></svg></button>
@@ -18238,6 +18243,7 @@
       const dir=$('#fx-sort-dir',pane); if(dir) dir.onclick=()=>{ const cur=_fxSort();
         ClientSettings.set('filesSort',{by:cur.by,dir:-cur.dir}); renderBlossom(); }; }
     { const nf=$('#bl-newfolder',pane); if(nf) nf.onclick=_newFolderModal; }
+    { const nd=$('#bl-newdoc',pane); if(nd) nd.onclick=_newDocumentModal; }
     /* ONE ROUTER FOR EVERY WAY OF MOVING. A crumb, Up and Back all mean "go to this place", and the
      * place is one of three sources (drive folder, synced folder, this computer). A second copy of
      * this switch is how two of them start disagreeing about what `up` means. */
@@ -20692,6 +20698,63 @@
     }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
   }
 
+  /* CREATE A DOCUMENT, not only open one that already exists.
+   *
+   * `openOfficeFile` takes a file off the drive and hands it to CODE, and there was no path in the
+   * app that MADE a file — so starting a spreadsheet required already having a spreadsheet. The
+   * blank document comes from the server (`/client/office/blank/<kind>`, built with the stdlib zip
+   * module so it costs no dependency) and is then stored and opened through the EXISTING paths:
+   * the same upload the file picker uses, honouring the folder's encryption, and the same
+   * openOfficeFile below. Nothing about saving, encrypting or re-indexing is duplicated here. */
+  const _DOC_KINDS = [['text','Document','odt'], ['spreadsheet','Spreadsheet','ods'],
+                      ['presentation','Presentation','odp']];
+  async function _createOfficeDocument(name, kind){
+    const B = _instanceBase();
+    const r = await fetch(B + '/client/office/blank/' + encodeURIComponent(kind));
+    if(!r.ok) throw new Error('could not create the document (HTTP ' + r.status + ')');
+    const ext = r.headers.get('X-Document-Extension') || 'odt';
+    const blob = await r.blob();
+    /* A name is a FILENAME: a slash would make the drive index disagree with the folder chips. */
+    const base = String(name || '').replace(/[\\/]+/g, '-').trim().slice(0, 60) || 'Untitled';
+    const fname = base.toLowerCase().endsWith('.' + ext) ? base : base + '.' + ext;
+    const file = fileFromBytes(await blob.arrayBuffer(), fname, blob.type);
+    const folder = _filesFolder || '';
+    if(FilesIdx.isEncFolder(folder)){
+      const sha = await uploadEncFile(file, folder, null);
+      _rememberUploadedBlob(sha, '', file);
+      return { sha, name: fname, mime: blob.type, enc: '1' };
+    }
+    const stored = {};
+    const url = await uploadBlob(file, { hashOut: stored, noCompress: true });
+    const sha = stored.sha || _shaFromUrl(url);
+    if(!sha) throw new Error('upload completed without a content hash');
+    FilesIdx.setFile(sha, { name: fname, folder, mime: blob.type, size: file.size,
+                            ts: Math.floor(Date.now()/1000) });
+    _rememberUploadedBlob(sha, url, file);
+    return { sha, name: fname, mime: blob.type, enc: '0', url };
+  }
+  function _newDocumentModal(){
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-note"></use></svg>New document</h3>
+      <label class="fld">Name<input class="input" id="nd-name" placeholder="Untitled" maxlength="60"></label>
+      <div class="fld">Type
+        ${_DOC_KINDS.map(([k,label],i)=>`<label class="nf-opt"><input type="radio" name="nd-kind" value="${k}"${i?'':' checked'}> <b>${label}</b></label>`).join('')}
+      </div>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn btn-ghost small" id="nd-cancel">Cancel</button><button class="btn btn-neon small" id="nd-create">Create</button></div>`,
+      root=>{
+        const nm=$('#nd-name',root); if(nm) nm.focus();
+        const c=$('#nd-cancel',root); if(c) c.onclick=closeModal;
+        const go=async ()=>{
+          const btn=$('#nd-create',root); if(btn) btn.disabled=true;
+          const kind=(($('input[name="nd-kind"]:checked',root)||{}).value)||'text';
+          try{
+            const d=await _createOfficeDocument((nm&&nm.value)||'', kind);
+            closeModal(); renderBlossom(); await openOfficeFile(d);
+          }catch(e){ if(btn) btn.disabled=false; toast('could not create it: '+((e&&e.message)||e)); }
+        };
+        const g=$('#nd-create',root); if(g) g.onclick=go;
+        if(nm) nm.addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
+      });
+  }
   async function openOfficeFile(d){
     try{
       toast(d.enc==='1'?'decrypting document…':'opening office…');
