@@ -94,6 +94,10 @@ public class SyncCheckWorker extends Worker {
     SharedPreferences.Editor e = p.edit();
     for (android.content.UriPermission up : ctx.getContentResolver().getPersistedUriPermissions()) {
       if (!up.isReadPermission()) continue;
+      /* Only FOLDERS. `getPersistedUriPermissions()` also returns grants on single documents the
+       * user once picked, and every tree API here throws or answers nothing for those. That is the
+       * same list that crashed FolderSyncPlugin.list — see isSyncableTree there. */
+      if (!FolderSyncPlugin.isSyncableTree(up.getUri())) continue;
       e.putString("sig:" + up.getUri(), signature(ctx, up.getUri()));
     }
     e.apply();
@@ -120,6 +124,10 @@ public class SyncCheckWorker extends Worker {
       int changed = 0;
       for (android.content.UriPermission up : ctx.getContentResolver().getPersistedUriPermissions()) {
         if (!up.isReadPermission()) continue;
+      /* Only FOLDERS. `getPersistedUriPermissions()` also returns grants on single documents the
+       * user once picked, and every tree API here throws or answers nothing for those. That is the
+       * same list that crashed FolderSyncPlugin.list — see isSyncableTree there. */
+      if (!FolderSyncPlugin.isSyncableTree(up.getUri())) continue;
         String key = "sig:" + up.getUri();
         String now = signature(ctx, up.getUri());
         if (now == null) continue;                     // unreadable this pass — say nothing

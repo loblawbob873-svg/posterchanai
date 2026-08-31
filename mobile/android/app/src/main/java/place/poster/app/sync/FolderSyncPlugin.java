@@ -647,10 +647,18 @@ public class FolderSyncPlugin extends Plugin {
     JSArray out = new JSArray();
     for (android.content.UriPermission p : getContext().getContentResolver().getPersistedUriPermissions()) {
       if (!p.isReadPermission()) continue;
-      JSObject o = new JSObject();
-      o.put("id", p.getUri().toString());
-      o.put("dir", prettyName(p.getUri()));
-      out.put(o);
+      /* A grant on a single document is not a folder, and offering it as one would list a "folder"
+       * that can never sync. Skipping it is the fix; not crashing on it is `prettyName`'s. */
+      if (!isSyncableTree(p.getUri())) continue;
+      try {
+        JSObject o = new JSObject();
+        o.put("id", p.getUri().toString());
+        o.put("dir", prettyName(p.getUri()));
+        out.put(o);
+      } catch (Throwable t) {
+        /* One unreadable grant must cost that row, never the list. The screen that calls this is
+         * the only way to reach every synced folder on the device. */
+      }
     }
     JSObject ret = new JSObject();
     ret.put("roots", out);
@@ -1252,10 +1260,48 @@ public class FolderSyncPlugin extends Plugin {
     return out;
   }
 
+  /** Is this grant a FOLDER we can sync, or some other document the user once let us keep?
+   *
+   * `getPersistedUriPermissions()` returns every persistable grant this app has ever taken — and a
+   * single file picked through the document picker is one of them. On a real phone that list held
+   * `content://com.android.providers.media.documents/document/video:150963`, a video, sitting
+   * alongside the synced folders. It is not a tree and there is no way to walk it.
+   */
+  static boolean isSyncableTree(Uri u) {
+    if (u == null) return false;
+    try { return DocumentsContract.isTreeUri(u); }
+    catch (Throwable t) { return false; }
+  }
+
+  /* THE CRASH THAT SURVIVED FOUR ROUNDS OF FIXES, AND IT WAS NEVER A MISSING try/catch.
+   *
+   * `DocumentsContract.getTreeDocumentId` THROWS IllegalArgumentException for a URI that is not a
+   * tree, and this was called on every persisted grant the phone holds. One video the user had once
+   * picked was enough:
+   *
+   *   java.lang.IllegalArgumentException: Invalid URI:
+   *     content://com.android.providers.media.documents/document/video%3A150963
+   *       at android.provider.DocumentsContract.getTreeDocumentId(DocumentsContract.java:1365)
+   *       at place.poster.app.sync.FolderSyncPlugin.prettyName(FolderSyncPlugin.java:1256)
+   *       at place.poster.app.sync.FolderSyncPlugin.list(FolderSyncPlugin.java:652)
+   *
+   * Opening Folder Sync calls `list()`, the first non-tree grant threw, and Capacitor's
+   * `Bridge.callPluginMethod` re-threw it as a RuntimeException on the CapacitorPlugins
+   * HandlerThread, where nothing catches it — so ANDROID ENDED THE PROCESS. "Folder Sync just
+   * crashes the app and returns you to desktop."
+   *
+   * It is phone-specific, which is why no emulator run ever saw it: it needs a persisted grant on
+   * something that is not a folder, i.e. a person who has used the app to pick a file.
+   */
   private String prettyName(Uri tree) {
-    String d = DocumentsContract.getTreeDocumentId(tree);
+    String d = null;
+    if (isSyncableTree(tree)) {
+      try { d = DocumentsContract.getTreeDocumentId(tree); }
+      catch (Throwable ignored) { }
+    }
+    if (d == null) d = tree == null ? null : tree.getLastPathSegment();
     int i = d == null ? -1 : d.lastIndexOf(':');
     String tail = i >= 0 ? d.substring(i + 1) : d;
-    return (tail == null || tail.isEmpty()) ? tree.getLastPathSegment() : tail;
+    return (tail == null || tail.isEmpty()) ? (tree == null ? "" : tree.getLastPathSegment()) : tail;
   }
 }

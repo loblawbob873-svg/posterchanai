@@ -34,7 +34,25 @@ public class SignerPlugin extends Plugin {
      * too — and every one of the three SignerKey reads below is a Keystore lookup. */
     @PluginMethod
     public void status(PluginCall call) {
-        getBridge().execute(() -> statusNow(call));
+        /* AND THAT MOVE IS WHAT MADE IT ABLE TO KILL THE APP — the same defect as
+         * FolderSyncPlugin.nativeReport, one package over. Capacitor invokes a @PluginMethod inside
+         * its own try/catch; a Runnable handed to `getBridge().execute` runs later on the bridge's
+         * handler thread, after that try/catch has returned, so nothing catches what it throws and
+         * Android ends the PROCESS.
+         *
+         * `statusNow` is a rich target for it: three Android Keystore reads, and `Native.active()` /
+         * `Native.ecdhActive()`, which touch a JNI library whose absence or mismatch surfaces as
+         * UnsatisfiedLinkError — an ERROR, so even `catch (Exception)` would not have held it.
+         *
+         * This is on the Folder Sync path: that screen needs the signer to unwrap the drive key. It
+         * also runs at EVERY launch, because `_armNative` asks status() first. */
+        getBridge().execute(() -> {
+            try { statusNow(call); }
+            catch (Throwable t) {
+                try { call.reject("could not read the signer status: " + t); }
+                catch (Throwable ignored) { }
+            }
+        });
     }
 
     private void statusNow(PluginCall call) {

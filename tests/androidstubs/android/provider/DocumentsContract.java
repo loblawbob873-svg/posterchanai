@@ -18,7 +18,13 @@ public final class DocumentsContract {
     public static final String MIME_TYPE_DIR = "vnd.android.document/directory";
   }
 
-  public static String getTreeDocumentId(Uri tree) { return null; }
+  /* IT THROWS, exactly as the platform does. Returning null here would have let the crash that
+     ended the app process on every Folder Sync open compile, run and pass. */
+  public static String getTreeDocumentId(Uri tree) {
+    if (!isTreeUri(tree)) throw new IllegalArgumentException("Invalid URI: " + tree);
+    java.util.List<String> p = tree.getPathSegments();
+    return p.size() >= 2 ? p.get(1) : null;
+  }
   public static String getDocumentId(Uri doc) { return null; }
   public static Uri buildChildDocumentsUriUsingTree(Uri tree, String parentDocumentId) { return null; }
   public static Uri buildDocumentUriUsingTree(Uri tree, String documentId) { return null; }
@@ -31,4 +37,12 @@ public final class DocumentsContract {
       throws java.io.FileNotFoundException { return null; }
   public static Uri moveDocument(ContentResolver cr, Uri doc, Uri parent, Uri target)
       throws java.io.FileNotFoundException { return null; }
+  /* REAL BEHAVIOUR, not a stub that always says yes: the platform's getTreeDocumentId THROWS
+     IllegalArgumentException for a URI that is not a tree, and that throw is what ended the app
+     process every time somebody opened Folder Sync on a phone holding a grant for a single picked
+     file. A stub that quietly returned null here would let the bug compile and pass for ever. */
+  public static boolean isTreeUri(android.net.Uri uri) {
+    java.util.List<String> p = uri == null ? null : uri.getPathSegments();
+    return p != null && p.size() >= 2 && "tree".equals(p.get(0));
+  }
 }

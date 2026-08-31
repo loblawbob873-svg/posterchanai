@@ -21,12 +21,19 @@ with a different shape, and the harder one to tell from a hang.
 This is a source audit rather than a device test because the failure is structural: the presence of
 an unguarded body is the bug, and no amount of exercising finds the one input that throws.
 """
+import glob
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
-SYNC = (Path(__file__).resolve().parent.parent / "mobile" / "android" / "app" / "src" / "main"
-        / "java" / "place" / "poster" / "app" / "sync")
+APP = (Path(__file__).resolve().parent.parent / "mobile" / "android" / "app" / "src" / "main"
+       / "java" / "place" / "poster" / "app")
+SYNC = APP / "sync"
+MANIFEST = APP.parents[3] / "AndroidManifest.xml"   # .../app/src/main/AndroidManifest.xml
 
 
 def _bodies(src: str, opener: str):
@@ -119,6 +126,20 @@ class NoBackgroundTaskMayEndTheProcess(unittest.TestCase):
         self.assertIn("catch (Throwable", body)
         self.assertIn("call.reject", body, "a failure must reach the page, not vanish")
 
+    def test_no_bridge_task_ANYWHERE_in_the_app_is_unguarded(self):
+        """The audit was scoped to `sync` and the next crash was in `signer` — SignerPlugin.status,
+        the same `getBridge().execute(() -> somethingNow(call))` shape, reading the Keystore and
+        probing a JNI library whose absence is an UnsatisfiedLinkError (an Error, which even
+        `catch (Exception)` would not hold). Folder Sync needs the signer to unwrap the drive key,
+        and `_armNative` asks status() at every launch besides."""
+        bad = []
+        for path in sorted(APP.rglob("*.java")):
+            src = path.read_text(encoding="utf-8")
+            for pos, body in _bodies(src, "getBridge().execute("):
+                if "catch (Throwable" not in body:
+                    bad.append("%s:%d" % (path.name, _line(src, pos)))
+        self.assertEqual(bad, [], "unguarded bridge tasks end the PROCESS:\n" + "\n".join(bad))
+
     def test_the_screen_really_does_call_it_while_painting(self):
         """If this stops being true the test above is guarding the wrong method, so it is asserted
         rather than assumed."""
@@ -130,3 +151,51 @@ class NoBackgroundTaskMayEndTheProcess(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AMissedGuardCostsAFeatureNotTheApp(unittest.TestCase):
+    """Four rounds of fixes, four APKs, and the app still died — because each round guarded the
+    task it had found and the next unguarded one was in the next file. There are twenty-six
+    background tasks in this app whose bodies are not individually wrapped. This is the floor
+    underneath all of them."""
+
+    SRC = (APP / "PosterChanApp.java")
+
+    def test_the_application_class_exists_and_is_registered(self):
+        self.assertTrue(self.SRC.exists(), "no Application subclass — nothing installs the handler")
+        manifest = MANIFEST.read_text(encoding="utf-8")
+        self.assertIn('android:name=".PosterChanApp"', manifest,
+                      "the class exists but Android never instantiates it")
+
+    def test_a_worker_thread_does_not_take_the_process_with_it(self):
+        src = self.SRC.read_text(encoding="utf-8")
+        self.assertIn("setDefaultUncaughtExceptionHandler", src)
+        self.assertIn("Log.e(", src, "a swallowed crash with no log is worse than the crash")
+
+    def test_the_main_thread_is_deliberately_still_fatal(self):
+        """Swallowing on the main thread leaves a Looper unwound mid-dispatch: the process survives
+        with a UI that no longer draws or responds and reports nothing — strictly worse than
+        crashing, and undiagnosable."""
+        src = self.SRC.read_text(encoding="utf-8")
+        self.assertIn("previous.uncaughtException(thread, error)", src)
+        self.assertIn("if (main && previous != null)", src,
+                      "the main thread must reach the previous handler")
+
+
+@unittest.skipIf(not shutil.which("javac"), "no javac on this node")
+class TheSafetyNetActUALLYCompiles(unittest.TestCase):
+    """A test that cannot compile is a test that does not exist, only quieter — and that has already
+    cost this repo a whole rewrite's worth of coverage on the Android sweep. PosterChanApp sits
+    outside the `sync` package, so nothing else here would have compiled it."""
+
+    def test_the_application_class_compiles(self):
+        root = Path(__file__).resolve().parent.parent
+        stubs = str(root / "tests" / "androidstubs")
+        java = str(root / "mobile" / "android" / "app" / "src" / "main" / "java")
+        with tempfile.TemporaryDirectory() as out:
+            r = subprocess.run(
+                ["javac", "-nowarn", "-proc:none", "-d", out,
+                 "-sourcepath", stubs + os.pathsep + java,
+                 str(root / "mobile/android/app/src/main/java/place/poster/app/PosterChanApp.java")],
+                capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-3000:])
