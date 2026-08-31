@@ -214,7 +214,26 @@ public final class NativeRunner {
                 + (why == null || why.isEmpty() ? "" : " (" + why + ")");
         Thread t = new Thread(new Runnable() {
             public void run() {
+                /* NOTHING MAY ESCAPE THIS RUNNABLE, AND `finally` IS NOT A CATCH.
+                 *
+                 * This was try/finally with no catch, so anything sweepAll let out left run()
+                 * uncaught on a background thread — which on Android is not a logged error, it is
+                 * the DEFAULT HANDLER KILLING THE PROCESS. The app disappears, a launcher phone
+                 * lands on its home screen, and the system offers "there is a bug and it closed".
+                 * That is exactly how this was reported: Folder Sync "tries to load, then returns
+                 * you to desktop", and after a few attempts Android says the app closed. Nothing
+                 * reaches our own reporting, because the reporting lives inside the method that
+                 * threw.
+                 *
+                 * sweepAll catches Throwable ITSELF, which is why this looked safe — but its catch
+                 * block ALLOCATES to record the failure, and an OutOfMemoryError raised inside a
+                 * catch that then allocates is thrown again, out of the catch, past the finally and
+                 * out of here. Syncing a folder on a phone is precisely where OOM happens. */
                 try { sweepAll(app, p.due, p.deep); }
+                catch (Throwable fatal) {
+                    running = false;
+                    try { lastWhy = "the sync stopped: " + fatal; } catch (Throwable ignored) { }
+                }
                 finally { if (done != null) { try { done.run(); } catch (Throwable ignored) { } } }
             }
         }, "pc-native-sync");
@@ -224,11 +243,14 @@ public final class NativeRunner {
     }
 
     private static void sweepAll(Context ctx, List<SyncStore.Folder> due, List<Boolean> deep) {
-        SyncStore store = new SyncStore(ctx);
+        /* Opened INSIDE the try below, or the one line that opens the store is the one line
+         * whose failure has nowhere to be recorded and nothing to catch it. */
+        SyncStore store = null;
         PowerManager.WakeLock wake = null;
         java.util.Timer renew = null;
         byte[] sec = null;
         try {
+            store = new SyncStore(ctx);
             PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
             if (pm != null) {
                 wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "posterchan:nativesync");
@@ -275,10 +297,21 @@ public final class NativeRunner {
             out.put("folders", reports);
             store.setLastReport(Json.write(out));
         } catch (Throwable t) {
-            Map<String, Object> out = new LinkedHashMap<String, Object>();
-            out.put("at", System.currentTimeMillis());
-            out.put("error", String.valueOf(t.getMessage() == null ? t : t.getMessage()));
-            try { store.setLastReport(Json.write(out)); } catch (Throwable ignored) { }
+            /* REPORTING A FAILURE MUST NOT NEED WHAT THE FAILURE RAN OUT OF. Building a map and a
+             * JSON string is an allocation, and the commonest reason a sync dies on a phone is that
+             * there is no memory left — so the recorder threw its own OutOfMemoryError, out of this
+             * catch, and killed the process instead of writing the line that would have explained
+             * it. Everything here is wrapped, and `store` may legitimately be null when the failure
+             * was opening it. */
+            try { lastWhy = "the sync stopped: " + t; } catch (Throwable ignored) { }
+            try {
+                if (store != null) {
+                    Map<String, Object> out = new LinkedHashMap<String, Object>();
+                    out.put("at", System.currentTimeMillis());
+                    out.put("error", String.valueOf(t.getMessage() == null ? t : t.getMessage()));
+                    store.setLastReport(Json.write(out));
+                }
+            } catch (Throwable ignored) { }
         } finally {
             if (sec != null) java.util.Arrays.fill(sec, (byte) 0);
             if (renew != null) try { renew.cancel(); } catch (Throwable ignored) { }

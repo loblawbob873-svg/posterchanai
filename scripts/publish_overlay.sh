@@ -135,6 +135,31 @@ git push -q "ssh://$NAS$DEST" HEAD:main
 ssh "$NAS" "cd '$DEST' && git symbolic-ref HEAD refs/heads/main && git update-server-info \
     && git config core.sharedRepository group && chmod -R a+rX ."
 
-echo "[overlay] published"
-echo "[overlay]   sync-uri = $URL"
-echo "[overlay] verify with:  git ls-remote $URL"
+# VERIFY, RATHER THAN PRINT THE COMMAND THAT WOULD.
+#
+# This script ended by telling the operator how to check, which is not the same as checking — and
+# every failure this file already documents (EACCES on mkdir, a dangling HEAD, a missing
+# update-server-info) has the same shape: the publish looks perfect from here and the URL is broken.
+# It happened again on 2026-08-31 for a reason none of those comments cover: the overlay lives at
+# /raid/distfiles/distfiles/posterchan-overlay.git, and nas mirrors a Gentoo distfiles tree into
+# /raid/distfiles with `rsync --delete` every morning at 06:00. Upstream has never heard of this
+# directory, so the mirror deleted it daily. `emerge --sync` on an installed machine then said
+#
+#     fatal: repository 'https://gentoo.poster.place/posterchan-overlay.git/' not found
+#
+# and the machine could not update at all. The mirror now excludes it (admintools servers.py), but a
+# publish that cannot prove its own result will hide the next cause just as well as it hid this one.
+if command -v git >/dev/null 2>&1; then
+    if git ls-remote "$URL" >/dev/null 2>&1; then
+        echo "[overlay] published and reachable"
+        echo "[overlay]   sync-uri = $URL"
+    else
+        echo "[overlay] PUBLISHED BUT NOT REACHABLE at $URL" >&2
+        echo "[overlay] The files are on $NAS; something between them and the web is wrong." >&2
+        echo "[overlay] Installed machines cannot 'emerge --sync' until this resolves." >&2
+        exit 1
+    fi
+else
+    echo "[overlay] published (git unavailable here, so reachability was NOT verified)"
+    echo "[overlay]   sync-uri = $URL"
+fi
