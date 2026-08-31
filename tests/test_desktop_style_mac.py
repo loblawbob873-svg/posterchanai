@@ -103,7 +103,11 @@ def test_mac_mode_has_theme_specific_dock_and_status_icons():
               CSS.index("@media(max-width:1180px)", CSS.index("/* Optional macOS desktop experience"))]
     assert ".os-root.os-style-mac .os-task>.os-app-ic" in mac
     assert ".os-root.os-style-mac .os-task>.ic" in mac
-    assert "border-radius:10px" in mac and "linear-gradient(145deg" in mac
+    # The Dock tiles are macOS app artwork now: a squircle carrying the APP's own hue, rather than
+    # the old fixed 145deg gradients cycled by :nth-child position (see
+    # tests/client/test_mac_app_tint.py — the same app changed colour when a neighbour opened).
+    assert "border-radius:23%" in mac, "the Dock tiles lost their squircle"
+    assert "hsl(var(--app-h" in mac, "the Dock tiles no longer take the app's own colour"
     assert ".os-root.os-style-mac .os-tray-group" in mac
     assert "compact monochrome symbols" in mac
 

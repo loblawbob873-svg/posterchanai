@@ -40,8 +40,43 @@
   // of a 3000-event window, so this is the normal case, not an edge one.
   // Matched by the d-tag rather than by author because Store has no idea who is logged in — and it
   // needs none: `pcai:note…` under kind 30078 is by construction this user's own notes and folders.
+  /* YOUR OWN NOTIFICATIONS ARE NOT FIREHOSE, and the newest-N rule was treating them as if they
+   * were. Reported from the phone as "I have many notifications, mobile only shows 4 when I load
+   * the app".
+   *
+   * A mention, a reaction, a zap or a repost that p-tags YOU is a handful of events about you
+   * personally, and they sit in the same cache as the global feed — which produces thousands. A few
+   * minutes of reading the timeline evicts every one of them, so on the next cold start the
+   * Notifications view renders whatever survived, which is a single-digit number, while the relay
+   * still holds them all. It is the same mistake Notes, the vault, playlists, the desktop layout
+   * and the SMS archive each had to be rescued from, and the symptom is the giveaway: not empty,
+   * just far too few.
+   *
+   * CAPPED, because anybody can p-tag anybody — this is the second pin here written by strangers
+   * rather than by the signed-in user, so it takes the same treatment as the mini-app one: newest
+   * kept, the overflow rejoins the ordinary population and evicts normally. Never a growing set of
+   * unevictable rows a spammer can mint. */
+  const NOTIF_KINDS = new Set([1, 6, 7, 9735, 1984, 1111, 1621, 1617]);
+  /* Read at most every few seconds, never per event: _isPinned runs inside eviction loops over the
+     whole cache, and localStorage + JSON.parse per event is a real cost on a phone. */
+  let _mePk = '', _mePkAt = 0;
+  function _pinnedViewer(){
+    const now = Date.now();
+    if (now - _mePkAt > 3000){ _mePkAt = now;
+      try { _mePk = String((Session.load() || {}).pubkey || ''); } catch(_){ _mePk = ''; } }
+    return _mePk;
+  }
+  function _isNotifPin(ev){
+    if (!NOTIF_KINDS.has(ev.kind)) return false;
+    const me = _pinnedViewer();
+    /* Your own posts are not notifications, and with no session there is nobody to notify. */
+    if (!me || ev.pubkey === me) return false;
+    for (const t of ev.tags || []) if (t && t[0] === 'p' && t[1] === me) return true;
+    return false;
+  }
   function _isPinned(ev){
     if (!ev) return false;
+    if (_isNotifPin(ev)) return true;
     /* A MINI APP'S ANNOUNCEMENT (kind 1063, `m application/x-webxdc`).
      *
      * The only non-30078 thing pinned here, and for the same reason as the rest: the newest-N rule is
@@ -131,9 +166,18 @@
      network (single digits today, and galLoad asks for at most 300 per load) and small against the
      abuse case, which is unbounded — see the kind-1063 note in _isPinned. */
   const XDC_PIN_MAX = 400;
+  /* Roughly what the Notifications view can page through, and far more than the 150 the
+     subscription asks for on load. Same reasoning as XDC_PIN_MAX: generous against the real case,
+     bounded against a stranger who p-tags you a hundred thousand times. */
+  const NOTIF_PIN_MAX = 800;
   function _splitPinned(list){
-    const pin = [], xdc = [], rest = [];
-    for (const ev of list) (_isPinned(ev) ? (ev.kind === 1063 ? xdc : pin) : rest).push(ev);
+    const pin = [], xdc = [], notif = [], rest = [];
+    for (const ev of list){
+      if (!_isPinned(ev)) { rest.push(ev); continue; }
+      if (ev.kind === 1063) xdc.push(ev); else if (_isNotifPin(ev)) notif.push(ev); else pin.push(ev);
+    }
+    notif.sort((a,b)=>b.created_at-a.created_at);
+    for (let i = 0; i < notif.length; i++) (i < NOTIF_PIN_MAX ? pin : rest).push(notif[i]);
     /* The capped pin. Newest announcements are kept pinned; the overflow is not DELETED, it simply
        rejoins the ordinary newest-N population and evicts like any other event — so an app that
        falls out of the cache is one the gallery re-queries, not one that is gone. */

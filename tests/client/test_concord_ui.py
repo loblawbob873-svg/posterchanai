@@ -686,7 +686,13 @@ def test_room_history_errors_are_coalesced_instead_of_toaster_spam():
     assert 'const roomLoadNotices=new Map()' in CONCORD
     warning = CONCORD.split('function roomLoadWarning', 1)[1].split(
         'function decodeMembershipLists', 1)[0]
-    assert 'if(old&&old.message===message)return;' in warning, warning
+    # AND COMPARING THE WHOLE MESSAGE WAS NOT ENOUGH, which is why this now asserts the shape.
+    # The commonest failure here is deliberately diagnostic — "no channels readable yet - 4 relay(s)
+    # asked, 191 control event(s) held, 3 new" — so its COUNTS move on every attempt. Compared
+    # whole, no two are ever equal, this guard never matched, and the four-second retry toasted
+    # every four seconds anyway: the same wall of messages, reported again.
+    assert "const shape=message.replace(/\\d+/g,'#')" in warning, warning
+    assert 'if(old&&old.shape===shape)return;' in warning, warning
     assert 'now-old.at>' not in warning, "a time window re-toasts a condition nobody can act on"
     channel = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split(
         "$$('[data-cc-star]')", 1)[0]

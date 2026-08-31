@@ -240,3 +240,55 @@ def test_every_carried_doc_is_also_pinned():
                  for k, v in rules)
         assert ok, f"{d} is carried across relays but is NOT pinned in the client cache"
 
+
+
+def test_your_own_notifications_survive_the_firehose():
+    """Reported from the phone: "I have many notifications, mobile only shows 4 when I load the app".
+
+    A mention, reaction, zap or repost that p-tags YOU is a handful of events about you personally,
+    and they live in the same newest-N cache as the global feed, which produces thousands. A few
+    minutes of timeline reading evicts every one, and the next cold start renders whatever survived
+    — a single-digit number — while the relay still holds them all. Not empty, just far too few,
+    which is why it reads as a broken view rather than as a cache miss.
+    """
+    r = _run("""
+        ctx.localStorage.setItem('pc_nostr_session', JSON.stringify({pubkey:'me'}));
+        const mention = i => ({ id:'m'+i, pubkey:'them', kind:1, created_at: 3000+i, sig:'x',
+                                tags:[['p','me']], content:'hey @me '+i });
+        const zap     = i => ({ id:'z'+i, pubkey:'them', kind:9735, created_at: 4000+i, sig:'x',
+                                tags:[['p','me']], content:'' });
+        for (let i = 0; i < 40; i++) { Store.saveEvent(mention(i)); Store.saveEvent(zap(i)); }
+        for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
+        const mine = Store.query([{ '#p':['me'], limit:5000 }]).length;
+        process.stdout.write(JSON.stringify({ mine }));
+    """)
+    assert r["mine"] == 80, f"the firehose evicted your notifications: {r['mine']}/80 left"
+
+
+def test_a_stranger_cannot_mint_unevictable_rows():
+    """The second pin here written by strangers rather than by the signed-in user, so it takes the
+    same cap as the mini-app one: anybody can p-tag anybody."""
+    r = _run("""
+        ctx.localStorage.setItem('pc_nostr_session', JSON.stringify({pubkey:'me'}));
+        const spam = i => ({ id:'s'+i, pubkey:'flooder', kind:1, created_at: 5000+i, sig:'x',
+                             tags:[['p','me']], content:'spam '+i });
+        for (let i = 0; i < 3000; i++) Store.saveEvent(spam(i));
+        for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
+        process.stdout.write(JSON.stringify({ kept: Store.query([{ '#p':['me'], limit:20000 }]).length }));
+    """)
+    assert r["kept"] <= 900, f"the notification pin is unbounded: {r['kept']} kept"
+    assert r["kept"] >= 700, f"the cap threw away far more than it should: {r['kept']}"
+
+
+def test_your_own_posts_are_not_notifications():
+    """A post you wrote that p-tags you (a self-mention, or a reply in your own thread) is timeline
+    content and must age out normally, or every post you ever make becomes unevictable."""
+    r = _run("""
+        ctx.localStorage.setItem('pc_nostr_session', JSON.stringify({pubkey:'me'}));
+        const own = i => ({ id:'o'+i, pubkey:'me', kind:1, created_at: 6000+i, sig:'x',
+                            tags:[['p','me']], content:'mine '+i });
+        for (let i = 0; i < 40; i++) Store.saveEvent(own(i));
+        for (let i = 0; i < 9000; i++) Store.saveEvent(post(i));
+        process.stdout.write(JSON.stringify({ own: Store.query([{ authors:['me'], limit:5000 }]).length }));
+    """)
+    assert r["own"] < 40, f"your own posts are being pinned as notifications: {r['own']}/40 kept"

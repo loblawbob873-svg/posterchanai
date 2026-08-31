@@ -7487,6 +7487,41 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-root.os-style-mac .os-icons{padding-top:12px;padding-bottom:6px}
 .os-root.os-style-mac .os-icon{border-radius:10px;
   text-shadow:0 1px 3px var(--mac-ink-sh),0 2px 8px var(--mac-ink-sh)}
+/* macOS APP ARTWORK: a squircle tile, coloured by the app, with its glyph knocked out in white.
+ *
+ * The layout had a menu bar, a Dock and traffic lights, and then drew the SAME flat sprite glyphs
+ * the PosterChan desktop uses — so it read as our desktop wearing a Mac hat, which is what "I don't
+ * see macOS icons" meant.
+ *
+ * The hue comes from `--app-h`, stamped per button by os.js from the app's durable key (see
+ * appHue). It is deliberately NOT theme-derived: macOS icons are saturated on light and dark alike,
+ * for the same reason the traffic lights are fixed — colour is how you find an app, and an identity
+ * that changes with the wallpaper is not one. Contrast is safe by construction: the glyph is white
+ * on a 44-62% lightness fill, whatever the theme.
+ *
+ * 23% is the standard squircle approximation. A true superellipse needs a clip-path per size, and
+ * at 56px the difference is under a pixel. */
+.os-root.os-style-mac .os-icon>.ic,
+.os-root.os-style-mac .os-startmenu .os-app>.ic{
+  box-sizing:border-box;width:56px;height:56px;padding:12px;border-radius:23%;
+  color:#fff;
+  background:linear-gradient(160deg,hsl(var(--app-h,212) 78% 62%),hsl(var(--app-h,212) 74% 44%));
+  box-shadow:0 3px 9px #0006,inset 0 1px 0 #ffffff44;
+  transition:transform .13s ease,box-shadow .13s ease}
+.os-root.os-style-mac .os-icon:hover>.ic{transform:scale(1.06);box-shadow:0 6px 16px #0007,inset 0 1px 0 #ffffff55}
+/* Real artwork from a .desktop file is a PICTURE, not a glyph: give it the same silhouette and
+   leave the pixels alone — a gradient behind an opaque PNG would only show as a border. */
+.os-root.os-style-mac .os-icon>.os-app-ic,
+.os-root.os-style-mac .os-startmenu .os-app>.os-app-ic{
+  width:56px;height:56px;border-radius:23%;object-fit:cover;box-shadow:0 3px 9px #0006}
+/* A FOLDER IS BLUE, on every desktop that has ever had folders. It is the one icon whose colour is
+   not the app's identity but its KIND, so it does not take a hue. */
+.os-root.os-style-mac .os-icon.is-folder>.ic,
+.os-root.os-style-mac .os-icon.is-folder>.os-folder{
+  background:linear-gradient(160deg,#7cc4ff,#2b7fd4);color:#fff}
+.os-root.os-style-mac .os-startmenu .os-app{gap:9px}
+.os-root.os-style-mac .os-startmenu .os-app>.ic{width:34px;height:34px;padding:7px;border-radius:24%}
+.os-root.os-style-mac .os-startmenu .os-app>.os-app-ic{width:34px;height:34px;border-radius:24%}
 .os-root.os-style-mac .os-icon:hover,.os-root.os-style-mac .os-icon.selected{
   background:rgba(255,255,255,.15);box-shadow:inset 0 0 0 1px rgba(255,255,255,.13)}
 .os-root.os-style-mac .osw{border:1px solid var(--mac-line);border-radius:13px;
@@ -7556,13 +7591,15 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    artwork, clipped to the rounded-square mask used by the Dock. PosterChan's monochrome sprite
    fallbacks become coloured squircle tiles rather than bare Windows-style line glyphs. */
 .os-root.os-style-mac .os-task>.os-app-ic{width:39px;height:39px;display:block;object-fit:cover;
-  border-radius:10px;box-shadow:0 2px 7px #0007,0 1px 0 rgba(255,255,255,.25) inset}
-.os-root.os-style-mac .os-task>.ic{box-sizing:border-box;width:39px;height:39px;padding:8px;border-radius:10px;
-  color:#fff;background:linear-gradient(145deg,#58a9ff,#0969d7);box-shadow:0 2px 7px #0007,
-  0 1px 0 rgba(255,255,255,.28) inset}
-.os-root.os-style-mac .os-task:nth-child(4n+2)>.ic{background:linear-gradient(145deg,#b37cff,#7042d7)}
-.os-root.os-style-mac .os-task:nth-child(4n+3)>.ic{background:linear-gradient(145deg,#ff9768,#e24c39)}
-.os-root.os-style-mac .os-task:nth-child(4n)>.ic{background:linear-gradient(145deg,#58d39a,#16815c)}
+  border-radius:23%;box-shadow:0 2px 7px #0007,0 1px 0 rgba(255,255,255,.25) inset}
+/* THE SAME TILE AS THE DESKTOP AND THE START MENU, and coloured by the APP rather than by where it
+   happens to sit. This was `:nth-child(4n+2|3|4)` — a four-colour rainbow cycled by position, so
+   opening one window re-coloured every tile after it and the same app was blue, then purple, then
+   orange, on one desktop. `--app-h` is stamped per button from the app's durable key. */
+.os-root.os-style-mac .os-task>.ic{box-sizing:border-box;width:39px;height:39px;padding:8px;
+  border-radius:23%;color:#fff;
+  background:linear-gradient(160deg,hsl(var(--app-h,212) 78% 62%),hsl(var(--app-h,212) 74% 44%));
+  box-shadow:0 2px 7px #0007,0 1px 0 rgba(255,255,255,.28) inset}
 /* The top-right status area is menu-bar furniture: compact monochrome symbols, never Dock tiles. */
 .os-root.os-style-mac .os-tray .ic,.os-root.os-style-mac .os-tray-group svg{width:16px;height:16px;color:var(--mac-ink)}
 .os-root.os-style-mac .os-tray-group{height:26px;padding:0 5px;border:0;background:transparent;color:var(--mac-ink)}

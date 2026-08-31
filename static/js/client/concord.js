@@ -13,6 +13,10 @@
    * redundant Damus sockets. Explicit invite/bootstrap and room bundle relays remain authoritative
    * below, even when they name one of those hosts. */
   const CORD_RELAYS=['wss://jskitty.com/nostr','wss://asia.vectorapp.io/nostr','wss://nostr.computingcache.com','wss://relay.dreamith.to'];
+  /* How much cached history the channel on screen decrypts before it is drawn. A channel view
+   * shows a couple of dozen messages; everything past that is scrollback and belongs behind the
+   * paint, not in front of it. */
+  const FIRST_PAINT_WRAPS=60;
   const DISCOVER_RELAYS=['wss://relay.dreamith.to'];
   const LEGACY_RECOVERY_RELAYS=['wss://relay.ditto.pub','wss://relay.damus.io'];
   /* A community's invite is authoritative about where its encrypted stream lives. Appending the
@@ -680,7 +684,19 @@
        * tries again rather than showing initials for the rest of the session. */
       iconsWarmedFor=''; console.warn('Concord icon warm failed',e); return;
     }
-    if(!rows.length)return;
+    /* LATCH ON THE RESULT, NEVER ON THE ATTEMPT — the shape this codebase keeps re-learning.
+     *
+     * `iconsWarmedFor` is set BEFORE the read, and the two early exits below then mean "this room
+     * list is warmed" when nothing was warmed at all. An empty store is the ORDINARY first visit:
+     * the icons are written by applyRoomIconMetadata a moment later, and by then the signature has
+     * not changed, so nothing re-reads and every community shows its two initials for the rest of
+     * the session. The error path above already understood this ("could not ask" is never "there is
+     * nothing there"); an empty answer needed the same treatment.
+     *
+     * Only retried while there is something to wait FOR: a room with no icon at all must not make
+     * this re-read IndexedDB on every repaint. */
+    const wanted=saved().some(room=>iconRef(room&&(room.iconPointer||room.icon)));
+    if(!rows.length){ if(wanted)iconsWarmedFor=''; return; }
     const byKey=new Map(rows.map(r=>[String(r.key),r]));
     let filled=0;
     for(const room of saved()){
@@ -695,6 +711,9 @@
         filled++;
       }catch(_){ }
     }
+    /* Same rule at the other end: a pass that painted nothing while an icon was still wanted has
+     * not warmed anything, and must not claim it did. */
+    if(!filled&&wanted)iconsWarmedFor='';
     if(filled&&document.body.classList.contains('concord-view'))backgroundRender();
   }
 
@@ -1000,9 +1019,16 @@
    * handler), so a room that recovers and then breaks again says so again. What is gone is the
    * repetition of one unchanged fact nobody can act on. */
   function roomLoadWarning(p,key,prefix,error){
-    const message=String(error&&error.message||error),old=roomLoadNotices.get(key);
-    if(old&&old.message===message)return;
-    roomLoadNotices.set(key,{message,at:Date.now()});
+    const message=String(error&&error.message||error);
+    /* DEDUPE ON THE FAILURE, NOT ON ITS WORDING. The most common message here is deliberately
+     * diagnostic — "no channels readable yet - 4 relay(s) asked, 191 control event(s) held, 3 new"
+     * - so its COUNTS change on every attempt. Compared whole, no two are ever equal, the guard
+     * below never matches, and a condition that repeats every four seconds toasts every four
+     * seconds. That is the wall of messages this was reported as. The numbers are what make the
+     * line worth printing once, and exactly what makes it useless as an identity. */
+    const shape=message.replace(/\d+/g,'#'),old=roomLoadNotices.get(key);
+    if(old&&old.shape===shape)return;
+    roomLoadNotices.set(key,{message,shape,at:Date.now()});
     p.toast(prefix+message);
   }
   function decodeMembershipLists(decrypted){
@@ -1235,9 +1261,23 @@
          * whichever channel is actually open, and with no prior messages its `since` is 0. */
         const [cachedHead,...cachedRest]=ordered;
         if(cachedHead){
-          await replayCached(cachedHead);
+          /* PAINT A SCREENFUL, NOT A PAGE. Even after the other channels moved off the critical
+           * path, the one channel left still decrypted 300 envelopes before showing a single
+           * message — and a phone is several times slower at NIP-44 than the box this was measured
+           * on. Nobody is waiting for message 300; they are waiting for the last twenty. The rest of
+           * the page follows immediately behind, in the same prefetch as the other channels, so
+           * scrolling up still finds history. */
+          const quick=await cachedEnvelopePage(envelopeCacheKey(loadKey,cachedHead.id),FIRST_PAINT_WRAPS);
+          if(quick.length){
+            try{ await applyChannel(cachedHead,quick); cachedHistoryRendered=true; }
+            catch(e){ if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
+                      cachedStale.push(cachedHead.name); }
+          }
           if(roomIdentity(saved()[state.community])===identity)backgroundRender();
         }
+        /* The head's FULL page is prefetch too — it is the deeper history behind the screenful that
+         * has already been painted, not the thing being waited for. */
+        if(cachedHead)cachedRest.unshift(cachedHead);
         if(cachedRest.length)void (async()=>{
           for(const channel of cachedRest){
             await new Promise(resolve=>setTimeout(resolve,0));

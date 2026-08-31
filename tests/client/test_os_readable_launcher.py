@@ -10,7 +10,17 @@ JS = (ROOT / "static/js/client/os.js").read_text()
 
 
 def _rule(selector: str) -> str:
-    start = CSS.index(selector + "{")
+    """The rule whose selector IS this, not the first rule whose selector ENDS with it.
+
+    `CSS.index(".os-app{")` matches inside `.os-root.os-style-mac .os-startmenu .os-app{...}` too,
+    so adding any descendant rule above the base one silently shadowed it and this file started
+    asserting font sizes against a two-property macOS override. Anchor on a rule boundary — start of
+    file, or after the previous rule's `}` / a `,` in a selector list — which is what "the .os-app
+    rule" always meant.
+    """
+    m = re.search(r"(?:^|[}\n,])\s*" + re.escape(selector) + r"\{", CSS)
+    assert m, "no rule for %s" % selector
+    start = CSS.index(selector + "{", m.start())
     return CSS[start:CSS.index("}", start) + 1]
 
 

@@ -218,3 +218,43 @@ class TheCacheSourceItself(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WarmLatchesOnTheResult(unittest.TestCase):
+    """An empty icon store is the ORDINARY first visit, and it must not mark the list warmed.
+
+    `warmRoomIcons` sets `iconsWarmedFor` before reading IndexedDB, and its early exits then claim a
+    room list is warmed when nothing was painted. On a first visit the store IS empty — the icons
+    are written by applyRoomIconMetadata moments later — and by then the signature has not changed,
+    so nothing re-reads: every community shows its two initials for the rest of the session, and it
+    looks like the icons come and go depending on when you opened the app.
+
+    The error path already had this right ("could not ask" is never "there is nothing there"); the
+    EMPTY path did not. Source-level because the condition is a re-entry after a write that happens
+    on a different code path — the behaviour around it is covered by one-pass-warm above.
+    """
+
+    SRC = open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "static", "js", "client", "concord.js"),
+        encoding="utf-8").read()
+
+    def _warm(self):
+        body = self.SRC.split("async function warmRoomIcons(", 1)[1]
+        return body.split("async function hydrateStoredRoomIcon(", 1)[0]
+
+    def test_an_empty_store_does_not_count_as_warmed(self):
+        warm = self._warm()
+        self.assertIn("if(!rows.length){ if(wanted)iconsWarmedFor=''; return; }", warm,
+                      "an empty icon store still latches the room list as warmed, so icons written "
+                      "a moment later are never painted")
+
+    def test_a_pass_that_painted_nothing_does_not_count_as_warmed(self):
+        warm = self._warm()
+        self.assertIn("if(!filled&&wanted)iconsWarmedFor='';", warm,
+                      "a warm pass that filled no icon still claims the list is warmed")
+
+    def test_it_only_retries_while_an_icon_is_actually_wanted(self):
+        """Otherwise a community with no icon at all re-reads IndexedDB on every repaint."""
+        warm = self._warm()
+        self.assertIn("const wanted=saved().some(", warm,
+                      "the retry is no longer conditioned on an icon being wanted")

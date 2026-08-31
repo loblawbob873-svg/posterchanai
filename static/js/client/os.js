@@ -978,6 +978,27 @@
     return iconSvg((a && a.icon) || 'i-grid');
   }
 
+  /* A STABLE COLOUR PER APP, NEVER PER POSITION.
+   *
+   * The macOS Dock tinted its tiles with `:nth-child(4n+2|3|4)`, so an app was blue, then purple,
+   * then orange, depending only on what else happened to be open beside it. A macOS icon IS the
+   * app's identity — you find Mail by looking for the blue one — and an identity that changes when
+   * a neighbour opens is not one. The hue is derived from the app's own key instead, so it is the
+   * same on every device, survives reordering, and a feature added to the sidebar next year gets
+   * one for free with no table to maintain.
+   *
+   * FNV-1a, not a sum of char codes: 'notes' and 'stone' are the same sum, and anagram collisions
+   * across a 360-slot space are exactly what a launcher full of short names would produce. */
+  function appHue(key){
+    const str = String(key || ''); let h = 2166136261 >>> 0;
+    for(let i = 0; i < str.length; i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h % 360;
+  }
+  /* Stamped on the BUTTON, so the tile, its hover and its Dock reflection all read one value. The
+   * key must be the app's durable identity — never a window id (a new one on every reopen) and
+   * never a title (it carries the open document). */
+  const tint = (key) => ` data-tint="${enc(String(key || ''))}" style="--app-h:${appHue(key)}"`;
+
   /* The sidebar's own <use href> values carry the '#', but every hand-written call site here passes
    * a bare id — and `<use href="i-wot">` resolves to NOTHING and draws nothing, with no error. That
    * is why the start-menu stat icons and the Post/Profile/Search window-title icons were blank. Take
@@ -3785,7 +3806,7 @@
   const iconHtml = a =>
     `<button class="os-icon${a.folder ? ' is-folder' : ''}" data-view="${enc(a.view)}"${
         a.folder ? ` data-apps="${enc(a.folder.members.map(m => m.view).join(' '))}"` : ''
-      } title="${enc(a.label)}">
+      }${tint(a.view)} title="${enc(a.label)}">
        ${a.folder ? folderGlyph(a.folder) : iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
 
   /* Fit sparse saved coordinates to THIS usable desktop without rewriting the synced document.
@@ -6054,13 +6075,13 @@
       if(kind === 'view'){
         if(openViews.has(id)) return '';
         const a = apps().find(x => x.view === id); if(!a) return '';
-        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-view"
+        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-view"${tint(a.view)}
                  title="${enc(a.label)}">${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
       }
       if(kind === 'app'){
         if(openApps.has(id)) return '';
         const a = (_machineApps || []).find(x => x.id === id); if(!a) return '';
-        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-app"
+        return `<button class="os-task os-pinned" data-pin="${enc(key)}" data-kind="pin-app"${tint(a.id)}
                  title="${enc(a.name)}">${appIcon(a)}<span>${enc(a.name)}</span></button>`;
       }
       return '';
@@ -6074,11 +6095,11 @@
                 value="${enc(barQuery)}" placeholder="Search Nostr" aria-label="Search Nostr"></div>
        <div class="os-tasks">${pinHtml + wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
-                  data-id="${w.id}" data-kind="web" title="${enc(w.title)}">
+                  data-id="${w.id}" data-kind="web"${tint(w.machineApp ? w.machineApp.id : w.view)} title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
          + nativeTasks.map(w =>
          `<button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
-                  data-id="${w.id}" data-kind="native" title="${enc(w.title)}">
+                  data-id="${w.id}" data-kind="native"${tint(w.appId || w.title)} title="${enc(w.title)}">
             ${appIcon(w)}<span>${enc(w.title)}</span></button><span class="os-native-controls">
               <button class="os-native-max" data-id="${w.id}" title="Maximize ${enc(w.title)}">□</button>
               <button class="os-native-close" data-id="${w.id}" title="Close ${enc(w.title)}">×</button></span>`).join('')}</div>
@@ -6795,7 +6816,7 @@
             .filter(a => !q || a.name.toLowerCase().includes(q.toLowerCase())
                             || String(a.comment || '').toLowerCase().includes(q.toLowerCase()));
           if(nat.length) natives = `<div class="os-applist-h">This computer</div>`
-            + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}"${
+            + nat.map(a => `<button class="os-app" data-app="${enc(a.id)}"${tint(a.id)}${
                  a.comment ? ` title="${enc(a.comment)}"` : ''}>
                  ${appIcon(a)}<span>${enc(a.name)}</span></button>`).join('');
         }
@@ -6829,7 +6850,7 @@
 
       const nothing = !list.length && !natives && !drive && !local;
       $('#os-applist', menu).innerHTML = nrow + (list.length
-        ? list.map(a => `<button class="os-app" data-view="${enc(a.view)}">
+        ? list.map(a => `<button class="os-app" data-view="${enc(a.view)}"${tint(a.view)}>
              ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
         : (q || !nothing ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'))
         + natives + drive + local;
