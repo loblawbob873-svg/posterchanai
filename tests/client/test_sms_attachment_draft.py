@@ -93,7 +93,13 @@ def test_texts_media_opens_in_the_shared_fullscreen_viewer():
     assert "el.playsInline=true" in render
     assert ".lightbox{position:fixed;inset:0;z-index:100000" in css
     assert "document.documentElement.appendChild(bg)" in render
-    assert ".lightbox img,.lightbox video{max-width:100%;max-height:84vh;width:auto;height:auto" in css
+    # WAS a verbatim copy of the whole declaration, including `max-height:84vh` — so removing the
+    # letterboxing ("images should load full screen without the shitty borders that waste space")
+    # failed here, in a test about SMS attachments, for a rule it only cares about existing. What
+    # this test actually needs is that an SMS attachment opens in the viewer and the viewer sizes it
+    # from the viewport; the exact numbers belong to tests/client/test_lightbox_fills_the_screen.py.
+    assert ".lightbox img,.lightbox video{max-width:100vw" in css
+    assert "max-height:100dvh" in css
     assert ".sms-att-open{" in css
 
 

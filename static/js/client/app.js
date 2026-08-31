@@ -15052,7 +15052,22 @@
       const _escSave=e=>{ if(e.key==='Escape'){ e.preventDefault(); _autoSaveDraft(); _closeCmp(); } };
       document.addEventListener('keydown', _escSave);
       window.addEventListener('pagehide', _pageHideSave);
-      { const _bg=root.parentElement; if(_bg) _bg.onclick=e=>{ if(e.target===_bg){ _autoSaveDraft(); _closeCmp(); } }; }   // click-outside → save then close
+      /* THIS HANDLER REPLACED modal()'s, AND THAT IS WHY THE COMPOSER WAS NEVER STICKY.
+       *
+       * `root.classList.add('cmp-modal','modal-sticky')` a few lines up is read by modal()'s
+       * backdrop guard — but this line then assigned OVER that guard with an unconditional
+       * save-and-close, so the class, the CSS flinch rule and the ✕ were all in place around a
+       * sheet that still threw itself away on a stray click. Reported after the sticky fix had
+       * shipped: "new post in social exited when I click on desktop so that is broke still", while
+       * email — whose composer does not override the handler — was fine.
+       *
+       * The draft is still saved on Escape and on pagehide, which is where saving belongs. It has
+       * no business happening here any more, because this no longer closes anything. */
+      { const _bg=root.parentElement; if(_bg) _bg.onclick=e=>{
+          if(e.target!==_bg) return;
+          e.preventDefault(); e.stopPropagation();
+          if(root.classList.contains('modal-sticky')){ _stickyNudge(root); return; }
+          _autoSaveDraft(); _closeCmp(); }; }
       const _mh=$('#cmp-mentions',root); ta.addEventListener('input', ()=>updateMentionHint(ta,_mh)); updateMentionHint(ta,_mh);
       ta.addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey) && e.key==='Enter'){ e.preventDefault(); const sb=$('#cmp-send',root); if(sb) sb.click(); } });   // Ctrl/⌘+Enter to post
       $$('.cmp-tab',root).forEach(b=> b.onclick=()=>{
@@ -32374,15 +32389,20 @@
    * silently ignored reads as a frozen app, which is a worse bug than the one being fixed. Escape,
    * the Android back button and the sheet's own ✕ all still close it: this removes the ACCIDENTAL
    * way out, never the deliberate ones. */
+  /* THE FLINCH, IN ONE PLACE — because a sheet is allowed to install its own backdrop handler and
+   * one of them did, which is how `.modal-sticky` came to be decorative on the composer. A click
+   * that is silently ignored reads as a frozen app, so refusing must be VISIBLE wherever it is
+   * decided. */
+  function _stickyNudge(box){
+    if(!box) return;
+    box.classList.remove('modal-nudge');
+    // Reflow between the remove and the add, or a second click inside the animation does nothing.
+    void box.offsetWidth;
+    box.classList.add('modal-nudge');
+  }
   function modal(html, onMount){ const bg=document.createElement('div'); bg.className='modal-bg'; bg.innerHTML=`<div class="modal glass neon-border">${html}</div>`; bg.onclick=e=>{ if(e.target!==bg) return; e.preventDefault(); e.stopPropagation();
       const box=bg.querySelector('.modal');
-      if(box && box.classList.contains('modal-sticky')){
-        box.classList.remove('modal-nudge');
-        // Reflow between the remove and the add, or a second click inside the animation does nothing.
-        void box.offsetWidth;
-        box.classList.add('modal-nudge');
-        return;
-      }
+      if(box && box.classList.contains('modal-sticky')){ _stickyNudge(box); return; }
       closeModal(); }; $('#modal-root').appendChild(bg); document.body.classList.add('modal-open'); const _box=bg.querySelector('.modal'); if(onMount)onMount(_box); _trapFocus(_box);
     // More / Files / Discover / Games are all the same shape: a .more-grid of .more-item buttons. Tab and
     // Escape they already had; this gives them the grid cursor the effects and emoji pickers use (arrows,

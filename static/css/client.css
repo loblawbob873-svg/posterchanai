@@ -2730,10 +2730,30 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 @keyframes spin{to{transform:rotate(360deg)}}
 .badge{display:inline-grid;place-items:center;min-width:21px;height:21px;padding:0 6px;border-radius:11px;background:var(--neon);color:#fff;font-size:12px;font-weight:700;margin-inline-start:6px;box-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 
-.lightbox{position:fixed;inset:0;z-index:100000;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;cursor:zoom-out;animation:fade .15s}
-/* leave ~16vh at the bottom for the toolbar + counter so they sit BELOW the media (and clear of a
-   video's own controls) instead of overlapping it */
-.lightbox img,.lightbox video{max-width:100%;max-height:84vh;width:auto;height:auto;border-radius:10px;border:1px solid var(--neon);box-shadow:0 0 40px rgba(var(--accent-rgb),.4)}
+.lightbox{position:fixed;inset:0;z-index:100000;background:rgba(4,2,12,.92);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:0;box-sizing:border-box;cursor:zoom-out;animation:fade .15s}
+/* OPENING A PICTURE SHOWS THE PICTURE, AND NOTHING ELSE.
+   "For social, we just need images to load full screen without the shitty borders that waste space."
+
+   Three things were taking that space and none of them earned it:
+
+   1. `max-height:84vh` reserved ~16vh for the toolbar — but `.lb-bar` is `position:fixed`, so it
+      was never in the layout to begin with and always floated OVER the media. The reservation
+      bought nothing; it just letterboxed every image with ~170px of black on a 1080p screen. On a
+      desktop it is worse still: the bar is `opacity:0` until the pointer moves, so the space was
+      held for something not even on screen.
+   2. A 1px neon border and a 40px glow drawn around the photo, plus a 10px radius clipping its
+      corners. Chrome around somebody's picture is decoration on top of their content.
+   3. 16px of padding on the backdrop, cropping every edge for nothing.
+
+   Video keeps ONE reservation, and only the real one: its native controls sit along its own bottom
+   edge, and the toolbar would land on top of them. 76px is the bar (46px) plus its 16px offset and
+   a little air — a fifth of what 16vh was taking, and the controls stay usable. `dvh` is what makes
+   this correct on a phone whose address bar comes and goes; the `vh` line above it is the fallback
+   for anything that does not know `dvh`. */
+.lightbox img,.lightbox video{max-width:100vw;width:auto;height:auto;
+  border-radius:0;border:0;box-shadow:none}
+.lightbox img{max-height:100vh;max-height:100dvh}
+.lightbox video{max-height:calc(100vh - 76px);max-height:calc(100dvh - 76px)}
 .lightbox img{transform-origin:center center;will-change:transform;touch-action:none}   /* transform-driven zoom/pan (see _lbZoom); touch-action:none so pinch doesn't page-zoom */
 .lightbox audio{width:min(560px,100%)}
 /* Toolbar sits BELOW the media, centered along the bottom — not the top-right corner (it covered the

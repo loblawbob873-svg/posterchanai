@@ -115,6 +115,15 @@ def main():
         src = open(APP, encoding="utf-8").read()
         modal_src = _fn(src, "function modal(html, onMount)", "modal")
         close_src = _fn(src, "function closeModal()", "closeModal")
+        # THE FLINCH MOVED OUT OF modal() AND THIS HARNESS HAS TO FOLLOW IT.
+        #
+        # It used to be four lines inline; it is `_stickyNudge()` now, shared with the composer,
+        # which installs its OWN backdrop handler and was therefore silently ignoring the sticky
+        # class altogether. Lifting only `modal` left it calling a function this page did not have:
+        # the click was refused in total silence and this check went red — correctly, for its own
+        # harness, about code that is right in the app. Lift what it calls, or the next helper
+        # extracted from modal() breaks it the same way.
+        nudge_src = _fn(src, "function _stickyNudge(box)", "_stickyNudge")
     except ValueError as e:
         print(f"SKIP  could not lift {e} out of app.js — re-point this check")
         return 2
@@ -123,6 +132,11 @@ def main():
 
     # THE SOURCE HALF. The browser below proves the RULE; these prove the composer is the sheet it
     # applies to — a rule nothing opts into passes every rendered assertion.
+    if "_stickyNudge" not in modal_src:
+        problems.append("modal() no longer calls the shared flinch — a silent refusal "
+                        "reads as a frozen app")
+    if "modal-nudge" not in nudge_src:
+        problems.append("_stickyNudge no longer applies .modal-nudge")
     if "modal-sticky" not in modal_src:
         problems.append(("rule-gone", "modal() no longer honours .modal-sticky — every composer is "
                                       "one stray click from being dismissed again"))
@@ -137,7 +151,8 @@ def main():
                          "compose() renders no ✕ — a sheet that refuses the backdrop and has no "
                          "visible close is a trap on a phone browser"))
 
-    page = PAGE % {"css": "file://" + CSS, "modal": modal_src, "close": close_src}
+    page = PAGE % {"css": "file://" + CSS, "modal": nudge_src + "\n" + modal_src,
+                   "close": close_src}
     tmp = tempfile.mkdtemp(prefix="pccmp-")
     try:
         path = os.path.join(tmp, "r.html")
