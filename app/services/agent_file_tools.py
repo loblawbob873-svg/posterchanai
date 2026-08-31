@@ -27,9 +27,22 @@ import base64
 import json
 from typing import Any, Awaitable, Callable, Optional
 
-# Reject a write whose payload would make an unreasonable command line (ARG_MAX is ~2 MB on
-# Linux, and `docker exec` adds its own overhead). Well above any sane source file.
-_MAX_WRITE_BYTES = 512 * 1024
+# Reject a write whose payload would make a command line the kernel refuses to exec.
+#
+# THE BOUND IS NOT ARG_MAX. It is MAX_ARG_STRLEN — 32 pages, 128 KiB on every 4 KiB-page Linux —
+# which caps a SINGLE argv string, and the whole `sh -c "<command>"` is one such string. ARG_MAX
+# (~2 MB) is the total across all arguments and never applies here.
+#
+# This was 512 KiB, chosen against ARG_MAX, and MEASURED it does not work: base64 inflates the
+# payload by 4/3, so ~95 KB of content already builds a 134 KB command and exec fails with E2BIG.
+# Everything from ~92 KB to 512 KB passed this check and then died as `Argument list too long` —
+# the exact "raw shell error it will try to fix by editing a file" the JSON protocol below exists
+# to keep away from the model.
+#
+# 64 KiB of content is a ~95 KB command: comfortably inside the limit, with room for `docker exec`
+# overhead and for platforms whose page size makes the real ceiling lower than measured here. Still
+# well above any sane source file. tests/test_agent_file_tools.py execs a write at exactly this cap.
+_MAX_WRITE_BYTES = 64 * 1024
 
 # The worker program. Runs on the TARGET, prints one JSON object on stdout. Deliberately
 # contains no single quotes (it is base64-encoded anyway, but keeping it quote-free means the
