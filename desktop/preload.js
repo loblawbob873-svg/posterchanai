@@ -331,8 +331,10 @@ if (isOurPage) {
     pickDirectory: () => ipcRenderer.invoke('pc:host:pickDirectory'),
     pickFile: (opts) => ipcRenderer.invoke('pc:host:pickFile', opts || {}).then((r) => r && ({
       name:String(r.name||'file'), type:String(r.type||'application/octet-stream'), size:Number(r.size)||0,
-      data:new Uint8Array(r.data)
+      path:String(r.path||''), mtime:Number(r.mtime)||0, data:new Uint8Array(r.data)
     })),
+    saveFile: (name, bytes) => ipcRenderer.invoke('pc:host:saveFile', String(name || 'document'),
+      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || [])),
     list: (dir) => ipcRenderer.invoke('pc:host:list', String(dir || '')),
     roots: () => ipcRenderer.invoke('pc:host:roots'),
     // PosterChan Code, editing a file on this computer.

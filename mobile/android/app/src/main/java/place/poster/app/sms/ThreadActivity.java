@@ -97,6 +97,10 @@ public class ThreadActivity extends PcActivity {
     private String attachmentMime = "image/jpeg";
     private String attachmentName = "attachment";
     private byte[] capturedAttachment;
+    private MmsDraft.Value attachmentDraft;
+    private View attachmentDraftRow;
+    private ImageView attachmentPreview;
+    private TextView attachmentStatus;
     private Uri pendingCameraUri;
     private File pendingCameraFile;
     private TextView count, name, sub, avatar, context;
@@ -120,6 +124,9 @@ public class ThreadActivity extends PcActivity {
         sub = (TextView) findViewById(R.id.pc_th_sub);
         avatar = (TextView) findViewById(R.id.pc_th_avatar);
         context = (TextView) findViewById(R.id.pc_th_context);
+        attachmentDraftRow = findViewById(R.id.pc_th_attachment_draft);
+        attachmentPreview = (ImageView) findViewById(R.id.pc_th_attachment_preview);
+        attachmentStatus = (TextView) findViewById(R.id.pc_th_attachment_status);
         // AFTER the views exist, not before. readIntent prefills the compose box from a
         // `sms:+1555?body=…` link, and called first it wrote into a null EditText — guarded, so the
         // text was silently dropped and the screen opened empty. That is the whole point of the
@@ -144,6 +151,7 @@ public class ThreadActivity extends PcActivity {
         findViewById(R.id.pc_th_attach).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { chooseAttachmentSource(); }
         });
+        findViewById(R.id.pc_th_attachment_remove).setOnClickListener(v -> clearAttachmentDraft());
         findViewById(R.id.pc_th_emoji).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { pickEmoji(); }
         });
@@ -160,6 +168,7 @@ public class ThreadActivity extends PcActivity {
         });
 
         applySkin();
+        restoreAttachmentDraft();
     }
 
     @Override
@@ -296,6 +305,7 @@ public class ThreadActivity extends PcActivity {
                         if (id != threadId) return;
                         boolean atEnd = list.getLastVisiblePosition() >= adapter.getCount() - 2;
                         adapter.set(rows);
+                        restoreAttachmentDraft();
                         // Only follow the conversation down when the person was ALREADY at the
                         // bottom. Yanking somebody out of what they were reading because a message
                         // arrived is the thing every messaging app gets wrong once.
@@ -321,10 +331,16 @@ public class ThreadActivity extends PcActivity {
         /* Camera capture is an in-memory JPEG, while Device is a content URI.  Treat them as the
          * same draft: checking only the URI made a photo-only send do nothing and made a captioned
          * camera photo leave as ordinary SMS with the image silently stranded in this Activity. */
-        boolean hasAttachment = attachment != null || capturedAttachment != null;
+        boolean hasAttachment = attachmentDraft != null || attachment != null || capturedAttachment != null;
         if (body.trim().isEmpty() && !hasAttachment) return;
         if (address.isEmpty()) { say(getString(R.string.sms_not_default)); return; }
         if (hasAttachment) {
+            /* System acceptance is asynchronous. A second tap after navigation/recreation must not
+             * submit the same carrier MMS again; FAILED is the only state send() may retry. */
+            if (attachmentDraft != null && !MmsDraft.READY.equals(attachmentDraft.state)
+                    && !MmsDraft.FAILED.equals(attachmentDraft.state)) {
+                say(attachmentDraft.state); return;
+            }
             sendMms(body);
             return;
         }
@@ -388,6 +404,37 @@ public class ThreadActivity extends PcActivity {
         pendingCameraFile = null; pendingCameraUri = null;
     }
 
+    private void stageAttachment(byte[] bytes, String mime, String name) throws Exception {
+        attachmentDraft = MmsDraft.save(this, address, bytes, mime, name);
+        attachment = null; capturedAttachment = null;
+        paintAttachmentDraft();
+    }
+
+    private void restoreAttachmentDraft() {
+        attachmentDraft = MmsDraft.load(this, address);
+        paintAttachmentDraft();
+    }
+
+    private void clearAttachmentDraft() {
+        MmsDraft.remove(this, address); attachmentDraft = null;
+        attachment = null; capturedAttachment = null; discardPendingCamera();
+        paintAttachmentDraft();
+    }
+
+    private void paintAttachmentDraft() {
+        if (attachmentDraftRow == null) return;
+        attachmentDraftRow.setVisibility(attachmentDraft == null ? View.GONE : View.VISIBLE);
+        if (attachmentDraft == null) { attachmentPreview.setImageDrawable(null); return; }
+        Bitmap thumb = BitmapFactory.decodeFile(attachmentDraft.file.getAbsolutePath());
+        attachmentPreview.setImageBitmap(thumb);
+        String state = attachmentDraft.state;
+        String line = attachmentDraft.name + " · " + state;
+        if (!attachmentDraft.error.isEmpty()) line += "\n" + attachmentDraft.error;
+        attachmentStatus.setText(line);
+        attachmentStatus.setTextColor(MmsDraft.FAILED.equals(state) ? pal.danger
+                : MmsDraft.SENT.equals(state) ? pal.accent : pal.amber);
+    }
+
     /** A compact carrier-safe Unicode picker. Strings are built from code points so joined emoji
      * (skin tones, professions and families) are inserted as one selection, never split at a UTF-16
      * boundary. The system keyboard remains available for its complete/searchable emoji catalogue. */
@@ -426,8 +473,10 @@ public class ThreadActivity extends PcActivity {
         super.onActivityResult(request, result, data);
         if (request == CAPTURE_MMS_IMAGE) {
             if (result == RESULT_OK && pendingCameraFile != null && pendingCameraFile.length() > 0) {
-                attachment = pendingCameraUri; attachmentMime = "image/jpeg";
-                attachmentName = pendingCameraFile.getName(); capturedAttachment = null;
+                attachment = pendingCameraUri;
+                try (InputStream in = getContentResolver().openInputStream(pendingCameraUri)) {
+                    stageAttachment(readAttachment(in), "image/jpeg", pendingCameraFile.getName());
+                } catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); return; }
                 say(getString(R.string.sms_attachment_ready));
                 return;
             }
@@ -437,7 +486,8 @@ public class ThreadActivity extends PcActivity {
             if (raw instanceof Bitmap) {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 ((Bitmap) raw).compress(Bitmap.CompressFormat.JPEG, 92, out);
-                capturedAttachment = out.toByteArray(); attachment = null;
+                try { stageAttachment(out.toByteArray(), "image/jpeg", "camera.jpg"); }
+                catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); return; }
                 say(getString(R.string.sms_attachment_ready));
             } else say(getString(R.string.sms_attachment_bad));
             return;
@@ -465,13 +515,30 @@ public class ThreadActivity extends PcActivity {
         if (!attachmentMime.startsWith("image/") && !attachmentMime.startsWith("video/")) {
             attachment = null; say(getString(R.string.sms_attachment_bad)); return;
         }
-        capturedAttachment = null;
+        try (InputStream in = getContentResolver().openInputStream(picked)) {
+            stageAttachment(readAttachment(in), attachmentMime, attachmentName);
+        } catch (Throwable t) { attachment = null; say(getString(R.string.sms_attachment_bad)); return; }
         say(getString(R.string.sms_attachment_ready));
+    }
+
+    private byte[] readAttachment(InputStream in) throws Exception {
+        if (in == null) throw new Exception("attachment cannot be read");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[64 * 1024]; int n, total = 0;
+        while ((n = in.read(buf)) >= 0) {
+            total += n; if (total > 8 * 1024 * 1024) throw new Exception("media message is too large");
+            out.write(buf, 0, n);
+        }
+        return out.toByteArray();
     }
 
     /** Build a carrier MMS PDU and hand it to Android's public system MMS transport. */
     private void sendMms(String body) {
-        byte[] raw = capturedAttachment;
+        byte[] raw = null;
+        if (attachmentDraft != null) try (InputStream in = new java.io.FileInputStream(attachmentDraft.file)) {
+            raw = readAttachment(in);
+        } catch (Throwable problem) { say(getString(R.string.sms_attachment_bad)); return; }
+        if (raw == null) raw = capturedAttachment;
         try (InputStream in = raw == null && attachment != null
                 ? getContentResolver().openInputStream(attachment) : null) {
             if (in != null) {
@@ -494,13 +561,19 @@ public class ThreadActivity extends PcActivity {
             /* One transport for native and WebUI sends. MmsSender selects the active SMS/data
              * subscription; this screen's old duplicate omitted it, producing a provider row that
              * remained at Sending on dual-SIM and stale-default devices. */
-            SmsSender.Result result = MmsSender.send(this, address, body, raw,
-                    capturedAttachment != null ? "image/jpeg" : attachmentMime,
-                    capturedAttachment != null ? "camera.jpg" : attachmentName);
+            String mime = attachmentDraft != null ? attachmentDraft.mime
+                    : capturedAttachment != null ? "image/jpeg" : attachmentMime;
+            String fileName = attachmentDraft != null ? attachmentDraft.name
+                    : capturedAttachment != null ? "camera.jpg" : attachmentName;
+            String draftKey = attachmentDraft == null ? null : attachmentDraft.key;
+            SmsSender.Result result = MmsSender.send(this, address, body, raw, mime, fileName, draftKey);
             if (!result.ok) { say(result.error == null || result.error.isEmpty()
                     ? getString(R.string.sms_failed) : result.error); return; }
-            attachment = null;
-            capturedAttachment = null;
+            if (attachmentDraft != null) {
+                MmsDraft.state(this, attachmentDraft.key, MmsDraft.SENDING, "");
+                restoreAttachmentDraft();
+            }
+            attachment = null; capturedAttachment = null;
             discardPendingCamera();
             input.setText("");
             updateCount();

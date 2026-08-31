@@ -36,6 +36,11 @@ global.localStorage = {
 let result = { ok: false, msg: 'timeout' };
 let published = 0;
 let revived = 0;
+const documentListeners = {};
+global.document = {
+  hidden: false,
+  addEventListener(type, fn){ (documentListeners[type] ||= []).push(fn); },
+};
 global.window = {
   addEventListener(){},
   Relay: { status: 'ok', reviveStale(){ revived++; }, async publish(){ published++; return result; } },
@@ -102,6 +107,21 @@ const Outbox = global.window.Outbox;
   out.localDiscard = Outbox.remove(ev4.id) && Outbox.count() === 0;
   out.discardPublished = published - beforeDiscardPublishes;
 
+  // 6. The retry timer can expire while Android has frozen/hidden the WebView. It correctly avoids
+  // publishing in the background, but foregrounding must replace that consumed attempt even when
+  // the relay pool remains labelled `ok` and therefore emits no fresh status transition.
+  const ev5 = { id: 'e'.repeat(64), kind: 7, content: '+', sig: 'b'.repeat(128),
+                created_at: Math.floor(Date.now()/1000) };
+  document.hidden = true;
+  result = { ok: true };
+  Outbox.add(ev5);
+  await new Promise(resolve => setTimeout(resolve, 1700));
+  out.heldWhileHidden = Outbox.count() === 1;
+  document.hidden = false;
+  for(const fn of documentListeners.visibilitychange || []) fn();
+  await new Promise(resolve => setTimeout(resolve, 500));
+  out.sentOnForeground = Outbox.count() === 0;
+
   console.log(JSON.stringify(out));
 })();
 """
@@ -149,6 +169,18 @@ class OutboxStrikeTests(unittest.TestCase):
     def test_discard_never_needs_the_relay(self):
         self.assertTrue(self.r["localDiscard"])
         self.assertEqual(self.r["discardPublished"], 0)
+
+    def test_a_reaction_whose_retry_expired_in_background_sends_on_foreground(self):
+        self.assertTrue(self.r["heldWhileHidden"],
+                        "the hidden WebView attempted to publish in the background")
+        self.assertTrue(self.r["sentOnForeground"],
+                        "foregrounding did not replace the consumed retry timer")
+
+    def test_resume_readiness_also_drains_without_a_status_transition(self):
+        app = (ROOT / "static" / "js" / "client" / "app.js").read_text()
+        start = app.index("function _resumeRelay(){")
+        body = app[start:app.index("function _nativeResume", start)]
+        self.assertIn("if(ok){ _reaskMissing(); _flushOutbox(); }", body)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ const context={
   ingestWrap:async()=>{calls.ingested++;},
   Relay:{publish:async ev=>{calls.published.push(ev.id);return {ok:true};},publishTo:async()=>1},
   VIEW:'messages', renderMessages:()=>{calls.remounted++;},
+  _keepDmOpen:()=>{},
   dmInboxRelays:async()=>{calls.inbox++;return [];}, toast:()=>{},
   setTimeout, Promise,
 };

@@ -193,10 +193,8 @@ def _run_migrations():
 
     # NOT NULL relaxations. Neither create_all nor ADD COLUMN alters an existing column's nullability,
     # so a model that loosens one needs this or the old constraint silently outlives it.
-    # push_subscriptions.p256dh/auth are Web Push fields; a UnifiedPush subscription (the native APK,
-    # which has no Web Push at all) carries neither, and on an existing table the insert would fail
-    # with a NOT NULL violation — i.e. the APK could register nothing and stay silent, which is the
-    # exact symptom this whole transport exists to fix. Idempotent: skipped once already nullable.
+    # push_subscriptions.p256dh/auth are Web Push fields. PosterChan Direct devices use an authenticated
+    # first-party websocket and therefore carry neither. Idempotent: skipped once already nullable.
     for _tbl, _cols in (("push_subscriptions", ("p256dh", "auth")),):
         try:
             if not insp.has_table(_tbl):
@@ -206,9 +204,26 @@ def _run_migrations():
                 if _c in _nn:
                     with engine.begin() as conn:
                         conn.execute(text(f'ALTER TABLE "{_tbl}" ALTER COLUMN "{_c}" DROP NOT NULL'))
-                    logger.info(f"[MIGRATE] {_tbl}.{_c} is now nullable (UnifiedPush subscriptions)")
+                    logger.info(f"[MIGRATE] {_tbl}.{_c} is now nullable (PosterChan Direct devices)")
         except Exception as e:
             logger.warning(f"[MIGRATE] could not relax NOT NULL on {_tbl}: {e}")
+
+    # UnifiedPush was the native transport before PosterChan Direct. Its keyless endpoint URL is a
+    # bearer capability owned by a third-party distributor and cannot be upgraded into a Direct token.
+    # Remove those legacy rows once the explicit transport column exists; real Web Push rows have both
+    # VAPID keys and Direct rows are protected by their transport marker. This is intentionally
+    # idempotent and leaves no dormant third-party delivery path behind.
+    try:
+        if insp.has_table("push_subscriptions"):
+            with engine.begin() as conn:
+                res = conn.execute(text(
+                    "DELETE FROM push_subscriptions "
+                    "WHERE (p256dh IS NULL OR auth IS NULL) "
+                    "AND COALESCE(transport, 'webpush') <> 'posterchan-direct'"))
+            if res.rowcount:
+                logger.info("[MIGRATE] removed %d legacy UnifiedPush subscription(s)", res.rowcount)
+    except Exception as e:
+        logger.warning("[MIGRATE] could not remove legacy UnifiedPush subscriptions: %s", e)
 
     # Column TYPE widenings on existing tables (create_all + ADD COLUMN never change a column's type).
     # blossom_blobs.size was INTEGER (32-bit, ~2.1 GB cap): a blob larger than that failed to insert
@@ -311,7 +326,6 @@ def init_db():
             "blossom_blob_ttl_days": "0",
             "agent_artifact_ttl_days": "14",
             "blossom_max_upload_mb": "100",
-            "push_allow_private_endpoints": "false",
             # Single-node default: blobs live LOCALLY on the data volume. The "proxy" backend is
             # only for a multi-node setup with a shared storage server (set storage_server_url +
             # switch this to "proxy" in Admin → Blossom for that).

@@ -4288,6 +4288,69 @@
   const _mmss = (s) => { s = Math.max(0, Math.floor(s || 0));
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 
+  function _xmrDisplay(value){
+    const raw=String(value==null?'':value).trim();
+    if(!/^\d+(?:\.\d{1,12})?$/.test(raw))return '—';
+    const bits=raw.split('.'),whole=bits[0].replace(/^0+(?=\d)/,'').replace(/\B(?=(\d{3})+(?!\d))/g,',');
+    const frac=(bits[1]||'').replace(/0+$/,'');
+    return whole+(frac?'.'+frac:'');
+  }
+  async function _moneroJson(path){
+    const A=PC().authFetch||fetch;
+    const r=await A(_api(path),{cache:'no-store'});
+    let body={};try{body=await r.json();}catch(_){}
+    if(!r.ok)throw new Error(body.detail||('HTTP '+r.status));
+    return body;
+  }
+  function _moneroWidget(){
+    return {label:'Monero wallet',icon:'#i-coin',blurb:'Tip-wallet balance and local RPC health',every:30000,
+      mount(el){
+        el.innerHTML=`<div class="wgt-xmr is-loading"><header><span class="wgt-xmr-mark">ɱ</span><div><b>Monero</b><span class="wgt-xmr-net">checking…</span></div></header>
+          <div class="wgt-xmr-bal"><strong>—</strong><span>XMR available</span><small>— unlocked</small></div>
+          <div class="wgt-xmr-health"><span data-rpc>RPC · checking</span><span data-node>Node · checking</span><span data-at>not refreshed</span></div>
+          <div class="wgt-xmr-warn" hidden></div><div class="wgt-xmr-actions">
+            <button data-xmr="open">Open Wallet</button><button data-xmr="receive">Receive</button><button data-xmr="send">Send</button><button data-xmr="refresh" aria-label="Refresh wallet">↻</button></div></div>`;
+        el.onclick=ev=>{
+          const b=ev.target.closest&&ev.target.closest('[data-xmr]');if(!b)return;ev.stopPropagation();
+          const action=b.dataset.xmr;
+          if(action==='refresh'){_wgtFeeds.delete('monero:health');const host=el.closest('.os-wgt');if(host)_wgtRefreshOne(host);return;}
+          if(action==='open'){openApp('wallet');return;}
+          const W=window.PCMoneroWallet;
+          if(action==='receive'&&W&&W.openReceive){W.openReceive();return;}
+          if(action==='send'&&W&&W.openSend){W.openSend();return;}
+          openApp('wallet');
+        };
+      },
+      async refresh(el){
+        const box=$('.wgt-xmr',el);if(!box)return;
+        box.classList.add('is-loading');
+        try{
+          const d=await _wgtFeed('monero:health',25000,async()=>{
+            const both=await Promise.all([_moneroJson('/api/wallet/monero/status'),_moneroJson('/api/wallet/monero/node-status')]);
+            return {status:both[0],node:both[1]};
+          });
+          // The widget may have been removed while RPC was answering. Never repaint a detached body.
+          if(!el.isConnected||!$('.wgt-xmr',el))return;
+          const s=d.status||{},n=d.node||{},main=!!s.mainnet||String(s.network).toLowerCase()==='mainnet';
+          $('.wgt-xmr-net',el).textContent=String(s.network||n.network||'unknown').toUpperCase();
+          $('.wgt-xmr-bal strong',el).textContent=_xmrDisplay(n.balance);
+          $('.wgt-xmr-bal small',el).textContent=_xmrDisplay(n.unlocked_balance)+' unlocked';
+          $('[data-rpc]',el).textContent='RPC · '+(n.wallet_rpc_reachable?'online':'offline');
+          $('[data-node]',el).textContent='Node · '+(n.daemon_connected?'connected':'offline');
+          $('[data-at]',el).textContent='Updated '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+          const warn=$('.wgt-xmr-warn',el);warn.hidden=!main;warn.textContent=main?'MAINNET hot wallet · small tips only':'';
+          box.classList.toggle('is-mainnet',main);box.classList.remove('is-error');
+        }catch(err){
+          if(!el.isConnected||!$('.wgt-xmr',el))return;
+          const msg=String((err&&err.message)||'').toLowerCase(),disabled=msg.includes('disabled');
+          $('.wgt-xmr-net',el).textContent=disabled?'DISABLED':'OFFLINE';
+          $('[data-rpc]',el).textContent='RPC · '+(disabled?'disabled':'unreachable');
+          $('[data-node]',el).textContent='Node · unavailable';
+          $('[data-at]',el).textContent='Refresh failed';box.classList.add('is-error');
+        }finally{if(el.isConnected&&$('.wgt-xmr',el))box.classList.remove('is-loading');}
+      }};
+  }
+
   /* WMO weather codes → a glyph and a word. Open-Meteo reports the code; everything human about it
    * is ours. Grouped rather than enumerated: the distinctions between "slight" and "moderate" drizzle
    * do not survive being drawn at 13px. */
@@ -4372,6 +4435,8 @@
         }).join('') + (d && d.stale ? '<div class="wgt-dim">last known — upstream is not answering</div>' : '');
       },
     },
+
+    monero: _moneroWidget(),
 
     weather: {
       label: 'Weather', icon: '#i-globe', blurb: 'Conditions where you are, refreshed every 10 minutes',

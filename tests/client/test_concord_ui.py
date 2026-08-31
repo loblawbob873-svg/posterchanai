@@ -450,6 +450,19 @@ def test_concord_dove_icon_remains_available_inside_the_messages_app():
     assert '.osw-body>#feed.feed-dm:has(.cc-app)' in CONCORD_CSS
 
 
+def test_maximised_os_window_uses_frame_width_not_zoomed_viewport_width():
+    """100vw is narrower than a maximised frame when PosterChanOS body zoom is below one."""
+    assert 'body.os-on.concord-view .osw-body>#feed.feed-dm:has(.cc-app)' in CONCORD_CSS
+    os_rule = CONCORD_CSS[CONCORD_CSS.index(
+        'body.os-on.concord-view .osw-body>#feed.feed-dm:has(.cc-app)'
+    ):]
+    os_rule = os_rule[:os_rule.index('}')]
+    assert 'width:100%!important' in os_rule
+    assert 'max-width:none!important' in os_rule
+    assert '.cc-conversation' in os_rule and '.cc-messages' in os_rule
+    assert '100vw' not in os_rule
+
+
 def test_invite_parser_requires_naddr_and_secret_fragment():
     assert "/\\/invite\\/(naddr1" in CONCORD
     assert "m&&u.hash.length>3" in CONCORD

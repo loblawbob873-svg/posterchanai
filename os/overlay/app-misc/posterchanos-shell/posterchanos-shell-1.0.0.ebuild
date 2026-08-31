@@ -15,6 +15,7 @@ SLOT="0"
 # are masked on every stable install, which is every PosterChanOS machine, and the error
 # a person sees is "all ebuilds have been masked" about software their own OS ships.
 KEYWORDS="amd64"
+IUSE="monero"
 
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
 RDEPEND="
@@ -33,15 +34,18 @@ RDEPEND="
 	sys-apps/xdg-desktop-portal
 	gui-libs/xdg-desktop-portal-wlr
 	sys-boot/plymouth
+	monero? ( net-p2p/monero-wallet-rpc-bin )
 "
 
 src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-key pc-idle pc-screenshot update-posterchan; do
+	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
+	insinto /usr/lib/systemd/user
+	doins "${FILESDIR}/posterchan-monero-wallet-rpc.service"
 	# The installed recovery/LiveUSB tool is package-owned too. publish_overlay.sh injects the
 	# canonical os/gentoo.sh into FILESDIR, so an ordinary update cannot leave an older installer.
 	dobin "${FILESDIR}/gentoo.sh"

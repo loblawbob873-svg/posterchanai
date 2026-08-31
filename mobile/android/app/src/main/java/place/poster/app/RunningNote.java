@@ -11,6 +11,7 @@ import android.os.Build;
 import androidx.core.app.NotificationCompat;
 
 import place.poster.app.push.StayAwakeService;
+import place.poster.app.push.DirectPushService;
 import place.poster.app.signer.SignerRelayService;
 import place.poster.app.sync.SyncService;
 
@@ -95,6 +96,12 @@ public final class RunningNote {
             if (b.length() > 0) b.append(" · staying connected");
             else b.append("Staying connected so messages and calls reach you");
         }
+        if (DirectPushService.running) {
+            if (b.length() > 0) b.append(DirectPushService.connected
+                    ? " · notifications connected" : " · reconnecting notifications");
+            else b.append(DirectPushService.connected
+                    ? "Connected for messages and calls" : "Reconnecting notifications…");
+        }
         if (SyncService.running) {
             if (b.length() > 0) b.append(" · syncing folders");
             else b.append("Syncing your folders");
@@ -111,7 +118,8 @@ public final class RunningNote {
 
         boolean signer = SignerRelayService.running;
         boolean stay = StayAwakeService.running;
-        boolean both = signer && stay;
+        boolean direct = DirectPushService.running;
+        boolean both = (signer ? 1 : 0) + (stay ? 1 : 0) + (direct ? 1 : 0) > 1;
         /* The sweep deliberately gets NO action button. The other two are standing preferences the
          * user turned on and may want off from the shade; this one is a few minutes of work that
          * ends by itself, and a "Turn off" beside it would mean "abandon this sweep", which is not
@@ -140,6 +148,11 @@ public final class RunningNote {
                     new Intent(ctx, StayAwakeService.class).setAction(StayAwakeService.ACTION_STOP), f);
             b.addAction(0, both ? "Stop staying connected" : "Turn off", off);
         }
+        if (direct) {
+            PendingIntent off = PendingIntent.getService(ctx, 4,
+                    new Intent(ctx, DirectPushService.class).setAction(DirectPushService.ACTION_STOP), f);
+            b.addAction(0, both ? "Stop notifications" : "Turn off", off);
+        }
         return b.build();
     }
 
@@ -153,7 +166,7 @@ public final class RunningNote {
     /** Who is asking. A boolean answered this while there were exactly two services; a third made
      *  "the other one" meaningless, which is how a shared notification gets deleted from under a
      *  service that is still foreground. */
-    public static final int SIGNER = 1, STAY = 2, SYNC = 3;
+    public static final int SIGNER = 1, STAY = 2, SYNC = 3, DIRECT = 4;
 
     /**
      * True when a service OTHER than the one asking is still foreground, i.e. the shared
@@ -165,6 +178,7 @@ public final class RunningNote {
         boolean signer = me != SIGNER && SignerRelayService.running;
         boolean stay = me != STAY && StayAwakeService.running;
         boolean sync = me != SYNC && SyncService.running;
-        return signer || stay || sync;
+        boolean direct = me != DIRECT && DirectPushService.running;
+        return signer || stay || sync || direct;
     }
 }

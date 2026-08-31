@@ -1,0 +1,10 @@
+Monero CLI release: 0.18.5.1
+Artifact: monero-linux-x64-v0.18.5.1.tar.bz2
+SHA256: 22a7dda7b0cb699fdd6b7674c3b4a4465b337cc98a54983523b759e1e7cc9958
+Signed hash list: https://www.getmonero.org/downloads/hashes.txt
+Signer: binaryFate
+Signer fingerprint: 81AC 591F E9C4 B65C 5806 AFC3 F0AF 4D46 2A0B DF92
+Key provenance: https://github.com/monero-project/monero/blob/v0.18.5.1/utils/gpg_keys/binaryfate.asc
+
+The SHA256 above was verified against the clearsigned upstream hash list and independently against
+the downloaded artifact on 2026-08-31. Portage enforces the pinned BLAKE2B and SHA512 in Manifest.

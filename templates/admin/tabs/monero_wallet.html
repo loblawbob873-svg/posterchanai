@@ -1,0 +1,37 @@
+<section class="tab-content" id="tab-monero">
+  <fieldset>
+    <legend>Local Monero tip wallet</legend>
+    <p class="settings-help">Loopback Wallet RPC and small balances only. Choose stagenet for testing or explicitly select mainnet for real funds. Wallet seeds and spend keys never enter PosterChan.</p>
+    <label><input type="checkbox" id="monero_wallet_enabled" name="monero_wallet_enabled"> Enable local tipping wallet</label>
+    <label>Wallet RPC URL <input id="monero_wallet_rpc_url" name="monero_wallet_rpc_url" value="http://127.0.0.1:38083/json_rpc" autocomplete="off"></label>
+    <p class="settings-help">Only an explicit numeric loopback or private RFC1918 address is accepted—such as <code>http://192.168.0.85:38083/json_rpc</code>. Hostnames and public RPC servers are refused.</p>
+    <label>RPC username <input id="monero_wallet_rpc_user" name="monero_wallet_rpc_user" value="posterchan" autocomplete="off"></label>
+    <label>RPC password <input type="password" id="monero_wallet_rpc_password" name="monero_wallet_rpc_password" autocomplete="new-password" placeholder="Unchanged when masked or blank"></label>
+    <label>Network <select id="monero_wallet_network" name="monero_wallet_network"><option value="stagenet">Stagenet (testing)</option><option value="mainnet">MAINNET — real funds</option></select></label>
+    <p class="settings-help"><strong>MAINNET is a hot wallet.</strong> Keep only small tipping funds here; retain substantial Monero in Feather, Monero GUI, or hardware storage.</p>
+    <label>Per-transfer cap (XMR) <input id="monero_wallet_transfer_cap_xmr" name="monero_wallet_transfer_cap_xmr" value="0.1" inputmode="decimal"></label>
+    <label>Rolling daily cap (XMR) <input id="monero_wallet_daily_cap_xmr" name="monero_wallet_daily_cap_xmr" value="0.5" inputmode="decimal"></label>
+    <label>RPC timeout (seconds) <input type="number" id="monero_wallet_rpc_timeout" name="monero_wallet_rpc_timeout" value="8" min="1" max="30"></label>
+    <label>Durable spend ledger <input id="monero_wallet_spend_ledger" name="monero_wallet_spend_ledger" value="data/monero_wallet_spend.sqlite3" autocomplete="off"></label>
+    <button type="button" class="btn-secondary" id="monero-node-status">Check Node Status</button>
+    <pre id="monero-node-status-result" aria-live="polite">Not checked</pre>
+  </fieldset>
+</section>
+<script>
+document.getElementById('monero-node-status')?.addEventListener('click', async function () {
+  const out=document.getElementById('monero-node-status-result'); this.disabled=true; out.textContent='Checking…';
+  try {
+    const response=await fetch('/api/wallet/monero/node-status',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
+    const value=await response.json(); if(!response.ok)throw new Error(value.detail||'Node unavailable');
+    out.textContent=[
+      'Wallet RPC: '+(value.wallet_rpc_reachable?'reachable':'unreachable'),
+      'Daemon: '+(value.daemon_connected?'connected':'disconnected'),
+      'Network: '+String(value.network||'unknown').toUpperCase(),
+      'Height / target: '+String(value.height??'unknown')+' / '+String(value.target_height??'not exposed by Wallet RPC'),
+      'Synchronized: '+String(value.synchronized??'not exposed by Wallet RPC')+' · Busy: '+String(value.busy),
+      'Balance: '+String(value.balance)+' XMR · unlocked '+String(value.unlocked_balance)+' XMR'
+    ].join('\n');
+  } catch(error) { out.textContent='Node status unavailable: '+String(error&&error.message||error); }
+  finally { this.disabled=false; }
+});
+</script>

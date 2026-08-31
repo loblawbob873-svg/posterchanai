@@ -90,10 +90,10 @@ async function loadRelayIdentity() {
  * HTTP instance (an .onion, a LAN box) has no navigator.clipboard at all — so this must stand alone.
  *
  * So: AWAIT the write, fall back to execCommand over a real focused selection, and if even that is
- * refused leave the value SELECTED and say "press Ctrl+C" — never prompt(), which wedges keyboard
+ * refused leave the value SELECTED and say "press Ctrl+C" — never (await pcPrompt()), which wedges keyboard
  * focus in an Electron window. `srcEl` is the visible input holding the value, when there is one;
  * without it there is nothing on screen to select, so a value the admin would otherwise lose
- * (the relay nsec) still falls back to prompt(). Returns whether the clipboard actually got it.
+ * (the relay nsec) still falls back to (await pcPrompt()). Returns whether the clipboard actually got it.
  */
 async function copyToClipboard(text, btn, srcEl) {
     const v = String(text == null ? '' : text);
@@ -120,7 +120,7 @@ async function copyRelayKey(which) {
     const btn = (typeof event !== 'undefined') && event.target;
     if (!_relayKeys) await loadRelayIdentity();   // load on demand if the tab fetch hasn't run
     const v = _relayKeys && _relayKeys[which];
-    if (!v) { alert('No ' + which + ' available (no operator key).'); return; }
+    if (!v) { pcAlert('No ' + which + ' available (no operator key).'); return; }
     const ok = await copyToClipboard(v, btn);
     if (!ok) window.prompt('Copy the ' + which + ' manually:', v);   // nothing on screen to select
 }
@@ -269,12 +269,12 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
             body: JSON.stringify({ settings })
         });
         if (response.ok) {
-            alert('Settings saved!');
+            pcAlert('Settings saved!');
         } else {
-            alert('Failed to save settings');
+            pcAlert('Failed to save settings');
         }
     } catch (err) {
-        alert('Error saving settings');
+        pcAlert('Error saving settings');
     }
 });
 
@@ -331,7 +331,7 @@ async function loadUsers() {
 
 // Reset password
 async function resetPassword(userId, username) {
-    const newPassword = prompt(`Enter new password for ${username}:`);
+    const newPassword = (await pcPrompt(`Enter new password for ${username}:`));
     if (!newPassword) return;
 
     try {
@@ -341,29 +341,29 @@ async function resetPassword(userId, username) {
             body: JSON.stringify({ password: newPassword })
         });
         if (response.ok) {
-            alert('Password updated!');
+            pcAlert('Password updated!');
         } else {
             const data = await response.json();
-            alert(data.detail || 'Failed to update password');
+            pcAlert(data.detail || 'Failed to update password');
         }
     } catch (err) {
-        alert('Error updating password');
+        pcAlert('Error updating password');
     }
 }
 
 // Delete user
 async function deleteUser(id) {
-    if (!confirm('Delete this user?')) return;
+    if (!(await pcConfirm('Delete this user?'))) return;
     try {
         const response = await csrfFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
         if (response.ok) {
             loadUsers();
         } else {
             const data = await response.json();
-            alert(data.detail || 'Failed to delete user');
+            pcAlert(data.detail || 'Failed to delete user');
         }
     } catch (err) {
-        alert('Error deleting user');
+        pcAlert('Error deleting user');
     }
 }
 
@@ -374,7 +374,7 @@ async function updateStorageQuota(userId, username) {
     const quota_mb = parseFloat(quotaInput.value);
     
     if (isNaN(quota_mb) || quota_mb < 0) {
-        alert('Please enter a valid quota (MB, 0 for unlimited)');
+        pcAlert('Please enter a valid quota (MB, 0 for unlimited)');
         return;
     }
     
@@ -383,15 +383,15 @@ async function updateStorageQuota(userId, username) {
             method: 'PUT'
         });
         if (response.ok) {
-            alert(`Storage quota updated for ${username}: ${quota_mb === 0 ? 'Unlimited' : quota_mb + 'MB'}`);
+            pcAlert(`Storage quota updated for ${username}: ${quota_mb === 0 ? 'Unlimited' : quota_mb + 'MB'}`);
             loadUsers();
         } else {
             const data = await response.json();
-            alert(data.detail || 'Failed to update quota');
+            pcAlert(data.detail || 'Failed to update quota');
             loadUsers(); // Reload to reset
         }
     } catch (err) {
-        alert('Error updating quota');
+        pcAlert('Error updating quota');
         loadUsers();
     }
 }
@@ -412,15 +412,15 @@ async function updateCapabilities(userId, username) {
             method: 'PUT'
         });
         if (response.ok) {
-            alert(`Access updated for ${username}`);
+            pcAlert(`Access updated for ${username}`);
             loadUsers();
         } else {
             const data = await response.json().catch(() => ({}));
-            alert(data.detail || 'Failed to update access');
+            pcAlert(data.detail || 'Failed to update access');
             loadUsers();
         }
     } catch (err) {
-        alert('Error updating access');
+        pcAlert('Error updating access');
         loadUsers();
     }
 }
@@ -429,7 +429,7 @@ async function updateCapabilities(userId, username) {
 // Removed rescanUserStorage function - users should use the scan button in their own User Settings
 
 async function generateThumbnailsForUser(userId, username) {
-    if (!confirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`)) {
+    if (!(await pcConfirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`))) {
         return;
     }
     
@@ -443,26 +443,26 @@ async function generateThumbnailsForUser(userId, username) {
             if (data.results && data.results.length > 0) {
                 const result = data.results[0];
                 if (result.status === 'success') {
-                    alert(`Thumbnails generated for ${username}:\n• ${result.successful.toLocaleString()} generated\n• ${result.failed.toLocaleString()} failed`);
+                    pcAlert(`Thumbnails generated for ${username}:\n• ${result.successful.toLocaleString()} generated\n• ${result.failed.toLocaleString()} failed`);
                 } else {
-                    alert(`Error rescanning storage for ${username}: ${result.error || 'Unknown error'}`);
+                    pcAlert(`Error rescanning storage for ${username}: ${result.error || 'Unknown error'}`);
                 }
             } else {
-                alert(data.message || 'Storage rescanned');
+                pcAlert(data.message || 'Storage rescanned');
             }
         } else {
             const error = await response.json();
-            alert(`Error: ${error.detail || 'Failed to rescan storage'}`);
+            pcAlert(`Error: ${error.detail || 'Failed to rescan storage'}`);
         }
     } catch (err) {
         console.error('Storage rescan error:', err);
-        alert(`Error: ${err.message}`);
+        pcAlert(`Error: ${err.message}`);
     }
 }
 
 // Generate thumbnails for a specific user
 async function generateThumbnailsForUser(userId, username) {
-    if (!confirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`)) {
+    if (!(await pcConfirm(`Generate thumbnails for all images for user "${username}"? This may take a moment if there are many images.`))) {
         return;
     }
     
@@ -476,20 +476,20 @@ async function generateThumbnailsForUser(userId, username) {
             if (data.results && data.results.length > 0) {
                 const result = data.results[0];
                 if (result.status === 'success') {
-                    alert(`Thumbnails generated for ${username}:\n• ${result.successful.toLocaleString()} generated\n• ${result.failed.toLocaleString()} failed`);
+                    pcAlert(`Thumbnails generated for ${username}:\n• ${result.successful.toLocaleString()} generated\n• ${result.failed.toLocaleString()} failed`);
                 } else {
-                    alert(`Error generating thumbnails for ${username}: ${result.error || 'Unknown error'}`);
+                    pcAlert(`Error generating thumbnails for ${username}: ${result.error || 'Unknown error'}`);
                 }
             } else {
-                alert(data.message || 'Thumbnail generation completed');
+                pcAlert(data.message || 'Thumbnail generation completed');
             }
         } else {
             const error = await response.json();
-            alert(`Error: ${error.detail || 'Failed to generate thumbnails'}`);
+            pcAlert(`Error: ${error.detail || 'Failed to generate thumbnails'}`);
         }
     } catch (err) {
         console.error('Thumbnail generation error:', err);
-        alert(`Error: ${err.message}`);
+        pcAlert(`Error: ${err.message}`);
     }
 }
 
@@ -514,10 +514,10 @@ document.getElementById('createUserForm')?.addEventListener('submit', async (e) 
             loadUsers();
         } else {
             const data = await response.json();
-            alert(data.detail || 'Failed to create user');
+            pcAlert(data.detail || 'Failed to create user');
         }
     } catch (err) {
-        alert('Error creating user');
+        pcAlert('Error creating user');
     }
 });
 
@@ -880,7 +880,7 @@ window.editExternalStorage = async function(id) {
             const mount = mounts.find(m => m.id === id);
             if (!mount) {
                 console.error('Mount not found:', id);
-                alert('External storage mount not found');
+                pcAlert('External storage mount not found');
                 return;
             }
             
@@ -924,16 +924,16 @@ window.editExternalStorage = async function(id) {
         } else {
             const error = await response.json();
             console.error('Failed to load external storage:', error);
-            alert('Error loading external storage: ' + (error.detail || 'Unknown error'));
+            pcAlert('Error loading external storage: ' + (error.detail || 'Unknown error'));
         }
     } catch (err) {
         console.error('Failed to edit external storage:', err);
-        alert('Error: ' + (err.message || 'Failed to load external storage'));
+        pcAlert('Error: ' + (err.message || 'Failed to load external storage'));
     }
 }
 
 window.deleteExternalStorage = async function(id) {
-    if (!confirm('Are you sure you want to delete this external storage mount?')) {
+    if (!(await pcConfirm('Are you sure you want to delete this external storage mount?'))) {
         return;
     }
     
@@ -943,13 +943,13 @@ window.deleteExternalStorage = async function(id) {
         });
         if (response.ok) {
             await loadExternalStorage();
-            alert('External storage mount deleted');
+            pcAlert('External storage mount deleted');
         } else {
             const error = await response.json();
-            alert('Error: ' + (error.detail || 'Failed to delete'));
+            pcAlert('Error: ' + (error.detail || 'Failed to delete'));
         }
     } catch (err) {
-        alert('Error deleting external storage mount');
+        pcAlert('Error deleting external storage mount');
     }
 }
 
@@ -1038,7 +1038,7 @@ document.getElementById('saveExternalStorageBtn')?.addEventListener('click', asy
         if (response.ok) {
             document.getElementById('externalStorageModal').style.display = 'none';
             await loadExternalStorage();
-            alert(id ? 'External storage mount updated' : 'External storage mount created');
+            pcAlert(id ? 'External storage mount updated' : 'External storage mount created');
         } else {
             const error = await response.json();
             errorDiv.textContent = error.detail || 'Failed to save';
@@ -1245,10 +1245,10 @@ setTimeout(() => {
     async function forget() {
         if (!lastScan || !lastScan.missing.length) return;
         const n = lastScan.missing.length;
-        if (!confirm('Drop ' + n + ' row(s) whose bytes this node does not have?\n\n'
+        if (!(await pcConfirm('Drop ' + n + ' row(s) whose bytes this node does not have?\n\n'
                      + 'Nothing is deleted from storage — there is nothing there to delete. It stops '
                      + 'this node claiming to hold files it does not, so clients can stop retrying '
-                     + 'them.')) return;
+                     + 'them.'))) return;
         const fix = $id('bl_scan_fix'), out = $id('bl_scan_out');
         fix.disabled = true;
         try {

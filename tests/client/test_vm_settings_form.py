@@ -87,30 +87,11 @@ class SaveIsTheLastButtonInTheForm(unittest.TestCase):
         self.assertIn("Saving", handler)
 
 
-class NoNativeDialogsAnywhereInTheClient(unittest.TestCase):
-    """`alert`/`confirm`/`prompt` block the renderer, and in the Electron shell and the APK's
-    WebView that wedges the window with no way back. This rule has been known here for a long time
-    and was enforced by nothing — which is how a bare `prompt()` survived in the VM settings, on a
-    screen that ONLY exists inside the desktop shell."""
-
-    ALLOW = {"picker.html"}
-
-    def test_no_bare_native_dialog_in_any_client_module(self):
-        bad = []
-        pattern = re.compile(r"(?<![.\w$])(alert|confirm|prompt)\s*\(")
-        for path in sorted(CLIENT.glob("*.js")):
-            if path.name in self.ALLOW:
-                continue
-            src = _strip(path.read_text(encoding="utf-8"))
-            for m in pattern.finditer(src):
-                head = src[max(0, m.start() - 40):m.start()]
-                # `uiPrompt(`, `PC().uiConfirm(`, `_confirm(` and friends all end in a word char or
-                # a dot, which the lookbehind already excludes; `function confirm(` is a definition.
-                if re.search(r"(function|const|let|var)\s*$", head):
-                    continue
-                line = src.count("\n", 0, m.start()) + 1
-                bad.append("%s:%d  %s(" % (path.name, line, m.group(1)))
-        self.assertEqual(bad, [], "native dialogs wedge the desktop shell:\n" + "\n".join(bad))
+class TheVmDiskPromptUsesTheClientDialog(unittest.TestCase):
+    """The app-wide audit moved to tests/test_no_native_dialogs_anywhere.py, which covers every
+    served script AND every template — this one only ever scanned `static/js/client/*.js`, which is
+    exactly why 67 native dialogs in the admin panel went unnoticed until one of them split the
+    desktop in half. What stays here is the VM-specific half."""
 
     def test_the_vm_disk_prompt_uses_the_client_one(self):
         self.assertIn("PC().uiPrompt('New disk size in GB'", OS_JS)

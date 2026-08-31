@@ -318,7 +318,8 @@ def _settings_text_keys() -> set:
             out.add(name)
     # Secret tokens set OUT-OF-BAND (OAuth), never typed into the form: a blank field on Save must
     # mean "leave as-is", NOT clear — otherwise a normal Save wipes the token the admin never sees.
-    out -= {"fedi_bridge_access_token", "fedi_bridge_admin_token", "turn_shared_secret", "stream_auth_secret"}
+    out -= {"fedi_bridge_access_token", "fedi_bridge_admin_token", "turn_shared_secret", "stream_auth_secret",
+            "monero_wallet_rpc_password"}
     _TEXT_KEYS_CACHE = out
     return out
 
@@ -337,6 +338,8 @@ def get_settings(
     for _k in ("fedi_bridge_access_token", "fedi_bridge_admin_token", "turn_shared_secret", "stream_auth_secret"):
         if getattr(resp, _k, None):
             setattr(resp, _k, "")
+    if resp.monero_wallet_rpc_password:
+        resp.monero_wallet_rpc_password = "********"
     return resp
 
 
@@ -580,15 +583,24 @@ def update_settings(
         from app.services import settings_store
         text_keys = _settings_text_keys()
         for key, value in data.settings.items():
+            if key == "monero_wallet_rpc_password" and value in {"", "********"}:
+                continue  # a masked form round-trip must never replace the encrypted credential
             # Persist only keys whose value actually CHANGED. Empty is allowed ONLY for text settings
             # (so a TEXT field like the relay upstream list / blocklists can be CLEARED) — for typed
             # (number/bool) settings an empty string would break SettingsResponse parsing on the next
             # GET, and "" there just means "leave as-is" from a partial UI update, so skip it.
             if settings_store.get(key, "") != value and (value != "" or key in text_keys):
-                settings_store.put(key, value)   # updates the cache + writes through to the relay
+                settings_store.put(key, value, write_relay=not key.startswith("monero_wallet_"))
                 changed_keys.add(key)
             if key in cache_keys:
                 cache_settings_changed = True
+        # Wallet credentials cannot be acknowledged on a best-effort background write. They must
+        # reach the operator-signed, NIP-44-encrypted relay document before Save reports success.
+        _monero_changes = {k: settings_store.get(k, "") for k in changed_keys if k.startswith("monero_wallet_")}
+        if _monero_changes:
+            import asyncio as _asyncio
+            if _asyncio.run(settings_store.write_through(db, _monero_changes)) != len(_monero_changes):
+                raise HTTPException(status_code=503, detail="Could not durably save Monero wallet settings")
         logger.info(f"[Admin] Saved {len(changed_keys)} changed setting(s)")
 
         # Relay TASK-TOPOLOGY keys force a full subprocess restart (see the restart block below).
@@ -745,6 +757,9 @@ def update_settings(
                 logger.warning(f"[Admin] could not schedule relay restart: {e}")
         # (settings_store.put above already mirrors each changed key to the relay datastore.)
 
+    except HTTPException:
+        db.rollback()
+        raise
     except IntegrityError as e:
         # Handle constraint violations (e.g., unique constraint, foreign key)
         db.rollback()

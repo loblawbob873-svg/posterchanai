@@ -1910,6 +1910,23 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    Play rather than hidden in a menu — it is only ever wanted when something is already wrong. */
 .xdc-reset{flex:none;opacity:.75}
 .xdc-reset:hover{opacity:1}
+/* The same WebXDC cartridge inside a DM bubble. A bubble normally shrink-wraps one line of text at
+   max-width:74%; that is the opposite of what an attachment card needs and squeezed its icon, title,
+   Reset and Play controls into an unreadable strip. Let this attachment-sized bubble claim a bounded
+   chat width, remove inherited `white-space:pre-wrap`, and keep every edge inside the bubble. */
+.bubble:has(.xdc-card){width:min(520px,92%);max-width:92%}
+.bubble:has(.xdc-card)>.b-txt{display:block}
+.bubble .xdc-card{box-sizing:border-box;width:100%;max-width:100%;min-width:0;margin:4px 0 0;
+  white-space:normal;overflow:hidden;word-break:normal}
+.bubble .xdc-card .xdc-meta{min-width:0}
+@media(max-width:520px){
+  .bubble:has(.xdc-card){width:92%;max-width:92%;padding:8px 9px}
+  .bubble .xdc-card{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:7px 9px;padding:9px}
+  .bubble .xdc-card .xdc-ico{grid-column:1;grid-row:1}
+  .bubble .xdc-card .xdc-meta{grid-column:2/4;grid-row:1;align-self:center}
+  .bubble .xdc-card .xdc-reset{grid-column:2;grid-row:2;justify-self:start}
+  .bubble .xdc-card .xdc-play{grid-column:3;grid-row:2;justify-self:end}
+}
 /* ---- Games → Webxdc: the directory --------------------------------------------------------------
    A gallery, not a list, because these apps ship real cover art (Ditto's kind-1063 carries an
    `image` tag) and a wall of covers is the difference between "some files" and "things to play".
@@ -7022,6 +7039,11 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   touch-action:none}
 .wgt-dim{color:var(--muted);font-size:11.5px}
 
+/* Monero tip wallet — operational summary only. Addresses, credentials and transactions belong in
+   the full wallet window, never on an always-visible desktop surface. */
+.wgt-xmr{display:flex;flex-direction:column;height:100%;min-width:0;gap:7px;font-variant-numeric:tabular-nums}.wgt-xmr header{display:flex;align-items:center;gap:8px;min-width:0}.wgt-xmr header>div{display:flex;flex-direction:column;min-width:0}.wgt-xmr header b{font-size:13px}.wgt-xmr-mark{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;border-radius:50%;background:#f60;color:#fff;font-size:19px;font-weight:800}.wgt-xmr-net{font-size:9px;letter-spacing:.09em;color:#f80}.wgt-xmr-bal{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:0 6px;min-width:0}.wgt-xmr-bal strong{font-size:clamp(20px,8cqw,30px);line-height:1.05;color:var(--text);overflow:hidden;text-overflow:ellipsis}.wgt-xmr-bal>span{font-size:10px;color:var(--muted)}.wgt-xmr-bal small{grid-column:1/3;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wgt-xmr-health{display:flex;flex-wrap:wrap;gap:3px 9px;color:var(--muted);font-size:10px}.wgt-xmr-health span{white-space:nowrap}.wgt-xmr-warn{padding:4px 6px;border:1px solid rgba(255,102,0,.5);border-radius:6px;background:rgba(255,102,0,.1);color:#f80;font-size:9.5px}.wgt-xmr-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 28px;gap:5px;margin-top:auto}.wgt-xmr-actions button{min-width:0;min-height:28px;padding:4px 5px;border:1px solid var(--line);border-radius:7px;background:var(--bg2);color:var(--text);font:inherit;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.wgt-xmr-actions button:hover{border-color:#f60;color:#f80}.wgt-xmr.is-loading{opacity:.72}.wgt-xmr.is-error .wgt-xmr-bal strong{color:var(--muted)}
+.os-wgt[data-type="monero"][data-size="s"] .os-wgt-body{padding:5px 7px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr{gap:3px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-mark{width:23px;height:23px;flex-basis:23px;font-size:16px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-bal strong{font-size:18px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-bal>span,.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-health [data-node],.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-health [data-at],.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-warn{display:none}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:3px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-actions button{padding-inline:2px;font-size:9px}
+
 /* CPU, memory and network. A number says where the machine is now; the trace says whether that is
    a spike or a trend. Sixty samples at two seconds is a compact two-minute history. */
 .wgt-perf{height:100%;min-height:0;display:flex;flex-direction:column;gap:7px;font-variant-numeric:tabular-nums}
@@ -9681,3 +9703,19 @@ audio.sms-att-img{min-width:220px}
 /* A device URI is long and a phone is narrow: stack rather than squeeze the buttons off the edge. */
 @media(max-width:640px){.os-printer-row{flex-direction:column;align-items:stretch}
   .os-printer-acts{justify-content:flex-end}}
+
+/* Interoperable kind-0 profile music (`fields: [[label,url]]`), as published by Ditto. */
+.prof-music{display:grid;gap:9px;margin:12px 0}
+.prof-track{min-width:0;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.prof-track-name{font-weight:600;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prof-track audio{display:block;width:100%;height:36px}
+.pf-music-row{display:grid;grid-template-columns:minmax(110px,.7fr) minmax(180px,1.3fr) auto;gap:7px;margin:7px 0}
+.pf-music-actions{flex-wrap:wrap;gap:7px;margin-top:7px}
+@media(max-width:600px){.pf-music-editor{padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}.pf-music-row{grid-template-columns:minmax(0,1fr) auto}.pf-music-url{grid-column:1/3}.pf-music-actions .btn{flex:1 1 130px;min-height:42px}.prof-track audio{height:40px}}
+
+/* PosterChan Office launcher: a workspace surface, not an unstyled row of controls. */
+.office-home{width:min(860px,100%);margin:0 auto;padding:clamp(18px,4vw,44px)}
+.office-home h2{margin:0 0 8px;font-size:clamp(24px,4vw,38px)}
+.office-home-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:24px}
+.office-home-actions .btn{min-height:54px;justify-content:center}
+@media(max-width:640px){.office-home{padding:16px}.office-home-actions{grid-template-columns:1fr}.office-home-actions .btn{width:100%}}

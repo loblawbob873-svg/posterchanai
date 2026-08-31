@@ -819,11 +819,11 @@ def test_the_notification_is_not_rebuilt_for_every_request():
         "note() posts unconditionally, so every request redraws the notification")
 
 
-def test_the_signer_does_not_route_the_apps_http_through_okhttp():
+def test_native_okhttp_is_only_used_for_the_two_long_lived_websockets():
     """The app's own HTTP goes through the WebView so it inherits the user's proxy and Tor settings.
 
-    An OkHttp client would silently bypass both. It exists here for one thing — a WebSocket per relay
-    — and this asserts it stayed that way.
+    An OkHttp HTTP request would silently bypass both. The native transport is allowed only for the
+    signer relay WebSocket and PosterChan Direct's authenticated notification WebSocket.
     """
     import glob
     users = []
@@ -831,8 +831,13 @@ def test_the_signer_does_not_route_the_apps_http_through_okhttp():
                        recursive=True):
         if "okhttp3" in _read(p):
             users.append(os.path.basename(p))
-    assert users == ["SignerRelayService.java"], (
-        f"okhttp has spread beyond the signer's WebSocket: {users}")
+    assert sorted(users) == ["DirectPushService.java", "SignerRelayService.java"], (
+        f"okhttp has spread beyond the two native WebSockets: {users}")
+    for name in users:
+        source = _read(next(p for p in glob.glob(
+            os.path.join(ANDROID, "app", "src", "main", "java", "**", name), recursive=True)))
+        assert ".newWebSocket(" in source
+        assert ".newCall(" not in source, f"{name} routes app HTTP outside the WebView"
 
 
 if __name__ == "__main__":

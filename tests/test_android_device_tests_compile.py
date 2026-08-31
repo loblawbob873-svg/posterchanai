@@ -125,30 +125,6 @@ public final class ActivityLifecycleMonitorRegistry {
   public Stage getLifecycleStageOf(android.app.Activity activity) { return Stage.RESUMED; }
 }
 """,
-            # PushEventService itself remains compile-checked. Only UnifiedPush's external connector
-            # API is represented here, with the exact lifecycle surface the service overrides.
-            "org/unifiedpush/android/connector/PushService.java": """
-package org.unifiedpush.android.connector;
-public abstract class PushService extends android.app.Service {
-  public abstract void onMessage(org.unifiedpush.android.connector.data.PushMessage m, String instance);
-  public abstract void onNewEndpoint(org.unifiedpush.android.connector.data.PushEndpoint e, String instance);
-  public abstract void onUnregistered(String instance);
-  public abstract void onRegistrationFailed(FailedReason reason, String instance);
-  @Override public android.os.IBinder onBind(android.content.Intent intent) { return null; }
-}
-""",
-            "org/unifiedpush/android/connector/FailedReason.java": """
-package org.unifiedpush.android.connector;
-public enum FailedReason { INTERNAL_ERROR }
-""",
-            "org/unifiedpush/android/connector/data/PushMessage.java": """
-package org.unifiedpush.android.connector.data;
-public class PushMessage { public byte[] getContent() { return new byte[0]; } }
-""",
-            "org/unifiedpush/android/connector/data/PushEndpoint.java": """
-package org.unifiedpush.android.connector.data;
-public class PushEndpoint { public String getUrl() { return ""; } }
-""",
             "place/poster/app/music/MusicWidget.java": """
 package place.poster.app.music;
 public class MusicWidget extends android.content.BroadcastReceiver {

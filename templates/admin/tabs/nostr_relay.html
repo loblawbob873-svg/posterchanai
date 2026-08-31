@@ -150,8 +150,8 @@
             });
             var rstat=document.getElementById('relay-restore-status');
             var kbtn=document.getElementById('relay-backup-btn');
-            if(kbtn){ kbtn.addEventListener('click', function(){
-                if(!confirm('Re-publish the full current config (settings/accounts/per-user/bots) to the upstream relays now? Paced over a few minutes.')) return;
+            if(kbtn){ kbtn.addEventListener('click', async function(){
+                if(!(await pcConfirm('Re-publish the full current config (settings/accounts/per-user/bots) to the upstream relays now? Paced over a few minutes.'))) return;
                 kbtn.disabled=true; rstat.textContent='backing up to upstream… (runs in the background)';
                 var f=(window.csrfFetch||fetch);
                 f('/api/admin/nostr-relay/backup-datastore',{method:'POST'}).then(function(r){return r.json();})
@@ -162,8 +162,8 @@
                 .finally(function(){ kbtn.disabled=false; });
             }); }
             var rbtn=document.getElementById('relay-restore-btn');
-            if(rbtn){ rbtn.addEventListener('click', function(){
-                if(!confirm('Pull the operator’s encrypted config docs from the upstream relays into this node? Use this on a fresh/rebuilt node.')) return;
+            if(rbtn){ rbtn.addEventListener('click', async function(){
+                if(!(await pcConfirm('Pull the operator’s encrypted config docs from the upstream relays into this node? Use this on a fresh/rebuilt node.'))) return;
                 rbtn.disabled=true; rstat.textContent='restoring from upstream…';
                 var f=(window.csrfFetch||fetch);
                 f('/api/admin/nostr-relay/restore-datastore',{method:'POST'}).then(function(r){return r.json();})
@@ -186,8 +186,8 @@
             if(pbtn){
                 var f=(window.csrfFetch||fetch);
                 function relayStatus(){ return f('/api/admin/nostr-relay/status').then(function(r){return r.json();}).catch(function(){return null;}); }
-                pbtn.addEventListener('click', function(){
-                    if(!confirm('Apply the blocked words / languages / accounts / bridges to ALREADY-STORED notes and delete matches now? This cannot be undone.')) return;
+                pbtn.addEventListener('click', async function(){
+                    if(!(await pcConfirm('Apply the blocked words / languages / accounts / bridges to ALREADY-STORED notes and delete matches now? This cannot be undone.'))) return;
                     pbtn.disabled=true; pstat.textContent='purging…';
                     relayStatus().then(function(s0){
                         var baseTs=(s0&&s0.block_purge&&s0.block_purge.ts)||0;
@@ -254,8 +254,8 @@
                     .finally(function(){ abtn.disabled=dbtn.disabled=false; });
                 }
                 dbtn.addEventListener('click', function(){ runPrune(true); });
-                abtn.addEventListener('click', function(){
-                    if(!confirm('Delete every feed note past the retention window above? Preview first if you have not. This cannot be undone.')) return;
+                abtn.addEventListener('click', async function(){
+                    if(!(await pcConfirm('Delete every feed note past the retention window above? Preview first if you have not. This cannot be undone.'))) return;
                     runPrune(false);
                 });
             }

@@ -3143,6 +3143,9 @@
 
   function textsOnScreen(){
     if(!PC) return false;
+    /* VIEW is the hard ownership boundary. PosterChanOS may briefly report stale feed ownership
+     * during a route handoff, but it must never let this late-loaded module paint over Timeline. */
+    if(PC.VIEW !== 'texts') return false;
     try{
       if(window.PCOS && PCOS.isOn && PCOS.isOn() && PCOS.ownsFeedView)
         return !!PCOS.ownsFeedView('texts');
@@ -3155,6 +3158,10 @@
      * Background decrypt/subscription work must still prove ownership before painting, but applying
      * that asynchronous predicate to the route's own first paint can leave app.js's spinner in
      * place forever with a completely loaded S.msgs map. */
+    /* `force` only bridges PosterChanOS's one-turn ownership lag after the Texts route was selected.
+     * It is not permission to replace another route's feed. load() is also used by lifecycle work,
+     * so allowing a forced paint outside VIEW=texts put "Search messages" over Timeline at startup. */
+    if(!PC || PC.VIEW !== 'texts') return;
     if(!force && !textsOnScreen()) return;
     const feed = PC.$('#feed');
     if(!feed) return;
@@ -3910,6 +3917,13 @@
     let foregrounding = null;
     async function foreground(){
       if(document.visibilityState !== 'visible') return;
+      /* sms.js is present in every client shell. Browser startup commonly emits focus after the
+       * timeline has begun rendering; do not open/decrypt/query the Texts archive for that event.
+       * Entering Texts calls render(), which owns the cold load and installs this same retry path. */
+      /* Once Texts has actually been opened, retain its documented foreground catch-up even if the
+       * person later navigates away; paint() still cannot touch that route. The startup case is the
+       * important distinction: an archive that has never been requested stays completely cold. */
+      if(PC.VIEW !== 'texts' && !S.ready) return;
       if(foregrounding) return foregrounding;
       foregrounding = (async () => {
       await load();

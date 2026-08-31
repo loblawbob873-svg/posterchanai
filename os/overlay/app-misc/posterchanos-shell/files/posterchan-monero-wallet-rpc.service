@@ -1,0 +1,32 @@
+[Unit]
+Description=PosterChan local Monero wallet RPC
+Documentation=https://docs.getmonero.org/interacting/monero-wallet-rpc-reference/
+ConditionPathExists=%h/.config/posterchanos/monero-wallet-rpc.conf
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/monero-wallet-rpc --config-file=%h/.config/posterchanos/monero-wallet-rpc.conf --non-interactive
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/posterchanos/monero
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target

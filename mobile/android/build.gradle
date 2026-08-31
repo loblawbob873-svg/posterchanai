@@ -13,8 +13,7 @@ buildscript {
         //     Module was compiled with an incompatible version of Kotlin.
         //     The binary version of its metadata is 2.3.0, expected version is 1.9.0.
         //     WARNING: D8: Unexpected error during rewriting of Kotlin metadata … Should never be called
-        // Nothing in this repo changed to cause that — UnifiedPush 3.3.3 is built with Kotlin 2.1 and
-        // RootEncoder 2.7.2 with Kotlin 2.3, so pinning the DEPENDENCIES (as the RootEncoder comment in
+        // RootEncoder 2.7.2 is built with Kotlin 2.3, so pinning the DEPENDENCY (as its comment in
         // app/build.gradle tried to) only postpones it: the floor keeps rising and the toolchain has to
         // meet it. Requires Gradle 8.13 (see gradle/wrapper/gradle-wrapper.properties) and JDK 17,
         // which the workflow already uses.

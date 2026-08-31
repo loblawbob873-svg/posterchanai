@@ -22,6 +22,11 @@ public final class MmsSender {
 
     public static SmsSender.Result send(Context ctx, String to, String body, byte[] raw,
                                         String mime, String name) {
+        return send(ctx, to, body, raw, mime, name, null);
+    }
+
+    static SmsSender.Result send(Context ctx, String to, String body, byte[] raw,
+                                 String mime, String name, String draftKey) {
         SmsSender.Result r = new SmsSender.Result();
         if (to == null || to.trim().isEmpty()) { r.error = "missing recipient"; return r; }
         if (raw == null || raw.length == 0) { r.error = "missing attachment"; return r; }
@@ -75,6 +80,7 @@ public final class MmsSender {
              * "Sending" forever. Route the carrier result to our declared receiver. */
             Intent sent = new Intent(ctx, MmsSendReceiver.class)
                     .setAction(MmsSendReceiver.ACTION_SENT);
+            if (draftKey != null) sent.putExtra("draft_key", draftKey);
             new Transaction(ctx, settings).setExplicitBroadcastForSentMms(sent)
                     .sendNewMessage(message);
             r.ok = true;

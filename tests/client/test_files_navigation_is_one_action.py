@@ -41,6 +41,7 @@ class OneWayToOpenAFolder(unittest.TestCase):
         for needed, why in (
                 ("_fxRemember()", "Back has nothing to return to"),
                 ("_fxMobileSource='blossom'", "the visible pane never switches on a phone"),
+                ("_filesTab='public'", "the My Computer renderer keeps taking the screen back"),
                 ("_filesFolder=name", "the folder is never selected"),
                 ("renderBlossom()", "nothing repaints")):
             self.assertIn(needed, body, "%s missing — %s" % (needed, why))
@@ -49,7 +50,13 @@ class OneWayToOpenAFolder(unittest.TestCase):
         body = APP[APP.index("function _fxOpenSynced("):APP.index("function _fxOpenSynced(") + 400]
         self.assertIn("_fxMobileSource='synced'", body,
                       "a synced folder opens without switching the visible pane")
+        self.assertIn("_filesTab='public'", body,
+                      "a synced folder selected from My Computer remains trapped in its renderer")
         self.assertIn("_fxRemember()", body)
+
+    def test_delayed_computer_home_result_cannot_repaint_after_leaving_it(self):
+        body = APP[APP.index("function _openHostFiles("):APP.index("/* WHERE FILES HAS BEEN")]
+        self.assertGreaterEqual(body.count("_filesTab==='computer' && _hostOn"), 2)
 
     def test_both_the_chip_and_the_tile_go_through_it(self):
         for sel, fn in ((".folder-chip[data-folder]", "_fxOpenFolder"),

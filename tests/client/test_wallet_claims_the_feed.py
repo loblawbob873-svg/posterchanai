@@ -137,21 +137,37 @@ def test_a_zap_never_touches_the_feed():
     assert out == "FEED-UNTOUCHED"
 
 
-def test_a_zap_to_an_invalid_address_is_refused_before_any_request():
+def test_a_zap_to_an_invalid_address_is_refused_and_never_reaches_a_transfer():
     """The address comes off somebody else's profile. Sending to a malformed one is money gone with
-    no way back, so it is rejected before the wallet is even asked."""
+    no way back.
+
+    It used to be refused before ANY request. Since the wallet learned about mainnet the module has
+    to ask the node which network it is on before it can judge an alphabet, so a probe is now
+    expected — `fetch` here never resolves, which is the real "no wallet daemon" case, and the tip
+    must still come back false rather than hanging on a decision it cannot make."""
     out = _node("""
+      // A wallet port with nothing behind it refuses the connection at once; the module-level
+      // hanging fetch above is the OTHER case (a daemon that accepts and never answers) and is what
+      // the feed tests need. Both must end in a refused tip, never in a pending promise.
+      globalThis.fetch = () => Promise.reject(new Error('ECONNREFUSED'));
+      let settled = 'PENDING';
       Promise.resolve(window.PCMoneroWallet.tip({ address: 'not-an-address' }))
-        .then(ok => console.log(ok === false && fetchCalls === 0 ? 'REFUSED' : 'ok=' + ok));
+        .then(ok => { settled = (ok === false && !modalOpened) ? 'REFUSED' : 'ok=' + ok; });
+      setTimeout(() => console.log(settled), 60);
     """)
     assert out == "REFUSED"
 
 
 @pytest.mark.parametrize("addr", ["", "null", "undefined", "0x0000", "bitcoin:bc1qxyz", "4" * 10])
 def test_obviously_wrong_addresses_are_refused(addr):
+    """Same shape as above: the probe never answers here, so a tip that cannot be judged must resolve
+    false instead of waiting for ever on a wallet that is not there."""
     out = _node("""
+      globalThis.fetch = () => Promise.reject(new Error('ECONNREFUSED'));
+      let settled = 'PENDING';
       Promise.resolve(window.PCMoneroWallet.tip({ address: %s }))
-        .then(ok => console.log(ok === false ? 'REFUSED' : 'ACCEPTED'));
+        .then(ok => { settled = ok === false ? 'REFUSED' : 'ACCEPTED'; });
+      setTimeout(() => console.log(settled), 60);
     """ % json.dumps(addr))
     assert out == "REFUSED", f"{addr!r} was accepted as a Monero address"
 

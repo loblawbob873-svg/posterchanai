@@ -48,7 +48,15 @@ public class OkHttpClient {
   }
   public WebSocket newWebSocket(Request r, WebSocketListener l) { return null; }
   public java.util.concurrent.ExecutorService dispatcherExecutor() { return null; }
+  public Dispatcher dispatcher() { return new Dispatcher(); }
+  public ConnectionPool connectionPool() { return new ConnectionPool(); }
 }
+""",
+    "okhttp3/Dispatcher.java": """
+package okhttp3; public class Dispatcher { public void cancelAll() { } }
+""",
+    "okhttp3/ConnectionPool.java": """
+package okhttp3; public class ConnectionPool { public void evictAll() { } }
 """,
     "okhttp3/Request.java": """
 package okhttp3;
@@ -97,7 +105,9 @@ public class StayAwakeService extends android.app.Service {
     "place/poster/app/push/PushEventService.java": """
 package place.poster.app.push;
 public class PushEventService {
+  public static final String PREFS = "pcai_push";
   public static boolean running = false;
+  public static boolean deliver(android.content.Context c, String payload) { return true; }
 }
 """,
     "place/poster/app/music/MusicPlugin.java": """

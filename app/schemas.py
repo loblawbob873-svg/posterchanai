@@ -88,6 +88,17 @@ class SettingsUpdate(BaseModel):
 
 
 class SettingsResponse(BaseModel):
+    # Local, low-balance Monero tip wallet. These node settings are stored in the operator-signed,
+    # NIP-44-encrypted settings document. The password is masked by the admin API on reads.
+    monero_wallet_enabled: str = ""
+    monero_wallet_rpc_url: str = ""
+    monero_wallet_rpc_user: str = ""
+    monero_wallet_rpc_password: str = ""
+    monero_wallet_network: str = ""
+    monero_wallet_transfer_cap_xmr: str = ""
+    monero_wallet_daily_cap_xmr: str = ""
+    monero_wallet_rpc_timeout: str = ""
+    monero_wallet_spend_ledger: str = ""
     # Default UI theme for the Nostr web client (/client) — applied to any visitor/device that
     # hasn't picked their own theme. One of CLIENT_THEMES; the client falls back to "cyberpunk" (the
     # flagship bare-:root theme) if unknown. Stored in the relay like every other setting.
@@ -677,11 +688,6 @@ class SettingsResponse(BaseModel):
     blossom_public_url: Optional[str] = None
     blossom_blob_ttl_days: Optional[int] = None
     blossom_max_upload_mb: Optional[int] = None
-    # Allow a push endpoint on a PRIVATE address. Off by default: a UnifiedPush endpoint is a URL this
-    # server POSTs to, so accepting a LAN one lets any account aim it at an internal service. Turn on
-    # when the distributor (ntfy and friends) is self-hosted on your own network — which is a normal
-    # setup here, and otherwise fails with a flat "bad endpoint".
-    push_allow_private_endpoints: Optional[bool] = None
     blossom_user_quota_gb: Optional[int] = None   # per-user storage cap in GB (0/blank = unlimited).
     # Matters because blossom_blob_ttl_days=0 (keep forever) means nothing bounds growth by age.
     blossom_storage_backend: Optional[str] = None
@@ -921,5 +927,3 @@ class UserSettingsResponse(BaseModel):
     fedi_bridge_enabled: bool = False
     # Cross-post my top-level Nostr notes to my linked Pleroma account
     fedi_crosspost_enabled: bool = False
-
-

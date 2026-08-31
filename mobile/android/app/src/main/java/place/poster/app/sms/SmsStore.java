@@ -495,15 +495,21 @@ public final class SmsStore {
      */
     public static int markRead(Context ctx, long[] threadIds) {
         if (threadIds == null || threadIds.length == 0) return 0;
+        int changed = 0;
         try {
             ContentValues v = new ContentValues();
             v.put(Telephony.Sms.READ, 1);
             v.put(Telephony.Sms.SEEN, 1);
-            return ctx.getContentResolver().update(Telephony.Sms.CONTENT_URI, v,
+            changed += ctx.getContentResolver().update(Telephony.Sms.CONTENT_URI, v,
                     Telephony.Sms.THREAD_ID + " IN (" + marks(threadIds.length) + ") AND "
                             + Telephony.Sms.READ + "=0",
                     args(threadIds));
-        } catch (Throwable t) { return 0; }
+        } catch (Throwable ignored) { }
+        // A conversation is one surface backed by TWO providers. In particular, group messages are
+        // commonly MMS even with no media; leaving that provider unread is the badge that never
+        // clears after opening the group.
+        changed += MmsStore.markRead(ctx, threadIds);
+        return changed;
     }
 
     /**

@@ -1436,9 +1436,30 @@
        * merely stay unread. Leave the cache unset so the next pass asks again, and carry on. */
       if((controlWraps||[]).length) roomControls.set(loadKey,controlWraps);
       else roomLoadWarning(p,loadKey,'could not read this community yet: ','no control events came back — retrying'); }
-    const made=await reader.createChatWrap(bundle,controlWraps||[],channel.id,text,viewer.pubkey,p.signTemplate,extraTags,kind);
+    /* The read path already repairs a saved channel id against the current control stream by NAME.
+     * Publishing did not. A renamed/rekeyed channel therefore displayed perfectly (readChat used
+     * its repaired id) and then createChatWrap rejected the same membership as non-writable.
+     *
+     * Retry only that precise structural refusal. First refresh the control history—including the
+     * encrypted disk copy—then resolve the requested channel by name. Do not silently choose the
+     * first channel and do not rewrite the saved list from a possibly partial relay response. */
+    let writeChannel=channel,made;
+    try{ made=await reader.createChatWrap(bundle,controlWraps||[],writeChannel.id,text,viewer.pubkey,p.signTemplate,extraTags,kind); }
+    catch(e){
+      if(!/not writable with this membership/i.test(String(e&&e.message||e)))throw e;
+      const seed=reader.inspectControl(bundle,[]),key=envelopeCacheKey(loadKey,'control'),cached=await cachedEnvelopes(key),
+        known=[...cached,...(controlWraps||[])].filter((ev,i,a)=>ev&&ev.id&&a.findIndex(x=>x&&x.id===ev.id)===i),
+        fresh=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,known),
+        added=fresh.filter(ev=>!known.some(old=>old.id===ev.id));
+      if(added.length)await cacheEnvelopes(key,added);
+      if(fresh.length){controlWraps=fresh;roomControls.set(loadKey,fresh);}
+      const fixed=reconcileChannels(reader,bundle,controlWraps||[],room,channelName);
+      if(!fixed)throw new Error('this channel is no longer available with your current community membership');
+      writeChannel=fixed;
+      made=await reader.createChatWrap(bundle,controlWraps||[],writeChannel.id,text,viewer.pubkey,p.signTemplate,extraTags,kind);
+    }
     const accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the message');
-    await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),[made.wrap]);
+    await cacheEnvelopes(envelopeCacheKey(loadKey,writeChannel.id),[made.wrap]);
     return made;
   }
   function nip29PreviousTags(messages,viewerPubkey){const ids=(messages||[]).filter(m=>m.remote&&!m.pending&&m.pubkey!==viewerPubkey).slice(-3).map(m=>messageId(m).slice(0,8));return ids.length?[['previous',...ids]]:[];}

@@ -102,29 +102,29 @@ async function toggleBot(id, on) {
         if (!resp.ok) throw new Error(await resp.text());
         setTimeout(loadBots, 800);
     } catch (err) {
-        alert('Failed: ' + err.message);
+        pcAlert('Failed: ' + err.message);
         loadBots();
     }
 }
 
 async function deleteBot(id) {
     const b = _bots[id];
-    if (!confirm(`Delete bot "${b ? b.name : id}"? This stops it and removes its config.`)) return;
+    if (!(await pcConfirm(`Delete bot "${b ? b.name : id}"? This stops it and removes its config.`))) return;
     try {
         const resp = await fetch(`/api/admin/bots/${id}`, { method: 'DELETE' });
         if (!resp.ok) throw new Error(await resp.text());
         loadBots();
     } catch (err) {
-        alert('Delete failed: ' + err.message);
+        pcAlert('Delete failed: ' + err.message);
     }
 }
 
 // Delete ALL of this bot's posts (NIP-09 kind-5 deletions, signed by the bot — propagates to relays/clients).
 async function deleteBotPosts() {
     const id = _val('bot_f_id');
-    if (!id) { alert('Save the bot first.'); return; }
+    if (!id) { pcAlert('Save the bot first.'); return; }
     const b = _bots[id];
-    if (!confirm(`Delete ALL posts for "${b ? b.name : id}"? This publishes NIP-09 deletions for every one of its notes. Its profile and game state are kept. This cannot be undone.`)) return;
+    if (!(await pcConfirm(`Delete ALL posts for "${b ? b.name : id}"? This publishes NIP-09 deletions for every one of its notes. Its profile and game state are kept. This cannot be undone.`))) return;
     const btn = _g('bot_f_delposts');
     if (btn) { btn.disabled = true; btn.textContent = '🗑 Deleting…'; }
     try {
@@ -134,7 +134,7 @@ async function deleteBotPosts() {
         if (btn) btn.textContent = `🗑 Deleted ${d.deleted}`;
         setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete all posts'; } }, 2500);
     } catch (err) {
-        alert('Delete posts failed: ' + err.message);
+        pcAlert('Delete posts failed: ' + err.message);
         if (btn) { btn.disabled = false; btn.textContent = '🗑 Delete all posts'; }
     }
 }
@@ -424,7 +424,7 @@ async function publishPost() {
     const id = _val('bot_f_id');
     const st = _g('bot_testpost_status');
     if (!id) { st.textContent = 'Save the bot first.'; return; }
-    if (!confirm('Publish a test post now? It will be posted live to the timeline.')) return;
+    if (!(await pcConfirm('Publish a test post now? It will be posted live to the timeline.'))) return;
     st.textContent = 'Posting…';
     try {
         const r = await fetch(`/api/admin/bots/${id}/test-post/publish`, { method: 'POST' });
@@ -529,7 +529,7 @@ async function statsRunNow() {
     const st = _g('bot_stats_status');
     const nsec = _g('bot_f_nostr_nsec') ? _g('bot_f_nostr_nsec').value.trim() : '';
     if (!nsec) { if (st) st.textContent = "❌ set this bot's Nostr secret key first"; return; }
-    if (!confirm('Post the stats graph to Nostr now, from this bot?')) return;
+    if (!(await pcConfirm('Post the stats graph to Nostr now, from this bot?'))) return;
     if (st) st.textContent = '⏳ posting…';
     try {
         const r = await csrfFetch('/api/admin/stats-run', {

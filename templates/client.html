@@ -55,6 +55,7 @@
     <link rel="apple-touch-icon" href="/static/icon-192.png">
 <link rel="stylesheet" href="/static/css/client.css?v={{ ver }}">
 <link rel="stylesheet" href="/static/css/concord.css?v={{ ver }}">
+<link rel="stylesheet" href="/static/css/monero-wallet.css?v={{ ver }}">
     <!-- __PC_BUILD is the COMMIT, not a cache token: `ver` is an mtime and identifies nothing, which
          is how five days went into testing devices running code from before the fix. A bundled
          APK/desktop overwrites this with its OWN sha at build time (see mobile|desktop/build-www.sh),
@@ -270,6 +271,7 @@
             <div class="nav-group">
                 <button class="nav-item nav-grouphd" id="office-toggle"><svg class="ic"><use href="#i-folder"></use></svg><span>Office</span><span class="chev" id="office-chev">▾</span></button>
                 <div class="nav-sub" id="office-sub">
+                    {% if not nostr_only %}<button class="nav-item sub" data-view="office"><svg class="ic"><use href="#i-note"></use></svg><span>Documents</span></button>{% endif %}
                     {% if not nostr_only %}<button class="nav-item sub" data-view="contacts"><svg class="ic"><use href="#i-user"></use></svg><span>Contacts</span></button>{% endif %}
                     <!-- Calendar: this node's own CalDAV server, so the same calendar syncs to a phone. -->
                     {% if not nostr_only %}<button class="nav-item sub" data-view="calendar"><svg class="ic"><use href="#i-clock"></use></svg><span>Calendar</span></button>{% endif %}
@@ -289,6 +291,7 @@
                  any device. Not gated on an instance: it is relay-only, like Notes. -->
             <button class="nav-item" data-view="texts"><svg class="ic"><use href="#i-chat"></use></svg><span>Texts</span></button>
             <button class="nav-item" data-view="vault"><svg class="ic"><use href="#i-key"></use></svg><span>Passwords</span></button>
+            <button class="nav-item" data-view="wallet"><span class="mw-nav-mark" aria-hidden="true">ɱ</span><span>Monero Wallet</span></button>
             <button class="nav-item" data-view="drafts"><svg class="ic"><use href="#i-draft"></use></svg><span>Drafts<i id="draft-badge" class="badge hidden"></i></span></button>
             <button class="nav-item" data-view="meme"><svg class="ic"><use href="#i-tv"></use></svg><span>Meme Builder</span></button>
             <!-- Git is a top-level row, not a Discover sub-item: it is a place you go to work, like
@@ -440,6 +443,7 @@
 <script src="/static/js/client/qr.js?v={{ ver }}"></script>
 <script src="/static/js/client/urlclean.js?v={{ ver }}"></script>
 <script src="/static/js/client/app.js?v={{ ver }}"></script>
+<script src="/static/js/client/monero-wallet.js?v={{ ver }}"></script>
 <script src="/static/js/client/cord-protocol.js?v={{ ver }}"></script>
 <script src="/static/js/client/cord-reader.js?v={{ ver }}"></script>
 <script src="/static/js/client/concord-cache.js?v={{ ver }}"></script>
@@ -459,7 +463,6 @@
   <script src="/static/js/client/phoneshell.js?v={{ ver }}"></script>
   <script src="/static/js/client/sms.js?v={{ ver }}"></script>
 <script src="/static/js/client/os.js?v={{ ver }}"></script>
-<script src="/static/js/client/markets.js?v={{ ver }}"></script>
 <script src="/static/js/client/budget.js?v={{ ver }}"></script>
 <script src="/static/js/client/joplin.js?v={{ ver }}"></script>
 <!-- webxdc mini apps: zip.js reads the .xdc, webxdc.js runs it in the sandbox origin. Loaded before
@@ -486,9 +489,7 @@
 <script src="/static/js/client/playlists.js?v={{ ver }}"></script>
 <script src="/static/js/client/vaultcore.js?v={{ ver }}"></script>
 <script src="/static/js/client/vault.js?v={{ ver }}"></script>
-<script src="/static/js/client/stats.js?v={{ ver }}"></script>
 <script src="/static/js/client/git.js?v={{ ver }}"></script>
-<script src="/static/js/client/meme.js?v={{ ver }}"></script>
 <script src="/static/js/client/chess.js?v={{ ver }}"></script>
 <script src="/static/js/client/ttt.js?v={{ ver }}"></script>
 <script src="/static/js/client/hangman.js?v={{ ver }}"></script>

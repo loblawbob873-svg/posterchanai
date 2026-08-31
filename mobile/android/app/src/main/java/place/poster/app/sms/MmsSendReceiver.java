@@ -34,6 +34,7 @@ public final class MmsSendReceiver extends BroadcastReceiver {
                 int status = MmsResult.classify(result, http, providerBox);
                 boolean ok = status == MmsResult.SENT;
                 boolean unknown = status == MmsResult.UNKNOWN;
+                String draftKey = intent.getStringExtra("draft_key");
                 /* Code 0 is not a failure on several OEM carrier stacks: the same callback has
                  * been observed for delivered and undelivered MMS. Keep its provider row in the
                  * outbox and label it delivery-unknown. Marking it FAILED caused the UI to lie and
@@ -47,6 +48,11 @@ public final class MmsSendReceiver extends BroadcastReceiver {
                 long id = 0;
                 try { id = Long.parseLong(row.getLastPathSegment()); } catch (Throwable ignored) { }
                 if (ok) MmsFailures.clear(ctx, id); else MmsFailures.put(ctx, id, result, http);
+                if (draftKey != null) MmsDraft.state(ctx, draftKey,
+                        ok ? MmsDraft.SENT : unknown ? MmsDraft.UNKNOWN : MmsDraft.FAILED,
+                        ok ? "" : MmsFailures.reason(ctx, result, http));
+                ctx.sendBroadcast(new Intent("place.poster.app.MMS_DRAFT_CHANGED")
+                        .setPackage(ctx.getPackageName()));
                 String file = intent.getStringExtra("file_path");
                 if (file != null && !file.isEmpty()) new File(file).delete();
                 /* An unknown result is deliberately not emitted as `ok:false`. The provider/error

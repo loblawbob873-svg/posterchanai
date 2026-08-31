@@ -63,6 +63,7 @@
             <button class="tab-btn" data-tab="nodes">Nodes</button>
             <button class="tab-btn" data-tab="storage">Storage</button>
             <button class="tab-btn" data-tab="network">Network</button>
+            <button class="tab-btn" data-tab="monero">Monero</button>
             <button class="tab-btn" data-tab="site">Site</button>
         </div>
     </nav>
@@ -87,6 +88,7 @@
             {% include 'admin/tabs/emoji.html' %}
             {% include 'admin/tabs/storage.html' %}
             {% include 'admin/tabs/network.html' %}
+            {% include 'admin/tabs/monero_wallet.html' %}
             {% include 'admin/tabs/site_settings.html' %}
 
             <button type="submit" class="btn-primary save-btn">Save Settings</button>
@@ -100,6 +102,10 @@
      It also removes the last server-rendered value from this template (a `window.isAdmin` flag that
      nothing has read in a long time), which is what lets /admin be served without a session at all —
      see static/js/admin-auth.js. -->
+<!-- FIRST: every other admin script calls these, and a native alert/confirm/prompt opens a REAL
+     window in the desktop shell, which sway tiles beside the app — "run auto-prune now button
+     causes desktop to split in half". -->
+<script src="/static/js/admin-dialogs.js?v={{ cache_bust }}"></script>
 <script src="/static/js/admin-auth.js?v={{ cache_bust }}"></script>
 <script src="/static/js/admin.js?v={{ cache_bust }}"></script>
 <script src="/static/js/admin-bots.js?v={{ cache_bust }}"></script>

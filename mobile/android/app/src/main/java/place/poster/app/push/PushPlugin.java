@@ -17,8 +17,6 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
-import org.unifiedpush.android.connector.UnifiedPush;
-
 /**
  * Notifications for the packaged app.
  *
@@ -26,14 +24,8 @@ import org.unifiedpush.android.connector.UnifiedPush;
  * build — the one users assume is the more capable of the two — could not receive a call or a message
  * while closed, at all, while the plain web PWA could. This closes that.
  *
- * UnifiedPush rather than Firebase: an endpoint is an ordinary HTTPS URL issued by a distributor the
- * USER installed and chose (ntfy and friends), so delivery is a POST from our own server. No Google
- * account, no Firebase project, no proprietary SDK in a self-hosted app — and the distributor holds
- * ONE OS-level socket shared by every app on the phone, which is why this costs far less battery than
- * us keeping a relay connection alive in the background would.
- *
- * The endpoint arrives asynchronously, at the distributor's leisure — see PushEventService, which
- * is what actually hands it to the web layer to register with the server.
+ * PosterChan Direct uses one authenticated native socket to the instance. No Google account,
+ * Firebase project, third-party distributor, compatibility process or resident WebView is involved.
  *
  * The battery half is here for a reason that is not obvious: Samsung's "Deep sleeping apps" (and the
  * generic background restriction) FORCE-STOP the app. A force-stopped process receives no pushes and
@@ -71,11 +63,16 @@ public class PushPlugin extends Plugin {
     @Override
     public void load() {
         try {
-            if (!StayAwakeService.wanted(getContext()) || StayAwakeService.running) return;
-            Intent i = new Intent(getContext(), StayAwakeService.class)
-                    .setAction(StayAwakeService.ACTION_START);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(i);
-            else getContext().startService(i);
+            if (DirectPushService.configured(getContext()) && !DirectPushService.running) {
+                DirectPushService.kick(getContext());
+            }
+            // Retain a user's independent media/background-connectivity setting across this update.
+            if (StayAwakeService.wanted(getContext()) && !StayAwakeService.running) {
+                Intent i = new Intent(getContext(), StayAwakeService.class)
+                        .setAction(StayAwakeService.ACTION_START);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getContext().startForegroundService(i);
+                else getContext().startService(i);
+            }
         } catch (Throwable ignored) {
             // The switch is still on; opening Settings and toggling it is the way back, and the
             // stored preference means the next open tries again.
@@ -83,9 +80,7 @@ public class PushPlugin extends Plugin {
     }
 
 
-    private static final String INSTANCE = "default";
-
-    /** Ask the user's distributor for an endpoint. Result arrives via PushEventService. */
+    /** Store server-issued direct credentials and start the native connection. */
     @PluginMethod
     public void register(PluginCall call) {
         // Android 13+ DROPS every notification unless this was granted at runtime — declaring it in
@@ -100,32 +95,38 @@ public class PushPlugin extends Plugin {
 
     @PermissionCallback
     private void afterNotifPermission(PluginCall call) {
-        doRegister(call);   // proceed either way: a refused permission still registers the endpoint,
-                            // and the in-app check reports why nothing is appearing.
+        if (getPermissionState("notifications") != com.getcapacitor.PermissionState.GRANTED) {
+            JSObject out = new JSObject();
+            out.put("ok", false);
+            out.put("error", "notification permission denied");
+            call.resolve(out);
+            return;
+        }
+        doRegister(call);
     }
 
     private void doRegister(PluginCall call) {
         Context ctx = getContext();
         JSObject out = new JSObject();
         try {
-            // No distributor installed = nothing can deliver to this phone. Say so plainly rather
-            // than register into a void and look like a delivery failure later.
-            java.util.List<String> dists = UnifiedPush.getDistributors(ctx);
-            if (dists.isEmpty()) {
-                out.put("ok", false);
-                out.put("needsDistributor", true);
-                call.resolve(out);
-                return;
+            String socketUrl = call.getString("socketUrl", "").trim();
+            String token = call.getString("token", "").trim();
+            String stable = DirectPushStore.deviceId(ctx);
+            String requested = call.getString("deviceId", stable).trim();
+            if (!stable.equals(requested)) throw new IllegalArgumentException("device id mismatch");
+            if (!DirectPushService.safeSocketUrl(socketUrl)) {
+                throw new IllegalArgumentException("notification socket must use wss");
             }
-            // getDistributor() returns the ACKed one, which stays empty until the first endpoint
-            // arrives — so re-registering would otherwise overwrite the user's choice with dists[0].
-            String saved = UnifiedPush.getSavedDistributor(ctx);   // nullable in 3.x
-            if (saved == null || saved.isEmpty()) {
-                UnifiedPush.saveDistributor(ctx, dists.get(0));
+            if (token.isEmpty() || token.length() > 8192) {
+                throw new IllegalArgumentException("invalid notification token");
             }
-            // All four arguments spelled out: the Kotlin defaults are not guaranteed visible to Java.
-            UnifiedPush.register(ctx, INSTANCE, null, null);
+            DirectPushStore.save(ctx, socketUrl, token, stable);
+            DirectPushService.kick(ctx);
             out.put("ok", true);
+            out.put("direct", true);
+            out.put("deviceId", stable);
+            out.put("endpoint", "pcdirect:" + stable);
+            out.put("connected", DirectPushService.connected);
         } catch (Throwable t) {
             out.put("ok", false);
             out.put("error", String.valueOf(t.getMessage()));
@@ -134,31 +135,29 @@ public class PushPlugin extends Plugin {
     }
 
     /**
-     * The endpoint the distributor issued, or "" if it hasn't arrived yet.
-     *
-     * register() cannot return it: the distributor answers whenever it likes, into a broadcast
-     * receiver, possibly after this call has long returned. So the receiver stashes it and the web
-     * layer — the only side holding the Nostr key needed to sign the registration — polls for it.
+     * Stable id is available before registration so JavaScript can sign the server registration.
+     * The endpoint is an opaque marker, never the socket URL or bearer token.
      */
     @PluginMethod
     public void getEndpoint(PluginCall call) {
         JSObject out = new JSObject();
-        out.put("endpoint", getContext()
-                .getSharedPreferences(PushEventService.PREFS, Context.MODE_PRIVATE)
-                .getString(PushEventService.KEY_ENDPOINT, ""));
+        String device = DirectPushStore.deviceId(getContext());
+        boolean configured = DirectPushService.configured(getContext());
+        out.put("endpoint", configured ? "pcdirect:" + device : "");
+        out.put("deviceId", device);
+        out.put("direct", true);
+        out.put("connected", DirectPushService.connected);
+        out.put("error", DirectPushService.lastError);
         call.resolve(out);
     }
 
     @PluginMethod
     public void unregister(PluginCall call) {
+        DirectPushStore.clear(getContext());
         try {
-            UnifiedPush.unregister(getContext(), INSTANCE);
-        } catch (Throwable ignored) {
-        }
-        // unregister() does not clear OUR copy of the endpoint, and pushState() reads that — without
-        // this, turning notifications off leaves the toggle reading "on".
-        getContext().getSharedPreferences(PushEventService.PREFS, Context.MODE_PRIVATE)
-                    .edit().remove(PushEventService.KEY_ENDPOINT).apply();
+            getContext().startService(new Intent(getContext(), DirectPushService.class)
+                    .setAction(DirectPushService.ACTION_STOP));
+        } catch (Throwable ignored) { }
         call.resolve();
     }
 

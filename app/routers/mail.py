@@ -341,9 +341,14 @@ async def mail_accounts(db: Session = Depends(get_db), current_user: User = Depe
 
 @router.post("/sync")
 async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Login-triggered + manual refresh: IMAP → encrypted mailbox. Returns new-message counts."""
+    """Fast new-mail refresh: mirror INBOX for every account.
+
+    Other folders refresh when opened. Walking every Archive/Trash/custom folder here made the
+    foreground refresh wait behind unrelated mailboxes and counted newly mirrored Sent mail as a
+    new incoming-message notification.
+    """
     try:
-        res = await mail_sync.sync_all(db, current_user)
+        res = await mail_sync.sync_all(db, current_user, folders=["INBOX"])
         return {"ok": True, "new": res}
     except Exception as e:
         logger.warning("[mail] sync failed for %s: %s", current_user.id, e)
@@ -711,6 +716,19 @@ async def mail_folders(account: str = "", db: Session = Depends(get_db), current
 async def mail_sync_folder(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Pull one folder on demand (the default sync only does INBOX/Sent)."""
     d = await request.json()
+    if d.get("account") == "__all":
+        # A logical folder in the unified view spans every account and may have a different real
+        # IMAP name in each. sync_one resolves the role per account; do not quietly refresh INBOX
+        # when the person clicked unified Sent.
+        out = {}
+        try:
+            for item in (get_user_mail_accounts(current_user.id, db) or []):
+                out[item.email] = await mail_sync.sync_one(
+                    db, current_user, item.email, d.get("folder", "INBOX"))
+            return {"ok": True, "new": out}
+        except Exception as e:
+            logger.warning("[mail] unified sync-folder failed: %s", e)
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")

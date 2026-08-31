@@ -277,7 +277,7 @@ async def deliver(db: Session, reminder: Reminder) -> None:
     except Exception as e:
         logger.info(f"live push skipped: {e}")
 
-    # Web Push / UnifiedPush — the only path that reaches a phone whose screen is OFF.
+    # Web Push / PosterChan Direct — the path that reaches a phone whose screen is OFF.
     #
     # The websocket above only lands if the app is open, and the chat row only if the user goes
     # looking. So a reminder set on a phone, for a phone, arrived nowhere at the moment it was due
@@ -295,7 +295,8 @@ async def deliver(db: Session, reminder: Reminder) -> None:
             rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all() if pk else []
             payload = {"title": "⏰ Reminder", "body": reminder.text, "type": "reminder"}
             for row in rows:
-                sub = {"endpoint": row.endpoint, "keys": {"p256dh": row.p256dh, "auth": row.auth}}
+                from app.services.direct_push_service import subscription_dict
+                sub = subscription_dict(row)
                 if not await asyncio.to_thread(push_service.send, sub, payload):
                     db.delete(row)        # endpoint is gone for good — prune it
             if rows:

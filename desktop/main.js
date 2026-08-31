@@ -1794,7 +1794,21 @@ ipcMain.handle('pc:host:pickFile', async (e, options) => {
   if(st.size>max)throw new Error('that file is too large');
   const ext=path.extname(file).toLowerCase(),types={'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png',
     '.gif':'image/gif','.webp':'image/webp','.heic':'image/heic','.heif':'image/heif','.avif':'image/avif'};
-  return {name:path.basename(file),type:types[ext]||'application/octet-stream',size:st.size,data:fs.readFileSync(file)};
+  return {name:path.basename(file),path:file,type:types[ext]||'application/octet-stream',size:st.size,
+    mtime:Math.round(st.mtimeMs),data:fs.readFileSync(file)};
+});
+ipcMain.handle('pc:host:saveFile', async (e, name, bytes) => {
+  fsGuard(e);
+  const owner=BrowserWindow.fromWebContents(e.sender)||win;
+  const r=await dialog.showSaveDialog(owner,{title:'Save document',defaultPath:path.basename(String(name||'document'))});
+  if(r.canceled||!r.filePath)return null;
+  const data=Buffer.from(bytes||[]);
+  if(data.length>256*1024*1024)throw new Error('that file is too large');
+  // A failed write must not truncate an existing document selected in Save As.
+  const tmp=path.join(path.dirname(r.filePath),'.pc-'+path.basename(r.filePath)+'.tmp');
+  fs.writeFileSync(tmp,data);
+  try{fs.renameSync(tmp,r.filePath);}catch(err){try{fs.unlinkSync(tmp);}catch(_){}throw err;}
+  return hostfs().clean(r.filePath);
 });
 /* PosterChan Code editing a file on THIS computer. The guards (size, NUL bytes, atomic rename,
  * mtime compare-and-swap) are in hostfs.js, where a bridge cannot be talked out of them. */

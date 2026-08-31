@@ -160,6 +160,17 @@
   // Drain when connectivity plausibly returned. Both signals are needed: 'online' fires on a LAN that may
   // still not reach the relay, and the relay can recover without the browser ever reporting a transition.
   try{ window.addEventListener('online', ()=>{ setTimeout(()=>Outbox.flush(), 1200); }); }catch(_){}
+  /* Android freezes the WebView in the background. If `_retrySoon` expires during that freeze (or runs
+   * just as Chromium marks the document hidden), it deliberately declines to publish — but used to
+   * consume its one timer without arranging another attempt. A warm resume can keep Relay.status='ok',
+   * so neither `online` nor a relay status transition necessarily follows. The signed event then sat in
+   * the visible queue forever even with a local nsec loaded. Foregrounding is itself a delivery trigger;
+   * revive a possibly-zombie socket and schedule the same idempotent signed-event retry. */
+  try{ document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden || !items.length) return;
+    try{ if(window.Relay&&Relay.reviveStale) Relay.reviveStale(); }catch(_){}
+    _retrySoon(250);
+  }); }catch(_){}
 
   window.Outbox = Outbox;
 })();

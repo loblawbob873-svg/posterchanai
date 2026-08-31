@@ -587,17 +587,38 @@ class ScheduledPost(Base):
 
 
 class PushSubscription(Base):
-    """A browser Web Push subscription (PWA) tied to a Nostr pubkey. The push watcher sends OS
-    notifications here when the app is closed. Server-owned infra (endpoint + keys the SERVER must read
-    in plaintext to send), so it lives in a table, not a relay event."""
+    """One notification device tied to a Nostr pubkey.
+
+    Browsers use ordinary VAPID Web Push.  The native Android app uses PosterChan Direct: it holds a
+    random bearer token and an authenticated WebSocket to this node.  Only the token's SHA-256 digest
+    is stored here, so a database read cannot be turned into a device connection.
+    """
     __tablename__ = "push_subscriptions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     pubkey = Column(String(64), index=True, nullable=False)   # Nostr pubkey hex this device belongs to
-    endpoint = Column(Text, unique=True, nullable=False)       # the push service endpoint URL
-    # NULLABLE, because two transports share this table: a Web Push subscription carries both keys,
-    # a UnifiedPush one carries neither (its endpoint URL is the whole capability). Absence of p256dh
-    # is what push_service.send() dispatches on.
+    endpoint = Column(Text, unique=True, nullable=False)       # Web Push URL; internal direct:<pk>:<device>
+    transport = Column(String(32), nullable=False, default="webpush", index=True)
+    device_id = Column(String(128), nullable=True, index=True) # app-generated, non-secret stable device id
+    token_hash = Column(String(64), nullable=True, unique=True, index=True)  # Direct bearer SHA-256
+    last_seen = Column(DateTime, nullable=True)
     p256dh = Column(String(255), nullable=True)                # client public key (base64url) — Web Push only
     auth = Column(String(255), nullable=True)                  # auth secret (base64url) — Web Push only
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DirectPushMessage(Base):
+    """Short, acknowledged queue for PosterChan Direct notifications.
+
+    A foreground Android service normally receives these immediately.  Keeping the small payload in
+    SQL until the device ACKs it closes the reconnect/reboot race without storing notification bearer
+    tokens or private message contents (NIP-17 notifications contain no decrypted body).
+    """
+    __tablename__ = "direct_push_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    subscription_id = Column(Integer, ForeignKey("push_subscriptions.id", ondelete="CASCADE"),
+                             nullable=False, index=True)
+    payload = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)

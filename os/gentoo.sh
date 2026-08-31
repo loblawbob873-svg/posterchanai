@@ -2006,7 +2006,7 @@ PROFILE
 	# Keep this list in step with the commands /etc/sway/config executes. Snap and Screenshot lived
 	# only in the overlay package's FILESDIR; a direct/fresh installer run therefore wrote working
 	# key bindings to executables it never copied, and mouse/Super snapping simply did nothing.
-	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-key pc-idle pc-screenshot update-posterchan; do
+	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ]; then

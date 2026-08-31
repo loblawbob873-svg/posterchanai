@@ -86,12 +86,14 @@ class TheHighlighter(unittest.TestCase):
                 "py_kw_in_string": ["s = 'def class return'\n", "python"],
                 "py_comment_with_quote": ["# it's a comment\nx = 1\n", "python"],
                 "py_docstring": ['"""doc"""\nx = 1\n', "python"],
+                "py_code": ["def greet(name):\n    return name\n", "python"],
                 "escaped": ["x = '<script>alert(1)</script>'\n", "python"],
                 "amp": ["a && b\n", "javascript"],
                 "sql_lower": ["select a from t\n", "sql"],
                 "sql_upper": ["SELECT a FROM t\n", "sql"],
                 "json_key_vs_value": ['{"k": "v"}', "json"],
                 "bash_var": ["echo $HOME ${X} $1\n", "bash"],
+                "bash_code": ["if [ -f x ]; then echo ok; fi\n", "bash"],
                 "unknown_lang": ["<b>hi</b>\n", "rustlang"],
                 "empty": ["", "python"],
             },
@@ -169,6 +171,11 @@ class TheHighlighter(unittest.TestCase):
         got = self.out["samples"]["bash_var"]
         self.assertEqual(got.count("t-var"), 3, got)
 
+    def test_python_and_bash_keywords_are_visibly_highlighted(self):
+        for sample in ("py_code", "bash_code"):
+            with self.subTest(sample=sample):
+                self.assertIn("t-kw", self.out["samples"][sample])
+
     def test_sql_keywords_match_in_either_case(self):
         """SQL is the one case-insensitive language here, and `(?i:…)` — the obvious way to say so —
         is a syntax error in JavaScript that would silently un-colour the whole language."""
@@ -214,6 +221,11 @@ class TheStateRules(unittest.TestCase):
         self.assertIn("function restoreCaret()", self.src)
         self.assertIn("ta.setSelectionRange(s, e)", self.src)
         self.assertIn("ta.scrollTop = d.scroll", self.src)
+
+    def test_the_editor_paints_highlighted_source_behind_the_textarea(self):
+        self.assertIn('class="pcc-layer pcc-hl"', self.raw)
+        self.assertIn('class="pcc-layer pcc-ta"', self.raw)
+        self.assertIn("highlight(d.text, d.lang)", self.src)
 
     def test_the_state_is_mirrored_outside_this_renderer(self):
         """A monitor handoff destroys the window on one screen and rebuilds it on the other, in a

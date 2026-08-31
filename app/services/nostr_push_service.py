@@ -13,6 +13,7 @@ import time
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.services import push_service, settings_store
+from app.services.direct_push_service import subscription_dict
 from app.services.nostr import relay
 
 logger = logging.getLogger(__name__)
@@ -205,7 +206,7 @@ async def _poll_channels():
                 for s in by_pk[pk]:
                     ok = await asyncio.to_thread(
                         push_service.send,
-                        {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}, payload)
+                        subscription_dict(s), payload)
                     if not ok:
                         dead.append(s)
         for s in dead:
@@ -264,7 +265,7 @@ async def _poll():
                 for s in by_pk[pk]:
                     ok = await asyncio.to_thread(
                         push_service.send,
-                        {"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}}, payload)
+                        subscription_dict(s), payload)
                     if not ok:
                         dead.append(s)
             for s in dead:
@@ -396,8 +397,7 @@ def _subs_for(pks) -> dict:
     try:
         out: dict = {}
         for r in db.query(PushSubscription).filter(PushSubscription.pubkey.in_(list(pks))).all():
-            out.setdefault(r.pubkey, []).append(
-                {"endpoint": r.endpoint, "keys": {"p256dh": r.p256dh, "auth": r.auth}})
+            out.setdefault(r.pubkey, []).append(subscription_dict(r))
         return out
     finally:
         db.close()

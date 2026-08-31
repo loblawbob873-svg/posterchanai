@@ -483,13 +483,9 @@
             </intent-filter>
         </service>
 
-        <!-- "Stay connected" — the persistent notification other messaging apps show. A FALLBACK, not
-             the plan: push through a UnifiedPush distributor reaches a closed app for free and is what
-             should be used. But a phone with no distributor installed receives NOTHING when the app is
-             closed, which is indistinguishable from the feature being broken, and this is the answer
-             for that case. Off by default; the notification says what it costs and turns it off in one
-             tap. `specialUse`, NOT `dataSync`: Android 15 caps dataSync at six hours per day, which for
-             a stay-connected service means it silently stops working most of the time. -->
+        <!-- Legacy optional process/media standby. Notification delivery no longer depends on this
+             WebView keepalive; PosterChan Direct below owns that job natively. It remains because the
+             Bluetooth standby media session is an independent opt-in feature. -->
         <service
             android:name=".push.StayAwakeService"
             android:exported="false"
@@ -499,6 +495,21 @@
                 android:value="Keeps the user's own Nostr relay connection open so direct messages and
                                incoming calls arrive when no push distributor is installed. User
                                opt-in, off by default, cancellable from the notification." />
+        </service>
+
+        <!-- PosterChan Direct notifications. Android does not permit an ordinary background app to
+             keep a reliable socket, so this is an explicit foreground service with one shared,
+             low-priority status notification. The socket and authentication are native: no WebView,
+             Google service, distributor app or compatibility process is required. -->
+        <service
+            android:name=".push.DirectPushService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains the user's authenticated PosterChan Direct notification
+                               connection so messages, mentions and calls arrive while the app is
+                               closed. User-controlled and cancellable from the notification." />
         </service>
 
         <!-- The remote signer (NIP-46), answered natively instead of by the WebView.
@@ -716,17 +727,6 @@
             <meta-data
                 android:name="android.provider.CONTACTS_STRUCTURE"
                 android:resource="@xml/contacts_structure" />
-        </service>
-
-        <!-- Where a UnifiedPush distributor delivers. In connector 3.x this is a SERVICE on the
-             PUSH_EVENT action, and it must NOT be exported — the distributor binds it by permission,
-             and exporting it would let any app on the phone feed us notifications. -->
-        <service
-            android:name="place.poster.app.push.PushEventService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
-            </intent-filter>
         </service>
 
     </application>

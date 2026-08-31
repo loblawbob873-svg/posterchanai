@@ -23,7 +23,7 @@ from app.auth import get_current_user_optional, get_current_user, create_access_
 from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api, search_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
-from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool
+from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool, monero_wallet
 from app.routers import code as code_router      # PosterChan Code: /api/code/* (editor tree, read/write, beautify)
 from app.routers import office as office_router  # built-in CODE + WOPI document editing
 from app.routers import sharelink as sharelink_router   # /f/<sha> — a shared encrypted file, decrypted in the recipient's browser
@@ -252,6 +252,7 @@ app.include_router(rss.router)
 app.include_router(markets.router)
 app.include_router(weather.router)
 app.include_router(mempool.router)
+app.include_router(monero_wallet.router)
 app.include_router(ssh_term.router)
 app.include_router(ssh_term.ws_router)   # /ws/ssh — the PTY socket
 app.include_router(youtube_thumb.router)

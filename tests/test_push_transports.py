@@ -1,63 +1,41 @@
-"""One send() call, two transports, and the discriminator between them.
+"""One send() call, two first-party transports, and the discriminator between them.
 
-The packaged Android app cannot use Web Push at all — a WebView has no push service — so it registers
-a UnifiedPush endpoint instead, which is a plain URL we POST to. Both live in the same table and are
-told apart by ONE thing: a Web Push row has VAPID keys and a UnifiedPush row does not.
+The packaged Android app cannot use Web Push, so it registers a PosterChan Direct socket. Explicit
+transport metadata keeps a malformed Web Push row from ever becoming an arbitrary server-side POST.
 
 Getting that wrong is silent in both directions. Route a Web Push subscription down the HTTP path and
-we POST an unencrypted payload to Google's FCM endpoint, which drops it; route a UnifiedPush endpoint
-through pywebpush and it raises on missing keys. Either way the phone just never buzzes.
+we queue it for the wrong device; route Direct through pywebpush and it raises on missing keys.
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from app.services import push_service as ps
 
 WEBPUSH = {"endpoint": "https://fcm.googleapis.com/fcm/send/abc", "keys": {"p256dh": "k", "auth": "a"}}
-UNIFIED = {"endpoint": "https://ntfy.sh/pcai-abc", "keys": {}}
+DIRECT = {"id": 42, "transport": "posterchan-direct", "endpoint": "direct:x:y", "keys": {}}
 
 
 def test_a_web_push_subscription_never_takes_the_http_path():
-    with patch.object(ps, "_send_unifiedpush") as up, patch.object(ps.settings_store, "get", return_value=None):
+    with patch.object(ps.direct_push_service, "enqueue") as direct, \
+         patch.object(ps.settings_store, "get", return_value=None):
         ps.send(WEBPUSH, {"type": "dm"})
-    assert not up.called
+    assert not direct.called
 
 
-def test_a_keyless_subscription_is_posted():
-    with patch.object(ps.requests, "post") as post:
-        post.return_value = MagicMock(status_code=200)
-        assert ps.send(UNIFIED, {"title": "x", "type": "dm"}) is True
-    assert post.call_args.args[0] == UNIFIED["endpoint"]
-    # The SAME payload shape the service worker already parses — one notification contract for every
-    # transport, so the Android receiver cannot drift from the web client's.
-    assert post.call_args.kwargs["json"] == {"title": "x", "type": "dm"}
+def test_a_direct_subscription_is_queued_by_database_id():
+    with patch.object(ps.direct_push_service, "enqueue", return_value=True) as enqueue:
+        assert ps.send(DIRECT, {"title": "x", "type": "dm"}) is True
+    enqueue.assert_called_once_with(42, {"title": "x", "type": "dm"})
 
 
-def test_a_call_is_marked_urgent():
-    """Distributors deprioritise normal traffic when the phone is dozing. A ring cannot wait."""
-    got = {}
-    for typ in ("call", "dm"):
-        with patch.object(ps.requests, "post") as post:
-            post.return_value = MagicMock(status_code=200)
-            ps.send(UNIFIED, {"type": typ})
-            got[typ] = post.call_args.kwargs["headers"]["Urgency"]
-    assert got == {"call": "high", "dm": "normal"}
+def test_a_direct_failure_does_not_fall_through_to_webpush():
+    with patch.object(ps.direct_push_service, "enqueue", return_value=False), \
+         patch.object(ps.settings_store, "get") as vapid:
+        assert ps.send(DIRECT, {"type": "call"}) is False
+    vapid.assert_not_called()
 
 
-def test_a_gone_endpoint_is_reported_for_pruning():
-    """False is the caller's signal to delete the row. Returning True for a dead endpoint means we
-    retry it forever; returning False for a transient blip loses a real device."""
-    for code, expect in ((410, False), (404, False), (500, True), (200, True)):
-        with patch.object(ps.requests, "post") as post:
-            post.return_value = MagicMock(status_code=code)
-            assert ps.send(UNIFIED, {}) is expect, f"status {code}"
-
-
-def test_a_network_error_keeps_the_subscription():
-    with patch.object(ps.requests, "post", side_effect=OSError("no route")):
-        assert ps.send(UNIFIED, {}) is True, "a transient failure must not delete someone's device"
-
-
-def test_a_nonsense_endpoint_is_not_posted():
-    with patch.object(ps.requests, "post") as post:
-        assert ps.send({"endpoint": "javascript:alert(1)", "keys": {}}, {}) is True
-    assert not post.called
+def test_a_legacy_keyless_endpoint_is_rejected_not_posted():
+    """Old UnifiedPush URLs are capability URLs. They must never regain an HTTP POST path."""
+    with patch.object(ps.direct_push_service, "enqueue") as direct:
+        assert ps.send({"endpoint": "https://ntfy.sh/old-secret", "keys": {}}, {}) is False
+    direct.assert_not_called()

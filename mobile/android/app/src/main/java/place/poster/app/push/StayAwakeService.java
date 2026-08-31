@@ -31,17 +31,9 @@ import place.poster.app.music.MusicService;
 /**
  * "Stay connected" — the persistent notification other messaging apps show.
  *
- * WHAT IT IS FOR, and it is a fallback, not the plan. The intended path for reaching a closed app is
- * PUSH: the server watches its own relay and posts to a UnifiedPush endpoint, the distributor wakes
- * the phone, PushEventService draws the notification, and this app's process need not be running at
- * all. That costs nothing and is what should be used.
- *
- * It has one hard requirement: a distributor app (ntfy, Sunup, …) must be installed. Plenty of people
- * will not install one, and for them a closed PosterChan receives NOTHING — no DMs, no calls, no
- * mentions — which is indistinguishable from the feature being broken. This service is the answer for
- * exactly that case: a foreground service keeps the process off the cached-process freezer and the
- * low-memory killer, so the WebView keeps its relay socket and keeps raising notifications itself
- * (through PushPlugin.notify → PushEventService.show, the same builder a push uses).
+ * Legacy optional process/media standby. PosterChan Direct now owns closed-app notification delivery
+ * through a small native socket, so notifications never depend on this service or on a resident
+ * WebView. This class remains for its independent Bluetooth standby media-session behavior.
  *
  * SO IT IS OFF BY DEFAULT AND THE COST IS STATED. A live WebSocket and an unfrozen renderer is real
  * battery; the alternative for these users is no notifications at all, and that is a trade only they

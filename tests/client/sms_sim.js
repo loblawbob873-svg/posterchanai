@@ -316,8 +316,9 @@ const filesIdx = {
 };
 global.window = global.window || {};
 global.window.__PC_API_BASE__ = (opt.apiBase === undefined ? 'https://node.example' : opt.apiBase);
-const visibleFeed = opt.desktopOwnershipRace ? {
-  innerHTML:'<div class="spinner"></div>', className:'feed feed-texts',
+const visibleFeed = (opt.desktopOwnershipRace || opt.timelineStartup) ? {
+  innerHTML: opt.timelineStartup ? '<article>timeline stays here</article>' : '<div class="spinner"></div>',
+  className: opt.timelineStartup ? 'feed feed-timeline' : 'feed feed-texts',
   querySelectorAll(){ return []; }, querySelector(){ return null; }
 } : null;
 if(opt.desktopOwnershipRace) global.PCOS = {

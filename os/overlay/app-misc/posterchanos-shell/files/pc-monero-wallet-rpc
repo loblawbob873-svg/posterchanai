@@ -1,0 +1,97 @@
+#!/bin/sh
+# Manage PosterChan's deliberately small, local Monero spending wallet service.
+# This creates RPC configuration, not a wallet. Wallet creation/import remains an explicit action.
+set -eu
+
+CONF_DIR="$HOME/.config/posterchanos"
+DATA_DIR="$HOME/.local/share/posterchanos/monero"
+CONF="$CONF_DIR/monero-wallet-rpc.conf"
+UNIT=posterchan-monero-wallet-rpc.service
+
+find_backend_root() {
+    for candidate in "${POSTERCHANAI_ROOT:-}" "$PWD" "$HOME/posterchanai" "$HOME/posterchanai/posterchanai"; do
+      [ -n "$candidate" ] || continue
+      [ -f "$candidate/run.py" ] && [ -d "$candidate/data" ] && { printf '%s\n' "$candidate"; return; }
+    done
+    echo "PosterChan backend root not found; set POSTERCHANAI_ROOT" >&2
+    return 1
+}
+
+usage() {
+    echo "usage: pc-monero-wallet-rpc enable [--stagenet|--mainnet] | disable | status | config-path" >&2
+    exit 2
+}
+
+case "${1:-}" in
+  enable)
+    network=stagenet
+    case "${2:-}" in
+      ""|--stagenet) ;;
+      --mainnet) network=mainnet ;;
+      *) usage ;;
+    esac
+    command -v monero-wallet-rpc >/dev/null 2>&1 || {
+      echo "monero-wallet-rpc is not installed; install PosterChanOS with the monero USE flag" >&2
+      exit 1
+    }
+    umask 077
+    mkdir -p "$CONF_DIR" "$DATA_DIR"
+    chmod 0700 "$CONF_DIR" "$DATA_DIR"
+    # Never trust or retain RPC directives from an older/user-edited file: one extra bind
+    # directive can turn a local hot wallet into a network service. Preserve only a strictly
+    # formed credential from a regular, non-symlink config and rewrite every directive below.
+    rpc_password=
+    if [ -f "$CONF" ] && [ ! -L "$CONF" ]; then
+      rpc_password="$(sed -n 's/^rpc-login=posterchan:\([0-9a-f]\{64\}\)$/\1/p' "$CONF")"
+    fi
+    if [ "${#rpc_password}" -ne 64 ] || ! printf '%s\n' "$rpc_password" | grep -Eq '^[0-9a-f]{64}$'; then
+      rpc_password="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+      [ "${#rpc_password}" -eq 64 ] || { echo "could not generate RPC credentials" >&2; exit 1; }
+    fi
+    tmp_conf="$(mktemp "$CONF_DIR/.monero-wallet-rpc.conf.XXXXXX")"
+    trap 'rm -f "$tmp_conf"' EXIT HUP INT TERM
+    {
+      echo 'rpc-bind-ip=127.0.0.1'
+      echo 'rpc-bind-port=38083'
+      echo 'rpc-login=posterchan:'"$rpc_password"
+      echo 'rpc-ssl=disabled'
+      echo 'trusted-daemon=0'
+      echo 'wallet-dir='"$DATA_DIR"
+      [ "$network" = stagenet ] && echo 'stagenet=1'
+    } >"$tmp_conf"
+    chmod 0600 "$tmp_conf"
+    mv -f "$tmp_conf" "$CONF"
+    trap - EXIT HUP INT TERM
+    backend_root="$(find_backend_root)" || exit 1
+    secrets="$backend_root/data/secrets.env"
+    [ ! -L "$secrets" ] || { echo "refusing symlinked PosterChan secrets.env" >&2; exit 1; }
+    touch "$secrets"
+    chmod 0600 "$secrets"
+    tmp_secrets="$(mktemp "$backend_root/data/.secrets.env.XXXXXX")"
+    trap 'rm -f "$tmp_secrets"' EXIT HUP INT TERM
+    # Preserve every unrelated bootstrap secret and replace only this integration's fixed keys.
+    awk '!/^export MONERO_WALLET_(ENABLED|RPC_URL|RPC_USER|RPC_PASSWORD|NETWORK|SPEND_LEDGER)=/' "$secrets" >"$tmp_secrets"
+    {
+      echo 'export MONERO_WALLET_ENABLED=1'
+      echo 'export MONERO_WALLET_RPC_URL=http://127.0.0.1:38083/json_rpc'
+      echo 'export MONERO_WALLET_RPC_USER=posterchan'
+      echo 'export MONERO_WALLET_RPC_PASSWORD='"$rpc_password"
+      echo 'export MONERO_WALLET_NETWORK='"$network"
+      echo 'export MONERO_WALLET_SPEND_LEDGER='"$backend_root"'/data/monero_wallet_spend.sqlite3'
+    } >>"$tmp_secrets"
+    chmod 0600 "$tmp_secrets"
+    mv -f "$tmp_secrets" "$secrets"
+    trap - EXIT HUP INT TERM
+    systemctl --user daemon-reload
+    systemctl --user enable --now "$UNIT"
+    systemctl restart posterchanai.service
+    echo "PosterChan Monero RPC enabled on loopback ($network); no wallet was created."
+    ;;
+  disable)
+    systemctl --user disable --now "$UNIT" >/dev/null 2>&1 || true
+    echo "PosterChan Monero RPC disabled; wallet data and credentials were preserved."
+    ;;
+  status) systemctl --user status "$UNIT" --no-pager ;;
+  config-path) echo "$CONF" ;;
+  *) usage ;;
+esac

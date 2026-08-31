@@ -103,6 +103,27 @@
         android:scrollbarStyle="outsideOverlay" />
 
     <LinearLayout
+        android:id="@+id/pc_th_attachment_draft"
+        android:layout_width="match_parent"
+        android:layout_height="72dp"
+        android:layout_marginLeft="12dp"
+        android:layout_marginRight="12dp"
+        android:padding="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+        <ImageView android:id="@+id/pc_th_attachment_preview"
+            android:layout_width="60dp" android:layout_height="60dp"
+            android:scaleType="centerCrop" android:contentDescription="@string/sms_add_attachment" />
+        <TextView android:id="@+id/pc_th_attachment_status"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:layout_marginLeft="10dp" android:maxLines="2" />
+        <Button android:id="@+id/pc_th_attachment_remove"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="@string/sms_delete_msg" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/pc_th_compose"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

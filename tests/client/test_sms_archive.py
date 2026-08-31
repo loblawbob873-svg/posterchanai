@@ -70,6 +70,15 @@ def calls_of(res, name):
 
 @unittest.skipIf(shutil.which("node") is None, "node not installed")
 class ColdArchiveFailures(unittest.TestCase):
+    def test_timeline_startup_cannot_mount_or_load_texts(self):
+        """sms.js ships in every page. The browser's initial focus event must neither replace the
+        timeline with its Search messages form nor pay for a Texts archive/cache/relay load."""
+        res = run(timelineStartup=True, steps=["foreground", "settle"])
+        self.assertEqual(res["feedHtml"], "<article>timeline stays here</article>")
+        self.assertNotIn("Search messages", res["feedHtml"])
+        self.assertEqual(calls_of(res, "storeQuery"), [])
+        self.assertEqual(calls_of(res, "relayQuery"), [])
+
 
     def test_firefox_signer_zero_and_oversize_records_do_not_block_texts(self):
         """NIP-44 signers reject decoded plaintext outside 1..65535 bytes. A bad record in either

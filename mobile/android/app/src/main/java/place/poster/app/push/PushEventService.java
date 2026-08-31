@@ -6,25 +6,14 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.os.Build;
 
 import org.json.JSONObject;
-import org.unifiedpush.android.connector.PushService;
-import org.unifiedpush.android.connector.data.PushEndpoint;
-import org.unifiedpush.android.connector.data.PushMessage;
-import org.unifiedpush.android.connector.FailedReason;
-
-import androidx.annotation.NonNull;
 
 import place.poster.app.MainActivity;
 
 /**
- * Where a push actually lands on the packaged app.
- *
- * A SERVICE, not a BroadcastReceiver: connector 3.x replaced MessagingReceiver with PushService, and
- * only the 3.x line is published to Maven Central at these coordinates — 2.x resolves nowhere, which
- * is what broke the first build.
+ * The one renderer for every native notification.
  *
  * The server sends the SAME JSON payload it sends the service worker — {title, body, type} — so there
  * is one notification contract for every transport rather than a second one that can drift out of
@@ -34,20 +23,28 @@ import place.poster.app.MainActivity;
  * an incoming call rather than an email, everything else is an ordinary heads-up. Two channels, so the
  * user can silence chatter without silencing calls — Android only lets them do that per channel.
  */
-public class PushEventService extends PushService {
+public final class PushEventService {
 
     public static final String PREFS = "pcai_push";
-    public static final String KEY_ENDPOINT = "endpoint";
     private static final String CH_CALLS = "pcai_calls";
     private static final String CH_MSGS = "pcai_messages";
 
-    @Override
-    public void onMessage(@NonNull PushMessage message, @NonNull String instance) {
-        Context ctx = this;
+    private PushEventService() { }
+
+    /**
+     * Render the compact JSON contract delivered by PosterChan Direct. Keeping parsing here means a
+     * foreground relay notification and a notification raised by the visible client still use the
+     * exact same channels, de-duplication tags and deep links.
+     */
+    public static boolean deliver(Context ctx, String payload) {
         String title = "PosterChan", body = "New activity", type = "", route = "notifications";
         String eventTag = null;
         try {
-            JSONObject j = new JSONObject(new String(message.getContent(), "UTF-8"));
+            JSONObject j = new JSONObject(payload == null ? "{}" : payload);
+            // The direct server currently sends the payload itself. Accept the explicit envelope too
+            // so a protocol version can add control frames without changing notification rendering.
+            JSONObject nested = j.optJSONObject("payload");
+            if (nested != null && "notification".equals(j.optString("type"))) j = nested;
             title = j.optString("title", title);
             body = j.optString("body", body);
             type = j.optString("type", "");
@@ -58,12 +55,14 @@ public class PushEventService extends PushService {
             // A payload we cannot parse is still a signal that SOMETHING happened; showing the
             // default beats swallowing it, which would look exactly like a delivery failure.
         }
-        // gCompat/UnifiedPush and the visible WebView relay are two delivery paths for the SAME
-        // Nostr event. Never discard one merely because MainActivity is visible: visibility does
-        // not prove that the WebView received, classified or announced this event, and doing so
-        // silently lost pushes while the app happened to be on screen. Both paths use the same
-        // event-id tag, so Android replaces the duplicate card while distinct events coexist.
-        show(ctx, title, body, type, eventTag, route);
+        // PosterChan Direct and the visible WebView relay can observe the SAME Nostr event. Both use
+        // the event-id tag, so Android replaces the duplicate card while distinct events coexist.
+        try {
+            show(ctx, title, body, type, eventTag, route);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /**
@@ -128,31 +127,6 @@ public class PushEventService extends PushService {
                 route == null || route.trim().isEmpty() ? "notifications" : route.trim());
         open.putExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW_AT, at);
         return open;
-    }
-
-    /**
-     * The distributor issued (or rotated) our endpoint. Stash it — the web layer reads it on next
-     * open and registers it with the server, which is the only place that knows our Nostr key.
-     *
-     * Storing rather than posting directly is deliberate: this fires whether or not the app is in the
-     * foreground, and the server call must be signed by the user's key, which lives in the web layer.
-     */
-    @Override
-    public void onNewEndpoint(@NonNull PushEndpoint endpoint, @NonNull String instance) {
-        SharedPreferences.Editor e = getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
-        e.putString(KEY_ENDPOINT, endpoint.getUrl());
-        e.apply();
-    }
-
-    @Override
-    public void onUnregistered(@NonNull String instance) {
-        getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_ENDPOINT).apply();
-    }
-
-    @Override
-    public void onRegistrationFailed(@NonNull FailedReason reason, @NonNull String instance) {
-        // Nothing to show: the user asked for notifications and will be told by the in-app check,
-        // which can explain the fix. A toast from a background receiver cannot.
     }
 
     static void ensureChannels(Context ctx) {

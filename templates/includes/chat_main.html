@@ -42,7 +42,7 @@
 <script>
 function openPhotoGalleryNow() {
     var v = document.getElementById('cyberpunkPictureViewer');
-    if (!v) { alert('Photo viewer not found'); return; }
+    if (!v) { pcAlert('Photo viewer not found'); return; }
     
     // Move to body
     if (v.parentElement !== document.body) {

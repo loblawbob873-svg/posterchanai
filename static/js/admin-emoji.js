@@ -107,7 +107,7 @@ async function emojiUpload(files) {
             // Report per-file failures instead of a bare "some failed" — with a 200-file drop the
             // only useful answer is WHICH ones and why.
             const lines = j.errors.slice(0, 12).map(e => `• ${e.file}: ${e.error}`).join('\n');
-            alert(`Added ${j.added.length}, failed ${j.errors.length}:\n\n${lines}`
+            pcAlert(`Added ${j.added.length}, failed ${j.errors.length}:\n\n${lines}`
                   + (j.errors.length > 12 ? `\n…and ${j.errors.length - 12} more` : ''));
         }
     } catch (err) {
@@ -115,7 +115,7 @@ async function emojiUpload(files) {
     }
 }
 
-function emojiInit() {
+async function emojiInit() {
     const grid = _em('emojiGrid');
     if (!grid || grid.dataset.wired) return;
     grid.dataset.wired = '1';
@@ -149,40 +149,40 @@ function emojiInit() {
         const pack = cell.dataset.pack, sc = cell.dataset.sc;
         try {
             if (btn.dataset.act === 'rename') {
-                const next = prompt(`Rename :${sc}: to`, sc);
+                const next = (await pcPrompt(`Rename :${sc}: to`, sc));
                 if (!next || next === sc) return;
                 await emojiPost('/api/admin/emoji/rename',
                                 { pack, shortcode: sc, new_shortcode: next.trim() });
             } else {
-                if (!confirm(`Delete :${sc}: permanently?`)) return;
+                if (!(await pcConfirm(`Delete :${sc}: permanently?`))) return;
                 await emojiPost('/api/admin/emoji/delete', { pack, shortcode: sc });
             }
             emojiLoad(false);
         } catch (err) {
-            alert('Failed: ' + err.message);
+            pcAlert('Failed: ' + err.message);
         }
     });
 
     _em('emojiNewPack').onclick = async () => {
-        const name = prompt('New pack name (letters, digits, _ and -)');
+        const name = (await pcPrompt('New pack name (letters, digits, _ and -)'));
         if (!name) return;
         try {
             const j = await emojiPost('/api/admin/emoji/pack', { name: name.trim() });
             _emState.pack = j.name;
             emojiLoad(false);
-        } catch (err) { alert('Failed: ' + err.message); }
+        } catch (err) { pcAlert('Failed: ' + err.message); }
     };
 
     _em('emojiDelPack').onclick = async () => {
         const pack = _em('emojiPack').value;
-        if (!pack) { alert('Pick a pack first.'); return; }
-        if (!confirm(`Delete the whole "${pack}" pack and every emoji in it? This cannot be undone.`)) return;
+        if (!pack) { pcAlert('Pick a pack first.'); return; }
+        if (!(await pcConfirm(`Delete the whole "${pack}" pack and every emoji in it? This cannot be undone.`))) return;
         try {
             const j = await emojiPost('/api/admin/emoji/pack/delete', { name: pack });
             _emState.pack = '';
             emojiLoad(false);
-            alert(`Deleted ${j.removed} emoji.`);
-        } catch (err) { alert('Failed: ' + err.message); }
+            pcAlert(`Deleted ${j.removed} emoji.`);
+        } catch (err) { pcAlert('Failed: ' + err.message); }
     };
 
     emojiLoad(false);

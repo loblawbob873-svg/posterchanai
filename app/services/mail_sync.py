@@ -280,8 +280,14 @@ async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
     owner_pk = nostr_service.derive_pubkey(seckey)
     import asyncio
     _, meta = await asyncio.to_thread(_account_meta, db, user, acc)
-    return await _sync_folder(db, user, seckey, owner_pk, acc, folder,
-                              await asyncio.to_thread(_sync_limit), _logical_of(folder, meta))
+    # The client may request a logical special-use name before /folders has resolved the real IMAP
+    # mailbox. Treat those names as roles at the API boundary; a server using INBOX.Sent or
+    # [Gmail]/Sent Mail must never silently sync a different literal "Sent" folder.
+    role = {"Sent": "sent", "Drafts": "drafts", "Trash": "trash",
+            "Spam": "junk", "Archive": "archive"}.get(folder)
+    real = (meta.get(role) if role else None) or folder
+    return await _sync_folder(db, user, seckey, owner_pk, acc, real,
+                              await asyncio.to_thread(_sync_limit), _logical_of(real, meta))
 
 
 async def sync_all(db: Session, user, folders: list | None = None) -> dict:

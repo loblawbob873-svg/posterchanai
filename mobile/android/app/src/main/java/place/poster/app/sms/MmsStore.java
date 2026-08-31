@@ -87,6 +87,25 @@ public final class MmsStore {
 
     private MmsStore() { }
 
+    /** Mark picture/group-message rows read alongside their SMS siblings.
+     *
+     * Android stores SMS and MMS in separate providers even though the UI presents one thread.
+     * Updating only content://sms leaves an unread MMS keeping the conversation badge alive for
+     * ever after the person has opened it.
+     */
+    public static int markRead(Context ctx, long[] threadIds) {
+        if (threadIds == null || threadIds.length == 0) return 0;
+        try {
+            android.content.ContentValues v = new android.content.ContentValues();
+            v.put(Telephony.Mms.READ, 1);
+            v.put(Telephony.Mms.SEEN, 1);
+            return ctx.getContentResolver().update(Telephony.Mms.CONTENT_URI, v,
+                    Telephony.Mms.THREAD_ID + " IN (" + SmsStore.marks(threadIds.length) + ") AND "
+                            + Telephony.Mms.READ + "=0",
+                    SmsStore.args(threadIds));
+        } catch (Throwable t) { return 0; }
+    }
+
     private static volatile boolean refused = false;
     private static volatile boolean capped = false;
 

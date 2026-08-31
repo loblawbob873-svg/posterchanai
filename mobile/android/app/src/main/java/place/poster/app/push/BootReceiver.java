@@ -71,6 +71,16 @@ public class BootReceiver extends BroadcastReceiver {
       }
     }
 
+    // PosterChan Direct owns its credentials and lifecycle. It must not depend on the unrelated
+    // legacy "stay connected" media/WebView preference below; most users never enable that switch.
+    if (DirectPushService.configured(ctx)) {
+      try {
+        DirectPushService.kick(ctx);
+      } catch (Throwable ignored) {
+        // The sealed configuration remains. Opening the app retries from a foreground context.
+      }
+    }
+
     if (!StayAwakeService.wanted(ctx)) return;
     try {
       Intent i = new Intent(ctx, StayAwakeService.class).setAction(StayAwakeService.ACTION_START);

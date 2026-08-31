@@ -18,6 +18,19 @@ body.concord-view .cc-messages{overscroll-behavior-x:none!important;touch-action
   body.concord-view .cc-conversation{width:auto!important;max-width:none!important}
 }
 .osw-body>#feed.feed-dm:has(.cc-app){width:100%!important;height:100%!important;max-width:none!important;min-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important}.osw-slot:has(>.cc-app){padding:0!important;opacity:1!important;overflow:hidden!important}.osw-slot>.cc-app{width:100%!important;height:100%!important;min-height:0!important}
+/* PosterChanOS scales its desktop with `body { zoom }`. A maximised frame therefore occupies the
+   work area's *layout* width, which is intentionally wider than 100vw. The generic browser safety
+   cap above used 100vw on every Concord descendant; under desktop zoom that clipped the workspace
+   before the frame's right edge and left a black/empty strip. Inside a managed OS window the frame,
+   not the viewport, is the sizing authority. Keep every grid/flex link shrinkable and let it consume
+   the complete osw-body width. */
+body.os-on.concord-view .osw-body>#feed.feed-dm:has(.cc-app),
+body.os-on.concord-view .osw-body>#feed.feed-dm:has(.cc-app)>.cc-app,
+body.os-on.concord-view .osw-slot>.cc-app,
+body.os-on.concord-view .osw-body .cc-conversation,
+body.os-on.concord-view .osw-body .cc-messages{
+  width:100%!important;max-width:none!important;min-width:0!important
+}
 .cc-settings-description{display:block!important;width:100%!important;min-height:76px!important;margin-top:10px!important;resize:vertical!important;font:14px/1.4 inherit!important}.cc-member-list{display:flex!important;flex-direction:column!important;gap:3px!important;max-height:50vh!important;overflow:auto!important;margin-top:8px!important}.cc-member{display:flex!important;align-items:center!important;gap:9px!important;width:100%!important;min-width:0!important;padding:7px 8px!important;border:0!important;border-radius:8px!important;background:transparent!important;color:inherit!important;text-align:start!important;cursor:pointer!important}.cc-member:hover,.cc-member:focus-visible{background:var(--cc-hover)!important;outline:0!important}.cc-member img{flex:0 0 32px!important;width:32px!important;height:32px!important;border-radius:50%!important;object-fit:cover!important}.cc-member>span{min-width:0!important}.cc-member b{display:block!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-size:13px!important}.cc-member small{display:block!important;color:var(--muted)!important;font-size:11px!important}
 .cc-attach-choices{display:grid!important;grid-template-columns:1fr 1fr!important;gap:10px!important;margin-top:18px!important}.cc-attach-choices .btn{min-height:48px!important}@media(max-width:520px){.cc-attach-choices{grid-template-columns:1fr!important}}
 .cc-visibility-select{display:block!important;width:100%!important;margin-top:8px!important}.cc-visibility{padding:3px 7px!important;border-radius:999px!important;font-size:10px!important;font-weight:800!important;text-transform:uppercase!important;letter-spacing:.35px!important}.cc-visibility.public{background:rgba(45,196,129,.14)!important;color:#69dca5!important}.cc-visibility.private{background:rgba(245,166,35,.15)!important;color:#ffc266!important}

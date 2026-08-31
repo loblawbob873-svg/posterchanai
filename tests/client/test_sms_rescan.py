@@ -254,8 +254,11 @@ class AStuckCompletionMarker(unittest.TestCase):
         forward. Once an old-history upload was interrupted, returning online could sync new texts
         forever while the older tail stayed absent forever."""
         rows = [picture(i, NOW - (100 + i) * 86400000) for i in range(1, 6)]
+        # `load` models that Texts has actually been opened. Production deliberately ignores a
+        # generic browser focus event while the Texts archive is still cold; calling only the
+        # exported migration helpers left S.ready false and tested the startup guard, not resume.
         payload = {"rows": rows, "storage": {}, "steps":
-                   ["phoneLoad", "migrateAll", "allow", "foreground"],
+                   ["load", "phoneLoad", "migrateAll", "allow", "foreground"],
                    "now": NOW, "canRead": True, "refuseAfter": 0}
         proc = subprocess.run([NODE, SIM, json.dumps(payload)], capture_output=True, text=True,
                               timeout=180)

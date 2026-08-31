@@ -323,7 +323,7 @@
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents',
-                                  'stats', 'meme', 'admin', 'websearch', 'terminal', 'calendar', 'contacts',
+                                  'stats', 'meme', 'admin', 'websearch', 'terminal', 'calendar', 'contacts', 'office',
                                   /* PosterChan Code edits files on a NODE, through /api/code, gated by
                                    * the same allowlist as the terminal. With no instance there is no
                                    * workspace to open, no formatter to call and nothing to save to —
@@ -394,6 +394,7 @@
     { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
     { view:'xdc', into:'#games-sub', icon:'#i-gamepad', label:'Webxdc' },
     { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
+    { view:'wallet', after:'vault', icon:'#i-coin', label:'Monero Wallet' },
   ];
   function ensureNavItems(){
     for(const it of _NAV_REQUIRED){
@@ -677,7 +678,9 @@
       timelineTop(target);
       return;
     }
-    switchView(target);
+    // A click is a PUBLIC view request too. During login/startup, boot is still awaiting config and
+    // must not replace the screen the person just chose with its default Social landing.
+    requestView(target);
   }
 
   function timelineTop(view){
@@ -3520,7 +3523,7 @@
       return true;
     }
     if(event && /^[0-9a-f]{64}$/i.test(event)){ _clean(); openThread(event); return true; }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','code','calendar','contacts','texts','notes','music']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','code','office','mail','calendar','contacts','texts','notes','music']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -4339,7 +4342,7 @@
     // …and once a socket can actually answer again, re-ask for whatever is still a placeholder on
     // screen. Waiting for `ready` rather than firing straight away is the point: wake() has just torn
     // every socket down, so asking now would go nowhere and merely spend the retry budget again.
-    try{ Relay.ready(8000).then(ok=>{ if(ok) _reaskMissing(); }).catch(()=>{}); }catch(_){}
+    try{ Relay.ready(8000).then(ok=>{ if(ok){ _reaskMissing(); _flushOutbox(); } }).catch(()=>{}); }catch(_){}
   }
   /* Resume from the NATIVE signal, but only if we were away long enough for the sockets to be worth
    * doubting. `wake()` tears down and reopens every relay connection — on a five-relay pool that is
@@ -6627,8 +6630,9 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v || (v==='concord'&&b.dataset.view==='messages')));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='blossom') $('#view-title').textContent='File Manager';
+    if(v==='office') $('#view-title').textContent='PosterChan Office';
     if(v==='concord') $('#view-title').textContent='Messages';
     if(v==='signer') $('#view-title').textContent = 'Signer';
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
@@ -6816,8 +6820,10 @@
                          _withSms(m => { if(VIEW==='texts') m.render(); }); return; }
     if(renderModuleView('sync','sync.js','PCSync','paint')) return;
     if(renderModuleView('vault','vault.js','PCVault','render')) return;
+    if(renderModuleView('wallet','monero-wallet.js','PCMoneroWallet','render')) return;
     if(VIEW==='xdc' && renderModuleView('xdc','webxdc.js','PCWebxdc','gallery')) return;
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
+    if (VIEW==='office') return renderOfficeHome();
     if (VIEW==='blossom') return renderBlossom();
     if (VIEW==='music') return renderMusicApp();
     if (VIEW==='settings') return renderSettings();
@@ -13082,6 +13088,15 @@
     // Prefer the render-time address (passed from the card) so an evicted note doesn't lose its per-note tag.
     const addr = (cardXmr && isXmrAddr(cardXmr)) ? cardXmr : (ev ? xmrForNote(ev) : xmrOf(p));
     if(!isXmrAddr(addr)){ toast('no Monero address on this post or profile'); return; }
+    /* A local PosterChan micro-wallet gets first refusal. Its availability probe is deliberately
+       fail-closed: browsers, old APKs and a stopped wallet service continue into the URI/QR flow
+       below, so tipping never depends on this optional integration. */
+    try{
+      if(window.PCMoneroWallet && await PCMoneroWallet.tip({
+        address:addr, name:p.name||p.display_name||'anon', noteId, pubkey:pk,
+        onSent:(amount, txid)=>_postXmrTipNote(noteId, pk, amount, addr, txid||'', '')
+      })) return;
+    }catch(_){}
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');
     modal(`<h3>ɱ Tip ${name} · Monero</h3>
@@ -13849,10 +13864,10 @@
           const mb=root.querySelector('#ss-meme');
           if(mb) mb.onclick=()=>{
             closeModal(); switchView('meme');
-            setTimeout(()=>{
-              const ok = window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(link, 'image/png', { id, pk: ev.pubkey });
+            _withModule('meme.js','PCMeme').then(m=>{
+              const ok=m&&m.addMedia&&m.addMedia(link,'image/png',{id,pk:ev.pubkey});
               toast(ok ? '🎞️ card added to the Meme Builder' : 'could not add that card');
-            }, 60);
+            }).catch(()=>toast('could not open the Meme Builder'));
           };
           /* 📓 Save to Notes: the card, the post's own words and a link back, as ONE private note.
            *
@@ -14097,13 +14112,13 @@
     switchView('meme');
     // switchView renders the builder; seed AFTER that so our layer isn't wiped by its own first
     // render — the same ordering bug the Effects studio hit with _ai.pendingFx.
-    setTimeout(()=>{
+    _withModule('meme.js','PCMeme').then(m=>{
       // Hand the SOURCE POST over with the media, the same way 🎬 Effect remembers _ai.replyTo: the
       // builder then offers "reply with it" on the finished render, instead of making you copy the link
       // and hunt the post down again.
-      const ok = window.PCMeme && window.PCMeme.addMedia && window.PCMeme.addMedia(url, isVid?'video/mp4':'image/jpeg', { id, pk });
+      const ok = m && m.addMedia && m.addMedia(url, isVid?'video/mp4':'image/jpeg', { id, pk });
       toast(ok ? '🎞️ added to the Meme Builder' : 'could not add that media');
-    }, 60);
+    }).catch(()=>toast('could not open the Meme Builder'));
   }
   // 🎬 Effect: copy the post's image into a fresh AI chat (the effects studio) and remember the post,
   // so the generated effect can be posted back as a reply. Guides the user with tappable effects.
@@ -14492,7 +14507,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
+    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['bookmarks','bookmark','Bookmarks'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
@@ -14547,7 +14562,7 @@
         else if(v==='logout') logout();
         // A guest has no profile to open — asking for one is asking to sign in.
         else if(v==='profile'){ if(GUEST) _guestPrompt(); else renderProfileView(ME.pubkey); }
-        else switchView(v); });
+        else requestView(v); });
     });
   }
   /* Mobile Files sub-sheet — DERIVED from the desktop sidebar's Files group, not a second list of it.
@@ -15677,12 +15692,19 @@
   // address to my posts" opt-in is DELIBERATELY per-device localStorage only — auto-enabling an
   // address-linking privacy setting on another device is not consent the user gave there.)
   const _prefTouched = new Set();   // keys the user changed THIS session — a late restore must not revert them
+  /* The prefs object; `{}` when the relays AGREED there is no document yet (so a first save is
+     safe); null when nothing answered. "Could not ask" is never "there is nothing there": the doc
+     is REPLACEABLE, so merging a patch onto an empty read republishes it as JUST that patch and
+     takes every pref this device did not load with it — one flaky moment while remembering a Monero
+     tip amount would drop the zap presets, the BCH presets and the data-saver. `Relay.query` marks
+     a set `complete` when every relay EOSE'd, which is the only thing that separates the two. */
   async function _readPrefs(){   // read the current prefs event, with retries (a laggy first REQ can EOSE empty)
-    let ev=null;
+    let ev=null, answered=false;
     for(let a=0; a<3 && !ev; a++){ if(a) await new Promise(r=>setTimeout(r, 450*a));
       try{ const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':['pcai:client-prefs'], limit:1 }]);
+        if(evs && evs.complete === true) answered=true;
         ev=(evs||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null; }catch(_){} }
-    if(!ev) return null;
+    if(!ev) return answered ? {} : null;
     try{ return JSON.parse(ev.content||'{}')||{}; }catch(_){ return {}; }
   }
   let _prefsSaveChain = Promise.resolve();
@@ -15694,7 +15716,11 @@
       try{
         // Merge only the changed key(s) into the CURRENT remote value, so changing one pref can't wipe the
         // others a laggy restore hasn't loaded yet (the replaceable-list-wipe class).
-        const cur = (await _readPrefs()) || {};
+        const cur = await _readPrefs();
+        // Nothing answered — skip the write instead of replacing the document with this patch alone.
+        // What the user just set is already in ClientSettings on this device, so nothing they did is
+        // lost here; the next save that CAN read the document carries it up.
+        if(cur === null) return;
         await publish(30078, JSON.stringify({ ...cur, ...(patch||{}) }), [['d','pcai:client-prefs']]);
       }catch(_){}
     });
@@ -18350,11 +18376,11 @@
    * Two call sites for one action drift the moment either is edited. There is one now. */
   function _fxOpenFolder(name){
     _fxRemember(); _syncRoot=''; _syncPath=''; _hostOn=false;
-    _fxMobileSource='blossom'; _filesFolder=name; renderBlossom();
+    _filesTab='public'; _fxMobileSource='blossom'; _filesFolder=name; renderBlossom();
   }
   function _fxOpenSynced(key){
     _fxRemember(); _syncRoot=key; _syncPath=''; _hostOn=false;
-    _fxMobileSource='synced'; renderBlossom();
+    _filesTab='public'; _fxMobileSource='synced'; renderBlossom();
   }
   function _fxOpenComputer(){
     _fxRemember(); _fxMobileSource='computer'; _openHostFiles();
@@ -18377,8 +18403,8 @@
       H2.roots().then(rs => {
         const home = (rs || []).find(x => x.kind === 'home') || (rs || [])[0];
         H2.enter(home ? home.path : '/');
-        if(VIEW==='blossom' && _filesTab==='computer') renderBlossom();
-      }, () => { if(VIEW==='blossom' && _filesTab==='computer') renderBlossom(); });
+        if(VIEW==='blossom' && _filesTab==='computer' && _hostOn) renderBlossom();
+      }, () => { if(VIEW==='blossom' && _filesTab==='computer' && _hostOn) renderBlossom(); });
       return;
     }
     renderBlossom();
@@ -20088,12 +20114,14 @@
           hint:'Edit it here — saves straight back to this computer',
           run:async() => {
             try{
+              let openedMtime=Number(openHere&&openHere.mtime)||0;
               const bytes = await pcHost.read(path, 128 * 1024 * 1024);
               const nm = name || String(path).split('/').pop() || 'document';
               const f = fileFromBytes(bytes, nm, mime || mimeForName(nm) || '');
               await _officeSession(f, async (updated) => {
                 if(!(pcHost.writeBytes)) throw new Error('this build cannot save back to this computer');
-                await pcHost.writeBytes(path, new Uint8Array(await updated.arrayBuffer()), 0);
+                const info=await pcHost.writeBytes(path,new Uint8Array(await updated.arrayBuffer()),openedMtime||0);
+                if(info&&info.mtime)openedMtime=info.mtime;
               });
             }catch(err){ toast('could not open in Office: ' + ((err && err.message) || err)); }
           } }] : [];
@@ -20727,7 +20755,7 @@
         <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
         <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
           <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
-        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-ghost" id="office-pdf">Save as PDF</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
+        <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-ghost" id="office-pdf">Save as PDF…</button><button class="btn btn-ghost" id="office-saveas">Save As…</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
       const drop=async()=>{ try{ await fetch(B + '/client/office/session/'+session.id+'?access_token='+encodeURIComponent(session.token),{method:'DELETE'}); }catch(_){} };
       /* `wire` is handed how to shut whatever it was mounted in, so the Save and Close buttons do
        * not have to know which of the two they are living in. */
@@ -20788,9 +20816,20 @@
             if(!rr.ok) throw new Error('HTTP '+rr.status);
             const blob=await rr.blob();
             if(!blob.size) throw new Error('the converter returned nothing');
-            await saveBlobAs(blob, (file.name||'document').replace(/\.[^.]+$/,'') + '.pdf');
+            await _officeSaveCopy(blob, (file.name||'document').replace(/\.[^.]+$/,'') + '.pdf');
           }catch(err){ toast('could not save a PDF: '+((err&&err.message)||err)); }
-          b.disabled=false; b.textContent='Save as PDF';
+          b.disabled=false; b.textContent='Save as PDF…';
+        };
+        const saveAsBtn=$('#office-saveas',root);
+        if(saveAsBtn) saveAsBtn.onclick=async e=>{
+          const b=e.currentTarget;b.disabled=true;b.textContent='Saving…';
+          try{
+            await askEditorToSave(root); await new Promise(res=>setTimeout(res,700));
+            const rr=await fetch(B+'/client/office/session/'+session.id+'/contents?access_token='+encodeURIComponent(session.token));
+            if(!rr.ok)throw new Error('saved document HTTP '+rr.status);
+            await _officeSaveCopy(await rr.blob(),file.name||'document');
+          }catch(err){toast('Save As failed: '+((err&&err.message)||err));}
+          b.disabled=false;b.textContent='Save As…';
         };
         $('#office-save',root).onclick=async e=>{
           const b=e.currentTarget; b.disabled=true; b.textContent='Saving\u2026';
@@ -20845,6 +20884,58 @@
     }catch(err){ toast('office unavailable: '+((err&&err.message)||err)); }
   }
 
+  async function _officeStoreDrive(blob,name){
+    const file=fileFromBytes(await blob.arrayBuffer(),name,blob.type||mimeForName(name)||'application/octet-stream');
+    const stored={}; const url=await uploadBlob(file,{hashOut:stored,noCompress:true});
+    const sha=stored.sha||_shaFromUrl(url); if(!sha)throw new Error('upload completed without a content hash');
+    FilesIdx.setFile(sha,{name,folder:'',mime:file.type,size:file.size,ts:Math.floor(Date.now()/1000)});
+    _rememberUploadedBlob(sha,url,file); return sha;
+  }
+  function _officeSaveCopy(blob,name){
+    return new Promise((resolve,reject)=>modal(`<h3>Save ${enc(name)} to…</h3><div class="openwith-list">
+      <button class="openwith-row" data-office-dest="drive"><b>Files / Blossom</b><span>Your PosterChan drive</span></button>
+      ${_syncRoot?'<button class="openwith-row" data-office-dest="sync"><b>Synced Folder</b><span>The folder currently open in Files</span></button>':''}
+      <button class="openwith-row" data-office-dest="local"><b>This computer</b><span>Choose a local destination</span></button></div>`,root=>{
+      $$('[data-office-dest]',root).forEach(btn=>btn.onclick=async()=>{
+        try{
+          const dest=btn.dataset.officeDest;
+          if(dest==='drive')await _officeStoreDrive(blob,name);
+          else if(dest==='sync'){
+            if(!(window.PCSync&&PCSync.edit&&PCSync.edit.uploadMany))throw new Error('this build cannot write to a synced folder');
+            const r=await PCSync.edit.uploadMany(_syncRoot,_syncPath||'',[fileFromBytes(await blob.arrayBuffer(),name,blob.type)],{replace:false});
+            if(r&&r.failed&&r.failed.length)throw new Error('the folder refused the write');
+            _syncManifests.delete(_syncRoot);
+          }else if(window.pcHost&&pcHost.saveFile){
+            const out=await pcHost.saveFile(name,new Uint8Array(await blob.arrayBuffer())); if(!out)return;
+          }else await saveBlobAs(blob,name);
+          closeModal();toast('saved '+name);resolve(dest);
+        }catch(e){closeModal();reject(e);}
+      });
+    }));
+  }
+
+  function renderOfficeHome(){
+    const feed=$('#feed');
+    feed.innerHTML=`<section class="office-home"><h2>PosterChan Office</h2><p class="muted">Create a document or open one from any of your files.</p>
+      <div class="office-home-actions">${_DOC_KINDS.map(([k,label])=>`<button class="btn btn-neon" data-office-new="${k}">New ${label}</button>`).join('')}
+      <button class="btn btn-ghost" id="office-open-files">Open from Files</button>
+      ${window.pcHost&&pcHost.pickFile?'<button class="btn btn-ghost" id="office-open-local">Open from this computer</button>':''}</div></section>`;
+    $$('[data-office-new]',feed).forEach(b=>b.onclick=()=>_newDocumentModal(b.dataset.officeNew));
+    $('#office-open-files',feed).onclick=()=>switchView('blossom');
+    const local=$('#office-open-local',feed); if(local)local.onclick=async()=>{
+      try{
+        const p=await pcHost.pickFile({title:'Open in PosterChan Office',max:64*1024*1024}); if(!p)return;
+        const file=fileFromBytes(p.data,p.name,(p.type&&p.type!=='application/octet-stream')?p.type:mimeForName(p.name));
+        let openedMtime=p.mtime||0;
+        await _officeSession(file,async updated=>{
+          if(!p.path||!pcHost.writeBytes)throw new Error('this build cannot save back to that file');
+          const info=await pcHost.writeBytes(p.path,new Uint8Array(await updated.arrayBuffer()),openedMtime);
+          if(info&&info.mtime)openedMtime=info.mtime;
+        });
+      }catch(e){toast('could not open in Office: '+((e&&e.message)||e));}
+    };
+  }
+
   /* CREATE A DOCUMENT, not only open one that already exists.
    *
    * `openOfficeFile` takes a file off the drive and hands it to CODE, and there was no path in the
@@ -20880,11 +20971,11 @@
     _rememberUploadedBlob(sha, url, file);
     return { sha, name: fname, mime: blob.type, enc: '0', url };
   }
-  function _newDocumentModal(){
+  function _newDocumentModal(preselect){
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-note"></use></svg>New document</h3>
       <label class="fld">Name<input class="input" id="nd-name" placeholder="Untitled" maxlength="60"></label>
       <div class="fld">Type
-        ${_DOC_KINDS.map(([k,label],i)=>`<label class="nf-opt"><input type="radio" name="nd-kind" value="${k}"${i?'':' checked'}> <b>${label}</b></label>`).join('')}
+        ${_DOC_KINDS.map(([k,label],i)=>`<label class="nf-opt"><input type="radio" name="nd-kind" value="${k}"${(preselect?k===preselect:!i)?' checked':''}> <b>${label}</b></label>`).join('')}
       </div>
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px"><button class="btn btn-ghost small" id="nd-cancel">Cancel</button><button class="btn btn-neon small" id="nd-create">Create</button></div>`,
       root=>{
@@ -23660,6 +23751,11 @@
   }
   let _notifShown = 25;   // paginate: render a page at a time, "Load more" reveals the next
   let _notifFilter = 'all';
+  // The initial mixed-kind subscription is capped at 150. Rare kinds (especially zap receipts and
+  // Monero tip notes) can have zero rows in that window even though years of history exist. Keep a
+  // filter-owned cursor so its tab can ask the relay directly instead of requiring 25 already-loaded
+  // zaps before the first "Load more" button can exist.
+  let _notifZapUntil = 0, _notifZapDone = false;
   const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
   function _notifMatch(e){
     switch(_notifFilter){
@@ -23747,10 +23843,15 @@
     const sig = _notifSigOf(list, upd);
     if(sig === _notifSig && feed.querySelector('.notif-tabs')){ markNotifsRead(); return; }
     _notifSig = sig;
+    const loadedMore=all.length>_notifShown;
+    const relayMore=_notifFilter==='zaps' && !_notifZapDone;
+    const moreHtml=(loadedMore||relayMore)
+      ? `<button class="btn btn-ghost full" id="notif-more">${loadedMore
+          ? `Load ${Math.min(25,all.length-_notifShown)} more (${all.length-_notifShown})`
+          : 'Load older tips and zaps'}</button>` : '';
     feed.innerHTML = tabs + upd + (all.length
-      ? list.map(notifHtml).join('') + (all.length>_notifShown
-          ? `<button class="btn btn-ghost full" id="notif-more">Load ${Math.min(25, all.length-_notifShown)} more (${all.length-_notifShown})</button>` : '')
-      : (upd ? '' : '<div class="empty">No notifications here.</div>'));
+      ? list.map(notifHtml).join('') + moreHtml
+      : (upd ? moreHtml : '<div class="empty">No notifications here.</div>'+moreHtml));
     if(_notifScrollTop){ _notifScrollTop=false; feed.scrollTop=0; }
     { const un=$('#upd-notif',feed); if(un && !_updApplying) un.onclick=applyUpdate; }
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
@@ -23764,7 +23865,26 @@
       _notifShown+=25;
       // Reaching the end of what's loaded → fetch OLDER notifications from the relay (paginate back
       // in time with `until`), so notifications aren't capped at the initial window.
-      if(_notifShown >= all.length-5 && all.length){
+      if(_notifFilter==='zaps' && _notifShown >= all.length-5){
+        more.textContent='Loading older tips and zaps…'; more.disabled=true;
+        const localOldest=all.length ? Math.min(...all.map(e=>e.created_at||0).filter(Boolean)) : 0;
+        const until=(_notifZapUntil || localOldest || Math.floor(Date.now()/1000)+1)-1;
+        try{
+          // Lightning receipts are kind 9735. PosterChan's Monero/BCH receipts are kind-1 tip notes;
+          // query their t-tags explicitly so ordinary mentions cannot consume this history page.
+          const older=await Relay.query([
+            { '#p':[ME.pubkey], kinds:[9735], until, limit:100 },
+            { '#p':[ME.pubkey], '#t':['monerotip','bchtip'], kinds:[1], until, limit:100 }
+          ]);
+          let floor=0;
+          for(const e of older||[]){ if(!floor||e.created_at<floor) floor=e.created_at;
+            if(e.pubkey!==ME.pubkey) Store.saveEvent(e); }
+          if(floor) _notifZapUntil=floor;
+          if(!(older&&older.length)) _notifZapDone=true;
+          // A page can be entirely duplicate relay fan-out, not end-of-history; the timestamp cursor still
+          // advances and the next press continues backward rather than latching history closed.
+        }catch(_){}
+      } else if(_notifShown >= all.length-5 && all.length){
         more.textContent='Loading older…'; more.disabled=true;
         const oldest=all[all.length-1].created_at;
         try{
@@ -24469,6 +24589,9 @@
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
     const atts=_dmAttachmentMeta(rumor);
     arr.push({ id:ev.id, mine, text:rumor.kind===15?'':rumor.content, t:rumor.created_at, nip17:true, atts,
+               /* The peer wrap and our self-copy have different outer ids. WebXDC must use the
+                  shared INNER rumor id or the two recipients derive different game sessions. */
+               xdcMessageId:rumor.id||ev.id, tags:(rumor.tags||[]).map(t=>t.slice()),
                em:(rumor.tags||[]).filter(t=>t[0]==='emoji') }); arr.sort((a,b)=>a.t-b.t);
     // COUNT on freshness, not on `live`. `live` is a network signal (the sub's EOSE) and it can never
     // arrive — a relay in the user's list that is down/DNS-dead is still counted in the pool, so the
@@ -24560,12 +24683,25 @@
     _inboxCache.set(pk, { relays, ts:now });
     return relays;
   }
+  /* A background history/profile refresh may rebuild #dm-list while a remote signer or relay is
+   * still handling Send. `dmActive` remains correct, but mobile navigation is controlled by the
+   * rebuilt list's `has-active` class, so losing only that class looks like the conversation closed.
+   * Never resurrect a thread after Back/navigation: repair the chrome only while this peer is still
+   * the explicitly active conversation. */
+  function _keepDmOpen(pk){
+    if(VIEW!=='messages' || dmActive!==pk) return;
+    const list=$('#dm-list'); if(list) list.classList.add('has-active');
+    $$('.dm-peer',list||document).forEach(e=>e.classList.toggle('active',e.dataset.peer===pk));
+    if(!$('#dm-in') && $('#dm-thread')) renderDmThread(pk);
+  }
   // Send a DM: NIP-17 gift wraps for local-key users, legacy NIP-04 for NIP-07 (no exposed secret).
   async function sendDm(pk, text){
     if(signer && signer.nip17wrap){
       const { toPeer, toSelf } = await signer.nip17wrap(pk, text);
       Store.saveEvent(toSelf); await ingestWrap(toSelf, false);   // show our own message right away
+      _keepDmOpen(pk);
       const r1=await Relay.publish(toPeer); await Relay.publish(toSelf);
+      _keepDmOpen(pk);
       // ingestWrap already schedules the visible thread's in-place refresh. Rebuilding all of
       // Messages here replaced the mobile overlay/composer and could drop the sender back on the
       // conversation list immediately after Send.
@@ -24580,6 +24716,7 @@
       }).catch(()=>{});
     } else {
       const ct=await signer.nip04enc(pk, text); await publish(4, ct, [['p',pk]]);
+      _keepDmOpen(pk);
     }
   }
   function bumpDm(){ $$('#dm-badge,#dm-badge-m').forEach(b=>{ if(_dmUnread){ b.textContent=_dmUnread>99?'99+':_dmUnread; b.classList.remove('hidden'); } else b.classList.add('hidden'); }); }
@@ -24615,7 +24752,8 @@
     if(!peer) return false; needProfile(peer);
     if(!dmPeers.has(peer)) dmPeers.set(peer, []);
     const arr=dmPeers.get(peer); if(arr.find(m=>m.id===ev.id)) return false;
-    arr.push({ id:ev.id, mine, ev, text:null, t:ev.created_at }); arr.sort((a,b)=>a.t-b.t);
+    arr.push({ id:ev.id, mine, ev, text:null, t:ev.created_at, xdcMessageId:ev.id,
+               tags:(ev.tags||[]).map(t=>t.slice()) }); arr.sort((a,b)=>a.t-b.t);
     _scheduleDmRefresh();
     return true;
   }
@@ -25180,7 +25318,7 @@
   }
 
   const Mail = {
-    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null,
+    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null, _listSeq:0,
     async api(path, opts={}){
       await ensureAiSession();
       const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{})}});
@@ -25269,12 +25407,20 @@
       const k={INBOX:'📥 Inbox',Sent:'📤 Sent',Drafts:'📝 Drafts',Trash:'🗑 Trash',Spam:'⚠️ Spam',Junk:'⚠️ Junk',Archive:'🗄 Archive'}; return k[f]||('📁 '+enc(String(f).split(/[./]/).pop()||f)); },
     async loadFolders(){
       if(this.acct==='__all' || !this.root) return;
+      const account=this.acct;
       let r; try{ r=await this.api('/folders?account='+encodeURIComponent(this.acct)); }catch(_){}
-      if(!r || !r.folders || !r.folders.length) return;
+      if(!r || !r.folders || !r.folders.length || account!==this.acct) return;
+      // `draw()` must offer a Sent button before this server round-trip finishes. If it was clicked
+      // during that window, move the view to the server's real RFC-6154 Sent mailbox instead of
+      // leaving it on a plausible but unrelated literal folder named "Sent".
+      const resolvedSent=r.sent||'';
+      const remapSent=this.folder==='Sent' && resolvedSent && resolvedSent!=='Sent';
+      if(remapSent) this.folder=resolvedSent;
       this.folders=r.folders; this.folderLabels=r.labels||{};
       const box=this.root.querySelector('.mail-folders'); if(!box) return;
       box.innerHTML=this.folders.map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('');
       box.querySelectorAll('.mail-folder').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
+      if(remapSent){ this.msgs=[]; this.loadList(); this.refreshFolder(resolvedSent); }
     },
     async selectFolder(f){
       this.folder=f; this.openUid=null; this.q=''; this.msgs=[]; if(this.sel) this.sel.clear();
@@ -25284,16 +25430,19 @@
       // minutes with no way to tell whether it was working. Whatever has been synced before appears
       // at once; the pull then runs in the background and the list refreshes when it lands.
       await this.loadList();
-      // INBOX/Sent are kept fresh by the main sync; Drafts is local; any OTHER folder is on demand.
-      if(this.acct!=='__all' && !['INBOX','Sent','Drafts'].includes(f)){
-        const mine=f;
-        this.setBusy(`Fetching ${f} from the mail server…`);
-        this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},
-                                 body:JSON.stringify({account:this.acct,folder:f})})
-          .then(()=>{ if(this.folder===mine) this.loadList(); })
-          .catch(()=>{ if(this.folder===mine) toast('could not fetch that folder'); })
-          .finally(()=>{ if(this.folder===mine) this.setBusy(''); });
-      }
+      // A folder click means "show me what is there now". The periodic whole-mailbox sync is not a
+      // substitute: it may still be walking another account/folder, which is how Sent could stop on
+      // Aug 8 while a mailbox-wide search already found a message sent this morning.
+      if(f!=='Drafts') this.refreshFolder(f);
+    },
+    refreshFolder(f){
+      const mine=f, account=this.acct;
+      this.setBusy(`Fetching ${this._folderLabel(f).replace(/^\S+\s*/, '')} from the mail server…`);
+      this.api('/sync-folder',{method:'POST',headers:{'Content-Type':'application/json'},
+                               body:JSON.stringify({account,folder:f})})
+        .then(()=>{ if(this.folder===mine && this.acct===account) this.loadList(); })
+        .catch(()=>{ if(this.folder===mine && this.acct===account) toast('could not fetch that folder'); })
+        .finally(()=>{ if(this.folder===mine && this.acct===account) this.setBusy(''); });
     },
     /* A one-line status above the list. A big folder takes as long as it takes; what it must not do
      * is look identical to a hung screen. */
@@ -25327,17 +25476,22 @@
     },
     async loadList(){
       const box=$('#mail-items', this.root); if(!box) return;
+      const seq=++this._listSeq, root=this.root, account=this.acct, folder=this.folder, query=this.q;
       // Only spin when there is nothing to look at. Opening the screen runs draw → loadList → sync →
       // loadList, and blanking to a spinner each time made the whole list flash and jump twice
       // before settling. A refresh over an existing list swaps the rows in place instead.
       if(!this.msgs.length) box.innerHTML='<div class="spinner"></div>';
       try{
-        const r = this.q
-          ? await this.api('/search?account='+encodeURIComponent(this.acct)+'&q='+encodeURIComponent(this.q))
-          : await this.api('/messages?account='+encodeURIComponent(this.acct)+'&folder='+encodeURIComponent(this.folder));
+        const r = query
+          ? await this.api('/search?account='+encodeURIComponent(account)+'&q='+encodeURIComponent(query))
+          : await this.api('/messages?account='+encodeURIComponent(account)+'&folder='+encodeURIComponent(folder));
+        if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder || query!==this.q) return;
         this.msgs=r.messages||[];
         this._next=r.next_until||0;
-      }catch(_){ this.msgs=[]; this._next=0; }
+      }catch(_){
+        if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder || query!==this.q) return;
+        this.msgs=[]; this._next=0;
+      }
       this.drawList();
     },
     /* The IMAP name of the Sent folder for this account — 'Sent', 'Sent Messages' and 'INBOX.Sent'
@@ -25361,7 +25515,9 @@
       const box=$('#mail-items', this.root); if(!box) return;
       this.sel=this.sel||new Set();
       if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this.q?'No matches.':'No messages.')+'</div>'; this.updateBulk(); return; }
-      const isSent=this.folderLabels[this.folder]==='📤 Sent', unified=this.acct==='__all';
+      // Unified mode uses the logical name and has no per-account folderLabels map. Treat it as
+      // Sent too, or its rows show the sender (yourself) instead of the useful "To:" recipient.
+      const isSent=this.folder==='Sent'||this.folderLabels[this.folder]==='📤 Sent', unified=this.acct==='__all';
       box.innerHTML=this.msgs.map(m=>{ const key=this._key(m);
         const cur = (this.msgs.indexOf(m) === this.cursor) ? ' cursor' : '';
         return `<div class="mail-item${m.read?'':' unread'}${cur}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}">
@@ -25921,7 +26077,7 @@
      * on becoming visible again, which is the moment it actually matters. */
     _pollT: 0,
     _lastSync: 0,          // sync() assigns this; declared so the staleness test below is not NaN
-    POLL_MS: 10 * 60 * 1000,
+    POLL_MS: 2 * 60 * 1000,
     /* "WHEN A USER OPENS THE APP, IT SHOULD REFRESH." It did not.
      *
      * The only catch-up was the poller's `visibilitychange` handler, and it is gated on the last
@@ -25968,8 +26124,7 @@
         document.addEventListener('visibilitychange', () => {
           // Catch up on becoming visible, but only if the last check is actually stale — switching
           // tabs twice in a minute must not mean two IMAP syncs.
-          if(this._pollT && document.visibilityState === 'visible'
-             && Date.now() - (this._lastSync || 0) > this.POLL_MS) tick();
+          if(this._pollT && document.visibilityState === 'visible') this.refreshIfStale();
         });
       }
     },
@@ -26015,7 +26170,11 @@
         ac.classList.remove('hidden'); ac.innerHTML=matches.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc(p.meta.picture||LOGO)}" onerror="this.src='${LOGO}'"><b>${enc(p.meta.name||p.meta.display_name||'anon')}</b></div>`).join('');
         $$('[data-pk]',ac).forEach(el=> el.onmousedown=ev=>{ ev.preventDefault(); toPk=el.dataset.pk; to.value='@'+((Store.profile(toPk)||{}).name||NT().nip19.npubEncode(toPk).slice(0,12)); ac.classList.add('hidden'); });
       });
-      $('#dm-attach',root).onclick=()=>$('#dm-file',root).click();
+      $('#dm-attach',root).onclick=e=>{
+        const rows=[['file','📎 File']];
+        if(window.PCWebxdc&&PCWebxdc.attach) rows.push(['webxdc','🎮 Multiplayer mini app']);
+        openMenuPopover(e.currentTarget,rows,a=>{ if(a==='file') $('#dm-file',root).click(); else if(a==='webxdc') PCWebxdc.attach(body); });
+      };
       // Honours the same 🔒 preference as an open thread's composer — it is a per-DEVICE choice, and
       // a first message to someone is no less private than the tenth. (Its own toggle would be a
       // second switch for one setting; the thread topbar owns it.)
@@ -26111,10 +26270,21 @@
     // normal linkifier and append a verified/decrypted attachment slot instead.
     for(const a of (m.atts||[])) if(a.enc) text=text.split(a.url).join('').trim();
     const files=(m.atts||[]).map((a,i)=>`<button class="dm-file-att" data-dm-file="${enc(m.id)}" data-ai="${i}">🔒 decrypting attachment…</button>`).join('');
+    /* The card is passive until Play, exactly like Social and Concord. PCWebxdc owns one delegated
+       handler for every card, so lazy DM decryption/repainting cannot double-bind it. A bare .xdc
+       derives its multiplayer topic from xdcMessageId — the stable inner NIP-17 rumor id. */
+    let xdcCard='';
+    try{
+      if(window.PCWebxdc&&PCWebxdc.appOf&&PCWebxdc.cardHtml){
+        const app=PCWebxdc.appOf({id:m.xdcMessageId||m.id,kind:m.nip17?14:4,
+          tags:m.tags||[],content:text});
+        if(app){ text=text.replace(app.url,'').trim(); xdcCard=PCWebxdc.cardHtml(app); }
+      }
+    }catch(_){}
     const mq = /^>\s?([^\n]*)\n\n([\s\S]*)$/.exec(text);
     const _em = ev => applyEmojis(ev, { tags: m.em||[] });   // the RUMOR's own NIP-30 tags
     const body=mq ? `<span class="b-quote">${enc(mq[1])}</span>${_em(linkify(mq[2]))}` : _em(linkify(text));
-    return body+files;
+    return body+files+xdcCard;
   }
   function _scheduleDmRefresh(){
     if(_dmRefreshTimer || VIEW!=='messages') return;
@@ -26285,7 +26455,11 @@
     const _syncAtts = wireImgAttach(inp, $('#dm-atts'), {enc:true});
     decorateEncAtts($('#dm-msgs'));   // first paint of this thread
     _decorateDmFileAtts($('#dm-msgs'));
-    $('#dm-attach').onclick=()=>$('#dm-file').click();
+    $('#dm-attach').onclick=e=>{
+      const rows=[['file','📎 File']];
+      if(window.PCWebxdc&&PCWebxdc.attach) rows.push(['webxdc','🎮 Multiplayer mini app']);
+      openMenuPopover(e.currentTarget,rows,a=>{ if(a==='file') $('#dm-file').click(); else if(a==='webxdc') PCWebxdc.attach(inp); });
+    };
     // 🔒 is opt-in and OFF by default: an encrypted file is unreadable to anyone not running this
     // client, so it can't be the silent default for a conversation with a Damus user. Remembered per
     // device (not per thread) — someone who encrypts once usually means it.
@@ -26436,6 +26610,21 @@
     _prof.loading=false;
   }
   function renderProfile(pk){ renderProfileView(pk); }
+  /* Ditto interoperates through kind-0 `fields`: [[label,url], ...]. Music is not a private Ditto
+   * event kind; it is an ordinary labelled profile link whose target is audio. Keep every unknown
+   * field intact and only claim the entries we can identify as playable audio. */
+  function _profileMusicFields(p){
+    const audio=/\.(?:mp3|mpga|m4a|aac|ogg|oga|opus|wav|flac)(?:[?#].*)?$/i;
+    return (p&&Array.isArray(p.fields)?p.fields:[]).filter(x=>Array.isArray(x)&&x.length>1
+      && /^https?:\/\//i.test(String(x[1]||'')) && (audio.test(String(x[1])) || /^🎶/.test(String(x[0]||''))));
+  }
+  function _profileMusicHtml(p){
+    const rows=_profileMusicFields(p);
+    if(!rows.length) return '';
+    return `<div class="prof-music" aria-label="Profile music">${rows.map(([label,url])=>
+      `<div class="prof-track"><div class="prof-track-name">${enc(String(label||'Track').replace(/^🎶\s*/,''))}</div><audio controls preload="none" src="${enc(url)}"></audio></div>`
+    ).join('')}</div>`;
+  }
   // Patch the already-painted profile header in place when a background kind-0 refresh changed it
   // (live rename / new avatar), so we never have to block the first paint on that refetch.
   function _patchProfileHeader(pk){
@@ -26444,6 +26633,7 @@
     const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
     const h2=feed.querySelector('.prof .pbody h2'); if(h2){ const vchk=h2.querySelector('.vchk'); h2.innerHTML=emojiName(pk,p.name||p.display_name||'anon'); if(vchk) h2.appendChild(vchk); }
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
+    const music=feed.querySelector('#prof-music'); if(music) music.innerHTML=_profileMusicHtml(p);
   }
 
   /* A profile page normally loads only the newest handful of notes, so its local cache cannot tell
@@ -26565,6 +26755,7 @@
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
         <div class="prof-joined" id="prof-joined" hidden><svg class="ic" aria-hidden="true"><use href="#i-clock"></use></svg><span>Joined Nostr</span><b></b></div>
         <div class="about">${linkify(p.about||'')}</div>
+        <div id="prof-music">${_profileMusicHtml(p)}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>
       </div></div>
       <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
@@ -27047,6 +27238,11 @@
      * nowhere else, and this sheet is a big target. The ✕ keeps it escapable. */
     modal(`<h3 class="cmp-hd">Edit profile<button class="modal-x" id="pf-close" title="Close" aria-label="Close">&#215;</button></h3>
       <label class="fld">Display name<input class="input" id="pf-name" placeholder="your name" value="${enc(p.name||p.display_name||'')}"></label>
+      <!-- Music is deliberately near the top. On a phone it used to sit below eight profile fields
+           and a tall bio, outside the first several screens of this scrolling sheet; the feature
+           existed but "Edit profile" appeared to contain nothing related to it. -->
+      <div class="fld pf-music-editor"><span>Profile music</span><div id="pf-music-list">${_profileMusicFields(p).map(([label,url])=>`<div class="pf-music-row"><input class="input pf-music-title" aria-label="Track title" placeholder="Track title" value="${enc(String(label||'').replace(/^🎶\s*/,''))}"><input class="input pf-music-url" aria-label="Audio URL" placeholder="https://…/track.mp3" value="${enc(url)}"><button class="btn btn-ghost small pf-music-remove" type="button" aria-label="Remove track">Remove</button></div>`).join('')}</div>
+        <div class="row pf-music-actions"><button class="btn btn-ghost small" id="pf-music-add" type="button">Add audio URL</button><button class="btn btn-ghost small" id="pf-music-up" type="button">Upload music</button><input type="file" id="pf-music-file" accept="audio/*,.mp3,.mpga,.m4a,.aac,.ogg,.opus,.wav,.flac" multiple hidden></div></div>
       <label class="fld">NIP-05 identifier<input class="input" id="pf-nip05" placeholder="name@domain" value="${enc(p.nip05||'')}"></label>
       <label class="fld">⚡ Lightning address<input class="input" id="pf-lud16" placeholder="you@walletofsatoshi.com" value="${enc(p.lud16||'')}"></label>
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
@@ -27072,12 +27268,37 @@
         // never shows under Files ("updated my pic but it's not in blossom"). Best-effort.
         try{ const _sha=_shaFromUrl(_u); if(_sha) FilesIdx.setFile(_sha,{name:f.name||'profile-pic', folder:'', mime:f.type||'', size:f.size, ts:Math.floor(Date.now()/1000)}); }catch(_){}
         toast('uploaded'); }catch(err){toast('upload failed');} };
+      const musicList=$('#pf-music-list',root);
+      const addMusic=(title,url)=>{
+        const row=document.createElement('div'); row.className='pf-music-row';
+        row.innerHTML=`<input class="input pf-music-title" aria-label="Track title" placeholder="Track title" value="${enc(title||'')}"><input class="input pf-music-url" aria-label="Audio URL" placeholder="https://…/track.mp3" value="${enc(url||'')}"><button class="btn btn-ghost small pf-music-remove" type="button" aria-label="Remove track">Remove</button>`;
+        $('.pf-music-remove',row).onclick=()=>row.remove(); musicList.appendChild(row);
+      };
+      $$('.pf-music-remove',musicList).forEach(b=>b.onclick=()=>b.closest('.pf-music-row').remove());
+      $('#pf-music-add',root).onclick=()=>addMusic('','');
+      $('#pf-music-up',root).onclick=()=>$('#pf-music-file',root).click();
+      $('#pf-music-file',root).onchange=async e=>{
+        for(const f of Array.from(e.target.files||[])) try{
+          // A Ditto profile field must remain publicly playable. Keep this copy unfiled; putting a
+          // plaintext blob under encrypted Music creates an undecryptable personal-library row.
+          const url=await uploadBlob(f,{noCompress:true});
+          const title=(f.name||'Track').replace(/\.[^.]+$/,''); addMusic(title,url);
+        }catch(err){ toast('music upload failed: '+((err&&err.message)||err)); }
+        e.target.value='';
+      };
       $('#pf-save',root).onclick=async()=>{ const _xmr=$('#pf-xmr',root).value.trim();
         if(_xmr && !isXmrAddr(_xmr)){ toast('that doesn\'t look like a Monero address (starts 4 or 8)'); $('#pf-xmr',root).focus(); return; }   // keeps the modal open → other edits aren't lost
         const _bch=$('#pf-bch',root).value.trim().replace(/^bitcoincash:/i,'');
         if(_bch && !isBchAddr(_bch)){ toast('that doesn\'t look like a Bitcoin Cash address'); $('#pf-bch',root).focus(); return; }
         { const sc=$('#pf-xmr-stamp',root); if(sc) ClientSettings.set('xmrStampNotes', !!sc.checked); }   // opt-in: attach my XMR to my posts — per-device only (NOT synced: it's an address-linking privacy choice)
         const meta={ ...p, name:$('#pf-name',root).value.trim(), nip05:$('#pf-nip05',root).value.trim(), lud16:$('#pf-lud16',root).value.trim(), picture:$('#pf-pic',root).value.trim(), banner:$('#pf-banner',root).value.trim(), about:$('#pf-about',root).value.trim() };
+        /* Replace only the music entries we own. Ditto and other clients may put arbitrary labelled
+         * links in `fields`; saving a song must never erase those unrelated profile fields. */
+        const musicOld=new Set(_profileMusicFields(p));
+        const fields=(Array.isArray(p.fields)?p.fields:[]).filter(x=>!musicOld.has(x));
+        $$('.pf-music-row',root).forEach(row=>{ const title=$('.pf-music-title',row).value.trim(),url=$('.pf-music-url',row).value.trim();
+          if(url && /^https?:\/\//i.test(url)) fields.push(['🎶'+(title||'Track'),url]); });
+        if(fields.length) meta.fields=fields; else delete meta.fields;
         // Publish the Monero address to BOTH `monero_address` (the field most OTHER clients read — incl.
         // Nosmero — so they can tip you) AND `xmr` (what this client also reads); clearing removes every
         // alias. Previously we wrote ONLY `xmr` and DELETED monero_address, which hid your address from
@@ -29957,22 +30178,16 @@
      it (see the _viewChosen note in CLAUDE.md). */
   window.addEventListener('load', () => setTimeout(() => _withPhoneShell(() => {}), 3000));
 
-  /* "Stay connected" — the persistent-notification fallback (StayAwakeService).
-   *
-   * ONLY OFFERED ON THE PACKAGED APP, because it is the only build that can do it: a browser cannot
-   * keep itself running and does not need to (a PWA's push goes through the browser's own service).
-   * Hidden rather than disabled elsewhere, since a permanently greyed switch reads as broken.
-   *
-   * The switch reflects the REMEMBERED preference, not whether the service happens to be running —
-   * Android may have killed it, and a switch that flips itself off because of that would tell the
-   * user they turned something off. */
+  /* "Stay connected" is the opt-in persistent-notification fallback for packaged Android builds
+   * that cannot receive distributor push. Its switch reflects the remembered preference, and a
+   * refused native service start must put the control back instead of claiming a false state. */
   async function _wireStayConnected(){
     const row = $('#set-stay-row'), box = $('#set-stay');
     if(!row || !box) return;
     const P = _capPlugin('PosterChanPush', 'stayConnected');
-    if(!P) return;                                   // a browser: leave the row hidden
+    if(!P) return;
     let cur = null;
-    try{ cur = await P.stayConnected(); }catch(_){ return; }   // an APK older than this feature
+    try{ cur = await P.stayConnected(); }catch(_){ return; }
     row.hidden = false;
     box.checked = !!(cur && cur.on);
     box.onchange = async () => {
@@ -29982,7 +30197,6 @@
         toast(want ? 'staying connected — see the permanent notification'
                    : 'stopped staying connected');
       }catch(e){
-        // Put the switch back: it must never show a state the phone is not in.
         box.checked = !want;
         toast('could not change it: ' + ((e && (e.message || e.errorMessage)) || 'refused'));
       }
@@ -30028,28 +30242,45 @@
     }
     return await _registerPushSub(sub.toJSON());
   }
-  /* The packaged Android app takes a different road to the same place.
-   * A WebView has NO push service, so pushManager.subscribe() above cannot work there at all — which
-   * is why the native build, the one users expect to be MORE capable, received nothing while closed.
-   * UnifiedPush gives us an endpoint from a distributor the user chose; the server treats it as just
-   * another subscription (no VAPID keys → it POSTs instead). */
+  /* The packaged Android app takes a different road to the same place. A WebView has no Web Push,
+   * so the native service keeps one authenticated PosterChan socket and draws notifications itself.
+   * Credentials are issued for this installation only and sealed by the native Keystore code. */
   // _capPlugin, NOT a bare Capacitor.Plugins lookup: for a NATIVELY-registered plugin that map is
   // empty, so the direct read returns undefined, pushState() falls through to 'unsupported', and the
   // APK reports it cannot do notifications at all. This repo has been bitten by that twice already.
   function _pushPlugin(){ try{ return _capPlugin('PosterChanPush','register'); }catch(_){ return null; } }
+  async function _directPushAuth(action, deviceId){
+    if(!deviceId) throw new Error('this installation has no notification identity');
+    return await Promise.race([
+      sign(27235,`posterchan-direct:${action}:${deviceId}`,[['p',ME.pubkey],['d',deviceId]]),
+      new Promise((_,rej)=>setTimeout(()=>rej(new Error('signer timeout')),30000)),
+    ]);
+  }
   async function _enablePushNative(P){
-    const r = await P.register();
-    if(r && r.needsDistributor){
-      toast('Install a UnifiedPush app (e.g. ntfy) to receive notifications');
-      return;
+    const local=(await P.getEndpoint())||{};
+    const deviceId=local.deviceId||local.device_id;
+    let auth;
+    try{ auth=await _directPushAuth('register',deviceId); }
+    catch(e){ toast('Your signer did not approve notifications: '+((e&&e.message)||e)); return; }
+    const issued=await fetch('/api/push/direct/register',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pubkey:ME.pubkey,device_id:deviceId,auth:btoa(JSON.stringify(auth))})
+    }).then(r=>r.json()).catch(()=>null);
+    if(!(issued&&issued.ok&&issued.token&&issued.websocket_url)){
+      toast('Could not turn notifications on'+((issued&&issued.error)?': '+issued.error:'')); return;
     }
-    if(!(r && r.ok)){ toast('Could not turn notifications on'+((r&&r.error)?': '+r.error:'')); return; }
-    // The distributor answers a broadcast receiver on its own schedule, so the endpoint appears a
-    // moment later rather than being returned above. Poll briefly instead of guessing a fixed wait.
-    let ep = '';
-    for(let i=0;i<20 && !ep;i++){ ep = ((await P.getEndpoint())||{}).endpoint || ''; if(!ep) await new Promise(r=>setTimeout(r,250)); }
-    if(!ep){ toast('Your notification app did not respond — is it running?'); return; }
-    if(!await _registerPushSub({ endpoint: ep })) return;
+    const socket=new URL(issued.websocket_url,location.href);
+    socket.protocol=socket.protocol==='https:'?'wss:':'ws:';
+    const r=await P.register({socketUrl:socket.href,token:issued.token,deviceId:issued.device_id||deviceId});
+    if(!(r&&r.ok)){
+      // Android asks for notification permission only after the signed server registration. Revoke
+      // that fresh token when permission is refused instead of leaving a phantom device behind.
+      try{
+        const undo=await _directPushAuth('unregister',deviceId);
+        await fetch('/api/push/direct/unregister',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pubkey:ME.pubkey,device_id:deviceId,auth:btoa(JSON.stringify(undo))})});
+      }catch(_){}
+      toast('Could not start notifications'+((r&&r.error)?': '+r.error:'')); return;
+    }
     // Now say whether the OS will actually let any of it through. Being force-stopped by a battery
     // setting silences push AND password autofill, and reports nothing.
     try{ const b=await P.batteryStatus();
@@ -30104,9 +30335,15 @@
   }
   async function disablePush(){
     const P=_pushPlugin();
-    if(P){ try{ const ep=((await P.getEndpoint())||{}).endpoint;
-        if(ep) await fetch('/api/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:ep})});
-        await P.unregister(); }catch(_){}
+    if(P){ try{
+        const local=(await P.getEndpoint())||{}, deviceId=local.deviceId||local.device_id;
+        if(deviceId){
+          const auth=await _directPushAuth('unregister',deviceId);
+          await fetch('/api/push/direct/unregister',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({pubkey:ME.pubkey,device_id:deviceId,auth:btoa(JSON.stringify(auth))})});
+        }
+        await P.unregister();
+      }catch(e){ toast('Could not turn notifications off: '+((e&&e.message)||e)); return; }
       toast('Push notifications off'); return; }
     try{ const reg=await navigator.serviceWorker.ready; const sub=await reg.pushManager.getSubscription();
       if(sub){ await fetch('/api/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});
@@ -30497,11 +30734,10 @@
           <div class="muted small" id="set-push-status" style="margin-top:6px"></div>
           <div id="set-stay-row" class="set-stay" hidden>
             <label><input type="checkbox" id="set-stay"> Stay connected in the background</label>
-            <div class="muted small">Push needs a notification app (ntfy, Sunup) installed — without
-              one, a closed PosterChan receives nothing. This keeps the connection open instead, with
-              the permanent notification Android requires, and <strong>starts again by itself after a
-              reboot</strong>. <strong>It uses more battery</strong>, so leave it off if push is
-              working.</div>
+            <div class="muted small">Direct push normally reaches a closed PosterChan. This fallback
+              keeps the client connection open on devices where push is unavailable, with the
+              permanent notification Android requires, and starts again after a reboot.
+              <strong>It uses more battery</strong>, so leave it off when push is working.</div>
           </div>
         </div>
       </section>

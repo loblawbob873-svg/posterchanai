@@ -48,7 +48,7 @@ def interval_minutes() -> int:
 
 
 async def _push(db, user, title: str, body: str) -> None:
-    """Web Push / UnifiedPush — the only path that reaches a phone with its screen off.
+    """Web Push / PosterChan Direct — the path that reaches a phone with its screen off.
 
     Best-effort and never fatal: the mail is already stored by the time this runs, so a push service
     having a bad day must not turn into a failed sync.
@@ -64,7 +64,8 @@ async def _push(db, user, title: str, body: str) -> None:
         rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all() if pk else []
         payload = {"title": title, "body": body, "type": "mail"}
         for row in rows:
-            sub = {"endpoint": row.endpoint, "keys": {"p256dh": row.p256dh, "auth": row.auth}}
+            from app.services.direct_push_service import subscription_dict
+            sub = subscription_dict(row)
             if not await asyncio.to_thread(push_service.send, sub, payload):
                 db.delete(row)            # the endpoint is gone for good — prune it
         if rows:

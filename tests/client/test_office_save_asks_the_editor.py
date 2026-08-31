@@ -68,7 +68,8 @@ class TheEditorIsAskedToSave(unittest.TestCase):
         body = APP[start:start + 1400]
         self.assertIn("askEditorToSave(root)", body, "the PDF is converted from unsaved bytes")
         self.assertIn("/export/pdf?access_token=", body)
-        self.assertIn("saveBlobAs(", body)
+        self.assertIn("_officeSaveCopy(", body,
+                      "PDF export must use the same destination-aware save path as Save As")
         self.assertNotIn("<a download", body)
 
 
@@ -81,6 +82,8 @@ class ALocalDocumentCanBeOpenedInOffice(unittest.TestCase):
     Home was a dead end, on the OS whose whole point is that it ships an office suite.
     """
     def _chooser(self) -> str:
+        # hostfiles carries metadata on the callable `openHere`, preserving the four-argument
+        # opener contract shared by Preview and Code.
         start = APP.index("openFile: async (path, name, openHere, mime) => {")
         return APP[start:start + 3500]
 

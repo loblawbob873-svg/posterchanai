@@ -37,6 +37,14 @@
   function _isRelayUrl(u){
     return _WSURL.test(String(u || '').trim());
   }
+  /* Settings accepted both spellings, so `/relay/` from a saved list plus managed `/relay` opened
+     two physical sockets. Query-bearing endpoints stay byte-for-byte intact. */
+  function _relayUrl(u){
+    u = String(u || '').trim();
+    /* `/relay` is PosterChan's standard managed endpoint. Do not broadly strip slashes: an
+       external relay may intentionally distinguish `/nostr` from `/nostr/`. */
+    return /^wss?:\/\/[^/?#]+\/relay\/$/i.test(u) ? u.slice(0, -1) : u;
+  }
   /* Deployment-denied relay hosts. These two consistently refuse/time out and have appeared through
      legacy saved rooms, user relay migrations and external reads. Check at every constructor path so
      no persisted spelling can bypass a higher-level list cleanup. */
@@ -168,7 +176,7 @@
     // Connect to an explicit set of relays. verify=true makes the pool signature-verify every
     // incoming event (used for user-supplied relays); verify=false trusts them (built-in WoT relay).
     configure({ urls, verify } = {}){
-      urls = [...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))];
+      urls = [...new Set((urls||[]).map(_relayUrl).filter(u=>u&&!_isBlockedRelay(u)))];
       this._verify = !!verify;
       this.url = urls[0] || null;
       // drop connections no longer wanted

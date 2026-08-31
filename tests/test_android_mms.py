@@ -378,6 +378,23 @@ class MmsProvider(unittest.TestCase):
         # which made this file assert the absence of a string it had just deleted itself.
         return re.sub(r"(?<!:)//[^\n]*", " ", src)
 
+    @staticmethod
+    def _body(src, decl):
+        """The one method, brace-matched. A regex over the whole file cannot tell a rule that holds
+        inside one method from one that holds by accident everywhere else."""
+        i = src.index(decl)
+        i = src.index("{", i)
+        depth, j = 0, i
+        while j < len(src):
+            if src[j] == "{":
+                depth += 1
+            elif src[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    return src[i:j + 1]
+            j += 1
+        raise AssertionError("unbalanced braces after " + decl)
+
     def test_the_mms_table_is_read_and_selected_by_the_same_rule(self):
         """`Telephony.Mms.DATE` IS IN SECONDS by specification, `Telephony.Sms.DATE` is in
         milliseconds, and several OEM providers keep milliseconds in the MMS table anyway. Read the
@@ -439,10 +456,25 @@ class MmsProvider(unittest.TestCase):
 
     def test_reading_pictures_never_writes_the_provider(self):
         """Carrier download belongs to the transport receiver; this provider reader must never
-        manufacture a placeholder row that every messaging app and backup would then preserve."""
+        manufacture a placeholder row that every messaging app and backup would then preserve.
+
+        `markRead` is the ONE deliberate write and it is not that: it flips READ/SEEN on rows the
+        platform already stored, because a conversation is one surface over TWO providers and a
+        group message with no media is still an MMS — left unread there, the badge outlives the
+        person opening the thread. So the ban is on ROW CREATION, and that one write is PINNED to
+        those two columns rather than exempted wholesale: a `ContentValues` anywhere else in this
+        file, or another column in this one, is a row being built.
+        """
         src = self._code("MmsStore.java")
-        for banned in ("ContentValues", "insert(", "downloadMultimediaMessage"):
+        for banned in ("insert(", "downloadMultimediaMessage"):
             self.assertNotIn(banned, src, "the MMS reader writes to the provider")
+        mark = self._body(src, "public static int markRead")
+        self.assertIn("ContentValues", mark, "markRead no longer writes anything")
+        self.assertEqual(src.count("ContentValues"), mark.count("ContentValues"),
+                         "a ContentValues outside markRead — this reader is building a row")
+        self.assertEqual(sorted(set(re.findall(r"\.put\(Telephony\.Mms\.(\w+)", mark))),
+                         ["READ", "SEEN"],
+                         "the read-flag write carries a column that could create or alter a row")
 
     def test_a_picture_message_is_deleted_through_its_own_uri(self):
         """Handed to SmsStore it deletes nothing AND reports nothing — which the client reads as a

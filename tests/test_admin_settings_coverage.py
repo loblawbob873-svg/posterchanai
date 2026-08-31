@@ -62,7 +62,11 @@ def test_every_tab_pane_is_reachable_from_the_nav(tab):
     """Each tab file declares one #tab-<name> pane, and admin.html must have a button for it —
     an orphaned pane is invisible, and an orphaned button throws on click."""
     admin_html = (TABS.parents[1] / "admin.html").read_text(encoding="utf-8")
-    panes = re.findall(r'<div class="tab-content[^"]*" id="tab-([a-z0-9_-]+)"', (TABS / tab).read_text(encoding="utf-8"))
+    # Any element, not just <div>: admin.js switches panes with `querySelectorAll('.tab-content')`,
+    # so a <section class="tab-content"> is a working pane — matching only <div> made this check
+    # report the Monero tab as unreachable when the nav button and the include were both correct.
+    panes = re.findall(r'<[a-z]+ class="tab-content[^"]*" id="tab-([a-z0-9_-]+)"',
+                       (TABS / tab).read_text(encoding="utf-8"))
     assert panes, f"{tab} declares no .tab-content pane"
     for pane in panes:
         assert f'data-tab="{pane}"' in admin_html, f"{tab}: no nav button for tab '{pane}'"

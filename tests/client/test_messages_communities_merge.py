@@ -38,6 +38,15 @@ def test_successful_dm_send_does_not_remount_messages():
     send = send[:send.index("\n  }") + 4]
     assert "renderMessages()" not in send
     assert "await ingestWrap(toSelf, false)" in send
+    assert "_keepDmOpen(pk)" in send
+
+
+def test_send_repairs_mobile_thread_chrome_without_resurrecting_a_closed_thread():
+    helper = APP[APP.index("function _keepDmOpen(pk){"):]
+    helper = helper[:helper.index("\n  }") + 4]
+    assert "VIEW!=='messages' || dmActive!==pk" in helper
+    assert "classList.add('has-active')" in helper
+    assert "renderDmThread(pk)" in helper
 
 
 def test_successful_dm_send_runtime_stays_in_open_thread():
