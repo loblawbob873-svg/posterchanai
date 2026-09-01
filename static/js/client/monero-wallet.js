@@ -63,8 +63,28 @@
       // Extension/Nostr login mints a bearer session, while the cookie may be absent after a server
       // restart. A bare fetch therefore returned 401 and mislabeled a configured wallet unavailable.
       const fetcher=PC&&PC.authFetch ? PC.authFetch : fetch;
-      const res=await fetcher(path,Object.assign({credentials:'include',cache:'no-store',signal:ctl.signal,
-        headers:{'Accept':'application/json'}},opts||{}));
+      /* The base the bundle's fetch shim will actually prepend — read from the global it sets,
+         NOT from a PC helper: `_serverOrigin` lives in app.js's factory argument list and is not on
+         `window.__PC`, so calling it would throw exactly where an error is being reported. */
+      const target=String((root.__PC_API_BASE__!==undefined?root.__PC_API_BASE__:'')||'')+path;
+      let res;
+      try{
+        res=await fetcher(path,Object.assign({credentials:'include',cache:'no-store',signal:ctl.signal,
+          headers:{'Accept':'application/json'}},opts||{}));
+      }catch(err){
+        /* "FAILED TO FETCH" NAMES NOTHING, AND THAT COST FIVE ROUNDS OF GUESSING.
+           A fetch that dies at the network layer throws a bare TypeError whose message is those
+           three words: no URL, no status, no distinction between DNS, a refused connection, a
+           blocked mixed-content request, an abort, or a CORS rejection. On the web the wallet
+           works and on Android it did not, and the only thing the screen could say was "Failed to
+           fetch" — which is equally consistent with every one of those and points at none.
+           The address and the kind are both known HERE, so say them: the next report arrives with
+           the one fact that identifies the cause instead of the one word that does not. */
+        const aborted=(err&&err.name==='AbortError')||ctl.signal.aborted;
+        throw new Error(aborted
+          ? ('the wallet did not answer within '+Math.round(WALLET_TIMEOUT_MS/1000)+'s: '+target)
+          : ('could not reach '+target+' — '+((err&&err.message)||err)));
+      }
       let body={}; try{ body=await res.json(); }catch(_){}
       /* A REFUSAL IS NOT AN OUTAGE, AND SAYING SO COST SEVERAL RELEASES.
          The wallet is admin-only. A Nostr sign-in that resolves to an ordinary account gets 403 on
