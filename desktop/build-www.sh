@@ -19,8 +19,21 @@ rm -rf www
 mkdir -p www/static/js/client www/static/css www/static/fonts
 
 cp "$SRC"/static/js/client/*.js       www/static/js/client/
-cp "$SRC"/static/css/client.css       www/static/css/
-cp "$SRC"/static/css/concord.css      www/static/css/
+# EVERY STYLESHEET THE SHELL REFERENCES, READ FROM THE TEMPLATE — never a list maintained here.
+#
+# This was three hardcoded names, and `templates/client.html` grew a fourth. `monero-wallet.css`
+# was therefore present on the web (the server serves /static) and ABSENT from the bundle, where
+# the shim treats /static/ as bundle-local — so the request 404'd inside the app and the whole
+# Monero wallet rendered unstyled. On the web it was perfect. Reported exactly that way: "monero
+# works fine on web, android is broken".
+#
+# Same shape as the fonts and the i18n catalogues below, which is three times now, so the list is
+# derived instead of restated. A stylesheet added to the shell is copied without anyone remembering.
+for _css in $(grep -o 'href="/static/css/[^"?]*' "$SRC/templates/client.html" | sed 's|.*/||' | sort -u); do
+  cp "$SRC/static/css/$_css" www/static/css/ || { echo "build-www: missing static/css/$_css" >&2; exit 1; }
+done
+# Loaded at RUNTIME by i18n.js for right-to-left languages, so it is in no template and the loop
+# above cannot see it.
 cp "$SRC"/static/css/rtl.css          www/static/css/
 # The translation catalogues. i18n.js fetches /static/i18n/<lang>.json at runtime, and in a bundle
 # that request is served by the bundle — so without this the language picker offers Arabic and
