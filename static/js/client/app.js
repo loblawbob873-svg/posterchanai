@@ -23829,9 +23829,13 @@
     if(!(_newBuild || _apkUpdate)) return '';
     const body = _updApplying ? ' <span class="muted small">applying the new version</span>'
       : (_desktopUpdate ? ' \u2014 a new desktop build is ready<div class="muted small">tap to open the download page</div>'
-      : (_apkUpdate ? (_fromZapstore()
-            ? ' — a new PosterChan app version is ready<div class="muted small">tap to open Zapstore — this install updates through it</div>'
-            : ' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>')
+      /* NO ZAPSTORE BRANCH ANY MORE. `_fromZapstore` and the `_installer` it read were deleted when
+         Android moved to direct signed upgrades, and this one call site was left behind — so with
+         an APK update pending this threw ReferenceError, and it threw INSIDE the notifications
+         render. Both callers (the view and the right rail) build their HTML through here, so the
+         whole screen died: reported as "notifications is slow" and separately as
+         "_fromZapstore is not defined when it start". They were the same bug. */
+      : (_apkUpdate ? ' — a new PosterChan app version is ready<div class="muted small">tap to download &amp; install the update</div>'
                     : ' — a new version of the app is ready<div class="muted small">tap to reload &amp; update</div>'));
     return `<div class="notif upd-notif" id="${id}"><span class="ic">🔄</span>`
          + `<div><b>${_updApplying?'Updating…':'Update available'}</b>${body}</div></div>`;

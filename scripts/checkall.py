@@ -458,6 +458,37 @@ def verdict(res):
     return "FAIL", summarise(res)
 
 
+def _serving_live_traffic():
+    """True when this box is currently serving the app — i.e. somebody is using it right now."""
+    try:
+        import subprocess as _sp
+        for unit in ("posterchanai.service", "posterchanai-relay.service"):
+            r = _sp.run(["systemctl", "is-active", unit], capture_output=True, text=True, timeout=5)
+            if r.stdout.strip() == "active":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _default_jobs():
+    """HOW MANY BROWSERS AT ONCE — AND NOT SIX ON A BOX SOMEBODY IS USING.
+
+    The browser checks are ~20 cold headless Chrome sessions. On a dev machine, half the cores is
+    right. On a node that is ALSO serving the app and the relay it is not: measured on server1
+    mid-run, load 3.04 and the relay's newest event two minutes stale, reported from a phone as
+    "no posts coming in" and "1 min behind" — while the box was simply busy running the suite that
+    was supposed to be checking it.
+
+    A deploy node is the commonest place this gets run, because it is where the code is. So it
+    notices, halves itself, and says so; `--jobs N` still wins for anyone who means it."""
+    cores = os.cpu_count() or 4
+    jobs = max(1, min(6, cores // 2))
+    if _serving_live_traffic():
+        jobs = max(1, min(2, jobs))
+    return jobs
+
+
 def main():
     ap = argparse.ArgumentParser(description="Run every PosterChanAI check and report.")
     ap.add_argument("--live", metavar="URL",
@@ -558,11 +589,13 @@ def main():
                         out="SKIP needs a running instance — re-run with --live <URL>"))
         runnable = [c for c in runnable if c["group"] != "live"]
 
-    jobs = args.jobs or max(1, min(6, (os.cpu_count() or 4) // 2))
+    jobs = args.jobs or _default_jobs()
     if runnable:
         serial = [c for c in runnable if c.get("serial")]
         parallel = [c for c in runnable if not c.get("serial")]
+        gentle = (not args.jobs) and _serving_live_traffic()
         say(f"  {C['dim']}…{len(runnable)} browser check(s), {jobs} at a time"
+            + (" (this node is serving live traffic — throttled; --jobs N overrides)" if gentle else "")
             + (f", {len(serial)} memory-heavy check(s) serialized" if serial else "")
             + f"{C['off']}")
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
