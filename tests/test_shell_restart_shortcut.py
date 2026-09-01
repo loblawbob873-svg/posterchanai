@@ -41,7 +41,15 @@ def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
     main = (ROOT / "desktop/main.js").read_text()
     assert "flock -n 9" in start
     assert "posterchan-shell-start.lock" in start
-    assert start.count('"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland 9>&-') == 2
+    # BOTH launches must close fd 9 — the launcher mutex is not part of the desktop environment,
+    # and anything Electron spawns would inherit the lock. Matched as a pattern rather than as a
+    # fixed string: the line now also carries ${PC_SHELL_EXTRA_ARGS:-} (see
+    # tests/test_shell_launcher_debug_args.py), and pinning the exact text made adding a flag look
+    # like removing the fd guard.
+    import re as _re
+    launches = _re.findall(r'"\$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland[^\n]*', start)
+    assert len(launches) == 2, launches
+    assert all("9>&-" in line for line in launches), launches
     assert start.count('>>"$SHELL_LOG" 2>&1 &') == 2
     local = start.index("if [ -x /usr/local/bin/posterchan ]")
     canonical = start.index("PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan", local)
