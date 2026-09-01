@@ -25,6 +25,7 @@ Everything is stubbed: no network, no DOM library, no wallet. The module is load
 browser loads it, and the assertions are on what it asked for.
 """
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -472,3 +473,45 @@ def test_history_failure_does_not_hide_a_healthy_wallet_and_probe_errors_are_vis
     assert "history?limit=50').catch" in probe
     assert "[monero wallet] probe failed" in probe
     assert "fallbackHtml(s.error)" in src
+
+
+# =============================================================================================
+# THE CLIENT MUST NOT GIVE UP BEFORE THE SERVER IS ALLOWED TO ANSWER
+# =============================================================================================
+
+
+def test_the_request_budget_exceeds_the_nodes_own_rpc_budget():
+    """A 200 IN THE LOG AND "UNAVAILABLE" ON SCREEN, which is what was reported for four APK builds.
+
+    The client aborted every wallet request at 5s. The node is allowed 8s for the wallet RPC alone
+    (`monero_wallet_rpc_timeout`, up to 30 by configuration) plus its own overhead — so a
+    slow-but-successful call was killed here and painted as "Local wallet unavailable", while the
+    server finished and logged a 200. The journal showed exactly that: status, balance, address and
+    history all 200, the operator authenticated, nothing refused, and the phone saying the wallet
+    was down.
+
+    Raising it is free in the failure case: a wallet that is not running refuses the connection
+    immediately, so this timer only fires while the node is genuinely working on an answer."""
+    js = WALLET.read_text(encoding="utf-8")
+    budget = re.search(r"WALLET_TIMEOUT_MS\s*=\s*(\d+)", js)
+    assert budget, "the wallet request budget is no longer a named constant"
+    client_ms = int(budget.group(1))
+
+    service = (ROOT / "app/services/monero_wallet_service.py").read_text(encoding="utf-8")
+    default_s = re.search(r'"monero_wallet_rpc_timeout",\s*"MONERO_WALLET_RPC_TIMEOUT",\s*"(\d+)"',
+                          service)
+    assert default_s, "the node's RPC timeout default has moved"
+    assert client_ms > int(default_s.group(1)) * 1000, (
+        f"the client gives up after {client_ms}ms while the node is allowed "
+        f"{default_s.group(1)}s for the RPC alone — a slow success is reported as an outage")
+
+    assert re.search(r"setTimeout\(\(\)=>ctl\.abort\(\),\s*WALLET_TIMEOUT_MS\)", js), (
+        "the abort no longer uses the named budget, so the two can drift apart again")
+
+
+def test_the_abort_is_still_armed_at_all():
+    """The fix must not be "remove the timeout": a request with no ceiling is the spinner-forever
+    failure this module already has a comment about."""
+    js = WALLET.read_text(encoding="utf-8")
+    assert "AbortController" in js and "ctl.abort()" in js
+    assert "signal:ctl.signal" in js.replace(" ", "")

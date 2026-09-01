@@ -44,12 +44,21 @@
     return {address,amount:/^0(?:\.0+)?$/.test(valueAmount)?'':valueAmount,recipient};
   }
 
+  const WALLET_TIMEOUT_MS = 20000;   // > the node's own 8s RPC budget, with room for its overhead
   async function request(path, opts){
     // Signing/login is interactive and can legitimately take longer than the network timeout. Starting
     // the timer before it meant a slow Android signer returned successfully and then handed fetch() an
     // already-aborted signal, so no wallet request ever reached the server.
     if(PC&&PC.ensureAiSession) await PC.ensureAiSession();
-    const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),5000);
+    /* THE CLIENT MUST NOT GIVE UP BEFORE THE SERVER IS ALLOWED TO ANSWER.
+       This was 5s while the node is allowed 8s for the wallet RPC alone (`monero_wallet_rpc_timeout`,
+       up to 30 by configuration) plus its own overhead. So every slow-but-successful call was aborted
+       here and painted as "Local wallet unavailable · Retry local wallet" — while the server finished
+       and logged a 200. That is exactly what the journal showed while the phone said the wallet was
+       down: status, balance, address and history all 200, the operator authenticated, nothing refused.
+       Raising it costs nothing in the case that matters: a wallet that is not running refuses the
+       connection immediately, so this timer only ever fires while the node is genuinely working. */
+    const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),WALLET_TIMEOUT_MS);
     try{
       // Extension/Nostr login mints a bearer session, while the cookie may be absent after a server
       // restart. A bare fetch therefore returned 401 and mislabeled a configured wallet unavailable.
