@@ -78,13 +78,13 @@ globalThis.window.__PC = {
 
 globalThis.requests = [];
 globalThis.replies = {
-  '/api/wallet/monero/status': { network:'stagenet', mainnet:false },
-  '/api/wallet/monero/balance': { balance:'1000000000000', unlocked_balance:'1000000000000' },
-  '/api/wallet/monero/address': { address: %(stagenet)s },
-  '/api/wallet/monero/history': { in:[], out:[], pending:[], failed:[] },
-  '/api/wallet/monero/transfer/prepare': { confirmation:'tok-'+'z'.repeat(40), expires_at: 0,
+  '/api/wallet/xmr/status': { network:'stagenet', mainnet:false },
+  '/api/wallet/xmr/balance': { balance:'1000000000000', unlocked_balance:'1000000000000' },
+  '/api/wallet/xmr/address': { address: %(stagenet)s },
+  '/api/wallet/xmr/history': { in:[], out:[], pending:[], failed:[] },
+  '/api/wallet/xmr/transfer/prepare': { confirmation:'tok-'+'z'.repeat(40), expires_at: 0,
                                            address: %(stagenet)s, amount_atomic: 10000000000 },
-  '/api/wallet/monero/transfer/confirm': { tx_hash:'deadbeef' },
+  '/api/wallet/xmr/transfer/confirm': { tx_hash:'deadbeef' },
 };
 globalThis.failures = {};
 globalThis.fetch = async (url, opts) => {
@@ -149,8 +149,8 @@ def test_a_mainnet_profile_address_is_declined_by_a_stagenet_wallet_so_external_
 
 def test_a_stagenet_profile_address_is_declined_by_a_mainnet_wallet():
     got = node("""
-      replies['/api/wallet/monero/status']={network:'mainnet',mainnet:true};
-      replies['/api/wallet/monero/address']={address:%s};
+      replies['/api/wallet/xmr/status']={network:'mainnet',mainnet:true};
+      replies['/api/wallet/xmr/address']={address:%s};
       openSend(%s).then(r => done({ok:r.ok,modals:modals.length,requests:requests.length}));
     """ % (json.dumps(MAINNET), json.dumps(STAGENET)))
     assert got == {"ok": False, "modals": 0, "requests": 4}
@@ -158,8 +158,8 @@ def test_a_stagenet_profile_address_is_declined_by_a_mainnet_wallet():
 
 def test_a_mainnet_profile_address_opens_when_wallet_reports_mainnet():
     got = node("""
-      replies['/api/wallet/monero/status']={network:'mainnet',mainnet:true};
-      replies['/api/wallet/monero/address']={address:%s};
+      replies['/api/wallet/xmr/status']={network:'mainnet',mainnet:true};
+      replies['/api/wallet/xmr/address']={address:%s};
       openSend(%s).then(r => done({ok:r.ok,modals:modals.length}));
     """ % (json.dumps(MAINNET), json.dumps(MAINNET)))
     assert got == {"ok": True, "modals": 1}
@@ -187,8 +187,8 @@ def test_a_stagenet_tip_opens_the_send_sheet_with_the_address_already_filled():
     assert STAGENET in got["html"]
     assert "Tip alice" in got["html"]
     assert "cannot be reversed" not in got["html"], "the send sheet is not the confirm sheet"
-    assert set(got["requests"]) == {"/api/wallet/monero/balance", "/api/wallet/monero/address",
-                                    "/api/wallet/monero/history", "/api/wallet/monero/status"}
+    assert set(got["requests"]) == {"/api/wallet/xmr/balance", "/api/wallet/xmr/address",
+                                    "/api/wallet/xmr/history", "/api/wallet/xmr/status"}
 
 
 # --------------------------------------------------------------------------- review
@@ -322,7 +322,7 @@ def test_sending_is_prepare_then_confirm_and_the_token_travels_alone():
     that decides what leaves the wallet."""
     got = _confirm()
     assert [call["key"] for call in got["spend"]] == [
-        "/api/wallet/monero/transfer/prepare", "/api/wallet/monero/transfer/confirm"]
+        "/api/wallet/xmr/transfer/prepare", "/api/wallet/xmr/transfer/confirm"]
     prepare, confirm = got["spend"]
     assert prepare["method"] == "POST" and confirm["method"] == "POST"
     assert prepare["body"]["address"] == STAGENET
@@ -347,10 +347,10 @@ def test_a_refused_prepare_never_reaches_confirm_and_hands_the_dialog_back():
     payment that did not happen, which is how somebody ends up paying twice by hand."""
     got = _confirm(mutate="""
       check.checked = true; check.onchange();
-      failures['/api/wallet/monero/transfer/prepare'] =
+      failures['/api/wallet/xmr/transfer/prepare'] =
         { status:400, detail:'Amount exceeds the daily spending cap' };
     """)
-    assert [call["key"] for call in got["spend"]] == ["/api/wallet/monero/transfer/prepare"]
+    assert [call["key"] for call in got["spend"]] == ["/api/wallet/xmr/transfer/prepare"]
     assert got["closed"] == 0
     assert got["disabled"] is False
     assert got["label"] == "Send now"
@@ -363,12 +363,12 @@ def test_a_failed_confirm_is_reported_and_not_retried():
     would burn the allowance and could double-send if the first call did in fact broadcast."""
     got = _confirm(mutate="""
       check.checked = true; check.onchange();
-      failures['/api/wallet/monero/transfer/confirm'] =
+      failures['/api/wallet/xmr/transfer/confirm'] =
         { status:503, detail:'Local Monero wallet is unavailable' };
     """)
     keys = [call["key"] for call in got["spend"]]
-    assert keys == ["/api/wallet/monero/transfer/prepare", "/api/wallet/monero/transfer/confirm"]
-    assert keys.count("/api/wallet/monero/transfer/confirm") == 1
+    assert keys == ["/api/wallet/xmr/transfer/prepare", "/api/wallet/xmr/transfer/confirm"]
+    assert keys.count("/api/wallet/xmr/transfer/confirm") == 1
     assert got["closed"] == 0 and got["disabled"] is False
     assert any("unavailable" in toast for toast in got["toasts"])
 
@@ -402,10 +402,10 @@ def test_a_hostile_transfer_row_cannot_put_markup_into_the_wallet_screen():
     are supposed to be numeric — so the numeric coercion IS the escaping, and this is the test that
     says so. The date and the address go through `esc()` and are checked with it."""
     got = node("""
-      replies['/api/wallet/monero/history'] = { in:[{
+      replies['/api/wallet/xmr/history'] = { in:[{
         amount_atomic: '<img src=x onerror=alert(1)>', timestamp: '<script>alert(2)</script>' }],
         out:[], pending:[], failed:[] };
-      replies['/api/wallet/monero/address'] = { address: '"><script>alert(3)</script>' };
+      replies['/api/wallet/xmr/address'] = { address: '"><script>alert(3)</script>' };
       window.__PC.VIEW = 'wallet';
       window.PCMoneroWallet.render(true).then(() => done({
         html: feed.innerHTML,
@@ -431,7 +431,7 @@ def test_the_wallet_screen_names_the_network_it_is_actually_on():
 
 def test_a_mainnet_wallet_screen_shouts_real_funds_and_never_says_testing_only():
     got = node("""
-      replies['/api/wallet/monero/status'] = { network:'mainnet', mainnet:true,
+      replies['/api/wallet/xmr/status'] = { network:'mainnet', mainnet:true,
         transfer_cap:'0.1', daily_cap:'0.5', warning:'MAINNET hot wallet' };
       window.__PC.VIEW = 'wallet';
       window.PCMoneroWallet.render(true).then(() => done({ html: feed.innerHTML }));

@@ -4390,7 +4390,7 @@
         box.classList.add('is-loading');
         try{
           const d=await _wgtFeed('monero:health',25000,async()=>{
-            const both=await Promise.all([_moneroJson('/api/wallet/monero/status'),_moneroJson('/api/wallet/monero/node-status')]);
+            const both=await Promise.all([_moneroJson('/api/wallet/xmr/status'),_moneroJson('/api/wallet/xmr/node-status')]);
             return {status:both[0],node:both[1]};
           });
           // The widget may have been removed while RPC was answering. Never repaint a detached body.

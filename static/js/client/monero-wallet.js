@@ -103,11 +103,11 @@
     checkedAt=Date.now();
     try{
       const [meta,bal,addr,histResult]=await Promise.all([
-        request('/api/wallet/monero/status'),
-        request('/api/wallet/monero/balance'), request('/api/wallet/monero/address'),
+        request('/api/wallet/xmr/status'),
+        request('/api/wallet/xmr/balance'), request('/api/wallet/xmr/address'),
         // History is optional display data. A malformed/temporarily unavailable history response
         // must not hide an otherwise healthy wallet, balance and receive address.
-        request('/api/wallet/monero/history?limit=50').catch(error=>({__error:error}))]);
+        request('/api/wallet/xmr/history?limit=50').catch(error=>({__error:error}))]);
       const hist=histResult&&typeof histResult==='object'&&!histResult.__error?histResult:{};
       const transfers=[];
       for(const kind of ['in','out','pending','failed']) for(const row of (hist[kind]||[]))
@@ -247,8 +247,8 @@
       button.onclick=async()=>{
         button.disabled=true;button.textContent='Sending…';
         try{
-          const made=await request('/api/wallet/monero/transfer/prepare',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({address:pay.address,amount:pay.amount,description:pay.note||''})});
-          const out=await request('/api/wallet/monero/transfer/confirm',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({confirmation:made.confirmation})});
+          const made=await request('/api/wallet/xmr/transfer/prepare',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({address:pay.address,amount:pay.amount,description:pay.note||''})});
+          const out=await request('/api/wallet/xmr/transfer/confirm',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({confirmation:made.confirmation})});
           PC.closeModal();PC.toast('ɱ payment sent'); checkedAt=0;
           if(typeof opts.onSent==='function')opts.onSent(pay.amount,out.txid||out.tx_hash||'');
           if(PC.VIEW==='wallet')render(true);

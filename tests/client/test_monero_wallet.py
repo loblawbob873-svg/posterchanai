@@ -134,8 +134,8 @@ def test_keys_never_enter_the_client_module():
     for forbidden in ("spend_key", "private_view", "mnemonic", "seed phrase", "nsec"):
         assert forbidden not in src
     assert "stagenet" in src
-    assert "/api/wallet/monero/transfer/prepare" in src
-    assert "/api/wallet/monero/transfer/confirm" in src
+    assert "/api/wallet/xmr/transfer/prepare" in src
+    assert "/api/wallet/xmr/transfer/confirm" in src
     assert "cannot be reversed" in src
     assert "open external wallet instead" in src.lower()
     assert "scan wallet qr" in src.lower()

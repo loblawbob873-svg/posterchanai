@@ -7,7 +7,21 @@ from app.auth import get_admin_user
 from app.models import User
 from app.services.monero_wallet_service import MoneroWallet, WalletError, atomic_to_xmr, transfer_gate, xmr_to_atomic
 
-router = APIRouter(prefix="/api/wallet/monero", tags=["monero-wallet"])
+# NO PREFIX HERE — main.py mounts this under two of them.
+#
+# Cloudflare's managed WAF blocks any path containing "monero" as a cryptomining pattern, with a
+# 403 served by Cloudflare itself and NO CORS headers on it. The browser then rejects the response
+# and the client sees a bare "Failed to fetch". Measured: /api/wallet/monero/status → 403 from
+# cloudflare, /api/wallet/foo → 404 from us, /api/walletx/monero/status → 403. The trigger is the
+# word, not the route.
+#
+# It only ever bit users coming through Cloudflare, so it looked like an Android-only bug: the
+# operator's browser is on the LAN, where DNS points poster.place at the router and skips Cloudflare
+# entirely, while the phone on cellular does not. "It worked on wifi" was the tell.
+#
+# `/api/wallet/xmr` is the canonical path now. The old one stays mounted because installed clients
+# ask for it, and on a node that is NOT behind such a WAF it has always worked fine.
+router = APIRouter(tags=["monero-wallet"])
 WalletOwner = Annotated[User, Depends(get_admin_user)]
 
 

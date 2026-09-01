@@ -85,6 +85,6 @@ def test_node_status_admin_ui_and_route_do_not_render_secrets():
     dependencies = repr(route.dependant.dependencies)
     assert "get_admin_user" in dependencies
     ui = open("templates/admin/tabs/monero_wallet.html", encoding="utf-8").read()
-    assert "Check Node Status" in ui and "/api/wallet/monero/node-status" in ui
-    status_block = ui[ui.index("/api/wallet/monero/node-status"):]
+    assert "Check Node Status" in ui and "/api/wallet/xmr/node-status" in ui
+    status_block = ui[ui.index("/api/wallet/xmr/node-status"):]
     assert "rpc_password" not in status_block and "tx_hash" not in status_block

@@ -252,7 +252,10 @@ app.include_router(rss.router)
 app.include_router(markets.router)
 app.include_router(weather.router)
 app.include_router(mempool.router)
-app.include_router(monero_wallet.router)
+app.include_router(monero_wallet.router, prefix="/api/wallet/xmr")
+# Legacy path for already-installed clients. Blocked by Cloudflare's WAF (see the router),
+# so it is the compatibility route and never the one we ask for.
+app.include_router(monero_wallet.router, prefix="/api/wallet/monero")
 app.include_router(ssh_term.router)
 app.include_router(ssh_term.ws_router)   # /ws/ssh — the PTY socket
 app.include_router(youtube_thumb.router)

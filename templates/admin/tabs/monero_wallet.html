@@ -21,7 +21,7 @@
 document.getElementById('monero-node-status')?.addEventListener('click', async function () {
   const out=document.getElementById('monero-node-status-result'); this.disabled=true; out.textContent='Checking…';
   try {
-    const response=await fetch('/api/wallet/monero/node-status',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
+    const response=await fetch('/api/wallet/xmr/node-status',{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
     const value=await response.json(); if(!response.ok)throw new Error(value.detail||'Node unavailable');
     out.textContent=[
       'Wallet RPC: '+(value.wallet_rpc_reachable?'reachable':'unreachable'),
