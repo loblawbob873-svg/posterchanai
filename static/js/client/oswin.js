@@ -1,0 +1,111 @@
+/* REAL WINDOWS ON PosterChanOS — stage 1: the container.
+ *
+ * WHY. The desktop is ONE tiled sway window and every native app floats above it, so sway always
+ * paints Telegram and Firefox in front of anything we draw. "Click a window to bring it forward"
+ * was therefore faked: the native surface is taken off the screen entirely and its frame keeps a
+ * frozen screenshot. That fake has been reported three times in one day — "Settings glitching my
+ * screen and telegram, sticking", the Music/Firefox "glitch", and "telegram is swallowing windows
+ * and its not separating" — and no threshold fixes it, because a 9px conflict costs the whole app
+ * when a real window manager would leave the other 99% visible and live.
+ *
+ * The fix is for a PosterChan window to BE a compositor window. Then sway stacks it with Telegram
+ * natively, clicking raises exactly that window, and the entire parking subsystem (stashPlan, the
+ * previews, `_natSent`, the black-window family of bugs) has nothing left to do.
+ *
+ * WHAT MAKES IT AFFORDABLE. A same-origin `window.open()` child shares the opener's PROCESS and,
+ * because it is same-origin, its JavaScript objects. So a window can use the desktop's Store, relay
+ * pool and signer directly through `window.opener` — there is no engine/view IPC split to write and
+ * no second copy of the relay pool per window. (Two full copies already exist, one per monitor.)
+ *
+ * WEB AND ANDROID DO NOT CHANGE. A browser tab cannot make OS windows, so they keep the DOM windows
+ * in os.js. This is a second BACKEND behind the same openApp/openDoc/focusWin API, and the two are
+ * deliberately fed from the same list of views — two render paths for one surface is a trap this
+ * codebase has paid for before.
+ *
+ * OFF BY DEFAULT until stage 4. `localStorage.pc_os_toplevels = '1'` turns it on for one machine.
+ */
+(function (root) {
+  'use strict';
+
+  const PARAM = 'pcwin';                 // the view this window was opened for
+  const TITLE = 'PosterChan Window';     // sway keys its floating rule on this — see sway.config
+
+  /* Is this document a window rather than the desktop? Asked of the URL, not of a flag: a window is
+   * opened WITH the parameter, so a child must behave as one even if the flag was turned off in the
+   * desktop after it opened. */
+  function isWindow(){
+    try{ return new URLSearchParams(root.location.search).has(PARAM); }
+    catch(_){ return false; }
+  }
+
+  function viewOf(){
+    try{ return String(new URLSearchParams(root.location.search).get(PARAM) || ''); }
+    catch(_){ return ''; }
+  }
+
+  /* THE DESKTOP THIS WINDOW BELONGS TO, or null. `window.opener` is same-origin here, so this is a
+   * live reference to the shell's own client — not a copy and not a message channel.
+   *
+   * Every access is guarded: the opener can be CLOSED while this window is still up (the desktop
+   * crashed, or the renderer was rebuilt under memory pressure), and reading a dead one throws. A
+   * window whose desktop has gone is not broken, it is just alone — stage 2 decides what it can
+   * still do; stage 1 only has to notice. */
+  function desktop(){
+    try{
+      const o = root.opener;
+      if(!o || o.closed) return null;
+      return o.__PC ? o : null;
+    }catch(_){ return null; }
+  }
+
+  /* Only where a compositor window is possible AND asked for. The desktop shell is the one place:
+   * a browser tab has no such thing, and the APK's WebView is a single surface. */
+  function enabled(){
+    try{
+      /* `pcWM` is the compositor bridge and exists ONLY in the PosterChanOS shell — not in a
+       * browser, not in the APK, and not in the plain desktop app running on somebody's Mac. It is
+       * the honest capability test: a real toplevel is only meaningful where a window manager is
+       * placing our windows. */
+      if(!root.pcWM) return false;
+      if(isWindow()) return false;        // a window does not open windows; the desktop does
+      return String(root.localStorage.getItem('pc_os_toplevels') || '') === '1';
+    }catch(_){ return false; }
+  }
+
+  /* Open one. Returns the child window handle, or null when this build/platform cannot — the caller
+   * falls back to the in-page window, which is what web and Android always use. */
+  function open(view, label, opts){
+    if(!enabled()) return null;
+    const o = opts || {};
+    const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''));
+    /* The size is a HINT to the compositor, passed as window features because a frameless Electron
+     * child takes its geometry from them. sway may place it elsewhere and that is fine: it is the
+     * window manager now, which is the entire point of this change. */
+    const features = 'width=' + Math.max(360, Math.round(o.width || 1100)) +
+                     ',height=' + Math.max(240, Math.round(o.height || 760));
+    let win = null;
+    try{ win = root.open(url, '_blank', features); }catch(_){ win = null; }
+    if(!win) return null;
+    try{ win.__PC_WINDOW_LABEL__ = String(label || view || ''); }catch(_){ }
+    return win;
+  }
+
+  /* Called by the child as early as it can. Stage 1 does two things and no more: name the window so
+   * the compositor can tell it from the desktop, and record whether the shared client is reachable
+   * — which is the one assumption the whole design rests on and the one worth failing loudly. */
+  function adopt(){
+    if(!isWindow()) return null;
+    const view = viewOf();
+    try{ root.document.title = TITLE + (view ? ' — ' + view : ''); }catch(_){ }
+    try{ root.document.documentElement.classList.add('pc-oswin'); }catch(_){ }
+    const host = desktop();
+    const state = { view, shared: !!host, label: '' };
+    try{ state.label = String(root.__PC_WINDOW_LABEL__ || ''); }catch(_){ }
+    root.__PC_WIN_STATE__ = state;
+    return state;
+  }
+
+  const API = { isWindow, viewOf, desktop, enabled, open, adopt, PARAM, TITLE };
+  root.PCOSWin = API;
+  if(typeof module !== 'undefined' && module.exports) module.exports = API;
+})(typeof globalThis !== 'undefined' ? globalThis : this);

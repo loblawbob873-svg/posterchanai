@@ -4413,10 +4413,11 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 /* When a thread holds ONE message (the common case) that message owns the pane, so the body grows
    instead of the pane keeping slack under it. `.mail-thread` itself is never :only-child: the reader
    header and action bar are its siblings, so only test the message count inside the thread. */
-.mail-thread>.mail-msg:only-child{display:flex;flex-direction:column;min-height:0;flex:1}
-.mail-thread>.mail-msg:only-child>.mail-msg-body{flex:1;min-height:0;display:flex;flex-direction:column}
-.mail-thread>.mail-msg:only-child .mail-body{flex:1;min-height:0;display:flex;flex-direction:column}
-.mail-thread>.mail-msg:only-child .mail-html{flex:1}
+/* The reply row is now the message's second sibling, so a singleton is the first of exactly two. */
+.mail-thread>.mail-msg:first-child:nth-last-child(2){display:flex;flex-direction:column;min-height:0;flex:1}
+.mail-thread>.mail-msg:first-child:nth-last-child(2)>.mail-msg-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.mail-thread>.mail-msg:first-child:nth-last-child(2) .mail-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.mail-thread>.mail-msg:first-child:nth-last-child(2) .mail-html{flex:1}
 .mail-acct-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
 .mar-meta{min-width:0}
 .mar-meta b{word-break:break-all}
@@ -4554,18 +4555,33 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .mail-bulk-act .btn{flex:1 1 auto;min-width:0;justify-content:center}
 .mail-bulk-n{color:var(--cyan);font-weight:600}
 /* mail conversation thread + Blossom attach picker */
-.mail-thread{display:flex;flex-direction:column;flex:1;min-height:0}
-.mail-msg{border-bottom:1px solid var(--line)}
-.mail-msg-hd{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 18px;cursor:pointer}
+.mail-thread{display:flex;flex-direction:column;flex:1;min-height:0;padding:14px 18px 24px;gap:8px;background:color-mix(in srgb,var(--bg) 82%,var(--panel))}
+.mail-msg{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden;box-shadow:0 2px 9px rgba(0,0,0,.08)}
+.mail-msg-hd{display:flex;gap:11px;align-items:center;padding:12px 14px;cursor:pointer;min-height:58px}
 /* From/To are unbounded foreign strings; without this a long one pushes the date out of the pane. */
-.mm-who{overflow:hidden}
+.mm-who{overflow:hidden;flex:0 1 230px}
 .mm-who b,.mm-who .muted{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mail-msg-hd:hover{background:var(--panel2)}
 .mail-msg.open>.mail-msg-hd{background:var(--panel2)}
 .mm-who{min-width:0}
-.mm-date{flex:0 0 auto}
+.mm-avatar{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:50%;font-weight:700;color:var(--bg);background:linear-gradient(135deg,var(--cyan),var(--neon))}
+.mm-preview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
+.mail-msg.open .mm-preview{display:none}
+.mm-date{flex:0 0 auto;white-space:nowrap}
+.mm-chevron{flex:0 0 auto;color:var(--muted);font-size:17px;transition:transform .15s ease}
+.mail-msg.open .mm-chevron{transform:rotate(180deg)}
 .mail-msg-body{display:none}
 .mail-msg.open>.mail-msg-body{display:block}
+.mail-thread-reply{display:flex;gap:8px;padding:10px 2px 0}
+.mail-thread-reply .btn{min-height:42px;gap:7px}
+@media(max-width:820px){
+  .mail-thread{padding:9px 8px calc(24px + env(safe-area-inset-bottom));gap:7px}
+  .mail-msg{border-radius:11px}
+  .mail-msg-hd{padding:11px 10px;min-height:62px}.mm-who{flex:1}.mm-preview{display:none}
+  .mm-avatar{width:38px;height:38px;flex-basis:38px}.mm-date{align-self:flex-start;margin-top:3px}
+  .mail-thread-reply{position:sticky;bottom:0;z-index:2;padding:8px;background:color-mix(in srgb,var(--bg) 94%,transparent);backdrop-filter:blur(10px)}
+  .mail-thread-reply .btn{flex:1;min-height:44px}
+}
 .bp-list{max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:5px;margin-top:6px}
 .bp-item{text-align:start;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 11px;cursor:pointer}
 .bp-item:hover{border-color:var(--neon)}
@@ -9798,3 +9814,17 @@ audio.sms-att-img{min-width:220px}
 .office-home-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:24px}
 .office-home-actions .btn{min-height:54px;justify-content:center}
 @media(max-width:640px){.office-home{padding:16px}.office-home-actions{grid-template-columns:1fr}.office-home-actions .btn{width:100%}}
+
+/* ---- A PosterChan WINDOW (PosterChanOS only) -----------------------------------------------
+   A real compositor window rather than a `.osw` div — see static/js/client/oswin.js. The page is
+   the window's whole body here: there is no desktop behind it and no taskbar below it, so it fills
+   the surface and paints its own ground. `html.pc-oswin` is set before first paint so nothing
+   inherits the desktop's layout. Stage 1 draws only the probe below; stage 2 renders the view. */
+html.pc-oswin, html.pc-oswin body{height:100%;margin:0;background:var(--bg)}
+html.pc-oswin body{overflow:auto}
+.oswin-probe{display:flex;flex-direction:column;justify-content:center;gap:var(--sp-2);
+  min-height:100vh;padding:var(--sp-5);text-align:center;color:var(--text)}
+.oswin-probe h2{margin:0;font-size:20px}
+.oswin-probe p{margin:0;max-width:52ch;margin-inline:auto;line-height:1.5}
+.oswin-probe code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+  padding:1px 6px;font-size:12px}

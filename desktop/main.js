@@ -636,7 +636,41 @@ function createWindow(assignment) {
 
   // Off-site links (and target=_blank to another host) belong in the user's real browser; our own pages —
   // plus blob:/data: (media the client builds locally) — open as a normal app window.
-  created.webContents.setWindowOpenHandler(({ url }) => {
+  created.webContents.setWindowOpenHandler(({ url, features }) => {
+    /* A PosterChan WINDOW — see static/js/client/oswin.js. On PosterChanOS a window is its own
+     * compositor toplevel so sway stacks it with Telegram and Firefox natively, instead of the
+     * desktop faking "bring to front" by taking the native surface off the screen.
+     *
+     * Frameless on purpose: the client draws the same title bar it draws on the web, so the UI is
+     * identical in a browser tab and in a real window. sway is told to float these by TITLE (the
+     * app_id is shared with the desktop, which must stay tiled) — see sway.config. */
+    if (isOurs(url) && /[?&]pcwin=/.test(url)) {
+      const num = (name, fallback) => {
+        const m = new RegExp(name + '=(\\d+)').exec(String(features || ''));
+        const v = m ? Number(m[1]) : NaN;
+        return Number.isFinite(v) && v > 0 ? v : fallback;
+      };
+      return { action: 'allow', overrideBrowserWindowOptions: {
+        frame: false,
+        width: num('width', 1100),
+        height: num('height', 760),
+        minWidth: 360,
+        minHeight: 240,
+        backgroundColor: '#0a0a10',
+        autoHideMenuBar: true,
+        // The window is a VIEW onto the desktop's client and reaches it through window.opener, so
+        // it needs the same preload bridges — and, critically, the same process. Electron keeps a
+        // same-origin child in the opener's process, which is what makes window.opener usable.
+        webPreferences: {
+          preload: path.join(__dirname, 'preload.js'), sandbox: false, contextIsolation: true,
+          /* The same two arguments the desktop's own surfaces get. `--pc-preload-dir` is how the
+           * preload finds its siblings; `--pc-secondary-surface` withholds folder-sync ownership,
+           * which a WINDOW must never claim — it is a view onto the desktop's client, and a second
+           * writer over one tree is the failure that marker exists to prevent. */
+          additionalArguments: ['--pc-preload-dir=' + __dirname, '--pc-secondary-surface'],
+        },
+      } };
+    }
     if (isOurs(url) || /^blob:|^data:/.test(url)) return { action: 'allow' };
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };

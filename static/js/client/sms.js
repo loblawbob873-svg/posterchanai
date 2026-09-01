@@ -1256,6 +1256,18 @@
         body.att.push(att);
       }
     }
+    /* AND SAY SO WHEN THERE WAS NOTHING TO SEND — the other half of `natt`, which was parsed and
+     * remembered but never actually written by anything.
+     *
+     * A picture message archived with no `att` is indistinguishable from one nobody has asked about
+     * yet, and `needsPartUpgrade` reads its parts to decide — of which there are none — so it
+     * answers "complete" and the row is never offered again. Measured on the reporting account:
+     * 1,490 MMS, **1,299 of them carrying no attachment at all**, permanently, while only 20 were
+     * refusals anybody could see. That is the whole of "Texts still not showing my images".
+     *
+     * Writing it here is what turns "never asked" into "asked, and the provider had nothing",
+     * which is a fact the next sweep can act on instead of re-deriving from an absence. */
+    else if(m.mms) body.natt = 1;
 
     /* Uploads can succeed before the relay publish fails. Keep that encrypted pointer on the local
      * pending row so a reconnect retries the small event instead of creating another encrypted

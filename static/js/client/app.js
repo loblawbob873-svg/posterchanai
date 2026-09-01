@@ -3537,7 +3537,41 @@
   function _cfgCached(){ try{ return JSON.parse(localStorage.getItem(_CFG_KEY)||'null'); }catch(_){ return null; } }
   function _cfgCache(c){ try{ if(c && c.relay_url) localStorage.setItem(_CFG_KEY, JSON.stringify(c)); }catch(_){} }
 
+  /* STAGE 1: prove the container. A real toplevel that the compositor stacks like any other
+   * window, and a live reference to the desktop's client through `window.opener`. Nothing renders
+   * a view yet — that is stage 2, and doing it before the container is verified on real hardware is
+   * how the last desktop rewrite produced a black screen. */
+  async function _bootAsWindow(){
+    const st = (window.PCOSWin && PCOSWin.adopt()) || { view:'', shared:false, label:'' };
+    const host = window.PCOSWin && PCOSWin.desktop();
+    let who = '';
+    try{ who = String((host && host.__PC && host.__PC.me && host.__PC.me() && host.__PC.me().pubkey) || ''); }
+    catch(_){ who = ''; }
+    const app = document.getElementById('app') || document.body;
+    app.innerHTML =
+      '<div class="oswin-probe">' +
+        '<h2>' + enc(st.label || st.view || 'PosterChan window') + '</h2>' +
+        '<p class="muted">This is a real compositor window. Drag it, raise it over Telegram, ' +
+        'put it behind Firefox — the window manager owns it now.</p>' +
+        '<p class="small muted">view <code>' + enc(st.view || '(none)') + '</code> · desktop ' +
+        (st.shared ? 'reachable' : 'NOT reachable') +
+        (who ? ' · signed in as <code>' + enc(who.slice(0, 12)) + '…</code>' : '') + '</p>' +
+      '</div>';
+    try{ document.body.classList.add('oswin-body'); }catch(_){ }
+  }
+
   async function boot(){
+    /* A WINDOW IS NOT A SECOND CLIENT. On PosterChanOS a PosterChan window is its own compositor
+     * window (see oswin.js), and it is opened same-origin from the desktop so it can use the
+     * desktop's Store, relay pool and signer directly. Booting the whole client here as well would
+     * mint another relay pool, another subscription set and another signer for every window on the
+     * screen — the exact duplication this design exists to avoid.
+     *
+     * Stage 1 therefore stops here and paints what the container needs to prove. Stage 2 renders
+     * the requested view against the desktop's engine. */
+    try{
+      if(window.PCOSWin && PCOSWin.isWindow()){ await _bootAsWindow(); return; }
+    }catch(e){ try{ console.error('[pc] window boot failed', e); }catch(_){ } }
     // Standalone has no /client/config to ask, and asking anyway costs a failed request and a cached
     // answer from whichever instance this install used to point at — which would then re-enable every
     // server-backed surface for a session with no server. Skip straight to {}.
@@ -25720,8 +25754,15 @@
                    sandbox="allow-popups allow-popups-to-escape-sandbox"
                    srcdoc="${enc('<base target="_blank"><meta name="referrer" content="no-referrer">' + m.body_html)}"></iframe>`
         : `<div class="mail-text">${this._linkify(enc(m.body_text||'')).replace(/\n/g,'<br>')}</div>`);
+      const sender=String(m.from||m.from_email||'').replace(/\s*<[^>]*>\s*$/,'').trim()||String(m.from_email||'?');
+      const initial=Array.from(sender)[0]||'?';
+      const preview=String(m.preview||m.body_text||'').replace(/\s+/g,' ').trim().slice(0,110);
       return `<div class="mail-msg${expanded?' open':''}">
-        <div class="mail-msg-hd"><div class="mm-who"><b class="mm-sender" data-from="${enc(m.from_email||m.from||'')}" data-name="${enc(m.from||'')}" title="Who sent this">${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div><span class="muted small mm-date">${enc(_mailDate(m.ts))}</span></div>
+        <div class="mail-msg-hd" role="button" tabindex="0" aria-expanded="${expanded?'true':'false'}">
+          <span class="mm-avatar" aria-hidden="true">${enc(initial.toUpperCase())}</span>
+          <div class="mm-who"><b class="mm-sender" data-from="${enc(m.from_email||m.from||'')}" data-name="${enc(m.from||'')}" title="View sender">${enc(m.from||'')}</b><div class="muted small">To: ${enc((m.to||'').slice(0,90))}</div></div>
+          ${preview?`<span class="mm-preview muted">${enc(preview)}</span>`:''}<span class="muted small mm-date">${enc(_mailDate(m.ts))}</span><span class="mm-chevron" aria-hidden="true">⌄</span>
+        </div>
         <div class="mail-msg-body">${atts?`<div class="mail-atts">${atts}</div>`:''}<div class="mail-body">${body}</div></div>
       </div>`;
     },
@@ -25787,16 +25828,23 @@
           <button class="btn small icon-only" data-act="move" title="Move" aria-label="Move"><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg></button>
           <button class="btn btn-red small icon-only" data-act="delete" title="Delete" aria-label="Delete"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>
         </div>
-        <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}</div>`;
+        <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}
+          <div class="mail-thread-reply"><button class="btn btn-cyan" data-thread-reply="reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg> Reply</button><button class="btn" data-thread-reply="forward"><svg class="ic b-ic" aria-hidden="true"><use href="#i-forward"></use></svg> Forward</button></div>
+        </div>`;
       $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
       $$('.mail-msg .mail-msg-hd',pane).forEach(hd=> hd.onclick=(e)=>{
         // The sender's name is a button inside the header, and the header collapses the message.
         // Without this, asking who sent it also folds away what they wrote.
         if(e.target.closest('.mm-sender')) return;
-        hd.parentElement.classList.toggle('open');
+        const open=hd.parentElement.classList.toggle('open');
+        hd.setAttribute('aria-expanded',open?'true':'false');
+      });
+      $$('.mail-msg .mail-msg-hd',pane).forEach(hd=>hd.onkeydown=e=>{
+        if(e.key==='Enter'||e.key===' '){e.preventDefault();hd.click();}
       });
       $$('.mm-sender',pane).forEach(b=> b.onclick=(e)=>{ e.stopPropagation(); this.senderCard(b.dataset.from, b.dataset.name); });
       $$('[data-act]',pane).forEach(b=> b.onclick=()=>this.action(b.dataset.act, target, target.folder||folder, target.account||acct));
+      $$('[data-thread-reply]',pane).forEach(b=>b.onclick=()=>this.action(b.dataset.threadReply,latest,latest.folder||folder,latest.account||acct));
       $$('[data-mail-attachment]',pane).forEach(a=> a.onclick=async e=>{
         e.preventDefault();
         await _openMailAttachment(a);
