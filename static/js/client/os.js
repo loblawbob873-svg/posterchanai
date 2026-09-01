@@ -2649,8 +2649,10 @@
                  rect: { left: r.left, top: r.top, width: r.width, height: r.height } });
     };
     try{
+      // `live`: a gesture in progress, judged on ANY overlap so a drag cannot flicker a surface
+      // in and out across the threshold. See stashPlan.
       if(_htmlGestureRect) out.push({z:Number.MAX_SAFE_INTEGER,minimised:false,
-                                    rect:_htmlGestureRect});
+                                    rect:_htmlGestureRect, live:true});
       for(const el of (root ? root.children : []))
         if(el !== desk && el !== bar) add(el);
       for(const el of document.querySelectorAll(_OVERLAYS_ON_BODY)) add(el);

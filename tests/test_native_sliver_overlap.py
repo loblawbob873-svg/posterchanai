@@ -236,3 +236,81 @@ def test_the_threshold_is_measured_in_the_space_the_shell_hands_it():
         "means a different size on every display and must be scaled at the call site")
     frame = os_js[os_js.index("function _frameRect(w)"):]
     assert "getBoundingClientRect()" in frame[:300]
+
+
+# --------------------------------------------------------------------------- a drag is not a rest
+
+def test_a_drag_parks_on_any_overlap_so_it_cannot_flicker():
+    """Reported as "terminal is glitching out on moving it", immediately after the sliver rule
+    shipped — and caused by it.
+
+    While a window is dragged its frame is pushed into the plan as an overlay. Judged by the
+    threshold, the overlap crosses 64px again and again as the window moves, so the surface parks,
+    unparks and parks again — and every toggle is a scratchpad round trip plus a full screen
+    capture for the preview card. That is a visible stutter on the thing being dragged.
+
+    The threshold is about windows AT REST, where a 9px lap must not cost the whole application. A
+    gesture is the opposite case: it is momentary, it ends, and flicker is the worst outcome. So a
+    rectangle marked `live` is judged on any overlap at all."""
+    lap = {"left": TELEGRAM["left"] + TELEGRAM["width"] - 20, "top": 400,
+           "width": 1200, "height": 900}          # a 20px lap: below the threshold
+    at_rest = run(f"out.p = N.stashPlan([{{native:1,z:5,minimised:false,rect:{json.dumps(TELEGRAM)}}}],"
+                  f"[{{z:9,minimised:false,rect:{json.dumps(lap)}}}]);")["p"]
+    dragging = run(f"out.p = N.stashPlan([{{native:1,z:5,minimised:false,rect:{json.dumps(TELEGRAM)}}}],"
+                   f"[{{z:9,minimised:false,rect:{json.dumps(lap)},live:true}}]);")["p"]
+    assert at_rest["stash"] == [], "the threshold stopped applying to a window at rest"
+    assert dragging["stash"] == [1], (
+        "a drag is judged by the sliver threshold, so the surface flickers in and out as the "
+        "overlap crosses it — this is the terminal glitching while it is moved")
+
+
+def test_the_gesture_rectangle_is_the_one_marked_live():
+    """The two halves live in different files: os.js decides what a gesture is, osnative.js decides
+    what `live` means. Neither is any use without the other."""
+    os_js = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    overlay = os_js[os_js.index("function overlayRects()"):]
+    overlay = overlay[:overlay.index("\n  }")]
+    assert "_htmlGestureRect" in overlay and "live:true" in overlay, (
+        "the drag rectangle is no longer marked live, so a drag is judged by the threshold again")
+    # …and only the gesture. A real window carries no `live`, or every overlap would park again.
+    assert overlay.count("live:true") == 1
+
+
+def test_dragging_a_window_across_an_app_parks_it_once_not_repeatedly():
+    """THE TEST THAT WAS MISSING, and the reason a user found this instead of the suite.
+
+    Every check in this file measured a window standing still. A drag is a SEQUENCE of rectangles,
+    and the failure only exists between them: as the frame slides across Telegram the overlap
+    crosses the threshold repeatedly, so the plan flips park/unpark/park — each flip a scratchpad
+    round trip and a full-screen grim capture. Nothing static can see that.
+
+    So this walks a real drag path and counts TRANSITIONS. One is correct (it goes away, and comes
+    back when the drag has passed); several is the stutter that was reported."""
+    path = [{"left": x, "top": 300, "width": 900, "height": 900}
+            for x in range(TELEGRAM["left"] - 900, TELEGRAM["left"] + TELEGRAM["width"] + 40, 40)]
+    items = json.dumps([{"native": 1, "z": 5, "minimised": False, "rect": TELEGRAM}])
+    states = run(
+        "out.s = " + json.dumps([None]) + ";\n"
+        f"const items = {items};\n"
+        f"out.s = {json.dumps(path)}.map(r => "
+        "N.stashPlan(items, [{z:9, minimised:false, rect:r, live:true}]).stash.length > 0);")["s"]
+    flips = sum(1 for a, b in zip(states, states[1:]) if a != b)
+    assert any(states), "the drag never covered the app at all — re-read this fixture"
+    assert flips <= 2, (
+        f"the surface parked and unparked {flips} times during ONE drag — that is the reported "
+        f"terminal stutter; states: {''.join('P' if s else '.' for s in states)}")
+
+
+def test_the_same_drag_under_the_resting_rule_is_what_stuttered():
+    """The counter-example, so the test above cannot pass for the wrong reason: judged by the
+    threshold (no `live`), the identical drag flips more often. If this ever stops being true the
+    rule has changed and the guard above is measuring nothing."""
+    path = [{"left": x, "top": 300, "width": 900, "height": 900}
+            for x in range(TELEGRAM["left"] - 900, TELEGRAM["left"] + TELEGRAM["width"] + 40, 40)]
+    items = json.dumps([{"native": 1, "z": 5, "minimised": False, "rect": TELEGRAM}])
+    live = run(f"const i={items};out.s={json.dumps(path)}.map(r=>"
+               "N.stashPlan(i,[{z:9,minimised:false,rect:r,live:true}]).stash.length>0);")["s"]
+    rest = run(f"const i={items};out.s={json.dumps(path)}.map(r=>"
+               "N.stashPlan(i,[{z:9,minimised:false,rect:r}]).stash.length>0);")["s"]
+    assert live.count(True) >= rest.count(True), (
+        "a live drag now parks LESS than a resting window, which is backwards")

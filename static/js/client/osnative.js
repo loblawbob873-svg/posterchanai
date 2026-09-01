@@ -140,8 +140,17 @@
     const stash = [], show = [];
     for(const it of (items || [])){
       if(!it || it.native == null) continue;
+      /* A LIVE GESTURE PARKS ON ANY OVERLAP — the threshold is for windows at REST.
+       *
+       * Reported as "terminal is glitching out on moving it". While a window is being dragged its
+       * frame is pushed here as an overlay, and judged by the sliver rule the overlap crosses 64px
+       * again and again as it moves: the surface parks, unparks, parks — and every toggle is a
+       * scratchpad round trip plus a full screen capture for the preview. Flicker during a drag is
+       * far worse than a native app briefly leaving for a 9px lap, and the drag ENDS, so nothing
+       * is left parked by it. `live` says which rectangles are a gesture rather than a window. */
       const covered = (htmlWins || []).some(w => w && !w.minimised && w.z > (it.z || 0)
-                                               && coversMoreThanASliver(it.rect, w.rect));
+                                               && (w.live ? overlaps(it.rect, w.rect)
+                                                          : coversMoreThanASliver(it.rect, w.rect)));
       const hide = !!it.minimised || !it.rect || !(it.rect.width > 0) || !(it.rect.height > 0)
                    || covered;
       (hide ? stash : show).push(it.native);
