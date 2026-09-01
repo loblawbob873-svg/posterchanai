@@ -57,6 +57,14 @@
       const res=await fetcher(path,Object.assign({credentials:'include',cache:'no-store',signal:ctl.signal,
         headers:{'Accept':'application/json'}},opts||{}));
       let body={}; try{ body=await res.json(); }catch(_){}
+      /* A REFUSAL IS NOT AN OUTAGE, AND SAYING SO COST SEVERAL RELEASES.
+         The wallet is admin-only. A Nostr sign-in that resolves to an ordinary account gets 403 on
+         every route, the probe catches it, and the screen said "Local wallet unavailable · Retry
+         local wallet" — which reads as a wallet service that is down and sent everyone looking at
+         the daemon, the RPC and the client's own auth. It is neither: it is this account. */
+      if(res.status===401||res.status===403)
+        throw new Error('this account cannot open the node wallet — sign in as the node operator'
+                        + ' (the wallet is admin-only)');
       if(!res.ok) throw new Error(body.detail||body.error||body.message||('wallet service returned '+res.status));
       return body;
     }finally{clearTimeout(timer);}

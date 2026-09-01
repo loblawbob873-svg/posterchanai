@@ -2803,7 +2803,10 @@
     const body = String((m && m.body) || '').slice(0, 90);
     const parts = (m && m.parts) || [];
     if(body) return body;
-    if(!parts.length) return mmsWithoutMedia(m) ? 'Photo \u00b7 not backed up' : '';
+    /* NOT NECESSARILY A PHOTO. With no parts there is no content type to read, so naming one is a
+       guess — and it is wrong for every video, voice note and contact card that was never
+       downloaded. `attLabel`'s own fallback word is the honest one. */
+    if(!parts.length) return mmsWithoutMedia(m) ? 'Attachment \u00b7 not backed up' : '';
     if(parts.length === 1) return attLabel(parts[0]);
     return parts.length + ' attachments';
   }
@@ -2960,7 +2963,24 @@
           a = { blob, bytes:offset, chunked:true };
           break;
         }
-        if(!q.data) { a = q; break; }
+        if(!q.data) {
+          /* AN EMPTY CHUNK IS NOT AN ANSWER, AND THE CHUNKED PATH HAD NO WAY BACK.
+           *
+           * The non-chunking path above already rescues itself: a read that returns no bytes, no
+           * error and no `tooBig` is asked again for the whole file, because `max` means two
+           * different things on the two paths and the chunk size was being used as a file cap.
+           * The chunked path got no such second chance — a first chunk that comes back with
+           * nothing lands straight in the generic branch below and reaches the user as "the phone
+           * answered with no bytes and no reason", which is the report this is here for.
+           *
+           * Only at offset 0: a short chunk PART WAY THROUGH a transfer is a different failure and
+           * re-reading the whole file would throw away everything already collected. */
+          if(offset === 0 && !q.error && !q.tooBig){
+            try{ const whole = await P.attachment({ part:id, max:WHOLE_BYTES });
+                 if(whole && (whole.blob || whole.data || whole.tooBig)){ a = whole; break; } }catch(_){ }
+          }
+          a = q; break;
+        }
       }
       if(chunked && !a) a = { error:'attachment exceeded the safe transfer limit' };
     }catch(e){ a = null; threw = String((e && e.message) || e).slice(0, 120); }
@@ -3537,7 +3557,7 @@
           const atts = (m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('')
             || (mmsWithoutMedia(m)
                  ? '<div class="sms-att sms-att-missing" data-done="1"><span class="muted small">'
-                   + enc('Photo \u00b7 not backed up from your phone') + '</span></div>'
+                   + enc('Attachment \u00b7 not backed up from your phone') + '</span></div>'
                  : '');
           const retryable = !m.incoming && m.failed &&
             !ambiguousMmsError(m.error);

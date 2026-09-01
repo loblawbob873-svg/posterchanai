@@ -122,6 +122,36 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
     npub = nostr_service.npub_of(pk)
 
     user = db.query(User).filter(User.nostr_npub == npub).first()
+
+    # SIGNING IN WITH THE NODE'S OWN OPERATOR KEY IS THE OPERATOR SIGNING IN.
+    #
+    # The operator's account is often created with a username and password, so it carries no
+    # `nostr_npub`. Their key therefore matched nothing here and minted a SECOND, ordinary
+    # account — same person, no admin rights — and every admin-only surface answered 403 to it.
+    # The Monero wallet is the one where that is unmistakable: the phone showed "Local wallet
+    # unavailable · Retry local wallet" while the same wallet worked in a browser signed in with
+    # the password. Reported as the wallet not working on Android, and it was not a client bug at
+    # all, which is why several releases of client-side auth fixes changed nothing.
+    #
+    # Possession of the operator nsec already means total control of this node — it signs the
+    # settings documents and the relay's own events — so recognising it grants nothing new. The
+    # npub is LINKED on the way through, so this costs one lookup once and the ordinary path
+    # takes over afterwards.
+    if not user:
+        try:
+            op = db.query(User).filter(User.is_admin == True,  # noqa: E712
+                                       User.nostr_nsec.isnot(None)).first()
+            if op:
+                op_pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(op.nostr_nsec))
+                if op_pk and op_pk == pk:
+                    if not op.nostr_npub:
+                        op.nostr_npub = npub
+                        db.commit()
+                    user = op
+                    logger.info("[auth] operator signed in with the node's own key")
+        except Exception as e:
+            logger.warning("[auth] operator-key match failed: %s", e)
+
     created = False
     if not user:
         # derive a unique username from the npub; AI stays off until an admin grants it
