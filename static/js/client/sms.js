@@ -1237,7 +1237,14 @@
            * reader nothing. */
           if(/^[0-9a-f]{64}$/i.test(String(p.sha || ''))) sha = p.sha;
           else {
-            p.err = String((e && e.message) || e).slice(0, 160);
+            /* THE REASON, WITHOUT THE LABEL. `partData` builds its `why` as
+             * `attLabel(p) + ' · ' + reason`, and archivePart throws exactly that string — so
+             * storing the message verbatim baked "Photo · " into `err`, and every reader then
+             * prefixed the label AGAIN. That is the reported "Photo · Photo · the phone answered
+             * with no bytes and no reason", and it compounds once per archive, not once per read.
+             * Older documents already carry the doubled form; `attReason` below strips it on the
+             * way out, so this fixes new ones and the display fixes the rest. */
+            p.err = _bareReason(String((e && e.message) || e), attLabel(p)).slice(0, 160);
             if(!p.err) p.err = 'the attachment could not be read';
           }
         }
@@ -2890,6 +2897,24 @@
 
   /* A human name for an attachment, for the snippet and for the bubble that cannot draw one.
    * "Photo" beats "image/jpeg" everywhere a person is reading rather than debugging. */
+  /* "Photo · provider refused attachment" -> "provider refused attachment".
+   *
+   * Only ever strips THIS attachment's own label, and only from the front, so a reason that
+   * legitimately mentions the word (a filename, a provider message) is untouched. */
+  function _bareReason(text, label){
+    const t = String(text || '').trim();
+    const pre = String(label || '') + ' \u00b7 ';
+    return t.startsWith(pre) ? t.slice(pre.length).trim() : t;
+  }
+  /* What to SHOW for a part that has no bytes: the label once, then the reason. Every caller went
+   * through `attLabel(p) + ' · ' + p.err`, which doubled the label on every document archived
+   * before the fix above — and there is no migration for those, they are published events. */
+  function attReason(p, fallback){
+    const label = attLabel(p);
+    const said = _bareReason(String((p && p.err) || ''), label);
+    return label + ' \u00b7 ' + (said || fallback);
+  }
+
   function attLabel(p){
     const ct = String((p && p.ct) || '');
     if(isImage(ct)) return 'Photo';
@@ -3017,8 +3042,7 @@
      * declined to hand it over. The phone's own words are the answer, and they are the only thing
      * that distinguishes a carrier that never delivered the media from a provider read that
      * failed. */
-    if(!id) return { why: attLabel(p) + ' \u00b7 '
-      + (String(p.err || '').trim() || 'on your phone') };
+    if(!id) return { why: attReason(p, 'on your phone') };
     if(ATT.has(id)){
       const remembered=ATT.get(id);
       /* A provider refusal is a snapshot, not durable attachment state. MMS transactions can expose

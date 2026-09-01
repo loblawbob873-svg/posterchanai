@@ -145,3 +145,48 @@ class TheRetryIsBounded(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(NODE is None, "node not installed")
+class TheLabelIsSaidOnce(unittest.TestCase):
+    """Reported verbatim: "Photo · Photo · the phone answered with no bytes and no reason".
+
+    `partData` builds its message as `attLabel(p) + ' · ' + reason`, and `archivePart` throws that
+    whole string — so publishOne stored "Photo · provider refused attachment" as the REASON, and
+    every reader then put the label in front of it again. The simulator had been printing the
+    doubled form all along (`"err":"Photo · provider refused attachment"`).
+
+    It compounds per archive rather than per read, so it is stored, not cosmetic: those documents
+    are published Nostr events and there is no migration for them. Hence two rules — store the bare
+    reason from now on, and strip a leading label when displaying, so the archive somebody already
+    has reads correctly too."""
+
+    def _archived_err(self, res):
+        return [e for t in res["threads"] for row in t["partErrs"] for e in row if e]
+
+    def test_a_new_refusal_is_stored_without_the_label(self):
+        rows = [picture(1)]
+        res = run(isPhone=True, rows=rows, parts=parts_for(rows, refuse=True),
+                  steps=["phoneLoad", "migrate", "settle"])
+        errs = self._archived_err(res)
+        self.assertTrue(errs, "no refusal was recorded at all")
+        for e in errs:
+            self.assertFalse(e.startswith("Photo"), f"the label is baked into the stored reason: {e!r}")
+            self.assertIn("refused", e)
+
+    def test_the_label_is_not_repeated_on_screen(self):
+        """What the person actually sees. The bubble text must name the attachment once."""
+        rows = [picture(1)]
+        res = run(isPhone=True, rows=rows, parts=parts_for(rows, refuse=True),
+                  steps=["phoneLoad", "migrate", "settle", "render"])
+        shown = " ".join(s for row in res["snippets"] for s in row) + " " + res.get("feedHtml", "")
+        self.assertNotIn("Photo · Photo", shown, "the label is still doubled on screen")
+
+    def test_an_archive_that_already_has_the_doubled_form_reads_correctly(self):
+        """The half that cannot be fixed by writing better documents: these are published events,
+        and every one archived before this reads "Photo · Photo · …" for ever without it."""
+        src = open(SMS_JS, encoding="utf-8").read()
+        self.assertIn("function _bareReason(", src)
+        self.assertIn("function attReason(", src)
+        # The display path must go through it rather than concatenating the label itself.
+        self.assertNotIn("{ why: attLabel(p) + ' \\u00b7 '\n      + (String(p.err", src)
