@@ -68,6 +68,9 @@ class DB:
     def commit(self):
         self.committed += 1
 
+    def all_with_npub(self, npub):
+        return [u for u in ([self.by_npub] if self.by_npub else []) if getattr(u, "nostr_npub", None) == npub]
+
 
 class Row:
     def __init__(self, **kw):
@@ -88,19 +91,19 @@ def operator():
 
 
 def _match(db, pk):
-    """Run just the operator-key branch the route performs before creating an account."""
-    user = db.by_npub
-    if user:
-        return user
+    """The route's resolution order: the operator key is checked BEFORE the npub lookup."""
     op = db.query(object()).filter("is_admin == True", "nostr_nsec IS NOT NULL").first()
     if op:
         op_pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(op.nostr_nsec))
         if op_pk and op_pk == pk:
-            if not op.nostr_npub:
+            dupes = [u for u in db.all_with_npub(nostr_service.npub_of(pk)) if u is not op]
+            for d in dupes:
+                d.nostr_npub = None
+            if op.nostr_npub != nostr_service.npub_of(pk) or dupes:
                 op.nostr_npub = nostr_service.npub_of(pk)
                 db.commit()
             return op
-    return None
+    return db.by_npub
 
 
 def test_the_route_actually_contains_the_operator_match():
@@ -111,6 +114,18 @@ def test_the_route_actually_contains_the_operator_match():
     assert "derive_pubkey" in block and "nostr_nsec" in block, (
         "nostr_login no longer recognises the node's own operator key")
     assert "op_pk == pk" in block
+    # ORDER IS THE FIX. The operator comparison must come before the npub lookup, or a duplicate
+    # account that already holds the npub wins and the branch never runs.
+    assert block.index("op_pk == pk") < block.index("User.nostr_npub == npub).first()"), (
+        "the npub lookup runs before the operator check again — that is the version that helps "
+        "nobody who has ever signed in on a phone")
+    # The duplicate must be UNLINKED, or it keeps the npub and the next sign-in is ambiguous —
+    # two rows claiming one key, with the route's answer depending on row order.
+    assert "d.nostr_npub = None" in block, (
+        "a duplicate account that already holds the operator's npub is no longer unlinked")
+    # Unlinked, never deleted: it may own posts, drafts and chats.
+    assert "db.delete" not in block and ".delete()" not in block, (
+        "the sign-in endpoint is deleting an account — it must only unlink")
 
 
 def test_the_operators_own_key_signs_them_in_as_the_operator(operator):
@@ -147,14 +162,33 @@ def test_a_node_with_no_operator_key_matches_nobody():
     assert _match(DB(operator=None), pk) is None
 
 
-def test_an_already_linked_account_is_returned_untouched(operator):
-    """The ordinary path still wins: a user found by npub is used as-is and the operator lookup
-    never runs, so a normal member signing in cannot be compared against the operator at all."""
+def test_a_duplicate_account_already_holding_the_npub_does_not_win(operator):
+    """THE CASE THE FIRST ATTEMPT MISSED, and the one everybody reporting this is in.
+
+    Anyone who has signed in on a phone already HAS the duplicate account, and it already carries
+    their npub. A version that looked the npub up first found that duplicate, returned it, and the
+    operator branch never ran — so the fix would have helped nobody who had ever opened the app.
+    The operator key is therefore checked BEFORE the lookup."""
     op, pk = operator
-    member = Row(id=7, username="joe", is_admin=False, nostr_npub=nostr_service.npub_of(pk))
-    db = DB(operator=op, by_npub=member)
+    dupe = Row(id=7, username="npub_abc", is_admin=False, nostr_npub=nostr_service.npub_of(pk))
+    db = DB(operator=op, by_npub=dupe)
     got = _match(db, pk)
+    assert got is op, "the duplicate non-admin account won again — this is the reported bug"
+    assert got.is_admin is True
+    assert dupe.nostr_npub is None, "the duplicate still claims the operator's npub"
+    assert op.nostr_npub == nostr_service.npub_of(pk)
+
+
+def test_an_ordinary_members_account_is_returned_untouched(operator):
+    """A member whose key is NOT the operator's still resolves to their own account, unchanged."""
+    op, _ = operator
+    _, member_pk = _keypair()
+    member = Row(id=7, username="joe", is_admin=False,
+                 nostr_npub=nostr_service.npub_of(member_pk))
+    db = DB(operator=op, by_npub=member)
+    got = _match(db, member_pk)
     assert got is member and got.is_admin is False
+    assert member.nostr_npub == nostr_service.npub_of(member_pk), "a member was unlinked"
     assert db.committed == 0
 
 

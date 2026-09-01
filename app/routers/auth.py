@@ -121,36 +121,49 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
         raise HTTPException(status_code=403, detail="invalid or stale Nostr signature")
     npub = nostr_service.npub_of(pk)
 
-    user = db.query(User).filter(User.nostr_npub == npub).first()
-
-    # SIGNING IN WITH THE NODE'S OWN OPERATOR KEY IS THE OPERATOR SIGNING IN.
+    # SIGNING IN WITH THE NODE'S OWN OPERATOR KEY IS THE OPERATOR SIGNING IN — CHECKED FIRST.
     #
-    # The operator's account is often created with a username and password, so it carries no
-    # `nostr_npub`. Their key therefore matched nothing here and minted a SECOND, ordinary
-    # account — same person, no admin rights — and every admin-only surface answered 403 to it.
-    # The Monero wallet is the one where that is unmistakable: the phone showed "Local wallet
-    # unavailable · Retry local wallet" while the same wallet worked in a browser signed in with
-    # the password. Reported as the wallet not working on Android, and it was not a client bug at
-    # all, which is why several releases of client-side auth fixes changed nothing.
+    # The operator's account is usually created with a username and password, so it carries no
+    # `nostr_npub`. Their key matched nothing, and the branch below minted a SECOND, ordinary
+    # account for the same person; every admin-only surface then answered 403 to it. The Monero
+    # wallet is where that is unmistakable: the phone showed "Local wallet unavailable · Retry
+    # local wallet" while the same wallet worked in a browser signed in with the password. It was
+    # never a client bug, which is why several APK releases of client-side auth fixes changed
+    # nothing.
+    #
+    # THIS RUNS BEFORE THE NPUB LOOKUP, and that ordering is the whole fix. Anyone who has already
+    # signed in on a phone HAS that duplicate account, and it already carries their npub — so a
+    # lookup-first version finds the duplicate, returns it, and the operator branch never executes.
+    # The first attempt at this fix did exactly that and would have helped nobody who had ever
+    # opened the app, which is everybody reporting it.
     #
     # Possession of the operator nsec already means total control of this node — it signs the
-    # settings documents and the relay's own events — so recognising it grants nothing new. The
-    # npub is LINKED on the way through, so this costs one lookup once and the ordinary path
-    # takes over afterwards.
-    if not user:
-        try:
-            op = db.query(User).filter(User.is_admin == True,  # noqa: E712
-                                       User.nostr_nsec.isnot(None)).first()
-            if op:
-                op_pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(op.nostr_nsec))
-                if op_pk and op_pk == pk:
-                    if not op.nostr_npub:
-                        op.nostr_npub = npub
-                        db.commit()
-                    user = op
-                    logger.info("[auth] operator signed in with the node's own key")
-        except Exception as e:
-            logger.warning("[auth] operator-key match failed: %s", e)
+    # settings documents and the relay's own events — so recognising it grants nothing new. Any
+    # duplicate holding the npub is UNLINKED rather than deleted: it may own posts, drafts and
+    # chats, and this endpoint is no place to delete an account.
+    user = None
+    try:
+        op = db.query(User).filter(User.is_admin == True,  # noqa: E712
+                                   User.nostr_nsec.isnot(None)).first()
+        if op:
+            op_pk = nostr_service.derive_pubkey(nostr_service.decode_seckey(op.nostr_nsec))
+            if op_pk and op_pk == pk:
+                dupes = db.query(User).filter(User.nostr_npub == npub,
+                                              User.id != op.id).all()
+                for d in dupes:
+                    d.nostr_npub = None
+                    logger.info("[auth] unlinked duplicate npub account %s from the operator's key",
+                                d.username)
+                if op.nostr_npub != npub or dupes:
+                    op.nostr_npub = npub
+                    db.commit()
+                user = op
+                logger.info("[auth] operator signed in with the node's own key")
+    except Exception as e:
+        logger.warning("[auth] operator-key match failed: %s", e)
+
+    if user is None:
+        user = db.query(User).filter(User.nostr_npub == npub).first()
 
     created = False
     if not user:
