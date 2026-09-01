@@ -13614,7 +13614,19 @@
   function openMenuPopover(anchorBtn, items, onPick){
     document.querySelectorAll('.menu-pop,.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack popovers
     const pop=document.createElement('div'); pop.className='menu-pop';
-    pop.innerHTML=items.map(([a,label,cls])=>`<button data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</button>`).join('');
+    /* AN ITEM MAY BE A <label>, AND THAT IS WHAT KEEPS A FILE PICKER WORKING FROM A MENU.
+     *
+     * Opening the native chooser needs a trusted click on the <input type=file>. Doing it as
+     * `input.click()` from an item's handler does not survive: `close()` below removes the menu
+     * first, and Firefox then treats the programmatic click as untrusted — the chooser never
+     * opens, silently. That is why the post composer's paperclip stopped offering a menu at all on
+     * the web, which took "attach from Files" with it.
+     *
+     * A label bound to the input needs no script: the browser opens the chooser as the label's own
+     * default action. So an item may carry `{htmlFor:'<input id>'}` and is rendered as one. */
+    pop.innerHTML=items.map(([a,label,cls,extra])=> extra && extra.htmlFor
+      ? `<label for="${enc(extra.htmlFor)}" data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</label>`
+      : `<button data-m="${a}"${cls?` class="${cls}"`:''}>${enc(label)}</button>`).join('');
     _scalePop(pop);                              // desktop scale, BEFORE insertion (see _scalePop)
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
@@ -13637,7 +13649,12 @@
     };
     const onDoc=e=>{ if(!pop.contains(e.target) && !anchorBtn.contains(e.target)) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
-    $$('[data-m]',pop).forEach(b=> b.onclick=()=>{ close(); onPick(b.dataset.m); });
+    $$('[data-m]',pop).forEach(b=> b.onclick=()=>{
+      /* A label's job IS the click — closing first would detach it before the browser ran its
+       * default action, which is the whole failure this exists to avoid. Let it happen, then tidy
+       * up; there is nothing for onPick to do that the input's own change handler does not. */
+      if(b.tagName === 'LABEL'){ setTimeout(close, 0); return; }
+      close(); onPick(b.dataset.m); });
     _detachKeys=_popKeys(pop, '[data-m]', b=>{ close(); onPick(b.dataset.m); }, close);
     return close;
   }
@@ -15016,7 +15033,7 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="cmp-tools"><button class="cmp-ico needs-net" id="cmp-attach" title="Attach an image or file" aria-label="Attach an image or file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><button class="cmp-ico" id="cmp-react" title="Emoji or GIF" aria-label="Emoji or GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>${(reply||quote||community||articleComment)?'':'<button class="cmp-ico" id="cmp-poll" title="Poll" aria-label="Poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg></button>'}<button class="cmp-ico needs-net" id="cmp-ai" title="AI tools" aria-label="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="cmp-ico" id="cmp-more" title="More" aria-label="More options">⋯</button><span class="cmp-of"><button class="cmp-ico" id="cmp-clean" title="Clean links — remove tracking from every link" aria-label="Clean links — remove tracking from every link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg></button><button class="cmp-ico" id="cmp-cw-btn" title="Mark sensitive / NSFW" aria-label="Mark sensitive / NSFW"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg></button>${(quote||community||articleComment)?'':`<button class="cmp-ico needs-net" id="cmp-bg-btn" title="Background — post short text as an image" aria-label="Background — post short text as an image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg></button>`}<button class="cmp-ico" id="cmp-draft" title="Save to drafts" aria-label="Save to drafts"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button></span><input type="file" id="cmp-file" multiple hidden></div>
+      <div class="cmp-tools"><button class="cmp-ico needs-net" id="cmp-attach" title="Attach an image or file" aria-label="Attach an image or file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><button class="cmp-ico" id="cmp-react" title="Emoji or GIF" aria-label="Emoji or GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>${(reply||quote||community||articleComment)?'':'<button class="cmp-ico" id="cmp-poll" title="Poll" aria-label="Poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg></button>'}<button class="cmp-ico needs-net" id="cmp-ai" title="AI tools" aria-label="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="cmp-ico" id="cmp-more" title="More — attach from Files, background, sensitive" aria-label="More — attach from Files, background, sensitive">⋯</button><span class="cmp-of"><button class="cmp-ico" id="cmp-clean" title="Clean links — remove tracking from every link" aria-label="Clean links — remove tracking from every link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg></button><button class="cmp-ico" id="cmp-cw-btn" title="Mark sensitive / NSFW" aria-label="Mark sensitive / NSFW"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg></button>${(quote||community||articleComment)?'':`<button class="cmp-ico needs-net" id="cmp-bg-btn" title="Background — post short text as an image" aria-label="Background — post short text as an image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg></button>`}<button class="cmp-ico" id="cmp-draft" title="Save to drafts" aria-label="Save to drafts"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button></span><input type="file" id="cmp-file" multiple hidden></div>
       ${(quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
       <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
@@ -15125,14 +15142,18 @@
       });
       // 📎 Attach → pick Local (this device) or Blossom (your uploaded files)
       $('#cmp-attach',root).onclick=()=>{
-        // Browsers already provide the right camera/photo/file sources in their native chooser.
-        // Putting another popover between the trusted click and input.click() made Firefox lose the
-        // transient user activation on some builds, so selecting Attach did nothing and no /upload
-        // request was ever emitted. Open the chooser directly on web; the native shell keeps its
-        // explicit Camera / device / Files choices because those are distinct app integrations.
-        if(!window.Capacitor){ $('#cmp-file',root).click(); return; }
+        // Putting a popover between the trusted click and `input.click()` made Firefox lose the
+        // transient user activation, so Attach did nothing and no /upload was ever emitted. The
+        // answer was to open the chooser directly on web — which silently removed "📁 Files" from
+        // this button, because the menu was where it lived. Reported as "you broke Reply modal? no
+        // more attach from Files", and "it is missing if I can't see it and it defaults to local
+        // files!" — a choice behind a ⋯ labelled More is not a choice anybody finds.
+        //
+        // Both, now: the device item is a <label> bound to the input, so the browser opens the
+        // chooser as the label's OWN default action and there is no programmatic click to be
+        // distrusted. See openMenuPopover.
         const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','📁 Files']]
-                                       : [['local','💻 Local'],['blossom','📁 Files']];
+                                       : [['local','💻 Local','',{htmlFor:'cmp-file'}],['blossom','📁 Files']];
         // 🎮 A webxdc mini app — a game, a poll, a shared editor — attached as a playable card.
         // Its own entry rather than a file among files: a .xdc is a zip, so picking it from "Local"
         // would upload it as an anonymous archive with no way to know it can be played.

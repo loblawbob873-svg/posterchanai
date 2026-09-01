@@ -3576,11 +3576,12 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 .menu-pop{position:fixed;z-index:360;display:flex;flex-direction:column;min-width:calc(178px * var(--pop-scale,1));max-width:92vw;padding:calc(6px * var(--pop-scale,1));max-height:min(70vh,440px);overflow-y:auto;
   background:var(--panel2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--neon);border-radius:14px;
   box-shadow:0 0 0 1px rgba(var(--accent-rgb),.3),0 0 26px rgba(var(--accent-rgb),.3);animation:pop .14s ease-out}
-.menu-pop button{display:block;width:100%;text-align:start;background:transparent;border:none;color:var(--text);
+.menu-pop label{cursor:pointer;user-select:none}
+.menu-pop button,.menu-pop label{display:block;width:100%;text-align:start;background:transparent;border:none;color:var(--text);
   cursor:pointer;font-size:calc(15px * var(--pop-scale,1));padding:calc(12px * var(--pop-scale,1)) calc(14px * var(--pop-scale,1));border-radius:9px;transition:.12s;font-family:inherit;white-space:nowrap}
-.menu-pop button:hover{background:rgba(var(--accent-rgb),.16);color:var(--cyan)}
-.menu-pop button.danger{color:var(--danger)}
-.menu-pop button.danger:hover{background:rgba(255,77,109,.16);color:var(--danger)}
+.menu-pop button:hover,.menu-pop label:hover{background:rgba(var(--accent-rgb),.16);color:var(--cyan)}
+.menu-pop button.danger,.menu-pop label.danger{color:var(--danger)}
+.menu-pop button.danger:hover,.menu-pop label.danger:hover{background:rgba(255,77,109,.16);color:var(--danger)}
 
 /* Popover menus become a full-width bottom action-sheet on phones (always attached + readable,
    never floating off to the side of a tiny right-edge button) with a dim backdrop; the anchored
@@ -3591,7 +3592,7 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
   .menu-pop.sheet,.emoji-pop.sheet{inset-inline-start:0;inset-inline-end:0;bottom:calc(8px + env(safe-area-inset-bottom));top:auto;min-width:0;
     width:min(480px,calc(100vw - 16px));margin-inline:auto;max-height:calc(82vh - env(safe-area-inset-bottom));border-radius:18px;
     animation:sheetup .2s ease-out}
-  .menu-pop.sheet button{font-size:17px;padding:16px 16px}
+  .menu-pop.sheet button,.menu-pop.sheet label{font-size:17px;padding:16px 16px}
   /* Bottom sheet on phones: bigger touch targets, and the GRID takes the sheet's height (the sheet
      is a column, so its own max-height must not be what scrolls). */
   .emoji-pop.sheet .ep-grid{justify-content:center;max-height:calc(78vh - 118px - env(safe-area-inset-bottom))}
@@ -6141,7 +6142,7 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 /* Keyboard cursor inside the reaction grid / ☰ menu — matches each popover's own hover treatment, so
    arrowing through looks the same as mousing through. */
 .emoji-pop button.kb{background:rgba(var(--accent-rgb),.18);transform:scale(1.18)}
-.menu-pop button.kb{background:rgba(var(--accent-rgb),.16);color:var(--cyan)}
+.menu-pop button.kb,.menu-pop label.kb{background:rgba(var(--accent-rgb),.16);color:var(--cyan)}
 
 /* Keyboard-selected conversation. Distinct from .dm-peer.active (the one that is OPEN) — you arrow past
    rows without opening them, so the cursor and the open conversation have to be tellable apart. */
