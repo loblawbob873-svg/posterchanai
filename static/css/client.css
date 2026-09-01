@@ -565,19 +565,23 @@ a.btn.full{display:block}
    as six equally-urgent things and the eye finds no primary — the single loudest "unpolished" signal in
    the UI. At rest they get real elevation (--sh-1); the bloom is what hover/focus adds. Shared rules, so
    all seven themes inherit the behaviour and only the colour differs. */
-/* A FILLED BUTTON IS THE SAME HEIGHT AS AN OUTLINED ONE.
-   `.btn` carries a 1px border; these three dropped it with `border:none`, so a filled button came
-   out 2px SHORTER than a ghost button with identical padding and font — and the two sit side by
-   side all over the app. Reported as the buttons in Edit profile all being different sizes: `Add
-   audio URL` (ghost) at 23px next to `Upload pic` (cyan) at 21px, same class, same row.
-   `transparent` rather than `none` keeps the box identical and paints nothing. */
-.btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border-color:transparent;color:#fff;box-shadow:var(--sh-1)}
-.btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border-color:transparent;color:#04222a;box-shadow:var(--sh-1)}
+/* A FILLED BUTTON IS 2px SMALLER THAN AN OUTLINED ONE, AND THAT IS THE CHEAPER OF TWO EVILS.
+   `.btn` carries a 1px border and these drop it, so a filled button is 2px shorter AND 2px
+   narrower than a ghost button with identical padding. Giving them a transparent border instead
+   equalises it — and grows every filled button by 2px in both directions, which wrapped the meme
+   builder's top bar onto two rows at 360px. That bar is one row by design and has its own check;
+   it caught this within one suite run. Six buttons times two pixels is all it took.
+   The visible half of the complaint was never these 2px: it was `Upload pic` at 31px beside 42px
+   music buttons on a phone, which is the touch-target rule further down and is fixed. Real parity
+   needs the outline to stop being a layout border (an inset box-shadow), which is a bigger change
+   than this bug is worth mid-session. */
+.btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border:none;color:#fff;box-shadow:var(--sh-1)}
+.btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a;box-shadow:var(--sh-1)}
 .btn-neon:hover{box-shadow:var(--glow),var(--sh-2)}
 .btn-cyan:hover{box-shadow:var(--glow-cy),var(--sh-2)}
 /* filled "danger/negative" action (e.g. Hold'em Fold) — red reads as stop across all themes, so it's
    intentionally a fixed red gradient like the admin's btn-danger, not theme vars. */
-.btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border-color:transparent;color:#fff}
+.btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border:none;color:#fff}
 /* Secondary buttons: FILLED with the theme's accent colour (a tint of --neon over the panel) with a
    matching accent border + label, so they read as real coloured buttons next to the solid
    btn-neon/btn-cyan primaries instead of looking empty/plain. Theme-safe (all via --neon/--panel2);
