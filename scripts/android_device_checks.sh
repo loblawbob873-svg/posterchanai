@@ -70,11 +70,36 @@ sleep 20
 
 crash_scan() {   # $1 = label
   adb logcat -d > "$OUT/pc-logcat-$1.txt" 2>/dev/null
-  # A FATAL EXCEPTION from OUR package is a failure. Other apps' noise on the emulator is not ours.
-  if grep -q "FATAL EXCEPTION" "$OUT/pc-logcat-$1.txt" && grep -q "$PKG" "$OUT/pc-logcat-$1.txt"; then
+  # A FATAL EXCEPTION FROM *OUR* PACKAGE IS A FAILURE — and this has to be the SAME crash, not two
+  # facts about the same file.
+  #
+  # It used to be `grep FATAL EXCEPTION` AND `grep $PKG`, run independently over the whole logcat.
+  # Our package appears in every logcat ever captured here — it is the app under test — so the
+  # second grep is always true and the condition collapsed to "did ANYTHING on this emulator
+  # crash". It failed a real run on `com.google.android.permissioncontroller` throwing an NPE
+  # inside its own Kotlin utils: a Google system app, on Google's image, nothing to do with us,
+  # reported as "the app crashed during: launch" with our name on it.
+  #
+  # That is worse than a flake. A red CI that is usually somebody else's crash is a CI people stop
+  # reading, which is exactly what a device check is for.
+  #
+  # `Process: <pkg>,` is how ART names the crashing process on the line after FATAL EXCEPTION, and
+  # the trailing comma is load-bearing: without it `place.poster.app` also matches a hypothetical
+  # `place.poster.apple`.
+  if awk -v pkg="$PKG" '
+        /FATAL EXCEPTION/ { inblock = 1; next }
+        inblock && /Process: / { if (index($0, "Process: " pkg ",")) { found = 1 } inblock = 0 }
+        END { exit(found ? 0 : 1) }
+      ' "$OUT/pc-logcat-$1.txt"; then
     fail "the app crashed during: $1"
     echo "---- the trace ----"
-    grep -A 40 "FATAL EXCEPTION" "$OUT/pc-logcat-$1.txt" | head -60
+    awk -v pkg="$PKG" '
+        /FATAL EXCEPTION/ { buf = $0; n = 1; hit = 0; next }
+        n { buf = buf "\n" $0; n++
+            if (/Process: / && index($0, "Process: " pkg ",")) hit = 1
+            if (hit && n > 40) { print buf; exit }
+            if (!hit && /Process: /) { n = 0 } }
+      ' "$OUT/pc-logcat-$1.txt" | head -60
     echo "-------------------"
     return 1
   fi
