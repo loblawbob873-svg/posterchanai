@@ -463,3 +463,11 @@ def test_wallet_hydrates_authenticated_session_and_uses_shared_auth_fetch():
     assert "await PC.ensureAiSession()" in request
     assert "PC&&PC.authFetch ? PC.authFetch : fetch" in request
     assert "credentials:'include'" in request
+
+
+def test_history_failure_does_not_hide_a_healthy_wallet_and_probe_errors_are_visible():
+    src = WALLET.read_text(encoding="utf-8")
+    probe = src[src.index("async function probe("):src.index("function qr(")]
+    assert "history?limit=50').catch" in probe
+    assert "[monero wallet] probe failed" in probe
+    assert "fallbackHtml(s.error)" in src

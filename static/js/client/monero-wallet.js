@@ -62,10 +62,13 @@
     if(!force && Date.now()-checkedAt<8000) return state;
     checkedAt=Date.now();
     try{
-      const [meta,bal,addr,hist]=await Promise.all([
+      const [meta,bal,addr,histResult]=await Promise.all([
         request('/api/wallet/monero/status'),
         request('/api/wallet/monero/balance'), request('/api/wallet/monero/address'),
-        request('/api/wallet/monero/history?limit=50')]);
+        // History is optional display data. A malformed/temporarily unavailable history response
+        // must not hide an otherwise healthy wallet, balance and receive address.
+        request('/api/wallet/monero/history?limit=50').catch(error=>({__error:error}))]);
+      const hist=histResult&&typeof histResult==='object'&&!histResult.__error?histResult:{};
       const transfers=[];
       for(const kind of ['in','out','pending','failed']) for(const row of (hist[kind]||[]))
         transfers.push(Object.assign({direction:kind},row));
@@ -73,14 +76,18 @@
       state={available:true,network:meta.network,warning:meta.warning,balance:bal.balance,
         unlocked_balance:bal.unlocked_balance,
         address:addr.address||(((addr.addresses||[])[0]||{}).address)||'',transfers};
-    }catch(e){ state={available:false,error:(e&&e.message)||'local wallet unavailable',network:'stagenet'}; }
+    }catch(e){
+      const detail=(e&&e.message)||String(e||'local wallet unavailable');
+      try{console.error('[monero wallet] probe failed',e);}catch(_){}
+      state={available:false,error:detail,network:'stagenet'};
+    }
     return state;
   }
   function qr(text,alt){
     try{ const src=root.PCQR&&root.PCQR.dataUrl(String(text)); return src?'<img src="'+esc(src)+'" alt="'+esc(alt)+'">':''; }catch(_){return '';}
   }
   function warning(s){const main=s&&s.network==='mainnet';return '<div class="mw-warning" role="note"><b>'+(main?'MAINNET HOT WALLET — REAL FUNDS.':'Small tips only.')+'</b> '+(main?'Keep only small tipping funds here. ':'This is a hot spending wallet. ')+'Keep substantial Monero in Feather, Monero GUI, or hardware storage.</div>';}
-  function fallbackHtml(){return '<section class="mw-card mw-unavailable"><h3>Local wallet unavailable</h3><p>This device is in safe external-wallet mode. Tips still open Feather, Monero GUI, or another installed wallet; PosterChan never receives your spend key.</p><button class="btn btn-cyan" id="mw-retry">Retry local wallet</button></section>';}
+  function fallbackHtml(error){return '<section class="mw-card mw-unavailable"><h3>Local wallet unavailable</h3><p>This device is in safe external-wallet mode. Tips still open Feather, Monero GUI, or another installed wallet; PosterChan never receives your spend key.</p>'+(error?'<p class="muted small mw-error">'+esc(error)+'</p>':'')+'<button class="btn btn-cyan" id="mw-retry">Retry local wallet</button></section>';}
   function historyDate(v){
     if(v==null||v==='')return 'pending';
     if(typeof v==='string'&&!/^\d+$/.test(v))return v;
@@ -107,7 +114,7 @@
     // navigation (including login landing, resume, or a relay-driven repaint).
     if(!PC||PC.VIEW!=='wallet')return;
     const f=document.getElementById('feed'); if(!f)return;
-    if(!s.available){f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">LOCAL WALLET</span></div></header>'+warning(s)+fallbackHtml()+'</div>'; bind(); return;}
+    if(!s.available){f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">LOCAL WALLET</span></div></header>'+warning(s)+fallbackHtml(s.error)+'</div>'; bind(); return;}
     const address=String(s.address||''), balance=s.balance_atomic!=null?s.balance_atomic:s.balance;
     f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">'+esc((s.network||'stagenet').toUpperCase())+(s.network==='stagenet'?' · testing only':'')+'</span></div><button class="btn btn-ghost small" id="mw-refresh">Refresh</button></header>'
       +warning(s)+'<section class="mw-balance"><span>Available balance</span><strong>'+xmr(balance,s.balance_atomic!=null)+' <small>XMR</small></strong><span class="muted small">'+xmr(s.unlocked_balance_atomic!=null?s.unlocked_balance_atomic:balance,s.unlocked_balance_atomic!=null||s.balance_atomic!=null)+' XMR unlocked</span></section>'
