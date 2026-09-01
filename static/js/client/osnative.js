@@ -150,7 +150,42 @@
     return { replace:true, memo:{ want, tries: tries + 1 } };
   }
 
-  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, stashPlan, changed, driftPlan };
+  /* IS THIS CAPTURE A PICTURE OF NOTHING?
+   *
+   * `grim` photographs a SCREEN REGION, not a window, and it always hands back a well-formed PNG —
+   * so "it decoded" says nothing about whether there are any pixels in it. A surface that was
+   * parked a moment earlier, an output that has not damaged a frame since grim subscribed, or a
+   * rectangle that has drifted off the edge of every output all photograph as one flat dark colour.
+   * Adopted as a preview that paints an OPAQUE black body under our label, and that is exactly the
+   * reported "Firefox turns black with click to bring this window forward".
+   *
+   * The bright system card the no-preview state already paints is better than a black rectangle in
+   * every one of those cases, so a blank capture is refused and falls back to it.
+   *
+   * Blank means flat AND dark: every sample within a hair of every other one, and dark overall. A
+   * uniformly BRIGHT capture is deliberately kept — a blank white page is a real thing to be
+   * looking at, and refusing it would replace a truthful preview with a card. Fully transparent
+   * pixels count as black, because that is how they will be composited over the body.
+   *
+   * `px` is RGBA bytes as `getImageData().data` returns them; the sampling is in os.js, this is the
+   * decision, and it lives here so it can be run under node. */
+  function previewIsBlank(px){
+    if(!px || !px.length || px.length % 4) return true;
+    let min = 255, max = 0, sum = 0, n = 0;
+    for(let i = 0; i < px.length; i += 4){
+      const a = px[i+3];
+      const lum = a === 0 ? 0
+                : (0.2126*px[i] + 0.7152*px[i+1] + 0.0722*px[i+2]) * (a/255);
+      if(lum < min) min = lum;
+      if(lum > max) max = lum;
+      sum += lum; n++;
+    }
+    if(!n) return true;
+    return (max - min) <= 6 && (sum / n) <= 24;
+  }
+
+  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, stashPlan, changed, driftPlan,
+                previewIsBlank };
   root.PCOSNative = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

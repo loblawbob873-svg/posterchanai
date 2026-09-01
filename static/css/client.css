@@ -8337,10 +8337,23 @@ html.os-on #upload-badge.upbadge{z-index:333}
     radial-gradient(circle at 78% 74%,rgba(203,76,255,.68),transparent 34%),
     linear-gradient(135deg,#174b67 0%,#3b326a 52%,#175466 100%);
   border-top:1px solid var(--line)}
+/* THE PREVIEW IS PAINTED ON TOP OF THAT CARD, NEVER INSTEAD OF IT.
+   This rule used to set `background-color:var(--panel,#0b0a14)` under the capture — the exact
+   near-black fallback the rule above forbids, for the exact reason it gives. So a preview that
+   failed to decode, arrived transparent, or was dropped by the CSS engine left a black body with
+   our label in the corner: "Firefox turns black with click to bring this window forward". The card
+   is the LAST background layer now, so there is no state of this element that renders dark.
+   (An OPAQUE all-black capture would still cover the card, so os.js refuses to adopt one —
+   `previewIsBlank`. The two halves are one fix; neither is sufficient alone.) */
 .osw.native-stashed.native-stash-preview .osw-body::after{
   content:'click to bring this window forward';align-items:flex-end;justify-content:flex-start;
-  color:#fff;text-shadow:0 1px 3px #000;background-color:var(--panel,#0b0a14);
-  background-image:linear-gradient(transparent 70%,rgba(0,0,0,.7)),var(--native-stash-preview);
+  color:#fff;text-shadow:0 1px 3px #000;background-color:#174b67;
+  background-image:
+    linear-gradient(transparent 70%,rgba(0,0,0,.7)),
+    var(--native-stash-preview),
+    radial-gradient(circle at 22% 28%,rgba(0,240,255,.72),transparent 31%),
+    radial-gradient(circle at 78% 74%,rgba(203,76,255,.68),transparent 34%),
+    linear-gradient(135deg,#174b67 0%,#3b326a 52%,#175466 100%);
   background-position:center;background-repeat:no-repeat;background-size:cover}
 /* A window BEING DRAGGED already suppresses pointer events in its body; a stashed one must not, or
    the click that is supposed to raise it lands on nothing. */

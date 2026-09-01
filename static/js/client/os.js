@@ -2450,10 +2450,51 @@
   const _natDrift = new Map();   // per-window give-up state for NAT().driftPlan
 
   const nativeWins = () => wins.filter(w => w.native != null);
+  /* Decode the capture far enough to see whether there is anything in it. A data: URL never taints
+   * a canvas, so this is a plain read; 16x16 is enough to tell a flat surface from a window. */
+  function _previewPixels(data){
+    return new Promise(resolve=>{
+      try{
+        const img=new Image();
+        img.onload=()=>{
+          try{
+            const c=document.createElement('canvas'); c.width=16; c.height=16;
+            const g=c.getContext&&c.getContext('2d',{willReadFrequently:true});
+            if(!g) return resolve(null);
+            g.drawImage(img,0,0,16,16);
+            resolve(g.getImageData(0,0,16,16).data);
+          }catch(_){ resolve(null); }
+        };
+        img.onerror=()=>resolve(null);
+        img.src=data;
+      }catch(_){ resolve(null); }
+    });
+  }
+  /* NEVER ADOPT A CAPTURE WITHOUT LOOKING AT IT — an all-black PNG is a black window.
+   *
+   * The card the no-preview state paints is deliberately loud and readable, and the rule above it
+   * in client.css says in as many words never to fall back to a near-black body. This variant used
+   * to do it anyway: `grim` returns a valid PNG whatever it photographed, so an uncomposited or
+   * off-screen region arrived as a perfectly good picture of nothing and was painted, opaque, over
+   * the body. Reported as "Firefox turns black with click to bring this window forward".
+   *
+   * So the card goes up FIRST and is only replaced once the capture has been decoded and found to
+   * contain something. `previewIsBlank` (osnative.js, node-tested) makes that call. The token guards
+   * the gap: a window restored or re-stashed while the decode was in flight must not have a stale
+   * preview land on it afterwards. */
   function _nativePreview(w,data){
     if(!w||!w.el)return;
-    if(data){w.el.style.setProperty('--native-stash-preview',`url("${String(data).replace(/["\\]/g,'')}")`);w.el.classList.add('native-stash-preview');}
-    else{w.el.style.removeProperty('--native-stash-preview');w.el.classList.remove('native-stash-preview');}
+    const token=(w._previewSeq=(Number(w._previewSeq)||0)+1);
+    w.el.style.removeProperty('--native-stash-preview');
+    w.el.classList.remove('native-stash-preview');
+    if(!data)return;
+    _previewPixels(data).then(px=>{
+      if(!w.el || w._previewSeq!==token) return;
+      const nat=NAT();
+      if(!px || !nat || typeof nat.previewIsBlank!=='function' || nat.previewIsBlank(px)) return;
+      w.el.style.setProperty('--native-stash-preview',`url("${String(data).replace(/["\\]/g,'')}")`);
+      w.el.classList.add('native-stash-preview');
+    });
   }
   function _focusNativeDecorated(id){
     id=Number(id);if(!id||!window.pcWM)return Promise.resolve(false);
