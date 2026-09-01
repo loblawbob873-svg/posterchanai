@@ -76,6 +76,18 @@ window.__PC_SET_INSTANCE__ = function(u){ try{ localStorage.setItem('pc_instance
 window.__PC_TOKEN__ = '';
 window.__PC_APP_BUILD__ = __BUILD__;
 (function(){
+  // An APK update can start while the previous APK's service worker still controls this first page.
+  // Listen before any app modules load; once the newly bundled worker claims the page, reload exactly
+  // once onto its fresh shell. This preserves IndexedDB/localStorage/media while preventing a new APK
+  // from running old JS and CSS until the user manually force-closes it.
+  if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+  var changed = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function(){
+    if (changed) return; changed = true;
+    try { location.reload(); } catch(e) {}
+  });
+})();
+(function(){
   var B = window.__PC_API_BASE__, W = B.replace(/^http/, 'ws');
   var _f = window.fetch.bind(window);
   // Attach the instance bearer token, but NEVER over an Authorization the caller already set — Blossom
@@ -140,6 +152,17 @@ html = re.sub(r'<link[^>]+rel=["\']manifest["\'][^>]*>', '', html)
 # on purpose (usesCleartextTraffic + allowMixedContent); this meta would override that for no benefit.
 html = re.sub(r'<meta[^>]+upgrade-insecure-requests[^>]*>', '', html, flags=re.I)
 open(p, 'w', encoding='utf-8').write(html)
+# Give every APK build its own SHELL cache. The source cache number still controls web-PWA releases;
+# the build suffix prevents two consecutive APKs from sharing a cache merely because sw.js itself did
+# not otherwise change. Media/drive caches retain their separate stable names and are not discarded.
+sw = 'www/sw.js'
+sw_text = open(sw, encoding='utf-8').read()
+sw_text, changed = re.subn(r"const CACHE = '([^']+?)(?:-apk\d+)?';",
+                           lambda m: "const CACHE = '" + m.group(1) + "-apk" + build + "';",
+                           sw_text, count=1)
+if changed != 1:
+    raise SystemExit('could not stamp APK service-worker cache')
+open(sw, 'w', encoding='utf-8').write(sw_text)
 # THIS BUNDLE'S OWN COMMIT, overwriting whatever the server had when index.html was fetched.
 # A bundle is built from a checkout and then installed by hand, so "which build is this device on"
 # has to be answerable from the device — it is the question that made every folder-sync report
