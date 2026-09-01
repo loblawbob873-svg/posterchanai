@@ -565,13 +565,19 @@ a.btn.full{display:block}
    as six equally-urgent things and the eye finds no primary — the single loudest "unpolished" signal in
    the UI. At rest they get real elevation (--sh-1); the bloom is what hover/focus adds. Shared rules, so
    all seven themes inherit the behaviour and only the colour differs. */
-.btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border:none;color:#fff;box-shadow:var(--sh-1)}
-.btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border:none;color:#04222a;box-shadow:var(--sh-1)}
+/* A FILLED BUTTON IS THE SAME HEIGHT AS AN OUTLINED ONE.
+   `.btn` carries a 1px border; these three dropped it with `border:none`, so a filled button came
+   out 2px SHORTER than a ghost button with identical padding and font — and the two sit side by
+   side all over the app. Reported as the buttons in Edit profile all being different sizes: `Add
+   audio URL` (ghost) at 23px next to `Upload pic` (cyan) at 21px, same class, same row.
+   `transparent` rather than `none` keeps the box identical and paints nothing. */
+.btn-neon{background:linear-gradient(135deg,var(--neon),var(--neon2));border-color:transparent;color:#fff;box-shadow:var(--sh-1)}
+.btn-cyan{background:linear-gradient(135deg,#0bb6cf,var(--cyan));border-color:transparent;color:#04222a;box-shadow:var(--sh-1)}
 .btn-neon:hover{box-shadow:var(--glow),var(--sh-2)}
 .btn-cyan:hover{box-shadow:var(--glow-cy),var(--sh-2)}
 /* filled "danger/negative" action (e.g. Hold'em Fold) — red reads as stop across all themes, so it's
    intentionally a fixed red gradient like the admin's btn-danger, not theme vars. */
-.btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border:none;color:#fff}
+.btn-red{background:linear-gradient(135deg,#ff3366,#ff5a7d);border-color:transparent;color:#fff}
 /* Secondary buttons: FILLED with the theme's accent colour (a tint of --neon over the panel) with a
    matching accent border + label, so they read as real coloured buttons next to the solid
    btn-neon/btn-cyan primaries instead of looking empty/plain. Theme-safe (all via --neon/--panel2);
@@ -9723,8 +9729,16 @@ audio.sms-att-img{min-width:220px}
 .prof-track-name{font-weight:600;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prof-track audio{display:block;width:100%;height:36px}
 .pf-music-row{display:grid;grid-template-columns:minmax(110px,.7fr) minmax(180px,1.3fr) auto;gap:7px;margin:7px 0}
-.pf-music-actions{flex-wrap:wrap;gap:7px;margin-top:7px}
-@media(max-width:600px){.pf-music-editor{padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}.pf-music-row{grid-template-columns:minmax(0,1fr) auto}.pf-music-url{grid-column:1/3}.pf-music-actions .btn{flex:1 1 130px;min-height:42px}.prof-track audio{height:40px}}
+/* EVERY ACTION BUTTON IN THIS SHEET IS THE SAME SIZE.
+   `align-items:center` because these are flex items and the default `stretch` made them 23px tall
+   next to an identically-classed `Upload pic` at its natural 21px — same `.btn.small`, two heights,
+   in one row of one dialog. Reported as the buttons all being different sizes, and they were. */
+.pf-music-actions{flex-wrap:wrap;gap:7px;margin-top:7px;align-items:center}
+/* On a phone the touch floor applies to EVERY button in the sheet, not only the music ones.
+   `Upload pic` sat at 31px beside 42px music buttons — a smaller target for the same kind of
+   action, in the same dialog, which is both the visual inconsistency that was reported and a real
+   miss on the one that is hardest to hit. */
+@media(max-width:600px){.pf-music-editor{padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}.pf-music-row{grid-template-columns:minmax(0,1fr) auto}.pf-music-url{grid-column:1/3}.pf-music-actions .btn{flex:1 1 130px}.pf-music-actions .btn,.pf-music-remove,#pf-up,#pf-banner-up{min-height:42px}.prof-track audio{height:40px}}
 
 /* PosterChan Office launcher: a workspace surface, not an unstyled row of controls. */
 .office-home{width:min(860px,100%);margin:0 auto;padding:clamp(18px,4vw,44px)}
