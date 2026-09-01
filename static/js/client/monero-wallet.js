@@ -45,11 +45,14 @@
   }
 
   async function request(path, opts){
+    // Signing/login is interactive and can legitimately take longer than the network timeout. Starting
+    // the timer before it meant a slow Android signer returned successfully and then handed fetch() an
+    // already-aborted signal, so no wallet request ever reached the server.
+    if(PC&&PC.ensureAiSession) await PC.ensureAiSession();
     const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),5000);
     try{
       // Extension/Nostr login mints a bearer session, while the cookie may be absent after a server
       // restart. A bare fetch therefore returned 401 and mislabeled a configured wallet unavailable.
-      if(PC&&PC.ensureAiSession) await PC.ensureAiSession();
       const fetcher=PC&&PC.authFetch ? PC.authFetch : fetch;
       const res=await fetcher(path,Object.assign({credentials:'include',cache:'no-store',signal:ctl.signal,
         headers:{'Accept':'application/json'}},opts||{}));

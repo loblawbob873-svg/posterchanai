@@ -463,6 +463,7 @@ def test_wallet_hydrates_authenticated_session_and_uses_shared_auth_fetch():
     assert "await PC.ensureAiSession()" in request
     assert "PC&&PC.authFetch ? PC.authFetch : fetch" in request
     assert "credentials:'include'" in request
+    assert request.index("await PC.ensureAiSession()") < request.index("new AbortController()")
 
 
 def test_history_failure_does_not_hide_a_healthy_wallet_and_probe_errors_are_visible():
