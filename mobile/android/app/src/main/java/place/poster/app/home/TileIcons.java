@@ -33,6 +33,7 @@ public final class TileIcons {
         if ("clock".equals(icon)) return R.drawable.ic_pc_clock;
         if ("close".equals(icon)) return R.drawable.ic_pc_close;
         if ("cloud".equals(icon)) return R.drawable.ic_pc_cloud;
+        if ("coin".equals(icon)) return R.drawable.ic_pc_coin;
         if ("compass".equals(icon)) return R.drawable.ic_pc_compass;
         if ("concord".equals(icon)) return R.drawable.ic_pc_concord;
         if ("discs".equals(icon)) return R.drawable.ic_pc_discs;

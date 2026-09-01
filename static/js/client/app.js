@@ -14975,6 +14975,21 @@
   // timeline's inline composer uses it to surface Poll/AI as first-class buttons without reimplementing
   // their UI — the poll builder and the AI handlers live in this closure, so duplicating them inline would
   // mean two copies of each drifting apart.
+  /* WHICH VIEW A SUCCESSFUL POST HAS TO REPAINT.
+   *
+   * Pure, and separate from the click handler, because the bug it encodes was a MISSING ENTRY in a
+   * list of view names — the kind of thing that is invisible in a 40-line handler and obvious in a
+   * three-line function with a test beside it. `thread` was absent: it is the one view not reached
+   * through `renderView` (the route calls `renderThread(id)` instead), and it holds no live
+   * subscription, so a reply posted from inside a conversation had nothing at all to bring it on
+   * screen until the user navigated away and back.
+   *
+   * Run under node by tests/client/test_reply_appears_in_its_thread.py. */
+  function _repaintAfterPost(view){
+    if(view==='home' || view==='global' || view==='drafts') return 'view';
+    if(view==='thread') return 'thread';
+    return null;
+  }
   function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason='', files=null, open=null}={}){
     const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     // Show the post being replied to / quoted, ditto-style — replying used to give you an empty box with
@@ -15389,7 +15404,22 @@
           if(r && r.ok) _dropDraft();
           else if(r && r.queued && r.ev) _qDraftSet(r.ev.id, autoId||draftId);
           if(r && r.ok) toast('posted'); }   // failure toast + kept draft handled by publish()
-        if(VIEW==='home'||VIEW==='global'||VIEW==='drafts') renderView(true);
+        { const what=_repaintAfterPost(VIEW);
+          if(what==='view') renderView(true);
+          else if(what==='thread' && renderThread._tok) renderThread(renderThread._tok); }
+        /* A REPLY POSTED FROM INSIDE A THREAD HAD NOTHING TO REPAINT IT.
+         *
+         * The thread is the one view that is not reached through `renderView` — it is rendered by
+         * `renderThread(id)` off the route — so it was simply absent from the list above, and
+         * `renderThread` holds NO live subscription (it is a one-shot query). Between those two
+         * facts there was no path at all by which a reply you had just sent could appear: it
+         * published fine, it was in the Store, and the conversation on screen never changed until
+         * you navigated away and came back, which is exactly how it was reported.
+         *
+         * `publish()` has already saved the event optimistically, so this costs nothing: the
+         * cache-first paint puts the reply on screen immediately and the refresh behind it is the
+         * ordinary one. Re-rendering the SAME id keeps the scroll position (`_same` in
+         * renderThread), so the conversation does not jump under the user's thumb. */
       };
       // ⏰ Schedule (plain top-level posts): sign the note with a future created_at; the backend publishes it.
       { const sbtn=$('#cmp-sched-btn',root), srow=$('#cmp-sched-row',root), sat=$('#cmp-sched-at',root);
@@ -31917,6 +31947,14 @@
     for(const x of chain) merged.set(x.id, x);              // clicked post + its ancestors up to root
     merged.set(ev.id, ev); merged.set(root.id, root);
     let frontier=[...new Set([root.id, ev.id, ...chain.map(x=>x.id)])];
+    /* WHETHER THE RELAYS EVER ACTUALLY ANSWERED. A `#e` query that times out instead of EOSEing
+     * comes back as a SHORT LIST, not as an error, and rendering that as the conversation is how
+     * replies "go missing" — worst on a phone radio, which is why this reads as an Android-only
+     * problem while the same code is fine on a desktop connection. The retry below helps and is not
+     * enough: both attempts can time out, and then the thread confidently reports a reply count it
+     * never established. Same rule as the timeline and Trending — a query no relay EOSE'd means
+     * "the relays never spoke", never "there is nothing there". */
+    let expandedFully=true;
     for(let round=0; round<4 && frontier.length; round++){
       const batch=frontier.slice(0,60);                     // one REQ per round, not one per node
       // kinds 1 AND 1111: a NIP-22 comment that e-tags a post IS a reply to it, so a kind-1-only query
@@ -31929,6 +31967,7 @@
       if(got && got.complete===false){
         const retry=await Relay.query([{ kinds:[1,1111], '#e':batch, limit:500 }]).catch(()=>[]);
         if(retry.length>got.length) got=retry;
+        if(!(retry && retry.complete===true)) expandedFully=false;
       }
       if(VIEW!=='thread' || renderThread._tok!==id) return;   // navigated away / opened another thread mid-expansion
       const fresh=[];
@@ -31959,6 +31998,9 @@
       return h;
     };
     const nReplies=all.length-1;
+    /* An incomplete expansion must not present its count as the answer. It says what it knows and
+     * offers the one thing that helps, rather than quietly showing a shorter conversation. */
+    const partial = !expandedFully;
     // If the clicked post is itself a reply but its parent couldn't be reached (author out of WoT, no
     // working relay hint), SAY so instead of silently presenting the reply as though it were the root.
     const missingParent = (root.id===ev.id && replyParentId(ev)) ? replyParentId(ev) : null;
@@ -31970,10 +32012,13 @@
     let html = _THREAD_TOP;
     html+= missingParent ? `<div class="thread-node thread-missing"><div class="empty">↩ Replying to a post that couldn't be loaded from any connected relay.</div></div>` : '';
     html+=`<div class="thread-node${id===root.id?' thread-hl':''}" data-tid="${enc(root.id)}">${noteHtml(root)}</div>`;
-    html+=`<div class="search-section-title">${nReplies} repl${nReplies===1?'y':'ies'}</div>`;
-    html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('') : '<div class="empty">No replies yet.</div>';
+    html+=`<div class="search-section-title">${partial ? `${nReplies} repl${nReplies===1?'y':'ies'} so far` : `${nReplies} repl${nReplies===1?'y':'ies'}`}</div>`;
+    html+= partial ? `<div class="thread-partial empty">Some relays didn’t answer, so replies may be missing. <button class="btn btn-ghost small" id="thread-retry">Load again</button></div>` : '';
+    html+= nReplies ? (kids.get(root.id)||[]).sort((a,b)=>a.created_at-b.created_at).map(c=>renderNode(c,1)).join('')
+         : (partial ? '' : '<div class="empty">No replies yet.</div>');
     feed.innerHTML=html; hydrate(feed);
     _bindThreadBack(feed, id);   // the same binder the early paint used — see _paintThreadHead
+    { const rb=$('#thread-retry',feed); if(rb) rb.onclick=()=>renderThread(id, hints); }
     // Reveal + flash the clicked post (when it isn't the root).
     if(id!==root.id){ const el=feed.querySelector(`.thread-node[data-tid="${CSS.escape(id)}"]`);
       if(el) _revealThreadNode(feed, el, id); }

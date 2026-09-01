@@ -179,8 +179,13 @@
       if(!view || seen.has(view)) return null;
       seen.add(view);
       const use = btn.querySelector('svg use');
+      /* A row that draws its OWN glyph instead of a sprite `<use>` — the wallet's ɱ is the first —
+       * has no href to read, and `appIcon` then falls back to `i-grid`: the app lands on the
+       * desktop, in the start menu and in the taskbar as an anonymous grey square. `data-icon` lets
+       * such a row name its sprite symbol without giving up the mark it draws in the sidebar. */
       return { view, label: _navLabel(btn) || view, off: _navGone(btn),
-               icon: use ? (use.getAttribute('href') || use.getAttribute('xlink:href') || '') : '' };
+               icon: (use ? (use.getAttribute('href') || use.getAttribute('xlink:href') || '') : '')
+                     || String(btn.dataset.icon || '') };
       // EXTRAS are not sidebar rows, but two of them SHADOW one (#nav-music, #nav-golive) — so they
       // answer to the same switch. `__profile` has no row and is never hidden by this.
     }).filter(Boolean).concat(EXTRAS.filter(x => x.when())

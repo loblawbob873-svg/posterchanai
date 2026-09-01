@@ -87,6 +87,11 @@ class SocialButtonTests(unittest.TestCase):
         const events=[];
         const timelineTop=v=>events.push('top:'+v);
         const switchView=v=>events.push('view:'+v);
+        /* `activateNavView` routes through requestView() since the Monero wallet's boot-landing
+           fix (650cc091); it is a thin wrapper that counts the request and calls switchView. Not
+           stubbing it made every case here die with `ReferenceError: requestView is not defined`,
+           which is a RED SUITE saying nothing about the behaviour under test. */
+        const requestView=(v,q)=>switchView(v,q);
         %s
         %s
         activateNavView(%s);
@@ -118,6 +123,11 @@ class SocialButtonTests(unittest.TestCase):
         const events=[];
         const timelineTop=v=>events.push('top:'+v);
         const switchView=v=>{events.push('view:'+v);VIEW=v;};
+        /* `activateNavView` routes through requestView() since the Monero wallet's boot-landing
+           fix (650cc091); it is a thin wrapper that counts the request and calls switchView. Not
+           stubbing it made every case here die with `ReferenceError: requestView is not defined`,
+           which is a RED SUITE saying nothing about the behaviour under test. */
+        const requestView=(v,q)=>switchView(v,q);
         %s
         %s
         activateNavView('global');
