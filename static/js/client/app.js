@@ -15110,6 +15110,12 @@
       });
       // 📎 Attach → pick Local (this device) or Blossom (your uploaded files)
       $('#cmp-attach',root).onclick=()=>{
+        // Browsers already provide the right camera/photo/file sources in their native chooser.
+        // Putting another popover between the trusted click and input.click() made Firefox lose the
+        // transient user activation on some builds, so selecting Attach did nothing and no /upload
+        // request was ever emitted. Open the chooser directly on web; the native shell keeps its
+        // explicit Camera / device / Files choices because those are distinct app integrations.
+        if(!window.Capacitor){ $('#cmp-file',root).click(); return; }
         const opts = window.Capacitor ? [['camera','📷 Camera'],['local','🖼️ Photos / files'],['blossom','📁 Files']]
                                        : [['local','💻 Local'],['blossom','📁 Files']];
         // 🎮 A webxdc mini app — a game, a poll, a shared editor — attached as a playable card.
@@ -15195,8 +15201,10 @@
           if(has('#cmp-cw-btn')) items.push(['cw', on('#cmp-cw-btn')?'🔞 Sensitive ✓':'🔞 Sensitive']);
           if(has('#cmp-bg-btn')) items.push(['bg', on('#cmp-bg-btn')?'🎨 Background ✓':'🎨 Background']);
           if(has('#cmp-draft'))  items.push(['draft','☁️ Save to drafts']);
+          items.push(['files','📁 Attach from Files']);
           const sel={clean:'#cmp-clean', cw:'#cmp-cw-btn', bg:'#cmp-bg-btn', draft:'#cmp-draft'};
-          openMenuPopover(mb, items, a=>{ const b=sel[a] && $(sel[a],root); if(b) b.click(); }); }; }
+          openMenuPopover(mb, items, a=>{ if(a==='files'){ blossomPicker(ta); return; }
+            const b=sel[a] && $(sel[a],root); if(b) b.click(); }); }; }
       /* 🧹 Clean links — its OWN button, not an item in the 🤖 AI menu. It never calls the model or
        * the network (see _cleanLinksCmd / urlclean.js), and filing it under AI both misdescribed it
        * and made it unreachable offline, since the AI button carries `needs-net`. This one does not. */
