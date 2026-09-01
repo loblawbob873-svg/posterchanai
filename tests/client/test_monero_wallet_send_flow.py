@@ -454,3 +454,12 @@ def test_an_unreachable_wallet_paints_external_wallet_mode_rather_than_an_empty_
     assert "Retry local wallet" in got["html"]
     assert "0 <small>XMR</small>" not in got["html"]
     assert "never receives your spend key" in got["html"]
+
+
+def test_wallet_hydrates_authenticated_session_and_uses_shared_auth_fetch():
+    """Extension/Nostr logins need the bearer path; a cookie-only probe falsely returns 401."""
+    src = WALLET.read_text(encoding="utf-8")
+    request = src[src.index("async function request("):src.index("async function probe(")]
+    assert "await PC.ensureAiSession()" in request
+    assert "PC&&PC.authFetch ? PC.authFetch : fetch" in request
+    assert "credentials:'include'" in request

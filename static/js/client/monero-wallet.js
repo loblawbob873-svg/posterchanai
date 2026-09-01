@@ -47,7 +47,11 @@
   async function request(path, opts){
     const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),5000);
     try{
-      const res=await fetch(path,Object.assign({credentials:'same-origin',cache:'no-store',signal:ctl.signal,
+      // Extension/Nostr login mints a bearer session, while the cookie may be absent after a server
+      // restart. A bare fetch therefore returned 401 and mislabeled a configured wallet unavailable.
+      if(PC&&PC.ensureAiSession) await PC.ensureAiSession();
+      const fetcher=PC&&PC.authFetch ? PC.authFetch : fetch;
+      const res=await fetcher(path,Object.assign({credentials:'include',cache:'no-store',signal:ctl.signal,
         headers:{'Accept':'application/json'}},opts||{}));
       let body={}; try{ body=await res.json(); }catch(_){}
       if(!res.ok) throw new Error(body.detail||body.error||body.message||('wallet service returned '+res.status));
