@@ -51,11 +51,26 @@ COIN = "#i-coin"
 def test_the_sidebar_has_the_wallet_and_it_names_its_icon():
     """Everything else is derived from this row, so it is the one thing that must be right."""
     html = CLIENT_HTML.read_text(encoding="utf-8")
-    row = re.search(r'<button class="nav-item" data-view="wallet"[^>]*>', html)
+    row = re.search(r'<button class="nav-item"[^>]*data-view="wallet"[^>]*>.*?</button>', html, re.S)
     assert row, "the Monero Wallet is not in the sidebar at all"
-    assert 'data-icon="#i-coin"' in row.group(0), (
-        "the wallet row draws its own ɱ mark and does not declare a sprite icon, so every shell "
-        "built from the sidebar falls back to the anonymous i-grid square")
+    assert '<use href="#i-coin">' in row.group(0), (
+        "the wallet row no longer draws the coin sprite, so it neither matches the rows around it "
+        "nor gives the desktop an icon to use")
+
+
+def test_every_sidebar_row_draws_its_icon_the_same_way():
+    """THE REPORT: "Monero wallet navbar icon does not match the other icons". It did not — the row
+    drew a bespoke `ɱ` text mark, 22px wide in a hardcoded orange, where every other row puts a
+    21px sprite in a 30px slot. So it was a different size, a different colour, ignored the theme,
+    and left its label 8px out of line with every row above and below it.
+
+    Stated as a property rather than as "the wallet uses #i-coin": one row drawing its glyph a
+    private way is exactly the thing that looks wrong, whichever row does it next."""
+    html = CLIENT_HTML.read_text(encoding="utf-8")
+    rows = re.findall(r'<button class="nav-item"[^>]*data-view="[^"]+"[^>]*>(.*?)</button>', html, re.S)
+    assert len(rows) > 10, "the sidebar rows could not be read"
+    odd = [r[:70] for r in rows if '<use href="#i-' not in r]
+    assert not odd, f"these rows draw an icon some other way: {odd}"
 
 
 def test_the_coin_symbol_actually_exists_in_the_sprite():
