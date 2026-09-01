@@ -63,6 +63,14 @@
     <string name="sms_title">Messages</string>
     <string name="sms_new">New message</string>
     <string name="sms_search">Search messages</string>
+    <string name="sms_backup">Backup</string>
+    <string name="sms_backup_title">Message backup</string>
+    <string name="sms_backup_now">Back up now</string>
+    <string name="sms_backup_rescan">Re-scan everything</string>
+    <string name="sms_backup_never">Nothing has been backed up from this phone yet.</string>
+    <string name="sms_backup_through">Backed up through %1$s</string>
+    <string name="sms_backup_started">Backing up in the background…</string>
+    <string name="sms_backup_rescanning">Re-reading every message on this phone…</string>
     <string name="sms_back">Back</string>
     <string name="sms_call">Call</string>
     <string name="sms_menu">More</string>

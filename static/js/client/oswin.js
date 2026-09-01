@@ -33,14 +33,37 @@
   /* Is this document a window rather than the desktop? Asked of the URL, not of a flag: a window is
    * opened WITH the parameter, so a child must behave as one even if the flag was turned off in the
    * desktop after it opened. */
+  /* REMEMBERED, NOT RE-READ. The client rewrites its own URL during boot — routing replaces the
+   * path and the query goes with it — so `?pcwin=` is gone within a second of the page loading.
+   * Asked of the URL, this window then reported that it was not a window at all: it kept the title
+   * (set before the rewrite) and landed on the timeline like any other page, so every window was
+   * the same window. Measured on the real desktop: `location.search` empty, `isWindow()` false,
+   * `VIEW` 'global'.
+   *
+   * The URL is the only way IN — a child is opened with it — but the answer is latched the first
+   * time it is asked, before anything can navigate. */
   function isWindow(){
-    try{ return new URLSearchParams(root.location.search).has(PARAM); }
-    catch(_){ return false; }
+    try{ if(root.__PC_WIN_STATE__) return true; }catch(_){ }
+    try{
+      if(new URLSearchParams(root.location.search).has(PARAM)){ _latch(); return true; }
+    }catch(_){ }
+    return false;
   }
 
   function viewOf(){
+    try{ if(root.__PC_WIN_STATE__) return String(root.__PC_WIN_STATE__.view || ''); }catch(_){ }
     try{ return String(new URLSearchParams(root.location.search).get(PARAM) || ''); }
     catch(_){ return ''; }
+  }
+
+  /* Write the latch as early as anything asks, so a later navigation cannot erase what this window
+   * is for. `adopt()` fills in the rest. */
+  function _latch(){
+    try{
+      if(root.__PC_WIN_STATE__) return;
+      const v = String(new URLSearchParams(root.location.search).get(PARAM) || '');
+      root.__PC_WIN_STATE__ = { view: v, shared: false, label: '' };
+    }catch(_){ }
   }
 
   /* THE DESKTOP THIS WINDOW BELONGS TO, or null. `window.opener` is same-origin here, so this is a
@@ -99,7 +122,8 @@
     try{ root.document.title = TITLE + (view ? ' — ' + view : ''); }catch(_){ }
     try{ root.document.documentElement.classList.add('pc-oswin'); }catch(_){ }
     const host = desktop();
-    const state = { view, shared: !!host, label: '' };
+    const state = root.__PC_WIN_STATE__ || { view, shared: false, label: '' };
+    state.view = view || state.view; state.shared = !!host;
     try{ state.label = String(root.__PC_WINDOW_LABEL__ || ''); }catch(_){ }
     root.__PC_WIN_STATE__ = state;
     return state;

@@ -3209,7 +3209,17 @@
     if(m) return { kind:'bech32', q: m[1] };
     return _entityFromQuery();
   }
+  /* IS THIS PAGE A WINDOW? Three separate places set a view during boot and each has to ask, so it
+   * is one guarded call rather than three copies of the same try/catch — and short enough not to
+   * push the code it guards out of the fixed slices other tests read. */
+  function _inWin(){ try{ return !!(window.PCOSWin && PCOSWin.isWindow()); }catch(_){ return false; } }
+
   async function routeFromPath(){
+    /* A WINDOW LANDS ON THE VIEW IT WAS OPENED FOR. Gated on `isWindow()`, which is false in a
+     * browser tab, in the APK and in the desktop's own shell — so no existing boot path moves. That
+     * matters: a speculative landing guard once shipped and broke the APK, because
+     * `applyInstanceGating` can switchView during boot and the guard then skipped its own landing. */
+    if(_inWin()){ const v = PCOSWin.viewOf(); if(v){ switchView(v); return; } }
     const e = _entityFromPath();
     if(!e){ switchView(_startTimeline()); return; }   // the root path IS "back to my timeline"
     _routing = true;
@@ -3537,29 +3547,6 @@
   function _cfgCached(){ try{ return JSON.parse(localStorage.getItem(_CFG_KEY)||'null'); }catch(_){ return null; } }
   function _cfgCache(c){ try{ if(c && c.relay_url) localStorage.setItem(_CFG_KEY, JSON.stringify(c)); }catch(_){} }
 
-  /* STAGE 1: prove the container. A real toplevel that the compositor stacks like any other
-   * window, and a live reference to the desktop's client through `window.opener`. Nothing renders
-   * a view yet — that is stage 2, and doing it before the container is verified on real hardware is
-   * how the last desktop rewrite produced a black screen. */
-  async function _bootAsWindow(){
-    const st = (window.PCOSWin && PCOSWin.adopt()) || { view:'', shared:false, label:'' };
-    const host = window.PCOSWin && PCOSWin.desktop();
-    let who = '';
-    try{ who = String((host && host.__PC && host.__PC.me && host.__PC.me() && host.__PC.me().pubkey) || ''); }
-    catch(_){ who = ''; }
-    const app = document.getElementById('app') || document.body;
-    app.innerHTML =
-      '<div class="oswin-probe">' +
-        '<h2>' + enc(st.label || st.view || 'PosterChan window') + '</h2>' +
-        '<p class="muted">This is a real compositor window. Drag it, raise it over Telegram, ' +
-        'put it behind Firefox — the window manager owns it now.</p>' +
-        '<p class="small muted">view <code>' + enc(st.view || '(none)') + '</code> · desktop ' +
-        (st.shared ? 'reachable' : 'NOT reachable') +
-        (who ? ' · signed in as <code>' + enc(who.slice(0, 12)) + '…</code>' : '') + '</p>' +
-      '</div>';
-    try{ document.body.classList.add('oswin-body'); }catch(_){ }
-  }
-
   async function boot(){
     /* A WINDOW IS NOT A SECOND CLIENT. On PosterChanOS a PosterChan window is its own compositor
      * window (see oswin.js), and it is opened same-origin from the desktop so it can use the
@@ -3569,9 +3556,10 @@
      *
      * Stage 1 therefore stops here and paints what the container needs to prove. Stage 2 renders
      * the requested view against the desktop's engine. */
+    let _asWindow = false;
     try{
-      if(window.PCOSWin && PCOSWin.isWindow()){ await _bootAsWindow(); return; }
-    }catch(e){ try{ console.error('[pc] window boot failed', e); }catch(_){ } }
+      if(window.PCOSWin && PCOSWin.isWindow()){ PCOSWin.adopt(); _asWindow = true; }
+    }catch(e){ try{ console.error('[pc] window mode', e); }catch(_){ } }
     // Standalone has no /client/config to ask, and asking anyway costs a failed request and a cached
     // answer from whichever instance this install used to point at — which would then re-enable every
     // server-backed surface for a session with no server. Skip straight to {}.
@@ -3608,7 +3596,9 @@
     // The logo becomes the way into PosterChan OS. Wired after gating, so the desktop's app list —
     // which it reads from the sidebar — reflects what this deployment actually shows.
     try{ _wireOsLogo(); }catch(_){}
-    try{ window.PCOS && window.PCOS.restore(); }catch(_){}   // remembered per device
+    /* A WINDOW IS NOT A DESKTOP. `restore()` turns this page into the windowed shell — icons,
+     * taskbar, the lot — which inside a window would be a whole second desktop drawn in it. */
+    if(!_asWindow){ try{ window.PCOS && window.PCOS.restore(); }catch(_){} }   // remembered per device
     // Custom branding (Admin → Site): override the logo used as the avatar fallback + brand
     // marks, and point the favicon/splash at it. Blank → keep the built-in PosterChan logo.
     if (CFG.logo_url){
@@ -4785,7 +4775,19 @@
     else if(!_consumeLaunchParams()){
       let _osHome = false;
       try{ _osHome = !!(window.PCOS && PCOS.isOn()); }catch(_){}
-      if(!_osHome && !_publicViewRequests){ switchView(_startView()); _onLandingView = true; }
+      /* A WINDOW HAS ALREADY BEEN TOLD WHAT TO SHOW. This applies the startup-view PREFERENCE, and
+       * the guard above only asks whether this page is the desktop — a window is not, so it
+       * qualified and every window opened on the start view instead of its own. Measured on real
+       * hardware three times: windows opened for `notes`, `files` and `music`, each reporting
+       * `viewOf` correctly and `VIEW: global`. It is the last of three separate places that set a
+       * view during boot (the others being the remembered view and the path route). */
+      /* THE LANDING DECISION, and a window makes it here too — suppressing the preference is not
+       * enough. Guarding the other paths without giving the window its own view left NOTHING
+       * setting one: `VIEW` stayed at its initial 'home' and every window showed the timeline. The
+       * measurement that found it: switchView was never called at all. */
+      const _win = _inWin() ? PCOSWin.viewOf() : '';
+      if(_win){ try{ switchView(_win); }catch(_){} }
+      else if(!_osHome && !_publicViewRequests){ switchView(_startView()); _onLandingView = true; }
     }
     // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just
     // logged in with a share still waiting). Self-guards on GUEST (prompts + keeps the stash) and on an
@@ -5062,7 +5064,7 @@
         if(c){ _routing=true; try{ openCommunity(c, true); } finally{ _routing=false; }
           _restoreNavScroll(st); return; }
       }
-      if(!_entityFromPath() && st && st.pcv && st.pcv!=='thread' && st.pcv!=='profile'){
+      if(!_inWin() && !_entityFromPath() && st && st.pcv && st.pcv!=='thread' && st.pcv!=='profile'){
         _routing = true;
         try{ switchView(st.pcv); }catch(_){ }
         finally{ _routing = false; }

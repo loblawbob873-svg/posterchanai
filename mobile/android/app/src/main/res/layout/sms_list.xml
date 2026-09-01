@@ -30,6 +30,17 @@
             android:textStyle="bold"
             android:letterSpacing="0.04" />
 
+        <!-- BACKUP. The launcher's Texts reads the phone's own store, so without this there was
+             nothing on the screen to say whether any of it had reached the archive, and no way to
+             ask it to try — the features people knew from PosterChan → Texts simply were not here.
+             See ThreadListActivity.showBackup(). -->
+        <ImageView
+            android:id="@+id/pc_sms_backup"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:padding="10dp"
+            android:contentDescription="@string/sms_backup" />
+
         <ImageView
             android:id="@+id/pc_sms_search_btn"
             android:layout_width="42dp"

@@ -87,6 +87,9 @@ public class ThreadListActivity extends PcActivity {
         findViewById(R.id.pc_sms_new).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { compose(); }
         });
+        findViewById(R.id.pc_sms_backup).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showBackup(); }
+        });
         findViewById(R.id.pc_sms_search_btn).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 boolean showing = search.getVisibility() == View.VISIBLE;
@@ -216,6 +219,7 @@ public class ThreadListActivity extends PcActivity {
         if (bar != null) bar.setBackground(Skin.bar(this, pal, false));
         title.setTextColor(pal.text);
         Skin.glow(title, pal);
+        icon(R.id.pc_sms_backup, R.drawable.ic_pc_cloud, pal.muted);
         icon(R.id.pc_sms_search_btn, R.drawable.ic_pc_search, pal.muted);
         icon(R.id.pc_sms_new, R.drawable.ic_pc_plus, pal.accent);
         findViewById(R.id.pc_sms_new).setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.16), true));
@@ -228,6 +232,60 @@ public class ThreadListActivity extends PcActivity {
         notice.setBackground(Skin.ghost(this, pal, pal.amber, false));
         notice.setTextColor(pal.text);
         if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    /**
+     * WHAT THE ARCHIVE HAS, AND HOW TO MAKE IT TRY AGAIN.
+     *
+     * Reported as "the launcher is missing features like sync and backup that the posterchan ->
+     * texts app uses". It was: this screen already NUDGES a sweep when it opens (see onCreate), but
+     * it showed nothing about the result and offered no way to ask again, so from the outside it
+     * was indistinguishable from a Texts app that backs nothing up. The web client has had both for
+     * as long as the archive has existed.
+     *
+     * Everything here is already recorded by SmsArchive — the high-water mark and the last pass's
+     * own sentence. Nothing is computed twice and nothing new is stored: this is the missing WINDOW
+     * onto it.
+     *
+     * `rescan()` clears the mark, which is the same deliberate "read the whole phone again" the web
+     * client's Re-scan does. It is a person asking, so it is unbounded by design; the sweep that
+     * follows still bounds each PASS, because this phone is in somebody's hand.
+     */
+    private void showBackup() {
+        long mark = 0L;
+        String last = "";
+        try { mark = SmsArchive.mark(this); last = SmsArchive.last(this); } catch (Throwable ignored) { }
+        StringBuilder msg = new StringBuilder();
+        if (mark > 0L) {
+            msg.append(getString(R.string.sms_backup_through,
+                    android.text.format.DateFormat.getDateFormat(this).format(new java.util.Date(mark))));
+        } else {
+            msg.append(getString(R.string.sms_backup_never));
+        }
+        /* THE LAST PASS'S OWN WORDS, when it left any. This is where "the background signer is
+         * switched off, so this phone has no relay connection to publish through" reaches somebody
+         * — sweepSms writes exactly that sentence and, until now, nothing ever showed it. */
+        if (last != null && !last.trim().isEmpty()) msg.append("\n\n").append(last.trim());
+        try {
+            new AlertDialog.Builder(this)
+                .setTitle(R.string.sms_backup_title)
+                .setMessage(msg.toString())
+                .setPositiveButton(R.string.sms_backup_now, new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        try { SignerRelayService.sweepSms(ThreadListActivity.this); } catch (Throwable ignored) { }
+                        say(getString(R.string.sms_backup_started));
+                    }
+                })
+                .setNeutralButton(R.string.sms_backup_rescan, new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        try { SmsArchive.rescan(ThreadListActivity.this); } catch (Throwable ignored) { }
+                        try { SignerRelayService.sweepSms(ThreadListActivity.this); } catch (Throwable ignored) { }
+                        say(getString(R.string.sms_backup_rescanning));
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+        } catch (Throwable ignored) { }
     }
 
     /** Whether the last read was REFUSED rather than answered empty. See draw(). */

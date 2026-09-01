@@ -235,15 +235,33 @@ def test_a_window_never_claims_folder_sync_ownership():
 
 # ------------------------------------------------------------------ the client side
 
-def test_a_window_does_not_boot_a_second_client():
-    """The point of sharing the opener's objects. Booting the client again per window would mint
-    another relay pool, another subscription set and another signer for every window on screen."""
+def test_a_window_boots_the_client_but_never_the_desktop():
+    """STAGE 2. A window runs the real client — that is what makes its view byte-identical to the
+    web — but it must not `PCOS.restore()`, which turns the page into the windowed shell. Doing
+    that inside a window would draw a whole second desktop, icons and taskbar, inside it."""
     boot = APP_JS[APP_JS.index("  async function boot(){"):]
-    boot = boot[:boot.index("_bootCfg")]
-    assert "PCOSWin.isWindow()" in boot
-    assert "_bootAsWindow" in boot
-    assert boot.index("PCOSWin.isWindow()") < boot.index("fetch('/client/config')") \
-        if "fetch('/client/config')" in boot else True
+    boot = boot[:boot.index("// ---------- auth UI ----------")]
+    assert "PCOSWin.isWindow()" in boot and "_asWindow = true" in boot
+    restore = [l for l in boot.splitlines() if "PCOS.restore()" in l]
+    assert restore, "the desktop restore has moved — re-read this test"
+    assert all("!_asWindow" in l for l in restore), (
+        "a window would restore the desktop shell inside itself: " + restore[0].strip()[:90])
+
+
+def test_a_window_lands_on_the_view_it_was_opened_for():
+    """Without this it lands on the timeline like any other page, and every window is the same
+    window. Gated on isWindow() so no existing boot path moves — a speculative landing guard once
+    broke the APK, because applyInstanceGating can switchView during boot."""
+    route = APP_JS[APP_JS.index("  async function routeFromPath(){"):]
+    route = route[:route.index("const e = _entityFromPath();")]
+    assert "_inWin()" in route and "PCOSWin.viewOf()" in route
+    assert "switchView(v)" in route
+
+
+def test_a_window_shows_no_sidebar_desktop_or_mobile_nav():
+    """One view per window: the window manager is how you reach the others now."""
+    for sel in ("html.pc-oswin .sidebar", "html.pc-oswin .mobilenav", "html.pc-oswin #os-root"):
+        assert sel in CSS, f"{sel} is not hidden in a window"
 
 
 def test_the_window_boot_cannot_take_the_desktop_down_with_it():
@@ -261,14 +279,77 @@ def test_the_page_loads_oswin_before_the_client():
     assert PAGE.index("oswin.js") < PAGE.index("client/app.js")
 
 
-def test_every_class_the_window_draws_is_styled():
-    """The bug this repo keeps paying for: markup whose classes the stylesheet never defines renders
-    as unstyled browser default. It shipped in the office save sheet earlier today."""
-    body = APP_JS[APP_JS.index("async function _bootAsWindow"):]
-    body = body[:body.index("async function boot(")]
-    for cls in sorted(set(re.findall(r'class="([a-z][a-z0-9 _-]*)"', body))):
-        for one in cls.split():
-            if one in ("muted", "small"):
-                continue
-            assert f".{one}" in CSS, f"the window draws .{one}, which the stylesheet never defines"
-    assert ".pc-oswin" in CSS
+def test_the_window_only_hides_chrome_and_never_the_view():
+    """The window CSS is allowed to remove the shell's furniture and nothing else. Hiding a content
+    container here would be a blank window with no error — the same shape as the unstyled office
+    sheet earlier, one file over."""
+    block = CSS[CSS.index("html.pc-oswin .sidebar"):]
+    block = block[:block.index(".oswin-probe")]
+    hidden = re.findall(r"html\.pc-oswin ([#.][a-z0-9-]+)", block)
+    assert hidden, "the window stylesheet no longer hides anything"
+    for sel in hidden:
+        assert sel in (".sidebar", ".mobilenav", "#os-root", "#app", ".main"), (
+            f"a window hides {sel}, which is not shell furniture — check it is not the view itself")
+
+
+def test_a_window_is_not_given_the_desktops_remembered_view():
+    """MEASURED ON REAL HARDWARE, twice, and the reason the first two attempts looked like the
+    window "ignoring" its view: it opened for `notes`, reported `viewOf: notes`, and then reported
+    `VIEW: global`.
+
+    A window shares the desktop's saved state, and the restore path switches to the REMEMBERED view
+    (`st.pcv`). So every window briefly showed what it was asked for and then switched itself to
+    whatever the desktop had last been looking at — one window's worth of content, repeated."""
+    src = APP_JS[APP_JS.index("if(!_inWin() && !_entityFromPath() && st && st.pcv"):]
+    src = src[:src.index("_restoreNavScroll(st);")]
+    assert "switchView(st.pcv)" in src, "the remembered-view restore has moved — re-read this test"
+    guard = APP_JS[APP_JS.index("function _inWin(){"):]
+    guard = guard[:guard.index("\n")]
+    assert "PCOSWin.isWindow()" in guard and "catch" in guard, (
+        "the window check is unguarded — a throw here runs during boot on every client")
+
+
+def test_the_window_identity_survives_the_url_being_rewritten():
+    """THE OTHER HALF, also measured on hardware: `location.search` was EMPTY a second after the
+    window opened, because the client rewrites its own URL while routing. Asked of the URL, the
+    window then reported that it was not a window — it kept its title and landed on the timeline.
+    The answer is latched the first time it is asked, before anything can navigate."""
+    src = OSWIN.read_text(encoding="utf-8")
+    fn = src[src.index("function isWindow(){"):src.index("function viewOf(){")]
+    assert "__PC_WIN_STATE__" in fn, "isWindow() reads only the URL again"
+    assert "_latch()" in fn, "nothing records the answer before the URL can change"
+    view = src[src.index("function viewOf(){"):src.index("function _latch(){")]
+    assert view.index("__PC_WIN_STATE__") < view.index("URLSearchParams"), (
+        "viewOf() prefers the URL over the latch, so it goes blank on the first navigation")
+
+
+def test_the_start_view_preference_does_not_reach_a_window():
+    """THE THIRD of three places that set a view during boot, and the one that actually won.
+
+    It applies the startup-view PREFERENCE, guarded only on "is this page the desktop" — and a
+    window is not the desktop, so it qualified. Measured on hardware three times: windows opened
+    for notes, files and music, each reporting the right `viewOf` and `VIEW: global`.
+
+    All three now exclude a window, and this asserts all three together — fixing two of them is
+    indistinguishable from fixing none."""
+    starts = APP_JS[APP_JS.index("if(_win){ try{ switchView(_win); }catch(_){} }"):]
+    assert "switchView(_startView())" in starts[:200], "the preference path is gone entirely"
+    for where, needle in (
+            ("the startup preference", "const _win = _inWin() ? PCOSWin.viewOf() : '';"),
+            ("the remembered view", "if(!_inWin() && !_entityFromPath() && st && st.pcv"),
+            ("the path route", "if(_inWin()){ const v = PCOSWin.viewOf();")):
+        assert needle in APP_JS, f"{where} no longer excludes a window"
+    # One helper, guarded once — three copies of the same try/catch is how two of them drift.
+    assert "function _inWin(){" in APP_JS and "catch(_){ return false; }" in APP_JS
+
+
+def test_suppressing_the_other_paths_is_not_enough_on_its_own():
+    """The failure this cost two rounds to find: guarding every path that sets a view left NOTHING
+    setting one, so `VIEW` stayed at its initial value and every window showed the timeline anyway.
+    The window must be GIVEN its view, not merely spared the others."""
+    block = APP_JS[APP_JS.index("const _win = _inWin() ? PCOSWin.viewOf() : '';"):]
+    block = block[:block.index("_onLandingView = true; }") + 24]
+    assert "PCOSWin.viewOf()" in block, "the window is no longer told which view to show"
+    assert "switchView(_win)" in block
+    assert block.index("switchView(_win)") < block.index("switchView(_startView())"), (
+        "the preference is applied before the window's own view, so it wins")

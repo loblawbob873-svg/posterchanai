@@ -9822,6 +9822,15 @@ audio.sms-att-img{min-width:220px}
    inherits the desktop's layout. Stage 1 draws only the probe below; stage 2 renders the view. */
 html.pc-oswin, html.pc-oswin body{height:100%;margin:0;background:var(--bg)}
 html.pc-oswin body{overflow:auto}
+/* A window is ONE view: no sidebar to navigate with, no mobile nav bar, no desktop behind it. The
+   window manager is how you get to the others now — that is the entire point of it being a real
+   window. The view itself is byte-identical to the web, which is the promise this rewrite made. */
+html.pc-oswin .sidebar,
+html.pc-oswin .mobilenav,
+html.pc-oswin #os-root{display:none!important}
+html.pc-oswin #app{padding:0;margin:0}
+html.pc-oswin .main{margin:0;max-width:none;width:100%}
+
 .oswin-probe{display:flex;flex-direction:column;justify-content:center;gap:var(--sp-2);
   min-height:100vh;padding:var(--sp-5);text-align:center;color:var(--text)}
 .oswin-probe h2{margin:0;font-size:20px}
