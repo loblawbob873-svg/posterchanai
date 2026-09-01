@@ -121,6 +121,10 @@
     /* The one thing that offers a refused attachment to the phone again. Held for this pass only,
      * and released in `finally` so a failure cannot leave the sweep permanently churning. */
     _retryRefused = true;
+    /* Releases the SCREEN's remembered failures too, not just the archive's: the broken
+     * thumbnails in the open conversation re-attempt on the next paint instead of being answered
+     * from the 15-second cache. A person asking outranks fifteen seconds of memory. */
+    attForgetFailures();
     try{
       await loadFromPhone();
       const r = await migrateLocalHistory();
@@ -138,6 +142,49 @@
    * distinction `resend` draws in folder sync: a name is somebody answering the question, never
    * another inference from the same evidence. */
   let _retryRefused = false;
+  /* AND A REFUSAL THAT NOBODY EVER PRESSES ANYTHING ABOUT MUST STILL HEAL.
+   *
+   * Reported as "Texts on webui/desktop still showing Photo · the phone answered with no bytes and
+   * no reason, despite it working before for that photo". Those words are the PHONE's, recorded on
+   * the archived document at capture time and replayed on every other device for ever — the
+   * picture is fine on the handset, the archive simply never got bytes for it.
+   *
+   * `settled` above is what makes that permanent, and it was right about the thing it was written
+   * for: re-offering every refused attachment on every sweep is one relay write per refused picture
+   * per pass, 1,284 of them on the reporting account. But the comment eight lines up says the
+   * provider "is allowed to refuse the second time even though it answered the first" — refusals
+   * here are TRANSIENT — and the only thing that ever tried again was a button on the phone, while
+   * the failure is only visible on a desktop. Nothing connected the two.
+   *
+   * The cost argument bounds the work; it does not require giving up. Each sweep re-offers a few
+   * refused documents, so a transient refusal heals on its own within a handful of visits, a
+   * permanent one is retried cheaply and rarely, and the pass costs a dozen extra writes instead of
+   * 1,284. `rescan` still means "all of them, now", because a person asking is a different thing
+   * from a timer asking. */
+  const REFUSED_RETRY_PER_SWEEP = 12;
+  const _refusedRetryDocs = new Set();
+  let _refusedRetrySpent = 0;
+  function _resetRefusedRetryBudget(){ _refusedRetryDocs.clear(); _refusedRetrySpent = 0; }
+  /* Per DOCUMENT, not per part: a message with three refused pictures is one retry, and the set
+   * makes the answer stable no matter how many times the predicate is asked about it this pass —
+   * `needsPartUpgrade` runs once per part and can be called twice for the same row. */
+  /* A SIZE CEILING IS NOT A REFUSAL. `tooBig` is a real file the bridge cannot carry and its
+   * answer is the same every time, so re-reading a 20 MB part on every sweep costs a provider read
+   * to learn what its own `bytes` already said. Only a part that could FIT is worth offering
+   * again — the difference between a transient no and a permanent one. */
+  function _partWorthRetrying(x){
+    if(!x || !String(x.err || '')) return false;
+    if(_retryRefused) return true;   // a person asking overrides the size rule, as it does the budget
+    return !(Number(x.bytes) > WHOLE_BYTES);
+  }
+  function _mayRetryRefused(doc){
+    if(_retryRefused) return true;
+    const id = String(doc || '');
+    if(!id) return false;
+    if(_refusedRetryDocs.has(id)) return true;
+    if(_refusedRetrySpent >= REFUSED_RETRY_PER_SWEEP) return false;
+    _refusedRetrySpent++; _refusedRetryDocs.add(id); return true;
+  }
   /* A cancelled outbox command is its own tombstone. Relay pools and the local Store can hand us
    * an older request after the newer cancellation (including in a later refresh); without keeping
    * this watermark, that stale request recreates a sending bubble and can reach drainOutbox again. */
@@ -1169,6 +1216,10 @@
          * shows "Photo · <what the provider said>" instead of an empty bubble, which is the truth
          * and is also the only way anyone can see how many are affected. */
         let sha = '';
+        /* Reaching here with a recorded refusal MEANS this part is being re-offered — the sweep's
+         * retry budget or `rescan` admitted it. Drop the remembered failure first or the read is
+         * answered from memory and the retry is a no-op. */
+        if(String(p.err || '')) attForget(Number(p.id) || 0);
         try{ sha = await archivePart(p); }
         catch(e){
           /* A FAILED RE-READ MUST NEVER ERASE A COPY WE ALREADY STORED.
@@ -1400,6 +1451,8 @@
    * is local to one handset, so a restored backup renumbers every message and would republish the
    * entire history. The mark only ever moves FORWARD and only once a batch has actually landed. */
   async function mirror(opts){
+    // One retry budget per sweep — see _mayRetryRefused.
+    _resetRefusedRetryBudget();
     const P = plug('list');
     /* PUBLISHING NEEDS TO READ, NOT TO BE THE DEFAULT APP — and that was the difference between an
      * archive and nothing at all.
@@ -1472,6 +1525,49 @@
       try{ rows = ((await P.list({ since: querySince, limit: (opts && opts.limit) || 400 })) || {}).messages || []; }
       catch(_){ return { published:0, skipped:'could not read the phone' }; }
       rows = await withMmsParts(rows, querySince, (opts && opts.limit) || 400);
+      /* AND A FEW OF THE ONES THAT WERE REFUSED, WHICH THIS QUERY CAN NEVER REACH.
+       *
+       * A refused attachment is recorded and the mark moves past it, so the message sits BEHIND the
+       * high-water mark for ever: `since` reads forwards and the full-migration branch stops running
+       * once the completion latch is set. That is the whole of "it worked before for that photo" —
+       * the picture is fine on the phone, the archive holds the refusal, and nothing was ever going
+       * to look at it again. `_mayRetryRefused` bounds how many, so this costs a handful of reads a
+       * sweep rather than one per refused picture. */
+      /* A PROVIDER PART ID is the requirement, not `_local`: by the time a refusal has been
+       * archived the message in memory is the merged document, and asking for `_local` here
+       * filtered out precisely the rows this is for. The id is what makes it re-readable, and only
+       * a handset ever has one — this branch already returned if the phone could not be listed. */
+      const worthRetrying = x => _partWorthRetrying(x) && Number(x.id);
+      const retryable = Array.from(S.msgs.values())
+        .filter(m => m && !m.gone && !_migrationFailed.has(m.doc)
+                     && (m.parts || []).some(worthRetrying))
+        .sort((a, b) => (b.date || 0) - (a.date || 0))
+        .filter(m => _mayRetryRefused(m.doc));
+      if(retryable.length){
+        /* A row the timeline query DID return comes back BARE — `list` carries no parts, which is
+         * what `withMmsParts` exists to fix, and it only fills rows inside the window it was given.
+         * So a refused message inside that window was republished with no attachment at all, losing
+         * even the recorded reason, while one outside it was never seen. Both are the same repair:
+         * give the row the part ids the merged document still holds. */
+        /* AND FORGET THE REMEMBERED REFUSAL, HERE, WHERE THE DECISION IS MADE. The row the phone
+         * just handed back is a FRESH provider row and carries no `err` — the refusal is on the
+         * archived document — so a guard further down that looks at the row's own error never
+         * fires, `partData` answers from the 15-second failure cache, and the retry completes
+         * without the plugin being called once. */
+        for(const m of retryable)
+          for(const x of (m.parts || []))
+            if(worthRetrying(x)) attForget(Number(x.id));
+        const byDoc = new Map(rows.map(r => [String((r && r.doc) || ''), r]));
+        for(const m of retryable){
+          const row = byDoc.get(String(m.doc || ''));
+          if(!row) rows.push(m);
+          /* USABLE parts, not merely present ones. A bare row can carry attachment placeholders
+           * with no provider id, and `partData` answers those from the message itself without ever
+           * asking the phone — so the retry read no bytes, called nothing, and recorded the same
+           * refusal again. An id is the only thing that makes a part re-readable. */
+          else if(!(row.parts || []).some(x => x && Number(x.id))) row.parts = m.parts;
+        }
+      }
     }
 
     let n = 0, top = since, drive = null, archiveError = '', rowErrors = 0;
@@ -2302,7 +2398,9 @@
      * sweep republishes the same document on every visit for ever — one relay write per refused
      * picture per pass, which on the reporting account is 1,284 of them. `rescan` clears the
      * record deliberately, so a person can still say "try again"; nothing else does. */
-    const settled = p => !!String(p.err || '') && !_retryRefused;
+    /* Size first, so a part that can never fit does not spend a retry from the budget. */
+    const settled = p => !!String(p.err || '')
+                      && (!_partWorthRetrying(p) || !_mayRetryRefused(phone && phone.doc));
     return dst.length !== src.length || dst.some(p => !settled(p) && (
       !/^[0-9a-f]{64}$/i.test(String(p.sha || '')) ||
       (isImage(p.ct) && !p.nothumb && !/^[0-9a-f]{64}$/i.test(String(p.thumb || '')))));
@@ -2746,6 +2844,20 @@
    * different questions and were the same number; see the fallback in partData. `WHOLE_BYTES`
    * matches SmsPlugin.MAX_ATTACHMENT, which is what actually bounds the answer. */
   const CHUNK_BYTES = 768 * 1024, WHOLE_BYTES = 12 * 1024 * 1024;
+
+  /* FORGETTING ONE, for the paths that have DECIDED to read a part again. The cache below answers
+   * a failed read from memory for 15 seconds, which is right while a conversation paints and wrong
+   * the moment something deliberately re-offers a refused attachment: the re-read never reaches the
+   * provider and the retry silently does nothing. That defeated `rescan` pressed promptly — the one
+   * action whose whole purpose is "try it again now". */
+  function attForget(id){
+    const old = ATT.get(id);
+    ATT.delete(id);
+    if(old && old.url) try{ URL.revokeObjectURL(old.url); }catch(_){ }
+  }
+  function attForgetFailures(){
+    for(const [k, v] of Array.from(ATT.entries())) if(v && v.why) attForget(k);
+  }
 
   function attRemember(id, v){
     if(v) v._at = Date.now();

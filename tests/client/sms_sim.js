@@ -479,6 +479,13 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step === 'mirror'){ await S.mirror(); }
     else if(step === 'drain'){ await S.drainOutbox(); }
     else if(step === 'allow'){ refusals = -1; }
+    /* THE PROVIDER STOPS REFUSING. A refusal here is transient by nature — the same part that
+       answered once may refuse the next read and back again — so a test about healing needs to be
+       able to say "and now it works", which no static fixture can. */
+    else if(step === 'allowParts'){
+      for(const k of Object.keys(opt.parts || {})) delete opt.parts[k].refuse;
+      calls.push(['allowParts']);
+    }
     // Resume the real foreground handler. This is deliberately not a direct migrateAll call: the
     // regression was that visibility only ran the recent timestamp sweep after an interrupted
     // historical migration, so the older tail could never be reached again.
@@ -680,6 +687,9 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
                                    parts: t.msgs.map(m => (m.parts || []).length),
                                    partIds: t.msgs.map(m => (m.parts || []).map(p => Number(p.id)||0)),
                                    partShas: t.msgs.map(m => (m.parts || []).map(p => String(p.sha||''))),
+                                   // WHY a part has no bytes, which is the whole subject of the
+                                   // refused-attachment tests and was invisible from out here.
+                                   partErrs: t.msgs.map(m => (m.parts || []).map(p => String(p.err||''))),
                                    pending: t.msgs.map(m => !!m.pending),
                                    failed: t.msgs.map(m => !!m.failed) })),
     /* A PICTURE MESSAGE THE ARCHIVE CARRIES NO PICTURE FOR — the shape 1,284 of one real
