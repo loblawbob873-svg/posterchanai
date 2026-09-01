@@ -1504,6 +1504,38 @@
     return { x, y, w, h };
   }
 
+  /* HAND THIS WINDOW TO THE COMPOSITOR.
+   *
+   * The desktop is one tiled sway window and every native app floats above it, so a PosterChan
+   * window can never be drawn in front of Telegram or Firefox — sway paints floating over tiled,
+   * always. Everything this desktop does to fake "bring to front" (parking the native surface,
+   * leaving a screenshot in its frame) exists because of that, and it has been reported as a bug
+   * three separate ways in one day: "swallowing windows", "sticking", "glitch".
+   *
+   * A window that is a REAL toplevel has none of that problem. sway stacks it with everything else,
+   * clicking raises it, alt-tab reaches it. This is the opt-in door: the window you choose becomes
+   * a real one, and the in-page frame closes behind it.
+   *
+   * Deliberately per-window rather than a switch for everything. The in-page windows carry the
+   * folder/EXTRAS/Messages-tab/monitor-handoff machinery, and moving all of it at once is how a
+   * desktop rewrite produces a black screen. This moves one window, and nothing else changes. */
+  function popOut(w){
+    if(!w) return null;
+    let child = null;
+    const view = String((w.appView || w.view || '').replace(/^doc:/, ''));
+    try{
+      const r = w.el ? w.el.getBoundingClientRect() : null;
+      child = window.PCOSWin && PCOSWin.open(view, w.label || view,
+                { width: r && r.width, height: r && r.height });
+    }catch(_){ child = null; }
+    /* KEEP THE FRAME IF THE WINDOW DID NOT OPEN. A pop-out that closes the only copy of what you
+     * were looking at and then fails is the worst possible outcome, and `open()` answers null for
+     * every reason it cannot: no compositor, the flag off, a refused window. */
+    if(!child){ try{ PC().toast('this build cannot open a separate window'); }catch(_){ } return null; }
+    try{ closeWin(w); }catch(_){ }
+    return child;
+  }
+
   function openApp(view, label, icon, render, noFeed, direct){
     if(view && view.indexOf('folder:') === 0 && !_inFolder){
       const f = layout().folders.find(x => 'folder:' + x.key === view);
@@ -1560,6 +1592,7 @@
          <span class="osw-title">${enc(label)}</span>
          <span class="osw-btns">
            <button class="osw-b osw-ai" data-w="ai" draggable="true" title="Ask AI about this window" aria-label="Ask AI about this window">&#10024;</button>
+           <button class="osw-b osw-pop" data-w="pop" title="Open as a real window" aria-label="Open as a real window">&#10696;</button>
            <button class="osw-b" data-w="min" title="Minimise" aria-label="Minimise">–</button>
            <button class="osw-b" data-w="max" title="Maximise" aria-label="Maximise">▢</button>
            <button class="osw-b osw-x" data-w="close" title="Close" aria-label="Close">✕</button>
@@ -1587,10 +1620,18 @@
       e.stopPropagation();
       const a = b.dataset.w;
       if(a === 'ai') toggleWindowAI(w, b, e);
+      else if(a === 'pop') popOut(w);
       else if(a === 'close') closeWin(w);
       else if(a === 'max') toggleMax(w);
       else minimise(w);
     });
+    /* THE POP-OUT is only offered where the compositor can actually take it. In a browser tab or
+     * the APK there is no such thing as a window, and a control that does nothing is worse than an
+     * absent one. */
+    { const pop = $('.osw-b[data-w="pop"]', el);
+      let can = false;
+      try{ can = !!(window.PCOSWin && PCOSWin.enabled()); }catch(_){ }
+      if(pop && !can) pop.remove(); }
     const maxBtn = $('.osw-b[data-w="max"]', el);
     const aiBtn = $('.osw-ai', el);
     aiBtn.ondragstart=e=>{_aiDragWin=w;try{e.dataTransfer.setData('application/x-pc-ai-window',String(w.id));e.dataTransfer.effectAllowed='link';}catch(_){}};
@@ -2826,7 +2867,7 @@
         /* Preserve application-requested fullscreen. Turning every new surface floating in place()
          * silently cancelled a game's fullscreen/pointer lock and let the mouse escape to another
          * monitor. A fullscreen client needs no HTML hole until it exits fullscreen itself. */
-        if(it.w.nativeFullscreen){
+        if(it.w.nativeFullscreen || it.w.nativeGame){
           it.w.el.classList.add('native-fullscreen-frame');
           if(_natSent.get(it.native)!=='fullscreen'){
             try{ await pcWM.fullscreen(it.native,true); _natSent.set(it.native,'fullscreen'); }
@@ -2988,6 +3029,33 @@
 
   /* Adopt a compositor window into a PosterChan window. Called when one appears, whether the
    * launcher started it or the app opened a second window of its own. */
+  /* A GAME IS NOT A WINDOW TO PLACE.
+   *
+   * Reported as: "gaming is broken on desktop, cyberpunk 2077, loads in small window, does not
+   * capture mouse, game loads full screen then when you click, goes to desktop and loads cyberpunk
+   * in small window."
+   *
+   * Every native window is adopted into a PosterChan frame and then PLACED into its body. For a
+   * game that is a race it always loses: the surface maps, this desktop sizes it to a frame, and
+   * sway's own `for_window [class="^steam_app_.*"] fullscreen enable` arrives after — so the game
+   * opens small. The comment on the fullscreen branch in the placement pass already records what
+   * placing one costs: "Turning every new surface floating in place() silently cancelled a game's
+   * fullscreen/pointer lock and let the mouse escape to another monitor." That is the missing mouse
+   * capture, and the drop back to a small window on the next focus change.
+   *
+   * `nativeFullscreen` cannot cover it, because it is only true once the game has ALREADY got
+   * fullscreen — the damage happens in the window before that. The class does: Steam sets
+   * `steam_app_<id>` and sway's own config keys its rule on exactly that string. gamescope is the
+   * other wrapper a game arrives inside.
+   *
+   * The frame is still adopted, so the game keeps its taskbar button and can be switched to. It is
+   * simply never sized, moved, or parked by us again. */
+  const _GAME_APP = /^(?:steam_app_\d+|gamescope)/i;
+  function isGameApp(nw){
+    try{ return _GAME_APP.test(String((nw && (nw.app || nw.class)) || '')); }
+    catch(_){ return false; }
+  }
+
   function adoptNative(nw){
     if(!nw || nw.id == null) return null;
     const id=Number(nw.id), view='native:'+id;
@@ -2995,7 +3063,7 @@
     if(w) return w;
     w=openApp(view, nw.title||nw.name||nw.app||'App', '#i-window', null, true, true);
     if(!w) return null;
-    w.native=id; w.nativeFullscreen=!!nw.fullscreen; w.machineApp=nw;
+    w.native=id; w.nativeFullscreen=!!nw.fullscreen; w.nativeGame=isGameApp(nw); w.machineApp=nw;
     w.el.classList.add('osw-native');
     /* Stable identity for accessibility, diagnostics and exact window actions.  Matching a frame
      * by title or by "the first Firefox" is unsafe when two profiles or Telegram are open: a test
@@ -3038,7 +3106,30 @@
       _nativeDecorated.add(id);
       Promise.resolve(pcWM.decorate(id)).catch(()=>_nativeDecorated.delete(id));
     }
-    for(const r of rows) if(!nativeWins().some(w=>Number(w.native)===Number(r.id))){
+    /* WHO OWNS A NATIVE WINDOW — the compositor, or us.
+     *
+     * Hosting Firefox and Telegram inside PosterChan frames is why this desktop keeps behaving in
+     * ways no window manager does, and every one of these was reported separately:
+     *
+     *   * "firefox window border goes behind telegram" — the CONTENT is a floating sway surface and
+     *     the FRAME is drawn by this shell, which is the TILED window underneath. sway paints
+     *     floating over tiled, so a window's own border is covered by any other app, even while it
+     *     is the one you are using. Two layers for one window; nothing in z-order can fix it.
+     *   * "telegram is swallowing windows", "sticking", "glitch" — the parking/screenshot machinery
+     *     that exists only to fake "bring to front" against that same constraint.
+     *   * "firefox is colliding with steam and fighting for focus" — two owners of focus.
+     *   * a game placed into a frame before it can go fullscreen.
+     *
+     * With sway owning them the border is drawn on the same layer as the content, stacking is just
+     * stacking, focus has one owner, and nothing places or parks anything. They keep a taskbar
+     * button either way: `nativeTasks` is the path for windows we do not host, and it already
+     * carries the icon, focus/minimise toggle, maximise and close.
+     *
+     * The frames are still here and one flag away, because they are what makes a hosted app look
+     * like part of the desktop — the thing this trades off. */
+    const _hostNative = (()=>{ try{ return localStorage.getItem('pc_os_host_native') === '1'; }
+                               catch(_){ return false; } })();
+    if(_hostNative) for(const r of rows) if(!nativeWins().some(w=>Number(w.native)===Number(r.id))){
       adoptNative(r); changed=true;
     }
     /* ADOPTION MUST NOT INVENT THE STACKING ORDER.
@@ -3073,6 +3164,7 @@
       }
       if(r.title && r.title!==w.title){ w.title=r.title; const t=$('.osw-title',w.el); if(t)t.textContent=r.title; changed=true; }
       w.nativeFullscreen=!!r.fullscreen;
+      if(isGameApp(r)) w.nativeGame=true;
     }
     /* Adopted apps already have an ordinary PosterChan task button through `wins`. */
     nativeTasks=rows.filter(r=>!nativeWins().some(w=>Number(w.native)===Number(r.id)));

@@ -258,17 +258,59 @@
   }
   async function render(force){
     if(!PC||PC.VIEW!=='wallet')return;
-    /* CLAIM THE FEED BEFORE THE FIRST AWAIT. `#feed` is shared by every screen, and
-     * `renderModuleView` only draws a spinner when the module GLOBAL is missing — ours is loaded by
-     * a script tag, so it calls straight in here and nothing has cleared the previous view.
-     * Awaiting probe() first therefore leaves the LAST view's DOM on screen for the whole probe:
-     * opening Monero Wallet from Texts showed "Search messages" and "Loading messages…" under the
-     * wallet's nav item, and stayed that way for as long as the wallet backend took to answer —
-     * for ever when monerod is unreachable, which is the default on a node with no wallet.
-     * Same rule as the rest of the client: paint what this view is about before any network await. */
-    const f=PC.$&&PC.$('#feed'); if(f) f.innerHTML='<div class="spinner"></div>';
+    /* CLAIM THE FEED BEFORE THE FIRST AWAIT, AND CLAIM IT WITH WHAT WE ALREADY KNOW.
+     *
+     * `#feed` is shared by every screen and `renderModuleView` only draws a spinner when the module
+     * GLOBAL is missing — ours is loaded by a script tag, so it calls straight in here and nothing
+     * has cleared the previous view. Awaiting probe() first therefore left the LAST view's DOM on
+     * screen for the whole probe: opening Monero Wallet from Texts showed "Search messages" and
+     * "Loading messages…" under the wallet's nav item, for as long as the backend took to answer.
+     *
+     * Painting a SPINNER fixed that and introduced the next report — "on desktop I alt-tab to
+     * monero then monero wallet black screen with circle". Re-entering the view blanked a wallet
+     * this device had already read and then waited on probe(), which is allowed 20 seconds and
+     * takes most of them while a just-restarted monerod reconnects.
+     *
+     * `state` is the last answer this page got, so alt-tab paints the balance you were looking at
+     * and updates it in place. The spinner is kept for the one case it is honest about: a view
+     * that has never been read, where there is nothing to show. */
+    const f=PC.$&&PC.$('#feed');
+    if(state) paint(state);
+    else if(f) f.innerHTML='<div class="spinner"></div>';
     const s=await probe(!!force);
-    if(PC.VIEW==='wallet')paint(s);
+    if(PC.VIEW!=='wallet')return;
+    paint(s);
+    _watch(s);
+  }
+
+  /* COME BACK ON ITS OWN — a restarted daemon is not a permanent verdict.
+   *
+   * Reported after `monerod` was restarted: the screen sat on "Local wallet unavailable — this
+   * device is in safe external-wallet mode" until somebody pressed Retry. Nothing was wrong by
+   * then; the wallet needs a moment to reconnect and the probe had simply asked once, during it.
+   * The wording makes it worse than a spinner would: "safe external-wallet mode" reads as a
+   * DECISION this device has taken, not as one failed request.
+   *
+   * Backed off so a node with genuinely no wallet — the default — costs a handful of requests and
+   * then one every half minute, and stopped the moment the view is left or the wallet answers. The
+   * Retry button stays: a person asking is still allowed to ask immediately. */
+  let _watchTimer=null, _watchDelay=0;
+  function _stopWatch(){ if(_watchTimer){ clearTimeout(_watchTimer); _watchTimer=null; } _watchDelay=0; }
+  function _watch(s){
+    _stopWatch();
+    if(s && s.available) return;                     // nothing to wait for
+    _watchDelay = Math.min(_watchDelay ? _watchDelay*2 : 3000, 30000);
+    _watchTimer = setTimeout(async ()=>{
+      _watchTimer=null;
+      if(!PC || PC.VIEW!=='wallet') return _stopWatch();   // left the screen: stop asking
+      const next=await probe(true);
+      if(!PC || PC.VIEW!=='wallet') return _stopWatch();
+      /* Only repaint when the ANSWER changed. Redrawing the same failure every few seconds throws
+       * away a scroll position and makes a quiet retry look like something going wrong. */
+      if(next && next.available) paint(next);
+      _watch(next);
+    }, _watchDelay);
+    try{ if(_watchTimer && _watchTimer.unref) _watchTimer.unref(); }catch(_){ }
   }
   async function tip(opts){
     const s=await probe(false);if(!s.available||!validAddress(opts&&opts.address,s.network))return false;

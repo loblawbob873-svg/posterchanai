@@ -760,6 +760,28 @@ def _idset(m: dict) -> set:
     return s
 
 
+def _is_reply(m: dict) -> bool:
+    """Does this message CLAIM to continue an existing conversation?
+
+    A message carrying `In-Reply-To` or `References` is a reply whose parent we may simply not hold
+    — a mailing list stripped the headers, or the parent is in a folder we did not read. Matching it
+    to a same-subject message is a repair.
+
+    A message with NEITHER is a ROOT, and two roots are never the same conversation however identical
+    their subjects. That is the difference the subject fallback did not draw: it grouped anything
+    sharing a subject, so four separate "Kraken" notices — each a root, each its own event, sent days
+    apart — arrived as one thread. Reported as "it grouped 4 different kraken emails into 1 thread /
+    it should be by thread/conversation".
+
+    Automated senders are exactly the case that breaks: they reuse one subject for months and never
+    reference anything, so subject alone says nothing about whether two of their messages belong
+    together. Header links still do all the real work above; this only bounds the fallback.
+    """
+    if (m.get("in_reply_to") or "").strip():
+        return True
+    return bool((m.get("references") or "").strip())
+
+
 def _build_thread(seed: dict, allmsgs: list) -> list:
     """Group a conversation: close the Message-ID/References/In-Reply-To reference graph, with a
     normalized-subject fallback when there are no usable headers. Cross-folder. Oldest→newest."""
@@ -783,7 +805,7 @@ def _build_thread(seed: dict, allmsgs: list) -> list:
         if ns:
             by = {}
             for m in allmsgs:
-                if _normsubj(m.get("subject", "")) == ns:
+                if _normsubj(m.get("subject", "")) == ns and _is_reply(m):
                     by[(m.get("folder"), m.get("uid"))] = m
             by[(seed.get("folder"), seed.get("uid"))] = seed
             msgs = list(by.values())

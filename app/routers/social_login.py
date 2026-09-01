@@ -323,6 +323,9 @@ async def google_callback(request: Request, code: str = None, state: str = None,
     user = db.query(User).filter(User.google_sub == sub).first()
     created = False
     if not user:
+        from app.services import registration_service
+        if not registration_service.enabled():
+            return _error_page(registration_service.closed_message(), 403)
         # Deliberately NOT matched on email: addresses are re-assignable and a match would hand an
         # existing identity to whoever holds the address today. A user who wants their existing key
         # reachable by Google links it themselves (see /google/link).
@@ -552,6 +555,9 @@ async def pleroma_callback(code: str = None, state: str = None, error: str = Non
                            "didn't finish answering. Please try signing in again in a moment.", 503)
     created = False
     if not user:
+        from app.services import registration_service
+        if not registration_service.enabled():
+            return _error_page(registration_service.closed_message(), 403)
         user = User(
             username=_unique_username(db, acct.split("@")[0]), email=None, password_hash="",
             is_admin=False, email_verified=True,

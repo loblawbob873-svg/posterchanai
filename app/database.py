@@ -291,6 +291,9 @@ def init_db():
         default_settings = {
             # Default UI theme for the Nostr web client (/client) for visitors who haven't picked one.
             "client_default_theme": "cyberpunk",
+            # Existing installations remain open until their operator deliberately closes them.
+            # settings_store seeds this into, and hydrates it from, the relay-backed settings doc.
+            "registration_enabled": "true",
             "site_logo_url": "",
             # Instance custom emoji packs (Admin → Emoji). The directory is
             # seeded so a fresh node just works once an operator drops a pack in; it stays empty

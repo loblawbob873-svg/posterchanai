@@ -167,6 +167,9 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
 
     created = False
     if not user:
+        from app.services import registration_service
+        if not registration_service.enabled():
+            raise HTTPException(status_code=403, detail=registration_service.closed_message())
         # derive a unique username from the npub; AI stays off until an admin grants it
         base = "npub_" + npub[4:16]
         username = base
@@ -1127,6 +1130,5 @@ def rrule_to_human(rrule: str) -> str:
         result = rrule  # Fallback to raw if unknown
 
     return result
-
 
 

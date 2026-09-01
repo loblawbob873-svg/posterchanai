@@ -220,10 +220,16 @@ async def render_client_shell(request: Request, db, meta: dict | None = None):
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme
     # Nostr-only deployments hide the AI tab + AI compose actions (POSTERCHANAI_NOSTR_ONLY=1).
     nostr_only = os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on")
+    from app.services import registration_service
     return _TEMPLATES.TemplateResponse("client.html",
         {"request": request, "ver": _static_version(), "build": _build_sha(),
          "secure": proto == "https", "meta": meta,
-         "nostr_only": nostr_only, "default_theme": _default_theme(db)},
+         "nostr_only": nostr_only, "default_theme": _default_theme(db),
+         # ONE parse, not two. This re-implemented registration_service.enabled()'s rule inline,
+         # which is the "two copies of one rule" shape this codebase keeps paying for — and it
+         # called .strip() on the raw value where the service defensively does str(value).strip(),
+         # so a non-string in the settings document raises AttributeError inside /client/config.
+         "registration_enabled": registration_service.enabled()},
         # This page sent NO Cache-Control, so Chromium (and the Electron desktop app, which loads the client
         # over HTTP) fell back to HEURISTIC caching and served a stale copy. The page is what carries the
         # `?v=<mtime>` tokens for the JS/CSS, so a stale page pins the whole client to OLD assets — deploys
@@ -3263,6 +3269,10 @@ async def follow_and_admit(db: Session, new_pk: str) -> tuple[bool, str]:
 @router.post("/signup-follow")
 async def signup_follow(data: SignupFollow, db: Session = Depends(get_db)):
     """Operator auto-follows + admits a freshly-created account so the WoT relay accepts its posts."""
+    from app.services import registration_service
+    if not registration_service.enabled():
+        return JSONResponse({"ok": False, "error": "registration_closed",
+                             "message": registration_service.closed_message()}, status_code=403)
     new_pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not new_pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
@@ -5908,6 +5918,12 @@ async def claim_nip05(data: ClaimNip05, request: Request, db: Session = Depends(
     existing = next((n for n, h in names.items() if h == pk), None)
     if existing:
         return JSONResponse({"ok": True, "name": existing, "nip05": f"{existing}@{domain}", "existing": True})
+    # This endpoint is part of public signup: do not let a bundled/stale client bypass a closed
+    # signup page and allocate a new server-owned name. Existing assignments above stay readable.
+    from app.services import registration_service
+    if not registration_service.enabled():
+        return JSONResponse({"ok": False, "error": "registration_closed",
+                             "message": registration_service.closed_message()}, status_code=403)
     base = _sanitize_nip05_name(data.name) or ("user" + pk[:8])
     name, taken = base, set(names.keys())
     i = 1

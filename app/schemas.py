@@ -103,6 +103,9 @@ class SettingsResponse(BaseModel):
     # hasn't picked their own theme. One of CLIENT_THEMES; the client falls back to "cyberpunk" (the
     # flagship bare-:root theme) if unknown. Stored in the relay like every other setting.
     client_default_theme: str = "cyberpunk"
+    # Master admission switch. Existing accounts can always sign in; only creation of a new User is
+    # refused. Stored in the operator's encrypted settings document like the rest of Admin → Site.
+    registration_enabled: str = "true"
     # Custom branding: URL of an image to replace the built-in PosterChan logo in the web client's
     # favicon, login splash and header (Admin → Site). Blank → the default logo. Stored in
     # the relay like every other setting.

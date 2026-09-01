@@ -353,3 +353,48 @@ def test_suppressing_the_other_paths_is_not_enough_on_its_own():
     assert "switchView(_win)" in block
     assert block.index("switchView(_win)") < block.index("switchView(_startView())"), (
         "the preference is applied before the window's own view, so it wins")
+
+
+# ------------------------------------------------------------------ stage 3: the pop-out
+
+OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+
+
+def _popout():
+    return OS_JS[OS_JS.index("  function popOut(w){"):OS_JS.index("  function openApp(view, label")]
+
+
+def test_a_window_can_be_handed_to_the_compositor():
+    """STAGE 3, opt-in. The in-page frame carries the folder, EXTRAS, Messages-tab and
+    monitor-handoff machinery; moving all of it at once is how a desktop rewrite produces a black
+    screen. This moves ONE window and changes nothing else."""
+    body = _popout()
+    assert "PCOSWin.open(" in body
+    assert "closeWin(w)" in body, "the in-page frame is left behind, so the window exists twice"
+
+
+def test_the_frame_survives_a_pop_out_that_did_not_open():
+    """`open()` answers null for every reason it cannot — no compositor, the flag off, a refused
+    window. Closing the frame first would destroy the only copy of what somebody was looking at."""
+    body = _popout()
+    assert body.index("if(!child)") < body.index("closeWin(w)"), (
+        "the frame is closed before the new window is known to exist")
+    assert "toast(" in body, "a refused pop-out says nothing"
+
+
+def test_the_control_is_absent_where_it_could_not_work():
+    """A browser tab and the APK have no such thing as a window. A button that does nothing is
+    worse than no button — that is the same lesson as the office save sheet's dead classes."""
+    wiring = OS_JS[OS_JS.index("const pop = $('.osw-b[data-w=\"pop\"]', el);"):]
+    wiring = wiring[:wiring.index("const maxBtn")]
+    assert "PCOSWin.enabled()" in wiring
+    assert "pop.remove()" in wiring
+
+
+def test_it_pops_the_view_the_window_is_actually_showing():
+    """`appView` is the tab a Messages frame is on; `view` is the frame's identity. Popping the
+    frame identity would open Direct Messages for a window showing Communities."""
+    body = _popout()
+    assert "w.appView || w.view" in body
+    assert "replace(/^doc:/, '')" in body, (
+        "a document window's view keeps its `doc:` prefix, which routes to nothing")

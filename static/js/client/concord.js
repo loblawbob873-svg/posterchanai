@@ -312,10 +312,51 @@
    * cache page used during cold launch. */
   const MAX_PAINTED_MESSAGES=300;
   function paintedMessages(room){const all=activeMessages(room);return all.length>MAX_PAINTED_MESSAGES?all.slice(-MAX_PAINTED_MESSAGES):all;}
+  /* WHO IS IN THIS ROOM — the people it KNOWS about, not only the ones who have spoken.
+   *
+   * This read message authors and nothing else, so a member who had not posted (or whose posts were
+   * not in the loaded history) did not exist: they were absent from the Members pane, absent from
+   * the call picker, and — the reported one — impossible to @-mention, because the autocomplete had
+   * no candidate to offer. "Concord: user tagging still not working, I want to @ tab autocomplete
+   * and it notifies the user properly": Tab and the `p`/`P` tags were both already there and both
+   * already correct. There was simply nobody in the list to complete TO.
+   *
+   * The room's own control document carries the answer: `controlPubkeys` are its admins and each
+   * channel's `streamPubkeys` are the keys allowed to write to it. Message authors stay in the set
+   * — a room whose control view has not loaded yet must not lose the people who are visibly talking
+   * in it — so this only ever ADDS.
+   *
+   * Cached per control-view generation because `drawMentions` calls it on every keystroke, and
+   * `inspectControl` re-walks the wraps each time. */
+  /* `var`, not `const`: `roomParticipants` is a hoisted function declaration and is reachable from
+   * render paths that run before this line would have been evaluated. A `const` there is in its
+   * temporal dead zone at that moment, so the first call throws ReferenceError — and the callers
+   * (the call picker, the Members pane, the mention list) all swallow or propagate that as "no
+   * participants", which looks exactly like the bug this cache was added to speed up. */
+  var _partsCache=new Map();
   function roomParticipants(room,viewerPubkey=''){
-    return [...new Set([viewerPubkey,...channelsOf(room).flatMap(channel=>
-      testMessages(channelStoreId(room,channel.name)).map(message=>message&&message.pubkey)
-    )].filter(Boolean))];
+    const fromMessages=channelsOf(room).flatMap(channel=>
+      testMessages(channelStoreId(room,channel.name)).map(message=>message&&message.pubkey));
+    let known=[];
+    try{
+      const loadKey=room&&(room.communityId||room.naddr),
+            bundle=room&&room.cord&&room.cord.bundle,
+            reader=window.PosterCordReader,
+            wraps=loadKey?roomControls.get(loadKey):null;
+      if(reader&&reader.inspectControl&&bundle&&loadKey){
+        const gen=loadKey+':'+((wraps&&wraps.length)||0), hit=_partsCache.get(gen);
+        if(hit) known=hit;
+        else{
+          const view=reader.inspectControl(bundle,wraps||[]);
+          known=[...(view&&view.controlPubkeys||[])];
+          for(const channel of (view&&view.channels)||[])
+            for(const pk of (channel&&channel.streamPubkeys)||[]) known.push(pk);
+          _partsCache.clear();                 // one room's view at a time; this is a keystroke path
+          _partsCache.set(gen,known);
+        }
+      }
+    }catch(_){ known=[]; }
+    return [...new Set([viewerPubkey,...known,...fromMessages].filter(Boolean))];
   }
   function mentionAliases(profile,pubkey,fallback=''){
     const aliases=new Set([profile&&profile.display_name,profile&&profile.name,fallback,pubkey]

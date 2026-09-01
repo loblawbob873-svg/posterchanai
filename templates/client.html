@@ -142,7 +142,7 @@
                 <input id="nsec-input" class="input" type="password" placeholder="nsec1… (stays in your browser)" autocomplete="off">
                 <button id="btn-nsec-login" class="btn btn-cyan full">Login with key</button>
             </details>
-            <div class="auth-foot">
+            <div class="auth-foot{% if not registration_enabled|default(true) %} hidden{% endif %}">
                 <span class="muted small">New here?</span>
                 <button id="btn-show-signup" class="btn btn-ghost full"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create a new identity</button>
             </div>

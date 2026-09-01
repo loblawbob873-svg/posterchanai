@@ -199,3 +199,62 @@ def test_cancelling_is_not_reported_as_a_failure():
     body = _save_copy_body()
     assert "done(null)" in body, "cancelling no longer resolves"
     assert "fail(e)" in body, "a real save failure must still reject"
+
+
+# ---------------------------------------------------------------- 5. the web gets a view, not a box
+
+def test_the_web_client_opens_the_editor_as_a_view():
+    """Reported as "office is loading in a tiny ass window in the webui, classic mode, it should be
+    the entire right side like concord".
+
+    A document editor is an application — it is the thing you are doing, for as long as you are
+    doing it. `modal()` is one centred box with a backdrop: right for a picker, wrong for a word
+    processor. Concord is the shape to copy, because it owns `#feed`, which IS the right side. The
+    desktop keeps its real window; the modal stays only as the last resort for a client with no feed
+    to take."""
+    session = APP_JS[APP_JS.index("async function _officeSession"):]
+    session = session[:session.index("function renderOfficeHome")]
+    feed_at = session.index("const feed = document.getElementById('feed');")
+    modal_at = session.index("modal(bodyHTML, root=>{")
+    assert feed_at < modal_at, "the modal is still reached before the view"
+    view = session[feed_at:modal_at]
+    assert "office-view" in view and "feed.appendChild(host)" in view
+    assert "switchView('office')" in view, "the editor mounts into a feed that may be showing another view"
+    assert "renderOfficeHome()" in view, (
+        "closing the editor leaves the office view blank, which reads as a crash")
+
+
+@pytest.mark.skipif(not __import__("shutil").which("google-chrome-stable")
+                    and not __import__("shutil").which("chromium"), reason="Chrome unavailable")
+def test_the_editor_view_gives_the_document_real_height():
+    """MEASURED, because this is the failure mode a class name cannot show: `#feed` is a scroll
+    container, so an editor that only takes its content's height collapses and the iframe gets NO
+    height at all — a blank white panel with no error anywhere."""
+    import json as _json, re as _re, shutil as _shutil, subprocess as _sp, tempfile as _tf
+    chrome = _shutil.which("google-chrome-stable") or _shutil.which("chromium")
+    html = f"""<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+    <style>html,body{{margin:0;height:100%}}{CSS}</style>
+    <!-- AUTO height, which is what `#feed` actually is. Given a fixed height the editor fills it
+         from `.office-win{{height:100%}}` alone and this test proves nothing — the collapse only
+         happens against a parent that has no height of its own. -->
+    <div id="feed" style="overflow:auto">
+      <div class="office-win office-view">
+        <div class="office-head"><h3>doc.odt</h3></div>
+        <iframe class="office-frame"></iframe>
+        <div class="row office-actions"><button class="btn">Save</button></div>
+      </div></div><pre id=o></pre><script>
+    const g=s=>{{const r=document.querySelector(s).getBoundingClientRect();
+      return {{w:Math.round(r.width),h:Math.round(r.height)}};}};
+    o.textContent=JSON.stringify({{view:g('.office-view'),frame:g('.office-frame')}});</script>"""
+    with _tf.TemporaryDirectory() as td:
+        page = Path(td) / "o.html"
+        page.write_text(html, encoding="utf-8")
+        done = _sp.run([chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
+                        "--window-size=1400,900", "--force-device-scale-factor=1",
+                        "--dump-dom", page.as_uri()], text=True, capture_output=True, timeout=90)
+    m = _re.search(r'<pre id="o">(.*?)</pre>', done.stdout, _re.S)
+    assert m, done.stdout[-800:]
+    got = _json.loads(m.group(1).replace("&quot;", '"'))
+    assert got["view"]["h"] >= 400, f"the editor view collapsed: {got}"
+    assert got["frame"]["h"] >= 300, f"the document itself has almost no height: {got}"
+    assert got["frame"]["w"] >= got["view"]["w"] - 4, f"the document does not fill the width: {got}"

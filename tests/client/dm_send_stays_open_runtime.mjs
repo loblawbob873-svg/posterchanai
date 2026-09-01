@@ -16,7 +16,13 @@ const calls={saved:0,ingested:0,published:[],remounted:0,inbox:0};
 const context={
   signer:{nip17wrap:async(pk,text)=>({toPeer:{id:'peer',pk,text},toSelf:{id:'self',pk,text}})},
   Store:{saveEvent:()=>{calls.saved++;}},
-  ingestWrap:async()=>{calls.ingested++;},
+  /* TRUE, because that is what a successful ingest answers — sendDm now uses the result to decide
+     whether it must echo the message locally (see dm_echo_runtime.mjs). A stub returning undefined
+     modelled a REFUSED ingest, which is a different test than this one. */
+  ingestWrap:async()=>{calls.ingested++; return true;},
+  /* Only reached when the ingest refuses; present so this sandbox cannot ReferenceError if the
+     branch is ever taken. */
+  _dmEcho:()=>{calls.echoed=(calls.echoed||0)+1; return true;},
   Relay:{publish:async ev=>{calls.published.push(ev.id);return {ok:true};},publishTo:async()=>1},
   VIEW:'messages', renderMessages:()=>{calls.remounted++;},
   _keepDmOpen:()=>{},

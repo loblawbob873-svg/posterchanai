@@ -674,9 +674,23 @@
     if(_TL_TABS.indexOf(target) >= 0){
       try{ if(tlHiddenSet().has(target)) target=_startTimeline(); }catch(_){}
     }
-    if(target === VIEW && _TL_TABS.indexOf(target) >= 0){
-      timelineTop(target);
-      return;
+    if(_TL_TABS.indexOf(target) >= 0){
+      if(target === VIEW){ timelineTop(target); return; }
+      /* A NAV CLICK IS "TAKE ME THERE", NOT "PUT ME BACK WHERE I WAS".
+       *
+       * Reported as: "when I click on social, it takes me half way down the feed, I have to scroll
+       * all the way to the top manually". Tapping the tab you are ALREADY on went to the top (the
+       * branch above); arriving from any other screen restored `_tlScrollMemo` instead, so the one
+       * gesture people use to check what is new landed them in the middle of what they had already
+       * read.
+       *
+       * The memo still earns its place — BACK, a thread you opened and closed, a monitor handoff —
+       * all of which restore through history rather than through this button.
+       *
+       * Done by clearing the memo rather than by calling `timelineTop`, because `requestView` below
+       * carries a guard this must not lose: during login/startup boot is still awaiting config and
+       * must not replace the screen the person just chose. */
+      try{ delete _tlScrollMemo[target]; _tlForceTop = target; ++_scrollRestoreGen; }catch(_){ }
     }
     // A click is a PUBLIC view request too. During login/startup, boot is still awaiting config and
     // must not replace the screen the person just chose with its default Social landing.
@@ -20976,6 +20990,32 @@
         // No slot to mount into: fall through to the modal rather than leave an empty window.
         try{ PCOS.closeDoc && PCOS.closeDoc('office:'+session.id); }catch(_){}
       }
+      /* THE WEB CLIENT GETS THE WHOLE VIEW, NOT A DIALOG.
+       *
+       * Reported as "office is loading in a tiny ass window in the webui, classic mode, it should
+       * be the entire right side like concord". A document editor is an application: it is the
+       * thing you are doing, for as long as you are doing it. `modal()` is one centred box with a
+       * backdrop — right for a picker, wrong for a word processor, and on a laptop it left the
+       * editor in a small panel with the timeline greyed out behind it.
+       *
+       * Concord is the shape to copy: it owns `#feed`, which IS the right side. The desktop keeps
+       * its real window above; the modal stays as the last resort for a client with no feed to
+       * take (an embedded surface, a shell that has not painted yet). */
+      {
+        const feed = document.getElementById('feed');
+        if(feed){
+          try{ switchView('office'); }catch(_){ }
+          feed.innerHTML = '';
+          const host = document.createElement('div');
+          host.className = 'office-win office-view';
+          host.innerHTML = bodyHTML;
+          feed.appendChild(host);
+          /* Closing returns to the document list rather than an empty screen — the view is still
+           * `office`, so leaving it blank would look like the editor had crashed. */
+          wire(host, () => { drop(); try{ renderOfficeHome(); }catch(_){ } });
+          return;
+        }
+      }
       modal(bodyHTML, root=>{
           /* `modal()` caps its box at 720px and the office frame asks for far more inside that, so
            * without this the iframe is clipped to 720px of a modal that then scrolls — "a tiny ass
@@ -24334,7 +24374,18 @@
       // Without this every historical DM fired a notification on login — the "flooded on login" bug.
       let _dmLive = false;
       Relay.subscribe([{ kinds:[1059], '#p':[ME.pubkey] }], {
-        onEvent: async ev => { if(!Store.saveEvent(ev)) return; await ingestWrap(ev, _dmLive); },
+        /* THE STORE'S DEDUP MUST NOT GATE THE UNWRAP. `saveEvent` answers false for an event the
+         * Store already holds — which is true the moment this wrap has been SEEN, not when it has
+         * been read. So a wrap whose first unwrap failed (a remote signer that timed out, a crypto
+         * worker busy verifying the feed) was stored, skipped on every redelivery, and never tried
+         * again: the message is invisible for the rest of the session. Reported as "Messages -> DM,
+         * it did not load the new message from the user".
+         *
+         * `ingestWrap` owns this decision and always did: `_wrapTried` returns immediately for one
+         * already in flight or done — so nothing is decrypted twice — and it DELETES that entry
+         * when the unwrap throws, precisely so a redelivery can retry. Gating it here overrode the
+         * retry it was designed to allow. */
+        onEvent: async ev => { Store.saveEvent(ev); await ingestWrap(ev, _dmLive); },
         onEose: () => { _dmLive = true; }
       });
     }
@@ -24833,10 +24884,38 @@
     if(!$('#dm-in') && $('#dm-thread')) renderDmThread(pk);
   }
   // Send a DM: NIP-17 gift wraps for local-key users, legacy NIP-04 for NIP-07 (no exposed secret).
+  /* THE LOCAL ECHO, for when the wrap could not be ingested. Deliberately minimal: it is the same
+   * shape `ingestWrap` pushes, keyed on the SAME outer id, so the relay's copy of our own message
+   * de-duplicates against it (`arr.find(m=>m.id===ev.id)`) instead of appearing twice. */
+  function _dmEcho(pk, text, id){
+    if(!pk || !id) return false;
+    if(!dmPeers.has(pk)) dmPeers.set(pk, []);
+    const arr = dmPeers.get(pk);
+    if(arr.find(m => m.id === id)) return false;
+    arr.push({ id, mine:true, text:String(text||''), t:Math.floor(Date.now()/1000), nip17:true, atts:[] });
+    arr.sort((a,b)=>(a.t||0)-(b.t||0));
+    try{ _scheduleDmRefresh(); }catch(_){ }
+    return true;
+  }
+
   async function sendDm(pk, text){
     if(signer && signer.nip17wrap){
       const { toPeer, toSelf } = await signer.nip17wrap(pk, text);
-      Store.saveEvent(toSelf); await ingestWrap(toSelf, false);   // show our own message right away
+      Store.saveEvent(toSelf);
+      /* THE MESSAGE YOU JUST SENT MUST BE IN THE THREAD. Reported as "i send dm to user, then the
+       * conversation goes blank": the pane renders `dmPeers.get(pk)`, so if our own copy does not
+       * land there the thread paints EMPTY — and on a conversation with no history that is a blank
+       * screen where the message should be.
+       *
+       * `ingestWrap` has several honest ways to decline: the unwrap can throw (a remote signer that
+       * timed out, a worker that is busy), the id can already be in `_wrapTried`, the rumor can come
+       * back the wrong kind. Every one of them returned false into a call that ignored the answer.
+       *
+       * So the answer is used. The wrap is still the real record — this only guarantees the echo,
+       * with the SAME outer id, so the copy that arrives from the relay is recognised as a duplicate
+       * rather than shown twice. */
+      const echoed = await ingestWrap(toSelf, false);   // show our own message right away
+      if(!echoed) _dmEcho(pk, text, toSelf && toSelf.id);
       _keepDmOpen(pk);
       const r1=await Relay.publish(toPeer); await Relay.publish(toSelf);
       _keepDmOpen(pk);

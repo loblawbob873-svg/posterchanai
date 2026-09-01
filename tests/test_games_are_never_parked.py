@@ -52,7 +52,7 @@ def test_the_fullscreen_branch_leaves_the_loop():
     """It must `continue`, not fall through into placement — placing a fullscreen surface is what
     cancelled the pointer lock."""
     loop = _placement_loop()
-    branch = loop[loop.index("if(it.w.nativeFullscreen){"):]
+    branch = loop[loop.index("if(it.w.nativeFullscreen || it.w.nativeGame){"):]
     branch = branch[:branch.index("it.w.el.classList.remove('native-fullscreen-frame')")]
     assert "continue;" in branch
 
@@ -84,3 +84,57 @@ def test_the_new_window_rule_cannot_match_a_game():
                 "the window float rule matches on title alone, so any client could match it: " + line)
             assert "posterchan" in line.lower(), (
                 "the window float rule is not anchored to our own application: " + line)
+
+
+# ---------------------------------------------------------------------------------------------
+# AND THE WINDOW BEFORE FULLSCREEN ARRIVES — which is where this actually broke, and which every
+# test above was blind to. They asserted the fullscreen guard; the game is not fullscreen yet when
+# the damage is done.
+
+def test_a_game_is_recognised_before_it_is_fullscreen():
+    """Reported as "cyberpunk 2077, loads in small window, does not capture mouse, game loads full
+    screen then when you click, goes to desktop and loads cyberpunk in small window".
+
+    `nativeFullscreen` is only true once the game HAS fullscreen. The surface maps first, this
+    desktop sizes it into a frame, and sway's `for_window [class="^steam_app_.*"] fullscreen enable`
+    arrives after — so the game opens small, and placing it is what cancels its pointer lock.
+
+    The class is available immediately and is the same string sway keys its own rule on."""
+    assert "const _GAME_APP" in OS_JS, "nothing identifies a game before it is fullscreen"
+    match = re.search(r"const _GAME_APP = (/.*?/i);", OS_JS)
+    assert match, "the game pattern has moved"
+    pattern = match.group(1)
+    assert "steam_app_" in pattern, "the Steam class is not recognised"
+    # The Steam CLIENT is an ordinary window and must keep its frame.
+    assert r"steam_app_\d+" in pattern, (
+        "the pattern would match Steam's own UI, which is a normal window people resize")
+
+
+def test_the_placement_pass_skips_a_game_that_is_not_yet_fullscreen():
+    """The two conditions are ORed in the branch that leaves the loop, so a game is exempt from the
+    first frame it maps in — not from the moment it wins fullscreen."""
+    loop = _placement_loop()
+    assert "it.w.nativeFullscreen || it.w.nativeGame" in loop, (
+        "a game is only spared once it is already fullscreen, which is after it has been placed "
+        "small and had its pointer lock cancelled")
+    assert loop.index("it.w.nativeGame") < loop.index("stash.has(it.native)")
+
+
+def test_the_flag_is_set_when_the_window_is_adopted_and_kept_current():
+    """At adoption, because the first placement pass can run before any refresh; and on refresh,
+    because a game relaunching into an existing frame arrives as a new compositor window."""
+    adopt = OS_JS[OS_JS.index("function adoptNative(nw){"):]
+    adopt = adopt[:adopt.index("\n  function ")]
+    assert "w.nativeGame=isGameApp(nw)" in adopt
+    assert "if(isGameApp(r)) w.nativeGame=true;" in OS_JS, (
+        "the flag is never refreshed, so a game that maps before its class is readable stays a "
+        "normal window for ever")
+
+
+def test_the_class_is_read_from_either_wayland_or_x11():
+    """Steam and most games are XWayland, so `app_id` is empty and the class is the only name they
+    have — wm.js folds both into `app` for exactly this reason."""
+    fn = OS_JS[OS_JS.index("function isGameApp(nw){"):]
+    fn = fn[:fn.index("\n  }") + 4]
+    assert "nw.app" in fn and "nw.class" in fn
+    assert "catch(_){ return false; }" in fn, "an unreadable window throws into the placement pass"

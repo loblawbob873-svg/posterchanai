@@ -1,4 +1,6 @@
 import asyncio
+import unittest
+import pathlib
 import os
 import sqlite3
 import time
@@ -505,3 +507,62 @@ def test_an_answer_that_is_not_a_json_rpc_result_is_an_outage_not_a_balance(monk
     monkeypatch.setattr(httpx, "AsyncClient", Client)
     with pytest.raises(WalletError, match="invalid response|unavailable"):
         asyncio.run(wallet.balance())
+
+
+class TheWalletComesBackByItself(unittest.TestCase):
+    """A RESTARTED DAEMON IS NOT A PERMANENT VERDICT.
+
+    Reported as: "does our monero implementation now support monero restarts: Local wallet
+    unavailable — This device is in safe external-wallet mode ... I restarted monerod and then this
+    happens."
+
+    Nothing was wrong by the time it was read. `monerod` had come back and the wallet needed a
+    moment to reconnect; the probe had asked once, during that moment, and the screen then held the
+    answer until somebody pressed Retry. The wording made it worse than a spinner: "safe
+    external-wallet mode" reads as a DECISION this device has taken, not as one failed request.
+
+    The screen now re-probes on a backoff while it is open. The cost is bounded for the ordinary
+    case — a node with no wallet at all, which is the default — and it stops the instant the view is
+    left, so it cannot become a background poller nobody asked for.
+    """
+
+    SRC = (pathlib.Path(__file__).resolve().parents[1]
+           / "static/js/client/monero-wallet.js").read_text(encoding="utf-8")
+
+    def _watch(self):
+        body = self.SRC[self.SRC.index("function _watch(s){"):]
+        return body[:body.index("\n  }") + 4]
+
+    def test_an_unavailable_wallet_is_asked_again(self):
+        # The CALL, not the definition — `function _watch(s){` matched the old assertion, so
+        # deleting the call left this green. (Caught by mutating it.)
+        self.assertIn("paint(s);\n    _watch(s);", self.SRC, "render never arms a retry")
+        self.assertIn("probe(true)", self._watch(), "the retry does not force a fresh probe")
+
+    def test_a_working_wallet_arms_nothing(self):
+        """The common case must cost nothing: no timer while the wallet is answering."""
+        self.assertIn("if(s && s.available) return;", self._watch())
+
+    def test_it_backs_off_and_has_a_ceiling(self):
+        """A node with no wallet is the DEFAULT. Asking every three seconds for ever would be a
+        request storm on the machines least able to answer it."""
+        watch = self._watch()
+        self.assertIn("_watchDelay*2", watch, "the retry does not back off")
+        self.assertIn("30000", watch, "the backoff has no ceiling")
+
+    def test_leaving_the_screen_stops_it(self):
+        """Twice — before the probe and after it — because the probe is awaited and somebody can
+        leave during it. Otherwise this is a background poller for a screen nobody is looking at."""
+        watch = self._watch()
+        self.assertEqual(watch.count("PC.VIEW!=='wallet'"), 2, watch)
+        self.assertIn("_stopWatch()", watch)
+
+    def test_a_repeated_failure_does_not_repaint(self):
+        """Redrawing the same failure every few seconds throws away the scroll position and makes a
+        quiet retry look like something actively going wrong."""
+        watch = self._watch()
+        self.assertIn("if(next && next.available) paint(next);", watch)
+
+    def test_the_manual_retry_still_exists(self):
+        """A person asking is still allowed to ask immediately, rather than waiting out a backoff."""
+        self.assertIn("by('mw-retry').onclick=()=>render(true)", self.SRC)

@@ -33,6 +33,17 @@
     </fieldset>
 
     <fieldset>
+        <legend>User registration</legend>
+        <div class="form-group">
+            <label for="registration_enabled">
+                <input type="checkbox" id="registration_enabled" name="registration_enabled"> Allow new users to sign up
+            </label>
+            <small>Turn this off to make the server invite-only. Existing users can still sign in normally,
+                but unknown Nostr keys and new Google or fediverse accounts will be refused.</small>
+        </div>
+    </fieldset>
+
+    <fieldset>
         <legend>Sign in with an account (login page)</legend>
         <small style="display:block;margin-bottom:12px;">
             Extra buttons on the web client's login screen, for people who don't want to manage a Nostr key.

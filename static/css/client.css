@@ -947,6 +947,15 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
      --app-max is the sum of the tracks so the middle column lands exactly on --feed-max:
      300 + 20 gap + 920 + 20 gap + 340 + 64 padding = 1664. */
   .app{grid-template-columns:300px minmax(0,1fr) 340px;max-width:var(--app-max);margin-inline:auto}
+  /* AN APPLICATION WORKSPACE IS NOT A PROSE COLUMN, and this is the half that was missing.
+     switchView already sets `body.concord-view` and hides the right rail, with a comment saying it
+     does so "so its own sheet can remove the right rail and width cap" — the rail went, the cap
+     never did. So Concord stayed inside a 1664px cluster centred on the screen: on a 3072px monitor
+     that is a chat app using barely half the display, reported repeatedly as "concord window width
+     still not maximize the screen ... said this many times and never fixed".
+     The cap is right for a TIMELINE, where line length is the point. A chat is Discord-shaped: it
+     wants the whole width and manages its own columns inside it. */
+  body.concord-view .app{max-width:none;grid-template-columns:300px minmax(0,1fr)}
   /* Mirrors .sidebar exactly: same --rail surface, same single hairline on the edge that faces the feed. */
   .rightbar{display:flex;flex-direction:column;gap:16px;padding:18px 16px;overflow-y:auto;min-height:0;
     border:0;border-inline-start:1px solid var(--line);background:var(--rail)}
@@ -9664,6 +9673,10 @@ audio.sms-att-img{min-width:220px}
    the frame take everything the head and the buttons do not. Without it the iframe keeps the
    modal's viewport-relative height and spills out of a window somebody just made smaller. */
 .office-win{display:flex;flex-direction:column;height:100%;min-height:0;padding:10px;gap:8px}
+/* THE EDITOR AS A VIEW (web/classic): it takes the height it is given rather than a dialog's box.
+   `#feed` is a scroll container, so the editor has to be told how tall it may be — without this it
+   collapses to its content and the iframe gets no height at all, which is a blank white panel. */
+.office-view{height:82vh;min-height:420px;padding:0}
 /* A no-feed document lives in `.osw-slot` permanently, including while focused. The generic slot
    is a subdued parked-app snapshot (opacity + outer padding + scrolling); none of those belong on
    a live maximised editor. Keep Office's own deliberate 10px inner spacing. */

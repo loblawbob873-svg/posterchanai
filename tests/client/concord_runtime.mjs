@@ -571,8 +571,13 @@ afterReaction[afterReaction.findIndex(m=>m.id===permanentId)]=acted;
 data.set(raceKey,JSON.stringify(afterReaction));
 
 PCConcord.render();
+/* COUNTED FROM HERE, not from zero. The earlier click above is allowed to place a call now that the
+   room names members who have not posted yet (roomParticipants reads the control document, not just
+   message authors), so a total of one was an assertion about the OTHER click. What this one means is
+   "this click placed exactly one call, and it included the member who posted". */
+const callsBeforeMember = calls.group;
 control('cc-call').click();
-if(calls.group!==1 || !calls.groupPeers.includes('b'.repeat(64)))
+if(calls.group!==callsBeforeMember+1 || !calls.groupPeers.includes('b'.repeat(64)))
   throw new Error('community call omitted a known room participant');
 if(PCConcord.memberTapAction(true,false)!=='profile' ||
    PCConcord.memberTapAction(false,false)!=='menu' ||
