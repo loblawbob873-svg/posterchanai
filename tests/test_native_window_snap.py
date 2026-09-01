@@ -402,10 +402,13 @@ def test_focusing_a_posterchan_window_parks_compositor_windows_above_it():
     nat = (ROOT / "static/js/client/osnative.js").read_text()
     plan = nat[nat.index("function stashPlan"):]
     plan = plan[:plan.index("\n  }")]
-    assert "overlaps(it.rect, w.rect)" in plan, (
+    assert "coversMoreThanASliver(it.rect, w.rect)" in plan, (
         "stashPlan no longer puts away a native app that a PosterChan window covers, so Telegram "
         "and Firefox sit on top of whatever you click"
     )
+    # It is a threshold, not a plain intersection: one shared pixel used to park a whole app.
+    # tests/test_native_sliver_overlap.py drives that rule against real measured geometry.
+    assert "function coversMoreThanASliver" in nat
     assert "w.z > (it.z || 0)" in plan, (
         "the comparison lost its direction — a window BEHIND a native app would stash it, which is "
         "every window stashing everything it shares pixels with"

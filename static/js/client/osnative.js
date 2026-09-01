@@ -96,13 +96,52 @@
    * app back. Do not restore one of these two halves without the other.
    *
    * Both directions of the comparison are load-bearing: a PosterChan window BELOW a native app
-   * must not touch it, or every window would stash everything it happens to share pixels with. */
+   * must not touch it, or every window would stash everything it happens to share pixels with.
+   *
+   * AND IT IS NOT ANY OVERLAP — A SLIVER IS NOT A COVER. Reported as "Settings is now glitching my
+   * screen and telegram, sticking to that on desktop": a Settings window whose edge lapped about
+   * 38px over Telegram's took the WHOLE of Telegram off the screen and replaced it with a frozen
+   * screenshot. The rule was `overlaps()`, i.e. one shared pixel, and windows abut constantly.
+   *
+   * The trade is ASYMMETRIC, which is why the threshold is not zero. Parking costs the entire
+   * native app no matter how small the overlap was — it becomes a still image of itself. NOT
+   * parking costs only the overlapped band, and that cost scales with the band. One is fixed and
+   * large, the other is proportional, so they cross somewhere above zero.
+   *
+   * IT IS MEASURED AGAINST THE COVERING WINDOW, NEVER THE NATIVE ONE, and that is the whole
+   * subtlety. "How much of Telegram is covered" sounds like the question and is the wrong one: a
+   * small dialog opened in the middle of a MAXIMISED Firefox covers about 2% of it, so a rule
+   * written that way would leave Firefox on top and the dialog invisible and unclickable — which
+   * is the maximised-Firefox bug this desktop has already paid for twice. The rule exists to make
+   * the window you clicked usable, so it asks how much of THAT window is blocked.
+   *
+   * A sliver is an overlap thinner than `SLIVER` in either direction. That keeps the two cases
+   * that matter on the right sides of the line: 38px of Telegram over Settings' edge is incidental
+   * and Telegram stays, while a dialog sitting inside Firefox is overlapped in both axes by its
+   * own full size and Firefox goes away. */
+
+  //: An intersection thinner than this in either axis is windows touching, not one covering the
+  //: other. Roughly a fingertip; well above the border/rounding overlaps that are pure accident.
+  const SLIVER = 64;
+
+  /** Does `w` cover enough of the rectangle it sits over to be worth parking the app underneath? */
+  function coversMoreThanASliver(nativeRect, w){
+    if(!overlaps(nativeRect, w)) return false;
+    const wide = Math.min(nativeRect.left + nativeRect.width, w.left + w.width)
+               - Math.max(nativeRect.left, w.left);
+    const tall = Math.min(nativeRect.top + nativeRect.height, w.top + w.height)
+               - Math.max(nativeRect.top, w.top);
+    // A window smaller than the slop in one axis can never overlap by more than it is, so judge it
+    // against its own size instead — otherwise a narrow palette could never park anything.
+    return wide >= Math.min(SLIVER, w.width) && tall >= Math.min(SLIVER, w.height);
+  }
+
   function stashPlan(items, htmlWins){
     const stash = [], show = [];
     for(const it of (items || [])){
       if(!it || it.native == null) continue;
       const covered = (htmlWins || []).some(w => w && !w.minimised && w.z > (it.z || 0)
-                                               && overlaps(it.rect, w.rect));
+                                               && coversMoreThanASliver(it.rect, w.rect));
       const hide = !!it.minimised || !it.rect || !(it.rect.width > 0) || !(it.rect.height > 0)
                    || covered;
       (hide ? stash : show).push(it.native);
@@ -184,7 +223,8 @@
     return (max - min) <= 6 && (sum / n) <= 24;
   }
 
-  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, stashPlan, changed, driftPlan,
+  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, coversMoreThanASliver,
+                stashPlan, changed, driftPlan,
                 previewIsBlank };
   root.PCOSNative = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
