@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 CSS=(Path(__file__).parents[1]/'static/css/client.css').read_text()
@@ -11,7 +12,20 @@ def test_mobile_reader_uses_readable_type_and_measure():
 
 
 def test_single_html_message_fills_reader_without_a_decorative_document_inset():
-    assert '.mail-thread>.mail-msg:only-child' in CSS
+    # THE ONE-MESSAGE THREAD, however it is spelled. This named `:only-child`, which stopped being
+    # true the moment the thread grew a Reply/Forward row beneath the message: the message is then
+    # the first of two children, not the only one. The PROPERTY is "a lone HTML message fills the
+    # pane"; the selector expressing it is an implementation detail, and changing it is not a
+    # regression.
+    lone = ('.mail-thread>.mail-msg:only-child',
+            '.mail-thread>.mail-msg:first-child:nth-last-child(2)')
+    assert any(sel in CSS for sel in lone), (
+        "nothing makes a single message fill the reader pane any more: " + repr(lone))
+    for sel in lone:
+        if sel in CSS:
+            assert sel + '>.mail-msg-body{flex:1' in CSS, (
+                "the rule exists but no longer stretches the message body, so a lone HTML mail "
+                "would sit in a short box with dead space under it")
     assert '.mail-thread:only-child .mail-msg:only-child' not in CSS
     assert '.mail-body:has(>.mail-html){padding:0}' in CSS
     assert '.mail-html{width:100%;border:none;background:#fff;border-radius:0;' in CSS
@@ -27,9 +41,17 @@ def test_mobile_reader_actions_are_compact_accessible_icons():
     app = (ROOT / 'static/js/client/app.js').read_text()
     thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid)'):
                  app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid)'))]
-    assert thread.count('class="btn') == 7
+    # SCOPED TO THE ACTIONS ROW, not to the whole function. This counted every button in
+    # `_renderThread`, so adding a labelled Reply/Forward row elsewhere in the thread failed a test
+    # about the compact icon row — which was still exactly as it should be. The row is the subject;
+    # the count of buttons anywhere in the render is not.
+    row = re.search(r'<div class="(?:mail-msg-actions|mail-actions)[^"]*"(.*?)</div>', thread, re.S)
+    assert row, "the reader's actions row has moved — re-read this test"
+    assert row.group(1).count('class="btn') == 7
+    # Compactness and labelling are asserted over the whole thread on purpose: an icon-only button
+    # without an aria-label is unreachable by a screen reader wherever it is put.
     assert thread.count('icon-only') == 7
-    assert thread.count('aria-label=') == 7
+    assert thread.count('aria-label=') == thread.count('icon-only')
 
 
 def test_packaged_mail_attachments_use_the_configured_instance():

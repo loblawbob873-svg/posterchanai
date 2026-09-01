@@ -807,9 +807,12 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
         seed = await mail_store.get_message(sk, acc.email, folder, uid)
     if not seed:
         raise HTTPException(status_code=404, detail="Message not found")
-    # Only scan/decrypt the whole mailbox when this message is actually part of a thread (has reply
-    # headers). Most messages are singletons — return just the seed and skip the expensive load.
-    if not (seed.get("in_reply_to") or (seed.get("references") or "").strip()):
+    # A root message has no In-Reply-To/References of its own, but later replies point at its
+    # Message-ID. Treating that root as a singleton made the same conversation appear complete when
+    # opened from a reply and incomplete when opened from the first message. A usable Message-ID is
+    # therefore enough to search the reference graph; truly headerless messages keep the fast path.
+    if not (seed.get("message_id") or seed.get("in_reply_to") or
+            (seed.get("references") or "").strip()):
         thread = [seed]
     else:
         allm = await mail_store.list_messages(sk, acc.email if acc else None, None, limit=0)

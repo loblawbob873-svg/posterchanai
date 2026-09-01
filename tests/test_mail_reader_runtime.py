@@ -93,10 +93,17 @@ def test_single_html_message_uses_the_available_reader_width():
       <div class="mail-read-hd">subject</div><div class="mail-actions">actions</div>
       <div class="mail-thread"><div class="mail-msg open"><div class="mail-msg-hd">sender</div>
         <div class="mail-msg-body"><div class="mail-body"><iframe class="mail-html"></iframe></div></div>
-      </div></div></div><pre id=o></pre><script>
+      </div>
+      <!-- The reply row the reader ALWAYS renders inside .mail-thread. Without it the fixture is a
+           thread of one, which the shipped `:first-child:nth-last-child(2)` rule does not match —
+           so this measured a layout the app never produces and failed on a correct change. -->
+      <div class="mail-thread-reply"><button class="btn">Reply</button></div>
+      </div></div><pre id=o></pre><script>
     const pane=document.querySelector('.mail-read').getBoundingClientRect();
     const body=document.querySelector('.mail-body'), frame=document.querySelector('.mail-html').getBoundingClientRect();
-    o.textContent=JSON.stringify({{pane:pane.width,frame:frame.width,padding:getComputedStyle(body).padding,bottom:frame.bottom,paneBottom:pane.bottom}});
+    const holder=document.querySelector('.mail-msg-body').getBoundingClientRect();
+    const floor=document.querySelector('.mail-msg').getBoundingClientRect().bottom;
+    o.textContent=JSON.stringify({{pane:pane.width,frame:frame.width,holder:holder.width,padding:getComputedStyle(body).padding,bottom:frame.bottom,paneBottom:pane.bottom,floor:floor}});
     </script>'''
     with tempfile.TemporaryDirectory() as td:
         p=Path(td)/'mail-fill.html';p.write_text(html)
@@ -106,5 +113,15 @@ def test_single_html_message_uses_the_available_reader_width():
     m=re.search(r'<pre id="o">(.*?)</pre>',r.stdout,re.S);assert m
     got=json.loads(m.group(1).replace('&quot;','"'))
     assert got['padding']=='0px'
-    assert got['frame'] >= got['pane']-1
-    assert got['bottom'] >= got['paneBottom']-1
+    # THE MESSAGE FILLS THE SPACE IT IS GIVEN — measured against its own container, not the pane.
+    # The reader draws each message as an inset CARD now (`.mail-thread` has horizontal padding and
+    # `.mail-msg` a border), so comparing the iframe to the whole pane failed a deliberate design
+    # change while saying nothing about the thing this test is for: a decorative inset INSIDE the
+    # message, which is what used to leave an HTML mail in a narrow column with dead space beside it.
+    assert got['frame'] >= got['holder']-1, got
+    # ...AND DOWN TO THE BOTTOM OF ITS OWN MESSAGE. It used to be measured against the PANE, which
+    # stopped being the right floor when the reader became a column of inset cards with a
+    # Reply/Forward row under them: the thread's padding and its 8px gap are chrome, not dead space.
+    # The property is unchanged and is the one that actually mattered — an HTML mail must not sit in
+    # a short box with empty room beneath it INSIDE its own message.
+    assert got['bottom'] >= got['floor']-1, got
