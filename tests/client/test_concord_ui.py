@@ -101,10 +101,19 @@ def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_i
 
 
 def test_native_bundles_package_the_concord_stylesheet():
-    """Native shells load local /static assets, so a server copy cannot hide this omission."""
+    """Native shells load local /static assets, so a server copy cannot hide this omission.
+
+    The bundlers no longer NAME each stylesheet — they derive the list from the shell template,
+    because a hand-maintained list is what left `monero-wallet.css` out of the APK (present on the
+    web, 404 in the app, the whole wallet unstyled). So the check is that concord.css is still
+    linked by the shell and therefore still copied, rather than that a literal `cp` line exists."""
+    html = (ROOT / "templates/client.html").read_text()
+    assert '/static/css/concord.css' in html, (
+        "the shell no longer links concord.css, so the bundlers will not copy it either")
     for bundle in ("mobile/build-www.sh", "desktop/build-www.sh"):
         build = (ROOT / bundle).read_text()
-        assert 'static/css/concord.css' in build, bundle
+        assert 'templates/client.html' in build and 'static/css' in build, (
+            f"{bundle} no longer derives its stylesheets from the shell template")
 
 
 def test_desktop_release_audits_the_built_payload_not_only_source():

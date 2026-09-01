@@ -26660,12 +26660,48 @@
     return (p&&Array.isArray(p.fields)?p.fields:[]).filter(x=>Array.isArray(x)&&x.length>1
       && /^https?:\/\//i.test(String(x[1]||'')) && (audio.test(String(x[1])) || /^🎶/.test(String(x[0]||''))));
   }
+  /* PROFILE MUSIC LOOKS LIKE THE PLAYER, NOT LIKE A FORM CONTROL.
+   *
+   * It was a bare `<audio controls>` in a grey box — the browser's widget, on a page that has its
+   * own visual language, next to a player (`.mp-*`) built in it. The equaliser is the cheap half of
+   * that language: twelve bars on the same cyan→magenta ramp, animating ONLY while the track plays,
+   * so a profile at rest is quiet and one that is playing is obviously playing from across the room.
+   *
+   * Deliberately CSS animation and not an AnalyserNode: a real spectrum needs the audio graph, and
+   * a cross-origin track without CORS taints it and analyses to flat silence — the visualiser would
+   * die on exactly the tracks people link. This one cannot fail that way, costs nothing to decode,
+   * and stops dead when the audio is paused. `controls` stays: it is the accessible, keyboard-
+   * reachable transport, and reinventing it here would be a second player to keep in step. */
   function _profileMusicHtml(p){
     const rows=_profileMusicFields(p);
     if(!rows.length) return '';
+    /* The bar count is local on purpose. As a module constant it was outside the function, and the
+     * tests that LIFT this renderer out of app.js and run it under node got a ReferenceError and no
+     * markup at all — the same shape as the `_fromZapstore` call left behind by a deletion, which
+     * cost this evening two separate bug reports. A renderer that only works with the rest of the
+     * file loaded is a renderer that cannot be tested in isolation. */
+    const bars = 12;
+    const eq = `<div class="prof-eq" aria-hidden="true">${
+      Array.from({length:bars}, (_,i)=>`<i style="--i:${i}"></i>`).join('')}</div>`;
     return `<div class="prof-music" aria-label="Profile music">${rows.map(([label,url])=>
-      `<div class="prof-track"><div class="prof-track-name">${enc(String(label||'Track').replace(/^🎶\s*/,''))}</div><audio controls preload="none" src="${enc(url)}"></audio></div>`
+      `<div class="prof-track"><div class="prof-track-head"><span class="prof-track-mark" aria-hidden="true">♪</span><div class="prof-track-name">${enc(String(label||'Track').replace(/^🎶\s*/,''))}</div></div>${eq}<audio controls preload="none" src="${enc(url)}"></audio></div>`
     ).join('')}</div>`;
+  }
+  /* The equaliser only runs while the audio does, so the class is driven by the element's own
+   * events rather than by a guess. Bound wherever the block is (re)inserted — the first paint and
+   * the background kind-0 refresh both replace this HTML wholesale, and a listener on a node that
+   * has been thrown away is a listener on nothing. */
+  function _bindProfileMusic(root){
+    if(!root) return;
+    root.querySelectorAll('.prof-track audio').forEach(a=>{
+      const card=a.closest('.prof-track'); if(!card || a._pcEq) return;
+      a._pcEq=1;
+      const on=()=>card.classList.add('playing'), off=()=>card.classList.remove('playing');
+      a.addEventListener('play',on); a.addEventListener('playing',on);
+      a.addEventListener('pause',off); a.addEventListener('ended',off);
+      /* A stalled or failed track must not leave the bars dancing over silence. */
+      a.addEventListener('error',off); a.addEventListener('waiting',off);
+    });
   }
   // Patch the already-painted profile header in place when a background kind-0 refresh changed it
   // (live rename / new avatar), so we never have to block the first paint on that refetch.
@@ -26675,7 +26711,8 @@
     const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
     const h2=feed.querySelector('.prof .pbody h2'); if(h2){ const vchk=h2.querySelector('.vchk'); h2.innerHTML=emojiName(pk,p.name||p.display_name||'anon'); if(vchk) h2.appendChild(vchk); }
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
-    const music=feed.querySelector('#prof-music'); if(music) music.innerHTML=_profileMusicHtml(p);
+    const music=feed.querySelector('#prof-music');
+    if(music){ music.innerHTML=_profileMusicHtml(p); _bindProfileMusic(music); }
   }
 
   /* A profile page normally loads only the newest handful of notes, so its local cache cannot tell
@@ -26900,6 +26937,10 @@
     };
     let _profBroke = null;
     _bind('the avatars and names', () => hydrate(feed));
+    /* Wrapped like every other binding here: an equaliser that fails to attach must cost the
+     * equaliser, never the tabs, the follow stats or Copy npub below it — that is the whole reason
+     * `_bind` exists on this screen. */
+    _bind('the profile music equaliser', () => _bindProfileMusic(feed));
     _bind('the verified badge', () => decorateVerified($('#prof-vchk'), pk, p.nip05));
     /* COPY NPUB IS BOUND EARLY AND ON ITS OWN. It is one line, it can only fail if the element is
      * missing, and it is the single most reported casualty of everything above it. */

@@ -8334,10 +8334,19 @@ html.os-on #upload-badge.upbadge{z-index:333}
    clickable, which is what brings the app back. See stashPlan() in osnative.js; the two halves are
    one fix. */
 .osw.native-stashed .osw-body{position:relative}
+/* THE LABEL SITS NEAR THE TOP, NOT IN THE MIDDLE.
+   Centred, it lands exactly where a floating app parks itself — so on a MAXIMISED window the card
+   filled the screen and its one line of text was behind Telegram. What is left is a full-screen
+   teal/purple panel that looks like wallpaper, which is what "if Firefox is maximized and you click
+   notifications, the screen gets all fucked up" actually is: the card was working and saying
+   nothing. Measured from a screenshot of the real desktop — the body sampled rgb(23,117,146) and
+   rgb(47,55,100), the card's own gradient, with no legible text anywhere on it.
+   Top-centre is the one region a floating window rarely covers, and the pill gives the text an
+   edge of its own so it never reads as part of a background. */
 .osw.native-stashed .osw-body::after{
   content:'App is behind another window · click to bring it forward';
-  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  padding:12px;text-align:center;font-size:13px;font-weight:700;letter-spacing:.025em;
+  position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:center;
+  padding:18px 12px;text-align:center;font-size:13px;font-weight:700;letter-spacing:.025em;
   color:#fff;text-shadow:0 1px 3px #000;
   /* Capture can be unavailable (another native surface overlaps, grim is absent, or the 16 MiB
      memory cap rejects it). Never fall back to a near-black empty body: that is indistinguishable
@@ -8347,6 +8356,15 @@ html.os-on #upload-badge.upbadge{z-index:333}
     radial-gradient(circle at 78% 74%,rgba(203,76,255,.68),transparent 34%),
     linear-gradient(135deg,#174b67 0%,#3b326a 52%,#175466 100%);
   border-top:1px solid var(--line)}
+/* The pill: a solid, high-contrast plate behind the label so it is legible on any capture and on
+   the card's own gradient, and so a parked window never looks like an empty desktop. */
+.osw.native-stashed .osw-body::after{
+  background-clip:padding-box}
+.osw.native-stashed .osw-body::before{
+  content:'';position:absolute;left:50%;top:12px;transform:translateX(-50%);
+  width:min(460px,86%);height:34px;border-radius:999px;z-index:1;
+  background:rgba(6,10,20,.82);border:1px solid rgba(255,255,255,.22);
+  box-shadow:0 6px 18px rgba(0,0,0,.45)}
 /* THE PREVIEW IS PAINTED ON TOP OF THAT CARD, NEVER INSTEAD OF IT.
    This rule used to set `background-color:var(--panel,#0b0a14)` under the capture — the exact
    near-black fallback the rule above forbids, for the exact reason it gives. So a preview that
@@ -9729,9 +9747,38 @@ audio.sms-att-img{min-width:220px}
 
 /* Interoperable kind-0 profile music (`fields: [[label,url]]`), as published by Ditto. */
 .prof-music{display:grid;gap:9px;margin:12px 0}
-.prof-track{min-width:0;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
-.prof-track-name{font-weight:600;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* PROFILE MUSIC, IN THE PLAYER'S OWN LANGUAGE.
+   The card borrows the cyan→magenta ramp, the glow and the dark plate the floating player (.mp-*)
+   uses, so a track on a profile reads as part of this app rather than as a browser widget dropped
+   into it. The equaliser animates ONLY while the audio plays — `.playing` is toggled from the
+   element's own play/pause/ended/error events, so a paused profile is completely still and a failed
+   track never leaves bars dancing over silence. */
+.prof-track{position:relative;min-width:0;padding:11px 12px 9px;border:1px solid var(--line);
+  border-radius:12px;overflow:hidden;
+  background:linear-gradient(180deg,rgba(0,240,255,.05),transparent 60%),var(--panel)}
+.prof-track.playing{border-color:color-mix(in srgb,var(--cyan,#0ff) 55%,var(--line));
+  box-shadow:0 0 0 1px rgba(0,240,255,.12),0 6px 22px rgba(0,240,255,.10)}
+.prof-track-head{display:flex;align-items:center;gap:8px;min-width:0;margin-bottom:8px}
+.prof-track-mark{flex:0 0 auto;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+  font-size:12px;color:#04222a;background:linear-gradient(135deg,var(--cyan,#0ff),var(--magenta,#f0f))}
+.prof-track.playing .prof-track-mark{animation:profMark 1.6s ease-in-out infinite}
+@keyframes profMark{0%,100%{transform:scale(1)}50%{transform:scale(1.14)}}
+.prof-track-name{flex:1 1 auto;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Twelve bars on one shared keyframe, offset by --i so they never move as a block. `will-change`
+   is deliberately absent: a dozen 3px bars do not need a compositor layer each, and a profile can
+   carry several tracks. */
+.prof-eq{display:flex;align-items:flex-end;gap:3px;height:26px;margin:0 0 8px;opacity:.5}
+.prof-eq i{flex:1 1 0;min-width:2px;height:18%;border-radius:2px 2px 0 0;
+  background:linear-gradient(180deg,var(--cyan,#0ff),var(--magenta,#f0f))}
+.prof-track.playing .prof-eq{opacity:1}
+.prof-track.playing .prof-eq i{animation:profEq 900ms ease-in-out infinite;
+  animation-delay:calc(var(--i) * -110ms)}
+@keyframes profEq{0%,100%{height:18%}25%{height:86%}50%{height:38%}75%{height:66%}}
 .prof-track audio{display:block;width:100%;height:36px}
+/* Somebody who asked for less motion gets the colour and none of the movement. */
+@media(prefers-reduced-motion:reduce){
+  .prof-track.playing .prof-eq i,.prof-track.playing .prof-track-mark{animation:none}
+  .prof-track.playing .prof-eq i{height:52%}}
 .pf-music-row{display:grid;grid-template-columns:minmax(110px,.7fr) minmax(180px,1.3fr) auto;gap:7px;margin:7px 0}
 /* EVERY ACTION BUTTON IN THIS SHEET IS THE SAME SIZE.
    `align-items:center` because these are flex items and the default `stretch` made them 23px tall

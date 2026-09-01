@@ -315,7 +315,7 @@ class APictureMessageWithNoPicture(unittest.TestCase):
     def test_a_captionless_picture_message_is_not_an_empty_bubble(self):
         res = self._run()
         flat = [s for row in res["snippets"] for s in row]
-        self.assertIn("Photo · not backed up", flat,
+        self.assertIn("Attachment · not backed up", flat,
                       "a picture message with no media still renders as an empty bubble: %r" % (flat,))
 
     def test_a_caption_still_wins_over_the_notice(self):

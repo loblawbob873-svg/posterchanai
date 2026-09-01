@@ -259,3 +259,40 @@ def test_a_capture_is_only_refused_when_it_is_both_flat_and_dark(pixels, blank, 
     replace a truthful preview with a card, and refusing a dark capture that has content in it would
     throw away the preview of every dark-themed application on the desktop."""
     assert _blank(pixels) is blank, why
+
+
+# --------------------------------------------------------------------------- the label must be seen
+
+
+def _label_band_luminance(classes, preview=None, adopt=True):
+    """Mean luminance of the TOP band of the body, where the parked label now lives."""
+    png = _render(classes, preview, adopt)
+    box = (WIN["x"] + 16, WIN["y"] + 8, WIN["x"] + WIN["w"] - 16, WIN["y"] + 60)
+    return _mean_luminance(png, box)
+
+
+def test_the_parked_label_is_near_the_top_not_under_a_floating_window():
+    """A MAXIMISED parked window fills the screen, and a floating app sits in the MIDDLE of it — so
+    a centred label is behind that app and the card reads as wallpaper. Measured on the real desktop
+    exactly that way: the body sampled the card's own gradient with no legible text anywhere, and it
+    was reported as the screen being broken.
+
+    The band checked here is the top of the body. It has to differ from the card's background, which
+    is what having a label (and its pill) there means."""
+    top = _label_band_luminance("native-stashed")
+    middle = _body_luminance("native-stashed")
+    assert abs(top - middle) > 3, (
+        f"the top band ({top:.1f}) is indistinguishable from the card body ({middle:.1f}) — the "
+        f"label is not there, so a maximised parked window says nothing where it can be seen")
+
+
+def test_the_label_has_a_plate_of_its_own():
+    """Text alone on a gradient is what made this read as wallpaper. The pill gives it an edge."""
+    assert ".osw.native-stashed .osw-body::before" in CSS
+    rule = CSS.split(".osw.native-stashed .osw-body::before{", 1)[1].split("}", 1)[0]
+    assert "border-radius:999px" in rule and "rgba(6,10,20" in rule
+
+
+def test_the_card_still_never_renders_dark():
+    """The label move must not have cost the property this file exists for."""
+    assert _body_luminance("native-stashed") > DARK
