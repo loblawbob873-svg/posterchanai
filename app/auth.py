@@ -198,13 +198,63 @@ def get_current_user_optional(
         return None
 
 
-def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
-    return current_user
+def _operator_pubkey(db: Session) -> Optional[str]:
+    """The pubkey this node signs its own events with, or None. Cached: it cannot change without a
+    restart, and this runs on every admin request."""
+    global _OPERATOR_PK
+    if _OPERATOR_PK is not _UNSET:
+        return _OPERATOR_PK
+    _OPERATOR_PK = None
+    try:
+        from app.services.nostr import nostr_service
+        op = db.query(User).filter(User.is_admin == True,  # noqa: E712
+                                   User.nostr_nsec.isnot(None)).first()
+        if op:
+            _OPERATOR_PK = nostr_service.derive_pubkey(nostr_service.decode_seckey(op.nostr_nsec))
+    except Exception as e:                                  # pragma: no cover - never fatal
+        logger.warning("[auth] could not derive the operator pubkey: %s", e)
+    return _OPERATOR_PK
+
+
+_UNSET = object()
+_OPERATOR_PK = _UNSET
+
+
+def get_admin_user(current_user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)) -> User:
+    if current_user.is_admin:
+        return current_user
+
+    # AN EXISTING SESSION HEALS ITSELF — NOBODY SHOULD HAVE TO LOG OUT TO FIX OUR BUG.
+    #
+    # nostr-login used to mint a second, ordinary account for an operator whose account had no
+    # linked npub, so phones are already signed in AS that duplicate. Fixing the login path alone
+    # left every one of those sessions broken until the person signed out and in again — which is
+    # asking the user to perform the repair, and they were right to refuse.
+    #
+    # The claim is identical to the one the login path makes: this account carries the npub of the
+    # key this node signs with, so whoever holds it already controls the node completely. That is
+    # true of a live session exactly as it is of a fresh sign-in, so it is honoured here too and
+    # the phone recovers on its next request with nothing asked of anybody.
+    try:
+        npub = (current_user.nostr_npub or "").strip()
+        if npub:
+            from app.services.nostr import nostr_service
+            op_pk = _operator_pubkey(db)
+            if op_pk and nostr_service.to_pubkey_hex(npub) == op_pk:
+                operator = db.query(User).filter(User.is_admin == True,  # noqa: E712
+                                                 User.nostr_nsec.isnot(None)).first()
+                if operator:
+                    logger.info("[auth] session on %s carries the operator's own key — serving it "
+                                "as the operator", current_user.username)
+                    return operator
+    except Exception as e:                                  # pragma: no cover - never fatal
+        logger.warning("[auth] operator-session repair failed: %s", e)
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Admin access required"
+    )
 
 
 def get_ai_user(current_user: User = Depends(get_current_user)) -> User:

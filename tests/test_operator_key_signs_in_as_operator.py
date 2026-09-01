@@ -215,3 +215,108 @@ def test_the_wallet_stays_admin_only():
     for route in monero_wallet.router.routes:
         names = [d.call.__name__ for d in route.dependant.dependencies]
         assert "get_admin_user" in names, f"{route.path} lost its admin gate"
+
+
+# =============================================================================================
+# THE SESSION THAT IS ALREADY WRONG — nobody should have to log out to fix our bug.
+# =============================================================================================
+
+
+class _AdminDB:
+    """Enough of a session for get_admin_user's repair path."""
+
+    def __init__(self, operator):
+        self.operator = operator
+
+    def query(self, model):
+        return self
+
+    def filter(self, *conditions):
+        return self
+
+    def first(self):
+        return self.operator
+
+
+def _fresh_auth():
+    """A module with its operator-pubkey cache cleared — it is global and cached on purpose."""
+    from app import auth as auth_mod
+    auth_mod._OPERATOR_PK = auth_mod._UNSET
+    return auth_mod
+
+
+def test_a_live_session_on_the_duplicate_account_is_served_as_the_operator(operator):
+    """THE COMPLAINT, AND IT WAS RIGHT: "I should not have to log out on my phone."
+
+    Fixing only the login path left every phone already signed in as the duplicate broken until the
+    person signed out and in again — asking the user to perform the repair for a bug we shipped.
+    The claim here is identical to the login path's: this account carries the npub of the key this
+    node signs with, so whoever holds it already controls the node completely. True of a live
+    session exactly as it is of a fresh sign-in."""
+    auth_mod = _fresh_auth()
+    op, pk = operator
+    op.nostr_nsec = op.nostr_nsec           # the operator row still holds the key
+    dupe = Row(id=7, username="npub_abc", is_admin=False,
+               nostr_npub=nostr_service.npub_of(pk))
+    got = auth_mod.get_admin_user(dupe, _AdminDB(op))
+    assert got is op, "the phone's existing session still 403s — it must heal on its next request"
+    assert got.is_admin is True
+
+
+def test_an_ordinary_member_session_is_still_refused(operator):
+    """The security question again, on the session path this time: any account NOT carrying the
+    operator's own key must still be refused, exactly as before."""
+    from fastapi import HTTPException
+    auth_mod = _fresh_auth()
+    op, _ = operator
+    _, other_pk = _keypair()
+    member = Row(id=7, username="joe", is_admin=False, nostr_npub=nostr_service.npub_of(other_pk))
+    with pytest.raises(HTTPException) as caught:
+        auth_mod.get_admin_user(member, _AdminDB(op))
+    assert caught.value.status_code == 403
+
+
+def test_a_session_with_no_npub_at_all_is_refused(operator):
+    """A password-only member has nothing to compare, and must not fall through the repair."""
+    from fastapi import HTTPException
+    auth_mod = _fresh_auth()
+    op, _ = operator
+    member = Row(id=7, username="joe", is_admin=False, nostr_npub=None)
+    with pytest.raises(HTTPException):
+        auth_mod.get_admin_user(member, _AdminDB(op))
+
+
+def test_a_node_with_no_operator_key_refuses_everyone_as_before():
+    """A relay-only node has no admin carrying an nsec. The repair must find nothing and change
+    nothing — it must never become a way in."""
+    from fastapi import HTTPException
+    auth_mod = _fresh_auth()
+    _, pk = _keypair()
+    member = Row(id=7, username="joe", is_admin=False, nostr_npub=nostr_service.npub_of(pk))
+    with pytest.raises(HTTPException):
+        auth_mod.get_admin_user(member, _AdminDB(None))
+
+
+def test_a_real_admin_is_returned_without_touching_the_database(operator):
+    """The ordinary case must not pay for the repair: an admin session returns immediately, before
+    any query, so this adds nothing to the path every admin request already takes."""
+    auth_mod = _fresh_auth()
+
+    class Explode:
+        def query(self, *a):
+            raise AssertionError("an admin session hit the database for the repair path")
+
+    admin = Row(id=1, username="root", is_admin=True, nostr_npub=None)
+    assert auth_mod.get_admin_user(admin, Explode()) is admin
+
+
+def test_the_repair_can_never_raise_out_of_the_gate(operator):
+    """A broken operator row must refuse the request, not 500 every admin endpoint on the node."""
+    from fastapi import HTTPException
+    auth_mod = _fresh_auth()
+    op, pk = operator
+    op.nostr_nsec = "not-a-key"
+    dupe = Row(id=7, username="npub_abc", is_admin=False, nostr_npub=nostr_service.npub_of(pk))
+    with pytest.raises(HTTPException) as caught:
+        auth_mod.get_admin_user(dupe, _AdminDB(op))
+    assert caught.value.status_code == 403
