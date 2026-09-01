@@ -127,6 +127,20 @@ git push origin master
 # NOTE: this publishes every commit to the PUBLIC mirror on each deploy.
 git push github master:main || echo "[sync] WARN: github push (Android APK build trigger) failed"
 
+# AND KEEP THE HOSTED `main` IN STEP WITH master ON THE NOSTR HOST TOO.
+#
+# The GRASP repo carries both branches, HEAD points at master, and the 30618 announces master's tip
+# — but a Nostr git client picks the branch IT considers default, and for most of them that is
+# `main`. Ours sat 425 commits behind, so gitworkshop read the announced HEAD, failed to find it on
+# the branch it had checked out, and told everybody:
+#
+#   "The maintainer announced commit <sha> as HEAD on Nostr, but it couldn't be found on any git
+#    server. Showing the latest available commit instead."
+#
+# Nothing was wrong with the push, the objects or the announcement — the repo simply offered a
+# second, stale branch to anyone who preferred it. A fast-forward, because master descends from it.
+git push origin master:main || echo "[sync] WARN: could not fast-forward the hosted 'main' to master"
+
 # NOTE: scripts/grasp_mirror.py is no longer called from here. It existed to copy commits from a
 # Gitea `origin` onto the nostr repo; now that `origin` IS the nostr repo, the push above already put
 # them there and mirroring would be a circular no-op. The script is kept for manual/recovery use.

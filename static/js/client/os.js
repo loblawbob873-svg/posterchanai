@@ -2909,7 +2909,25 @@
                 _nativePreview(it.w,'');
               }
             }
-            catch(_){ _natSent.set(it.native, 'hidden'); continue; }
+            catch(_){
+              /* THE SURFACE IS STILL PARKED, SO SAY SO ON THE FRAME.
+               *
+               * This recorded 'hidden' and moved on, leaving our chrome on screen with a
+               * TRANSPARENT BODY: no Firefox, no card, the wallpaper showing straight through a
+               * window that still has a title bar. Measured on the real desktop with Firefox
+               * maximised — a `.osw` frame titled "Status - YummyOrder — Mozilla Firefox" with a
+               * gradient where the browser should be. It is the empty-frame failure the block
+               * thirty lines above this one exists to prevent, reached by the one path that
+               * forgot to mark it.
+               *
+               * The card is also the way out: it is clickable, and focusing the frame raises and
+               * restores the surface, so a refused restore becomes something the user can act on
+               * instead of a hole. The next pass retries the show either way. */
+              _natSent.set(it.native, 'hidden');
+              _nativePreview(it.w, '');
+              it.w.el.classList.add('native-stashed');
+              continue;
+            }
           }
           try{ if(!pcWM.restore || was !== rect) await pcWM.place(it.native, rect.x, rect.y, rect.w, rect.h); }
           catch(_){ _natSent.delete(it.native); continue; }
