@@ -20793,6 +20793,13 @@
       if(!/^https?:\/\//i.test(B))
         throw new Error('connect this app to your PosterChan instance before opening Office');
       const fd=new FormData(); fd.append('file',file,file.name); fd.append('mode','edit');
+      /* WHERE THE EDITOR SHOULD POST BACK TO — this page, which is not the instance in either
+       * packaged app (`app://posterchan` on the desktop, `capacitor://localhost` on Android). The
+       * server checks it against the shells it already trusts and ignores anything else, so this is
+       * a statement of fact, not a permission. Without it Collabora addresses every host message to
+       * the instance, the browser drops all of them, and `askEditorToSave` waits out its full
+       * timeout on every Save, Save As and PDF export. */
+      try{ if(location && location.origin && location.origin !== 'null') fd.append('origin', location.origin); }catch(_){ }
       let r;
       try{ r=await fetch(B + '/client/office/session',{method:'POST',body:fd}); }
       catch(e){ throw new Error('could not reach ' + (B || 'this node') + ' — ' + ((e&&e.message)||e)); }
@@ -20919,7 +20926,7 @@
        * the editor and loses whatever was typed. The window OWNS the session: closing it drops the
        * server-side document, or an editor closed by its ✕ leaks a session for the whole TTL. */
       if(window.PCOS && PCOS.isOn() && PCOS.openDoc){
-        const w = PCOS.openDoc('office:'+session.id, file.name, 'i-doc', () => {}, true);
+        const w = PCOS.openDoc('office:'+session.id, file.name, 'i-note', () => {}, true);
         if(w && PCOS.documentWindow) PCOS.documentWindow(w);
         const host = w && (w.slot || w.body);
         if(host){
@@ -20951,10 +20958,42 @@
     _rememberUploadedBlob(sha,url,file); return sha;
   }
   function _officeSaveCopy(blob,name){
-    return new Promise((resolve,reject)=>modal(`<h3>Save ${enc(name)} to…</h3><div class="openwith-list">
-      <button class="openwith-row" data-office-dest="drive"><b>Files / Blossom</b><span>Your PosterChan drive</span></button>
-      ${_syncRoot?'<button class="openwith-row" data-office-dest="sync"><b>Synced Folder</b><span>The folder currently open in Files</span></button>':''}
-      <button class="openwith-row" data-office-dest="local"><b>This computer</b><span>Choose a local destination</span></button></div>`,root=>{
+    /* THE SAME CHOOSER AS EVERYTHING ELSE. This grew its own markup — `.openwith-list` /
+     * `.openwith-row`, no icons, no way out but the backdrop — beside `_openWithSheet`'s
+     * `.openwith` / `.ow-opt`, which every other "which one of these?" in the app uses. Reported as
+     * "very ugly", and it was: two patterns for one question, and the plain one on the screen you
+     * reach by saving work. Same classes, same header shape, same ✕ — no new CSS. */
+    const dests = [
+      ['drive','🗂','Files / Blossom','Your PosterChan drive'],
+      ...(_syncRoot?[['sync','🔄','Synced Folder','The folder currently open in Files']]:[]),
+      ['local','💻','This computer','Choose a local destination'],
+    ];
+    return new Promise((resolve,reject)=>modal(
+      `<h3 class="cmp-hd">Save “${enc(name)}”<button class="modal-x" id="os-x" title="Close" aria-label="Close">&#215;</button></h3>
+       <div class="openwith">${dests.map(([id,icon,label,hint])=>
+         `<button class="ow-opt" data-office-dest="${enc(id)}"><span class="ow-ic">${icon}</span>
+            <span class="ow-t"><b>${enc(label)}</b><i>${enc(hint)}</i></span></button>`).join('')}</div>`,root=>{
+      /* A CHOOSER THAT IS DISMISSED MUST STILL SETTLE — reported as "convert to pdf button is
+       * stuck". `Save as PDF…` disables its button, awaits this promise and re-enables afterwards;
+       * dismissing this sheet by the BACKDROP or Escape called `closeModal()` and resolved nothing,
+       * so the await never returned and the button sat on "Converting…" for the life of the page.
+       * The ✕ had the same hole. Watching for the node to leave the document covers every way out
+       * at once — including a `closeModal()` from somewhere else entirely — where handling each
+       * one separately is how the backdrop got missed in the first place.
+       *
+       * Cancelling is not an error: resolve with nothing rather than rejecting into a "could not
+       * save a PDF" toast for a deliberate choice. */
+      let settled = false;
+      const done = v => { if(settled) return; settled = true; resolve(v); };
+      const fail = e => { if(settled) return; settled = true; reject(e); };
+      { const x=$('#os-x',root); if(x) x.onclick=()=>{ closeModal(); done(null); }; }
+      try{
+        const host = $('#modal-root');
+        if(host && window.MutationObserver){
+          const mo = new MutationObserver(()=>{ if(!root.isConnected){ mo.disconnect(); done(null); } });
+          mo.observe(host, {childList:true, subtree:true});
+        }
+      }catch(_){ }
       $$('[data-office-dest]',root).forEach(btn=>btn.onclick=async()=>{
         try{
           const dest=btn.dataset.officeDest;
@@ -20967,8 +21006,8 @@
           }else if(window.pcHost&&pcHost.saveFile){
             const out=await pcHost.saveFile(name,new Uint8Array(await blob.arrayBuffer())); if(!out)return;
           }else await saveBlobAs(blob,name);
-          closeModal();toast('saved '+name);resolve(dest);
-        }catch(e){closeModal();reject(e);}
+          closeModal();toast('saved '+name);done(dest);
+        }catch(e){closeModal();fail(e);}
       });
     }));
   }

@@ -25,9 +25,12 @@ def test_editor_save_as_and_pdf_share_the_destination_picker():
     assert 'id="office-saveas"' in session
     assert session.count("_officeSaveCopy(") >= 2
     picker = APP[APP.index("function _officeSaveCopy"):APP.index("function renderOfficeHome")]
-    for destination in ('data-office-dest="drive"', 'data-office-dest="sync"',
-                        'data-office-dest="local"'):
-        assert destination in picker
+    # The three destinations are generated from a list now (so the sheet can use the shared
+    # `.ow-opt` chooser markup — see tests/test_office_reaches_the_editor.py), so assert the
+    # destinations themselves rather than the attribute text a template no longer contains.
+    assert "data-office-dest=" in picker
+    for destination in ("'drive'", "'sync'", "'local'"):
+        assert destination in picker, f"the {destination} destination is gone from the picker"
     assert "PCSync.edit.uploadMany" in picker
     assert "_officeStoreDrive" in picker
     assert "pcHost.saveFile" in picker

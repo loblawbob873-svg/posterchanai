@@ -25,6 +25,14 @@ import httpx
 from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+# The one list of origins the packaged apps run from — shared with the CORS policy and the
+# frame-ancestors header, so a shell added there is trusted here too and cannot be forgotten.
+from app.auth import NATIVE_APP_ORIGINS
+
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["office"])
 
 _ROOT = Path(os.getenv("POSTERCHANAI_OFFICE_WORK_DIR", "/tmp/posterchanai-office"))
@@ -151,6 +159,33 @@ def _public_base(request: Request) -> str:
     return f"{proto}://{host}"
 
 
+def _post_message_origin(request: Request, claimed: str) -> str:
+    """WHERE THE EDITOR IS ALLOWED TO POST ITS MESSAGES — which is the page embedding it, not us.
+
+    Collabora sends every host message (`Action_Save_Resp` among them) to `PostMessageOrigin`, and
+    the browser drops it unless that string equals the embedding page's own origin. This was always
+    the WOPI request's origin, i.e. this instance — right in a browser, wrong in the packaged apps,
+    where the client runs from `app://posterchan` (desktop) or `capacitor://localhost` (Android).
+    So in those shells NOTHING the editor said ever arrived: `askEditorToSave` waited its full eight
+    seconds and fell back on every Save, every Save As and every PDF export.
+
+    The client therefore states its own origin. It is checked against the SAME list the CORS policy
+    and the frame-ancestors header use, never taken on trust: this value decides who may receive a
+    document's contents, and an attacker-chosen one would be a way to read what somebody is editing.
+    Anything unrecognised falls back to the old behaviour rather than failing the session.
+    """
+    # `create_session` is also called DIRECTLY by tests and by any in-process caller, where an
+    # unfilled `Form(...)` default arrives as a Form object rather than a string. Coerce rather
+    # than trust the signature: this must never be the thing that breaks opening a document.
+    want = (claimed if isinstance(claimed, str) else "").strip().rstrip("/")
+    if not want:
+        return _public_base(request)
+    if want in NATIVE_APP_ORIGINS or want == _public_base(request):
+        return want
+    logger.warning("office: refusing PostMessageOrigin %r", want[:80])
+    return _public_base(request)
+
+
 async def _discover(client: httpx.AsyncClient) -> httpx.Response:
     """Fetch discovery, under the service root or at the origin — whichever this CODE answers.
 
@@ -208,7 +243,8 @@ async def _action_url(ext: str, mode: str) -> str:
 
 
 @router.post("/client/office/session")
-async def create_session(request: Request, file: UploadFile = File(...), mode: str = Form("edit")):
+async def create_session(request: Request, file: UploadFile = File(...),
+                         mode: str = Form("edit"), origin: str = Form("")):
     if not enabled():
         raise HTTPException(404, "built-in office support is disabled")
     name = Path(file.filename or "document").name[:240]
@@ -224,7 +260,7 @@ async def create_session(request: Request, file: UploadFile = File(...), mode: s
     p.mkdir(mode=0o700, parents=True)
     (p / "document").write_bytes(data)
     meta = {"name": name, "size": len(data), "version": 1, "created": int(time.time()),
-            "readonly": mode != "edit"}
+            "readonly": mode != "edit", "origin": _post_message_origin(request, origin)}
     (p / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     expires = int(time.time()) + _TTL
     token = _token(file_id, expires)
@@ -323,7 +359,10 @@ def check_file_info(file_id: str, request: Request, access_token: str = Query(..
             "Version": str(meta["version"]), "OwnerId": "posterchan",
             "UserId": "posterchan", "UserFriendlyName": "PosterChan user",
             "UserCanWrite": not meta["readonly"], "SupportsLocks": True,
-            "SupportsUpdate": not meta["readonly"], "PostMessageOrigin": base}
+            # The EMBEDDING page's origin, not ours — see _post_message_origin. Older sessions
+            # (created before this field existed) keep the previous behaviour.
+            "SupportsUpdate": not meta["readonly"],
+            "PostMessageOrigin": meta.get("origin") or base}
 
 
 @router.get("/wopi/files/{file_id}/contents")
