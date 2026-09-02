@@ -4426,9 +4426,16 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 /* The one exception, and it is deliberate: a thread holding a SINGLE message lets that message
    own the pane instead of leaving slack under it. `flex:1` here overrides the `flex:none`
    above for that case only. */
-.mail-thread>.mail-msg:first-child:nth-last-child(2){display:flex;flex-direction:column;min-height:0;flex:1}
-.mail-thread>.mail-msg:first-child:nth-last-child(2)>.mail-msg-body{flex:1;min-height:0;display:flex;flex-direction:column}
-.mail-thread>.mail-msg:first-child:nth-last-child(2) .mail-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.mail-thread>.mail-msg:first-child:nth-last-child(2){display:flex;flex-direction:column;flex:1 0 auto}
+.mail-thread>.mail-msg:first-child:nth-last-child(2)>.mail-msg-body{flex:1 0 auto;display:flex;flex-direction:column}
+/* GROW TO FILL THE PANE, NEVER SHRINK BELOW THE MESSAGE. `flex:1` is `flex:1 1 0%` and `min-height:0`
+   removes the content floor, so together they let this box be SMALLER than the mail inside it — and
+   `.mail-msg` is `overflow:hidden`, so the remainder is clipped away with nothing to scroll it. An
+   HTML mail escapes that because `_sizeMailFrames` writes `flex:none` and a real height onto the
+   iframe; a PLAIN TEXT mail has no such rescue, so it was clipped at the pane and simply could not
+   be read to the end: measured 3225px of text in a 465px box with 0px of scrollable distance.
+   `flex:1 0 auto` still fills the pane (the reason this rule exists) but cannot shrink under it. */
+.mail-thread>.mail-msg:first-child:nth-last-child(2) .mail-body{flex:1 0 auto;display:flex;flex-direction:column}
 .mail-thread>.mail-msg:first-child:nth-last-child(2) .mail-html{flex:1}
 .mail-acct-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
 .mar-meta{min-width:0}

@@ -47,6 +47,13 @@ globalThis.window = globalThis;
 globalThis.document = {
   createElement: el, body: el(), documentElement: el(),
   querySelector(s){ return s === '#feed' ? feed : el(); },
+  /* THE MODULE LOOKS THINGS UP BOTH WAYS. `PC.$('#feed')` and `document.getElementById('feed')`
+     are both used in monero-wallet.js — six call sites use the latter, including `bind()`. A stub
+     that only implements querySelector therefore does not fail the code under test, it THROWS
+     inside it, and the branch being exercised is never reached. That is what hid the timed-out
+     path: the test that exists to prove the wallet paints "did not answer" instead of spinning
+     was dying on a missing stub method before it got there. */
+  getElementById(id){ return id === 'feed' ? feed : el(); },
   querySelectorAll(){ return []; }, addEventListener(){},
 };
 let modalOpened = false;
