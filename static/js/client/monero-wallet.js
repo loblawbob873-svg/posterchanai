@@ -366,10 +366,16 @@
         /* The spendable balance is what a transfer can actually draw on. Checked HERE so the
            refusal names the reason and the countdown, instead of the daemon answering after the
            user has confirmed an irreversible payment. */
+        /* SAY WHAT THE LIMIT IS, not merely that one was hit. "More than the wallet can spend
+           right now" tells somebody their number is wrong without telling them the right one, so
+           the only way to find it is to guess — and the balance on screen is the TOTAL, which is
+           not what a transfer can draw on when part of it is still locking. */
         if(amount(val) > amount(state && state.unlocked_balance)){
+          const have = xmr(state && state.unlocked_balance, false);
           PC.toast(_lockedOnly
-            ? ('funds unlock in about ' + (Math.max(1,_blocks)*2) + ' minutes — use an external wallet meanwhile')
-            : 'more than the wallet can spend right now');
+            ? ('only ' + have + ' XMR can be sent right now — the rest unlocks in about '
+               + (Math.max(1,_blocks)*2) + ' minutes')
+            : ('only ' + have + ' XMR is available to send right now'));
           return;
         }
         confirmDialog({address:to,amount:val,note},opts);
@@ -710,7 +716,15 @@
         go.onclick = async () => {
           const val = String((r.querySelector('#mw-me-amt') || {}).value || '').trim();
           if(!(amount(val) > 0)){ PC.toast('enter an amount greater than zero'); return; }
-          if(amount(val) > amount(s.unlocked_balance)){ PC.toast('more than your wallet can send right now'); return; }
+          if(amount(val) > amount(s.unlocked_balance)){
+            // Same rule: name the amount they can actually send.
+            const have = xmr(s.unlocked_balance, false);
+            const mins = Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
+            PC.toast(amount(s.balance) > amount(s.unlocked_balance)
+              ? ('only ' + have + ' XMR can be sent right now — the rest unlocks in about ' + mins + ' minutes')
+              : ('only ' + have + ' XMR is available to send right now'));
+            return;
+          }
           go.disabled = true; go.textContent = 'Sending…';
           try{
             const out = await request('/api/wallet/xmr/me/pay', {method:'POST',

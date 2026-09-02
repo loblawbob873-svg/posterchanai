@@ -331,3 +331,16 @@ def test_the_wallet_screen_never_spins_for_ever(seen):
         f"the wallet screen waited {seen['screenHangs']['tookMs']}ms on a signer that never answered")
     assert seen["screenHangs"]["spinner"] is False, "it is still spinning with no answer"
     assert seen["screenHangs"]["saysSo"] is True and seen["screenHangs"]["hasRetry"] is True
+
+
+def test_an_amount_that_is_too_big_names_the_limit(seen):
+    """Reported as: '"more than one wallet cn spend now" wtf is this!'
+
+    The message told somebody their number was wrong without telling them the right one, so the only
+    way to find it was to guess — and the balance on screen is the TOTAL, which is not what a
+    transfer can draw on while part of it is still locking. It now names the spendable amount, and
+    when the rest is locking it says when that ends."""
+    assert seen["overAmount"]["namesTheLimit"] is True, (
+        f"the refusal does not say how much can actually be sent: {seen['overAmount']['toast']!r}")
+    assert seen["overAmount"]["saysUnlock"] is True, (
+        "a locked remainder is not explained, so the number looks arbitrary")

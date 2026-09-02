@@ -346,4 +346,32 @@ function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 
   };
 }
 
+// 26. AN AMOUNT THAT IS TOO BIG MUST NAME THE LIMIT. "more than the wallet can spend right now"
+//     says the number is wrong without saying what the right one is — and the balance on screen is
+//     the TOTAL, which is not what a transfer can draw on while part of it is locking.
+{
+  const w = boot({ fetcher: p => (p.includes('/me/status') ? OK({enabled:true, network:'mainnet'})
+    : p.includes('/me/balance') ? OK({address:ADDR, balance:'2.5', unlocked_balance:'0.25',
+                                      blocks_to_unlock:3, outputs:2})
+    : (() => { throw new Error('this account cannot open the node wallet'); })()) });
+  const toasts = []; w.PC.toast = t => toasts.push(String(t));
+  let onMount = null;
+  w.PC.modal = (h, cb) => { onMount = cb; w._html = h; };
+  await w.api.meTip({ address: ADDR, name: 'x' });
+  // pretend the user typed more than they can send
+  const el = { value: '1.0' };
+  const stub = { querySelector: sel => (sel === '#mw-me-amt' ? el
+                    : sel === '#mw-me-send' ? { onclick: null, disabled: false, textContent: '' } : null),
+                 querySelectorAll: () => [] };
+  if (onMount) {
+    const send = { onclick: null, disabled: false, textContent: '' };
+    stub.querySelector = sel => (sel === '#mw-me-amt' ? el : sel === '#mw-me-send' ? send : null);
+    onMount(stub);
+    if (send.onclick) await send.onclick();
+  }
+  out.overAmount = { toast: toasts[toasts.length - 1] || '',
+                     namesTheLimit: /0\.25/.test(toasts.join(' ')),
+                     saysUnlock: /unlocks in about 6 minutes/.test(toasts.join(' ')) };
+}
+
 console.log(JSON.stringify(out));
