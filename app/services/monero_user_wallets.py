@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 import os
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -29,9 +31,55 @@ from app.services.monero_wallet_service import (
     WalletBusy, WalletError, WalletUnsure, atomic_to_xmr, normalize_amounts, validate_address,
 )
 
+logger = logging.getLogger(__name__)
+
 #: Monero caps the outputs in one transaction and the change takes a slot. Measured against the real
 #: daemon: 15 destinations built one transaction, 16 was refused.
 MAX_DESTINATIONS = 15
+
+
+# ── The operator's zap fee ───────────────────────────────────────────────────────────────────────
+#
+# A percentage of every custodial zap, paid to the node operator's own address. It applies ONLY on
+# this path — the one where the node actually executes the transfer. The URI/QR flow is
+# non-custodial (the payment never touches this server, so there is nothing to take a cut of) and
+# the operator's own node wallet is not charged, because that would be the operator paying
+# themselves a fee out of their own wallet and losing a transaction fee to do it.
+#
+# THE FEE MUST NEVER BLOCK A PAYMENT. Every failure to work out a fee — no address configured, an
+# address that does not validate, a percentage that is nonsense, a cut too small to be worth a
+# destination — results in the zap going out in full, unchanged. Money moving is the feature; the
+# fee is the operator's business arrangement, and an arrangement that can strand somebody's tip is
+# worse than no arrangement.
+FEE_MIN_ATOMIC = 10 ** 7          # 0.00001 XMR — below this a destination costs more than it earns
+
+
+def zap_fee_percent() -> Decimal:
+    """The configured cut, as a percentage. Anything unparseable is no fee at all."""
+    raw = _setting("monero_zap_fee_percent", "MONERO_ZAP_FEE_PERCENT", "2")
+    try:
+        pct = Decimal(str(raw).strip() or "0")
+    except (InvalidOperation, ValueError):
+        return Decimal(0)
+    if not pct.is_finite() or pct <= 0:
+        return Decimal(0)
+    # A cut of more than half is far likelier to be a typo (200 for 2.00) than an intention, and the
+    # cost of being wrong lands on somebody else's tip.
+    return min(pct, Decimal(50))
+
+
+def split_fee(atomic: int, pct: Decimal) -> tuple[int, int]:
+    """(what the recipient gets, what the operator gets) — exact integers, never floats.
+
+    The cut comes OUT of the amount rather than being added on top, so the sender is debited exactly
+    what they typed. Rounded DOWN, so rounding always favours the recipient, and skipped entirely
+    when it would be dust or would leave the recipient with nothing."""
+    if pct <= 0 or atomic <= 0:
+        return atomic, 0
+    fee = int((Decimal(atomic) * pct / Decimal(100)).to_integral_value(rounding=ROUND_DOWN))
+    if fee < FEE_MIN_ATOMIC or fee >= atomic:
+        return atomic, 0
+    return atomic - fee, fee
 
 
 def _setting(name: str, env_name: str, default: str) -> str:
@@ -54,6 +102,7 @@ class UserWallets:
         self.password = _setting("monero_pool_rpc_password", "MONERO_POOL_RPC_PASSWORD", "")
         self.network = _setting("monero_wallet_network", "MONERO_WALLET_NETWORK", "stagenet").lower()
         self.timeout = float(_setting("monero_wallet_rpc_timeout", "MONERO_WALLET_RPC_TIMEOUT", "8"))
+        self._fee_address: str | None = None
         self._lock = asyncio.Lock()
 
     def enabled(self) -> bool:
@@ -167,6 +216,45 @@ class UserWallets:
             "outputs": sum(int(x.get("num_unspent_outputs") or 0) for x in subs),
         }
 
+    async def fee_address(self) -> str:
+        """Where the operator's cut goes — their configured address, else the node wallet's own.
+
+        Cached for the process: an address does not change, and this is on the path of every zap.
+        Returns "" for anything it cannot verify, which switches the fee off rather than sending
+        somebody's money somewhere unproven. Note the ORDER: an explicitly configured address wins,
+        so an operator can bank the fee somewhere other than the hot wallet the node spends from.
+        """
+        if self._fee_address is not None:
+            return self._fee_address
+
+        configured = _setting("monero_zap_fee_address", "MONERO_ZAP_FEE_ADDRESS", "").strip()
+        if configured:
+            try:
+                validate_address(configured, self.network)
+                self._fee_address = configured
+                return configured
+            except WalletError:
+                logger.warning("[monero] the configured zap fee address is not a valid %s address "
+                               "— no fee will be taken", self.network)
+                self._fee_address = ""
+                return ""
+
+        # Fall back to the node's own wallet: "goes to my wallet" with nothing else to configure.
+        try:
+            node = importlib.import_module("app.services.monero_wallet_service")
+            # Built per call, exactly as the node-wallet router does — there is no singleton, and
+            # the CONSTRUCTOR is what refuses when the wallet is disabled or misconfigured.
+            wallet = node.MoneroWallet()
+            got = await wallet.address()
+            addr = str((got or {}).get("address") or "").strip()
+            validate_address(addr, self.network)
+            self._fee_address = addr
+            return addr
+        except Exception:
+            # Including a node wallet that is off, unreachable or on another network. No fee.
+            self._fee_address = ""
+            return ""
+
     async def pay(self, pubkey: str, payments: list[tuple[str, int]]) -> dict[str, Any]:
         """Pay one or many people from THIS user's account, in as few transactions as possible.
 
@@ -184,10 +272,45 @@ class UserWallets:
                 raise WalletError("Each payment needs a positive amount")
             dests.append({"address": address, "amount": atomic})
 
-        out: dict[str, Any] = {"recipients": len(dests), "batches": [], "tx_hash_list": [],
-                               "amount": 0, "fee": 0}
-        for i in range(0, len(dests), MAX_DESTINATIONS):
-            chunk = dests[i:i + MAX_DESTINATIONS]
+        # THE OPERATOR'S CUT, worked out in full before anything is sent.
+        #
+        # `service_fee` is what the operator receives; `fee` remains the MINER's fee. They are
+        # different numbers and a caller that conflates them will report the wrong thing to a payer.
+        #
+        # Every step here fails OPEN: no configured address, an address that will not validate, a
+        # percentage that is nonsense, or a cut too small to be worth an output, and the zap simply
+        # goes out in full. A fee that can strand somebody's tip is worse than no fee.
+        pct = zap_fee_percent()
+        fee_to = await self.fee_address() if pct > 0 else ""
+
+        # (address, what the recipient gets, what the operator gets) per payment.
+        plan: list[tuple[str, int, int]] = []
+        for dest in dests:
+            gross = int(dest["amount"])
+            if not fee_to or dest["address"] == fee_to:
+                # A payment TO the fee address is never charged: that is the operator paying
+                # themselves and burning a miner fee for the privilege.
+                plan.append((dest["address"], gross, 0))
+                continue
+            net, cut = split_fee(gross, pct)
+            plan.append((dest["address"], net, cut))
+        taken = sum(cut for _, _, cut in plan)
+        if taken <= 0:
+            fee_to = ""
+
+        # ONE aggregated fee output per transaction, never one per recipient: a transaction's
+        # outputs are capped, so a cut per person would halve how many people a single zap reaches.
+        per_tx = MAX_DESTINATIONS - (1 if fee_to else 0)
+
+        out: dict[str, Any] = {"recipients": len(plan), "batches": [], "tx_hash_list": [],
+                               "amount": 0, "fee": 0, "service_fee": taken,
+                               "service_fee_percent": str(pct if fee_to else Decimal(0))}
+        for i in range(0, len(plan), per_tx):
+            slice_ = plan[i:i + per_tx]
+            chunk = [{"address": a, "amount": net} for a, net, _ in slice_]
+            cut = sum(c for _, _, c in slice_)
+            if fee_to and cut > 0:
+                chunk.append({"address": fee_to, "amount": cut})
             got = await self.rpc("transfer_split", {
                 "destinations": chunk, "account_index": index, "priority": 1,
                 "get_tx_keys": False, "get_tx_hex": False,

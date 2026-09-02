@@ -13,6 +13,20 @@
     <label>Rolling daily cap (XMR) <input id="monero_wallet_daily_cap_xmr" name="monero_wallet_daily_cap_xmr" value="0.5" inputmode="decimal"></label>
     <label>RPC timeout (seconds) <input type="number" id="monero_wallet_rpc_timeout" name="monero_wallet_rpc_timeout" value="8" min="1" max="30"></label>
     <label>Durable spend ledger <input id="monero_wallet_spend_ledger" name="monero_wallet_spend_ledger" value="data/monero_wallet_spend.sqlite3" autocomplete="off"></label>
+  </fieldset>
+  <fieldset>
+    <legend>Zap service fee</legend>
+    <p class="hint">A cut of each zap sent through a wallet this node holds, paid to you. It applies
+      ONLY where this node executes the transfer — a zap paid from the user's own wallet through the
+      address/QR flow never touches this server, so there is nothing to take a cut of. The cut comes
+      out of the amount, so the sender is debited exactly what they typed and the recipient receives
+      the remainder. A cut smaller than 0.00001 XMR is skipped: the extra output would cost more in
+      transaction size than it earns.</p>
+    <label>Fee (%) <input type="number" id="monero_zap_fee_percent" name="monero_zap_fee_percent" value="2" min="0" max="50" step="0.1"></label>
+    <label>Fee address <input id="monero_zap_fee_address" name="monero_zap_fee_address" value="" placeholder="leave blank to use this node's own wallet address" autocomplete="off" spellcheck="false"></label>
+  </fieldset>
+  <fieldset>
+    <legend>Node status</legend>
     <button type="button" class="btn-secondary" id="monero-node-status">Check Node Status</button>
     <pre id="monero-node-status-result" aria-live="polite">Not checked</pre>
   </fieldset>

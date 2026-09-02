@@ -99,6 +99,12 @@ class SettingsResponse(BaseModel):
     monero_wallet_daily_cap_xmr: str = ""
     monero_wallet_rpc_timeout: str = ""
     monero_wallet_spend_ledger: str = ""
+    #: The operator's cut of each CUSTODIAL zap, as a percentage. Only the path where this
+    #: node executes the transfer can be charged — the URI/QR flow is non-custodial and the
+    #: payment never touches this server. Blank or 0 disables it.
+    monero_zap_fee_percent: str = "2"
+    #: Where that cut goes. Blank means the node's own wallet address.
+    monero_zap_fee_address: str = ""
     # Default UI theme for the Nostr web client (/client) — applied to any visitor/device that
     # hasn't picked their own theme. One of CLIENT_THEMES; the client falls back to "cyberpunk" (the
     # flagship bare-:root theme) if unknown. Stored in the relay like every other setting.

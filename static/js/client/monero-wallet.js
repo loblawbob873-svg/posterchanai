@@ -670,7 +670,11 @@
       const b = await request('/api/wallet/xmr/me/balance');
       _meState = {enabled:true, network:st.network, address:b.address, balance:b.balance,
                   unlocked_balance:b.unlocked_balance, blocks_to_unlock:b.blocks_to_unlock,
-                  outputs:b.outputs};
+                  outputs:b.outputs,
+                  /* The operator's cut, so the sheet can state it BEFORE anybody sends. A fee a
+                     payer only discovers afterwards — by noticing the recipient got less than they
+                     chose — is indistinguishable from the wallet being broken. */
+                  fee_percent:Number(st.fee_percent || 0) || 0};
     }catch(e){
       /* A FAILURE IS NOT A DURABLE ANSWER — the same latch that made the node wallet stop working
          for the life of a page. Only a positive result is cached. */
@@ -705,13 +709,39 @@
       + '<label>Amount (XMR)<input class="input" id="mw-me-amt" type="number" min="0.000000000001" '
       + 'step="0.0001" inputmode="decimal" value="' + esc(String(opts.amount || '')) + '"></label>'
       + presets
+      + (s.fee_percent > 0
+          ? '<p class="muted small" id="mw-me-fee">This server takes ' + esc(String(s.fee_percent))
+            + '% of a tip sent from your wallet here. Sending from your own wallet costs nothing '
+            + '\u2014 use the link below.</p>'
+          : '')
       + '<button class="btn btn-neon full" id="mw-me-send">Send tip</button>'
       + '<a class="btn btn-ghost full" id="mw-me-external" href="' + esc(uri(opts.address, '', opts.name || '')) + '">Use an external wallet instead</a>'
       + '</div>', r => {
+        /* SHOW THE ACTUAL FIGURE, not just the percentage. "2%" of an amount somebody has not
+           typed yet is not information; "they receive 0.0098" is. Recomputed as they type and on
+           every preset, and it stays silent when there is no fee. */
+        const fee = Number(s.fee_percent) || 0;
+        const note = r.querySelector('#mw-me-fee');
+        const restate = () => {
+          if(!note || !(fee > 0)) return;
+          const v = amount(String((r.querySelector('#mw-me-amt') || {}).value || '').trim());
+          note.textContent = (v > 0)
+            ? 'They receive ' + xmr(v * (100 - fee) / 100, false) + ' XMR \u2014 this server takes '
+              + fee + '% (' + xmr(v * fee / 100, false) + ' XMR). Sending from your own wallet costs '
+              + 'nothing; use the link below.'
+            : 'This server takes ' + fee + '% of a tip sent from your wallet here. Sending from your '
+              + 'own wallet costs nothing \u2014 use the link below.';
+        };
+        /* `oninput =`, not addEventListener — every other binding in this module is a property
+           assignment, and the scenario harness stubs elements accordingly. Reaching for a listener
+           here threw `amtEl.addEventListener is not a function` and took out 28 tip scenarios. */
+        const amtEl = r.querySelector('#mw-me-amt');
+        if(amtEl) amtEl.oninput = restate;
         Array.prototype.forEach.call(r.querySelectorAll('[data-mw-amt]'), b => {
           b.onclick = () => { const el = r.querySelector('#mw-me-amt');
-            if(el){ el.value = b.getAttribute('data-mw-amt'); try{ el.focus(); }catch(_){ } } };
+            if(el){ el.value = b.getAttribute('data-mw-amt'); try{ el.focus(); }catch(_){ } restate(); } };
         });
+        restate();
         const go = r.querySelector('#mw-me-send');
         go.onclick = async () => {
           const val = String((r.querySelector('#mw-me-amt') || {}).value || '').trim();

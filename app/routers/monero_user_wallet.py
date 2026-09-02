@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.routers import auth
-from app.services.monero_user_wallets import user_wallets
+from app.services.monero_user_wallets import user_wallets, zap_fee_percent
 from app.services.monero_wallet_service import WalletError, xmr_to_atomic
 
 router = APIRouter(tags=["monero-user-wallet"])
@@ -60,8 +60,14 @@ class WithdrawRequest(BaseModel):
 
 @router.get("/status")
 async def status(user: CurrentUser):
-    """Whether this node offers per-user wallets at all. Cheap: no RPC."""
-    return {"enabled": user_wallets.enabled(), "network": user_wallets.network}
+    """Whether this node offers per-user wallets at all. Cheap: no RPC.
+
+    Carries the service fee so the tip sheet can state it BEFORE anybody sends. A cut a payer only
+    discovers afterwards, by noticing the recipient got less than they chose, is indistinguishable
+    from the wallet being broken — which is a support question at best and an accusation at worst."""
+    fee = zap_fee_percent()
+    return {"enabled": user_wallets.enabled(), "network": user_wallets.network,
+            "fee_percent": str(fee) if fee > 0 else "0"}
 
 
 @router.get("/address")
