@@ -14,16 +14,22 @@ function mainnetWallet() {
   };
 }
 
-// 1. A WALLET THAT NEVER ANSWERS must not hold up the non-custodial flow.
+// 1. THE SAME CLICK MUST GIVE THE SAME ANSWER, whatever the wallet's latency is.
+//    This used to race the probe against a 1200ms stopwatch, so an identical click returned the
+//    built-in wallet or the external flow depending on which won.
 {
-  const w = boot({ fetcher: mainnetWallet() });
-  let release;
-  const hang = new Promise(r => { release = r; });
-  w.PC.authFetch = async () => { await hang; throw new Error('scanning'); };
-  const began = Date.now();
-  const answered = await w.api.tip({ address: ADDR, name: 'x' });
-  out.slow = { tookMs: Date.now() - began, answered };
-  release();
+  const answers = [];
+  /* The delays STRADDLE the 1200ms stopwatch this used to race against — below it the race is
+     always won and the bug is invisible, which is exactly how the first version of this test
+     passed against the very code it was written to reject. */
+  for (const delay of [0, 100, 1500, 2500]) {
+    const inner = mainnetWallet();
+    const w = boot({ fetcher: p => new Promise(r => setTimeout(() => r(inner(p)), delay)) });
+    let opened = false; w.PC.modal = () => { opened = true; };
+    // Immediately — a warm cache would answer before the race could be reached.
+    answers.push(await w.api.tip({ address: ADDR, name: 'x' }));
+  }
+  out.deterministic = { answers, allSame: answers.every(a => a === answers[0]) };
 }
 
 // 2. A wallet this page already read answers immediately, with no request at all.
@@ -124,6 +130,31 @@ function mainnetWallet() {
   await w.api.render();
   w.PC.modal = () => {};
   out.lockedWallet = { answered: await w.api.tip({ address: ADDR, name: 'x' }) };
+}
+
+// 11. A LOCKED balance keeps the built-in wallet — Monero locks the change from every send for 10
+//     blocks, so refusing on spendable balance made the wallet stop working for ~20 minutes after
+//     each tip ("you fixed android but broke webui").
+{
+  const w = boot({ fetcher: p => (p.includes('/balance')
+    ? OK({ balance: '0.00788058', unlocked_balance: '0', blocks_to_unlock: 4 })
+    : mainnetWallet()(p)) });
+  await w.api.render();
+  let html = ''; w.PC.modal = h => { html = h; };
+  const answered = await w.api.tip({ address: ADDR, name: 'x' });
+  out.lockedKeepsWallet = { answered, saysLocking: /still locking/i.test(html),
+                            saysMinutes: /8 minutes/.test(html) };
+}
+
+// 12. A wallet holding NOTHING still hands the tip to the external flow — that is the one case
+//     where the built-in wallet genuinely cannot help.
+{
+  const w = boot({ fetcher: p => (p.includes('/balance')
+    ? OK({ balance: '0', unlocked_balance: '0' })
+    : mainnetWallet()(p)) });
+  await w.api.render();
+  let opened = false; w.PC.modal = () => { opened = true; };
+  out.trulyEmpty = { answered: await w.api.tip({ address: ADDR, name: 'x' }), opened };
 }
 
 console.log(JSON.stringify(out));

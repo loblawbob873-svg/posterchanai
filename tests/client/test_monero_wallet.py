@@ -89,8 +89,12 @@ def test_wallet_is_wired_as_optional_module_and_tip_falls_back():
     app = open(APP, encoding="utf-8").read()
     tpl = open(TPL, encoding="utf-8").read()
     assert "renderModuleView('wallet','monero-wallet.js','PCMoneroWallet','render')" in app
-    assert "await PCMoneroWallet.tip" in app
-    assert "catch(_){}" in app[app.index("await PCMoneroWallet.tip"):][:500]
+    # The module is LOADED on demand and then asked. Testing the global alone made the built-in
+    # wallet depend on whether the Wallet screen had been opened this session — "monero android app
+    # not using built-in wallet! desktop works but not android".
+    assert "_withModule('monero-wallet.js', 'PCMoneroWallet')" in app
+    assert "await _xmrWallet.tip" in app
+    assert "catch(_){}" in app[app.index("await _xmrWallet.tip"):][:500]
     assert 'data-view="wallet"' in tpl
     assert '/static/js/client/monero-wallet.js' in tpl
 

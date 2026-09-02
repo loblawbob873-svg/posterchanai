@@ -4,7 +4,7 @@
  * bridge and treats every failure as "external wallet mode". */
 (function(root){
   'use strict';
-  let PC=null, state=null, checkedAt=0, booted=false;
+  let PC=null, state=null, checkedAt=0, booted=false, _probeSeq=0;
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const amount=v=>{ const n=Number(v); return Number.isFinite(n)&&n>=0?n:0; };
   /* RPC amounts arrive as decimal STRINGS. Never pass atomic units through Number: wallet balances
@@ -99,7 +99,22 @@
     }finally{clearTimeout(timer);}
   }
   async function probe(force){
-    if(!force && Date.now()-checkedAt<8000) return state;
+    /* THE CACHE IS ONLY A CACHE ONCE THERE IS SOMETHING IN IT.
+     *
+     * `checkedAt` is stamped BEFORE the request, so a second call arriving while the first is still
+     * in flight took this early return and got the state as it was then — null. Harmless while
+     * nothing probed concurrently, and immediate once the module warms itself on load: `paint(null)`
+     * throws on `s.available` and the wallet screen dies. Requiring `state` makes the early return
+     * mean what it says. */
+    if(!force && state && Date.now()-checkedAt<8000) return state;
+    /* THE LAST ANSWER TO ARRIVE IS NOT THE LATEST ANSWER.
+     *
+     * Two probes can be in flight — the module warms itself on load, and a view entry or the Retry
+     * button asks again. Whichever finishes LAST used to win, so a slow early probe could overwrite
+     * a newer, truer one: a wallet that had just been found unreachable would flip back to
+     * "available" a second later, and the screen with it. Stamped and checked, an out-of-order
+     * answer is discarded rather than believed. */
+    const seq = ++_probeSeq;
     checkedAt=Date.now();
     try{
       const [meta,bal,addr,histResult]=await Promise.all([
@@ -117,9 +132,14 @@
       for(const kind of ['in','out','pending','failed','pool']) for(const row of (hist[kind]||[]))
         transfers.push(Object.assign({direction:kind, unconfirmed:(kind==='pool'||kind==='pending')},row));
       transfers.sort((a,b)=>Number(b.timestamp||b.height||0)-Number(a.timestamp||a.height||0));
-      state={available:true,network:meta.network,warning:meta.warning,balance:bal.balance,
+      const _next={available:true,network:meta.network,warning:meta.warning,balance:bal.balance,
         unlocked_balance:bal.unlocked_balance,
+        /* HOW LONG UNTIL IT CAN BE SPENT. Monero locks the CHANGE from a send for 10 blocks, so the
+           wallet goes to zero spendable immediately after a successful tip. Without this the screen
+           can only say "0", which reads as the money having gone somewhere. */
+        blocks_to_unlock:bal.blocks_to_unlock,
         address:addr.address||(((addr.addresses||[])[0]||{}).address)||'',transfers};
+      if(seq === _probeSeq) state=_next;
     }catch(e){
       const detail=(e&&e.message)||String(e||'local wallet unavailable');
       try{console.error('[monero wallet] probe failed',e);}catch(_){}
@@ -128,8 +148,9 @@
          operator setting allowed up to 30s, and this client aborts at 20 — above 20 the abort wins
          and the message is ours, not the node's. Matching only the node's wording would make the
          "catching up" card quietly stop appearing on exactly the nodes whose wallet is slowest. */
-      state={available:false,error:detail,network:'stagenet',
+      const _fail={available:false,error:detail,network:'stagenet',
              busy:/still reading the chain|is busy|did not answer within/i.test(String(detail||''))};
+      if(seq === _probeSeq) state=_fail;
     }
     return state;
   }
@@ -168,7 +189,8 @@
   function paint(s){
     // The state request is async. A late balance/history response never owns the shared feed after
     // navigation (including login landing, resume, or a relay-driven repaint).
-    if(!PC||PC.VIEW!=='wallet')return;
+    // Nothing to paint is not an error — an in-flight probe can hand back no state at all.
+    if(!s||!PC||PC.VIEW!=='wallet')return;
     const f=document.getElementById('feed'); if(!f)return;
     if(!s.available){f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">LOCAL WALLET</span></div></header>'+warning(s)+(s.busy?busyHtml():fallbackHtml(s.error))+'</div>'; bind(); return;}
     const address=String(s.address||''), balance=s.balance_atomic!=null?s.balance_atomic:s.balance;
@@ -246,7 +268,22 @@
   }
   function sendDialog(opts){
     opts=opts||{}; const preset=validAddress(opts.address,state&&state.network)?opts.address:'';
-    PC.modal('<div class="mw-modal"><h3>'+(preset?'Tip '+esc(opts.name||'with Monero'):'Send Monero')+'</h3>'+warning()+'<button type="button" class="btn btn-cyan full mw-scan" id="mw-scan">Scan wallet QR</button><div class="mw-scan-stage hidden" id="mw-scan-stage"><video playsinline muted></video><span>Point at a Monero payment QR…</span><button type="button" class="btn btn-ghost small" id="mw-scan-cancel">Cancel scan</button></div><label>Recipient address<input class="input" id="mw-to" value="'+esc(preset)+'" autocomplete="off" spellcheck="false"></label><label>Amount (XMR)<input class="input" id="mw-amount" type="number" min="0.000000000001" step="0.0001" inputmode="decimal"></label><label>Note (stored only in your wallet)<input class="input" id="mw-note" maxlength="120"></label><button class="btn btn-neon full" id="mw-review">Review payment</button></div>',r=>{
+    /* SAY WHY IT CANNOT SEND YET, at the top, before an amount is typed.
+     *
+     * Monero locks the change from a send for 10 blocks, so the spendable balance is zero for about
+     * twenty minutes after every tip. Left unsaid, the send is accepted, the daemon refuses it, and
+     * the wallet looks broken — which is exactly how it was reported. */
+    const _lockedOnly = state && amount(state.balance) > 0 && !(amount(state.unlocked_balance) > 0);
+    const _blocks = Number(state && state.blocks_to_unlock) || 0;
+    const _lockNote = _lockedOnly
+      ? '<div class="mw-warning" role="note"><b>Your balance is still locking.</b> '
+        + esc(xmr(state.balance, false)) + ' XMR arrives in about '
+        + esc(String(Math.max(1, _blocks) * 2)) + ' minutes ('
+        + esc(String(Math.max(1, _blocks))) + ' block' + (_blocks === 1 ? '' : 's')
+        + '). Monero locks the change from every payment — nothing is lost. '
+        + 'Until then, tip from an external wallet.</div>'
+      : '';
+    PC.modal('<div class="mw-modal"><h3>'+(preset?'Tip '+esc(opts.name||'with Monero'):'Send Monero')+'</h3>'+warning()+_lockNote+'<button type="button" class="btn btn-cyan full mw-scan" id="mw-scan">Scan wallet QR</button><div class="mw-scan-stage hidden" id="mw-scan-stage"><video playsinline muted></video><span>Point at a Monero payment QR…</span><button type="button" class="btn btn-ghost small" id="mw-scan-cancel">Cancel scan</button></div><label>Recipient address<input class="input" id="mw-to" value="'+esc(preset)+'" autocomplete="off" spellcheck="false"></label><label>Amount (XMR)<input class="input" id="mw-amount" type="number" min="0.000000000001" step="0.0001" inputmode="decimal"></label><label>Note (stored only in your wallet)<input class="input" id="mw-note" maxlength="120"></label><button class="btn btn-neon full" id="mw-review">Review payment</button></div>',r=>{
       r.querySelector('#mw-scan').onclick=()=>scanPayment(r);
       r.querySelector('#mw-review').onclick=()=>{
         let to=r.querySelector('#mw-to').value.trim();
@@ -256,6 +293,15 @@
         const val=r.querySelector('#mw-amount').value.trim(), note=r.querySelector('#mw-note').value.trim();
         if(!validAddress(to,state&&state.network)){PC.toast('check the Monero address for this network');return;}
         if(!(amount(val)>0)){PC.toast('enter an amount greater than zero');return;}
+        /* The spendable balance is what a transfer can actually draw on. Checked HERE so the
+           refusal names the reason and the countdown, instead of the daemon answering after the
+           user has confirmed an irreversible payment. */
+        if(amount(val) > amount(state && state.unlocked_balance)){
+          PC.toast(_lockedOnly
+            ? ('funds unlock in about ' + (Math.max(1,_blocks)*2) + ' minutes — use an external wallet meanwhile')
+            : 'more than the wallet can spend right now');
+          return;
+        }
         confirmDialog({address:to,amount:val,note},opts);
       };
     });
@@ -377,13 +423,23 @@
    *
    * A fresh cached answer is used as-is. Otherwise the probe is started — it is still worth having
    * for the next tip — and given a moment to answer before we get out of the way. */
-  const TIP_WAIT_MS = 1200;
+  /* THE SAME CLICK MUST GIVE THE SAME ANSWER.
+   *
+   * This raced the probe against a 1200ms stopwatch so a tip would never block on a scanning
+   * wallet. It did fix the twenty-second freeze and it made the decision depend on WHO WON A RACE:
+   * probe answers in time and you get the built-in wallet, a moment slower and the same click hands
+   * you the external flow. Reported as "the monero chooser is like different each time! sometimes
+   * it lets it from local wallet, sometimes not" — and a payment UI that behaves differently on
+   * identical input is worse than a slow one.
+   *
+   * So the answer comes from what the wallet SAID, never from a timer. `warm()` asks once when this
+   * module loads, so by the time anybody clicks ɱ the answer is almost always already here; when it
+   * is not, this waits for it. `probe` has its own ceiling, and the wallet screen's own paths are
+   * unchanged. */
+  function warm(){ try{ Promise.resolve(probe(false)).catch(()=>null); }catch(_){ } }
   async function tip(opts){
-    let s = (state && Date.now()-checkedAt < 8000) ? state : null;
-    if(!s){
-      const asked = Promise.resolve(probe(false)).catch(()=>null);
-      s = await Promise.race([asked, new Promise(r=>setTimeout(()=>r(null), TIP_WAIT_MS))]);
-    }
+    let s = state;
+    if(!s){ try{ s = await probe(false); }catch(_){ s = null; } }
     if(!s||!s.available||!validAddress(opts&&opts.address,s.network))return false;
     /* AN EMPTY WALLET MUST NOT OFFER TO SPEND.
      *
@@ -395,8 +451,18 @@
      * Answering false hands the tip back to the non-custodial URI/QR flow, which needs no local
      * wallet at all and is the thing that actually works right now. The local wallet takes over
      * again by itself the moment it has spendable funds. */
-    const spendable = Number(String(s.unlocked_balance != null ? s.unlocked_balance : s.balance).replace(/,/g,''));
-    if(!Number.isFinite(spendable) || spendable <= 0) return false;
+    /* EMPTY AND LOCKED ARE DIFFERENT ANSWERS.
+     *
+     * Refusing on zero SPENDABLE balance was right for an empty wallet and wrong the moment you had
+     * used it: Monero locks the change from a send for 10 blocks, so a successful tip drops the
+     * unlocked balance to zero for ~20 minutes. The built-in wallet then quietly handed the next zap
+     * to the external flow — reported as "you fixed android but broke webui".
+     *
+     * So: nothing at all hands the tip back (the external wallet is genuinely the only way to pay).
+     * A balance that is merely LOCKING keeps the built-in wallet, and the send dialog says how many
+     * blocks are left instead of failing with a refusal from the daemon. */
+    const held = Number(String(s.balance == null ? 0 : s.balance).replace(/,/g,''));
+    if(!Number.isFinite(held) || held <= 0) return false;
     sendDialog(opts||{});return true;
   }
   async function openReceive(){
@@ -412,6 +478,9 @@
   function boot(){
     if(booted)return;PC=root.__PC;if(!PC)return setTimeout(boot,40);booted=true;
     root.PCMoneroWallet={render:()=>render(false),tip,probe,openReceive,openSend,uri,validAddress,_format:xmr};
+    /* Ask once, now. A tip taken from cache is instant AND deterministic; the alternative is
+       deciding on a stopwatch, which is what made the chooser differ between identical clicks. */
+    warm();
   }
   if(typeof module!=='undefined'&&module.exports)module.exports={uri,parsePaymentUri,validAddress,format:xmr,transferView,historyDate};
   if(typeof document!=='undefined')boot();

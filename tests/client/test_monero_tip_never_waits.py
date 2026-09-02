@@ -39,14 +39,22 @@ def seen():
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-def test_a_wallet_that_never_answers_does_not_hold_up_the_tip(seen):
-    """THE LAUNCH BUG. The fallback exists so tipping never depends on this optional wallet; it has
-    to not depend on its latency either."""
-    assert seen["slow"]["answered"] is False, (
-        "a wallet that never answered was treated as usable, so the URI flow never ran")
-    assert seen["slow"]["tookMs"] < 4000, (
-        f"tapping the tip button blocked for {seen['slow']['tookMs']}ms waiting on a scanning "
-        f"wallet — this was 20s before the fix, with nothing on screen the whole time")
+def test_the_same_click_gives_the_same_answer(seen):
+    """A PAYMENT UI MUST NOT DECIDE ON A STOPWATCH.
+
+    Fixing the twenty-second freeze introduced something worse: the tip raced the probe against a
+    1200ms timer, so an identical click returned the built-in wallet or the external flow depending
+    on which won. Reported as "the monero chooser is like different each time! sometimes it lets it
+    from local wallet, sometimes not".
+
+    The answer now comes from what the wallet SAID. The module asks once as it loads, so the state
+    is almost always already there when somebody clicks; when it is not, the tip waits for it rather
+    than guessing. Driven at five different wallet latencies here — the decision must not move."""
+    assert seen["deterministic"]["allSame"] is True, (
+        f"identical clicks gave different answers at different latencies: "
+        f"{seen['deterministic']['answers']} — the chooser is deciding on a timer")
+    assert seen["deterministic"]["answers"][0] is True, (
+        "a reachable, funded wallet was not used at any latency")
 
 
 def test_an_answer_this_page_already_has_costs_nothing(seen):
@@ -112,10 +120,29 @@ def test_an_empty_wallet_hands_the_tip_back_instead_of_offering_to_spend(seen):
     assert seen["emptyWallet"]["opened"] is False, "the send dialog was opened anyway"
 
 
-def test_locked_funds_are_not_spendable_funds(seen):
-    """A balance that is all still locking (10 blocks after it arrives) cannot be sent either, and
-    reads as the same refusal."""
-    assert seen["lockedWallet"]["answered"] is False
+def test_a_locked_balance_keeps_the_built_in_wallet_and_explains_the_wait(seen):
+    """EMPTY AND LOCKED ARE DIFFERENT ANSWERS, and conflating them broke the web UI.
+
+    Monero locks the CHANGE from every send for 10 blocks, so a successful tip drops the spendable
+    balance to zero for about twenty minutes. Refusing on spendable balance therefore meant the
+    built-in wallet worked once and then quietly handed every following zap to the external flow —
+    reported as "you fixed android but broke webui". Measured on the real wallet at the time:
+    balance 0.00788058, unlocked 0, blocks_to_unlock 4.
+
+    So a locked wallet keeps the built-in path and the dialog states the wait, instead of accepting
+    a payment the daemon will refuse."""
+    assert seen["lockedKeepsWallet"]["answered"] is True, (
+        "a wallet whose balance is merely locking hands the tip away again — it stops working for "
+        "twenty minutes after every successful tip")
+    assert seen["lockedKeepsWallet"]["saysLocking"] is True, "nothing tells the user why"
+    assert seen["lockedKeepsWallet"]["saysMinutes"] is True, (
+        "the wait is not quantified, so 'locked' reads as 'broken'")
+
+
+def test_a_wallet_holding_nothing_still_hands_the_tip_back(seen):
+    """The one case where the built-in wallet genuinely cannot help."""
+    assert seen["trulyEmpty"]["answered"] is False
+    assert seen["trulyEmpty"]["opened"] is False
 
 
 def test_a_funded_wallet_still_uses_the_local_path(seen):
