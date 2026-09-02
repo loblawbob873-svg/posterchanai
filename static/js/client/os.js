@@ -3172,6 +3172,14 @@
     try{ if(PCOSShell.machineApps) await PCOSShell.machineApps(); }catch(_){}
     if(pass !== _nativeAdoptPass) return false;
     try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
+    /* A window opened for a view wears that view's icon and label — the same ones its desktop icon
+     * and start-menu row carry. osshell.js cannot know them (it is the machine's half and has no
+     * app list); this is the half that does. */
+    for(const r of rows){
+      if(!r || !r.own) continue;
+      const a = apps().find(x => x.view === r.view);
+      if(a){ r.icon = a.icon || r.icon; r.title = a.label || r.title; r.label = r.title; }
+    }
     let changed = JSON.stringify(nativeTasks.map(r => [r.id,r.title,r.focused,r.stashed]))
                !== JSON.stringify(rows.map(r => [r.id,r.title,r.focused,r.stashed]));
     nativeTasks = rows;
@@ -3205,7 +3213,10 @@
      * like part of the desktop — the thing this trades off. */
     const _hostNative = (()=>{ try{ return localStorage.getItem('pc_os_host_native') === '1'; }
                                catch(_){ return false; } })();
-    if(_hostNative) for(const r of rows) if(!nativeWins().some(w=>Number(w.native)===Number(r.id))){
+    /* Our OWN windows are never hosted in an HTML frame, whatever `pc_os_host_native` says: hosting
+     * exists to draw a PosterChan frame around somebody else's application, and doing it to a
+     * PosterChan window would wrap this client in a screenshot of itself. */
+    if(_hostNative) for(const r of rows) if(!r.own && !nativeWins().some(w=>Number(w.native)===Number(r.id))){
       adoptNative(r); changed=true;
     }
     /* ADOPTION MUST NOT INVENT THE STACKING ORDER.
@@ -3379,13 +3390,133 @@
    * this same list. Creation order is stable as focus changes, so advancing from the focused frame
    * visits every window instead of bouncing between the two highest z-indices. */
   let _altSwitch=null;
-  const _switchRows=()=>wins.filter(w=>w&&w.el&&w.el.isConnected!==false&&
-    String(w.title||w.view||'').trim()&&!w.closing);
+  /* A SWITCHER ROW IS A WINDOW ON THIS SCREEN, WHOEVER DRAWS IT — and forgetting that is what
+   * killed Alt+Tab outright.
+   *
+   * Hosting Firefox/Telegram inside PosterChan frames became opt-in (`pc_os_host_native`, default
+   * off), so on every shipped desktop those applications are compositor windows this shell only
+   * keeps a TASKBAR button for: they live in `nativeTasks`, not in `wins`. This list still read
+   * `wins` alone. Measured on the two-monitor machine with Firefox, Telegram and a terminal on
+   * screen: `PCOS.windows()` was `[]` on BOTH renderers while the taskbar showed all three, so
+   * `cycleWindows` returned false on the first line and Alt+Tab drew nothing whatsoever — no
+   * chooser, no focus change, nothing in any log. With one PosterChan window open it was worse
+   * rather than better: one row means the first press is already "at the end of the list", so the
+   * gesture was handed to the adjacent monitor, which had no rows either. A DOM recorder caught
+   * the chooser appearing and being removed again 38ms later, twice, on every press.
+   *
+   * Both halves of "alt tab is complete garbage" reduce to this one line reading half the desk. */
+  const _switchRows=()=>{
+    const rows=[];
+    for(const w of wins){
+      if(!w||!w.el||w.el.isConnected===false||w.closing)continue;
+      const title=String(w.title||w.view||'').trim(); if(!title)continue;
+      rows.push({key:'w:'+w.id,win:w,row:null,title:title,
+                 native:w.native==null?null:Number(w.native),
+                 focused:!!(w.el.classList.contains('focused')&&!w.min)});
+    }
+    /* ORDERED BY CREATION, NEVER BY FOCUS — the promise the comment above makes, which only `wins`
+     * was keeping. `nativeTasks` follows sway's tree, and sway moves the FOCUSED floating window to
+     * the end of its list. Measured on the two-monitor desk with a terminal (con 188) and Firefox
+     * (con 204) on one screen: focus foot and the rows read 204,188; focus Firefox and they read
+     * 188,204 — the focused window is ALWAYS last. "Last" is what triggers the hand-off to the
+     * adjacent monitor, so every single Alt+Tab press threw the gesture at the other screen instead
+     * of moving to the window beside it. A con_id is assigned once, in creation order, and never
+     * moves, which is the same stability `wins` gets for free. */
+    const nat=[];
+    for(const r of (nativeTasks||[])){
+      if(!r||r.id==null)continue;
+      const id=Number(r.id); if(!Number.isFinite(id))continue;
+      const title=String(r.title||'').trim(); if(!title)continue;
+      /* A hosted app is in BOTH lists for as long as `pc_os_host_native` is on. One window, one
+       * row: the frame wins, because it is the thing that carries the preview and the focus. */
+      if(rows.some(x=>x.native===id))continue;
+      nat.push({key:'n:'+id,win:null,row:r,title:title,native:id,
+                focused:!!(r.focused&&!r.stashed)});
+    }
+    nat.sort((a,b)=>a.native-b.native);
+    for(const e of nat)rows.push(e);
+    return rows;
+  };
+  /* Committing to a row focuses whoever owns that window. An internal frame is ours; a compositor
+   * window is sway's, and a stashed (minimised) one has to be brought back before it can take the
+   * keyboard — the same two steps its taskbar button performs, so a window reached through Alt+Tab
+   * and one reached by clicking the taskbar end up in the same state rather than two. */
+  function _focusSwitchRow(e){
+    if(!e)return false;
+    if(e.win){ if(wins.includes(e.win))focusWin(e.win,false); return true; }
+    const r=e.row; if(!r||r.id==null)return false;
+    try{
+      if(r.stashed)Promise.resolve(pcWM.show(r.id)).then(()=>_focusNativeDecorated(r.id)).catch(()=>{});
+      else _focusNativeDecorated(r.id);
+    }catch(_){}
+    return true;
+  }
+  /* THE CHOOSER WAS BEING DRAWN WHERE NOBODY COULD SEE IT.
+   *
+   * The shell is the only TILED window on its output and sway paints every floating window above
+   * every tiled one — focusing ours cannot change that, because focus is not stacking. Measured on
+   * the two-monitor machine with Firefox floating over DP-2: the chooser existed in the DOM at
+   * (1300,915) 472x218 css px, `PCOS.__switchRows()` listed both windows, the shell surface was
+   * `focused: true` — and a `grim` of exactly that rectangle came back as Firefox's page. An
+   * Alt+Tab overlay you cannot see is indistinguishable from one that was never drawn, which is
+   * most of "alt tab is complete garbage".
+   *
+   * A COMPOSITOR FULLSCREEN is the one thing that outranks a floating window, and this file already
+   * relies on that fact in the other direction (nsync refuses to leave the shell fullscreen while
+   * it hosts anything, because fullscreen makes every native app `visible:false`). Measured before
+   * it was written: `[con_id=<shell>] fullscreen enable` and sway answered `foot visible False,
+   * firefox-bin visible False` with the desktop on screen.
+   *
+   * It waits for the previews because `pc:wm:preview` REFUSES an invisible window and grim can only
+   * photograph pixels that are on the screen — raise first and every native card is a blank tile.
+   * Capped, because a chooser that appears only once grim has finished is a chooser that stutters.
+   *
+   * And it is undone by a timer as well as by every exit path. A shell left fullscreen hides every
+   * window on the workspace with nothing on screen to explain it — the worst failure in this file
+   * is the one that needs a person to know a keyboard shortcut to escape. */
+  let _altFsId=0,_altFsTimer=0,_altFsGen=0,_altFsBusy=false;
+  function _altRaiseShell(on){
+    if(!window.pcWM||!pcWM.fullscreen)return;
+    if(!on){
+      clearTimeout(_altFsTimer);_altFsTimer=0;
+      _altFsGen++;_altFsBusy=false;              // any raise still in flight is now stale
+      const id=_altFsId;_altFsId=0;
+      if(id>0)Promise.resolve(pcWM.fullscreen(id,false)).catch(()=>{});
+      return;
+    }
+    if(_altFsId||_altFsBusy)return;
+    _altFsBusy=true;
+    const gen=++_altFsGen,s=_altSwitch;
+    clearTimeout(_altFsTimer);
+    _altFsTimer=setTimeout(()=>_altRaiseShell(false),8000);
+    Promise.race([Promise.allSettled((s&&s.previewJobs)||[]),new Promise(r=>setTimeout(r,500))])
+      .then(()=>Promise.resolve(pcWM.windows()))
+      .then(list=>{
+        _altFsBusy=false;
+        if(gen!==_altFsGen||_altSwitch!==s)return;      // the gesture ended while grim was working
+        const shell=(list||[]).find(x=>
+          /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
+        if(!shell||shell.fullscreen)return;             // already fullscreen for its own reasons
+        _altFsId=Number(shell.id);
+        return Promise.resolve(pcWM.fullscreen(_altFsId,true)).then(()=>{
+          /* The gesture can end between choosing the id and the compositor acting on it. Undo it
+           * here as well as on the timer: a shell left fullscreen hides every window on the
+           * workspace and there is nothing on screen to say why. */
+          if(gen===_altFsGen)return;
+          const id=_altFsId;_altFsId=0;
+          if(id>0)Promise.resolve(pcWM.fullscreen(id,false)).catch(()=>{});
+        });
+      }).catch(()=>{_altFsBusy=false;});
+  }
   function _closeAltSwitch(commit){
     const s=_altSwitch;if(!s)return false;_altSwitch=null;clearTimeout(s.timer);
     if(s.el)try{s.el.remove();}catch(_){}
+    /* Lower before focusing: while this surface is fullscreen every other window on the workspace
+     * is hidden, so committing to one and leaving it hidden is a window that took focus and did not
+     * appear. */
+    _altRaiseShell(false);
     const target=commit?s.rows[s.index]:s.initial;
-    if(target&&wins.includes(target))focusWin(target,false);
+    _focusSwitchRow(target);
     return true;
   }
   function _drawAltSwitch(s){
@@ -3393,37 +3524,49 @@
       s.el.setAttribute('role','listbox');s.el.setAttribute('aria-label','Open windows');
       document.body.appendChild(s.el);}
     s.el.innerHTML='';
-    s.rows.forEach((w,i)=>{
+    s.rows.forEach((e,i)=>{
+      const w=e.win;
       const b=document.createElement('div');b.className='os-alt-card'+(i===s.index?' selected':'');
       b.setAttribute('role','option');b.setAttribute('aria-selected',i===s.index?'true':'false');
       const p=document.createElement('div');p.className='os-alt-preview';
-      const nativeBg=w.el.style.getPropertyValue('--native-stash-preview');
+      const nativeBg=w?w.el.style.getPropertyValue('--native-stash-preview'):'';
       if(nativeBg)p.style.backgroundImage=nativeBg;
-      else{
+      else if(w){
         const src=w.body||w.slot;
         if(src){const clone=src.cloneNode(true);clone.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));
           clone.querySelectorAll('iframe,video,audio,canvas').forEach(n=>n.remove());
           if(clone.childElementCount||String(clone.textContent||'').trim())p.appendChild(clone);}
       }
       if(!p.children.length&&!p.style.backgroundImage)p.classList.add('empty');
-      if(w.native!=null&&pcWM.preview){
+      if(e.native!=null&&pcWM.preview){
         /* A native screenshot used to exist only when overlap reconciliation had stashed the app.
          * Ordinary live Firefox/Telegram therefore showed an empty generic card in Alt+Tab even
          * though the compositor can capture it safely. Cache once per switch gesture (grim is not
          * a paint primitive), and never write into a chooser that has since closed/redrawn. */
-        s.nativePreviews=s.nativePreviews||new Map();const key=Number(w.native);
+        s.nativePreviews=s.nativePreviews||new Map();const key=Number(e.native);
         const apply=data=>{if(!data||_altSwitch!==s||!p.isConnected)return;
           p.style.backgroundImage=`url("${String(data).replace(/["\\]/g,'')}")`;p.classList.remove('empty');};
         if(s.nativePreviews.has(key))apply(s.nativePreviews.get(key));
-        else Promise.resolve(pcWM.preview(key)).then(data=>{s.nativePreviews.set(key,data||'');apply(data);}).catch(()=>{});
+        else{
+          /* grim captures SCREEN PIXELS, so a window has to still be on screen to be photographed —
+           * which is why the raise below waits for these. */
+          const job=Promise.resolve(pcWM.preview(key))
+            .then(data=>{s.nativePreviews.set(key,data||'');apply(data);}).catch(()=>{});
+          (s.previewJobs=s.previewJobs||[]).push(job);
+        }
       }
       const label=document.createElement('div');label.className='os-alt-title';
-      label.innerHTML=iconSvg(w.icon||'i-grid')+'<span>'+enc(w.title||w.view||'Window')+'</span>';
+      /* A native row's icon comes from the application's own .desktop entry, exactly as its
+       * taskbar button's does — a generic grid tile beside "Firefox" is not a picture of Firefox. */
+      label.innerHTML=(w?iconSvg(w.icon||'i-grid'):appIcon(e.row))+
+        '<span>'+enc(e.title||'Window')+'</span>';
       b.appendChild(p);b.appendChild(label);s.el.appendChild(b);
       if(i===s.index&&b.scrollIntoView)try{b.scrollIntoView({block:'nearest',inline:'nearest'});}catch(_){}
     });
   }
-  function _leaveAltSwitch(){const s=_altSwitch;if(!s)return;_altSwitch=null;clearTimeout(s.timer);if(s.el)try{s.el.remove();}catch(_){}}
+  function _leaveAltSwitch(){const s=_altSwitch;if(!s)return;_altSwitch=null;clearTimeout(s.timer);
+    _altRaiseShell(false);
+    if(s.el)try{s.el.remove();}catch(_){}}
   /* HANDING THE GESTURE TO THE NEXT MONITOR MUST NOT COST THE CHOOSER ON A MACHINE THAT HAS ONE.
    *
    * Both boundary branches fired on `pcWM.cycleOutput` merely EXISTING — and the main process
@@ -3454,7 +3597,7 @@
         .catch(()=>{});
     };
     if(!_altSwitch){
-      const initial=rows.find(w=>w.el.classList.contains('focused')&&!w.min)||null;
+      const initial=rows.find(e=>e.focused)||null;
       const current=rows.indexOf(initial);
       /* Each output has its own renderer and therefore its own `wins`. At the end of this output's
        * list, continue the SAME Alt+Tab gesture on the adjacent output instead of wrapping forever
@@ -3470,6 +3613,8 @@
       try{Promise.resolve(pcWM.windows()).then(list=>{const shell=(list||[]).find(x=>
         /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
         if(shell)return pcWM.focus(shell.id);}).catch(()=>{});}catch(_){}
+      /* Focus alone leaves the chooser underneath every floating application — see _altRaiseShell. */
+      try{_altRaiseShell(true);}catch(_){}
       if(!entering&&atEnd)handoff(_altSwitch);
     }else{
       _altSwitch.rows=rows;
@@ -7630,6 +7775,26 @@
 
   function enter(){
     if(on) return;
+    /* A WINDOW IS NOT A DESKTOP, AND THIS IS THE ONE PLACE THAT CANNOT BE ROUTED AROUND.
+     *
+     * A PosterChan window (oswin.js) is a same-origin child, so it reads the SAME remembered
+     * `osMode` as the desktop that opened it and it is over MIN_WIDTH on any real monitor. When the
+     * shell bridges are missing — which was the case for every popped-out window until the preload
+     * was fixed — `restore()` skips its PosterChanOS branch and falls through to exactly that
+     * preference, and the window builds a second desktop inside itself. `html.pc-oswin` hides
+     * `#os-root`, and `enter()` has already moved `#feed` into it: the window is left showing the
+     * client's background gradient and nothing else. Measured as `PosterChan Window — terminal`,
+     * floating, correctly titled, `#feed` 0x0 holding 477KB of timeline HTML nobody could see.
+     *
+     * `restore()` states the same rule for `?popout=1`; stated here it also covers the callers that
+     * do not go through restore, and a window whose bridges came back. */
+    try{
+      /* `window.PCOSWin`, not the bare global: the whole check sits in a try/catch, so a bare
+       * identifier that is momentarily undefined throws into the catch and the guard silently does
+       * not guard — which for this one is a second desktop built inside a window. */
+      if((window.PCOSWin && window.PCOSWin.isWindow()) || window.__PC_WIN_STATE__ ||
+         new URLSearchParams(window.location.search).has('pcwin')) return;
+    }catch(_){}
     if(!fits() && !isSystemShell()){
       // A tablet held upright is the common case here, and "needs a wider screen" is useless advice
       // when turning the device sideways is the answer.
@@ -7766,7 +7931,13 @@
             else if(p === 'pc:terminal'){
               _suppressStartUntil = Date.now() + 1200;
               toggleStart(false);
-              openApp('terminal');
+              /* `openTerminalHere`, NOT a bare launch of the terminal app — and the difference is
+               * WHICH COMPUTER you end up typing into. This arms the local PTY first (and says so
+               * out loud where there is no shell to arm); launching the app alone opens the terminal
+               * on whatever host this device last SSH'd into. The function existed, said all of that
+               * in its own comment, and had NO CALLERS AT ALL — the key that is meant to be the one
+               * unambiguous way to a shell on this machine was the one path that skipped it. */
+              openTerminalHere();
             }
             else if(p === 'pc:tasks'){
               toggleStart(false);
@@ -8444,6 +8615,15 @@
                   windows: () => wins.map(w => ({ view: w.view, appView: w.appView || w.view,
                                                   title: w.title, min: w.min,
                                                   snap:w.snap||'', rotationSnap:w.rotationSnap||'' })),
+                  /* WHAT THIS OUTPUT COULD SHOW IN AN Alt+Tab CHOOSER, asked by the main process
+                   * before it hands the gesture across a monitor boundary. An output with nothing
+                   * on it cannot continue the gesture, and being given it is worse than wrapping:
+                   * the origin tears its chooser down the moment the handoff resolves true, so the
+                   * person is left looking at a monitor with no chooser and no window. */
+                  __canCycle: () => _switchRows().length > 0,
+                  __switchRows: () => _switchRows().map(e => ({ key:e.key, title:e.title,
+                                                                native:e.native, focused:e.focused,
+                                                                kind:e.win ? 'frame' : 'native' })),
                   /* The layout arithmetic, exposed so tests/test_desktop_layout.py can run the
                    * SHIPPED code against a list of apps and a document. Everything it decides fails
                    * silently on screen — an app that stops appearing, a folder that swallows an icon

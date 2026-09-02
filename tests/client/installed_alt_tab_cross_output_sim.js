@@ -13,7 +13,11 @@ function makeOutput(name,specs){
   const listeners={},document={body:new El('body'),createElement:()=>new El(),addEventListener:(k,f)=>(listeners[k]=listeners[k]||[]).push(f)};
   const wins=specs.map((s,i)=>{const el=new El('osw'+(s.focused?' focused':'')+(s.native?' osw-native':''));if(s.native)el.preview='url(preview-'+i+')';return {title:s.title,view:s.title.toLowerCase(),icon:'i-grid',native:s.native?100+i:null,min:false,closing:false,el,body:new El('feed')};});
   const focused=[],restored=[];
-  const c={document,wins,console,setTimeout,clearTimeout,Promise,toggleStart(){},hideCtx(){},enc:String,iconSvg:x=>x,
+  /* Hosted fixture: these native windows are adopted frames in `wins`, so `nativeTasks` is empty.
+   * The un-hosted default lives in alt_tab_native_taskbar_sim.js. */
+  const c={document,wins,nativeTasks:[],console,setTimeout,clearTimeout,Promise,toggleStart(){},hideCtx(){},enc:String,iconSvg:x=>x,
+    appIcon:()=>'<img class="os-app-ic" alt="">',_focusNativeDecorated:()=>Promise.resolve(true),
+    window:{},
     focusWin(w){wins.forEach(x=>x.el.classList.remove('focused'));w.el.classList.add('focused');w.min=false;focused.push(w.title);if(w.native)restored.push(w.title);},
     pcWM:{windows:async()=>[{id:name==='left'?90:91,app:'posterchan-desktop'}],focus:async()=>true,cycleOutput:async d=>handoff(name,d)}};
   vm.createContext(c);vm.runInContext(code,c);const out={name,c,wins,focused,restored,listeners,document};outputs.push(out);return out;

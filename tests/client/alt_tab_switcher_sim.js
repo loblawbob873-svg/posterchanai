@@ -28,6 +28,13 @@ const listeners={};
 global.document={body:new El('body'),createElement:()=>new El(),
   addEventListener:(k,f)=>(listeners[k]=listeners[k]||[]).push(f)};
 const toggleStart=()=>{},hideCtx=()=>{},enc=String,iconSvg=x=>'<svg>'+x+'</svg>';
+/* This fixture is the HOSTED desktop (`pc_os_host_native` on): native windows live in
+ * `wins` as adopted frames, so nothing is in `nativeTasks`. The un-hosted default — which
+ * is what every shipped machine runs — is `alt_tab_native_taskbar_sim.js`. */
+let nativeTasks=[];
+const appIcon=a=>'<img class="os-app-ic" alt="">';
+const _focusNativeDecorated=id=>Promise.resolve(true);
+global.window={};
 const crossed=[];
 const previewed=[];
 const pcWM={windows:async()=>[{id:90,app:'posterchan-desktop'}],focus:async()=>{},

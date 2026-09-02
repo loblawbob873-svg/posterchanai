@@ -181,7 +181,31 @@
       // still our compositor surface, never a hosted native app. Treating it as a task creates a
       // recursive black "PosterChan · Nostr" window inside the desktop and closing it can remove
       // the only visible surface.
-      if(!app || /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(app)) continue;
+      if(!app || /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(app)){
+        /* A POSTERCHAN WINDOW IS A WINDOW, AND IT WAS THE ONLY ONE ON THE SCREEN THAT WAS NOT.
+         *
+         * Since oswin.js, opening Terminal/Notes/Files on PosterChanOS makes a REAL compositor
+         * toplevel — same app_id as the desktop, because it is the same program. This filter exists
+         * for the DESKTOP surfaces (a taskbar button for the desktop is recursive, and closing it
+         * removes the only visible surface), and it swallowed those windows with them. Measured on
+         * the machine: `PosterChan Window — terminal` floating at 986,664 1100x760, with the DP-1
+         * taskbar listing only Telegram and `PCOS.__switchRows()` answering `[{key:'n:60'}]`. So a
+         * window you opened had no taskbar button, could not be reached with Alt+Tab, and — being
+         * frameless with no title bar of its own — had no close, minimise or maximise anywhere.
+         *
+         * The TITLE is the discriminator, and it is already load-bearing: sway's `for_window` rule
+         * floats these on `title="^PosterChan Window"`, and main.js sets it in the window options
+         * precisely so it is right at the instant the surface maps. A desktop surface is titled
+         * "PosterChan · Nostr" and never matches. */
+        const own = /^PosterChan Window(?:\s*[—-]\s*(.*))?$/.exec(String(w.title || '').trim());
+        if(!own) continue;
+        const view = String(own[1] || '').trim();
+        rows.push({ id: w.id, app, title: view || 'Window', focused: !!w.focused,
+                    stashed: !!w.stashed, iconUri: '', icon: 'grid', own: true, view,
+                    workspace: String(w.workspace || ''), xwayland: !!w.xwayland,
+                    label: view || 'Window' });
+        continue;
+      }
       /* Native file choosers are transient UI owned by the application which opened them, not
        * applications of their own.  The Wayland portal gives its chooser a normal titled surface,
        * so the generic adoption path used to wrap it in a PosterChan frame and taskbar button.

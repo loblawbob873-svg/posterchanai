@@ -672,8 +672,28 @@ function createWindow(assignment) {
         // The window is a VIEW onto the desktop's client and reaches it through window.opener, so
         // it needs the same preload bridges — and, critically, the same process. Electron keeps a
         // same-origin child in the opener's process, which is what makes window.opener usable.
+        /* NO `sandbox: false` HERE, AND THAT ONE WORD WAS THE WHOLE OF "THE TERMINAL DOESN'T WORK".
+         *
+         * A same-origin child shares the OPENER'S renderer process — that is the design, it is what
+         * makes `window.opener.__PC` a live reference instead of a message channel. Every shell
+         * surface is created by createWindow(), which does not set `sandbox` and therefore gets
+         * Electron's default: sandboxed. Asking for an UNsandboxed preload inside that process is a
+         * contradiction Electron cannot honour, and it does not refuse the window — it fails to
+         * bootstrap the preload and carries on:
+         *     TypeError: Cannot destructure property 'preloadScripts' of 'binding.startupData'
+         * one line in shell.log per window opened, and nothing at all on screen.
+         *
+         * MEASURED on the machine: in `app://posterchan/index.html?pcwin=terminal`, `window.pcClip`
+         * — exposed unconditionally at the top of preload.js — was `undefined`, along with pcTerm,
+         * pcWM, pcFs and PCOSShell. With no `pcTerm`, `_viewNeedsInstance('terminal')` answers true
+         * on this instance-less machine and the nav row is `hidden gated-off`, so the window routes
+         * to the timeline; and with no `PCOSShell.available()`, `PCOS.restore()` falls through to
+         * the remembered desktop preference and builds a SECOND DESKTOP inside the window, whose
+         * `#os-root` `html.pc-oswin` then hides — taking `#feed` with it. The result is a
+         * 1100x760 window containing the client's background gradient and nothing else, which is
+         * exactly what "PosterChan Window — terminal" was photographed as. */
         webPreferences: {
-          preload: path.join(__dirname, 'preload.js'), sandbox: false, contextIsolation: true,
+          preload: path.join(__dirname, 'preload.js'), contextIsolation: true,
           /* The same two arguments the desktop's own surfaces get. `--pc-preload-dir` is how the
            * preload finds its siblings; `--pc-secondary-surface` withholds folder-sync ownership,
            * which a WINDOW must never claim — it is a view onto the desktop's client, and a second
@@ -1404,10 +1424,35 @@ ipcMain.handle('pc:wm:cycle-output', async (e, direction) => {
   if(at<0||rows.length<2)return false;
   const step=dir==='previous'?-1:1,target=rows[(at+step+rows.length)%rows.length];
   if(!target||target===rows[at])return false;
+  /* ASK THE OTHER MONITOR BEFORE GIVING IT THE GESTURE — and before moving the keyboard there.
+   *
+   * The origin renderer tears its chooser down the instant this resolves true, so answering "yes"
+   * on behalf of an output that has nothing to cycle ends the gesture with no chooser anywhere and
+   * focus on an empty desktop. Measured on the two-monitor machine: one PosterChan window on DP-1
+   * and nothing of ours on DP-2 made the chooser appear and disappear again within 38ms on every
+   * single press, which is the whole of "alt tab disappears each time you switch". A refusal is
+   * honest and cheap — the origin then wraps locally, which is what a one-window desk should do. */
+  if(!await surfaceCanCycle(target))return false;
   if(Number.isFinite(Number(target.conId)))await wm().focus(Number(target.conId));
   try{target.browser.webContents.send('pc:wm:event',{name:'tick',change:'run',payload:'pc:cycle-enter:'+dir,window:null});}catch(_){return false;}
   return true;
 });
+
+/* The destination answers for itself. A renderer that cannot answer in time keeps the gesture where
+ * it is rather than swallowing it: a busy monitor is a reason to wrap locally, never a reason for
+ * Alt+Tab to do nothing at all. */
+function surfaceCanCycle(rec){
+  if(!rec||!rec.browser||rec.browser.isDestroyed())return Promise.resolve(false);
+  let wc; try{ wc=rec.browser.webContents; }catch(_){ return Promise.resolve(false); }
+  if(!wc||wc.isDestroyed())return Promise.resolve(false);
+  let ask;
+  try{
+    ask=Promise.resolve(wc.executeJavaScript(
+      '(()=>{try{return !!(window.PCOS&&PCOS.__canCycle&&PCOS.__canCycle());}catch(_){return false;}})()',
+      true)).then(v=>!!v).catch(()=>false);
+  }catch(_){ return Promise.resolve(false); }
+  return Promise.race([ask,new Promise(res=>setTimeout(()=>res(false),400))]);
+}
 ipcMain.handle('pc:wm:snapshot', async (e) => {
   fsGuard(e);
   /* Today the primary surface owns the full list. Per-output surfaces replace `windows` with their
@@ -1941,6 +1986,22 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
   const NAMES = ['window', 'workspace', 'output', 'tick'];
   await w.subscribe(NAMES);
   for (const name of NAMES) {
+    /* ONE PRESS, ONE DELIVERY — and this loop was the second one.
+     *
+     * The comment above says tick forwarding belongs to wireShellRecovery() and that keeping it
+     * here too would toggle Start twice. It describes the fix; the code never made it. Both sites
+     * registered a `tick` listener on the same socket, so EVERY compositor binding arrived at the
+     * renderer twice. Measured on the two-monitor machine by adding a second `pcWM.onEvent`
+     * listener through the debugger and sending two ticks by hand:
+     *     {"pc:probe-one":2,"pc:probe-two":2}
+     * That is Alt+Tab stepping two windows per press (and therefore running off the end of the list
+     * and throwing the gesture at the other monitor on the FIRST press), Super opening the start
+     * menu and closing it again, Print Screen saving two files, Alt+Return opening two terminals.
+     * Every one of those reads as "the key does nothing" or "it jumps", never as a double event.
+     *
+     * `subscribe` still names tick — the socket's name list is fixed on first subscription, and a
+     * renderer that got here before wireShellRecovery would otherwise strand the whole keyboard. */
+    if (name === 'tick') continue;
     w.on(name, (ev) => {
       if(name === 'output') scheduleDisplayReconcile();
       /* A shell surface can be moved by the same compositor command path used for native/window
@@ -1966,19 +2027,9 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
       }
       const deliver = async () => {
         let targets = BrowserWindow.getAllWindows();
-        /* A compositor key binding is broadcast to every renderer. With one shell surface per
-         * monitor that opened two Start menus from one Super press (and could launch two terminals).
-         * Actions belong to the focused output only. Close remains broadcast so a menu which was
-         * open before focus crossed displays cannot be stranded. */
-        if(name === 'tick' && ev && ev.payload !== 'pc:start:close'){
-          try{
-            const active=(await wm().workspaces()).find(x=>x && x.focused);
-            if(active) targets=targets.filter(target=>{
-              const scope=_shellScopes.get(target.webContents.id);
-              return !scope || String(scope.workspace)===String(active.name);
-            });
-          }catch(_){}
-        }
+        /* No tick reaches this loop any more; `forwardShellTick` owns that channel and does the
+         * focused-output filtering there. Leaving a second copy of the rule here is how the two
+         * paths drifted in the first place. */
         for (const target of targets) {
         try {
           const scope = _shellScopes.get(target.webContents.id);

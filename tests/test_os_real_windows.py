@@ -300,7 +300,12 @@ def test_the_window_only_hides_chrome_and_never_the_view():
     hidden = re.findall(r"html\.pc-oswin ([#.][a-z0-9-]+)", block)
     assert hidden, "the window stylesheet no longer hides anything"
     for sel in hidden:
-        assert sel in (".sidebar", ".mobilenav", "#os-root", "#app", ".main"), (
+        # `.rightbar`/`.rb-toggle` joined the list when the window stopped leaving the sidebar's
+        # empty grid track behind: `.app` is a grid, so collapsing it to one column would otherwise
+        # drop the right bar into an implicit row UNDER the view. Both are shell furniture — the
+        # trending/notifications rail and the button that folds it — not the view.
+        assert sel in (".sidebar", ".mobilenav", "#os-root", "#app", ".main",
+                       ".rightbar", ".rb-toggle"), (
             f"a window hides {sel}, which is not shell furniture — check it is not the view itself")
 
 

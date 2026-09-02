@@ -354,8 +354,14 @@ class Bridge(unittest.TestCase):
         handler = self.main[self.main.index("ipcMain.handle('pc:wm:subscribe'"):
                             self.main.index("/* Power, brightness", self.main.index("ipcMain.handle('pc:wm:subscribe'"))]
         self.assertIn("const NAMES = ['window', 'workspace', 'output', 'tick']", handler)
-        self.assertIn("if(name === 'tick'", handler,
-                      "Super shortcuts must be scoped to the focused output, not broadcast twice")
+        # This loop must not register a SECOND tick listener on the same socket. It used to, so
+        # every desktop key press reached the renderer twice — measured on hardware with a probe
+        # listener: {"pc:probe-one":2,"pc:probe-two":2}. `forwardShellTick` owns the channel and
+        # does the focused-output scoping; `subscribe` still NAMES tick because the socket's list
+        # is fixed on first subscription.
+        self.assertIn("if (name === 'tick') continue;", handler,
+                      "Super shortcuts must be scoped to the focused output, not delivered twice")
+        self.assertNotIn("w.on('tick'", handler)
 
     def test_it_is_absent_rather_than_broken_without_a_compositor(self):
         """A desktop install that is not PosterChanOS has no sway. The page must be able to ask,

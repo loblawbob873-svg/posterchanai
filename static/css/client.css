@@ -9898,8 +9898,17 @@ html.pc-oswin body{overflow:auto}
 html.pc-oswin .sidebar,
 html.pc-oswin .mobilenav,
 html.pc-oswin #os-root{display:none!important}
-html.pc-oswin #app{padding:0;margin:0}
-html.pc-oswin .main{margin:0;max-width:none;width:100%}
+/* AND THE COLUMN THE SIDEBAR LEFT BEHIND. `.app` is a GRID — `300px 1fr`, three columns on a wide
+   screen — so hiding `.sidebar` empties the first track without removing it: `.main` stays in a
+   300px column and `width:100%` is 100% OF THAT. Measured in the terminal window on the real
+   machine: a 1100px window whose `#feed` was 201x723 with nine hundred pixels of empty ground
+   beside it, on a screen whose whole purpose is to be a terminal. A window is one view, so it is
+   one column, whatever the body classes say about right bars. */
+html.pc-oswin #app{padding:0;margin:0;grid-template-columns:minmax(0,1fr)!important;
+  max-width:none;column-gap:0}
+html.pc-oswin .rightbar,
+html.pc-oswin .rb-toggle{display:none!important}
+html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
 
 .oswin-probe{display:flex;flex-direction:column;justify-content:center;gap:var(--sp-2);
   min-height:100vh;padding:var(--sp-5);text-align:center;color:var(--text)}
@@ -9918,6 +9927,7 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%}
 .ua-ranges button.on{background:rgba(var(--accent-rgb),.18);color:var(--text);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.3)}
 .ua-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
 .ua-metric{min-width:0;min-height:132px;padding:18px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,rgba(255,255,255,.035),transparent),var(--panel);display:flex;flex-direction:column}
+.ua-metric.xmr{background:radial-gradient(circle at 90% 0,rgba(255,102,0,.20),transparent 54%),var(--panel)}
 .ua-metric.hero{grid-column:span 2;background:radial-gradient(circle at 90% 0,rgba(139,92,246,.24),transparent 54%),var(--panel)}
 .ua-metric.zap{background:radial-gradient(circle at 100% 0,rgba(251,191,36,.16),transparent 54%),var(--panel)}
 .ua-metric>span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}

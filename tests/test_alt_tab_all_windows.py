@@ -39,7 +39,8 @@ def test_renderer_cycles_stable_window_order_in_both_directions():
     assert "direction==='previous'?-1:1" in body
     assert "(current+step+rows.length)%rows.length" in body
     switcher = CLIENT[CLIENT.index("let _altSwitch=null"):CLIENT.index("// ---- snapping", start)]
-    assert "focusWin(target,false)" in switcher
+    assert "_focusSwitchRow(target)" in switcher
+    assert "focusWin(e.win,false)" in switcher
 
 
 def test_switcher_is_visible_staged_and_never_draws_an_empty_card():
@@ -80,7 +81,7 @@ def test_compositor_tick_reaches_cycle_handler_and_native_target_uses_normal_foc
     assert "else if(/^pc:cycle:(next|previous)$/.test(p)) cycleWindows(p.slice(9));" in CLIENT
     start = CLIENT.index("let _altSwitch=null")
     body = CLIENT[start:CLIENT.index("// ---- snapping", start)]
-    assert "if(target&&wins.includes(target))focusWin(target,false)" in body
+    assert "if(wins.includes(e.win))focusWin(e.win,false)" in body
 
 
 def test_alt_tab_crosses_output_boundary_instead_of_wrapping_locally():
@@ -139,3 +140,82 @@ def test_the_chooser_is_not_taken_down_before_the_handoff_is_agreed():
     # And the local move is drawn on every press, boundary or not.
     assert "_altSwitch.index=(next+rows.length)%rows.length;" in body
     assert "_leaveAltSwitch();Promise.resolve(pcWM.cycleOutput" not in body
+
+
+def test_the_machines_own_windows_are_rows_not_only_our_frames():
+    """Hosting native apps in PosterChan frames is opt-in (`pc_os_host_native`, default OFF), so on
+    every shipped desktop Firefox/Telegram/a terminal are compositor windows this shell only keeps a
+    TASKBAR row for — `nativeTasks`, never `wins`. The switcher read `wins` alone.
+
+    MEASURED on the real two-monitor machine (build 1.0.1382), Firefox + Telegram + foot on screen
+    and drawn in the taskbar: `PCOS.windows()` answered `[]` on BOTH renderers, `swaymsg -t
+    send_tick pc:cycle:next` changed nothing but the clock, and a DOM recorder showed the chooser
+    being created and removed again 38ms later on the one output that had a single frame.
+    """
+    start = CLIENT.index("let _altSwitch=null")
+    body = CLIENT[start:CLIENT.index("// ---- snapping", start)]
+    rows = body[:body.index("function _closeAltSwitch")]
+    assert "nativeTasks" in rows, "Alt+Tab cannot see the machine's own windows"
+    # One window is one row even while `pc_os_host_native` puts it in both lists.
+    assert "if(rows.some(x=>x.native===id))continue;" in rows
+    # A stashed compositor window has to come back before it can take the keyboard.
+    assert "pcWM.show(r.id)" in body and "_focusNativeDecorated(r.id)" in body
+    # And the same measurement is available to the main process, which must not hand the gesture
+    # to a monitor with nothing on it.
+    assert "__canCycle: () => _switchRows().length > 0" in CLIENT
+
+
+def test_a_handoff_is_refused_by_an_output_with_nothing_to_show():
+    """`cycleOutput` used to answer true for any second shell surface and focus it first. The origin
+    tears its chooser down on that answer, so an empty monitor ended the gesture with no chooser
+    anywhere and the keyboard on a bare desktop."""
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    handler = main[main.index("ipcMain.handle('pc:wm:cycle-output'"):]
+    handler = handler[:handler.index("ipcMain.handle('pc:wm:snapshot'")]
+    ask = handler.index("surfaceCanCycle(target)")
+    focus = handler.index("await wm().focus(Number(target.conId))")
+    send = handler.index("pc:cycle-enter:")
+    assert ask < focus < send, "the other monitor is focused before it has agreed to take over"
+    assert "PCOS.__canCycle" in main
+    # A renderer that cannot answer keeps the gesture where it is rather than swallowing it.
+    assert "setTimeout(()=>res(false),400)" in main
+
+
+NATIVE_SIM = ROOT / "tests/client/alt_tab_native_taskbar_sim.js"
+
+
+def test_the_switcher_reaches_the_machines_windows_at_runtime():
+    """The other sims put Firefox in `wins` — the HOSTED shape — so the fixture agreed with the bug.
+    This one runs the shipped switcher against the shape every machine actually boots into."""
+    run = subprocess.run(["node", str(NATIVE_SIM)], capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK Alt+Tab reaches the machine's own windows" in run.stdout
+
+
+TICK_SIM = ROOT / "tests/client/shell_tick_delivery_sim.js"
+
+
+def test_one_compositor_key_press_reaches_the_page_exactly_once():
+    """Both forwarders in main.js registered a `tick` listener on the same socket, so every desktop
+    binding arrived at the renderer TWICE — measured on hardware by adding a second `pcWM.onEvent`
+    listener through the debugger and sending two ticks by hand: `{"pc:probe-one":2,
+    "pc:probe-two":2}`.
+
+    A doubled tick never looks like a doubled tick. Alt+Tab steps two windows per press, runs off
+    the end of the list and hands the gesture to the other monitor on the FIRST press; Super opens
+    the start menu and closes it again; Print Screen saves two files. Each reads as "the key does
+    nothing", and the comment in `pc:wm:subscribe` had described the fix for months without the code
+    ever doing it.
+    """
+    run = subprocess.run(["node", str(TICK_SIM)], capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "OK one press is one tick" in run.stdout
+
+
+def test_only_one_place_forwards_a_tick_to_a_renderer():
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    sub = main[main.index("ipcMain.handle('pc:wm:subscribe'"):]
+    sub = sub[:sub.index("ipcMain.handle", 10)] if "ipcMain.handle" in sub[10:] else sub
+    assert "if (name === 'tick') continue;" in sub, "the subscribe loop forwards ticks again"
+    # `subscribe` must still NAME tick: the socket's list is fixed on first subscription.
+    assert "const NAMES = ['window', 'workspace', 'output', 'tick'];" in main

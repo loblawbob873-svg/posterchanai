@@ -36,7 +36,18 @@ function isTrustedPreloadPage(raw, localDir) {
 const preloadDirArg = process.argv.find(v => String(v).startsWith('--pc-preload-dir='));
 const preloadDir = preloadDirArg ? String(preloadDirArg).slice('--pc-preload-dir='.length) : '';
 const isOurPage = isTrustedPreloadPage(location.href, preloadDir);
-const backgroundOwner = !process.argv.includes('--pc-secondary-surface');
+/* A POSTERCHAN WINDOW IS NEVER THE BACKGROUND OWNER, whatever process it landed in.
+ *
+ * `--pc-secondary-surface` is a PROCESS argument, and a same-origin `window.open` child runs in the
+ * OPENER'S process — so a window popped out of the primary surface inherits `backgroundOwner: true`
+ * and becomes a second folder-sync writer over the same tree with the same device identity. That is
+ * the failure the marker exists to prevent, arriving through the one door it does not cover. The
+ * document says what it is: `?pcwin=` is on the URL when this preload runs, before the client
+ * rewrites its own address. */
+const _isWindowDoc = (() => {
+  try { return new URLSearchParams(location.search).has('pcwin'); } catch (_) { return false; }
+})();
+const backgroundOwner = !_isWindowDoc && !process.argv.includes('--pc-secondary-surface');
 
 // Clipboard WRITE, exposed more widely than the controls below — it cannot repoint the app or enumerate
 // anything, and the main process still checks the caller. It exists because there is no working web

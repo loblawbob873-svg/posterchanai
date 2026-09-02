@@ -44,18 +44,30 @@ class ModReturnOpensOurs(unittest.TestCase):
         self.assertIn("send_tick pc:terminal", self.binds["Mod1+Return"])
 
     def test_the_shell_answers_it(self):
+        """Through `openTerminalHere`, which ARMS THE LOCAL PTY and then opens the same window a
+        click opens. The tick used to launch the app directly, so Alt+Return on the machine you are
+        sitting at reattached to whatever host this device last SSH'd into — and `openTerminalHere`,
+        which exists to prevent exactly that and says so in its own comment, had no callers at all.
+        """
         src = OS_JS.read_text()
         self.assertIn("'pc:terminal'", src)
-        i = src.index("'pc:terminal'")
-        self.assertIn("openApp('terminal')", src[i:i + 160],
-                      "the tick is recognised but does not open the terminal view")
+        i = src.index("else if(p === 'pc:terminal')")
+        branch = src[i:src.index("else if(p === 'pc:tasks')", i)]
+        self.assertIn("openTerminalHere()", branch,
+                      "the tick is recognised but does not arm a shell on THIS machine")
+        # And that helper is still the one that opens the ordinary window.
+        helper = src[src.index("function openTerminalHere()"):]
+        helper = helper[:helper.index("\n  }")]
+        self.assertIn("PCTerm.openLocal", helper)
+        self.assertIn("openApp('terminal')", helper,
+                      "the terminal key must open the same window a click opens")
 
     def test_it_opens_it_the_same_way_a_click_does(self):
         """`openApp` is what a start-menu entry and a desktop icon go through, so the window the key
         opens is the same window, in the same place in the stacking order."""
         src = OS_JS.read_text()
-        i = src.index("'pc:terminal'")
-        self.assertNotIn("window.open", src[i:i + 160])
+        i = src.index("else if(p === 'pc:terminal')")
+        self.assertNotIn("window.open", src[i:src.index("else if(p === 'pc:tasks')", i)])
 
     def test_its_super_release_cannot_open_start_over_the_terminal(self):
         """Old configs remain harmless for the first session before the package repairs them."""
