@@ -1,4 +1,22 @@
-"""ONE UNSPENT OUTPUT MEANS ONE TIP AT A TIME, WHATEVER THE BALANCE SAYS.
+"""ONE UNSPENT OUTPUT LIMITS SEQUENTIAL PAYMENTS, NOT SIMULTANEOUS ONES.
+
+CORRECTED. This file first claimed one output meant "one tip at a time", and a banner was shipped
+saying so. That is wrong, and the user called it out: one output means one TRANSACTION, and a Monero
+transaction carries up to 15 destinations. Measured on the live wallet from a single unspent output,
+with `do_not_relay` so nothing was spent:
+
+     5 destinations -> 1 transaction, fee 0.0000676 XMR
+    10 destinations -> 1 transaction, fee 0.0001163 XMR
+    16 destinations -> REFUSED, "tx not possible"  (the change needs an output slot)
+
+So a single output pays fifteen people at once. What it cannot do is pay again immediately: the
+change locks for 10 blocks. That is a limit on payments made one AFTER another, and batching removes
+it for the case that matters — see tests/test_monero_batch_zap.py.
+
+The banner is gone. `split_outputs` stays, because somebody tipping repeatedly over time still
+benefits from several outputs, but it is no longer presented as a defect to be fixed.
+
+ORIGINAL NOTE, still true about SEQUENTIAL sends:
 
 Asked directly: "cant you increase unspents? we have a lot of users".
 

@@ -201,13 +201,6 @@
     f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">'+esc((s.network||'stagenet').toUpperCase())+(s.network==='stagenet'?' · testing only':'')+'</span></div><button class="btn btn-ghost small" id="mw-refresh">Refresh</button></header>'
       +warning(s)+'<section class="mw-balance"><span>Available balance</span><strong>'+xmr(balance,s.balance_atomic!=null)+' <small>XMR</small></strong><span class="muted small">'+xmr(s.unlocked_balance_atomic!=null?s.unlocked_balance_atomic:balance,s.unlocked_balance_atomic!=null||s.balance_atomic!=null)+' XMR unlocked</span></section>'
       +'<div class="mw-actions"><button class="btn btn-neon" id="mw-send">Send</button><button class="btn btn-cyan" id="mw-receive">Receive</button></div>'
-      +(Number(s.outputs) === 1 && amount(s.balance) > 0
-        ? '<section class="mw-card mw-syncing"><h3>This wallet can only pay one person at a time</h3>'
-          + '<p>Its balance is a single Monero output. Spending one locks the change for about 20 '
-          + 'minutes, so a second tip has to wait — whatever the balance says. Splitting it into '
-          + 'several outputs lets tips follow each other.</p>'
-          + '<button class="btn btn-cyan" id="mw-split">Split into 8 outputs</button></section>'
-        : '')
       +'<div id="mw-sync"></div>'
       +'<section class="mw-card"><h3>Recent activity</h3>'+transferRows(s.transfers||s.history)+'</section>'
       +'<section class="mw-card mw-address"><h3>Receive address</h3><code>'+esc(address||'Wallet has not returned an address')+'</code><button class="btn btn-ghost small" id="mw-copy">Copy</button></section></div>';
@@ -257,15 +250,6 @@
     if(by('mw-send'))by('mw-send').onclick=()=>sendDialog({});
     if(by('mw-receive'))by('mw-receive').onclick=receiveDialog;
     if(by('mw-copy'))by('mw-copy').onclick=()=>copy(state.address);
-    if(by('mw-split'))by('mw-split').onclick=async()=>{
-      const b=by('mw-split'); b.disabled=true; b.textContent='Splitting…';
-      try{
-        await request('/api/wallet/xmr/split',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({outputs:8})});
-        PC.toast('split sent — the new outputs are spendable in about 20 minutes');
-        checkedAt=0; render(true);
-      }catch(e){ b.disabled=false; b.textContent='Split into 8 outputs';
-        PC.toast('could not split: '+((e&&e.message)||e)); }
-    };
   }
   async function copy(value){
     const text=String(value||'');
