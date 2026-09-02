@@ -1586,6 +1586,29 @@
         return opened || null;
       }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} return null; }
     }
+    /* A REAL COMPOSITOR WINDOW, WHERE THERE IS A COMPOSITOR TO GIVE IT TO.
+     *
+     * This is the whole point of the exercise and it was doing nothing: turning the flag on only
+     * made the ⧈ button appear, so every app still opened as an in-page frame that sway paints
+     * BEHIND every floating native app. "terminal gets fucked by telegram and firefox, can never
+     * get focus" is that, exactly — no amount of parking fixes it, because the shell is one tiled
+     * window and sway paints floating above tiled, always.
+     *
+     * Opened as its own toplevel, sway stacks it with Telegram and Firefox natively: clicking
+     * raises exactly it, alt-tab reaches it, and the parking subsystem has nothing left to do.
+     *
+     * `popOutView` is the same rule the ⧈ button uses — a view the nav actually knows — so an
+     * EXTRA, a folder or a doc: frame is never handed to it. A refusal (no compositor, the flag
+     * off, a window sway declined) answers null and falls straight through to the in-page frame
+     * below, which is what web and Android always use. */
+    if(!direct){
+      let real = null;
+      try{
+        if(window.PCOSWin && PCOSWin.enabled() && popOutView({view, appView:view}))
+          real = PCOSWin.open(view, label || view, {});
+      }catch(_){ real = null; }
+      if(real) return null;
+    }
     const existing = wins.find(w => sameAppWindow(w.view, view));
     if(existing){
       /* A handed-off Communities window deliberately comes back with the canonical frame identity
