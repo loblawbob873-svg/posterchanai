@@ -4540,7 +4540,7 @@
     return {label:'Monero wallet',icon:'#i-coin',blurb:'Tip-wallet balance and local RPC health',every:30000,
       mount(el){
         el.innerHTML=`<div class="wgt-xmr is-loading"><header><span class="wgt-xmr-mark">ɱ</span><div><b>Monero</b><span class="wgt-xmr-net">checking…</span></div></header>
-          <div class="wgt-xmr-bal"><strong>—</strong><span>XMR available</span><small>— unlocked</small></div>
+          <div class="wgt-xmr-bal"><strong>—</strong><span>XMR balance</span><small>— unlocked</small></div>
           <div class="wgt-xmr-health"><span data-rpc>RPC · checking</span><span data-node>Node · checking</span><span data-at>not refreshed</span></div>
           <div class="wgt-xmr-warn" hidden></div><div class="wgt-xmr-actions">
             <button data-xmr="open">Open Wallet</button><button data-xmr="receive">Receive</button><button data-xmr="send">Send</button><button data-xmr="refresh" aria-label="Refresh wallet">↻</button></div></div>`;
@@ -4568,7 +4568,19 @@
           const s=d.status||{},n=d.node||{},main=!!s.mainnet||String(s.network).toLowerCase()==='mainnet';
           $('.wgt-xmr-net',el).textContent=String(s.network||n.network||'unknown').toUpperCase();
           $('.wgt-xmr-bal strong',el).textContent=_xmrDisplay(n.balance);
-          $('.wgt-xmr-bal small',el).textContent=_xmrDisplay(n.unlocked_balance)+' unlocked';
+          /* "AVAILABLE" WAS A PROMISE THE TIP SHEET THEN BROKE. The big number is the BALANCE;
+             what can actually be sent is the unlocked part, and Monero locks a received output and
+             every transaction's change for 10 blocks. Measured on the live widget: "0.04928414 XMR
+             available" printed directly above "0 unlocked" — so the desktop said there was money
+             and every attempt to send it was refused, which reads as the wallet being broken rather
+             than as funds being temporarily locked. The label says balance now, and the second line
+             says plainly whether anything can be sent. */
+          const _unl = Number(String(n.unlocked_balance == null ? 0 : n.unlocked_balance).replace(/,/g,''));
+          const _bal = Number(String(n.balance == null ? 0 : n.balance).replace(/,/g,''));
+          $('.wgt-xmr-bal small',el).textContent =
+            (Number.isFinite(_unl) && _unl > 0) ? _xmrDisplay(n.unlocked_balance)+' can be sent now'
+            : (Number.isFinite(_bal) && _bal > 0) ? 'none of it can be sent yet \u2014 funds are locked'
+            : '0 unlocked';
           $('[data-rpc]',el).textContent='RPC · '+(n.wallet_rpc_reachable?'online':'offline');
           $('[data-node]',el).textContent='Node · '+(n.daemon_connected?'connected':'offline');
           $('[data-at]',el).textContent='Updated '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});

@@ -6395,11 +6395,48 @@
     if(em && /:[a-zA-Z0-9_+\-]+(?:@[a-zA-Z0-9.\-]+)?:/.test(name)) nm.innerHTML=emojiName(pk,name);
     else nm.textContent=name;
   }
+  /* Add the Monero / Bitcoin Cash marks to an already-drawn card once its author's profile lands.
+     Only ever ADDS: a per-note `monero_address` tag already won at render and must not be replaced
+     by the profile's address, which would misroute the tip to the author's default wallet. */
+  function _tipMarks(n, p){
+    try{
+      const bolt = n.querySelector('.actz .tipbolt'); if(!bolt) return;
+      let changed = false;
+      if(!n.dataset.xmr){
+        const addr = xmrOf(p);
+        if(isXmrAddr(addr)){
+          n.dataset.xmr = addr;
+          if(!bolt.querySelector('.xmr-mark')){
+            const sup=document.createElement('sup'); sup.className='xmr-mark'; sup.textContent='\u0271';
+            bolt.appendChild(sup); changed = true;
+          }
+        }
+      }
+      if(isBchAddr(bchOf(p)) && !bolt.querySelector('.bch-mark')){
+        const sup=document.createElement('sup'); sup.className='bch-mark'; sup.textContent='\ud83d\udfe2';
+        bolt.appendChild(sup); changed = true;
+      }
+      if(changed){
+        const btn = bolt.closest('.act');
+        if(btn) btn.title = 'tip \u2014 Lightning'
+          + (n.dataset.xmr ? ', Monero' : '')
+          + (bolt.querySelector('.bch-mark') ? ', Bitcoin Cash' : '');
+      }
+    }catch(_){ /* one card must never cost the whole decorate pass */ }
+  }
   function decorateProfiles(){
     $$('.note[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
       const a=n.querySelector('.av'); if(p.picture && a) a.src=p.picture;
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
+      /* THE TIP AFFORDANCE, WHICH IS A PROFILE FACT AND WAS ONLY EVER RESOLVED AT RENDER.
+         `hasNoteXmr` falls back to the AUTHOR'S kind-0, and a card is drawn once — so on a cold
+         session the note is painted before the profile arrives and the ɱ mark, the `data-xmr`
+         attribute and the "Monero" half of the tip title are never added. Reported as "on mobile i
+         could not see monero zap, but i zapped fine on desktop": nothing platform-specific about
+         it, only whether that author's profile happened to be cached already. Exactly the mention
+         bug below, on a different element. Idempotent — this pass runs on every profile batch. */
+      _tipMarks(n, p);
     }});
     // DM list rows + open-thread header: fill the avatar once the peer's kind-0 arrives. The NAME is a
     // `.name[data-prof]` (see renderMessages / renderDmThread) so the emoji-aware pass below renders it —
