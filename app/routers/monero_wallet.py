@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.auth import get_admin_user
 from app.models import User
+from app.services.monero_user_wallets import zap_fee_percent
 from app.services.monero_wallet_service import MoneroWallet, WalletError, atomic_to_xmr, transfer_gate, xmr_to_atomic
 
 # NO PREFIX HERE — main.py mounts this under two of them.
@@ -35,6 +36,12 @@ async def wallet_status(user: WalletOwner):
         "daily_cap": atomic_to_xmr(wallet.config.daily_cap_atomic),
         "warning": "MAINNET hot wallet — keep only small tipping funds here" if wallet.config.network == "mainnet"
                    else "Stagenet testing wallet — funds have no value",
+        # The configured service fee, so the OPERATOR'S OWN send sheet can say it is in force and
+        # that this wallet is not charged. Reported as "when I zap, i see nothing about the fee":
+        # true, and correct — the admin sends from the node wallet, which is the one wallet a fee
+        # would be taken from and handed straight back. Silence there is indistinguishable from the
+        # setting not having saved, which is what actually prompted the question.
+        "zap_fee_percent": str(zap_fee_percent()),
     }
 
 

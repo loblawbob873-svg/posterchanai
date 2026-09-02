@@ -134,6 +134,8 @@
       transfers.sort((a,b)=>Number(b.timestamp||b.height||0)-Number(a.timestamp||a.height||0));
       const _next={available:true,network:meta.network,warning:meta.warning,balance:bal.balance,
         unlocked_balance:bal.unlocked_balance,
+        /* The configured service fee, so the operator's own send sheet can state it. */
+        zap_fee_percent:Number(meta.zap_fee_percent || 0) || 0,
         /* HOW LONG UNTIL IT CAN BE SPENT. Monero locks the CHANGE from a send for 10 blocks, so the
            wallet goes to zero spendable immediately after a successful tip. Without this the screen
            can only say "0", which reads as the money having gone somewhere. */
@@ -338,6 +340,17 @@
      * Monero locks the change from a send for 10 blocks, so the spendable balance is zero for about
      * twenty minutes after every tip. Left unsaid, the send is accepted, the daemon refuses it, and
      * the wallet looks broken — which is exactly how it was reported. */
+    /* THE OPERATOR'S OWN SHEET SAYS WHAT THE FEE IS, AND THAT IT IS NOT CHARGED HERE.
+       Reported as "when I zap, i see nothing about the fee". Correct behaviour — this is the node's
+       own wallet, so a cut would be the operator paying themselves and losing a miner fee — but an
+       operator who has just configured a fee and then sees no mention of it anywhere cannot tell
+       working-as-intended from the setting having failed to save. */
+    const _feePct = Number(state && state.zap_fee_percent) || 0;
+    const _feeNote = _feePct > 0
+      ? '<p class="muted small">Service fee: <b>' + esc(String(_feePct)) + '%</b> on tips sent from a '
+        + 'wallet this node holds for someone else, paid to you. This is your own node wallet, so '
+        + 'nothing is taken from this tip.</p>'
+      : '';
     const _lockedOnly = state && amount(state.balance) > 0 && !(amount(state.unlocked_balance) > 0);
     const _blocks = Number(state && state.blocks_to_unlock) || 0;
     const _lockNote = _lockedOnly
@@ -348,7 +361,7 @@
         + '). Monero locks the change from every payment — nothing is lost. '
         + 'Until then, tip from an external wallet.</div>'
       : '';
-    PC.modal('<div class="mw-modal"><h3>'+(preset?'Tip '+esc(opts.name||'with Monero'):'Send Monero')+'</h3>'+warning()+_lockNote+'<button type="button" class="btn btn-cyan full mw-scan" id="mw-scan">Scan wallet QR</button><div class="mw-scan-stage hidden" id="mw-scan-stage"><video playsinline muted></video><span>Point at a Monero payment QR…</span><button type="button" class="btn btn-ghost small" id="mw-scan-cancel">Cancel scan</button></div><label>Recipient address<input class="input" id="mw-to" value="'+esc(preset)+'" autocomplete="off" spellcheck="false"></label><label>Amount (XMR)<input class="input" id="mw-amount" type="number" min="0.000000000001" step="0.0001" inputmode="decimal" value="'+esc(String(opts.amount||''))+'"></label>'+_presetRow(opts)+'<label>Note (stored only in your wallet)<input class="input" id="mw-note" maxlength="120"></label><button class="btn btn-neon full" id="mw-review">Review payment</button></div>',r=>{
+    PC.modal('<div class="mw-modal"><h3>'+(preset?'Tip '+esc(opts.name||'with Monero'):'Send Monero')+'</h3>'+warning()+_lockNote+_feeNote+'<button type="button" class="btn btn-cyan full mw-scan" id="mw-scan">Scan wallet QR</button><div class="mw-scan-stage hidden" id="mw-scan-stage"><video playsinline muted></video><span>Point at a Monero payment QR…</span><button type="button" class="btn btn-ghost small" id="mw-scan-cancel">Cancel scan</button></div><label>Recipient address<input class="input" id="mw-to" value="'+esc(preset)+'" autocomplete="off" spellcheck="false"></label><label>Amount (XMR)<input class="input" id="mw-amount" type="number" min="0.000000000001" step="0.0001" inputmode="decimal" value="'+esc(String(opts.amount||''))+'"></label>'+_presetRow(opts)+'<label>Note (stored only in your wallet)<input class="input" id="mw-note" maxlength="120"></label><button class="btn btn-neon full" id="mw-review">Review payment</button></div>',r=>{
       r.querySelector('#mw-scan').onclick=()=>scanPayment(r);
       // One tap fills the amount, exactly as it does in the external flow.
       Array.prototype.forEach.call(r.querySelectorAll('[data-mw-amt]'), b=>{

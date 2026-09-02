@@ -202,9 +202,10 @@ function mainnetWallet() {
 }
 
 // 16. THE USER'S OWN WALLET — tried after the node's, before the external flow.
-function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 0 } = {}) {
+function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 0,
+                    fee = '0' } = {}) {
   return p => {
-    if (p.includes('/me/status'))  return OK({ enabled, network: 'mainnet' });
+    if (p.includes('/me/status'))  return OK({ enabled, network: 'mainnet', fee_percent: fee });
     if (p.includes('/me/balance')) return OK({ address: ADDR, balance, unlocked_balance: unlocked,
                                                blocks_to_unlock: blocks, outputs: 2 });
     if (p.includes('/me/pay'))     return OK({ tx_hash_list: ['c'.repeat(64)], recipients: 1 });
@@ -218,6 +219,38 @@ function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 
   out.userWallet = { answered, sheet: /Your PosterChan wallet/.test(html),
                      saysCustodial: /held by this server/.test(html),
                      offersExternal: /external wallet/i.test(html) };
+}
+// 16b. THE SERVICE FEE HAS TO BE ON THE SHEET, WITH THE REAL FIGURE.
+//
+// Reported as "when I zap, i see nothing about the fee". A cut a payer only discovers afterwards —
+// by noticing the recipient got less than they chose — is indistinguishable from a broken wallet.
+// The percentage alone is not enough: "2%" of an amount nobody has typed yet is not information,
+// so the sheet states what the recipient will actually receive once there is an amount.
+{
+  const w = boot({ fetcher: meWallet({ fee: '2' }) });
+  let html = '', mounted = null;
+  w.PC.modal = (h, on) => { html = h; mounted = on; };
+  await w.api.meTip({ address: ADDR, name: 'x', amount: '0.01', presets: ['0.01'] });
+  const el = { value: '0.01' };
+  const note = { textContent: '' };
+  if (mounted) mounted({
+    querySelector: sel => (sel === '#mw-me-amt' ? el : sel === '#mw-me-fee' ? note
+                           : { onclick: null, disabled: false, textContent: '' }),
+    querySelectorAll: () => [],
+  });
+  out.userWalletFee = {
+    saysPercent: /2%/.test(html),
+    restated: /They receive/.test(note.textContent),
+    namesTheNet: /0\.0098/.test(note.textContent),
+    namesTheCut: /0\.0002/.test(note.textContent),
+  };
+}
+// 16c. NO FEE CONFIGURED — the sheet must not mention one.
+{
+  const w = boot({ fetcher: meWallet({ fee: '0' }) });
+  let html = ''; w.PC.modal = h => { html = h; };
+  await w.api.meTip({ address: ADDR, name: 'x', amount: '0.01' });
+  out.userWalletNoFee = { silent: !/service|fee/i.test(html.replace(/mw-[a-z-]*/g, '')) };
 }
 // 17. A user wallet with nothing spendable hands the tip on rather than opening a dead sheet.
 {

@@ -344,3 +344,23 @@ def test_an_amount_that_is_too_big_names_the_limit(seen):
         f"the refusal does not say how much can actually be sent: {seen['overAmount']['toast']!r}")
     assert seen["overAmount"]["saysUnlock"] is True, (
         "a locked remainder is not explained, so the number looks arbitrary")
+
+
+def test_the_service_fee_is_stated_before_anybody_sends(seen):
+    """Reported as "when I zap, i see nothing about the fee".
+
+    A cut a payer only discovers afterwards — by noticing the recipient got less than they chose —
+    is indistinguishable from the wallet being broken, and it is the kind of surprise that makes
+    people stop trusting a tipping button entirely. The percentage on its own is not enough either:
+    "2%" of an amount nobody has typed yet is not information, so the sheet does the arithmetic and
+    names what the recipient actually receives."""
+    fee = seen["userWalletFee"]
+    assert fee["saysPercent"] is True, "the sheet does not mention the fee at all"
+    assert fee["restated"] is True, "the sheet never says what the recipient will receive"
+    assert fee["namesTheNet"] is True, "the recipient's actual amount (0.0098) is not shown"
+    assert fee["namesTheCut"] is True, "the operator's cut (0.0002) is not shown"
+
+
+def test_a_node_with_no_fee_says_nothing_about_one(seen):
+    """Most nodes will not charge, and a sheet that talks about a 0% fee invents a concern."""
+    assert seen["userWalletNoFee"]["silent"] is True
