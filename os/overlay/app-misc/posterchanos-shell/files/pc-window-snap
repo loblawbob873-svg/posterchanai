@@ -109,11 +109,21 @@ def main():
         elif side != "edge":
             sway("-t", "send_tick", "pc:snap:" + side)
         return
-    if side in moves:
+    if side in moves and not is_popped_out_window(win):
         # Native Firefox/Telegram surfaces are paired with an HTML frame in exactly one output
         # renderer. A raw compositor move strands that frame/owner behind as a black window. Every
         # renderer sees the tick, so include con_id; only the renderer that owns it may hand it off.
+        #
+        # A POPPED-OUT POSTERCHAN WINDOW IS NOT THAT, and sending it here was the second half of
+        # "not moveable with keyboard". It has no paired HTML frame and no owning renderer, so the
+        # tick reached nobody and the window sat exactly where it was. Excluding it from the shell
+        # branch alone was not enough — it simply fell into the next wrong branch. It is a plain
+        # floating container; the geometry path below moves it the way it moves anything else.
         sway("-t", "send_tick", "pc:move-native:%d:%s" % (int(win["id"]), moves[side]))
+        return
+    if side in moves:
+        # Straight compositor move for a window nothing else owns.
+        sway("[con_id=%d]" % int(win["id"]), "move", moves[side])
         return
     box = out.get("rect") or {}
     x, y = int(box.get("x", 0)), int(box.get("y", 0))

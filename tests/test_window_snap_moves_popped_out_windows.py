@@ -116,3 +116,47 @@ def test_this_check_can_fail(snap):
     exec(compile(broken.split("def main()")[0], "broken", "exec"), ns)
     assert ns["is_posterchan_shell"](POPPED) is True, (
         "the pre-fix helper no longer claims a popped-out window, so this test proves nothing")
+
+
+# ── the second half: which BRANCH it lands in ────────────────────────────────────────────────────
+#
+# Excluding a popped-out window from the shell branch was not enough — it fell straight into the
+# next wrong one. `pc:move-native` exists for Firefox/Telegram surfaces that are paired with an HTML
+# frame in exactly one renderer; a popped-out PosterChan window has no such pairing, so the tick
+# reached nobody and the window sat exactly where it was. Measured on the machine after the first
+# fix: `x: 3516 -> 3516  DID NOT MOVE`.
+
+def _main_source() -> str:
+    return SNAP.read_text(encoding="utf-8").split("def main()", 1)[1]
+
+
+def test_a_popped_out_window_is_not_sent_down_the_native_handoff():
+    """THE SECOND CAUSE. That tick is addressed to a renderer that owns a paired frame; nothing
+    owns this window, so it goes nowhere."""
+    body = _main_source()
+    assert "if side in moves and not is_popped_out_window(win):" in body, (
+        "a popped-out window is being sent through pc:move-native again — the tick reaches no "
+        "renderer and the window does not move")
+
+
+def test_it_gets_a_plain_compositor_move_instead():
+    body = _main_source()
+    assert 'sway("[con_id=%d]" % int(win["id"]), "move", moves[side])' in body, (
+        "nothing actually moves a popped-out window")
+
+
+def test_the_native_handoff_is_still_there_for_real_native_apps():
+    """Firefox and Telegram must keep it: a raw compositor move strands their HTML frame behind as
+    a black window."""
+    body = _main_source()
+    assert "pc:move-native:%d:%s" in body
+
+
+def test_the_three_cases_are_ordered_shell_then_native_then_plain():
+    """Order is the whole logic here. The desktop surface must be decided first (moving it halves a
+    monitor), then paired native apps, and only then the ordinary move."""
+    body = _main_source()
+    i_shell = body.index("if is_posterchan_shell(win):")
+    i_native = body.index("pc:move-native")
+    i_plain = body.index('"move", moves[side]')
+    assert i_shell < i_native < i_plain
