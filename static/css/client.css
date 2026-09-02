@@ -9883,3 +9883,28 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%}
 .oswin-probe p{margin:0;max-width:52ch;margin-inline:auto;line-height:1.5}
 .oswin-probe code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
   padding:1px 6px;font-size:12px}
+/* ===== My Analytics ======================================================== */
+.ua-page{width:min(1120px,100%);margin:0 auto;padding:30px 24px 56px;color:var(--text)}
+.ua-head{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:26px}
+.ua-kicker{font:700 11px/1 var(--mono,monospace);letter-spacing:.18em;color:var(--neon,#22d3ee)}
+.ua-head h1{margin:8px 0 5px;font-size:clamp(28px,4vw,48px);line-height:1.02;letter-spacing:-.045em}
+.ua-head p{margin:0;color:var(--muted)}
+.ua-ranges{display:flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.ua-ranges button{border:0;border-radius:8px;padding:8px 12px;background:transparent;color:var(--muted);font-weight:700;cursor:pointer}
+.ua-ranges button.on{background:rgba(var(--accent-rgb),.18);color:var(--text);box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.3)}
+.ua-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
+.ua-metric{min-width:0;min-height:132px;padding:18px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(145deg,rgba(255,255,255,.035),transparent),var(--panel);display:flex;flex-direction:column}
+.ua-metric.hero{grid-column:span 2;background:radial-gradient(circle at 90% 0,rgba(139,92,246,.24),transparent 54%),var(--panel)}
+.ua-metric.zap{background:radial-gradient(circle at 100% 0,rgba(251,191,36,.16),transparent 54%),var(--panel)}
+.ua-metric>span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.ua-metric strong{font-size:clamp(29px,3vw,42px);letter-spacing:-.04em;margin:auto 0 3px}.ua-metric strong em{font-size:13px;font-style:normal;letter-spacing:0;color:var(--muted)}
+.ua-metric small,.ua-panel small{color:var(--muted)}
+.ua-chartgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.ua-panel{border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:20px;overflow:hidden}
+.ua-panel>header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.ua-panel>header div{display:flex;flex-direction:column;gap:4px}.ua-panel>header>strong{font-size:25px}
+.ua-bars{height:150px;display:flex;align-items:flex-end;gap:3px;margin-top:24px;border-bottom:1px solid var(--line);background:repeating-linear-gradient(to top,transparent 0,transparent 36px,var(--line) 37px)}
+.ua-bars i{display:block;flex:1;min-width:2px;background:var(--bar);border-radius:3px 3px 0 0;opacity:.78;transition:opacity .15s,filter .15s}.ua-bars i:hover{opacity:1;filter:brightness(1.25)}
+.ua-top{padding-bottom:8px}.ua-posts{margin:12px -10px 0}.ua-posts button{width:100%;display:grid;grid-template-columns:42px minmax(0,1fr) auto 20px;gap:12px;align-items:center;padding:13px 10px;border:0;border-top:1px solid var(--line);background:transparent;color:var(--text);text-align:left;cursor:pointer}.ua-posts button:hover{background:rgba(var(--accent-rgb),.06)}
+.ua-rank{font:700 12px/1 var(--mono,monospace);color:var(--muted)}.ua-copy{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ua-copy small{display:block;margin-top:4px}.ua-postnums{text-align:right}.ua-postnums b,.ua-postnums small{display:block}.ua-arrow{color:var(--neon,#22d3ee)}
+.ua-empty{margin:70px auto;text-align:center;max-width:420px}.ua-empty>span{font-size:54px;color:var(--neon,#22d3ee)}.ua-empty h2{margin:14px 0 8px}.ua-empty p,.ua-foot{color:var(--muted)}.ua-foot{text-align:center;font-size:11px;margin-top:18px}
+@media(max-width:700px){.ua-page{padding:20px 12px 90px}.ua-head{align-items:flex-start;flex-direction:column}.ua-ranges{align-self:stretch}.ua-ranges button{flex:1}.ua-metrics{grid-template-columns:1fr 1fr}.ua-metric.hero{grid-column:span 2}.ua-chartgrid{grid-template-columns:1fr}.ua-metric{min-height:116px;padding:15px}.ua-posts button{grid-template-columns:30px minmax(0,1fr) 20px}.ua-postnums{display:none}.ua-bars{height:125px}}
