@@ -79,6 +79,22 @@ def test_a_single_message_body_is_not_stretched_over_its_measured_height():
         "this test's reasoning no longer matches the stylesheet — re-read it")
 
 
+def test_it_does_not_watch_the_document_it_resizes():
+    """THE LOOP I SHIPPED. Observing the frame's document and then setting the frame's height
+    re-lays that document out, so the observer fires again — the browser reports it as
+    "ResizeObserver loop completed with undelivered notifications", endlessly, on every open mail.
+    Late images are covered by timed re-measures instead, and a write only happens when the height
+    actually changed."""
+    body = APP.split("_sizeMailFrames(root){", 1)[1].split("\n    },", 1)[0]
+    # The CALL, not the word — the comment above it names the thing being avoided, and matching
+    # that is how a test passes against its own explanation.
+    assert "new ResizeObserver(" not in body, (
+        "the mail sizer watches the document it resizes — that is an error storm on every mail")
+    assert "Math.abs(want" in body, (
+        "the sizer writes a height unconditionally, which is a feedback loop with anything that "
+        "observes the frame")
+
+
 def test_the_phone_floor_is_no_longer_a_window():
     """62dvh was the porthole. What remains is only what an unmeasurable body falls back to."""
     assert "min-height:62dvh" not in CSS, "the phone still pins the message to a 62dvh box"

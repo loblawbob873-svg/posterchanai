@@ -25867,26 +25867,31 @@
           const doc = el.contentDocument;
           if(!doc || !doc.documentElement) return;
           const h = Math.max(doc.documentElement.scrollHeight || 0, doc.body ? doc.body.scrollHeight : 0);
-          if(h > 0){
+          const want = Math.min(h + 8, 20000);
+          /* ONLY WRITE A HEIGHT THAT CHANGED. Setting the frame's height re-lays out the document
+             inside it, so an unconditional write is a feedback loop with anything that watches the
+             document — which is exactly what a ResizeObserver here produced: an endless storm of
+             "ResizeObserver loop completed with undelivered notifications". */
+          if(h > 0 && Math.abs(want - (parseFloat(el.style.height) || 0)) > 2){
             /* `flex:1` is set on a single-message thread's body so it fills the pane. In a flex
                column that resolves flex-basis:0 and GROWS the item, which beats an inline height —
                so the frame would go back to being a fixed box with its own scrollbar, exactly the
                porthole this removes. Sized frames opt out of the stretch. */
             el.style.flex = 'none';
-            el.style.height = Math.min(h + 8, 20000) + 'px';
+            el.style.height = want + 'px';
           }
         }catch(_){ /* a frame that will not be measured keeps the stylesheet's height */ }
       };
       for(const el of frames){
         fit(el);
         el.addEventListener('load', () => fit(el), { once: true });
-        [120, 400, 1200, 2500].forEach(ms => setTimeout(() => { if(el.isConnected) fit(el); }, ms));
-        try{
-          const doc = el.contentDocument;
-          if(doc && doc.defaultView && typeof ResizeObserver === 'function' && doc.documentElement){
-            new ResizeObserver(() => fit(el)).observe(doc.documentElement);
-          }
-        }catch(_){ }
+        /* Timed re-measures rather than a ResizeObserver ON THE DOCUMENT. Observing the document
+           and then setting the frame's height re-lays that same document out, so the observer fires
+           again — a loop the browser reports as "ResizeObserver loop completed with undelivered
+           notifications", forever, on every open mail. Images and webfonts are what change the
+           height, and they arrive within a couple of seconds; a few beats cover them without
+           standing in a feedback loop. */
+        [120, 400, 1200, 2500, 5000].forEach(ms => setTimeout(() => { if(el.isConnected) fit(el); }, ms));
       }
     },
     _msgBlock(m, folder, acct, expanded){

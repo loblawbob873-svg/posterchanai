@@ -111,8 +111,11 @@ window.fetch = async (url, opts) => {
   if(u.startsWith('/api/mail/folders')){ window.__calls.folders++; return j({folders:['INBOX','Sent','Drafts','Trash'], labels:{}}); }
   if(u.startsWith('/api/mail/messages')){ window.__calls.messages++; return j({messages:MSGS}); }
   if(u.startsWith('/api/mail/search'))   return j({messages:MSGS});
-  if(u.startsWith('/api/mail/message'))  return j({message:Object.assign({}, MSGS[0], {body_html:'<h1>Hello</h1><p>Regards</p>'})});
-  if(u.startsWith('/api/mail/thread'))   return j({messages:[Object.assign({}, MSGS[0], {body_html:'<h1>Hello</h1><p>Regards</p>'})]});
+  // LONG on purpose: a short mail fits any box, so only a long one can show whether the message is
+  // read on the page or through a fixed porthole with its own scrollbar.
+  const LONG_HTML = '<h1>Hello</h1>' + Array.from({length:60},(_,i)=>'<p>Paragraph '+i+' of a long message that used to be read through a small scrolling window inside the page.</p>').join('');
+  if(u.startsWith('/api/mail/message'))  return j({message:Object.assign({}, MSGS[0], {body_html:LONG_HTML})});
+  if(u.startsWith('/api/mail/thread'))   return j({messages:[Object.assign({}, MSGS[0], {body_html:LONG_HTML})]});
   if(u.startsWith('/api/mail/sync')){ window.__calls.sync++; return j({new:{}}); }
   if(u.startsWith('/api/contacts/books'))return j({books:[{id:'contacts',displayname:'Contacts'}]});
   if(u.startsWith('/api/contacts/cards'))return j({cards:CARDS});
