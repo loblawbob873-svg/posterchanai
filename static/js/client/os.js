@@ -5257,13 +5257,19 @@
        * they look from this to their phone. It stays one timer, it still stops when the desktop is
        * left or the tab is hidden, and a tick writes text into nodes that already exist. */
       every: 1000,
-      mount(el){
+      mount(el, w){
         el.innerHTML = `<div class="wgt-clk">
             <div class="wgt-clkt"><b class="wgt-clkh"></b><i class="wgt-clkap"></i>
               <button class="wgt-clkadd" type="button" title="Add a city" aria-label="Add a city">＋</button></div>
             <div class="wgt-clkd"></div>
             <div class="wgt-clkz"></div>
           </div>`;
+        /* AND FILL IT NOW. Every element above is empty, and the time only arrived on the first
+           `refresh` tick — so a freshly added or freshly redrawn clock was a BLANK TILE with a
+           lone ＋ in the corner until the next tick. Rendered and photographed: nothing else on it.
+           This refresh needs no network at all (a Date and `_clockFace`), so there is no reason to
+           wait for anything: a clock that cannot say the time immediately is not a clock. */
+        try{ WIDGETS.clock.refresh(el, w || {}); }catch(_){ }
       },
       refresh(el, w, save){
         const box = $('.wgt-clk', el); if(!box) return;
@@ -5389,7 +5395,12 @@
       // The app polls /client/stats once every 15s for the sidebar; this reads what that already
       // fetched, so it matches the tick it depends on and costs nothing of its own.
       every: 15000,
-      mount(el){ el.innerHTML = '<div class="wgt-st"></div>'; },
+      /* A SKELETON, not an empty div. `refresh` deliberately draws nothing when the stats have not
+         been fetched (five authoritative-looking zeroes would be worse), and mount drew nothing
+         either — so the tile was COMPLETELY blank: no title, no hint, no error. Rendered and
+         photographed beside the other thirteen, it is the only one with nothing on it at all.
+         The performance widgets already do this correctly with a "reading…" line. */
+      mount(el){ el.innerHTML = '<div class="wgt-st"><div class="wgt-dim">reading\u2026</div></div>'; },
       refresh(el){
         const box = $('.wgt-st', el); if(!box) return;
         let st = null;
@@ -8736,6 +8747,12 @@
                   // The size arithmetic, for the same reason: 'a widget fits the screen it is on'
                   // is the whole of the tablet↔desktop requirement and nothing on screen says
                   // when it is wrong — the panel is just too big, or too small to read.
+                  /* THE WIDGET REGISTRY, so all of them can be driven at once. Fourteen widgets
+                     shipped with two tests between them, and "the widgets are in a shit shape" is
+                     what that buys: a widget that throws on mount, or draws nothing, fails silently
+                     — the tile is simply empty and there is no error anywhere. Read-only: a copy of
+                     the map, so a caller cannot register a widget into the running desktop. */
+                  __widgets: () => Object.assign({}, WIDGETS),
                   __wgtBox: (size, w, h, def) => wgtBox(size, w, h, def),
                   __wxUnits: (w) => _wxUnits(w),
                   __calSplit: (occ, now) => _calSplit(occ, now),
