@@ -462,6 +462,88 @@
    * is not, this waits for it. `probe` has its own ceiling, and the wallet screen's own paths are
    * unchanged. */
   function warm(){ try{ Promise.resolve(probe(false)).catch(()=>null); }catch(_){ } }
+  /* ── THE USER'S OWN WALLET ─────────────────────────────────────────────────────────────────
+   *
+   * Everything above this line is the NODE's wallet, which is admin-only: for anybody who is not
+   * the operator every one of those calls is a 403, `tip()` answers false, and the zap falls
+   * through to the external URI flow. That is why 98.9% of profiles could not be tipped in one tap.
+   *
+   * This is the other half — a wallet the node keeps for the signed-in user, one account each in a
+   * pooled wallet. It is CUSTODIAL and the UI says so where it matters. It is tried AFTER the
+   * operator's wallet and BEFORE the external flow, and it declines quietly whenever it cannot
+   * help, so the non-custodial path is always still there. */
+  let _meState = null, _meAt = 0;
+  async function meProbe(force){
+    if(!force && _meState && Date.now() - _meAt < 30000) return _meState;
+    try{
+      const st = await request('/api/wallet/xmr/me/status');
+      if(!st || !st.enabled){ _meState = {enabled:false}; _meAt = Date.now(); return _meState; }
+      const b = await request('/api/wallet/xmr/me/balance');
+      _meState = {enabled:true, network:st.network, address:b.address, balance:b.balance,
+                  unlocked_balance:b.unlocked_balance, blocks_to_unlock:b.blocks_to_unlock,
+                  outputs:b.outputs};
+    }catch(e){
+      /* A FAILURE IS NOT A DURABLE ANSWER — the same latch that made the node wallet stop working
+         for the life of a page. Only a positive result is cached. */
+      _meState = null; _meAt = 0;
+      return {enabled:false, error:(e && e.message) || String(e)};
+    }
+    _meAt = Date.now();
+    return _meState;
+  }
+
+  async function meTip(opts){
+    const s = await meProbe(false);
+    if(!s || !s.enabled) return false;
+    if(!validAddress(opts && opts.address, s.network)) return false;
+    // Nothing spendable: hand it to the external flow rather than open a sheet that would be refused.
+    if(!(amount(s.unlocked_balance) > 0)){
+      const held = amount(s.balance), mins = Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
+      if(held > 0){ try{ PC.toast('your wallet unlocks in ~' + mins + ' min — using an external wallet'); }catch(_){ } }
+      return false;
+    }
+    meSendDialog(opts, s);
+    return true;
+  }
+
+  function meSendDialog(opts, s){
+    opts = opts || {};
+    const presets = _presetRow(opts);
+    PC.modal('<div class="mw-modal"><h3>\u0271 Tip ' + esc(opts.name || 'with Monero') + '</h3>'
+      + '<div class="mw-warning" role="note"><b>Your PosterChan wallet.</b> '
+      + esc(xmr(s.unlocked_balance, false)) + ' XMR available. This wallet is held by this server \u2014 '
+      + 'keep only tipping amounts in it, and you can withdraw to your own wallet at any time.</div>'
+      + '<label>Amount (XMR)<input class="input" id="mw-me-amt" type="number" min="0.000000000001" '
+      + 'step="0.0001" inputmode="decimal" value="' + esc(String(opts.amount || '')) + '"></label>'
+      + presets
+      + '<button class="btn btn-neon full" id="mw-me-send">Send tip</button>'
+      + '<a class="btn btn-ghost full" id="mw-me-external" href="' + esc(uri(opts.address, '', opts.name || '')) + '">Use an external wallet instead</a>'
+      + '</div>', r => {
+        Array.prototype.forEach.call(r.querySelectorAll('[data-mw-amt]'), b => {
+          b.onclick = () => { const el = r.querySelector('#mw-me-amt');
+            if(el){ el.value = b.getAttribute('data-mw-amt'); try{ el.focus(); }catch(_){ } } };
+        });
+        const go = r.querySelector('#mw-me-send');
+        go.onclick = async () => {
+          const val = String((r.querySelector('#mw-me-amt') || {}).value || '').trim();
+          if(!(amount(val) > 0)){ PC.toast('enter an amount greater than zero'); return; }
+          if(amount(val) > amount(s.unlocked_balance)){ PC.toast('more than your wallet can send right now'); return; }
+          go.disabled = true; go.textContent = 'Sending…';
+          try{
+            const out = await request('/api/wallet/xmr/me/pay', {method:'POST',
+              headers:{'Accept':'application/json','Content-Type':'application/json'},
+              body: JSON.stringify({payments:[{address:opts.address, amount:val}]})});
+            PC.closeModal(); PC.toast('\u0271 tip sent');
+            _meAt = 0;                                    // the balance just changed
+            if(typeof opts.onSent === 'function') opts.onSent(val, (out.tx_hash_list||[])[0] || '');
+          }catch(e){
+            go.disabled = false; go.textContent = 'Send tip';
+            PC.toast('tip not sent: ' + ((e && e.message) || e));
+          }
+        };
+      });
+  }
+
   async function tip(opts){
     /* A FAILURE IS NOT A DURABLE ANSWER — and trusting one is what broke this.
      *
@@ -524,7 +606,7 @@
   }
   function boot(){
     if(booted)return;PC=root.__PC;if(!PC)return setTimeout(boot,40);booted=true;
-    root.PCMoneroWallet={render:()=>render(false),tip,probe,openReceive,openSend,uri,validAddress,_format:xmr};
+    root.PCMoneroWallet={render:()=>render(false),tip,meTip,meProbe,probe,openReceive,openSend,uri,validAddress,_format:xmr};
     /* Ask once, now. A tip taken from cache is instant AND deterministic; the alternative is
        deciding on a stopwatch, which is what made the chooser differ between identical clicks. */
     warm();

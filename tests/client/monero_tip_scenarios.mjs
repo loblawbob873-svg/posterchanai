@@ -201,4 +201,43 @@ function mainnetWallet() {
                     row: /mw-presets/.test(html) };
 }
 
+// 16. THE USER'S OWN WALLET — tried after the node's, before the external flow.
+function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 0 } = {}) {
+  return p => {
+    if (p.includes('/me/status'))  return OK({ enabled, network: 'mainnet' });
+    if (p.includes('/me/balance')) return OK({ address: ADDR, balance, unlocked_balance: unlocked,
+                                               blocks_to_unlock: blocks, outputs: 2 });
+    if (p.includes('/me/pay'))     return OK({ tx_hash_list: ['c'.repeat(64)], recipients: 1 });
+    throw new Error('this account cannot open the node wallet');   // the node wallet 403s
+  };
+}
+{
+  const w = boot({ fetcher: meWallet() });
+  let html = ''; w.PC.modal = (h, on) => { html = h; };
+  const answered = await w.api.meTip({ address: ADDR, name: 'x', presets: ['0.01'] });
+  out.userWallet = { answered, sheet: /Your PosterChan wallet/.test(html),
+                     saysCustodial: /held by this server/.test(html),
+                     offersExternal: /external wallet/i.test(html) };
+}
+// 17. A user wallet with nothing spendable hands the tip on rather than opening a dead sheet.
+{
+  const w = boot({ fetcher: meWallet({ unlocked: '0', balance: '0.5', blocks: 4 }) });
+  const toasts = []; w.PC.toast = t => toasts.push(String(t));
+  let opened = false; w.PC.modal = () => { opened = true; };
+  out.userWalletLocked = { answered: await w.api.meTip({ address: ADDR, name: 'x' }), opened,
+                           toldWhy: toasts.some(t => /unlocks in ~8 min/.test(t)) };
+}
+// 18. A node that does not offer user wallets declines silently.
+{
+  const w = boot({ fetcher: meWallet({ enabled: false }) });
+  let opened = false; w.PC.modal = () => { opened = true; };
+  out.userWalletOff = { answered: await w.api.meTip({ address: ADDR, name: 'x' }), opened };
+}
+// 19. A wrong-network address is refused before any sheet opens.
+{
+  const w = boot({ fetcher: meWallet() });
+  let opened = false; w.PC.modal = () => { opened = true; };
+  out.userWalletWrongNet = { answered: await w.api.meTip({ address: '5' + 'C'.repeat(94) }), opened };
+}
+
 console.log(JSON.stringify(out));

@@ -13211,7 +13211,7 @@
     try{
       const _xmrWallet = window.PCMoneroWallet
         || await _withModule('monero-wallet.js', 'PCMoneroWallet');
-      if(_xmrWallet && await _xmrWallet.tip({
+      const _tipOpts = {
         address:addr, name:p.name||p.display_name||'anon', noteId, pubkey:pk,
         /* THE SAME AMOUNTS THE EXTERNAL FLOW OFFERS. They are a user setting (`xmrPresets`, synced
            across devices), so they are passed in rather than duplicated in the wallet module —
@@ -13225,7 +13225,14 @@
                            saveClientPrefsNostr({ xmrTip: String(amount) }); } }catch(_){ }
           _postXmrTipNote(noteId, pk, amount, addr, txid||'', '');
         }
-      })) return;
+      };
+      /* THREE PATHS, IN THIS ORDER, AND EVERY ONE OF THEM MAY DECLINE.
+       *   1. the NODE's wallet — the operator's own, admin-only, so a 403 for everybody else;
+       *   2. the USER's wallet — held by this node for the person signed in (custodial);
+       *   3. the URI/QR flow below — their own wallet, needs nothing from us and always works.
+       * Each answers false when it cannot help, so the non-custodial path is never taken away. */
+      if(_xmrWallet && await _xmrWallet.tip(_tipOpts)) return;
+      if(_xmrWallet && _xmrWallet.meTip && await _xmrWallet.meTip(_tipOpts)) return;
     }catch(_){}
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');

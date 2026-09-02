@@ -183,3 +183,59 @@ def test_the_send_sheet_offers_the_same_one_tap_amounts(seen):
 def test_no_configured_presets_draws_no_empty_row(seen):
     assert seen["noPresets"]["chips"] == 0
     assert seen["noPresets"]["row"] is False, "an empty preset row is drawn with nothing in it"
+
+
+# ── THE USER'S OWN WALLET ────────────────────────────────────────────────────────────────────────
+#
+# Everything above concerns the NODE's wallet, which is admin-only: for anybody who is not the
+# operator every call is a 403, `tip()` answers false, and the zap falls through to the external
+# flow. Measured on the relay, that left 890 of 900 profiles untippable in one tap.
+#
+# This is the other half — a wallet the node keeps for the signed-in user. It is CUSTODIAL, it is
+# tried after the operator's wallet and before the external flow, and it declines quietly whenever
+# it cannot help so the non-custodial path is never taken away.
+
+def test_a_user_with_a_funded_wallet_gets_the_built_in_sheet(seen):
+    assert seen["userWallet"]["answered"] is True
+    assert seen["userWallet"]["sheet"] is True
+
+
+def test_the_sheet_says_who_holds_the_money(seen):
+    """Custody has to be stated where the person is deciding to use it, not buried in a doc."""
+    assert seen["userWallet"]["saysCustodial"] is True, (
+        "the sheet does not tell the user this wallet is held by the server")
+    assert seen["userWallet"]["offersExternal"] is True, (
+        "no way to use their own wallet instead, from the screen where they would want it")
+
+
+def test_a_locked_user_wallet_hands_the_tip_on(seen):
+    """Same rule as the node wallet: a wallet that cannot pay must not stand in the way of paying."""
+    assert seen["userWalletLocked"]["answered"] is False
+    assert seen["userWalletLocked"]["opened"] is False
+    assert seen["userWalletLocked"]["toldWhy"] is True
+
+
+def test_a_node_without_user_wallets_declines_silently(seen):
+    """Most nodes will not offer this. It must cost them nothing and say nothing."""
+    assert seen["userWalletOff"]["answered"] is False
+    assert seen["userWalletOff"]["opened"] is False
+
+
+def test_a_wrong_network_address_never_opens_a_sheet(seen):
+    assert seen["userWalletWrongNet"]["answered"] is False
+    assert seen["userWalletWrongNet"]["opened"] is False
+
+
+def test_the_three_paths_are_tried_in_the_right_order():
+    """Operator wallet, then the user's, then the URI flow. If the user's wallet came first the
+    operator would tip from a custodial account instead of their own; if it came after the URI flow
+    it would never be reached at all."""
+    from pathlib import Path
+    app = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text(encoding="utf-8")
+    at = app.index("async function doXmrTip(")
+    block = app[at:app.index("const name=enc(p.name", at)]
+    assert block.index("_xmrWallet.tip(_tipOpts)") < block.index("_xmrWallet.meTip(_tipOpts)"), (
+        "the user's custodial wallet is tried before the operator's own")
+    tail = app[at:at + 6000]
+    assert tail.index("_xmrWallet.meTip(_tipOpts)") < tail.index("monero:"), (
+        "the user's wallet is never reached — the URI flow runs first")
