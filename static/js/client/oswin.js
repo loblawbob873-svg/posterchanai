@@ -91,7 +91,22 @@
        * placing our windows. */
       if(!root.pcWM) return false;
       if(isWindow()) return false;        // a window does not open windows; the desktop does
-      return String(root.localStorage.getItem('pc_os_toplevels') || '') === '1';
+      /* ON BY DEFAULT ON POSTERCHANOS, WITH ONE KEY TO TURN IT OFF.
+       *
+       * This was opt-in while it was unproven. What it replaces is not a rough edge: sway paints
+       * floating windows above tiled ones unconditionally, the shell is the one tiled window, and
+       * every native app floats — so a PosterChan window can NEVER be drawn in front of Firefox,
+       * Telegram or Steam. Everything the shell does to fake it (park the surface, leave a
+       * screenshot card, put it back) produced "swallowing windows", "sticking", "terminal gets
+       * fucked by telegram and firefox, can never get focus".
+       *
+       * A real toplevel has none of that problem: sway stacks it with everything else, clicking
+       * raises exactly it, and alt-tab reaches it.
+       *
+       * `pc_os_toplevels = '0'` turns it off for one machine, and every caller falls back to the
+       * in-page frame when `open()` answers null — so a refusal costs the old behaviour, not a
+       * lost window. */
+      return String(root.localStorage.getItem('pc_os_toplevels') || '') !== '0';
     }catch(_){ return false; }
   }
 

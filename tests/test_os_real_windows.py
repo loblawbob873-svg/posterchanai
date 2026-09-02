@@ -96,15 +96,20 @@ def test_a_browser_never_opens_a_compositor_window():
       const a = make({});                                   // a browser: no pcWM
       a.w.localStorage.setItem('pc_os_toplevels','1');
       out.browser = a.api.enabled();
-      const b = make({ pcWM: {} });                         // the shell, flag off
-      out.shellFlagOff = b.api.enabled();
+      const b = make({ pcWM: {} });                         // the shell, nothing set
+      out.shellDefault = b.api.enabled();
       const c = make({ pcWM: {} });
-      c.w.localStorage.setItem('pc_os_toplevels','1');
-      out.shellFlagOn = c.api.enabled();
+      c.w.localStorage.setItem('pc_os_toplevels','0');      // one machine opting out
+      out.shellOptedOut = c.api.enabled();
     """)
     assert got["browser"] is False, "a browser tab would try to open an OS window"
-    assert got["shellFlagOff"] is False, "stage 1 must stay off until it is turned on"
-    assert got["shellFlagOn"] is True
+    assert got["shellDefault"] is True, (
+        "real windows are off by default again — the shell is one TILED sway window and every "
+        "native app floats above it, so without this a PosterChan window can never be raised over "
+        "Firefox or Telegram ('terminal gets fucked by telegram and firefox, can never get focus')")
+    assert got["shellOptedOut"] is False, (
+        "pc_os_toplevels=0 no longer turns it off — there has to be one key back to the old "
+        "behaviour on a machine somebody depends on")
 
 
 def test_a_window_does_not_open_windows():

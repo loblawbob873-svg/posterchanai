@@ -4451,7 +4451,9 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .mail-read{display:none}
   .mail-read.has-open{display:flex;position:fixed;inset:0;z-index:46;background:var(--bg);padding-bottom:calc(62px + env(safe-area-inset-bottom))}
   .mail-read-hd{position:sticky;top:0;z-index:3;background:color-mix(in srgb,var(--panel) 96%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
-  .mail-html{height:auto;min-height:62dvh;border-radius:0}
+  /* Sized to its content by `_sizeMailFrames`, so the message scrolls with the page instead of
+   inside a 62dvh porthole. The floor is only what an empty or unmeasurable body falls back to. */
+  .mail-html{height:auto;min-height:220px;border-radius:0}
   .mail-back{display:inline-flex}
   /* A reader toolbar, not seven giant message cards. All actions stay visible in one compact row;
      40px remains a comfortable touch target and fits even the 360px WebView without scrolling. */

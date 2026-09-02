@@ -25846,6 +25846,49 @@
     _linkify(t){ return String(t||'').replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)])/g,
       (m0, pre, url) => pre + '<a href="' + (/^www\./i.test(url) ? 'https://' + url : url)
         + '" target="_blank" rel="noopener noreferrer">' + url + '</a>'); },
+    /* AN EMAIL IS READ ON THE PAGE, NOT THROUGH A PORTHOLE.
+     *
+     * HTML mail renders in a sandboxed iframe, which is right — it is somebody else's markup. But
+     * an iframe does not size to its content, so it kept a fixed 62dvh box with its own scrollbar
+     * inside the page's scrollbar. On a phone that is a ~520px window onto a long message, which is
+     * exactly the report: "mobile UI leaves a small window to actually read the message".
+     *
+     * `allow-same-origin` is what makes the height READABLE from here. It is safe only because
+     * `allow-scripts` is NOT granted and must never be: with scripts off nothing executes inside
+     * the frame, so it cannot use that origin for anything. The two together would be untrusted
+     * mail HTML running as us — `tests/test_mail_reads_on_the_page.py` fails if they ever meet.
+     *
+     * Re-measured after load and on a couple of beats afterwards, because images and webfonts
+     * arrive late and each one changes the height. */
+    _sizeMailFrames(root){
+      const frames = $$('iframe[data-mail-autosize]', root || document);
+      const fit = el => {
+        try{
+          const doc = el.contentDocument;
+          if(!doc || !doc.documentElement) return;
+          const h = Math.max(doc.documentElement.scrollHeight || 0, doc.body ? doc.body.scrollHeight : 0);
+          if(h > 0){
+            /* `flex:1` is set on a single-message thread's body so it fills the pane. In a flex
+               column that resolves flex-basis:0 and GROWS the item, which beats an inline height —
+               so the frame would go back to being a fixed box with its own scrollbar, exactly the
+               porthole this removes. Sized frames opt out of the stretch. */
+            el.style.flex = 'none';
+            el.style.height = Math.min(h + 8, 20000) + 'px';
+          }
+        }catch(_){ /* a frame that will not be measured keeps the stylesheet's height */ }
+      };
+      for(const el of frames){
+        fit(el);
+        el.addEventListener('load', () => fit(el), { once: true });
+        [120, 400, 1200, 2500].forEach(ms => setTimeout(() => { if(el.isConnected) fit(el); }, ms));
+        try{
+          const doc = el.contentDocument;
+          if(doc && doc.defaultView && typeof ResizeObserver === 'function' && doc.documentElement){
+            new ResizeObserver(() => fit(el)).observe(doc.documentElement);
+          }
+        }catch(_){ }
+      }
+    },
     _msgBlock(m, folder, acct, expanded){
       /* A relative download URL belongs to the page that rendered it. That is correct on the web,
        * but packaged clients render at app://posterchan (desktop) or https://localhost (Android),
@@ -25873,8 +25916,8 @@
       const body = nm
         ? this._nmailHtml(nm, m)
         : (m.body_html
-        ? `<iframe class="mail-html" referrerpolicy="no-referrer"
-                   sandbox="allow-popups allow-popups-to-escape-sandbox"
+        ? `<iframe class="mail-html" referrerpolicy="no-referrer" data-mail-autosize="1"
+                   sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
                    srcdoc="${enc('<base target="_blank"><meta name="referrer" content="no-referrer">' + m.body_html)}"></iframe>`
         : `<div class="mail-text">${this._linkify(enc(m.body_text||'')).replace(/\n/g,'<br>')}</div>`);
       const sender=String(m.from||m.from_email||'').replace(/\s*<[^>]*>\s*$/,'').trim()||String(m.from_email||'?');
@@ -25954,6 +25997,8 @@
         <div class="mail-thread">${thread.map((m,i)=>this._msgBlock(m, folder, acct, i===thread.length-1 || String(m.uid)===String(seedUid))).join('')}
           <div class="mail-thread-reply"><button class="btn btn-cyan" data-thread-reply="reply"><svg class="ic b-ic" aria-hidden="true"><use href="#i-reply"></use></svg> Reply</button><button class="btn" data-thread-reply="forward"><svg class="ic b-ic" aria-hidden="true"><use href="#i-forward"></use></svg> Forward</button></div>
         </div>`;
+      // Size every HTML body to its content so the PAGE scrolls, not a box inside it.
+      try{ this._sizeMailFrames(pane); }catch(_){ }
       $('#mail-back',pane).onclick=()=>{ pane.classList.remove('has-open'); this.openUid=null; this.drawList(); };
       $$('.mail-msg .mail-msg-hd',pane).forEach(hd=> hd.onclick=(e)=>{
         // The sender's name is a button inside the header, and the header collapses the message.
