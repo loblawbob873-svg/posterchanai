@@ -4842,7 +4842,24 @@
        * setting one: `VIEW` stayed at its initial 'home' and every window showed the timeline. The
        * measurement that found it: switchView was never called at all. */
       const _win = _inWin() ? PCOSWin.viewOf() : '';
-      if(_win){ try{ switchView(_win); }catch(_){} }
+      if(_win){
+        /* A WINDOW HAS TO ARM WHAT THE DESKTOP WOULD HAVE ARMED FOR IT.
+         *
+         * `openTerminalHere()` runs `PCTerm.openLocal()` and THEN opens the app — so with the
+         * terminal in its own window the PTY was armed in the DESKTOP's page while the terminal
+         * rendered in this one, which has its own PCTerm and knows nothing about it. The window was
+         * real, floating and correctly titled; it was simply empty. Reported as "terminal don't
+         * even work".
+         *
+         * Done here rather than by the opener because a window can also be restored or reloaded on
+         * its own, and each time it must come back to a working shell. `openLocal` is a no-op where
+         * there is no local bridge (a browser, the Windows app), so this costs nothing off
+         * PosterChanOS. */
+        if(_win === 'terminal'){
+          try{ if(window.PCTerm && PCTerm.openLocal) PCTerm.openLocal(); }catch(_){ }
+        }
+        try{ switchView(_win); }catch(_){}
+      }
       else if(!_osHome && !_publicViewRequests){ switchView(_startView()); _onLandingView = true; }
     }
     // Drain a file/text shared IN from another app (a fresh OS-share launch, OR a guest who has just

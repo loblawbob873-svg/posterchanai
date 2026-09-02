@@ -344,8 +344,10 @@ def test_the_start_view_preference_does_not_reach_a_window():
 
     All three now exclude a window, and this asserts all three together — fixing two of them is
     indistinguishable from fixing none."""
-    starts = APP_JS[APP_JS.index("if(_win){ try{ switchView(_win); }catch(_){} }"):]
-    assert "switchView(_startView())" in starts[:200], "the preference path is gone entirely"
+    starts = APP_JS[APP_JS.index("const _win = _inWin() ? PCOSWin.viewOf() : '';"):]
+    assert "switchView(_startView())" in starts[:1600], "the preference path is gone entirely"
+    assert "try{ switchView(_win); }catch(_){}" in starts[:1600], (
+        "a window no longer switches to the view it was opened for")
     for where, needle in (
             ("the startup preference", "const _win = _inWin() ? PCOSWin.viewOf() : '';"),
             ("the remembered view", "if(!_inWin() && !_entityFromPath() && st && st.pcv"),
@@ -456,3 +458,31 @@ def test_the_window_maps_with_the_title_sway_floats_on():
     oswin = (ROOT / "static/js/client/oswin.js").read_text(encoding="utf-8")
     assert "const TITLE = 'PosterChan Window'" in oswin, (
         "the page's title and the compositor rule have drifted apart")
+
+
+def test_a_terminal_window_arms_its_own_shell():
+    """THE REASON THIS WAS REVERTED ONCE, and the reason it can ship now.
+
+    `openTerminalHere()` runs `PCTerm.openLocal()` and THEN opens the app. With the terminal in its
+    own window the PTY was armed in the DESKTOP's page while the terminal rendered in a different
+    one, which has its own PCTerm and knew nothing about it. Measured on the machine at the time:
+    `PosterChan Window — terminal`, floating, correctly titled — and empty. Reported as "terminal
+    don't even work", and the window manager was never the problem.
+
+    A window arms its own shell on landing, which also survives it being reloaded or restored."""
+    at = APP_JS.index("const _win = _inWin() ? PCOSWin.viewOf() : '';")
+    landing = APP_JS[at:at + 1600]
+    assert "_win === 'terminal'" in landing, (
+        "a terminal window renders with no local shell armed — a real window containing nothing")
+    assert "PCTerm.openLocal()" in landing
+    assert landing.index("_win === 'terminal'") < landing.index("switchView(_win)"), (
+        "the shell is armed after the view is switched, so the first render has no session")
+
+
+def test_opening_an_app_asks_for_a_real_window_first():
+    body = OS_JS[OS_JS.index("  function openApp(view, label, icon, render, noFeed, direct){"):]
+    body = body[:body.index("const existing = wins.find")]
+    assert "PCOSWin.open(" in body and "PCOSWin.enabled()" in body
+    assert "popOutView(" in body, "an EXTRA or doc: frame could be handed a window it cannot fill"
+    assert "if(real) return null;" in body, "a refused window must fall back to the in-page frame"
+    assert "if(!direct){" in body, "a managed re-open must not be turned into a toplevel"
