@@ -1586,29 +1586,19 @@
         return opened || null;
       }catch(err){ try{ PC().toast('could not open ' + extra.label); }catch(_){} return null; }
     }
-    /* A REAL COMPOSITOR WINDOW, WHERE THERE IS A COMPOSITOR TO GIVE IT TO.
+    /* AUTO-OPENING EVERY APP AS A TOPLEVEL IS REVERTED — it broke the terminal.
      *
-     * This is the whole point of the exercise and it was doing nothing: turning the flag on only
-     * made the ⧈ button appear, so every app still opened as an in-page frame that sway paints
-     * BEHIND every floating native app. "terminal gets fucked by telegram and firefox, can never
-     * get focus" is that, exactly — no amount of parking fixes it, because the shell is one tiled
-     * window and sway paints floating above tiled, always.
+     * `openApp` briefly asked PCOSWin for a real window first and returned when it got one, so no
+     * in-page frame was built. Reported immediately as "terminal don't even work", and the machine
+     * agreed: no `PosterChan Window` toplevel existed in sway's tree, so the app had been taken off
+     * the old path without arriving on the new one.
      *
-     * Opened as its own toplevel, sway stacks it with Telegram and Firefox natively: clicking
-     * raises exactly it, alt-tab reaches it, and the parking subsystem has nothing left to do.
-     *
-     * `popOutView` is the same rule the ⧈ button uses — a view the nav actually knows — so an
-     * EXTRA, a folder or a doc: frame is never handed to it. A refusal (no compositor, the flag
-     * off, a window sway declined) answers null and falls straight through to the in-page frame
-     * below, which is what web and Android always use. */
-    if(!direct){
-      let real = null;
-      try{
-        if(window.PCOSWin && PCOSWin.enabled() && popOutView({view, appView:view}))
-          real = PCOSWin.open(view, label || view, {});
-      }catch(_){ real = null; }
-      if(real) return null;
-    }
+     * The mechanism is still there and still reachable per window through the ⧈ button, which is
+     * how it stays testable without every launch depending on it. What is missing is a MEASUREMENT
+     * of one real window opening on the hardware; until that exists, this must not be the default
+     * path for every app on a machine somebody is using. That is the same lesson as the boot-landing
+     * guard that broke the APK: do not change the path everything takes to fix a symptom you have
+     * not first reproduced. */
     const existing = wins.find(w => sameAppWindow(w.view, view));
     if(existing){
       /* A handed-off Communities window deliberately comes back with the canonical frame identity

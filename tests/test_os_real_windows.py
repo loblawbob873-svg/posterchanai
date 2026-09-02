@@ -424,54 +424,13 @@ def test_a_document_window_is_refused_rather_than_stripped():
         "a doc: window is no longer refused a pop-out")
 
 
-# ------------------------------------------------------------------------------------------------
-# STAGE 4: OPENING AN APP OPENS A REAL WINDOW.
+# STAGE 4 (OPENING EVERY APP AS A TOPLEVEL) IS REVERTED — it broke the terminal.
 #
-# Stage 3 added the ⧈ button and stage 3's flag turned it on — and that changed nothing anybody
-# would notice, because nothing OPENED as a toplevel on its own. Every app still became an in-page
-# frame that sway paints behind every floating native app, which is the reported problem verbatim:
-# "terminal gets fucked by telegram and firefox, can never get focus".
-#
-# Measured on the machine while this was written: two `place.poster.desktop` shells, both TILED, and
-# Telegram floating over one of them. sway paints floating above tiled unconditionally, so no
-# PosterChan window can be raised over Telegram while it lives inside the shell. A toplevel is not a
-# nicer way to do it; it is the only way.
-
-
-def test_opening_an_app_asks_for_a_real_window_first():
-    body = OS_JS[OS_JS.index("  function openApp(view, label, icon, render, noFeed, direct){"):]
-    body = body[:body.index("const existing = wins.find")]
-    assert "PCOSWin.open(" in body, (
-        "apps still open only as in-page frames, so they stay behind every floating native app "
-        "however the flag is set")
-    assert "PCOSWin.enabled()" in body
-
-
-def test_it_only_does_so_for_a_view_a_window_could_render():
-    """The same rule the ⧈ button uses. An EXTRA, a folder or a doc: frame has no view a fresh page
-    can render — that is what put the social feed under the System Settings title."""
-    body = OS_JS[OS_JS.index("  function openApp(view, label, icon, render, noFeed, direct){"):]
-    body = body[:body.index("const existing = wins.find")]
-    assert "popOutView(" in body
-
-
-def test_a_refusal_falls_back_to_the_in_page_window():
-    """No compositor, the flag off, or a window sway declined — every one of those has to leave the
-    old behaviour intact rather than lose the app. Web and Android take this path always."""
-    body = OS_JS[OS_JS.index("  function openApp(view, label, icon, render, noFeed, direct){"):]
-    body = body[:body.index("const existing = wins.find")]
-    assert "if(real) return null;" in body, (
-        "a refused real window no longer falls through to the in-page frame — the app would simply "
-        "not open")
-    assert "catch(_){ real = null; }" in body
-
-
-def test_a_direct_launch_is_left_alone():
-    """`direct` is how the shell re-opens its own managed frames (handoffs, EXTRAS). Those must not
-    be turned into toplevels underneath the code that is managing them."""
-    body = OS_JS[OS_JS.index("  function openApp(view, label, icon, render, noFeed, direct){"):]
-    body = body[:body.index("const existing = wins.find")]
-    assert "if(!direct){" in body
+# `openApp` asked PCOSWin for a real window first and returned when it got one, so no in-page frame
+# was built. Reported as "terminal don't even work", and sway's tree agreed: no `PosterChan Window`
+# existed, so the app had been taken off the old path without arriving on the new one. The per-window
+# ⧈ route stays; making it the default for every launch needs one real window measured on hardware
+# first. The tests below still cover the parts that ARE shipped.
 
 
 def test_the_window_maps_with_the_title_sway_floats_on():
