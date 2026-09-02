@@ -782,6 +782,19 @@ def _is_reply(m: dict) -> bool:
     return bool((m.get("references") or "").strip())
 
 
+def _looks_sent(name: str) -> bool:
+    """Does this folder name MEAN sent?
+
+    `_logical_of` only rewrites a folder when the server's RFC 6154 special-use flags name it, and
+    returns the raw name otherwise — so a real mailbox stored 52 messages under `Sent Messages` and
+    39 under `Sent`, and an equality check against "sent" found 39 of 91. Same story for
+    `Deleted Messages` beside `Trash`.
+
+    Matched on WHOLE words so `Sent Messages`, `Sent Items`, `INBOX.Sent` and `[Gmail]/Sent Mail`
+    all qualify while a folder called `Consent forms` does not."""
+    return "sent" in _re.split(r"[^a-z]+", str(name or "").lower())
+
+
 def _is_own_sent(m: dict) -> bool:
     """Is this the user's OWN copy of something they sent?
 
@@ -797,7 +810,7 @@ def _is_own_sent(m: dict) -> bool:
     Narrow on purpose. A message in the user's own Sent folder sharing a normalised subject is their
     side of that conversation. An inbound root from an automated sender sharing a subject with
     another inbound root is not, and still is not admitted."""
-    return str(m.get("logical") or "").strip().lower() == "sent"
+    return _looks_sent(m.get("logical")) or _looks_sent(m.get("folder"))
 
 
 def _build_thread(seed: dict, allmsgs: list) -> list:
@@ -831,6 +844,30 @@ def _build_thread(seed: dict, allmsgs: list) -> list:
     return msgs
 
 
+_THREAD_SCAN: dict = {}
+_THREAD_SCAN_TTL = 60.0
+
+
+async def _thread_scan(sk: bytes, account_email: str | None) -> list:
+    """The whole mailbox for threading, cached briefly per account.
+
+    Keyed on the account, not the user: the key material is the caller's own and never leaves this
+    process, and the value is only ever handed back to the same reader."""
+    import time as _time
+    key = (id(sk), account_email or "*")
+    hit = _THREAD_SCAN.get(key)
+    now = _time.monotonic()
+    if hit and now - hit[0] < _THREAD_SCAN_TTL:
+        return hit[1]
+    msgs = await mail_store.list_all_messages(sk, account_email, None)
+    # Bounded: one entry per account, and stale ones are dropped rather than accumulated.
+    for k, v in list(_THREAD_SCAN.items()):
+        if now - v[0] >= _THREAD_SCAN_TTL:
+            _THREAD_SCAN.pop(k, None)
+    _THREAD_SCAN[key] = (now, msgs)
+    return msgs
+
+
 @router.get("/thread")
 async def mail_thread(account: str, uid: str, folder: str = "INBOX",
                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -855,7 +892,18 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
             (seed.get("references") or "").strip()):
         thread = [seed]
     else:
-        allm = await mail_store.list_messages(sk, acc.email if acc else None, None, limit=0)
+        # PAGED, AND CACHED FOR A MINUTE.
+        #
+        # `list_messages(..., limit=0)` is ONE page and the relay clamps any filter to 5000, so on a
+        # real mailbox "all messages" quietly meant "the newest 5000 documents". Measured on the
+        # mailbox this was reported from: 5,000 of 17,903 documents, and 91 of 907 sent messages —
+        # the thread builder could not see 90% of the user's own sent mail however good the
+        # threading rules were. Reported as "Email is missing messages I sent in the thread".
+        #
+        # Walking every page costs ~10s of NIP-44 decrypts there, which is why it is cached: the
+        # client renders the message immediately and upgrades when this returns, so the READ is
+        # never blocked by it, and opening several messages in a row pays for one scan.
+        allm = await _thread_scan(sk, acc.email if acc else None)
         thread = _build_thread(seed, allm)
     for m in thread:                                    # rehydrate offloaded bodies (bounded by thread size)
         if m.get("body_ref"):

@@ -150,6 +150,35 @@ async def delete_message(seckey: bytes, account_email: str, folder: str, uid: st
     return await nostr_store.delete_doc(_port(), seckey, _d(account_email, folder, uid))
 
 
+async def list_all_messages(seckey: bytes, account_email: str | None = None,
+                            folder: str | None = None, max_pages: int = 8) -> list:
+    """EVERY stored message, walked page by page — not the newest 5000.
+
+    `list_messages(..., limit=0)` reads ONE page and the relay clamps any filter to 5000, so "all"
+    quietly means "the newest 5000 documents". That is fine for a list view and wrong for threading,
+    which has to find a conversation's other half wherever it is.
+
+    Measured on a real mailbox: 5000 returned, of which 3173 were Trash and 1711 Deleted Messages —
+    so roughly a hundred non-deleted messages were visible to the thread builder and most of the
+    Sent folder was outside the window entirely. Reported as "Email is missing messages I sent in
+    the thread". Nothing logged, because a read that hits the cap looks exactly like a read that
+    found everything.
+
+    Same walk `have_uids` already does for the sync's dedup, and for the same reason."""
+    out, until, guard = [], None, 0
+    while guard < max(1, max_pages):
+        guard += 1
+        page, nxt = await list_page(seckey, account_email, folder, limit=_SCAN_LIMIT, until=until)
+        out.extend(page)
+        if not nxt or not page:
+            break
+        until = nxt if until != nxt else nxt - 1     # never hand back the same cursor
+    else:
+        logger.warning("[mail] list_all_messages stopped at the %d-page guard — a very large "
+                       "mailbox may still be threading against a partial view", max_pages)
+    return out
+
+
 async def have_uids(seckey: bytes, account_email: str, folder: str) -> set:
     """UIDs already mirrored for (account, folder) — so sync only stores genuinely new mail. The UID is
     the last d-tag segment, so this reads d-tags WITHOUT decrypting any content (sync ran a NIP-44

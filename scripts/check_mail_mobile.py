@@ -293,6 +293,33 @@ OPEN_MESSAGE = r"""(async () => {
            vh: window.innerHeight,
            paneFrac: r ? +(r.height / window.innerHeight).toFixed(2) : 0,
            bodyFrac: br ? +(br.height / window.innerHeight).toFixed(2) : 0,
+           /* WHERE THE READING SCREEN'S PIXELS GO. The pane is position:fixed inset:0 on a phone,
+              so it already owns the whole viewport — the list chrome behind it is covered, not
+              competing. What matters is how the pane divides itself up. */
+           layout: (() => {
+             const box = sel => { const e=document.querySelector(sel); if(!e) return null;
+               const r=e.getBoundingClientRect();
+               return {t:Math.round(r.top), b:Math.round(r.bottom), h:Math.round(r.height)}; };
+             return { vh: window.innerHeight, wrap: box('.mail-wrap'), read: box('.mail-read'),
+                      thread: box('.mail-thread'), root: box('.mail-root'), feed: box('#feed'),
+                      items: box('.mail-items') };
+           })(),
+           paneKids: (() => {
+             const pane = document.querySelector('.mail-read'); if(!pane) return [];
+             return [...pane.querySelectorAll('*')].filter(e => e.parentElement === pane
+                      || (e.parentElement && e.parentElement.parentElement === pane))
+               .map(e => ({ c: String(e.className||e.tagName).slice(0,28),
+                            h: Math.round(e.getBoundingClientRect().height) }))
+               .filter(x => x.h > 8).slice(0, 14);
+           })(),
+           parts: (() => {
+             const h = sel => { const e=document.querySelector(sel); if(!e) return null;
+               const r=e.getBoundingClientRect(); return Math.round(r.height); };
+             return { head:h('.mail-read-head'), subj:h('.mail-subject'), meta:h('.mail-meta'),
+                      acts:h('.mail-actions'), body:h('.mail-html'), text:h('.mail-text'),
+                      top:h('.mail-list-top'), folders:h('.mail-folders'), nav:h('.mobilenav'),
+                      back:h('#mail-back') };
+           })(),
            listStillThere: (() => { const l=document.querySelector('.mail-items');
              if(!l) return 0; const lr=l.getBoundingClientRect();
              return (!l.checkVisibility || l.checkVisibility()) ? Math.round(lr.height) : 0; })(),
@@ -560,7 +587,8 @@ async def drive(url):
                 if os.environ.get("PC_DEBUG") and op:
                     print(f"  DEBUG {label} OPEN: vh={op.get('vh')} pane={op.get('paneH')}"
                           f"({op.get('paneFrac')}) body={op.get('bodyH')}({op.get('bodyFrac')}) "
-                          f"listLeft={op.get('listStillThere')} acts={(op.get('acts') or {}).get('barH')}",
+                          f"listLeft={op.get('listStillThere')} acts={(op.get('acts') or {}).get('barH')} "
+                          f"layout={op.get('layout')}",
                           flush=True)
                 if not op or op.get("error"):
                     problems.append((label, "missing-control",

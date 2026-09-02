@@ -52,9 +52,11 @@ def test_the_fullscreen_branch_leaves_the_loop():
     """It must `continue`, not fall through into placement — placing a fullscreen surface is what
     cancelled the pointer lock."""
     loop = _placement_loop()
-    branch = loop[loop.index("if(it.w.nativeFullscreen || it.w.nativeGame){"):]
+    branch = loop[loop.index("if(it.w.nativeFullscreen){"):]
     branch = branch[:branch.index("it.w.el.classList.remove('native-fullscreen-frame')")]
-    assert "continue;" in branch
+    assert branch.count("continue;") >= 2, (
+        "the fullscreen and settling-game branches must each leave the loop rather than fall "
+        "through into placement")
 
 
 def test_a_game_is_never_screen_captured():
@@ -114,10 +116,34 @@ def test_the_placement_pass_skips_a_game_that_is_not_yet_fullscreen():
     """The two conditions are ORed in the branch that leaves the loop, so a game is exempt from the
     first frame it maps in — not from the moment it wins fullscreen."""
     loop = _placement_loop()
-    assert "it.w.nativeFullscreen || it.w.nativeGame" in loop, (
+    assert "it.w.nativeGame && (Date.now() - (it.w.nativeGameAt || 0)) < GAME_SETTLE_MS" in loop, (
         "a game is only spared once it is already fullscreen, which is after it has been placed "
         "small and had its pointer lock cancelled")
     assert loop.index("it.w.nativeGame") < loop.index("stash.has(it.native)")
+
+
+def test_a_game_is_spared_placement_but_never_forced_fullscreen():
+    """THE OTHER HALF, and the one that was missing. The exemption was written into the branch that
+    also calls `pcWM.fullscreen(id,true)`, so every game window was promoted to fullscreen and held
+    there on top of everything — reported as "steam is overlapping terminal". Sway's own
+    `for_window [class=^steam_app_] fullscreen enable` rule is what makes a game fullscreen; the
+    shell only has to keep its hands off while it starts."""
+    loop = _placement_loop()
+    game = loop[loop.index("if(it.w.nativeGame &&"):]
+    game = game[:game.index("continue;") + len("continue;")]
+    assert "pcWM.fullscreen" not in game, (
+        "the shell forces a game fullscreen again — a windowed game then covers every PosterChan "
+        "window for as long as it runs")
+
+
+def test_the_exemption_ends_so_a_windowed_game_stops_owning_the_screen():
+    """Unbounded, this is indistinguishable from the bug it replaced: a game that never goes
+    fullscreen would be exempt from parking for ever and the terminal could never be used."""
+    import re as _re
+    m = _re.search(r"const GAME_SETTLE_MS = (\d+);", OS_JS)
+    assert m, "the settle window is gone — the exemption is unbounded again"
+    assert 10000 <= int(m.group(1)) <= 120000, (
+        f"a {int(m.group(1))}ms settle window is not a launch window")
 
 
 def test_the_flag_is_set_when_the_window_is_adopted_and_kept_current():
@@ -126,7 +152,7 @@ def test_the_flag_is_set_when_the_window_is_adopted_and_kept_current():
     adopt = OS_JS[OS_JS.index("function adoptNative(nw){"):]
     adopt = adopt[:adopt.index("\n  function ")]
     assert "w.nativeGame=isGameApp(nw)" in adopt
-    assert "if(isGameApp(r)) w.nativeGame=true;" in OS_JS, (
+    assert "if(isGameApp(r) && !w.nativeGame){ w.nativeGame=true; w.nativeGameAt=Date.now(); }" in OS_JS, (
         "the flag is never refreshed, so a game that maps before its class is readable stays a "
         "normal window for ever")
 

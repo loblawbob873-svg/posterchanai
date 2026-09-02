@@ -2896,12 +2896,30 @@
         /* Preserve application-requested fullscreen. Turning every new surface floating in place()
          * silently cancelled a game's fullscreen/pointer lock and let the mouse escape to another
          * monitor. A fullscreen client needs no HTML hole until it exits fullscreen itself. */
-        if(it.w.nativeFullscreen || it.w.nativeGame){
+        if(it.w.nativeFullscreen){
           it.w.el.classList.add('native-fullscreen-frame');
           if(_natSent.get(it.native)!=='fullscreen'){
             try{ await pcWM.fullscreen(it.native,true); _natSent.set(it.native,'fullscreen'); }
             catch(_){ _natSent.delete(it.native); }
           }
+          continue;
+        }
+        /* A GAME IS EXEMPT FROM PARKING WHILE IT STARTS — IT IS NOT PROMOTED TO FULLSCREEN FOR EVER.
+         *
+         * The exemption exists because placing a Steam window during launch cancelled its own
+         * fullscreen and pointer lock: "cyberpunk loads full screen then when you click, goes to
+         * desktop and loads cyberpunk in small window". But it was written into the branch ABOVE,
+         * which also CALLS `pcWM.fullscreen(id,true)` — so every game window was forced fullscreen
+         * and held there, on top of everything, forever. Reported as "steam is overlapping
+         * terminal".
+         *
+         * Two different things. A window whose APP asked for fullscreen is preserved (above). A
+         * game merely gets left alone while it settles — sway's own `for_window [class=^steam_app_]
+         * fullscreen enable` rule is what puts it fullscreen, and it does not need our help. Once
+         * it has settled and is still not fullscreen, it is a windowed game and behaves like any
+         * other application, which is what gives the terminal its screen back. */
+        if(it.w.nativeGame && (Date.now() - (it.w.nativeGameAt || 0)) < GAME_SETTLE_MS){
+          it.w.el.classList.add('native-fullscreen-frame');
           continue;
         }
         it.w.el.classList.remove('native-fullscreen-frame');
@@ -3079,6 +3097,9 @@
    *
    * The frame is still adopted, so the game keeps its taskbar button and can be switched to. It is
    * simply never sized, moved, or parked by us again. */
+  /* Long enough for a launcher to hand off to the game and for sway's own steam rule to put
+   * it fullscreen; short enough that a WINDOWED game stops owning the screen. */
+  const GAME_SETTLE_MS = 45000;
   const _GAME_APP = /^(?:steam_app_\d+|gamescope)/i;
   function isGameApp(nw){
     try{ return _GAME_APP.test(String((nw && (nw.app || nw.class)) || '')); }
@@ -3092,7 +3113,9 @@
     if(w) return w;
     w=openApp(view, nw.title||nw.name||nw.app||'App', '#i-window', null, true, true);
     if(!w) return null;
-    w.native=id; w.nativeFullscreen=!!nw.fullscreen; w.nativeGame=isGameApp(nw); w.machineApp=nw;
+    w.native=id; w.nativeFullscreen=!!nw.fullscreen; w.nativeGame=isGameApp(nw);
+    if(w.nativeGame) w.nativeGameAt=Date.now();
+    w.machineApp=nw;
     w.el.classList.add('osw-native');
     /* Stable identity for accessibility, diagnostics and exact window actions.  Matching a frame
      * by title or by "the first Firefox" is unsafe when two profiles or Telegram are open: a test
@@ -3193,7 +3216,7 @@
       }
       if(r.title && r.title!==w.title){ w.title=r.title; const t=$('.osw-title',w.el); if(t)t.textContent=r.title; changed=true; }
       w.nativeFullscreen=!!r.fullscreen;
-      if(isGameApp(r)) w.nativeGame=true;
+      if(isGameApp(r) && !w.nativeGame){ w.nativeGame=true; w.nativeGameAt=Date.now(); }
     }
     /* Adopted apps already have an ordinary PosterChan task button through `wins`. */
     nativeTasks=rows.filter(r=>!nativeWins().some(w=>Number(w.native)===Number(r.id)));
