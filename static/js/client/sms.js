@@ -3677,13 +3677,19 @@
     const t = S.threads.find(x => x.key === S.open);
     if(!t){ S.open = ''; return paint(); }
     const who = whoIs((t.msgs[t.msgs.length-1] || {}).name, t.address);
+    /* An archived message can carry the name the phone knew when it arrived. That is useful for
+       the title, but it is not proof the card still exists: after deleting the contact it would
+       hide the only way to add them back. Ask the current Contacts index for button visibility. */
+    let savedContact = false;
+    try{ savedContact = !!(window.PCContacts && PCContacts.nameFor && PCContacts.nameFor(t.address)); }
+    catch(_){ }
     feed.innerHTML = `
       <div class="sms-wrap">
         <div class="sms-head">
           <button class="btn small" id="sms-back">${ICO('arrow-left','b-ic')}</button>
           <div class="sms-title"><span>${enc(who)}</span>${who!==t.address?`<small>${enc(t.address)}</small>`:''}</div>
           <div class="sms-contact-actions">
-            ${who===t.address?`<button class="btn small" id="sms-add-contact" aria-label="Add ${enc(t.address)} to contacts">Add contact</button>`:''}
+            ${savedContact?'':`<button class="btn small" id="sms-add-contact" aria-label="Add ${enc(t.address)} to contacts">Add contact</button>`}
             <button class="btn small" id="sms-call" aria-label="Call ${enc(who)}">Call</button>
             <button class="btn small" id="sms-copy-number" aria-label="Copy phone number">Copy</button>
           </div>

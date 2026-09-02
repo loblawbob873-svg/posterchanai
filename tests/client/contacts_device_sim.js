@@ -135,14 +135,16 @@ const $ = (sel) => (typeof sel === 'string' && sel[0] === '#' && modalHtml.inclu
   ? { onclick:null, onchange:null, checked:false, value:'', click(){}, textContent:'' } : null;
 
 global.__PC = {
-  VIEW: 'timeline',
+  VIEW: opt.action === 'add-phone' ? 'contacts' : 'timeline',
   $, $$: () => [],
   enc,
   toast(){}, closeModal(){},
   modal(html, onMount){ modalHtml = String(html || ''); if(onMount) onMount({}); },
   uiConfirm: async () => true,
   ensureAiSession: async () => {},
-  authFetch: async (url) => ({ ok:true, status:200, json: async () => (/\/books/.test(url) ? { books:[] } : {}) }),
+  authFetch: async (url) => ({ ok:true, status:200, json: async () => (/\/books/.test(url)
+    ? { books: opt.action === 'add-phone' ? [{id:'personal', name:'Personal'}] : [] }
+    : /\/cards/.test(url) ? { cards:[] } : {}) }),
   me: () => ({ pubkey:'me' }),
   capPlugin: _capPlugin,
 };
@@ -150,7 +152,12 @@ global.__PC = {
 require(path.join(ROOT, 'static', 'js', 'client', 'contacts.js'));
 
 (async () => {
-  await global.PCContacts.openMenu();
+  if(opt.action === 'add-phone'){
+    await global.PCContacts.reload();
+    await global.PCContacts.addPhone(opt.phone || '');
+  }else{
+    await global.PCContacts.openMenu();
+  }
   await new Promise(r => setTimeout(r, 30));
   const row = /class="[^"]*ct-phonebook/.test(modalHtml);
   console.log(JSON.stringify({
@@ -162,6 +169,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'contacts.js'));
     saysBridge: /native bridge/i.test(modalHtml),
     why: (modalHtml.match(/id="ctb-phonewhy">([^<]*)</) || [, ''])[1],
     nativeCalls,
+    prefilledPhone: (modalHtml.match(/class="input ct-mv" value="([^"]*)"/) || [, ''])[1],
     html: opt.html ? modalHtml : undefined,
   }));
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
