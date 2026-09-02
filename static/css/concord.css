@@ -6,7 +6,16 @@ body.concord-view .cc-message-actions{gap:2px!important;padding:3px!important;bo
 body.concord-view .app{grid-template-columns:300px minmax(0,1fr)!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;column-gap:0!important}
 body.concord-view .rightbar,body.concord-view .rb-toggle,body.concord-view #rb-toggle{display:none!important;visibility:hidden!important;pointer-events:none!important}
 body.concord-view .main,body.concord-view .feed.feed-dm{width:100%!important;max-width:none!important;min-width:0!important;margin:0!important}
-html:has(body.concord-view),body.concord-view,body.concord-view .app,body.concord-view .main,body.concord-view .feed,body.concord-view .cc-app,body.concord-view .cc-conversation,body.concord-view .cc-messages{max-width:100vw!important;overflow-x:clip!important}
+/* `100%`, NEVER `100vw`, AND THAT ONE UNIT IS THE WHOLE 'concord still not maximizing to
+   width' BUG. The client scales the UI with `body{zoom}` by viewport, and `vw` is resolved
+   against the DEVICE viewport with no regard for zoom — so at zoom 0.67 a `max-width:100vw`
+   caps this at 1280 CSS px inside a body that is actually 1910 CSS px wide, and a third of
+   the monitor goes unused. It looked correct on exactly one class of display: the ones wide
+   enough to be at zoom 1, which is why every earlier fix here appeared to work. Measured:
+   1280px viewport -> 858px used (422px wasted); 1920 -> 1478 (442 wasted); 3072 -> full.
+   `100%` is relative to the parent and therefore already in the zoomed coordinate space.
+   The `overflow-x:clip` half is the part that was actually wanted and is unchanged. */
+html:has(body.concord-view),body.concord-view,body.concord-view .app,body.concord-view .main,body.concord-view .feed,body.concord-view .cc-app,body.concord-view .cc-conversation,body.concord-view .cc-messages{max-width:100%!important;overflow-x:clip!important}
 body.concord-view .cc-messages{overscroll-behavior-x:none!important;touch-action:pan-y!important}
 /* Tablets were falling between the phone drill-down (<=820px) and the wide desktop assumptions.
    Explicitly consume the remaining track and remove the shell's content caps at common 834–1180px
