@@ -11686,7 +11686,10 @@
 
   // ---------- note rendering ----------
   function profOf(pk){ return Store.profile(pk)||{}; }
-  function isXmrAddr(a){ return /^[48][1-9A-HJ-NP-Za-km-z]{94}([1-9A-HJ-NP-Za-km-z]{11})?$/.test((a||'').trim()); }  // base58 (no 0 O I l), exactly 95 (std/sub) or 106 (integrated)
+  // base58 (no 0 O I l), exactly 95 (std/sub) or 106 (integrated). String() FIRST: a kind-0 is
+  // arbitrary JSON off the network, so `monero_address` can be a number, an object or null, and
+  // `(a||'').trim()` throws on all three — inside xmrOf, which noteCard calls for every card.
+  function isXmrAddr(a){ return /^[48][1-9A-HJ-NP-Za-km-z]{94}([1-9A-HJ-NP-Za-km-z]{11})?$/.test(String(a==null?'':a).trim()); }
   // Monero address from kind-0 metadata. There is NO agreed Nostr standard (unlike LN's lud16/lud06), so
   // clients scatter it across many keys — `monero_address` is the most common in the wild, then `xmr`/
   // `monero`, plus capitalised/odd variants and even bio text. Read LIBERALLY so we can tip a user
@@ -27097,12 +27100,60 @@
   }
   // Patch the already-painted profile header in place when a background kind-0 refresh changed it
   // (live rename / new avatar), so we never have to block the first paint on that refetch.
+  /* Add (and bind) the tip controls once a profile turns out to carry payment addresses. Only ever
+     ADDS — an address that has gone away leaves a stale button, which is a far smaller harm than
+     tearing controls out from under a tap, and the next full render drops it anyway. */
+  function _patchProfileTips(feed, pk, p){
+    try{
+      const pbody = feed.querySelector('.prof .pbody'); if(!pbody) return;
+      const acts  = feed.querySelector('.prof .pactions') || feed.querySelector('#prof-menu') && feed.querySelector('#prof-menu').parentElement;
+      const after = feed.querySelector('.prof .npubrow');
+      const put = (el) => { if(after && after.parentElement) after.insertAdjacentElement('afterend', el); else pbody.appendChild(el); };
+      const mk = (tag, cls, id, title, html) => { const e=document.createElement(tag); e.className=cls; e.id=id; e.title=title; e.innerHTML=html; return e; };
+
+      const xmr = xmrOf(p);
+      if(isXmrAddr(xmr) && !feed.querySelector('#prof-xmr')){
+        const b = mk('button','ln-addr xmr','prof-xmr','tip Monero (XMR)',
+          'ɱ ' + enc(xmr.slice(0,10)) + '…' + enc(xmr.slice(-6)));
+        b.onclick = () => doXmrTip(null, pk); put(b);
+      }
+      if(isXmrAddr(xmr) && acts && !feed.querySelector('#xmrtip-prof') && !feed.querySelector('#prof-follow-self')){
+        const t = mk('button','btn btn-ghost small','xmrtip-prof','tip Monero (XMR)','ɱ Tip');
+        t.onclick = () => doXmrTip(null, pk);
+        const menu = feed.querySelector('#prof-menu');
+        if(menu) menu.insertAdjacentElement('beforebegin', t); else acts.appendChild(t);
+      }
+      const bch = bchOf(p);
+      if(isBchAddr(bch) && !feed.querySelector('#prof-bch')){
+        const b = mk('button','ln-addr bch','prof-bch','tip Bitcoin Cash (BCH)',
+          '<svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>'
+          + enc(bch.slice(0,14)) + '…' + enc(bch.slice(-6)));
+        b.onclick = () => doBchTip(pk); put(b);
+      }
+      if(p.lud16 && !feed.querySelector('#prof-ln')){
+        const b = mk('button','ln-addr','prof-ln','send a zap',
+          '<svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>' + enc(p.lud16));
+        b.onclick = () => doZap(null, pk); put(b);
+      }
+    }catch(_){ /* a tip button must never cost the header refresh */ }
+  }
+
   function _patchProfileHeader(pk){
     const feed=$('#feed'); if(!feed) return; const p=Store.profile(pk)||{};
     const av=feed.querySelector('.pav'); if(av){ const s=p.picture||LOGO; if(av.getAttribute('src')!==s) av.src=s; }
     const bn=feed.querySelector('.prof .banner'); if(bn){ const want=p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''; if(bn.innerHTML!==want) bn.innerHTML=want; }
     const h2=feed.querySelector('.prof .pbody h2'); if(h2){ const vchk=h2.querySelector('.vchk'); h2.innerHTML=emojiName(pk,p.name||p.display_name||'anon'); if(vchk) h2.appendChild(vchk); }
     const ab=feed.querySelector('.prof .about'); if(ab) ab.innerHTML=linkify(p.about||'');
+    /* THE TIP AFFORDANCES ARE PROFILE FACTS TOO, AND THIS PATCH DID NOT TOUCH THEM.
+       Reported against a real profile: "he added a payment target for xmr but no way to zap him".
+       His kind-0 carries `monero_address`, `xmr` AND `cryptocurrency_addresses.monero`, and the
+       address validates on the client and on the server — nothing was wrong with the data. The
+       header is rendered ONCE from whatever `Store.profile(pk)` held at paint time, which on a
+       cache-first or cold open is a profile with no addresses, and this function refreshed the
+       avatar, banner, name, about and music but never the tip row. So the buttons could not appear
+       for the rest of the visit. Exactly the feed card's bug (`_tipMarks`) on the profile screen.
+       Added and BOUND here, because a button that appears and does nothing is the worse failure. */
+    _patchProfileTips(feed, pk, p);
     const music=feed.querySelector('#prof-music');
     if(music){ music.innerHTML=_profileMusicHtml(p); _bindProfileMusic(music); }
   }
