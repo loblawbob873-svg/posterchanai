@@ -1,5 +1,12 @@
 #!/usr/bin/python3
-"""Snap the focused native Sway window without wrapping it in an HTML frame."""
+"""Act on the focused Sway window without wrapping it in an HTML frame.
+
+Snapping, moving between outputs and CLOSING all need the same first question — is the focused
+container a native application, a popped-out PosterChan window, or the shell surface that draws the
+whole desktop? — and answering it wrongly costs the same thing every time. That question is answered
+once, here, rather than copied into a second helper: this package has already shipped two copies of
+one script that drifted apart.
+"""
 import json
 import subprocess
 import sys
@@ -86,8 +93,10 @@ def main():
     side = sys.argv[1] if len(sys.argv) > 1 else ""
     moves = {"move-left": "left", "move-right": "right",
              "move-up": "up", "move-down": "down"}
-    if side not in ("left", "right", "max", "edge", *moves):
-        raise SystemExit("usage: pc-window-snap left|right|max|edge|move-left|move-right|move-up|move-down")
+    if side not in ("left", "right", "max", "edge", "close", *moves):
+        raise SystemExit(
+            "usage: pc-window-snap left|right|max|edge|close"
+            "|move-left|move-right|move-up|move-down")
     hit = focused(json.loads(sway("-t", "get_tree", "-r")))
     if not hit:
         return
@@ -100,6 +109,15 @@ def main():
     # the same physical key back to the shell so its ordinary snapTo() path handles the focused
     # PosterChan window.
     if is_posterchan_shell(win):
+        if side == "close":
+            # NEVER `kill` HERE. This container is the desktop: one surface hosting every PosterChan
+            # window, so killing it takes the lot. sway execs pc-shell-start once and does not
+            # respawn it, which leaves a black screen recoverable only by Ctrl+Alt+Backspace — from
+            # a keypress that meant "close this window". The renderer closes its own focused window
+            # and does nothing when it has none, which is the correct answer for Alt+F4 pressed on
+            # an empty desktop.
+            sway("-t", "send_tick", "pc:close")
+            return
         if side in moves:
             # Each output has its own shell surface. Moving that Sway container itself leaves the
             # source output black and bypasses the selected app's identity/state handoff. Ask the
@@ -108,6 +126,13 @@ def main():
             sway("-t", "send_tick", "pc:move-output:" + moves[side])
         elif side != "edge":
             sway("-t", "send_tick", "pc:snap:" + side)
+        return
+    if side == "close":
+        # A popped-out PosterChan window and a native application are both real toplevels, and
+        # closing one is the compositor's job. The desktop learns a native window is gone from
+        # sway's own `window::close`, which is the same path as quitting the app from its own menu,
+        # so its paired HTML frame is reaped without being told separately.
+        sway("[con_id=%d]" % int(win["id"]), "kill")
         return
     if side in moves and not is_popped_out_window(win):
         # Native Firefox/Telegram surfaces are paired with an HTML frame in exactly one output

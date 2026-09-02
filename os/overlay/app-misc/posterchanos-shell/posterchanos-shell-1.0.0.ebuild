@@ -41,7 +41,7 @@ src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
 	insinto /usr/lib/systemd/user
@@ -201,7 +201,22 @@ pkg_postinst() {
 			echo 'bindsym --no-repeat Mod1+Tab exec /usr/local/bin/pc-window-cycle next' >>"${cfg}"
 		grep -qF 'Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous' "${cfg}" || \
 			echo 'bindsym --no-repeat Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous' >>"${cfg}"
-		grep -qF 'Mod1+F4 kill' "${cfg}" || echo 'bindsym Mod1+F4 kill' >>"${cfg}"
+		# CLOSE CHORDS: TAKE THE BARE `kill` BACK OUT. An existing config carries
+		# `bindsym $mod+q kill` / `bindsym Mod1+F4 kill`, and this block used to ADD the
+		# second one to any config that lacked it. sway's `kill` closes the focused
+		# CONTAINER, which is the single shell surface hosting every PosterChan window
+		# whenever the desktop has focus -- so Alt+F4 destroyed the whole desktop rather
+		# than the window it was aimed at, and an upgrade installed that on machines that
+		# had escaped it. Delete both spellings, then bind the helper that asks what is
+		# focused first. Matching only a trailing bare `kill` leaves a hand-written
+		# binding that runs anything else alone.
+		sed -i -E '/^bindsym[[:space:]]+(\$mod\+q|Mod1\+F4)[[:space:]]+kill[[:space:]]*$/d' "${cfg}"
+		sed -i -E '/^bindsym[[:space:]]+(\$mod\+q|Mod1\+F4)[[:space:]]+exec[[:space:]]+\/usr\/local\/bin\/pc-window-close[[:space:]]*$/d' "${cfg}"
+		for line in \
+			'bindsym $mod+q exec /usr/local/bin/pc-window-close' \
+			'bindsym Mod1+F4 exec /usr/local/bin/pc-window-close'; do
+			echo "${line}" >>"${cfg}"
+		done
 		sed -i -E '/bindsym .*button1 exec \/usr\/local\/bin\/pc-window-snap edge/d' "${cfg}"
 		echo 'bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge' >>"${cfg}"
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'

@@ -1808,8 +1808,16 @@ PROFILE
 	# Closing one, which nothing else here offered. The compositor draws no chrome -- PosterChan does
 	# -- so a floating app has no titlebar and can only be closed from inside itself, and not every
 	# app has a way.
-	bindsym $mod+q kill
-	bindsym Mod1+F4 kill
+	#
+	# THROUGH THE HELPER, NEVER A BARE `kill`. sway's `kill` closes the focused CONTAINER, and every
+	# PosterChan window is drawn inside ONE shell surface -- which is the focused container whenever
+	# the desktop has focus. So Alt+F4, the most reflexive close chord on any keyboard, destroyed the
+	# whole desktop and every window in it. Nothing respawns the shell (`exec_always` runs on config
+	# reload, not on exit), so what was left was a black screen needing Ctrl+Alt+Backspace.
+	# pc-window-close asks who is focused first: the shell gets a tick and closes its own window,
+	# while a popped-out window and a native app are real toplevels the compositor still kills.
+	bindsym $mod+q exec /usr/local/bin/pc-window-close
+	bindsym Mod1+F4 exec /usr/local/bin/pc-window-close
 
 	# THE DESKTOP ITSELF STAYS PUT. It is maximized on the output it started on, and `focus output`
 	# above can move the FOCUS to a second screen while the shell stays where it is -- which is what
@@ -2006,7 +2014,7 @@ PROFILE
 	# Keep this list in step with the commands /etc/sway/config executes. Snap and Screenshot lived
 	# only in the overlay package's FILESDIR; a direct/fresh installer run therefore wrote working
 	# key bindings to executables it never copied, and mouse/Super snapping simply did nothing.
-	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ]; then
@@ -2018,7 +2026,7 @@ PROFILE
 	done
 	[ -f "${TARGET}/usr/local/bin/pc-shell-start" ] || \
 		echo -e "\033[1;31m  ✗ pc-shell-start not shipped — the desktop will not be full screen\033[0m"
-	for helper in pc-window-cycle pc-window-snap pc-screenshot; do
+	for helper in pc-window-cycle pc-window-snap pc-window-close pc-screenshot; do
 		if [ ! -x "${TARGET}/usr/local/bin/$helper" ]; then
 			echo -e "\033[1;31m  ✗ $helper not shipped — refusing a desktop with dead window/keyboard controls\033[0m"
 			return 1

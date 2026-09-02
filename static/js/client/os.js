@@ -1883,6 +1883,27 @@
 
   let _osSettingsPage='displays';
 
+  /* A BRIDGE THAT NEVER ANSWERS IS NOT AN ERROR ANYWHERE — it is a spinner for ever.
+   *
+   * Reported as "System Settings has window controls but nothing else? wtf". Every read below was
+   * an unbounded `await` wrapped in try/catch: a bridge that THROWS is handled and drawn as an
+   * error line, and a bridge that simply never resolves leaves `host.innerHTML` on the spinner it
+   * was set to, with no error, no log and no way out. `displays` is the DEFAULT page, so a hung
+   * display daemon is the whole app. The comment above claims scoping the reads per page fixed
+   * that; it cannot, because the page you land on is the one that hangs.
+   *
+   * Bounded, and a timeout is reported as its own state — "did not answer" is a different fact
+   * from "answered with an error", and telling somebody which one it is decides whether they wait
+   * or go and look at the daemon. */
+  const _SETTINGS_TIMEOUT = 6000;
+  function _settingsRead(promise, what){
+    return Promise.race([
+      Promise.resolve(promise).then(v => ({ ok: true, value: v })),
+      new Promise(r => setTimeout(() => r({ ok: false, timedOut: true }), _SETTINGS_TIMEOUT)),
+    ]).catch(e => ({ ok: false, error: String((e && e.message) || e) }))
+     .then(r => (r.ok ? r : Object.assign(r, { what })));
+  }
+
   async function renderSystemSettings(){
     const host=document.getElementById('feed');
     if(!host) return;
@@ -1898,23 +1919,37 @@
        failure mode: a hung display daemon left the whole Settings app on a spinner. Read only what
        the selected page needs; changing categories below reruns this renderer for the new owner. */
     if(_osSettingsPage==='displays'){
-      try{ outs=window.pcDisplays?await pcDisplays.status():(displayError='Display controls are unavailable on this device.',[]); }
-      catch(e){ outs=[];displayError='Could not read displays: '+String(e&&e.message||e); }
+      if(!window.pcDisplays){ displayError='Display controls are unavailable on this device.'; outs=[]; }
+      else{ const r=await _settingsRead(pcDisplays.status(), 'displays');
+            if(r.ok) outs=r.value||[];
+            else{ outs=[]; displayError = r.timedOut
+              ? 'The display service did not answer. It may be busy or stopped — this page will not load until it does.'
+              : 'Could not read displays: '+r.error; } }
       if(!alive()) return;
     }
     if(_osSettingsPage==='power'){
-      try{ power=window.pcPower?await pcPower.status():(powerError='Power controls are unavailable on this device.',{}); }
-      catch(e){ power={};powerError='Could not read power settings: '+String(e&&e.message||e); }
+      if(!window.pcPower){ powerError='Power controls are unavailable on this device.'; power={}; }
+      else{ const r=await _settingsRead(pcPower.status(), 'power');
+            if(r.ok) power=r.value||{};
+            else{ power={}; powerError = r.timedOut ? 'The power service did not answer.'
+                                                    : 'Could not read power settings: '+r.error; } }
       if(!alive()) return;
     }
     if(_osSettingsPage==='about'){
-      try{ system=window.pcSystem?await pcSystem.snapshot(false):(systemError='System information is unavailable on this device.',{}); }
-      catch(e){ system={};systemError='Could not read system information: '+String(e&&e.message||e); }
+      if(!window.pcSystem){ systemError='System information is unavailable on this device.'; system={}; }
+      else{ const r=await _settingsRead(pcSystem.snapshot(false), 'system');
+            if(r.ok) system=r.value||{};
+            else{ system={}; systemError = r.timedOut ? 'The system service did not answer.'
+                                                      : 'Could not read system information: '+r.error; } }
       if(!alive()) return;
     }
     if(_osSettingsPage==='users'){
-      try{ machineIdentity=window.pcOS&&pcOS.identity?await pcOS.identity():''; }
-      catch(e){ identityError='Could not read the local session identity: '+String(e&&e.message||e); }
+      if(window.pcOS && pcOS.identity){
+        const r=await _settingsRead(pcOS.identity(), 'identity');
+        if(r.ok) machineIdentity=r.value||'';
+        else identityError = r.timedOut ? 'The session service did not answer.'
+                                        : 'Could not read the local session identity: '+r.error;
+      }
       if(!alive()) return;
     }
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
@@ -8037,6 +8072,31 @@
             else if(/^pc:snap:(left|right|max)$/.test(p)){
               const w=wins.find(x=>x.el.classList.contains('focused'));
               if(w) snapTo(w, p.slice(8)==='max' ? 'max' : p.slice(8));
+            }
+            /* CLOSING A WINDOW FROM THE KEYBOARD, AND THE REASON IT CANNOT BE `kill`.
+             *
+             * Alt+F4 and Super+Q were bound straight to sway's `kill`, which closes the focused
+             * COMPOSITOR container. Every PosterChan window lives inside one shell surface, and
+             * that surface is the focused container whenever the desktop has focus — so the most
+             * reflexive close chord on any keyboard destroyed the whole desktop and every window
+             * in it. sway execs pc-shell-start once and does not respawn it, so what is left is a
+             * black screen needing Ctrl+Alt+Backspace, from one keypress meaning "close this".
+             *
+             * pc-window-close asks who is focused and only sends this tick for the shell surface;
+             * a popped-out window and a native app are real toplevels and are still closed by the
+             * compositor. So by the time it arrives, "close the focused window" means an in-page
+             * one.
+             *
+             * NO FOCUSED WINDOW IS A NO-OP, deliberately: pressing Alt+F4 on the bare desktop must
+             * do nothing at all, which is the whole point of routing it through here. Every
+             * renderer sees the tick, and only the one holding the focused window may act — the
+             * `find` answers undefined on the others, exactly as the move-output branch relies on.
+             *
+             * `closeWin` is what the ✕, the context menu and Ctrl+W already call, so the key
+             * closes a window the same way the mouse does, onClose hooks and all. */
+            else if(p === 'pc:close'){
+              const w=wins.find(x=>x.el.classList.contains('focused'));
+              if(w) closeWin(w);
             }
             else if(/^pc:move-output:(left|right|up|down)$/.test(p)){
               /* TWO SILENT NO-OPS LIVED HERE, AND BOTH READ AS "THE KEY DOES NOTHING".

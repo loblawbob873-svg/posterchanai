@@ -219,7 +219,10 @@ def test_native_snap_still_accepts_real_native_apps():
 
 def test_existing_identity_configs_are_migrated_to_native_snap():
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert "pc-window-snap pc-key" in ebuild
+    # pc-window-close sits between them in the install loop; match each helper on its own so
+    # adding a third never reads as one going missing.
+    for helper in ("pc-window-snap", "pc-key"):
+        assert f" {helper} " in ebuild, f"{helper} is not in the ebuild install loop"
     assert "focus output/d" in ebuild
 
 
@@ -264,7 +267,10 @@ def test_dragging_a_titlebar_to_an_output_edge_snaps_without_stealing_app_clicks
         assert "--border" in binding
         assert "--whole-window" not in binding
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert "pc-window-snap pc-key" in ebuild
+    # pc-window-close sits between them in the install loop; match each helper on its own so
+    # adding a third never reads as one going missing.
+    for helper in ("pc-window-snap", "pc-key"):
+        assert f" {helper} " in ebuild, f"{helper} is not in the ebuild install loop"
 
 
 def test_native_titlebar_corners_snap_to_output_quarters(monkeypatch):

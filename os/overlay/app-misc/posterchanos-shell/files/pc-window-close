@@ -1,0 +1,10 @@
+#!/bin/sh
+# CLOSE THE FOCUSED WINDOW, WHATEVER KIND OF WINDOW IT IS.
+#
+# The work is pc-window-snap's `close` action, not a copy of it. Deciding whether the focused
+# compositor container is a native application, a popped-out PosterChan window or the shell surface
+# that draws the whole desktop is the same question snapping and moving already ask, and answering
+# it in two places is how this package ended up shipping two copies of one helper that drifted
+# apart. This exists so the binding can say what it does: `pc-window-snap close` reads as a snap.
+set -u
+exec /usr/local/bin/pc-window-snap close

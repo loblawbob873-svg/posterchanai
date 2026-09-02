@@ -821,8 +821,17 @@ class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
                         self.assertNotIn(dead, line, f"{name}: names a specific output: {line.strip()}")
 
     def test_a_window_can_be_closed(self):
+        """AND NOT BY KILLING THE FOCUSED CONTAINER, which is the desktop itself.
+
+        This asserted `$mod+q kill` — a binding that closed the shell surface hosting every
+        PosterChan window, taking the whole session with it. Both configs must route the close
+        chords through pc-window-close, which asks what is focused before anything dies."""
         for name, cfg in self.CONFIGS.items():
-            self.assertIn("$mod+q kill", cfg, f"{name}: there is no way to close a window")
+            for chord in ("$mod+q", "Mod1+F4"):
+                self.assertIn(f"bindsym {chord} exec /usr/local/bin/pc-window-close", cfg,
+                              f"{name}: there is no way to close a window with {chord}")
+                self.assertNotIn(f"bindsym {chord} kill", cfg,
+                                 f"{name}: {chord} still kills the focused container outright")
 
     def test_the_terminal_binding_has_not_drifted_again(self):
         """The two files must agree about what Alt+Enter does."""
