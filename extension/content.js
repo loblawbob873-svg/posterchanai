@@ -50,12 +50,45 @@
   };
   setTimeout(_installProvider, 0);
 
+  /* THE WORKER IS ASLEEP, NOT ABSENT — RETRY BEFORE GIVING UP.
+   *
+   * MV3 evicts the background service worker when it is idle, and the FIRST message after that
+   * eviction fails with "Could not establish connection. Receiving end does not exist." — while
+   * being the very thing that wakes it. A single attempt therefore fails whenever the browser has
+   * been sitting still, which is most of the time.
+   *
+   * Reported from a real console as `ensureAiSession` failing at `__pcNostrProvider`, taking the
+   * whole app session with it: theme sync, mail, the Monero wallet — everything authenticated goes
+   * through this one call. It read as five separate broken features.
+   *
+   * "Extension context invalidated" is the other error and it is NOT retryable: the content script
+   * has been orphaned by an update or a reload, and nothing it sends will ever arrive. That one has
+   * to say "reload the page", because that is the only thing that fixes it. */
+  const ASLEEP = /receiving end does not exist|could not establish connection|message port closed/i;
+  const ORPHANED = /context invalidated|extension context/i;
+
+  async function askWorker(message, attempts){
+    let last = null;
+    for(let i = 0; i < (attempts || 3); i++){
+      try{ return await B.runtime.sendMessage(message); }
+      catch(err){
+        last = err;
+        const text = (err && err.message) || '';
+        if(ORPHANED.test(text)) throw new Error('PosterChan Passwords was updated — reload this page');
+        if(!ASLEEP.test(text)) throw err;
+        // Give the worker a moment to come up; the attempt above is what started it.
+        await new Promise(r => setTimeout(r, 120 * (i + 1)));
+      }
+    }
+    throw last || new Error('the extension is not available');
+  }
+
   window.addEventListener('message', async (e) => {
     if(e.source !== window) return;
     const d = e.data;
     if(!d || d.__pcnostr !== 'req' || !d.id) return;
     let res;
-    try{ res = await B.runtime.sendMessage({ type:'nostr', method: d.method, params: d.params }); }
+    try{ res = await askWorker({ type:'nostr', method: d.method, params: d.params }); }
     catch(err){ res = { error: (err && err.message) || 'the extension is not available' }; }
     // The reply carries the id back, and nothing else from the page is echoed: a site cannot use
     // this to have us repeat something to itself as though the extension had said it.
@@ -260,7 +293,7 @@
     // The lookup is async; the user may have closed it again by the time it lands.
     const gen = ++panelGen;
     let res;
-    try{ res = await B.runtime.sendMessage({ type:'matches', url: location.href }); }
+    try{ res = await askWorker({ type:'matches', url: location.href }); }
     catch(_){ res = null; }
     if(gen !== panelGen || !panelOpen) return;          // closed while we were asking
     let list = (res && res.items) || [];
@@ -298,7 +331,7 @@
 
   async function fill(id){
     let r;
-    try{ r = await B.runtime.sendMessage({ type:'fill', id }); }catch(_){ return; }
+    try{ r = await askWorker({ type:'fill', id }); }catch(_){ return; }
     if(!r || !r.ok) return;
     const pw = activeField && activeField.type === 'password'
       ? activeField
@@ -324,7 +357,7 @@
    * loaded is one that may already have expired by the time it is used. */
   async function fillCode(id){
     let r;
-    try{ r = await B.runtime.sendMessage({ type:'fill', id }); }catch(_){ return; }
+    try{ r = await askWorker({ type:'fill', id }); }catch(_){ return; }
     if(!r || !r.ok || !r.totp) return;
     const field = (activeField && isOtpField(activeField)) ? activeField : otpFieldFor(document);
     if(field) fillCodeInto(field, r.totp);
