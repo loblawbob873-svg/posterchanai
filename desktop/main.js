@@ -652,6 +652,17 @@ function createWindow(assignment) {
       };
       return { action: 'allow', overrideBrowserWindowOptions: {
         frame: false,
+        /* THE TITLE HAS TO BE RIGHT THE INSTANT THE WINDOW MAPS.
+         *
+         * sway evaluates `for_window` when a surface maps, and the rule that floats these keys on
+         * `title="^PosterChan Window"` (the app_id is shared with the desktop, which must stay
+         * TILED). The page sets that title in `PCOSWin.adopt()` — which runs after the document
+         * loads, i.e. after the map. Without it here the window maps under Electron's default
+         * title, matches nothing, and sway TILES it into the shell's layout: the desktop splits in
+         * half the first time an app is opened.
+         *
+         * The page still sets it (it appends the view name); this is only about the first frame. */
+        title: 'PosterChan Window',
         width: num('width', 1100),
         height: num('height', 760),
         minWidth: 360,

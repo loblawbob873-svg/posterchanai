@@ -472,3 +472,28 @@ def test_a_direct_launch_is_left_alone():
     body = OS_JS[OS_JS.index("  function openApp(view, label, icon, render, noFeed, direct){"):]
     body = body[:body.index("const existing = wins.find")]
     assert "if(!direct){" in body
+
+
+def test_the_window_maps_with_the_title_sway_floats_on():
+    """THE MAP MOMENT, which is the only one sway's rule ever sees.
+
+    `for_window` is evaluated when a surface maps. The rule that floats these windows keys on the
+    TITLE — it has to, because the app_id is shared with the desktop, which must stay tiled. The
+    page sets that title in `adopt()`, and `adopt()` runs after the document loads, which is after
+    the map. So the title must also be on the BrowserWindow at creation, or the first app opened
+    maps under Electron's default title, matches nothing, and is tiled into the shell's layout —
+    splitting the desktop in half.
+    """
+    main_js = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    handler = main_js[main_js.index("setWindowOpenHandler"):]
+    handler = handler[:handler.index("return { action: 'deny' };")]
+    assert "title: 'PosterChan Window'" in handler, (
+        "a real window maps without the title sway floats on — it would be tiled into the desktop")
+
+    sway = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(encoding="utf-8")
+    rule = [l for l in sway.splitlines() if "PosterChan Window" in l and "floating enable" in l]
+    assert rule, "sway no longer floats these windows by title"
+
+    oswin = (ROOT / "static/js/client/oswin.js").read_text(encoding="utf-8")
+    assert "const TITLE = 'PosterChan Window'" in oswin, (
+        "the page's title and the compositor rule have drifted apart")
