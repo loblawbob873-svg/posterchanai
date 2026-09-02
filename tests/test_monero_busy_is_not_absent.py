@@ -104,7 +104,11 @@ def test_the_busy_message_is_the_one_the_client_recognises():
         with _pytest.raises(svc.WalletBusy) as caught:
             asyncio.run(w.rpc("get_balance"))
     message = str(caught.value)
-    assert "still reading the chain" in message
-    assert "still reading the chain" in js, (
+    # The wording no longer ASSERTS a cause. "Still reading the chain" was a guess: a read can time
+    # out because the wallet is building a transaction or the daemon is loaded, and telling somebody
+    # with a fully synced wallet that it is still syncing is wrong — reported as "how can it still
+    # be reading the chain". What is known is that it did not answer.
+    assert "did not answer" in message
+    assert "did not answer" in js, (
         "the client no longer recognises the server's busy message, so a scanning wallet is "
         "described as an absent one again")

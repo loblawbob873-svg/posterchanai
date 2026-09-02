@@ -32,6 +32,19 @@ class WalletError(Exception):
     """A safe, client-displayable wallet error."""
 
 
+class WalletUnsure(WalletError):
+    """THE REQUEST TIMED OUT WHILE SPENDING, AND NOBODY KNOWS WHETHER THE MONEY LEFT.
+
+    Measured, with real money: the wallet was given an 8-second budget — a READ budget — for a
+    `transfer_split`, the call timed out, the client reported "payment not sent", and the transaction
+    had already been broadcast. `get_transfers` showed TWO pending 0.001 XMR sends afterwards, from a
+    person who had been told the first one failed and tried again.
+
+    A timeout on a SPEND is not a failure. It is an unknown, and it must never be worded as one or
+    followed by an invitation to retry. Anything that reads this must send the person to their
+    transaction history before they press anything again."""
+
+
 class WalletBusy(WalletError):
     """THE WALLET IS THERE AND IT IS WORKING — it just has not answered yet.
 
@@ -169,12 +182,22 @@ class MoneroWallet:
         self.config = config or WalletConfig.from_env()
         self.config.validate()
 
+    #: Methods that MOVE MONEY. They build and sign a transaction and then hand it to the daemon,
+    #: which is arithmetic plus a network round trip — nothing like reading a balance.
+    SPENDING = frozenset({"transfer", "transfer_split", "sweep_all", "sweep_single", "sweep_dust"})
+
+    #: A spend is allowed far longer than a read. Eight seconds is a read budget, and using it for a
+    #: transfer is what produced "payment not sent" over a payment that had already gone out.
+    SPEND_TIMEOUT = 120.0
+
     async def rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = {"jsonrpc": "2.0", "id": "0", "method": method, "params": params or {}}
+        spending = method in self.SPENDING
+        budget = max(self.config.timeout_seconds, self.SPEND_TIMEOUT) if spending else self.config.timeout_seconds
         try:
             async with httpx.AsyncClient(
                 auth=httpx.DigestAuth(self.config.username, self.config.password),
-                timeout=httpx.Timeout(self.config.timeout_seconds, connect=min(2.0, self.config.timeout_seconds)),
+                timeout=httpx.Timeout(budget, connect=min(2.0, budget)),
                 follow_redirects=False,
                 trust_env=False,
             ) as client:
@@ -185,7 +208,18 @@ class MoneroWallet:
             # Nothing accepted the connection — that is "not there", not "busy".
             raise WalletError("Local Monero wallet is unavailable") from exc
         except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
-            raise WalletBusy("Local Monero wallet is busy — it is still reading the chain") from exc
+            if spending:
+                # THE MONEY MAY HAVE LEFT. See WalletUnsure — this exact case double-sent real XMR.
+                raise WalletUnsure(
+                    "The wallet did not answer in time. This payment may have been sent — "
+                    "check your transaction history before trying again") from exc
+            # DO NOT ASSERT A CAUSE THAT HAS NOT BEEN MEASURED. This used to say "it is still
+            # reading the chain", which was a guess — a read can equally time out because the wallet
+            # is building a transaction or the daemon is loaded. Told to a person whose wallet was
+            # fully synced it is simply wrong ("how can it still be reading the chain"). What is
+            # KNOWN is that it did not answer; `sync_state` is the thing that can say why, because
+            # it measures.
+            raise WalletBusy("The wallet did not answer in time — it is busy") from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise WalletError("Local Monero wallet is unavailable") from exc
         if not isinstance(body, dict):
@@ -408,7 +442,7 @@ class TransferGate:
     def _connect(path: str) -> sqlite3.Connection:
         if os.path.islink(path):
             raise WalletError("Wallet spending ledger is unavailable")
-        existed = os.path.exists(path)
+        # (the mode is repaired on every open, so whether the file already existed does not matter)
         try:
             db = sqlite3.connect(path, timeout=5)
             db.execute("PRAGMA journal_mode=WAL")

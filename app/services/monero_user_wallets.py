@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 
 from app.services.monero_wallet_service import (
-    WalletBusy, WalletError, atomic_to_xmr, normalize_amounts, validate_address,
+    WalletBusy, WalletError, WalletUnsure, atomic_to_xmr, normalize_amounts, validate_address,
 )
 
 #: Monero caps the outputs in one transaction and the change takes a slot. Measured against the real
@@ -59,14 +59,22 @@ class UserWallets:
     def enabled(self) -> bool:
         return bool(self.url and self.user and self.password)
 
+    #: Methods that MOVE MONEY — see MoneroWallet.SPENDING. A spend is given far longer than a read;
+    #: using a read's budget for a transfer is what reported "payment not sent" over a payment that
+    #: had already been broadcast, and made somebody send twice.
+    SPENDING = frozenset({"transfer", "transfer_split", "sweep_all", "sweep_single", "sweep_dust"})
+    SPEND_TIMEOUT = 120.0
+
     async def rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.enabled():
             raise WalletError("Per-user Monero wallets are not configured on this node")
         payload = {"jsonrpc": "2.0", "id": "0", "method": method, "params": params or {}}
+        spending = method in self.SPENDING
+        budget = max(self.timeout, self.SPEND_TIMEOUT) if spending else self.timeout
         try:
             async with httpx.AsyncClient(
                 auth=httpx.DigestAuth(self.user, self.password),
-                timeout=httpx.Timeout(self.timeout, connect=min(2.0, self.timeout)),
+                timeout=httpx.Timeout(budget, connect=min(2.0, budget)),
                 follow_redirects=False, trust_env=False,
             ) as client:
                 response = await client.post(self.url, json=payload)
@@ -75,7 +83,12 @@ class UserWallets:
         except httpx.ConnectTimeout as exc:
             raise WalletError("The wallet service is unavailable") from exc
         except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
-            raise WalletBusy("The wallet is busy — it is still reading the chain") from exc
+            if spending:
+                # The money may have left. Never word this as a failure, and never invite a retry.
+                raise WalletUnsure(
+                    "The wallet did not answer in time. This payment may have been sent — "
+                    "check your transaction history before trying again") from exc
+            raise WalletBusy("The wallet did not answer in time — it is busy") from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise WalletError("The wallet service is unavailable") from exc
         if not isinstance(body, dict):

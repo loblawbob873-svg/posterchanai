@@ -161,7 +161,7 @@
         return state;
       }
       const _fail={available:false,error:detail,network:'stagenet',
-             busy:/still reading the chain|is busy|did not answer within/i.test(String(detail||''))};
+             busy:/did not answer|is busy|still reading the chain/i.test(String(detail||''))};
       if(seq === _probeSeq) state=_fail;
     }
     return state;
@@ -385,7 +385,17 @@
           PC.closeModal();PC.toast('ɱ payment sent'); checkedAt=0;
           if(typeof opts.onSent==='function')opts.onSent(pay.amount,out.txid||out.tx_hash||'');
           if(PC.VIEW==='wallet')render(true);
-        }catch(e){button.disabled=false;button.textContent='Send now';PC.toast('payment not sent: '+((e&&e.message)||e));}
+        }catch(e){
+          /* NEVER SAY "NOT SENT" ABOUT A TIMEOUT. Measured with real money: the wallet was given a
+             read's 8-second budget for a transfer, the call timed out, this said "payment not
+             sent" — and the transaction had already been broadcast. Two pending 0.001 XMR sends
+             afterwards, from somebody who had been told the first one failed. An unknown must read
+             as an unknown and must not invite a retry. */
+          const msg = (e && e.message) || String(e);
+          const unsure = /may have been sent|did not answer in time/i.test(msg);
+          button.disabled = unsure; button.textContent = unsure ? 'Check your history' : 'Send now';
+          PC.toast(unsure ? msg : ('payment not sent: ' + msg));
+        }
       };
     });
   }
@@ -655,8 +665,11 @@
             _meAt = 0;                                    // the balance just changed
             if(typeof opts.onSent === 'function') opts.onSent(val, (out.tx_hash_list||[])[0] || '');
           }catch(e){
-            go.disabled = false; go.textContent = 'Send tip';
-            PC.toast('tip not sent: ' + ((e && e.message) || e));
+            // Same rule as the node wallet's send: a timeout is an unknown, not a failure.
+            const msg = (e && e.message) || String(e);
+            const unsure = /may have been sent|did not answer in time/i.test(msg);
+            go.disabled = unsure; go.textContent = unsure ? 'Check your history' : 'Send tip';
+            PC.toast(unsure ? msg : ('tip not sent: ' + msg));
           }
         };
       });
