@@ -3475,6 +3475,52 @@
    * window on the workspace with nothing on screen to explain it — the worst failure in this file
    * is the one that needs a person to know a keyboard shortcut to escape. */
   let _altFsId=0,_altFsTimer=0,_altFsGen=0,_altFsBusy=false;
+  /* ANYTHING THE SHELL DRAWS OVER APPLICATIONS HAS TO RAISE THE SHELL FIRST.
+   *
+   * sway paints floating windows above tiled ones unconditionally, and this shell IS the tiled
+   * window. So the start menu, the notification panel and the Alt+Tab chooser are all drawn
+   * UNDERNEATH Firefox and Telegram no matter what z-index they carry — reported separately as
+   * "start menu is not going over windows" and "notifications do not go over open windows", and
+   * measured for the chooser with grim: a screenshot of its exact rectangle came back as Firefox's
+   * page. Focus is not stacking; nothing inside the page can fix it.
+   *
+   * The chooser already solved this by fullscreening the shell for the length of the gesture.
+   * This is the same move for every other transient surface, refcounted so two overlapping popups
+   * cannot lower it out from under each other, and with a backstop timer because a shell left
+   * fullscreen hides every window on the workspace with nothing on screen to say why. */
+  let _ovlN = 0, _ovlId = 0, _ovlTimer = 0, _ovlBusy = false;
+  function _raiseShellOverlay(on){
+    if(!window.pcWM || !pcWM.fullscreen) return;
+    if(!on){
+      _ovlN = Math.max(0, _ovlN - 1);
+      if(_ovlN > 0) return;                       // another popup is still up
+      clearTimeout(_ovlTimer); _ovlTimer = 0;
+      const id = _ovlId; _ovlId = 0;
+      if(id > 0) Promise.resolve(pcWM.fullscreen(id, false)).catch(()=>{});
+      return;
+    }
+    _ovlN++;
+    if(_ovlId || _ovlBusy) return;                // already raised, or a raise is in flight
+    _ovlBusy = true;
+    clearTimeout(_ovlTimer);
+    _ovlTimer = setTimeout(()=>{ _ovlN = 0; _raiseShellOverlay(false); }, 20000);
+    Promise.resolve(pcWM.windows()).then(list=>{
+      _ovlBusy = false;
+      if(_ovlN <= 0) return;                      // closed while we were asking
+      const shell = (list||[]).find(x =>
+        /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
+      /* Never touch a shell that is fullscreen for its own reasons — lowering it later would
+         un-fullscreen something the user put there. */
+      if(!shell || shell.fullscreen) return;
+      _ovlId = Number(shell.id);
+      return Promise.resolve(pcWM.fullscreen(_ovlId, true)).then(()=>{
+        if(_ovlN > 0) return;                     // it closed between choosing and acting
+        const id = _ovlId; _ovlId = 0;
+        if(id > 0) Promise.resolve(pcWM.fullscreen(id, false)).catch(()=>{});
+      });
+    }).catch(()=>{ _ovlBusy = false; });
+  }
+
   function _altRaiseShell(on){
     if(!window.pcWM||!pcWM.fullscreen)return;
     if(!on){
@@ -7008,16 +7054,23 @@
   }
 
   function hideNoti(){
+    const was = notiOpen;
     notiOpen = false;
     const p = $('#os-noti', root);
     if(p) p.remove();
+    if(was) _raiseShellOverlay(false);
   }
 
   function toggleNoti(force){
+    const was = notiOpen;
     notiOpen = (force === undefined) ? !notiOpen : !!force;
     const old = $('#os-noti', root);
     if(old) old.remove();
-    if(!notiOpen){ drawBar(); return; }
+    if(!notiOpen){ if(was) _raiseShellOverlay(false); drawBar(); return; }
+    /* Same rule as the start menu: this panel is drawn in the tiled shell surface, so without a
+       raise it opens beneath every floating application. Only on the OPENING edge — toggling twice
+       must not leave the refcount stuck above zero. */
+    if(!was) _raiseShellOverlay(true);
     toggleStart(false); toggleNet(false);
     const panel = document.createElement('div');
     panel.id = 'os-noti';
@@ -7471,10 +7524,16 @@
   }
 
   function toggleStart(force){
+    const wasStart = startOpen;
     startOpen = (force === undefined) ? !startOpen : !!force;
     let menu = $('#os-startmenu', root);
-    if(!startOpen){ if(menu) menu.remove(); _nativeMenuLayer(false); drawBar(); return; }
+    /* Only on the EDGES. `toggleStart(false)` is called defensively from several places, and an
+       unconditional release would decrement the overlay refcount for a menu that was never open —
+       lowering the shell out from under whatever else is up (the notification panel calls this). */
+    if(!startOpen){ if(menu) menu.remove(); _nativeMenuLayer(false);
+                    if(wasStart) _raiseShellOverlay(false); drawBar(); return; }
     _nativeMenuLayer(true);
+    if(!wasStart) _raiseShellOverlay(true);   // or the menu opens underneath every floating app
     if(notiOpen){ notiOpen = false; const np = $('#os-noti', root); if(np) np.remove(); }
     if(menu) menu.remove();
     menu = document.createElement('div');
