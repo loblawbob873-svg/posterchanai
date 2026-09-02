@@ -1530,6 +1530,31 @@
      * isn't (see _scheduleReopen). Kept per SESSION, cleared only by reset(). */
     _urls:[], _boff:{}, _rtimer:{}, _revivedAt:0,
     _live(){ return (this._socks||[]).filter(w => w && w.readyState === 1); },
+    /* A REPLY THAT WAS IN FLIGHT WHEN THE LAST SOCKET DIED IS NEVER ARRIVING.
+     *
+     * Kind 24133 is EPHEMERAL — this relay stores nothing and fans out only to whoever is listening
+     * at that instant. So once every socket is gone, a request already sent and unanswered cannot be
+     * answered: there is no copy anywhere, and the reply has nowhere to land. It nevertheless sat in
+     * `_pending` holding a lane slot until its ceiling — 120s for a signature, 45s for a decrypt.
+     *
+     * The interactive lane is TWO slots wide, so two dead requests block every signature for two
+     * minutes. That is a node restart in one sentence, and it was reported as all of its symptoms at
+     * once: "every time you restart, desktop takes a long time to recover and post", "queue builds
+     * up", "i just seen signer request timed out", and — because a publish gives the relay 8s before
+     * the post is filed — "i have a bunch of drafts now".
+     *
+     * Only when NO socket survives. Requests are fanned out to every relay this session holds, so
+     * while one is still up the reply may yet arrive on it and failing would be wrong.
+     *
+     * The error is deliberately the retryable wording `_send` already knows: it reconnects through
+     * `_ensure` and re-sends, which is what the user was doing by hand by pressing Post again. */
+    _failPending(why){
+      if(!this._pending || !this._pending.size) return;
+      const dead=[...this._pending.entries()];
+      this._pending.clear();
+      for(const [,p] of dead){ try{ p.rej(new Error(why)); }catch(_){} }
+      try{ console.warn('[nip46] signer relay lost — released ' + dead.length + ' in-flight request(s)'); }catch(_){}
+    },
     _want(url){ if(url && this._urls.indexOf(url) < 0) this._urls.push(url); },
     reset(){ this._wantOpen=false; this._enc='nip04'; this._lastDec=null; this._encOk=false; this._encSeen=null;
       (this._socks||[]).forEach(w=>{ try{ w.onclose=w.onerror=w.onmessage=null; w.close(); }catch(_){} });
@@ -1613,6 +1638,13 @@
       ws.onmessage = (e)=>this._recv(e.data);
       ws.onclose = ()=>{
         this._socks = this._socks.filter(w => w !== ws);
+        /* Nothing can answer a request that was outstanding on the LAST socket — see _failPending.
+           CONNECTING counts as a socket: `_openAll` opens every relay the session knows and a dead
+           one closing while a good one is still dialling would otherwise look like "all gone" and
+           kill the connect request that pairing is waiting on. Same `readyState <= 1` test
+           `_scheduleReopen` uses to decide a url is already covered. */
+        if(!(this._socks||[]).some(w => w && w.readyState <= 1))
+          this._failPending('lost the signer relay — retrying');
         this._scheduleReopen(url);
       };
       ws._pcUrl = url;

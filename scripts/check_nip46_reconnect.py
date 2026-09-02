@@ -280,6 +280,41 @@ async def drive(url):
             elif os.environ.get("PC_DEBUG"):
                 print(f"  DEBUG relay-restart signed in {got.get('took')}ms", flush=True)
 
+            # ---- 1b. the relay dies WHILE a signature is outstanding --------------------------
+            # THE NODE-RESTART CASE, which is what a deploy does to every logged-in desktop.
+            # A kind-24133 is ephemeral, so once the last socket is gone the reply to an already-sent
+            # request can never arrive — there is no copy anywhere and nowhere for it to land. It
+            # nevertheless sat in `_pending` holding a slot in the interactive lane, which is TWO
+            # slots wide: two dead requests block every signature for the full 120s ceiling.
+            # Reported as all of its symptoms at once — "every time you restart, desktop takes a long
+            # time to recover and post", "queue builds up", "signer request timed out", and (because
+            # a publish gives the relay 8s before the post is filed) "i have a bunch of drafts now".
+            # The budget here is far under the ceiling on purpose: passing it means the request was
+            # RELEASED and retried, not waited out.
+            if not problems:
+                pending = asyncio.ensure_future(signs(90000, "relay-dies-mid-request"))
+                await asyncio.sleep(1.0)          # let the request go out on a healthy socket
+                bunker.stop()
+                await relay.kill()
+                await asyncio.sleep(4)
+                relay_url3 = await relay.start()
+                assert relay_url3 == relay_url, "the relay came back on a different port"
+                bunker = clone_bunker(bunker, relay_url)
+                bunker.start()
+                got = await pending
+                if not got.get("ok"):
+                    problems.append(("relay-dies-mid-request",
+                                     got.get("err") or "the request was never answered",
+                                     "a request outstanding when the last socket died was not "
+                                     "released, so it held its lane slot until the ceiling"))
+                elif got.get("took", 0) > 45000:
+                    problems.append(("relay-dies-mid-request",
+                                     f"it took {got['took']}ms",
+                                     "that is the 120s ceiling being waited out rather than the "
+                                     "request being released the moment the socket closed"))
+                elif os.environ.get("PC_DEBUG"):
+                    print(f"  DEBUG relay-dies-mid-request signed in {got.get('took')}ms", flush=True)
+
             # ---- 2. the signer is not listening when the request goes out ----------------------
             # The relay stays UP: only the signer is away. The request is fanned out to nobody and
             # is GONE — no relay stores it — so unless this end notices and sends it again, the
