@@ -25823,7 +25823,14 @@
       toast(action==='read'?'marked read':(action==='delete'?'deleted':'archived')); this.loadList();
     },
     async open(uid, folder, account){
-      folder=folder||this.folder; const acct=account||this.acct; this.openUid=uid; this.drawList();
+      /* `__all` WHEN NO ACCOUNT IS SELECTED, never the string "null".
+       *
+       * `this.acct` is null in the All-inboxes view, and `encodeURIComponent(null)` is the four
+       * characters n-u-l-l. The server has no account by that name, so /thread answered 404 and the
+       * `.catch(()=>{})` below threw it away: the conversation silently never upgraded past the one
+       * message that was clicked. Reported as "webui not showing sent items in the thread" — the
+       * threading was right, the request asking for it was not. */
+      folder=folder||this.folder; const acct=account||this.acct||'__all'; this.openUid=uid; this.drawList();
       let msg; try{ const r=await this.api('/message?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid)); msg=r.message; }catch(_){}
       if(folder==='Drafts'){   // a draft opens back into the composer (prefilled) rather than a read pane
         if(msg) this.compose({mode:'draft', draft:msg, acct});
@@ -25838,7 +25845,10 @@
       this.api('/thread?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid))
         .then(t=>{ if(t && t.messages && t.messages.length>1 && this.openUid===uid && pane.isConnected)
           this._renderThread(pane, t.messages, folder, acct, uid); })
-        .catch(()=>{});
+        /* SAY SO. Swallowing this is what made a malformed account silent for as long as it was
+           wrong — the message still opened, so nothing looked broken; the conversation just never
+           arrived. The read itself must not fail, so it stays caught, but not in silence. */
+        .catch(e=>{ try{ console.warn('[mail] conversation could not be loaded:', (e&&e.message)||e); }catch(_){ } });
     },
     /* Plain-text mail had no links at all — the body was escaped and printed, so a URL was a string
      * you had to select and copy. Run over the ALREADY-ESCAPED text, so nothing here can introduce

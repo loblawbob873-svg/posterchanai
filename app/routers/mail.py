@@ -874,6 +874,13 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
     """The whole conversation for a message (across folders), bodies rehydrated."""
     sk = _seckey(db, current_user)
     acc = None
+    # An ABSENT account means the whole mailbox, however the client spelled it. `this.acct` is null
+    # in the All-inboxes view and `encodeURIComponent(null)` is the four characters n-u-l-l, which
+    # resolved to no account and 404'd the conversation — silently, because the client catches. The
+    # message still opened, so nothing looked broken; the thread simply never arrived. There is no
+    # such thing as an account named "null", so nothing legitimate is reinterpreted here.
+    if account in ("null", "undefined", "", None):
+        account = "__all"
     if account == "__all":
         seed = next((m for m in await mail_store.list_messages(sk, None, None, limit=0)
                      if str(m.get("uid")) == str(uid) and m.get("folder") == folder), None)

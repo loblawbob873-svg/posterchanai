@@ -116,3 +116,48 @@ def test_a_reply_is_still_a_reply_however_it_is_filed():
     assert _is_reply(msg("1", irt="<x@y>")) is True
     assert _is_reply(msg("1", refs="<x@y>")) is True
     assert _is_reply(msg("1")) is False
+
+
+# --------------------------------------------------------------------------------------------
+# THE REQUEST THAT ASKED FOR THE CONVERSATION WAS ITSELF MALFORMED.
+#
+# Reported as "webui not showing sent items in the thread!" AFTER the threading was fixed and
+# verified server-side on the real mailbox (200 of 200 conversations included the user's sent
+# mail). Both were true at once: the server built the right thread, and the browser never asked
+# for it properly.
+#
+# In the All-inboxes view `Mail.acct` is null, and `encodeURIComponent(null)` is the four
+# characters n-u-l-l. `/thread?account=null` resolved to no account and answered 404 — which the
+# client discarded in a bare `.catch(()=>{})`. The message still opened (that is a different
+# request), so nothing looked broken; the conversation simply never upgraded past the one message
+# that was clicked, with nothing in any log.
+#
+# Fixed at both ends deliberately: the client sends `__all`, and the server treats an absent
+# account as the whole mailbox however it was spelled — because an installed PWA or an older APK
+# keeps sending the old string for as long as it is cached.
+
+APP_JS = (Path(__file__).resolve().parents[1] / "static/js/client/app.js").read_text(encoding="utf-8")
+MAIL_PY = (Path(__file__).resolve().parents[1] / "app/routers/mail.py").read_text(encoding="utf-8")
+
+
+def test_the_client_never_sends_the_string_null_as_an_account():
+    body = APP_JS.split("    async open(uid, folder, account){", 1)[1][:1200]
+    assert "account||this.acct||'__all'" in body, (
+        "the All-inboxes view sends the literal string 'null' as the account again, and the "
+        "conversation 404s into a silent catch")
+
+
+def test_the_server_reads_an_absent_account_as_the_whole_mailbox():
+    """A cached client keeps sending the old spelling; the fix cannot depend only on the new one."""
+    thread = MAIL_PY.split("async def mail_thread(", 1)[1][:1600]
+    assert 'account in ("null", "undefined", "", None)' in thread
+
+
+def test_the_client_no_longer_discards_the_reason():
+    """A silent catch is what made this invisible for as long as it was wrong."""
+    at = APP_JS.index("this.api('/thread?account=")
+    tail = APP_JS[at:at + 1400]
+    assert ".catch(()=>{})" not in tail, (
+        "the conversation fetch swallows its error again — the next malformed request will be just "
+        "as silent as this one was")
+    assert "console.warn" in tail

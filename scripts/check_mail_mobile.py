@@ -587,6 +587,10 @@ async def drive(url):
                                          f"the message itself gets {op['bodyFrac']} of the screen "
                                          f"({op.get('bodyH')}px of {op.get('vh')}px) — the rest is "
                                          f"headers, actions and chrome"))
+                if op is not None:
+                    _errs = op.get("errors") or []
+                    print(f"  ERRORS {label}: {len(_errs)} page error(s)"
+                          + (f" — first: {str(_errs[0])[:90]}" if _errs else ""), flush=True)
                 if os.environ.get("PC_DEBUG") and op:
                     print(f"  DEBUG {label} OPEN: vh={op.get('vh')} pane={op.get('paneH')}"
                           f"({op.get('paneFrac')}) body={op.get('bodyH')}({op.get('bodyFrac')}) "
