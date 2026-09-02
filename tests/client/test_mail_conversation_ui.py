@@ -19,5 +19,10 @@ def test_thread_ends_with_reply_and_forward_actions():
 
 
 def test_desktop_uses_conversation_cards_and_mobile_keeps_touch_actions_visible():
-    assert ".mail-msg{border:1px solid var(--line);border-radius:12px" in CSS
+    # A message is a card. `flex:none` joined it because `.mail-thread` is a flex column and its
+    # messages shrink to fit by default — in a six-message thread that squeezed every collapsed
+    # message from its 58px header down to TEN PIXELS ("you are cramming everything into a tiny
+    # space"). A conversation has to scroll, not compress.
+    assert ".mail-msg{flex:none;border:1px solid var(--line);border-radius:12px" in CSS, (
+        "a message is no longer a card that keeps its own height inside the thread")
     assert ".mail-thread-reply .btn{flex:1;min-height:44px}" in CSS

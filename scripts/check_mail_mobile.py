@@ -115,7 +115,12 @@ window.fetch = async (url, opts) => {
   // read on the page or through a fixed porthole with its own scrollbar.
   const LONG_HTML = '<h1>Hello</h1>' + Array.from({length:60},(_,i)=>'<p>Paragraph '+i+' of a long message that used to be read through a small scrolling window inside the page.</p>').join('');
   if(u.startsWith('/api/mail/message'))  return j({message:Object.assign({}, MSGS[0], {body_html:LONG_HTML})});
-  if(u.startsWith('/api/mail/thread'))   return j({messages:[Object.assign({}, MSGS[0], {body_html:LONG_HTML})]});
+  // A REAL CONVERSATION IS SEVERAL MESSAGES. A one-message thread cannot show whether reading a
+  // conversation is a continuous scroll or a stack of cramped boxes.
+  if(u.startsWith('/api/mail/thread'))   return j({messages: Array.from({length:6},(_,i)=>Object.assign({}, MSGS[0], {
+      uid: String(900+i), message_id:'<m'+i+'@x>', ts: 1700000000+i*3600,
+      from: (i%2 ? 'Me <me@example.com>' : 'Sender '+i+' <s'+i+'@example.com>'),
+      subject: MSGS[0].subject, body_html: LONG_HTML}))});
   if(u.startsWith('/api/mail/sync')){ window.__calls.sync++; return j({new:{}}); }
   if(u.startsWith('/api/contacts/books'))return j({books:[{id:'contacts',displayname:'Contacts'}]});
   if(u.startsWith('/api/contacts/cards'))return j({cards:CARDS});
@@ -279,7 +284,10 @@ OPEN_MESSAGE = r"""(async () => {
   const r = pane ? pane.getBoundingClientRect() : null;
   // How much of the reading pane the message body actually occupies. A fixed-height body leaves a
   // band of dead pane under every short mail and letterboxes every long one.
-  const body = document.querySelector('.mail-html');
+  // THE OPEN MESSAGE'S body. With a multi-message thread the first `.mail-html` belongs to a
+  // COLLAPSED message and is display:none, so measuring it reports 0 and fails the UI for a
+  // fault in the probe.
+  const body = document.querySelector('.mail-msg.open .mail-html') || document.querySelector('.mail-html');
   const br = body ? body.getBoundingClientRect() : null;
   return { open: !!(pane && pane.classList.contains('has-open')),
            errors: window.__mailErrors.slice(),
@@ -299,6 +307,19 @@ OPEN_MESSAGE = r"""(async () => {
            /* WHERE THE READING SCREEN'S PIXELS GO. The pane is position:fixed inset:0 on a phone,
               so it already owns the whole viewport — the list chrome behind it is covered, not
               competing. What matters is how the pane divides itself up. */
+           /* HOW A CONVERSATION READS. Reported as "make reading email threads like infinite
+              scroll, you are cramming everything into a tiny space". */
+           convo: (() => {
+             const msgs = [...document.querySelectorAll('.mail-msg')];
+             const h = e => Math.round(e.getBoundingClientRect().height);
+             return { count: msgs.length,
+                      open: msgs.filter(m => m.classList.contains('open')).length,
+                      heights: msgs.map(h),
+                      threadScrollH: (() => { const t=document.querySelector('.mail-thread');
+                        return t ? Math.round(t.scrollHeight) : 0; })(),
+                      threadH: (() => { const t=document.querySelector('.mail-thread');
+                        return t ? Math.round(t.getBoundingClientRect().height) : 0; })() };
+           })(),
            layout: (() => {
              const box = sel => { const e=document.querySelector(sel); if(!e) return null;
                const r=e.getBoundingClientRect();
@@ -571,6 +592,22 @@ async def drive(url):
                                          f"{bb['barW']}px bar ({bb['labels']})"))
 
                 op = await js(OPEN_MESSAGE, awaited=True)
+                _c = (op or {}).get("convo") or {}
+                if phone and _c.get("count", 0) > 1:
+                    # A CONVERSATION SCROLLS; IT DOES NOT SQUASH. `.mail-thread` is a flex column, so
+                    # its messages shrink to fit unless told not to. Measured before the fix on a
+                    # six-message thread: every collapsed message squeezed from its 58px header down
+                    # to TEN PIXELS — unreadable and barely tappable. Reported as "you are cramming
+                    # everything into a tiny space".
+                    _small = [h for h in _c.get("heights", [])[:-1] if h < 40]
+                    if _small:
+                        problems.append((label, "conversation-squashed",
+                                         f"collapsed messages are {_small}px tall — a thread is "
+                                         f"being squeezed into the visible box instead of scrolling"))
+                    if _c.get("threadScrollH", 0) <= _c.get("threadH", 0):
+                        problems.append((label, "conversation-not-scrolling",
+                                         "a multi-message thread fits its box exactly, which means "
+                                         "it is being shrunk to fit rather than scrolled"))
                 if phone and op and op.get("vh"):
                     # THE VERTICAL BUDGET, asserted. Reported as "email UI is terrible on mobile,
                     # you get less than half the screen" — and nothing here could see it, because
@@ -595,7 +632,7 @@ async def drive(url):
                     print(f"  DEBUG {label} OPEN: vh={op.get('vh')} pane={op.get('paneH')}"
                           f"({op.get('paneFrac')}) body={op.get('bodyH')}({op.get('bodyFrac')}) "
                           f"listLeft={op.get('listStillThere')} acts={(op.get('acts') or {}).get('barH')} "
-                          f"layout={op.get('layout')}",
+                          f"convo={op.get('convo')}",
                           flush=True)
                 if not op or op.get("error"):
                     problems.append((label, "missing-control",
