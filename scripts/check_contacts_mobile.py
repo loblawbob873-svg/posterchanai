@@ -188,12 +188,30 @@ EDITOR = r"""(async () => {
                       .map(i => (i.id || i.type) + ':' + getComputedStyle(i).fontSize);
   const r = m.getBoundingClientRect();
   const wide = Math.round(r.width) > window.innerWidth + 1;
+  /* THE ACTION ROW AT THE BOTTOM. Save / Call / Text / Share / Delete in a plain flex row is five
+     buttons on a 360px phone. Reported as "the buttons on the contact on android when opened,
+     buttons dont fit on the bottom". */
+  const bar = [...m.querySelectorAll('.row')].pop();
+  const btns = bar ? [...bar.querySelectorAll('.btn')] : [];
+  const br = bar ? bar.getBoundingClientRect() : null;
+  const actions = {
+    n: btns.length,
+    rows: new Set(btns.map(b => Math.round(b.getBoundingClientRect().top))).size,
+    clipped: btns.filter(b => {
+      const q = b.getBoundingClientRect();
+      return q.right > (br ? br.right : window.innerWidth) + 1 || q.right > window.innerWidth + 1;
+    }).length,
+    overflows: bar ? bar.scrollWidth > bar.clientWidth + 1 : false,
+    belowFold: btns.filter(b => b.getBoundingClientRect().bottom > window.innerHeight + 1).length,
+    minW: btns.length ? Math.min(...btns.map(b => Math.round(b.getBoundingClientRect().width))) : 0,
+    labels: btns.map(b => (b.textContent || '').trim().slice(0, 10)),
+  };
   const given = m.querySelector('#cc-given');
   if (given) { given.value = 'Fire Dept'; }
   m.querySelector('#cc-save').click();
   await new Promise(r=>setTimeout(r,300));
   const saved = window.__saved;
-  return { fields: inputs.length, small, wide,
+  return { fields: inputs.length, small, wide, actions,
            sentVcf: saved ? String(saved.vcf) : '', uid: saved ? saved.uid : '' };
 })()"""
 
@@ -432,6 +450,24 @@ async def drive(url):
                                          f"coming back to contacts showed {sh['rowsBack']} rows"))
 
                 ed = await js(EDITOR, awaited=True)
+                _a = (ed or {}).get("actions") or {}
+                if _a.get("n"):
+                    # THE ACTION ROW HAS TO FIT. Save / Call / Text / Share / Delete in a nowrap flex
+                    # row put one button past the right edge at 390px and two at 360px, squeezing the
+                    # rest to 32px wide. Reported as "buttons dont fit on the bottom".
+                    if _a.get("clipped"):
+                        problems.append((label, "editor-actions-clipped",
+                                         f"{_a['clipped']} of {_a['n']} buttons run off the edge "
+                                         f"({', '.join(_a.get('labels') or [])})"))
+                    if _a.get("overflows"):
+                        problems.append((label, "editor-actions-overflow",
+                                         "the action row scrolls sideways instead of wrapping"))
+                    if phone and _a.get("minW", 0) < 88:
+                        problems.append((label, "editor-actions-tiny",
+                                         f"the narrowest action button is {_a['minW']}px — too small "
+                                         f"to read or hit"))
+                if os.environ.get("PC_DEBUG") and ed:
+                    print(f"  DEBUG {label} editor actions: {ed.get('actions')}", flush=True)
                 if not ed or ed.get("error"):
                     problems.append((label, "missing-control",
                                      f"the contact editor did not open ({(ed or {}).get('error')})"))

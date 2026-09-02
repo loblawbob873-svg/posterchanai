@@ -359,7 +359,7 @@
           <label class="fld">Notes<textarea class="input" id="cc-note" rows="3">${enc(c.note||'')}</textarea></label>
           ${(c.other && c.other.length) ? `<div class="muted small">Keeps ${c.other.length} field${c.other.length===1?'':'s'} this app doesn't edit (photo, labels, app data).</div>` : ''}
         </div>
-        <div class="row" style="margin-top:14px">
+        <div class="row ct-actions" style="margin-top:14px">
           <button class="btn btn-cyan" id="cc-save">Save</button>
           ${isNew || !(c.tels||[]).some(t=>String((t&&t.value)||'').trim()) ? '' :
             '<button class="btn btn-ghost" id="cc-call"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Call</button>'+

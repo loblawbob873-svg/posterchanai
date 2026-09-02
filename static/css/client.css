@@ -4576,6 +4576,21 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    down to TEN PIXELS — unreadable, barely tappable, and reported as "you are cramming
    everything into a tiny space". `flex:none` makes each message keep its natural height so
    the thread overflows and scrolls, which is what reading a conversation should be. */
+/* THE CONTACT EDITOR'S ACTION ROW — five buttons that have to fit a phone.
+   Save / Call / Text / Share / Delete in a plain `.row` is a nowrap flex line: measured at 390px it
+   pushed one button past the right edge and squeezed the rest to THIRTY-TWO pixels wide; at 360px
+   two were clipped. Reported as "the buttons on the contact on android when opened, buttons dont
+   fit on the bottom".
+   Wrapping is the fix, not shrinking: a button people are meant to hit needs a real width and a real
+   height, and there is nothing else competing for the vertical space in a dialog that already
+   scrolls. */
+.ct-actions{flex-wrap:wrap;gap:8px}
+.ct-actions>.btn{flex:1 1 auto;min-width:104px;justify-content:center}
+@media(max-width:600px){
+  .ct-actions>.btn{min-height:44px;min-width:calc(50% - 4px)}
+  /* Save is the one action people came for; give it the full row above the rest. */
+  .ct-actions>#cc-save{min-width:100%}
+}
 .mail-msg{flex:none;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden;box-shadow:0 2px 9px rgba(0,0,0,.08)}
 .mail-msg-hd{display:flex;gap:11px;align-items:center;padding:12px 14px;cursor:pointer;min-height:58px}
 /* From/To are unbounded foreign strings; without this a long one pushes the date out of the pane. */
