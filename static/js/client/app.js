@@ -12892,7 +12892,16 @@
     const parts=[];
     if(counts.zaps) parts.push(fmtSats(counts.zaps));
     const t=counts.tips;
-    if(t){ if(t.XMR) parts.push('ɱ'+fmtTipAmt(t.XMR)); if(t.BCH) parts.push('🟢'+fmtTipAmt(t.BCH)); }
+    /* A TIP WITH NO AMOUNT IS STILL A TIP. `amount_xmr` is optional on the note — an older client,
+       or somebody who paid without telling us how much — and keying the label on a truthy amount
+       made those tips invisible: `tipN` counted them, the button lit up, and the label was empty,
+       so a post read as tipped-but-for-nothing. Show the mark without a number instead; claiming an
+       amount we were not told is the one thing worse than showing none. */
+    if(t){
+      if(t.XMR) parts.push('ɱ'+fmtTipAmt(t.XMR));
+      if(t.BCH) parts.push('🟢'+fmtTipAmt(t.BCH));
+      if(!parts.length && counts.tipN) parts.push('ɱ' in t || t.XMR === 0 ? 'ɱ' : '🟢');
+    }
     return parts.join(' ');
   }
   function myReaction(id){ if(!CIDX) buildCounts(); return CIDX.myReact[id]||null; }
@@ -25945,14 +25954,23 @@
       if(!msg){ pane.innerHTML='<div class="empty">Could not load this message.</div>'; return; }
       // Render the message immediately, then upgrade to the full conversation when /thread returns
       // (threading scans the whole mailbox, so don't block the read on it).
-      this._renderThread(pane, [msg], folder, acct, uid);
+      this._renderThread(pane, [msg], folder, acct, uid, 'loading');
       this.api('/thread?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid))
-        .then(t=>{ if(t && t.messages && t.messages.length>1 && this.openUid===uid && pane.isConnected)
-          this._renderThread(pane, t.messages, folder, acct, uid); })
+        .then(t=>{ if(!(this.openUid===uid && pane.isConnected)) return;
+          const got = (t && t.messages) || [];
+          /* Re-render either way: with the conversation when there is one, and WITHOUT the
+             "Loading…" line when there is not — a spinner that never resolves is the same lie as
+             no message at all. */
+          if(got.length>1) this._renderThread(pane, got, folder, acct, uid);
+          else this._renderThread(pane, [msg], folder, acct, uid, 'alone'); })
         /* SAY SO. Swallowing this is what made a malformed account silent for as long as it was
            wrong — the message still opened, so nothing looked broken; the conversation just never
            arrived. The read itself must not fail, so it stays caught, but not in silence. */
-        .catch(e=>{ try{ console.warn('[mail] conversation could not be loaded:', (e&&e.message)||e); }catch(_){ } });
+        .catch(e=>{ try{ console.warn('[mail] conversation could not be loaded:', (e&&e.message)||e); }catch(_){ }
+          try{ if(this.openUid===uid && pane.isConnected){
+            const st=pane.querySelector('.mail-convo-state');
+            if(st) st.textContent='The rest of this conversation could not be loaded';
+          } }catch(_){ } });
     },
     /* Plain-text mail had no links at all — the body was escaped and printed, so a URL was a string
      * you had to select and copy. Run over the ALREADY-ESCAPED text, so nothing here can introduce
@@ -26090,13 +26108,26 @@
         ? `<div style="margin-top:8px">${this._linkify(enc(out)).replace(/\n/g,'<br>')}</div>`
         : `<div class="nt-warn" style="margin-top:8px">couldn\u2019t decrypt: ${enc(err || 'the signer did not answer')} \u2014 was this encrypted to your key?</div>`);
     },
-    _renderThread(pane, thread, folder, acct, seedUid){
+    _renderThread(pane, thread, folder, acct, seedUid, convo){
       const latest=thread[thread.length-1];
       // actions target the message the user actually OPENED (the seed), not just the newest in the thread
       const target=thread.find(m=>String(m.uid)===String(seedUid)) || latest;
       pane.innerHTML=`<div class="mail-read-hd"><button class="mini mail-back" id="mail-back" title="Back">←</button>
           <div class="mr-meta"><div class="mr-subj">${enc(latest.subject||'(no subject)')}</div>
-            ${thread.length>1?`<div class="muted small">${thread.length} messages</div>`:''}</div></div>
+            ${thread.length>1?`<div class="muted small">${thread.length} messages</div>`
+              /* SILENCE IS BEING READ AS ABSENCE, and that is the whole of "still not showing my
+                 part of the conversation", asked about ten times. The conversation IS found — the
+                 seed is painted at once and upgraded when /thread answers — but that call walks the
+                 whole mailbox, MEASURED AT 11.0s cold on the reporting account (17,921 documents of
+                 NIP-44 decrypts; 0.000s once the 60s cache is warm, and every service restart
+                 empties it). For eleven seconds the reader showed one message and said nothing, so
+                 the only available conclusion was that the sent mail is missing. Now it says it is
+                 looking, and says so when it has looked and there was nothing. */
+              : (convo === 'loading'
+                  ? `<div class="muted small mail-convo-state">Loading the rest of this conversation…</div>`
+                  : convo === 'alone'
+                    ? `<div class="muted small mail-convo-state">No other messages in this conversation</div>`
+                    : '')}</div></div>
         <!-- SPRITE ICONS, NOT EMOJI. This row was a filing-cabinet, a wastebasket and an arrow — glyphs from
              the font, on a screen that has an icon set precisely so the UI does not depend on one.
              A platform without the emoji font (a minimal Gentoo install, a WebView) draws them as

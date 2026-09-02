@@ -296,6 +296,7 @@ async def serve_saved_attachment(
 # ============================================================================
 import base64
 import asyncio as _asyncio
+import time as _time
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from app.services import mail_store, mail_sync, nostr_store, mail_service
@@ -355,11 +356,49 @@ async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depen
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
+def _warm_thread_scan(sk: bytes, user_id: int, account_email: str | None) -> None:
+    """Kick off the mailbox scan in the background so opening a message does not wait for it.
+
+    Never awaited and never raised: this is a cache warm, and the only cost of it failing is the
+    cold read that would have happened anyway. One in flight at a time per (user, account) — the
+    list view fires this on every page, and without the guard a fast scroll would start a dozen
+    11-second scans of the same mailbox."""
+    key = (user_id, account_email or "*")
+    task = _WARMING.get(key)
+    if task is not None and not task.done():
+        return
+    hit = _THREAD_SCAN.get(key)
+    if hit and _time.monotonic() - hit[0] < _THREAD_SCAN_TTL:
+        return                                  # already warm; nothing to do
+    try:
+        loop = _asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_thread_scan(sk, account_email, user_id=user_id))
+    task.add_done_callback(lambda t: (t.exception() if not t.cancelled() else None) and None)
+    _WARMING[key] = task
+
+
+_WARMING: dict = {}
+
+
 @router.get("/messages")
 async def mail_messages(account: str = "", folder: str = "INBOX", until: int = 0,
                         db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """One page of a folder, newest first. `until` is the cursor from the previous page."""
     sk = _seckey(db, current_user)
+    # WARM THE THREAD SCAN WHILE THEY ARE READING THE LIST.
+    #
+    # Opening a message paints it at once and upgrades to the conversation when /thread answers, and
+    # that call walks the whole mailbox: MEASURED at 11.0s cold on the reporting account (17,921
+    # documents of NIP-44 decrypts), 0.000s warm. Every service restart empties the cache, so the
+    # first message opened after one showed a single message for eleven seconds — read, reasonably,
+    # as "my sent mail is missing from the thread" and reported that way repeatedly.
+    #
+    # The list view is where somebody already is before they open anything, so the scan happens
+    # there instead. Fire and forget: the page must not wait on it, and a failure here is only a
+    # cold cache, which is what would have happened anyway.
+    _warm_thread_scan(sk, current_user.id, None if account in ("__all", "") else account)
     if account == "__all":
         # Unified view: this logical folder across EVERY account. Ask each account for the folder(s)
         # that play the role rather than pulling the whole mailbox and filtering in Python — the

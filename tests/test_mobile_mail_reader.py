@@ -39,8 +39,8 @@ def test_mobile_actions_are_thumb_sized_and_fit_without_hidden_scrolling():
 
 def test_mobile_reader_actions_are_compact_accessible_icons():
     app = (ROOT / 'static/js/client/app.js').read_text()
-    thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid)'):
-                 app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid)'))]
+    thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid'):
+                 app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid'))]
     # SCOPED TO THE ACTIONS ROW, not to the whole function. This counted every button in
     # `_renderThread`, so adding a labelled Reply/Forward row elsewhere in the thread failed a test
     # about the compact icon row — which was still exactly as it should be. The row is the subject;
@@ -65,8 +65,8 @@ def test_viewable_mail_attachments_open_in_the_fitted_preview_app():
     app = (ROOT / 'static/js/client/app.js').read_text()
     render = app[app.index('_msgBlock(m, folder, acct, expanded)'):
                  app.index('_nmailHtml(nm, m)', app.index('_msgBlock(m, folder, acct, expanded)'))]
-    thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid)'):
-                 app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid)'))]
+    thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid'):
+                 app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid'))]
     assert '_previewable(name,type)' in render
     assert 'data-mail-preview="1"' in render
     assert 'await _openMailAttachment(a)' in thread
@@ -80,8 +80,8 @@ def test_every_mail_attachment_uses_authenticated_fetch_then_preview_or_save():
     app = (ROOT / 'static/js/client/app.js').read_text()
     render = app[app.index('_msgBlock(m, folder, acct, expanded)'):
                  app.index('_nmailHtml(nm, m)', app.index('_msgBlock(m, folder, acct, expanded)'))]
-    thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid)'):
-                 app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid)'))]
+    thread = app[app.index('_renderThread(pane, thread, folder, acct, seedUid'):
+                 app.index('_msgText(msg)', app.index('_renderThread(pane, thread, folder, acct, seedUid'))]
     assert 'data-mail-attachment="1"' in render
     assert "$$('[data-mail-attachment]',pane)" in thread
     opener = app[app.index('async function _openMailAttachment'):app.index('const Mail =', app.index('async function _openMailAttachment'))]

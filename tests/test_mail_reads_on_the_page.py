@@ -58,7 +58,9 @@ def test_something_actually_sizes_it():
     assert "_sizeMailFrames(" in APP
     body = APP.split("_sizeMailFrames(root){", 1)[1].split("\n    },", 1)[0]
     assert "scrollHeight" in body and "style.height" in body
-    thread = APP.split("_renderThread(pane, thread, folder, acct, seedUid){", 1)[1][:6000]
+    # By NAME, not by its exact parameter list — the signature is not what this test is about,
+    # and pinning it turns any unrelated argument into a phantom "pane never sizes" failure.
+    thread = APP.split("_renderThread(pane, thread, folder, acct, seedUid", 1)[1][:6000]
     assert "this._sizeMailFrames(pane)" in thread, (
         "the reading pane renders without ever sizing its frames")
 

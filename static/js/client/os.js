@@ -6826,6 +6826,16 @@
          `<button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
                   data-id="${w.id}" data-kind="native"${tint(w.appId || w.title)} title="${enc(w.title)}">
             ${appIcon(w)}<span>${enc(w.title)}</span></button><span class="os-native-controls">
+              <!-- MINIMISE WAS THE MISSING ONE, AND ITS ABSENCE IS WHAT MADE THIS READ AS "NO WINDOW
+                   CONTROLS". sway draws border-normal: a title bar carrying the title and nothing
+                   else. Neither Firefox nor Telegram will negotiate client-side decorations
+                   (measured: border csd on both, they stayed normal, deco_h 30), so the only
+                   controls a non-hosted app can have are these, and shipping two thirds of a set is
+                   what a person reads as none. The task button already toggles minimise, but a
+                   toggle on an icon is not a control anybody can see.
+                   NO BACKTICKS IN THIS COMMENT: it lives inside a template literal, and one closes
+                   it and takes the whole module out at parse time. -->
+              <button class="os-native-min" data-id="${w.id}" title="Minimize ${enc(w.title)}">–</button>
               <button class="os-native-max" data-id="${w.id}" title="Maximize ${enc(w.title)}">□</button>
               <button class="os-native-close" data-id="${w.id}" title="Close ${enc(w.title)}">×</button></span>`).join('')}</div>
        <div class="os-tray">
@@ -6943,6 +6953,9 @@
       if(!actions.length)return;
       showCtx(e.clientX, e.clientY, actions, b);
     });
+    /* Minimise is `hide` — the same scratchpad path the task button's toggle uses, so the two agree
+       about what minimised means and `show` brings it back the same way. */
+    $$('.os-native-min',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.hide(Number(b.dataset.id))).catch(()=>{}); });
     $$('.os-native-max',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.snap(Number(b.dataset.id),'max')).catch(()=>{}); });
     $$('.os-native-close',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.close(Number(b.dataset.id))).catch(()=>{}); });
     placeDesktopTray();
