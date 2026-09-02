@@ -114,7 +114,7 @@ async def poll_user(db, user) -> int:
             before[acc.email] = None      # unreadable → treated as "cannot tell", never as "empty"
 
     try:
-        res = await mail_sync.sync_all(db, user, folders=["INBOX"])
+        res = await mail_sync.sync_all(db, user, folders=mail_sync.ESSENTIAL)
     except Exception as e:
         logger.info("[mail-notify] sync failed for %s: %s", getattr(user, "username", "?"), e)
         return 0

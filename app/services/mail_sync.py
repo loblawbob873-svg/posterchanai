@@ -290,6 +290,41 @@ async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
                               await asyncio.to_thread(_sync_limit), _logical_of(real, meta))
 
 
+#: What a routine sync must cover. A CONVERSATION IS BOTH HALVES.
+#:
+#: Both routine callers asked for `folders=["INBOX"]`, so every other folder — Sent included — was
+#: only ever mirrored by an explicit full sync. Measured on the reporting mailbox, and this is the
+#: whole of "still not showing my part of the conversation", asked about ten times:
+#:
+#:     INBOX          39 messages   newest 2026-09-02   (that day)
+#:     INBOX.Sent    807 messages   newest 2026-08-30   (three days stale)
+#:
+#: A named thread made it plain: "Information about your DoorDash Inquiry" arrived that morning and
+#: the user's replies to it were not in the mailbox at all. No threading rule can show a message
+#: that was never mirrored, so every threading fix was operating on data that could not contain the
+#: answer.
+#:
+#: Deliberately NOT every folder: Trash (11,565) and Archive (2,717) are a different order of cost
+#: and nothing needs them on a five-minute timer. INBOX plus the account's own Sent folder is the
+#: minimum that makes a conversation whole.
+ESSENTIAL = "__essential__"
+
+
+def _essential_folders(meta: dict) -> list:
+    """INBOX plus whatever this account calls its Sent folder, de-duplicated and order-stable.
+
+    The name is read from the account's special-use metadata, never guessed: the mailbox measured
+    here alone carries `INBOX.Sent`, `Sent`, `Sent Messages` and `sent-mail`, and a hardcoded
+    "Sent" would have mirrored the empty one on three accounts out of four."""
+    out, seen = [], set()
+    for f in ["INBOX", (meta or {}).get("sent") or ""]:
+        f = (f or "").strip()
+        if f and f.lower() not in seen:
+            seen.add(f.lower())
+            out.append(f)
+    return out or ["INBOX"]
+
+
 async def sync_all(db: Session, user, folders: list | None = None) -> dict:
     """Sync EVERY account's EVERY real folder into the encrypted mailbox (incremental). Returns
     {account_email: new_count}. limit per folder from `mail_sync_limit` (0 = everything, the default)."""
@@ -302,7 +337,11 @@ async def sync_all(db: Session, user, folders: list | None = None) -> dict:
     limit = await asyncio.to_thread(_sync_limit)
     out = {}
     for acc in accounts:
-        if folders is not None:
+        if folders == ESSENTIAL:
+            # Needs the account's metadata to know what IT calls Sent — see _essential_folders.
+            _all, meta = await asyncio.to_thread(_account_meta, db, user, acc)
+            flist = _essential_folders(meta)
+        elif folders is not None:
             flist, meta = folders, {}
         else:
             flist, meta = await asyncio.to_thread(_account_meta, db, user, acc)

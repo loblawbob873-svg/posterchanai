@@ -349,7 +349,7 @@ async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depen
     new incoming-message notification.
     """
     try:
-        res = await mail_sync.sync_all(db, current_user, folders=["INBOX"])
+        res = await mail_sync.sync_all(db, current_user, folders=mail_sync.ESSENTIAL)
         return {"ok": True, "new": res}
     except Exception as e:
         logger.warning("[mail] sync failed for %s: %s", current_user.id, e)
