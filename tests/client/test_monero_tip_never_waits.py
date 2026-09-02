@@ -148,3 +148,18 @@ def test_a_wallet_holding_nothing_still_hands_the_tip_back(seen):
 def test_a_funded_wallet_still_uses_the_local_path(seen):
     """The feature has to survive its own guard."""
     assert seen["fundedWallet"]["answered"] is True
+
+
+def test_an_early_failed_probe_does_not_latch(seen):
+    """THE ONE THAT KEPT IT BROKEN. `warm()` asks as soon as the module loads, which can be before
+    the wallet session is usable — that probe 401s and records `available:false`. A tip that trusts
+    the cache at any age then reads that stale failure for the rest of the page's life, and the
+    built-in wallet is never used again however reachable and funded it is. Reported as "i open a
+    post and click zap, it's still not using the fucking built-in monero wallet".
+
+    A latch set BEFORE the attempt it describes — the exact shape this codebase keeps paying for.
+    Only a POSITIVE answer is cached, and only briefly; anything else asks the wallet again."""
+    assert seen["recoversAfterEarlyFailure"]["answered"] is True, (
+        "a probe that failed before the session was ready still decides every later tip")
+    assert seen["recoversAfterEarlyFailure"]["opened"] is True, (
+        "the built-in wallet's send sheet never opened")

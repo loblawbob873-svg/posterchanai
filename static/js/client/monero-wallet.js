@@ -438,8 +438,20 @@
    * unchanged. */
   function warm(){ try{ Promise.resolve(probe(false)).catch(()=>null); }catch(_){ } }
   async function tip(opts){
-    let s = state;
-    if(!s){ try{ s = await probe(false); }catch(_){ s = null; } }
+    /* A FAILURE IS NOT A DURABLE ANSWER — and trusting one is what broke this.
+     *
+     * `warm()` asks as soon as the module loads, which can be BEFORE the wallet session is usable:
+     * that probe 401s, `state` becomes `available:false`, and a tip that trusts the cache at any age
+     * reads that stale failure for the rest of the page's life. Reported as "i open a post and click
+     * zap, it's still not using the fucking built-in monero wallet" — the wallet was reachable and
+     * funded the whole time; the client had latched a "no" recorded before it could have been a yes.
+     *
+     * Exactly the shape this codebase keeps paying for: a latch set BEFORE the attempt it describes.
+     *
+     * So only a POSITIVE answer is cached, and only briefly. Anything else asks again — which is
+     * still deterministic, because the answer comes from the wallet rather than from a timer. */
+    let s = (state && state.available && Date.now()-checkedAt < 30000) ? state : null;
+    if(!s){ try{ s = await probe(true); }catch(_){ s = null; } }
     if(!s||!s.available||!validAddress(opts&&opts.address,s.network))return false;
     /* AN EMPTY WALLET MUST NOT OFFER TO SPEND.
      *

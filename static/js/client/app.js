@@ -30564,7 +30564,19 @@
         (document.head || document.documentElement).appendChild(el);
       });
     }
-    return _lateLoad[file].then(() => {
+    return _lateLoad[file].then(async () => {
+      /* A SCRIPT THAT HAS LOADED HAS NOT NECESSARILY PUBLISHED ITSELF.
+       *
+       * This read the global ONCE, on `onload`. Several modules defer their own boot until the
+       * client is ready — monero-wallet.js retries every 40ms until `window.__PC` exists — so the
+       * script can be fully loaded while its global is still undefined, and the caller is told the
+       * module does not exist. For the wallet that means a tip silently using the external flow on
+       * a page where the built-in wallet was there all along.
+       *
+       * A short wait rather than a longer timeout: if a module has not published within this, it
+       * is not going to, and every caller here already treats null as "not available". */
+      for(let i = 0; i < 25 && !window[global]; i++)
+        await new Promise(r => setTimeout(r, 40));
       const mod = window[global] || null;
       if(mod && fn) try{ fn(mod); }catch(_){}
       return mod;

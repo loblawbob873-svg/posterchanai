@@ -157,4 +157,20 @@ function mainnetWallet() {
   out.trulyEmpty = { answered: await w.api.tip({ address: ADDR, name: 'x' }), opened };
 }
 
+// 13. A FAILED PROBE MUST NOT LATCH. `warm()` fires as the module loads, which can be before the
+//     wallet session is usable — that probe 401s. If the tip trusts the cache at any age, the
+//     built-in wallet is refused for the rest of the page's life even once it is reachable.
+{
+  let allow = false;
+  const inner = mainnetWallet();
+  const w = boot({ fetcher: p => {
+    if (!allow) throw new Error('this account cannot open the node wallet');
+    return inner(p);
+  }});
+  await new Promise(r => setTimeout(r, 30));      // let warm() fail, as it does on a cold page
+  allow = true;                                    // the session is ready now
+  let opened = false; w.PC.modal = () => { opened = true; };
+  out.recoversAfterEarlyFailure = { answered: await w.api.tip({ address: ADDR, name: 'x' }), opened };
+}
+
 console.log(JSON.stringify(out));
