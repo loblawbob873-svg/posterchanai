@@ -13,6 +13,7 @@ import asyncio
 import base64
 import email
 import imaplib
+import time
 import json
 import logging
 import re
@@ -1114,6 +1115,12 @@ def send_email(
     cc: str = "",
     bcc: str = "",
     inline_images: List[Tuple[str, bytes, str]] = None,  # (cid, data, content_type) for cid: refs in html_body
+    #: What the MAIL LIST calls this account's Sent folder. A server can flag more than one
+    #: mailbox \Sent — measured on a real account, both `Sent` (7 messages, months stale) and
+    #: `INBOX.Sent` (381, the one displayed) are flagged — and filing into the other one is
+    #: exactly the 'delivered, filed, and invisible' failure this module already warns about.
+    #: MailAccount carries no user link, so only a caller holding the session can resolve it.
+    sent_folder: str = "",
 ) -> bool:
     """Send an email via SMTP."""
     try:
@@ -1334,33 +1341,57 @@ def send_email(
         # The flagged mailbox is asked for FIRST, from this same connection, so no database session
         # is needed here; the historical name list stays as the last resort for servers that
         # advertise no special-use flags at all.
+        # WHETHER THE COPY WAS FILED IS NOT ALLOWED TO BE A SECRET.
+        #
+        # Every failure here used to be `except Exception: continue`, and a loop that filed nothing
+        # logged nothing at all — no success line, no error — while send_email still returned True.
+        # Measured on the reporting instance: 9 sends over three days, 9 "Sent email from" lines,
+        # and ZERO "Saved sent email to". The mail went out and the copy vanished, which is the
+        # whole of "you didn't fix emails conversations mode showing sent items", asked ten times.
+        # The first candidate was `'.'` — the hierarchy delimiter, mis-parsed out of a LIST reply —
+        # and `select "."` answers NO, but nothing downstream said so.
+        saved_to, tried = None, []
         try:
             imap = connect_imap(account)
             if imap:
-                sent_folders = _sent_folder_candidates(imap)
+                sent_folders = _sent_folder_candidates(imap, sent_folder)
                 msg_bytes = msg.as_bytes()
 
                 for folder in sent_folders:
                     try:
                         # Try to select the folder to verify it exists
                         status, _ = imap.select('"' + folder + '"')
-                        if status == "OK":
-                            # Append message with \Seen flag
-                            import time
+                        if status != "OK":
+                            tried.append(f"{folder}: SELECT {status}")
+                            continue
+                        import time
 
-                            result = imap.append(folder, "\\Seen", imaplib.Time2Internaldate(time.time()), msg_bytes)
-                            if result[0] == "OK":
-                                logger.info(f"Saved sent email to {folder}")
-                                break
-                    except Exception:
+                        result = imap.append(folder, "\\Seen", imaplib.Time2Internaldate(time.time()), msg_bytes)
+                        if result[0] == "OK":
+                            logger.info(f"Saved sent email to {folder}")
+                            saved_to = folder
+                            break
+                        tried.append(f"{folder}: APPEND {result[0]}")
+                    except Exception as exc:
+                        tried.append(f"{folder}: {type(exc).__name__} {str(exc)[:60]}")
                         continue
 
                 try:
                     imap.logout()
                 except Exception:
                     pass
+            else:
+                tried.append("no IMAP connection")
         except Exception as e:
             logger.warning(f"Failed to save to Sent folder: {e}")
+            tried.append(f"{type(e).__name__} {str(e)[:60]}")
+
+        if not saved_to:
+            logger.error("[mail] SENT COPY NOT FILED for %s — the message WAS delivered but no "
+                         "Sent folder accepted it. Tried: %s", account.email, "; ".join(tried) or "nothing")
+            # The thread view reads OUR mailbox, not the IMAP server, so keep the copy here rather
+            # than lose the user's own half of every conversation to a server that refused it.
+            _mirror_sent_locally(account, msg, to, subject)
 
         return True
 
@@ -1405,8 +1436,16 @@ def reply_to_message(
         cc_addrs = [a for a in cc_addrs if account.email.lower() not in a.lower()]
         cc = ", ".join(cc_addrs)
 
+    # Resolve Sent the way the LIST does, from the session this caller already holds — see
+    # send_email's `sent_folder`. A reply is the commonest way a sent copy goes missing.
+    _sent = ""
+    try:
+        _sent = (list_special_folders(user_id, db, account_email) or {}).get("sent") or ""
+    except Exception:
+        pass
     return send_email(
-        account=account, to=to, subject=subject, body=body, attachments=attachments, reply_to_msg=original, cc=cc
+        account=account, to=to, subject=subject, body=body, attachments=attachments,
+        reply_to_msg=original, cc=cc, sent_folder=_sent
     )
 
 
@@ -1691,7 +1730,59 @@ def set_folder_map(user_id: int, db: Session, account_email: str, mapping: dict)
     return full
 
 
-def _sent_folder_candidates(imap) -> list:
+def _mirror_sent_locally(account, msg, to: str, subject: str) -> None:
+    """Keep a sent message in OUR mailbox when the IMAP server would not file it.
+
+    Only on failure: when the append succeeds the ordinary sync mirrors that copy under its real
+    IMAP uid, and storing it twice would put the same message in a conversation twice. The uid here
+    is derived from the Message-ID so a retry cannot duplicate it either.
+
+    Best-effort by construction — it runs after the mail has already been delivered, so nothing it
+    can do is worth raising into the caller."""
+    try:
+        import asyncio as _aio
+        import hashlib
+        from app.database import SessionLocal
+        from app.models import User
+        from app.services import mail_store, nostr_store
+
+        mid = (msg.get("Message-ID") or "").strip()
+        uid = "local-" + hashlib.sha256((mid or f"{to}{subject}{time.time()}").encode()).hexdigest()[:16]
+        body_text, body_html = "", ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                ctype = part.get_content_type()
+                if ctype == "text/plain" and not body_text:
+                    body_text = part.get_payload(decode=True).decode("utf-8", "replace")
+                elif ctype == "text/html" and not body_html:
+                    body_html = part.get_payload(decode=True).decode("utf-8", "replace")
+        else:
+            body_text = (msg.get_payload(decode=True) or b"").decode("utf-8", "replace")
+
+        doc = {
+            "uid": uid, "message_id": mid, "from": account.email, "from_email": account.email,
+            "to": to, "cc": msg.get("Cc", ""), "subject": subject,
+            "date": msg.get("Date", ""), "ts": int(time.time()),
+            "body_text": body_text, "body_html": body_html,
+            "in_reply_to": msg.get("In-Reply-To", ""), "references": msg.get("References", ""),
+            "flags": {"read": True}, "attachments": [], "logical": "Sent",
+        }
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == account.user_id).first()
+            if not user:
+                return
+            seckey = nostr_store.user_storage_seckey(db, user)
+        finally:
+            db.close()
+        folder = "Sent"
+        _aio.run(mail_store.store_message(seckey, account.email, folder, doc))
+        logger.info("[mail] kept the sent copy in this node's mailbox as %s/%s", folder, uid)
+    except Exception as exc:
+        logger.warning("[mail] could not keep a local copy of the sent message: %s", exc)
+
+
+def _sent_folder_candidates(imap, preferred: str = "") -> list:
     """Where a sent copy should go, best answer first, using only an open IMAP connection.
 
     The mail LIST resolves Sent properly (special-use flags, the user's override, heuristics). The
@@ -1700,6 +1791,8 @@ def _sent_folder_candidates(imap) -> list:
     landed where the app never lists. This puts the flagged mailbox at the front of the same list.
     """
     named = []
+    if preferred:
+        named.append(preferred)          # what the list view calls Sent, so the two halves agree
     try:
         status, rows = imap.list()
         if status == "OK":
@@ -1707,10 +1800,18 @@ def _sent_folder_candidates(imap) -> list:
                 line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
                 if "\\Sent" not in line:
                     continue
-                # `(\HasNoChildren \Sent) "." "INBOX.Sent"` — the name is the last quoted field,
-                # or the trailing bare word on servers that do not quote it.
-                m = re.findall(r'"([^"]*)"', line)
-                name = m[-1] if m else line.split()[-1]
+                # `(\HasNoChildren \Sent) "." "INBOX.Sent"` — flags, delimiter, then the name,
+                # and the NAME IS NOT ALWAYS QUOTED. Taking "the last quoted field" returned the
+                # DELIMITER on a server that quotes the delimiter and not the mailbox: measured on
+                # a real account, the flagged candidate came back as `'.'`, and `SELECT "."` answers
+                # NO. Parse the three fields positionally instead, and only strip quotes from the
+                # name when it actually has them.
+                m = re.match(r'^\([^)]*\)\s+(?:"([^"]*)"|NIL|\S+)\s+(.+?)\s*$', line)
+                if not m:
+                    continue
+                name = m.group(2).strip()
+                if len(name) >= 2 and name[0] == '"' and name[-1] == '"':
+                    name = name[1:-1]
                 if name and name not in named:
                     named.append(name)
     except Exception as e:
