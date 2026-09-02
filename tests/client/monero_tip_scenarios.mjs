@@ -94,4 +94,36 @@ function mainnetWallet() {
                     external: w.feed.innerHTML.includes('external-wallet mode') };
 }
 
+// 8. AN EMPTY WALLET MUST HAND THE TIP BACK to the non-custodial flow, not open a send dialog
+//    that monero-wallet-rpc will refuse ("monero rejected request?").
+{
+  const w = boot({ fetcher: p => (p.includes('/balance')
+    ? OK({ balance: '0', unlocked_balance: '0' })
+    : mainnetWallet()(p)) });
+  await w.api.render();
+  let opened = false; w.PC.modal = () => { opened = true; };
+  out.emptyWallet = { answered: await w.api.tip({ address: ADDR, name: 'x' }), opened };
+}
+
+// 9. A wallet with funds still takes the local path.
+{
+  const w = boot({ fetcher: p => (p.includes('/balance')
+    ? OK({ balance: '2.5', unlocked_balance: '2.5' })
+    : mainnetWallet()(p)) });
+  await w.api.render();
+  w.PC.modal = () => {};
+  out.fundedWallet = { answered: await w.api.tip({ address: ADDR, name: 'x' }) };
+}
+
+// 10. Locked funds are not spendable funds — a wallet whose balance is all still locking must also
+//     hand the tip back rather than have the transfer refused.
+{
+  const w = boot({ fetcher: p => (p.includes('/balance')
+    ? OK({ balance: '2.5', unlocked_balance: '0' })
+    : mainnetWallet()(p)) });
+  await w.api.render();
+  w.PC.modal = () => {};
+  out.lockedWallet = { answered: await w.api.tip({ address: ADDR, name: 'x' }) };
+}
+
 console.log(JSON.stringify(out));

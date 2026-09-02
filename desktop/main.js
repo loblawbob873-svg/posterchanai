@@ -1617,11 +1617,21 @@ ipcMain.handle('pc:remote:release', (e) => { fsGuard(e); return SHELL_MODE ? rem
  * seven idempotent commands once per session. Without this the colours come only from a config file
  * the machine may have been installed with months ago. */
 let _chromeDone = false;
-async function decorateNative(id){
+async function decorateNative(id, hosted){
   if(!_chromeDone){ _chromeDone = true; try{ await wm().applyChrome(); }catch(_){ _chromeDone = false; } }
-  return wm().command('[con_id=' + Number(id) + '] border none, sticky disable');
+  /* WHOEVER DRAWS THE CHROME, SOMETHING MUST.
+   *
+   * `border none` was right while the shell HOSTED native windows: the PosterChan frame was the
+   * only chrome, and a second sway titlebar around it was the mismatched decoration people saw.
+   * Once hosting stopped being the default the same line left Firefox with no frame AND no border
+   * — reported as "firefox does not even have a window decoration? cant maximize and minimize?".
+   *
+   * So it follows the hosting decision instead of assuming it. Unhosted, sway draws its own
+   * titlebar: a title, a drag handle, right-click for its menu, and double-click to fullscreen. */
+  const border = hosted ? 'border none' : 'border normal 3';
+  return wm().command('[con_id=' + Number(id) + '] ' + border + ', sticky disable');
 }
-ipcMain.handle('pc:wm:decorate', async (e, id) => {
+ipcMain.handle('pc:wm:decorate', async (e, id, hosted) => {
   fsGuard(e);
   /* The PosterChan HTML frame is the only chrome. A second Sway titlebar is the mismatched
    * Firefox/Telegram decoration users were seeing around it.
@@ -1631,7 +1641,7 @@ ipcMain.handle('pc:wm:decorate', async (e, id) => {
    * workspace, appears above unrelated PosterChan frames and can be claimed by the wrong output.
    * Clear it by exact con_id whenever a surface is adopted. Do not blanket-disable fullscreen:
    * games and videos deliberately own that state and the renderer tracks it separately. */
-  return decorateNative(id);
+  return decorateNative(id, !!hosted);
 });
 ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().status(); });
 ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });

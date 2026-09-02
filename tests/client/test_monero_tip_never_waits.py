@@ -95,3 +95,29 @@ def test_the_sync_question_is_asked_once_per_visit_not_once_per_paint(seen):
         f"the wallet was asked to refresh {seen['syncCalls']['calls']} times for one visit")
     assert seen["syncCalls"]["banner"] is True, (
         "de-duplicating the request also stopped the banner appearing, which defeats the point")
+
+
+def test_an_empty_wallet_hands_the_tip_back_instead_of_offering_to_spend(seen):
+    """Reported as "monero can't even zap", then "monero rejected request?" — which is exactly what
+    happened. The wallet ANSWERS, so this path was taken, the send dialog opened, and
+    monero-wallet-rpc refused the transfer because there was nothing to send. Measured on the node:
+    balance 0, because its daemon was 284,871 blocks behind and still catching up.
+
+    Answering false hands the tip to the non-custodial URI/QR flow, which needs no local wallet and
+    is the thing that actually works. The local wallet takes over again on its own once it has
+    spendable funds."""
+    assert seen["emptyWallet"]["answered"] is False, (
+        "an empty wallet still offers to spend, and the transfer is refused after the user has "
+        "typed an amount")
+    assert seen["emptyWallet"]["opened"] is False, "the send dialog was opened anyway"
+
+
+def test_locked_funds_are_not_spendable_funds(seen):
+    """A balance that is all still locking (10 blocks after it arrives) cannot be sent either, and
+    reads as the same refusal."""
+    assert seen["lockedWallet"]["answered"] is False
+
+
+def test_a_funded_wallet_still_uses_the_local_path(seen):
+    """The feature has to survive its own guard."""
+    assert seen["fundedWallet"]["answered"] is True

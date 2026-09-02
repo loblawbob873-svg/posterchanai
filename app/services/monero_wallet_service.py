@@ -191,7 +191,25 @@ class MoneroWallet:
         if not isinstance(body, dict):
             raise WalletError("Local Monero wallet returned an invalid response")
         if body.get("error"):
-            # Do not forward daemon paths, RPC internals, or other untrusted details.
+            # SAY WHICH REFUSAL IT WAS, without forwarding internals.
+            #
+            # Every failure became "Monero wallet rejected the request", which tells somebody whose
+            # payment did not go through nothing at all — reported exactly that way. The daemon's own
+            # text can carry paths and RPC internals and is not safe to show, but the CLASS of
+            # refusal is both safe and the only part that helps: a wallet with no spendable balance
+            # (which is every wallet whose daemon is still catching up) reads completely differently
+            # from a bad address.
+            err = body.get("error") or {}
+            detail = str(err.get("message") or "").lower()
+            code = err.get("code")
+            if code == -37 or "not enough" in detail or "insufficient" in detail:
+                raise WalletError("Not enough unlocked balance in the local wallet — "
+                                  "tip from an external wallet, or wait for it to finish syncing")
+            if "daemon" in detail or "not connected" in detail or "busy" in detail:
+                raise WalletError("The wallet is not caught up with the Monero network yet — "
+                                  "it cannot spend until it is")
+            if "address" in detail:
+                raise WalletError("That Monero address was refused by the wallet")
             raise WalletError("Monero wallet rejected the request")
         result = body.get("result")
         if not isinstance(result, dict):

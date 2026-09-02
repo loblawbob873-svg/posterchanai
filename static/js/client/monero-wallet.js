@@ -385,6 +385,18 @@
       s = await Promise.race([asked, new Promise(r=>setTimeout(()=>r(null), TIP_WAIT_MS))]);
     }
     if(!s||!s.available||!validAddress(opts&&opts.address,s.network))return false;
+    /* AN EMPTY WALLET MUST NOT OFFER TO SPEND.
+     *
+     * Reported as "monero can't even zap" and then "monero rejected request?" — which is exactly
+     * what happens: the wallet answers, so this path is taken, the send dialog opens, and the
+     * transfer is refused by monero-wallet-rpc because there is nothing to send. On this node the
+     * daemon is still catching up, so the balance is legitimately 0 and will be for hours.
+     *
+     * Answering false hands the tip back to the non-custodial URI/QR flow, which needs no local
+     * wallet at all and is the thing that actually works right now. The local wallet takes over
+     * again by itself the moment it has spendable funds. */
+    const spendable = Number(String(s.unlocked_balance != null ? s.unlocked_balance : s.balance).replace(/,/g,''));
+    if(!Number.isFinite(spendable) || spendable <= 0) return false;
     sendDialog(opts||{});return true;
   }
   async function openReceive(){
