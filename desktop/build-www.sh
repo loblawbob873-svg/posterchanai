@@ -137,6 +137,13 @@ except Exception:
     _sha = 'unknown'
 html = html.replace('{{ build }}', _sha)
 html = html.replace("{{ 'true' if nostr_only else 'false' }}", 'false')
+# A BUNDLE CANNOT KNOW WHETHER SIGNUP IS OPEN, because it has not chosen an instance yet — one
+# bundle serves every one of them. So this resolves to the OPEN branch (the template's own
+# `default(true)`) and the real answer arrives at runtime from /client/config, exactly like
+# `nostr_only` above. Baking a closed signup here would hide the button permanently, on the one
+# screen a person with no account has.
+html = re.sub(r"\{%\s*if not registration_enabled\|default\(true\)\s*%\}.*?\{%\s*endif\s*%\}",
+              '', html, flags=re.S)
 left = re.search(r'\{\{.*?\}\}|\{%.*?%\}', html, flags=re.S)
 if left:
     raise SystemExit('build-www: unrendered template tag in client.html: ' + left.group(0)[:80])

@@ -57,6 +57,65 @@ case "${1:-run}" in
   get)
       read_secs
       ;;
+  status)
+      # WHY IS THE SCREEN STILL ON? Four different causes, three of which leave every other
+      # symptom looking perfectly healthy, so guessing between them from the outside does not
+      # work -- reported as "my desktop monitor has been on a long time" with a timeout that was
+      # set correctly the whole time.
+      secs="$(read_secs)"
+      if [ "$secs" -eq 0 ] 2>/dev/null; then
+          echo "timeout:    never (0) -- pc-idle set 120 to turn the display off again"
+      else
+          echo "timeout:    ${secs}s"
+      fi
+      if [ -e "$HOLD" ]; then
+          echo "keep-awake: ON -- something asked to hold the screen awake; pc-idle hold off"
+      else
+          echo "keep-awake: off"
+      fi
+      if pgrep -x swayidle >/dev/null 2>&1; then
+          echo "swayidle:   running (pid $(pgrep -x swayidle | tr '\n' ' ' | sed 's/ $//'))"
+      elif [ "$secs" -eq 0 ] 2>/dev/null; then
+          echo "swayidle:   not running, which is correct while the timeout is never"
+      else
+          echo "swayidle:   NOT RUNNING -- nothing is watching, so the display never turns off"
+      fi
+      # THE CAUSE THAT HIDES FROM EVERY CHECK ABOVE. Sway implements idle-inhibit by never
+      # reporting the seat idle at all, so swayidle's timer does not fire late -- it never fires,
+      # while the daemon sits there looking healthy and the configured timeout looks right.
+      # Chromium takes an inhibitor for any page holding a screen wake lock or playing video (the
+      # shell IS Chromium), and sway.config takes one for a fullscreen Steam game on purpose.
+      tree="$(swaymsg -t get_tree 2>/dev/null || true)"
+      if [ -z "$tree" ]; then
+          echo "inhibitors: cannot ask sway (is SWAYSOCK set? run this inside the session)"
+      elif ! command -v python3 >/dev/null 2>&1; then
+          echo "inhibitors: cannot read the tree without python3"
+      else
+          printf '%s' "$tree" | python3 -c '
+import json, sys
+held = []
+def walk(n):
+    inh = n.get("idle_inhibitors") or {}
+    who = [k for k, v in inh.items() if v and v != "none"]
+    if who:
+        held.append((n.get("app_id") or n.get("window_properties", {}).get("class") or "?",
+                     (n.get("name") or "")[:60], ",".join(sorted(who))))
+    for k in ("nodes", "floating_nodes"):
+        for c in n.get(k) or []:
+            walk(c)
+try:
+    walk(json.load(sys.stdin))
+except Exception as exc:
+    print("inhibitors: could not parse sway tree (%s)" % exc); raise SystemExit(0)
+if not held:
+    print("inhibitors: none -- nothing is holding the screen awake")
+else:
+    print("inhibitors: %d HOLDING THE SCREEN AWAKE" % len(held))
+    for app, title, who in held:
+        print("              %-24s %s  [%s]" % (app, title, who))
+'
+      fi
+      ;;
   run|*)
       [ ! -e "$HOLD" ] || exit 0
       SECS="$(read_secs)"

@@ -254,6 +254,7 @@ async def meme_font():
 
 @router.get("/config")
 async def client_config(request: Request, db: Session = Depends(get_db)):
+    from app.services import registration_service
     op = _operator(db)
     op_npub = None
     if op and op.nostr_npub:
@@ -288,6 +289,11 @@ async def client_config(request: Request, db: Session = Depends(get_db)):
         # Whether this node runs the built-in media server. The client uses it only to decide whether
         # to SHOW the "Go Live" entry points — /api/streams/* still gates the real thing.
         "stream_enabled": _setting(db, "stream_enabled", "false").lower() == "true",
+        # WHETHER SIGNUP IS OPEN HERE. The server-rendered shell already gates the button, but a
+        # BUNDLE (desktop/APK) is built once and pointed at any instance afterwards, so a value
+        # baked at build time is either wrong or permanent. Same reason `nostr_only` is published.
+        # One source for the rule — registration_service.enabled() — never a second inline parse.
+        "registration_enabled": registration_service.enabled(),
         # Optional local Collabora CODE/WOPI editor. The client leaves Office files as ordinary
         # downloads when disabled, so adding the code has zero effect on lightweight nodes.
         "office_enabled": os.getenv("POSTERCHANAI_OFFICE", "0").lower() in {"1", "true", "yes", "on"},

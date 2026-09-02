@@ -424,6 +424,16 @@
     const solo = _standalone();
     if(solo || (CFG && CFG.nostr_only)) window.PC_NOSTR_ONLY = true;
     document.body.classList.toggle('standalone', solo);
+    /* WHETHER SIGNUP IS OPEN IS THE INSTANCE'S ANSWER, AND A BUNDLE HAS TO ASK FOR IT.
+     * The server-rendered shell already hides this row, but a desktop/APK bundle is built once and
+     * pointed at an instance afterwards — a value baked at build time is either wrong or permanent,
+     * so build-www.sh resolves the tag to the OPEN branch and the truth arrives here.
+     * Standalone deliberately keeps it: "create a new identity" with no instance is a local keypair,
+     * not an account on anybody's node, so a closed instance must not take it away. */
+    try{
+      const _foot = document.querySelector('.auth-foot');
+      if(_foot) _foot.classList.toggle('hidden', !solo && !!CFG && CFG.registration_enabled === false);
+    }catch(_){ }
     try{
       $$('.nav-item[data-view]').forEach(b => {
         if(INSTANCE_VIEWS.has(b.dataset.view)){
