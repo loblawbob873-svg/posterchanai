@@ -381,6 +381,71 @@
       };
     });
   }
+  /* THE WALLET SCREEN FOR SOMEBODY WHO IS NOT THE OPERATOR.
+   *
+   * The node wallet is admin-only, so every call a normal user makes to it is a 403 and the screen
+   * showed them the refusal verbatim: "this account cannot open the node wallet — sign in as the
+   * node operator". Reported by the first person who signed up. That message is correct and it is
+   * addressed to the wrong audience — a user opening "Monero Wallet" wants THEIR wallet, and this
+   * node keeps one for them. */
+  function meWalletHtml(s){
+    const locked = amount(s.balance) > 0 && !(amount(s.unlocked_balance) > 0);
+    const mins = Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
+    return '<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">\u0271</span>'
+      + '<div><h2>Monero Wallet</h2><span class="mw-net">' + esc(String(s.network || '').toUpperCase())
+      + '</span></div><button class="btn btn-ghost small" id="mw-refresh">Refresh</button></header>'
+      + '<div class="mw-warning" role="note"><b>This wallet is held by this server.</b> '
+      + 'Keep only tipping amounts in it. You can withdraw to your own wallet at any time \u2014 '
+      + 'and for anything you want to keep, use your own wallet instead.</div>'
+      + '<section class="mw-balance"><span>Available balance</span><strong>'
+      + esc(xmr(s.unlocked_balance, false)) + ' <small>XMR</small></strong>'
+      + '<span class="muted small">' + esc(xmr(s.balance, false)) + ' XMR total'
+      + (locked ? ' \u00b7 unlocks in about ' + esc(String(mins)) + ' min' : '') + '</span></section>'
+      + '<div class="mw-actions"><button class="btn btn-cyan" id="mw-me-receive">Receive</button>'
+      + '<button class="btn" id="mw-me-withdraw">Withdraw</button></div>'
+      + '<section class="mw-card mw-address"><h3>Your receiving address</h3><code>'
+      + esc(s.address || '') + '</code>'
+      + '<button class="btn btn-ghost small" id="mw-me-copy">Copy</button></section></div>';
+  }
+
+  function meBind(s){
+    const by = id => document.getElementById(id);
+    if(by('mw-refresh')) by('mw-refresh').onclick = () => { _meAt = 0; render(true); };
+    if(by('mw-me-copy')) by('mw-me-copy').onclick = () => copy(s.address);
+    if(by('mw-me-receive')) by('mw-me-receive').onclick = () => {
+      PC.modal('<div class="mw-modal"><h3>Receive Monero</h3>'
+        + '<div class="mw-qr">' + qr(uri(s.address, '', ''), 'Your Monero address') + '</div>'
+        + '<code>' + esc(s.address || '') + '</code>'
+        + '<button class="btn btn-cyan full" id="mw-me-qcopy">Copy address</button></div>',
+        r => { const b = r.querySelector('#mw-me-qcopy'); if(b) b.onclick = () => copy(s.address); });
+    };
+    if(by('mw-me-withdraw')) by('mw-me-withdraw').onclick = () => {
+      /* THE WAY OUT. Custody without one is an IOU rather than a wallet, so it is on the screen
+         itself and not buried in a menu. */
+      PC.modal('<div class="mw-modal"><h3>Withdraw everything</h3>'
+        + '<p class="muted small">Sends your whole balance to an address you control. '
+        + 'There is no partial withdrawal: Monero sweeps the account.</p>'
+        + '<label>Your Monero address<input class="input" id="mw-wd-to" autocomplete="off" spellcheck="false"></label>'
+        + '<button class="btn btn-neon full" id="mw-wd-go">Withdraw</button></div>', r => {
+          const go = r.querySelector('#mw-wd-go');
+          go.onclick = async () => {
+            const to = String((r.querySelector('#mw-wd-to') || {}).value || '').trim();
+            if(!validAddress(to, s.network)){ PC.toast('check the Monero address for this network'); return; }
+            go.disabled = true; go.textContent = 'Withdrawing…';
+            try{
+              await request('/api/wallet/xmr/me/withdraw', {method:'POST',
+                headers:{'Accept':'application/json','Content-Type':'application/json'},
+                body: JSON.stringify({address: to})});
+              PC.closeModal(); PC.toast('withdrawal sent'); _meAt = 0; render(true);
+            }catch(e){
+              go.disabled = false; go.textContent = 'Withdraw';
+              PC.toast('withdrawal failed: ' + ((e && e.message) || e));
+            }
+          };
+        });
+    };
+  }
+
   async function render(force){
     if(!PC||PC.VIEW!=='wallet')return;
     /* CLAIM THE FEED BEFORE THE FIRST AWAIT, AND CLAIM IT WITH WHAT WE ALREADY KNOW.
@@ -404,6 +469,20 @@
     else if(f) f.innerHTML='<div class="spinner"></div>';
     const s=await probe(!!force);
     if(PC.VIEW!=='wallet')return;
+    /* A REFUSAL FROM THE NODE WALLET IS NOT THIS USER'S ANSWER. It is admin-only, so for everybody
+       else it always 403s — showing them that message is showing them somebody else's error. If
+       this node keeps a wallet for them, that is the wallet this screen is about. */
+    if(s && !s.available){
+      try{
+        const me = await meProbe(!!force);
+        if(me && me.enabled){
+          if(PC.VIEW!=='wallet')return;
+          const f2 = document.getElementById('feed');
+          if(f2){ f2.innerHTML = meWalletHtml(me); meBind(me); }
+          return;
+        }
+      }catch(_){ }
+    }
     paint(s);
     _watch(s);
   }

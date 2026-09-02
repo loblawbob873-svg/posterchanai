@@ -239,3 +239,31 @@ def test_the_three_paths_are_tried_in_the_right_order():
     tail = app[at:at + 6000]
     assert tail.index("_xmrWallet.meTip(_tipOpts)") < tail.index("monero:"), (
         "the user's wallet is never reached — the URI flow runs first")
+
+
+def test_a_normal_user_never_sees_the_node_wallets_refusal(seen):
+    """Reported by the first person who signed up: "i made new user and wallet broken — this account
+    cannot open the node wallet, sign in as the node operator".
+
+    That message is correct and addressed to the wrong audience. The node wallet is admin-only, so
+    for everybody who is not the operator every call to it is a 403 — showing them that refusal is
+    showing them somebody else's error, on a screen called "Monero Wallet" while this node is
+    holding a wallet for them."""
+    assert seen["userScreen"]["showsAdminRefusal"] is False, (
+        "a normal user is still shown the operator's admin-only refusal")
+    assert seen["userScreen"]["showsTheirBalance"] is True, "their own balance is not shown"
+    assert seen["userScreen"]["showsAddress"] is True, "no receiving address — they cannot be tipped"
+
+
+def test_the_user_screen_states_who_holds_the_money_and_offers_the_exit(seen):
+    """Custody said where the person is looking at the balance, and the way out on the screen
+    itself rather than buried in a menu."""
+    assert seen["userScreen"]["saysCustodial"] is True
+    assert seen["userScreen"]["hasWithdraw"] is True, (
+        "no withdraw on the wallet screen — that makes the balance an IOU")
+
+
+def test_a_node_without_user_wallets_still_explains_itself(seen):
+    """Most nodes will not offer this. With nothing of the user's to show, the node wallet's own
+    message is the honest one — the fix must not blank the screen for those."""
+    assert seen["noUserWallets"]["fallsBackToNodeMessage"] is True

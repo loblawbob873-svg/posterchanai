@@ -240,4 +240,33 @@ function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 
   out.userWalletWrongNet = { answered: await w.api.meTip({ address: '5' + 'C'.repeat(94) }), opened };
 }
 
+// 20. A NON-ADMIN OPENING THE WALLET SCREEN sees THEIR wallet, not the node's refusal.
+{
+  const w = boot({ fetcher: p => {
+    if (p.includes('/me/status'))  return OK({ enabled: true, network: 'mainnet' });
+    if (p.includes('/me/balance')) return OK({ address: ADDR, balance: '0.25',
+                                               unlocked_balance: '0.25', blocks_to_unlock: 0, outputs: 3 });
+    // every node-wallet route 403s for a normal user
+    throw new Error('this account cannot open the node wallet — sign in as the node operator (the wallet is admin-only)');
+  }});
+  await w.api.render();
+  const h = w.feed.innerHTML;
+  out.userScreen = {
+    showsAdminRefusal: /node operator|admin-only/.test(h),
+    showsTheirBalance: /0\.25/.test(h),
+    showsAddress: h.includes(ADDR),
+    hasWithdraw: /mw-me-withdraw/.test(h),
+    saysCustodial: /held by this server/.test(h),
+  };
+}
+// 21. A node with NO user wallets still shows the node wallet's own message (nothing else to show).
+{
+  const w = boot({ fetcher: p => {
+    if (p.includes('/me/status')) return OK({ enabled: false });
+    throw new Error('this account cannot open the node wallet — sign in as the node operator (the wallet is admin-only)');
+  }});
+  await w.api.render();
+  out.noUserWallets = { fallsBackToNodeMessage: /node operator|external-wallet mode/.test(w.feed.innerHTML) };
+}
+
 console.log(JSON.stringify(out));
