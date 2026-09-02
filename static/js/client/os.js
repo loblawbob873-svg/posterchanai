@@ -8486,6 +8486,25 @@
      * knew what the product was. An explicit Desktop choice is still remembered as true. The real
      * PosterChanOS machine returned above and therefore remains a desktop unconditionally. */
     try{ if(settings().get(KEY, false) && fits()) enter(); }catch(_){}
+    /* THE MACHINE'S ANSWER ARRIVES LATE, AND THE DECISION ABOVE IS MADE SYNCHRONOUSLY.
+     *
+     * `PCOSShell.available()` is a plain read of `_have`, which is null until the ASYNC `detect()`
+     * has asked the compositor. So on a boot where detect has not answered yet, the PosterChanOS
+     * branch above is skipped and the fall-through applies BOTH the remembered preference and
+     * `fits()` — a size check. Reproduced against this file with detect pending and a window not
+     * yet at its real width: desktop=false, permanently, because nothing re-decides. Every other
+     * combination is fine, which is why it showed up once, in a restart whose predecessor was still
+     * tearing down (`Network service crashed`, `GPU process launch failed` in that boot's log) —
+     * exactly the conditions that delay the socket AND the window's first size together.
+     *
+     * So ask properly and enter when the answer comes. Additive by construction: `enter()` is
+     * idempotent and refuses inside a window, and a browser has no compositor bridge, so `detect()`
+     * resolves false there and this changes nothing. It deliberately does NOT consult `fits()` —
+     * the machine is whatever size it is, which is the same reason the branch above skips it. */
+    try{
+      if(window.PCOSShell && PCOSShell.detect)
+        PCOSShell.detect().then(yes => { if(yes) enter(); }).catch(()=>{});
+    }catch(_){}
   }
 
   /* A BARE SUPER PRESS OPENS THE START MENU — the other half of the tick above, for the press made
