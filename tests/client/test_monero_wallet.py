@@ -94,7 +94,8 @@ def test_wallet_is_wired_as_optional_module_and_tip_falls_back():
     # not using built-in wallet! desktop works but not android".
     assert "_withModule('monero-wallet.js', 'PCMoneroWallet')" in app
     assert "await _xmrWallet.tip" in app
-    assert "catch(_){}" in app[app.index("await _xmrWallet.tip"):][:500]
+    assert "catch(_){}" in app[app.index("await _xmrWallet.tip"):][:2000], (
+        "the built-in wallet path is no longer fail-closed — a throw would break tipping entirely")
     assert 'data-view="wallet"' in tpl
     assert '/static/js/client/monero-wallet.js' in tpl
 

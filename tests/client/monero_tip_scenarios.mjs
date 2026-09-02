@@ -141,9 +141,10 @@ function mainnetWallet() {
     : mainnetWallet()(p)) });
   await w.api.render();
   let html = ''; w.PC.modal = h => { html = h; };
+  const toasts = []; w.PC.toast = t => toasts.push(String(t));
   const answered = await w.api.tip({ address: ADDR, name: 'x' });
-  out.lockedKeepsWallet = { answered, saysLocking: /still locking/i.test(html),
-                            saysMinutes: /8 minutes/.test(html) };
+  out.lockedKeepsWallet = { answered, opened: !!html,
+                            toldWhy: toasts.some(t => /unlocks in ~8 min/.test(t)) };
 }
 
 // 12. A wallet holding NOTHING still hands the tip to the external flow — that is the one case
@@ -171,6 +172,33 @@ function mainnetWallet() {
   allow = true;                                    // the session is ready now
   let opened = false; w.PC.modal = () => { opened = true; };
   out.recoversAfterEarlyFailure = { answered: await w.api.tip({ address: ADDR, name: 'x' }), opened };
+}
+
+// 14. THE SEND SHEET OFFERS THE SAME ONE-TAP AMOUNTS as the external flow, and remembers the last.
+{
+  const w = boot({ fetcher: p => (p.includes('/balance')
+    ? OK({ balance: '2.5', unlocked_balance: '2.5' })
+    : mainnetWallet()(p)) });
+  await w.api.render();
+  let html = ''; w.PC.modal = h => { html = h; };
+  await w.api.tip({ address: ADDR, name: 'x', presets: ['0.001', '0.01', '0.1'], amount: '0.01' });
+  out.presets = {
+    chips: (html.match(/data-mw-amt=/g) || []).length,
+    prefilled: /id="mw-amount"[^>]*value="0\.01"/.test(html),
+    labelled: /\u0271 0\.01/.test(html),
+  };
+}
+
+// 15. No presets configured is not an empty row of nothing.
+{
+  const w = boot({ fetcher: p => (p.includes('/balance')
+    ? OK({ balance: '2.5', unlocked_balance: '2.5' })
+    : mainnetWallet()(p)) });
+  await w.api.render();
+  let html = ''; w.PC.modal = h => { html = h; };
+  await w.api.tip({ address: ADDR, name: 'x' });
+  out.noPresets = { chips: (html.match(/data-mw-amt=/g) || []).length,
+                    row: /mw-presets/.test(html) };
 }
 
 console.log(JSON.stringify(out));

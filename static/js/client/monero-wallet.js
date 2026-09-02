@@ -266,6 +266,22 @@
     const u=uri(state.address,'','PosterChan');
     PC.modal('<div class="mw-modal"><h3>Receive Monero</h3><span class="mw-net">'+esc((state.network||'stagenet').toUpperCase())+'</span><div class="mw-qr">'+(qr(u,'Monero receive QR')||'<span>QR unavailable</span>')+'</div><code>'+esc(state.address)+'</code><div class="mw-actions"><button class="btn btn-cyan" id="mw-modal-copy">Copy address</button><a class="btn btn-ghost" href="'+esc(u)+'">Open wallet</a></div></div>',r=>{r.querySelector('#mw-modal-copy').onclick=()=>copy(state.address);});
   }
+  /* THE SAME ONE-TAP AMOUNTS THE EXTERNAL FLOW OFFERS.
+   *
+   * The built-in wallet's sheet had a bare number box while the URI/QR modal beside it had preset
+   * chips and remembered the last amount — so using the wallet that is meant to be the SEAMLESS one
+   * meant typing an amount every time. Reported as "it's missing the pre-filled zap amounts in it".
+   *
+   * The list is passed in by the caller (`xmrPresets()`, a synced user setting) rather than owned
+   * here: two lists of "your usual tip" would drift the first time somebody edited one. */
+  function _presetRow(opts){
+    const list=(opts&&Array.isArray(opts.presets)?opts.presets:[]).filter(a=>amount(a)>0);
+    if(!list.length) return '';
+    return '<div class="xmr-presets mw-presets">'
+      + list.map(a=>'<button type="button" class="xmr-preset" data-mw-amt="'+esc(String(a))+'">\u0271 '+esc(String(a))+'</button>').join('')
+      + '</div>';
+  }
+
   function sendDialog(opts){
     opts=opts||{}; const preset=validAddress(opts.address,state&&state.network)?opts.address:'';
     /* SAY WHY IT CANNOT SEND YET, at the top, before an amount is typed.
@@ -283,8 +299,13 @@
         + '). Monero locks the change from every payment — nothing is lost. '
         + 'Until then, tip from an external wallet.</div>'
       : '';
-    PC.modal('<div class="mw-modal"><h3>'+(preset?'Tip '+esc(opts.name||'with Monero'):'Send Monero')+'</h3>'+warning()+_lockNote+'<button type="button" class="btn btn-cyan full mw-scan" id="mw-scan">Scan wallet QR</button><div class="mw-scan-stage hidden" id="mw-scan-stage"><video playsinline muted></video><span>Point at a Monero payment QR…</span><button type="button" class="btn btn-ghost small" id="mw-scan-cancel">Cancel scan</button></div><label>Recipient address<input class="input" id="mw-to" value="'+esc(preset)+'" autocomplete="off" spellcheck="false"></label><label>Amount (XMR)<input class="input" id="mw-amount" type="number" min="0.000000000001" step="0.0001" inputmode="decimal"></label><label>Note (stored only in your wallet)<input class="input" id="mw-note" maxlength="120"></label><button class="btn btn-neon full" id="mw-review">Review payment</button></div>',r=>{
+    PC.modal('<div class="mw-modal"><h3>'+(preset?'Tip '+esc(opts.name||'with Monero'):'Send Monero')+'</h3>'+warning()+_lockNote+'<button type="button" class="btn btn-cyan full mw-scan" id="mw-scan">Scan wallet QR</button><div class="mw-scan-stage hidden" id="mw-scan-stage"><video playsinline muted></video><span>Point at a Monero payment QR…</span><button type="button" class="btn btn-ghost small" id="mw-scan-cancel">Cancel scan</button></div><label>Recipient address<input class="input" id="mw-to" value="'+esc(preset)+'" autocomplete="off" spellcheck="false"></label><label>Amount (XMR)<input class="input" id="mw-amount" type="number" min="0.000000000001" step="0.0001" inputmode="decimal" value="'+esc(String(opts.amount||''))+'"></label>'+_presetRow(opts)+'<label>Note (stored only in your wallet)<input class="input" id="mw-note" maxlength="120"></label><button class="btn btn-neon full" id="mw-review">Review payment</button></div>',r=>{
       r.querySelector('#mw-scan').onclick=()=>scanPayment(r);
+      // One tap fills the amount, exactly as it does in the external flow.
+      Array.prototype.forEach.call(r.querySelectorAll('[data-mw-amt]'), b=>{
+        b.onclick=()=>{ const el=r.querySelector('#mw-amount');
+          if(el){ el.value=b.getAttribute('data-mw-amt'); try{ el.focus(); }catch(_){ } } };
+      });
       r.querySelector('#mw-review').onclick=()=>{
         let to=r.querySelector('#mw-to').value.trim();
         // Pasting a complete payment URI into the address field is the permission-free scanner
@@ -463,18 +484,28 @@
      * Answering false hands the tip back to the non-custodial URI/QR flow, which needs no local
      * wallet at all and is the thing that actually works right now. The local wallet takes over
      * again by itself the moment it has spendable funds. */
-    /* EMPTY AND LOCKED ARE DIFFERENT ANSWERS.
+    /* A WALLET THAT CANNOT PAY MUST NOT STAND IN THE WAY OF PAYING.
      *
-     * Refusing on zero SPENDABLE balance was right for an empty wallet and wrong the moment you had
-     * used it: Monero locks the change from a send for 10 blocks, so a successful tip drops the
-     * unlocked balance to zero for ~20 minutes. The built-in wallet then quietly handed the next zap
-     * to the external flow — reported as "you fixed android but broke webui".
+     * Three versions of this, and the middle one was mine: refusing on zero SPENDABLE balance sent
+     * every zap external for the ~20 minutes after a send (Monero locks the change from a payment
+     * for 10 blocks), so the built-in wallet "stopped working" after each use. Keeping the built-in
+     * sheet instead fixed that and broke something worse — the sheet opens, refuses the amount, and
+     * the zap cannot be made at all. Reported as "i can't zap again because it says I have to wait
+     * 18 min despite nothing pending in my wallet": nothing IS pending; it is the change from their
+     * own sends, and the number was right while the behaviour was useless.
      *
-     * So: nothing at all hands the tip back (the external wallet is genuinely the only way to pay).
-     * A balance that is merely LOCKING keeps the built-in wallet, and the send dialog says how many
-     * blocks are left instead of failing with a refusal from the daemon. */
-    const held = Number(String(s.balance == null ? 0 : s.balance).replace(/,/g,''));
-    if(!Number.isFinite(held) || held <= 0) return false;
+     * What somebody clicking ɱ wants is to pay. So a wallet with nothing spendable hands the tip to
+     * the external flow — which works right now — and SAYS why, so the built-in wallet going quiet
+     * for a while is explained rather than mysterious. It takes over again by itself. */
+    const spendable = Number(String(s.unlocked_balance == null ? 0 : s.unlocked_balance).replace(/,/g,''));
+    if(!Number.isFinite(spendable) || spendable <= 0){
+      const held = Number(String(s.balance == null ? 0 : s.balance).replace(/,/g,''));
+      const mins = Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
+      if(Number.isFinite(held) && held > 0){
+        try{ PC.toast('local wallet unlocks in ~' + mins + ' min (change from your last payment) — using your external wallet'); }catch(_){ }
+      }
+      return false;
+    }
     sendDialog(opts||{});return true;
   }
   async function openReceive(){

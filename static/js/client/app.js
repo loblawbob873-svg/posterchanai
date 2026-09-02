@@ -13213,7 +13213,18 @@
         || await _withModule('monero-wallet.js', 'PCMoneroWallet');
       if(_xmrWallet && await _xmrWallet.tip({
         address:addr, name:p.name||p.display_name||'anon', noteId, pubkey:pk,
-        onSent:(amount, txid)=>_postXmrTipNote(noteId, pk, amount, addr, txid||'', '')
+        /* THE SAME AMOUNTS THE EXTERNAL FLOW OFFERS. They are a user setting (`xmrPresets`, synced
+           across devices), so they are passed in rather than duplicated in the wallet module —
+           two lists of "your usual tip" would drift the first time somebody edited one. The last
+           amount sent is offered the same way it is below. */
+        presets:xmrPresets(), amount:ClientSettings.get('xmrLastAmt','')||'',
+        onSent:(amount, txid)=>{
+          // Remember it here too, so tipping from the built-in wallet feeds the same memory the
+          // external flow writes — otherwise your usual amount depends on which path you took.
+          try{ if(amount){ ClientSettings.set('xmrLastAmt', String(amount)); _prefTouched.add('xmrTip');
+                           saveClientPrefsNostr({ xmrTip: String(amount) }); } }catch(_){ }
+          _postXmrTipNote(noteId, pk, amount, addr, txid||'', '');
+        }
       })) return;
     }catch(_){}
     const name=enc(p.name||p.display_name||'anon');

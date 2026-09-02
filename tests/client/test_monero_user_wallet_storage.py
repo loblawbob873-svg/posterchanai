@@ -256,8 +256,11 @@ def test_a_tip_note_is_only_posted_for_a_send_that_actually_happened():
     """`onSent` is the built-in wallet's success callback and fires after the server confirmed the
     transfer. A note posted on the attempt would publicly credit a payment that failed."""
     src = _src()
-    window = src[src.index("if(_xmrWallet && await _xmrWallet.tip("):][:600]
-    assert "onSent:(amount, txid)=>_postXmrTipNote" in window
+    window = src[src.index("if(_xmrWallet && await _xmrWallet.tip("):][:1600]
+    # The callback also remembers the amount now, so it is a block rather than a one-liner. What
+    # matters is unchanged: the note is posted from onSent — i.e. only for a send that happened.
+    assert "onSent:(amount, txid)=>{" in window
+    assert "_postXmrTipNote(noteId, pk, amount, addr, txid||'', '')" in window
     assert "prepare" not in window, "the note is posted from the preparation, not the confirmation"
 
 

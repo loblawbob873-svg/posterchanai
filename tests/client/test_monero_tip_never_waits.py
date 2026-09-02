@@ -120,23 +120,26 @@ def test_an_empty_wallet_hands_the_tip_back_instead_of_offering_to_spend(seen):
     assert seen["emptyWallet"]["opened"] is False, "the send dialog was opened anyway"
 
 
-def test_a_locked_balance_keeps_the_built_in_wallet_and_explains_the_wait(seen):
-    """EMPTY AND LOCKED ARE DIFFERENT ANSWERS, and conflating them broke the web UI.
+def test_a_locked_wallet_lets_the_tip_through_and_says_why(seen):
+    """A WALLET THAT CANNOT PAY MUST NOT STAND IN THE WAY OF PAYING.
 
-    Monero locks the CHANGE from every send for 10 blocks, so a successful tip drops the spendable
-    balance to zero for about twenty minutes. Refusing on spendable balance therefore meant the
-    built-in wallet worked once and then quietly handed every following zap to the external flow —
-    reported as "you fixed android but broke webui". Measured on the real wallet at the time:
-    balance 0.00788058, unlocked 0, blocks_to_unlock 4.
+    Three versions of this. Refusing on spendable balance sent every zap external for the ~20
+    minutes after a send (Monero locks the change from a payment for 10 blocks), so the built-in
+    wallet appeared to stop working after each use — "you fixed android but broke webui". Keeping
+    the built-in sheet fixed that and broke something worse: the sheet opens, refuses the amount,
+    and the zap cannot be made at all — "i can't zap again because it says I have to wait 18 min
+    despite nothing pending in my wallet". Nothing IS pending; it is the change from their own
+    sends, and the number was right while the behaviour was useless.
 
-    So a locked wallet keeps the built-in path and the dialog states the wait, instead of accepting
-    a payment the daemon will refuse."""
-    assert seen["lockedKeepsWallet"]["answered"] is True, (
-        "a wallet whose balance is merely locking hands the tip away again — it stops working for "
-        "twenty minutes after every successful tip")
-    assert seen["lockedKeepsWallet"]["saysLocking"] is True, "nothing tells the user why"
-    assert seen["lockedKeepsWallet"]["saysMinutes"] is True, (
-        "the wait is not quantified, so 'locked' reads as 'broken'")
+    Somebody clicking ɱ wants to pay. So a wallet with nothing spendable hands the tip to the
+    external flow — which works right now — and says why, so the built-in wallet going quiet for a
+    while is explained rather than mysterious."""
+    assert seen["lockedKeepsWallet"]["answered"] is False, (
+        "a locked wallet still takes the tip, and then refuses the amount — the zap cannot be made")
+    assert seen["lockedKeepsWallet"]["opened"] is False, (
+        "the built-in send sheet opened for a wallet that cannot send")
+    assert seen["lockedKeepsWallet"]["toldWhy"] is True, (
+        "the built-in wallet went quiet with no explanation and no unlock time")
 
 
 def test_a_wallet_holding_nothing_still_hands_the_tip_back(seen):
@@ -163,3 +166,20 @@ def test_an_early_failed_probe_does_not_latch(seen):
         "a probe that failed before the session was ready still decides every later tip")
     assert seen["recoversAfterEarlyFailure"]["opened"] is True, (
         "the built-in wallet's send sheet never opened")
+
+
+def test_the_send_sheet_offers_the_same_one_tap_amounts(seen):
+    """The built-in wallet's sheet had a bare number box while the URI/QR modal beside it had preset
+    chips and remembered the last amount — so using the wallet that is meant to be the SEAMLESS path
+    meant typing an amount every time. Reported as "it's missing the pre-filled zap amounts in it".
+
+    The list is passed in from `xmrPresets()` (a synced user setting) rather than owned by the wallet
+    module: two lists of "your usual tip" drift the first time somebody edits one."""
+    assert seen["presets"]["chips"] == 3, "the send sheet offers no one-tap amounts"
+    assert seen["presets"]["prefilled"] is True, "the last amount you sent is not filled in"
+    assert seen["presets"]["labelled"] is True, "a preset chip does not show its amount"
+
+
+def test_no_configured_presets_draws_no_empty_row(seen):
+    assert seen["noPresets"]["chips"] == 0
+    assert seen["noPresets"]["row"] is False, "an empty preset row is drawn with nothing in it"
