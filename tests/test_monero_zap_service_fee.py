@@ -205,3 +205,92 @@ def test_every_recipient_in_a_big_batch_is_still_paid(monkeypatch):
     pay(pool, [(ADDR_A, XMR // 100)] * 30)
     paid = [d for chunk in pool.sent for d in chunk if d["address"] != FEE_ADDR]
     assert len(paid) == 30
+
+
+# ── the address an operator saves in Admin ───────────────────────────────────────────────────────
+#
+# Reported as "i saved my address in admin, make sure persists and hydrates". Persistence is the
+# settings store's job and it works; what did NOT work was this module, which cached the resolved
+# address for the LIFE OF THE PROCESS on the reasoning that "an address does not change". It does —
+# it is a field in Admin. Two silent failures came out of that: an address saved after the process
+# had already resolved once had no effect until a restart (the fee just stayed off), and an address
+# CHANGED later kept paying the old one. Reading a hydrated setting is a dict lookup.
+
+class AddressPool(UserWallets):
+    """Only the setting lookup and the network, which is all fee_address() needs."""
+
+    def __init__(self, network="mainnet"):
+        self.network = network
+        self._fee_address = None
+        self._fee_at = 0.0
+
+
+def resolve(monkeypatch, value, network="mainnet"):
+    monkeypatch.setenv("MONERO_ZAP_FEE_ADDRESS", value)
+    return asyncio.run(AddressPool(network).fee_address())
+
+
+def test_a_saved_address_is_used(monkeypatch):
+    assert resolve(monkeypatch, FEE_ADDR) == FEE_ADDR
+
+
+def test_changing_the_address_takes_effect_without_a_restart(monkeypatch):
+    """THE BUG. The same pool instance must follow the setting, or an operator who corrects a typo
+    carries on paying the address they just removed."""
+    pool = AddressPool()
+    monkeypatch.setenv("MONERO_ZAP_FEE_ADDRESS", FEE_ADDR)
+    assert asyncio.run(pool.fee_address()) == FEE_ADDR
+    other = "4" + "C" * 94
+    monkeypatch.setenv("MONERO_ZAP_FEE_ADDRESS", other)
+    assert asyncio.run(pool.fee_address()) == other, (
+        "the pool is still using the previously resolved address — an operator changing it in "
+        "Admin would keep sending their fee to the old one until the process restarted")
+
+
+def test_clearing_the_address_stops_using_it(monkeypatch):
+    """Blank means "use the node's own wallet", and with no node wallet reachable that means no fee.
+    It must not keep paying the address that was just cleared."""
+    pool = AddressPool()
+    monkeypatch.setenv("MONERO_ZAP_FEE_ADDRESS", FEE_ADDR)
+    assert asyncio.run(pool.fee_address()) == FEE_ADDR
+    monkeypatch.setenv("MONERO_ZAP_FEE_ADDRESS", "")
+    assert asyncio.run(pool.fee_address()) != FEE_ADDR
+
+
+def test_an_address_for_the_wrong_network_is_refused(monkeypatch):
+    """A mainnet address on a stagenet node (or the reverse) is not a small mistake — it is money
+    sent somewhere unspendable. No fee is far better."""
+    assert resolve(monkeypatch, FEE_ADDR, network="stagenet") == ""
+
+
+def test_rubbish_in_the_field_takes_no_fee(monkeypatch):
+    for junk in ("not an address", "4", "0" * 95, "   "):
+        assert resolve(monkeypatch, junk) == ""
+
+
+def test_whitespace_around_a_pasted_address_is_tolerated(monkeypatch):
+    """Addresses get pasted, and a trailing newline should not silently disable the fee."""
+    assert resolve(monkeypatch, "  " + FEE_ADDR + "\n") == FEE_ADDR
+
+
+def test_the_setting_is_declared_so_it_hydrates_and_survives_a_save():
+    """An undeclared key is dropped from the settings GET, loads blank on every visit, and is then
+    written back empty by the next Save — the documented failure mode in CLAUDE.md."""
+    from app.schemas import SettingsResponse
+    fields = SettingsResponse.model_fields
+    assert "monero_zap_fee_address" in fields
+    assert "monero_zap_fee_percent" in fields
+
+
+def test_the_admin_inputs_hydrate_and_save_the_same_key():
+    """Hydration reads the element id, Save reads its name. They must agree or the field loads
+    blank forever."""
+    import re
+    from pathlib import Path
+    html = (Path(__file__).resolve().parents[1]
+            / "templates/admin/tabs/monero_wallet.html").read_text(encoding="utf-8")
+    for key in ("monero_zap_fee_percent", "monero_zap_fee_address"):
+        tag = re.search(r'<input[^>]*\b(?:id|name)="' + key + r'"[^>]*>', html)
+        assert tag, f"{key} has no input in the Monero admin tab"
+        assert f'id="{key}"' in tag.group(0) and f'name="{key}"' in tag.group(0), (
+            f"{key}'s input must carry the same id and name")

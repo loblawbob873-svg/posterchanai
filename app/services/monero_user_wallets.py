@@ -22,6 +22,7 @@ import asyncio
 import importlib
 import logging
 import os
+import time
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any
 
@@ -103,6 +104,7 @@ class UserWallets:
         self.network = _setting("monero_wallet_network", "MONERO_WALLET_NETWORK", "stagenet").lower()
         self.timeout = float(_setting("monero_wallet_rpc_timeout", "MONERO_WALLET_RPC_TIMEOUT", "8"))
         self._fee_address: str | None = None
+        self._fee_at = 0.0
         self._lock = asyncio.Lock()
 
     def enabled(self) -> bool:
@@ -216,30 +218,42 @@ class UserWallets:
             "outputs": sum(int(x.get("num_unspent_outputs") or 0) for x in subs),
         }
 
+    #: How long the NODE-WALLET fallback address is reused. The configured setting is
+    #: never cached — see fee_address().
+    FEE_ADDRESS_TTL = 60.0
+
     async def fee_address(self) -> str:
         """Where the operator's cut goes — their configured address, else the node wallet's own.
 
-        Cached for the process: an address does not change, and this is on the path of every zap.
-        Returns "" for anything it cannot verify, which switches the fee off rather than sending
-        somebody's money somewhere unproven. Note the ORDER: an explicitly configured address wins,
-        so an operator can bank the fee somewhere other than the hot wallet the node spends from.
-        """
-        if self._fee_address is not None:
-            return self._fee_address
+        THE CONFIGURED VALUE IS RE-READ ON EVERY CALL, and that is deliberate. The first version
+        cached the resolved address for the life of the process, on the reasoning that "an address
+        does not change" — which is exactly wrong for a field an operator edits in Admin. Two ways
+        it fails, both silent: an address saved AFTER the process resolved it once takes no effect
+        until a restart (the fee quietly stays off), and worse, an address CHANGED after the fact
+        keeps sending the operator's money to the old one. Reading a hydrated setting is an
+        in-memory dict lookup, so there was nothing to save.
 
+        Only the node-wallet FALLBACK is cached, because that one costs an RPC round trip, and it is
+        cached briefly rather than for ever.
+
+        Returns "" for anything it cannot verify, which switches the fee off rather than sending
+        money somewhere unproven. The ORDER matters: an explicitly configured address wins, so the
+        fee can be banked somewhere other than the hot wallet this node spends from."""
         configured = _setting("monero_zap_fee_address", "MONERO_ZAP_FEE_ADDRESS", "").strip()
         if configured:
             try:
                 validate_address(configured, self.network)
-                self._fee_address = configured
                 return configured
             except WalletError:
                 logger.warning("[monero] the configured zap fee address is not a valid %s address "
                                "— no fee will be taken", self.network)
-                self._fee_address = ""
                 return ""
 
         # Fall back to the node's own wallet: "goes to my wallet" with nothing else to configure.
+        now = time.monotonic()
+        if self._fee_address is not None and now - self._fee_at < self.FEE_ADDRESS_TTL:
+            return self._fee_address
+        resolved = ""
         try:
             node = importlib.import_module("app.services.monero_wallet_service")
             # Built per call, exactly as the node-wallet router does — there is no singleton, and
@@ -248,12 +262,12 @@ class UserWallets:
             got = await wallet.address()
             addr = str((got or {}).get("address") or "").strip()
             validate_address(addr, self.network)
-            self._fee_address = addr
-            return addr
+            resolved = addr
         except Exception:
             # Including a node wallet that is off, unreachable or on another network. No fee.
-            self._fee_address = ""
-            return ""
+            resolved = ""
+        self._fee_address, self._fee_at = resolved, now
+        return resolved
 
     async def pay(self, pubkey: str, payments: list[tuple[str, int]]) -> dict[str, Any]:
         """Pay one or many people from THIS user's account, in as few transactions as possible.
