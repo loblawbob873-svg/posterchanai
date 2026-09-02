@@ -26,7 +26,7 @@ from email.header import decode_header
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formatdate, parseaddr
+from email.utils import formatdate, make_msgid, parseaddr
 from typing import List, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -1223,6 +1223,21 @@ def send_email(
         msg["To"] = to_clean
         msg["Subject"] = subject
         msg["Date"] = formatdate(localtime=True)
+        # A MESSAGE WE SEND MUST CARRY AN ID WE KEEP, or nothing can ever thread it.
+        #
+        # Nothing set one, so the MTA assigned it on the way out: the recipient replies quoting an
+        # ID this mailbox has never seen, and the copy appended to Sent below has no ID at all. The
+        # reference graph therefore cannot link either direction — a conversation the user STARTED
+        # showed their reply and not their original, and the reply that came back stood alone.
+        # Reported as "threads is better but it's missing the sent items".
+        #
+        # Generated here rather than left to the server because both halves have to agree: this is
+        # the id that goes out AND the id stored in Sent. The domain comes from the account so it
+        # looks like what it is; make_msgid's uniqueness does the rest.
+        try:
+            msg["Message-ID"] = make_msgid(domain=(account.email.split("@", 1)[1] or None))
+        except Exception:
+            msg["Message-ID"] = make_msgid()
 
         if cc:
             msg["Cc"] = cc

@@ -171,6 +171,23 @@ AUDIT = r"""(() => {
     const fs = parseFloat(getComputedStyle(i).fontSize);
     if (fs < 16) out.zoomy.push({cls: (i.id || i.className || i.type), fs});
   });
+  /* HOW MUCH OF THE PHONE IS ACTUALLY MAIL? Reported as "email UI is terrible on mobile, you get
+     less than half the screen now" — which no assertion here could see, because everything was
+     measured for overflow and tap size and nothing for the vertical BUDGET. */
+  const px = el => { if(!el) return 0; const r=el.getBoundingClientRect();
+                     return (!el.checkVisibility || el.checkVisibility()) ? Math.max(0, Math.round(r.height)) : 0; };
+  out.vh = window.innerHeight;
+  out.chrome = {
+    top:     px(document.querySelector('.mail-list-top')),
+    folders: px(document.querySelector('.mail-folders')),
+    head:    px(document.querySelector('.mail-head')),
+    acct:    px(document.querySelector('.mail-accounts')),
+    nav:     px(document.querySelector('.mobilenav')),
+  };
+  out.listH = px(document.querySelector('.mail-items'));
+  out.readH = px(document.querySelector('.mail-read'));
+  out.listFrac = out.vh ? +(out.listH / out.vh).toFixed(2) : 0;
+  out.readFrac = out.vh ? +(out.readH / out.vh).toFixed(2) : 0;
   const list = document.querySelector('.mail-items');
   const nav = document.querySelector('.mobilenav');
   if (list) out.listBottom = Math.round(list.getBoundingClientRect().bottom);
@@ -270,6 +287,15 @@ OPEN_MESSAGE = r"""(async () => {
            wide: !!(r && Math.round(r.width) > window.innerWidth + 1),
            paneH: r ? Math.round(r.height) : 0,
            bodyH: br ? Math.round(br.height) : 0,
+           /* THE VERTICAL BUDGET WHILE READING — "you get less than half the screen".
+              vh is the whole phone; paneFrac is how much of it the open mail occupies, and
+              bodyFrac how much is the message itself rather than headers, actions and app chrome. */
+           vh: window.innerHeight,
+           paneFrac: r ? +(r.height / window.innerHeight).toFixed(2) : 0,
+           bodyFrac: br ? +(br.height / window.innerHeight).toFixed(2) : 0,
+           listStillThere: (() => { const l=document.querySelector('.mail-items');
+             if(!l) return 0; const lr=l.getBoundingClientRect();
+             return (!l.checkVisibility || l.checkVisibility()) ? Math.round(lr.height) : 0; })(),
            attachment: (() => {
              const a = document.querySelector('.mail-att');
              return a ? { href:a.href, host:new URL(a.href).host } : null;
@@ -437,6 +463,10 @@ async def drive(url):
                 if r is None:
                     print(f"SKIP  {label}: page did not evaluate")
                     return 2
+                if os.environ.get("PC_DEBUG"):
+                    print(f"  DEBUG {label}: vh={r.get('vh')} list={r.get('listH')}"
+                          f"({r.get('listFrac')}) read={r.get('readH')}({r.get('readFrac')}) "
+                          f"chrome={r.get('chrome')}", flush=True)
                 if r["overflow"]:
                     problems.append((label, "horizontal-overflow",
                                      "a subject or address scrolls the page sideways"))
@@ -511,6 +541,27 @@ async def drive(url):
                                          f"{bb['barW']}px bar ({bb['labels']})"))
 
                 op = await js(OPEN_MESSAGE, awaited=True)
+                if phone and op and op.get("vh"):
+                    # THE VERTICAL BUDGET, asserted. Reported as "email UI is terrible on mobile,
+                    # you get less than half the screen" — and nothing here could see it, because
+                    # every existing assertion was about overflow, tap size and button rows, and
+                    # none about how much of the phone the MAIL gets. Measured at the time of
+                    # writing: pane 100% of the viewport, body 62% of it. The floor is set below
+                    # what was measured, so it catches a regression rather than pinning a pixel.
+                    if op.get("paneFrac", 0) < 0.9:
+                        problems.append((label, "reading-pane-too-small",
+                                         f"the open mail covers {op['paneFrac']} of the screen — "
+                                         f"on a phone it should be the whole of it"))
+                    if op.get("bodyFrac", 0) < 0.5:
+                        problems.append((label, "message-body-squeezed",
+                                         f"the message itself gets {op['bodyFrac']} of the screen "
+                                         f"({op.get('bodyH')}px of {op.get('vh')}px) — the rest is "
+                                         f"headers, actions and chrome"))
+                if os.environ.get("PC_DEBUG") and op:
+                    print(f"  DEBUG {label} OPEN: vh={op.get('vh')} pane={op.get('paneH')}"
+                          f"({op.get('paneFrac')}) body={op.get('bodyH')}({op.get('bodyFrac')}) "
+                          f"listLeft={op.get('listStillThere')} acts={(op.get('acts') or {}).get('barH')}",
+                          flush=True)
                 if not op or op.get("error"):
                     problems.append((label, "missing-control",
                                      f"could not open a message ({(op or {}).get('error')})"))

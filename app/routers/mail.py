@@ -782,6 +782,24 @@ def _is_reply(m: dict) -> bool:
     return bool((m.get("references") or "").strip())
 
 
+def _is_own_sent(m: dict) -> bool:
+    """Is this the user's OWN copy of something they sent?
+
+    The subject fallback is bounded to replies because two ROOTS are never one conversation — that
+    is what stopped four separate Kraken notices arriving as one thread. But it also excluded the
+    one root that genuinely does belong: your own outgoing message.
+
+    Outgoing mail carried no `Message-ID` until it was added in mail_service.send_email, so every
+    message sent before that has none and never will: the copy in Sent cannot be linked by headers
+    to the reply it produced, in either direction. Header threading handles everything sent from now
+    on; this is what rescues the history.
+
+    Narrow on purpose. A message in the user's own Sent folder sharing a normalised subject is their
+    side of that conversation. An inbound root from an automated sender sharing a subject with
+    another inbound root is not, and still is not admitted."""
+    return str(m.get("logical") or "").strip().lower() == "sent"
+
+
 def _build_thread(seed: dict, allmsgs: list) -> list:
     """Group a conversation: close the Message-ID/References/In-Reply-To reference graph, with a
     normalized-subject fallback when there are no usable headers. Cross-folder. Oldest→newest."""
@@ -805,7 +823,7 @@ def _build_thread(seed: dict, allmsgs: list) -> list:
         if ns:
             by = {}
             for m in allmsgs:
-                if _normsubj(m.get("subject", "")) == ns and _is_reply(m):
+                if _normsubj(m.get("subject", "")) == ns and (_is_reply(m) or _is_own_sent(m)):
                     by[(m.get("folder"), m.get("uid"))] = m
             by[(seed.get("folder"), seed.get("uid"))] = seed
             msgs = list(by.values())
