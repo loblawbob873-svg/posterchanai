@@ -21,7 +21,14 @@ body.concord-view .cc-messages{overscroll-behavior-x:none!important;touch-action
    Explicitly consume the remaining track and remove the shell's content caps at common 834–1180px
    tablet widths; the conversation column, not an empty right gutter, gets every spare pixel. */
 @media(min-width:821px) and (max-width:1180px){
-  body.concord-view .app{grid-template-columns:240px minmax(0,1fr)!important;width:100vw!important}
+  /* `100%`, not `100vw` — the SAME unit bug as the cap above, and this is the copy that broke
+     Concord in a desktop WINDOW. This block covers 821-1180px, which is exactly the size a
+     PosterChan window opens at, and `vw` is the DEVICE viewport with no regard for the
+     client's body{zoom}. Measured in a 900px window: .app 603px of 900, the chat 161px, and
+     the conversation column ZERO. Full screen never enters this block, which is why it
+     looked fine there — and why dragging the window past 1180px 'fixed' it, reported as
+     "it starts not fit to width then it fits if you resize sway window". */
+  body.concord-view .app{grid-template-columns:240px minmax(0,1fr)!important;width:100%!important}
   body.concord-view .main,body.concord-view .feed.feed-dm{width:100%!important;max-width:none!important;min-width:0!important;margin:0!important}
   body.concord-view .cc-app{width:100%!important;max-width:none!important;grid-template-columns:62px 220px minmax(0,1fr) 190px!important}
   body.concord-view .cc-conversation{width:auto!important;max-width:none!important}
@@ -239,3 +246,13 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
 .cc-mention-me{background:rgba(250,190,60,.22)!important;color:#ffd479!important}
 .cc-message.cc-mentions-me{position:relative!important;background:rgba(250,190,60,.07)!important}
 .cc-message.cc-mentions-me::before{content:''!important;position:absolute!important;inset-block:0!important;inset-inline-start:0!important;width:3px!important;background:#fabe3c!important;border-radius:2px!important}
+
+/* A POSTERCHAN WINDOW HAS NO SIDEBAR, SO CONCORD MUST NOT RESERVE A COLUMN FOR ONE.
+   `html.pc-oswin` hides `.sidebar` (the window IS the app; a nav rail inside it is a second copy of
+   something the desktop already provides). Concord then forced `grid-template-columns:300px
+   minmax(0,1fr)` with !important anyway, so with the sidebar gone `.main` became the FIRST grid
+   item and landed in the 240/300px column while the 1fr column sat empty. Measured in a 900px
+   window: .app 900, .main 161, .cc-app 240 CSS px, and the conversation column ZERO — the chat had
+   less room than its own member list needs. One column here; the window is the frame. */
+html.pc-oswin body.concord-view .app{grid-template-columns:minmax(0,1fr)!important}
+html.pc-oswin body.concord-view .sidebar{display:none!important}

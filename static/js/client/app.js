@@ -12909,7 +12909,40 @@
   // (reaction display: '+' shows as ❤️, a custom emoji as its image — see reactDisp/buildCounts)
 
   // ---------- interactions ----------
+  /* A STRAY SPACE MUST NOT THROW YOUR PLACE IN THE TIMELINE AWAY.
+   *
+   * Reported as "space bar sometimes skips down the social page", and the "sometimes" is the whole
+   * clue. `.feed` is the scroll container (`overflow-y:auto`) and it is not focusable, so a space
+   * scrolls whatever scrollable ancestor the FOCUSED element happens to have: click a post — a
+   * plain div — and focus is inside the feed, so space pages it down; click nothing and focus is on
+   * body, whose document does not scroll, so space does nothing. Same key, two behaviours, decided
+   * by whatever you last touched. In a timeline a page-jump loses your position, and there is no
+   * way back to it.
+   *
+   * So space does nothing here — EXCEPT where it already means something, and those exceptions are
+   * not negotiable: it types in a field, and it ACTIVATES a focused control, which is how the
+   * keyboard operates a button. Suppressing either of those would trade one bug for a worse one. */
+  function _bindSpaceDoesNotJump(){
+    document.addEventListener('keydown', e => {
+      if(e.key !== ' ' && e.key !== 'Spacebar') return;
+      if(e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if(!t || t.isContentEditable) return;
+      const tag = String(t.tagName || '').toLowerCase();
+      if(tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      /* Space is the keyboard's "press this". Anything that can be pressed keeps it. */
+      try{
+        if(t.closest && t.closest('button, a[href], summary, label, [role="button"], [role="checkbox"], [role="menuitem"], [contenteditable=""], [contenteditable="true"]')) return;
+      }catch(_){ return; }
+      /* Only inside a scrollable feed — elsewhere on the page the browser's default is harmless and
+         somebody may be relying on it. */
+      try{ if(!(t.closest && t.closest('.feed'))) return; }catch(_){ return; }
+      e.preventDefault();
+    }, false);
+  }
+
   function bindFeedActions(){
+    _bindSpaceDoesNotJump();
     $('#feed').addEventListener('click', async (e)=>{
       if(e.target.closest('.yt-embed')) return;  // YouTube facade → handled by the player loader; don't lightbox the thumb
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }

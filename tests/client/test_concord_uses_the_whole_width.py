@@ -46,7 +46,8 @@ pytestmark = pytest.mark.skipif(not CHROME, reason="Chrome unavailable")
 WIDTHS = [1280, 1600, 1920, 2560, 3072]
 
 
-def measure(width: int, css: str = CSS, concord: str = CONCORD) -> dict:
+def measure(width: int, css: str = CSS, concord: str = CONCORD, oswin: bool = False) -> dict:
+    oswin_js = 'document.documentElement.className="pc-oswin";' if oswin else ''
     page = f"""<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>html,body{{margin:0;height:100%}}{css}
 {concord}</style>
@@ -63,10 +64,11 @@ def measure(width: int, css: str = CSS, concord: str = CONCORD) -> dict:
     </div>
   </main>
 </div>
+<script>{oswin_js}</script>
 <pre id="out"></pre><script>requestAnimationFrame(()=>{{
   const q=s=>document.querySelector(s), w=e=>e?Math.round(e.getBoundingClientRect().width):0;
   out.textContent=JSON.stringify({{viewport:window.innerWidth, app:w(q('.app')),
-    main:w(q('.main')), ccApp:w(q('.cc-app')),
+    main:w(q('.main')), ccApp:w(q('.cc-app')), conv:w(q('.cc-conversation')),
     zoom:getComputedStyle(document.body).zoom}});}});</script>"""
     with tempfile.TemporaryDirectory() as td:
         html = Path(td) / "c.html"
@@ -128,3 +130,57 @@ def test_at_zoom_one_the_old_rule_looked_fine():
                              "max-width:100vw!important;overflow-x:clip!important", 1)
     got = measure(3072, concord=broken)
     assert got["viewport"] - got["app"] <= 8
+
+
+# ── inside a desktop WINDOW ──────────────────────────────────────────────────────────────────────
+#
+# The probe above measures full-screen widths only, and Concord in a WINDOW was broken the whole
+# time it was passing. Reported as "you still did not fix concord fitting the width of the window!
+# now it's shit on desktop too" and "it starts not fit to width then it fits if you resize sway
+# window" — that second sentence is the diagnosis: a window opens between 821 and 1180px, which is
+# a media block full screen never enters, and dragging past 1180px leaves it.
+#
+# Two causes, both measured in a 900px window:
+#   * `width:100vw` in that block — the same unit bug as the cap, capping .app at the DEVICE width
+#     inside a larger CSS-pixel body: .app 603 of 900.
+#   * `html.pc-oswin` hides the sidebar (the window IS the app) while Concord still forced a
+#     two-column grid with !important, so `.main` took the 240px sidebar column and the 1fr column
+#     sat empty: main 161, cc-app 240 CSS px, conversation ZERO.
+
+WINDOW_WIDTHS = [900, 1000, 1100, 1180, 1400]
+
+
+@pytest.mark.parametrize("width", WINDOW_WIDTHS)
+def test_a_concord_window_fills_its_window(width):
+    got = measure(width, oswin=True)
+    wasted = got["viewport"] - got["app"]
+    assert wasted <= 8, f"at {width}px the app is {got['app']}px — {wasted}px of the window unused"
+
+
+@pytest.mark.parametrize("width", WINDOW_WIDTHS)
+def test_the_main_column_is_not_stranded_in_the_hidden_sidebars_track(width):
+    """THE SECOND CAUSE. `.main` in a 240px column while the 1fr column is empty."""
+    got = measure(width, oswin=True)
+    assert got["main"] >= got["app"] - 8, (
+        f"at {width}px .app is {got['app']}px but .main is only {got['main']}px — it is sitting in "
+        f"the column reserved for a sidebar that is hidden")
+
+
+@pytest.mark.parametrize("width", WINDOW_WIDTHS)
+def test_the_conversation_column_is_not_zero(width):
+    """The chat itself. A conversation column of 0px is a window with no chat in it."""
+    got = measure(width, oswin=True)
+    assert got["conv"] > 200, f"at {width}px the conversation column is {got['conv']}px"
+
+
+def test_the_window_checks_can_fail():
+    """MUTATION, against the pre-fix stylesheet: both causes restored."""
+    broken = CONCORD.replace(
+        "body.concord-view .app{grid-template-columns:240px minmax(0,1fr)!important;width:100%!important}",
+        "body.concord-view .app{grid-template-columns:240px minmax(0,1fr)!important;width:100vw!important}", 1)
+    broken = broken.replace(
+        "html.pc-oswin body.concord-view .app{grid-template-columns:minmax(0,1fr)!important}", "", 1)
+    assert broken != CONCORD
+    got = measure(900, concord=broken, oswin=True)
+    assert got["conv"] == 0 or got["main"] < got["app"] - 100, (
+        "the pre-fix stylesheet lays a window out correctly, so these checks prove nothing")
