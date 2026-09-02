@@ -14,11 +14,11 @@ def _renderer():
 def test_hardware_reads_are_scoped_to_their_real_settings_pages():
     body = _renderer()
     display_guard = body.index("if(_osSettingsPage==='displays')")
-    display_read = body.index("await pcDisplays.status()")
+    display_read = body.index("pcDisplays.status()")
     power_guard = body.index("if(_osSettingsPage==='power')")
-    power_read = body.index("await pcPower.status()")
+    power_read = body.index("pcPower.status()")
     about_guard = body.index("if(_osSettingsPage==='about')")
-    about_read = body.index("await pcSystem.snapshot(false)")
+    about_read = body.index("pcSystem.snapshot(false)")
     assert display_guard < display_read < power_guard < power_read < about_guard < about_read
 
 

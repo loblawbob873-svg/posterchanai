@@ -54,8 +54,13 @@ def test_a_missing_display_bridge_does_not_hide_unrelated_settings_pages():
     render = OS[OS.index("async function renderSystemSettings()"):
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
     assert "if(!host) return" in render
-    assert "outs=window.pcDisplays?await pcDisplays.status()" in render
-    assert "displayError='Could not read displays:" in render
+    # The read is BOUNDED now — an unbounded await left the whole window on a spinner whenever a
+    # bridge never answered — so the shape is a guard plus `_settingsRead(pcDisplays.status())`.
+    # What this test is actually about is unchanged: a missing display bridge degrades THIS page and
+    # does not take the others down with it.
+    assert "if(!window.pcDisplays)" in render and "_settingsRead(pcDisplays.status()" in render
+    assert "Display controls are unavailable on this device." in render
+    assert "Could not read displays: " in render
     assert "System settings are unavailable" not in render
     public = OS[OS.index("window.PCOS = {"):]
     assert "openSystemSettings" in public
@@ -94,7 +99,9 @@ def test_every_major_settings_category_is_a_distinct_page_not_a_combined_jump_ta
 def test_users_and_updates_are_functional_pages_not_placeholder_cards():
     render = OS[OS.index("async function renderSystemSettings()"):
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
-    for marker in ("await pcOS.identity()", "data-user-profile", "data-user-switch",
+    # `pcOS.identity()` is read through _settingsRead now (an unbounded await left the whole
+    # window on a spinner when a bridge never answered), so match the CALL, not the await.
+    for marker in ("pcOS.identity()", "data-user-profile", "data-user-switch",
                    "PC().openProfile", "PC().accountMenu", "data-update-reload",
                    "window.__PC_BUILD", "pcShell.retry"):
         assert marker in render
