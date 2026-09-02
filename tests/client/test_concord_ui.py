@@ -432,10 +432,18 @@ def test_concord_standard_controls_are_wired_not_decorative():
     # in every room `concord-mention-undefined:general`, collapsing them all into one.
     assert "roomIdentity(room)+':'+channel+':'+messageId(m)" in CONCORD
     assert "room.naddr+':'+channel" not in CONCORD
-    assert "const tagged=(m.tags||[]).some(t=>(t[0]==='p'||t[0]==='P')" in CONCORD
+    # A p/P TAG IS WHAT MAKES A MESSAGE A MENTION, wherever that rule now lives. It used to be
+    # inline here; it moved into `messageMentionsViewer` so the RENDERER can ask the same question
+    # — a message that tags you has to look different, not merely raise a notification. Asserted as
+    # the rule rather than as the old literal, so the next refactor does not fail for being tidy.
+    assert "messageMentionsViewer(m,viewer,me)" in CONCORD
+    assert "(t[0]==='p'||t[0]==='P')&&String(t[1]||'')===viewer.pubkey" in CONCORD, (
+        "a p/P tag no longer decides whether a message mentions you")
     assert "mentionRecipients.set(handle.toLowerCase(),choice.pk)" in CONCORD
     assert "mentionTags.push(['P',pk],['p',pk])" in CONCORD
-    assert "tagged||textMentionsViewer(body,handles)" in CONCORD
+    # The text half of the same rule: a client that writes only the handle (no p tag) must still
+    # register as a mention. Same move as above — it now lives in messageMentionsViewer.
+    assert "textMentionsViewer(String(m.text||''),viewerHandles(viewer,me))" in CONCORD
     assert "lower.includes('@'+h)" not in CONCORD
     assert 'import_meta.env' not in CORD_READER
     assert 'CapacitorException' not in CORD_READER and 'registerPlugin' not in CORD_READER
