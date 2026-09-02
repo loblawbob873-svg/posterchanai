@@ -150,12 +150,27 @@ def test_alt_tab_is_compositor_owned_and_migrated_to_existing_accounts():
 
 
 def test_native_windows_have_standard_close_shortcut_on_new_and_existing_accounts():
+    """AND IT DOES NOT KILL THE DESKTOP TO CLOSE A WINDOW.
+
+    This asserted a bare `bindsym Mod1+F4 kill` in all three places, and the ebuild line it pinned
+    APPENDED that binding to any existing config that lacked it. sway's `kill` closes the focused
+    container, which is the one shell surface hosting every PosterChan window whenever the desktop
+    has focus — so Alt+F4 destroyed the session, and an upgrade installed that on machines which had
+    escaped it. The shortcut still has to exist on new and existing accounts; it now routes through
+    pc-window-close, which asks what is focused before anything dies.
+    """
     cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
     installer = (ROOT / "os/gentoo.sh").read_text()
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert "bindsym Mod1+F4 kill" in cfg
-    assert "bindsym Mod1+F4 kill" in installer
-    assert "grep -qF 'Mod1+F4 kill'" in ebuild
+    binding = "bindsym Mod1+F4 exec /usr/local/bin/pc-window-close"
+    assert binding in cfg
+    assert binding in installer
+    # An EXISTING account is migrated: the bare kill is deleted and the helper appended.
+    assert "'bindsym Mod1+F4 exec /usr/local/bin/pc-window-close'" in ebuild
+    assert "echo 'bindsym Mod1+F4 kill'" not in ebuild, (
+        "an upgrade still installs the binding that destroys the desktop")
+    for name, src in (("sway.config", cfg), ("os/gentoo.sh", installer)):
+        assert "bindsym Mod1+F4 kill" not in src, f"{name} still kills the focused container"
 
 
 def test_restart_navigates_a_secondary_surface_that_is_still_about_blank():
