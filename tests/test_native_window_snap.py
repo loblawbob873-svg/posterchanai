@@ -346,7 +346,13 @@ def test_every_adopted_native_window_loses_stale_sticky_state_by_identity():
     main = (ROOT / "desktop/main.js").read_text()
     decorate = main[main.index("async function decorateNative"):
                     main.index("ipcMain.handle('pc:display:status'")]
-    assert "[con_id=' + Number(id) + '] border none, sticky disable" in decorate
+    # STICKY IS THE POINT OF THIS ASSERTION, not the border. The border now follows whether the
+    # shell HOSTS the window: hosted, the PosterChan frame is the only chrome; unhosted, sway must
+    # draw its own or Firefox has no decoration at all ("cant maximize and minimize"). Sticky is
+    # cleared either way, which is what this test is actually about.
+    assert "[con_id=' + Number(id) + '] ' + border + ', sticky disable" in decorate
+    assert "hosted ? 'border none' : 'border normal 3'" in decorate, (
+        "an unhosted native window gets no decoration from anybody")
     assert "fullscreen disable" not in decorate, "adoption must preserve app-requested fullscreen"
 
 

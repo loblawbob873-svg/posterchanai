@@ -13199,9 +13199,19 @@
     if(!isXmrAddr(addr)){ toast('no Monero address on this post or profile'); return; }
     /* A local PosterChan micro-wallet gets first refusal. Its availability probe is deliberately
        fail-closed: browsers, old APKs and a stopped wallet service continue into the URI/QR flow
-       below, so tipping never depends on this optional integration. */
+       below, so tipping never depends on this optional integration.
+
+       THE MODULE HAS TO BE LOADED BEFORE IT CAN BE ASKED. `window.PCMoneroWallet` is set by
+       monero-wallet.js, which is lazy-loaded when the Wallet SCREEN is opened — so in any session
+       where the user had not visited Wallet, this test was false and the built-in wallet was never
+       considered at all. Reported as "monero android app not using built-in wallet! desktop works
+       but not android": nothing differed between the platforms except whether that screen had been
+       opened in that session. `_withModule` is a no-op once loaded and answers null where the file
+       is absent, so the fail-closed fallback below is unchanged. */
     try{
-      if(window.PCMoneroWallet && await PCMoneroWallet.tip({
+      const _xmrWallet = window.PCMoneroWallet
+        || await _withModule('monero-wallet.js', 'PCMoneroWallet');
+      if(_xmrWallet && await _xmrWallet.tip({
         address:addr, name:p.name||p.display_name||'anon', noteId, pubkey:pk,
         onSent:(amount, txid)=>_postXmrTipNote(noteId, pk, amount, addr, txid||'', '')
       })) return;
