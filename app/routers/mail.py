@@ -744,7 +744,15 @@ import re as _re
 
 
 def _normsubj(s: str) -> str:
-    return _re.sub(r'^\s*(re|fwd|fw)\s*:\s*', '', (s or '').strip(), flags=_re.I).strip().lower()
+    """The subject with every reply/forward prefix stripped, not just the first.
+
+    Mail acquires them by accretion — "Re: Re: Fwd: quote" is ordinary after a few round trips, and
+    a single non-repeating strip left "re: fwd: quote", which matches nothing. Bounded rather than
+    greedy-anchored so a pathological subject cannot spin."""
+    # One anchored, repeating group rather than a loop with a cap: a cap silently stops matching
+    # past its depth, and every alternative must consume a prefix, so this cannot backtrack badly.
+    return _re.sub(r'^(?:\s*(?:re|fwd|fw)\s*:\s*)+', '', (s or '').strip(),
+                   flags=_re.I).strip().lower()
 
 
 def _idset(m: dict) -> set:
@@ -840,6 +848,33 @@ def _build_thread(seed: dict, allmsgs: list) -> list:
                     by[(m.get("folder"), m.get("uid"))] = m
             by[(seed.get("folder"), seed.get("uid"))] = seed
             msgs = list(by.values())
+    # ── OWN SENT MAIL THAT NO HEADER CAN REACH ──────────────────────────────────────────────────
+    #
+    # Reported four times, most plainly as "you didn't fix emails conversations mode showing sent
+    # items in thread". The threading rules were right and the scan was complete; the DATA is what
+    # is missing. Measured on the reporting mailbox: 907 sent messages, of which only 503 carry a
+    # Message-ID at all. This app did not set one on outgoing mail until it was fixed, so 404 of the
+    # user's own replies have no identity, are referenced by nothing, and reference nothing — they
+    # cannot be linked by the graph above however good it is, and the subject fallback below could
+    # never reach them either because it only runs when the graph found NOTHING.
+    #
+    # So this is additive and deliberately narrow: a message is pulled in only when it is the user's
+    # OWN SENT mail, carries no Message-ID (so it is unthreadable by any other means and nothing is
+    # being second-guessed), and shares the seed's normalized subject. Anything with an ID keeps
+    # being threaded by headers alone — a subject match is a guess, and a guess must never override
+    # evidence.
+    ns_own = _normsubj(seed.get("subject", ""))
+    if ns_own:
+        held = {(m.get("folder"), m.get("uid")) for m in msgs}
+        for m in allmsgs:
+            if (m.get("folder"), m.get("uid")) in held:
+                continue
+            if not _is_own_sent(m) or (m.get("message_id") or "").strip():
+                continue
+            if _normsubj(m.get("subject", "")) == ns_own:
+                msgs.append(m)
+                held.add((m.get("folder"), m.get("uid")))
+
     msgs.sort(key=lambda m: m.get("ts", 0))
     return msgs
 
