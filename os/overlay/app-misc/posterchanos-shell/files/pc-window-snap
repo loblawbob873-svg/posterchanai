@@ -49,7 +49,29 @@ def process_chain(pid):
             return
 
 
+def is_popped_out_window(win):
+    """A PosterChan window that is its OWN Sway toplevel, not the per-output desktop surface.
+
+    Popped-out windows became real compositor toplevels, and they carry the SAME app_id as the
+    desktop that opened them — so `is_posterchan_shell` claimed them and this helper forwarded the
+    keypress back to the renderer, which then looked for an in-page window to snap and found none.
+    Reported as "posterchan windows are not moveable on sway now with keyboard": the window was a
+    perfectly ordinary floating container Sway could have moved all along.
+
+    The discriminator is the TITLE, and deliberately the same one sway.config's own float rule uses
+    (`title="^PosterChan Window"`) — two rules disagreeing about what a window is would be the same
+    bug again, one layer down."""
+    if not str(win.get("app_id") or "").lower() in (
+            "posterchan", "posterchan-desktop", "place.poster.desktop"):
+        if not any("posterchan-desktop" in cmd.lower() for cmd in process_chain(win.get("pid"))):
+            return False
+    return str(win.get("name") or "").startswith("PosterChan Window")
+
+
 def is_posterchan_shell(win):
+    # A popped-out window is Sway's to move, exactly like any other floating container.
+    if is_popped_out_window(win):
+        return False
     app = str(win.get("app_id") or "").lower()
     # Electron 44's registered Wayland identity is the reverse-DNS package name. During startup or
     # compositor recovery pid metadata can still be absent, so ancestry is not a usable fallback.

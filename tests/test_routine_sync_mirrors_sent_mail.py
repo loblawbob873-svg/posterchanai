@@ -54,6 +54,44 @@ def test_essential_is_inbox_plus_this_accounts_own_sent_folder():
     assert mail_sync._essential_folders({"sent": "Sent Messages"}) == ["INBOX", "Sent Messages"]
 
 
+def test_every_sent_folder_is_mirrored_not_only_the_flagged_one():
+    """The flagged folder alone was still not enough. One real account carries all three, written by
+    different clients over the years — INBOX.Sent (381), Sent (7), Sent Messages (52) — so mirroring
+    only the flagged one leaves 59 of that person's own replies out of every conversation."""
+    got = mail_sync._essential_folders(
+        {"sent": "INBOX.Sent"},
+        ["INBOX", "INBOX.Sent", "Sent", "Sent Messages", "Trash", "INBOX.Archive"])
+    assert got == ["INBOX", "INBOX.Sent", "Sent", "Sent Messages"]
+
+
+def test_the_flagged_folder_comes_first():
+    """Order is not cosmetic: it is the folder a sent copy is SAVED to, so it should be mirrored
+    first when a sync is interrupted."""
+    got = mail_sync._essential_folders({"sent": "Sent Messages"}, ["INBOX", "Sent", "Sent Messages"])
+    assert got[1] == "Sent Messages"
+
+
+@pytest.mark.parametrize("name", ["Sent", "INBOX.Sent", "sent-mail", "Sent Messages",
+                                  "Sent Items", "SENTBOX", "INBOX/Sent"])
+def test_the_names_clients_actually_use_are_recognised(name):
+    assert mail_sync._is_sent_leaf(name) is True
+
+
+@pytest.mark.parametrize("name", ["Consent", "Unsent drafts", "Sent by Alice", "Archive",
+                                  "INBOX", "Trash", "Presentations", ""])
+def test_a_folder_that_merely_contains_the_word_is_not_a_sent_folder(name):
+    """Substring matching would sweep in Consent, Unsent and somebody's 'Sent by Alice' — and each
+    of those is a whole extra folder on a five-minute timer."""
+    assert mail_sync._is_sent_leaf(name) is False
+
+
+def test_a_pathological_mailbox_cannot_turn_this_into_a_full_sync():
+    many = ["INBOX"] + [f"Sent{i}" for i in range(50)] + ["Sent", "Sent Messages", "Sent Items",
+                                                          "sent-mail", "Sentbox"]
+    got = mail_sync._essential_folders({"sent": "Sent"}, many)
+    assert len(got) <= mail_sync._MAX_SENT_FOLDERS + 1
+
+
 def test_the_sent_folder_name_is_read_not_guessed():
     """The reporting mailbox carries INBOX.Sent, Sent, Sent Messages AND sent-mail. A hardcoded
     "Sent" would mirror the wrong (or an empty) folder on most of those accounts."""
@@ -85,7 +123,7 @@ def test_sync_all_understands_the_sentinel():
     """A sentinel that no branch reads would silently sync every folder — the opposite mistake."""
     src = inspect.getsource(mail_sync.sync_all)
     assert "folders == ESSENTIAL" in src
-    assert "_essential_folders(meta)" in src
+    assert "_essential_folders(meta, _all)" in src
 
 
 def test_the_sentinel_cannot_collide_with_a_real_folder_name():

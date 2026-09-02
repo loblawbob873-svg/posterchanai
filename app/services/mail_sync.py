@@ -310,18 +310,56 @@ async def sync_one(db: Session, user, account_email: str, folder: str) -> int:
 ESSENTIAL = "__essential__"
 
 
-def _essential_folders(meta: dict) -> list:
-    """INBOX plus whatever this account calls its Sent folder, de-duplicated and order-stable.
+#: A leaf folder name that means "sent", once punctuation and case are removed.
+_SENT_LEAVES = {"sent", "sentmail", "sentmessages", "sentitems", "sentbox"}
+#: A pathological mailbox must not turn a five-minute sync into a full one.
+_MAX_SENT_FOLDERS = 4
 
-    The name is read from the account's special-use metadata, never guessed: the mailbox measured
-    here alone carries `INBOX.Sent`, `Sent`, `Sent Messages` and `sent-mail`, and a hardcoded
-    "Sent" would have mirrored the empty one on three accounts out of four."""
+
+def _is_sent_leaf(folder: str) -> bool:
+    """Does this folder's LEAF name mean "sent"?
+
+    The leaf, so `INBOX.Sent` matches and a hypothetical `Sent.Receipts` still matches on its own
+    leaf rather than by prefix. Punctuation-stripped so `sent-mail` and `Sent Messages` land on the
+    same key, and matched against a SET rather than a substring, because `substring "sent"` also
+    matches `Consent`, `Unsent` and anybody's folder called `Sent by Alice`."""
+    leaf = str(folder or "").replace("/", ".").split(".")[-1]
+    key = "".join(ch for ch in leaf.lower() if ch.isalnum())
+    return key in _SENT_LEAVES
+
+
+def _essential_folders(meta: dict, allf: list | None = None) -> list:
+    """INBOX plus EVERY folder this account uses for sent mail, flagged one first.
+
+    Reading only the `\\Sent`-flagged folder was not enough, and the reporting mailbox is why. One
+    account carries all of these, written by different clients over the years:
+
+        INBOX.Sent      381 messages   newest 2026-08-30   <- what the server flags
+        Sent              7 messages   newest 2026-08-05
+        Sent Messages    52 messages   newest 2026-07-24   <- the Apple Mail default
+
+    Mirroring the flagged one alone leaves 59 of that person's own replies out of every conversation
+    they appear in, and no amount of correct threading can recover a message that was never fetched.
+    Requiring every client they have ever used to be configured identically is not a fix either —
+    it is a request. Fetching all of them costs 59 messages here, once, incrementally.
+
+    Still deliberately NOT every folder: Trash (11,565) and Archive (2,717) are a different order of
+    cost and nothing needs them on a five-minute timer."""
     out, seen = [], set()
-    for f in ["INBOX", (meta or {}).get("sent") or ""]:
+
+    def add(f):
         f = (f or "").strip()
         if f and f.lower() not in seen:
             seen.add(f.lower())
             out.append(f)
+
+    add("INBOX")
+    add((meta or {}).get("sent") or "")           # the flagged one first, when there is one
+    for f in (allf or []):
+        if len(out) >= _MAX_SENT_FOLDERS + 1:
+            break
+        if _is_sent_leaf(f):
+            add(f)
     return out or ["INBOX"]
 
 
@@ -340,7 +378,7 @@ async def sync_all(db: Session, user, folders: list | None = None) -> dict:
         if folders == ESSENTIAL:
             # Needs the account's metadata to know what IT calls Sent — see _essential_folders.
             _all, meta = await asyncio.to_thread(_account_meta, db, user, acc)
-            flist = _essential_folders(meta)
+            flist = _essential_folders(meta, _all)
         elif folders is not None:
             flist, meta = folders, {}
         else:
