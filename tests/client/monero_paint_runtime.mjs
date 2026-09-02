@@ -14,7 +14,18 @@ export function boot({ fetcher }) {
   FakeDate.now = () => RealDate.now() + skew;
   FakeDate.prototype = RealDate.prototype;
 
-  const doc = { getElementById: id => (id === 'feed' ? feed : null) };
+  /* Elements the painted markup actually contains have to be findable, or code that fills them in
+     after the paint (the sync banner) silently no-ops and a test of it proves nothing. Modelled the
+     cheap way: an id present in the feed's HTML resolves to a stub element. */
+  const made = new Map();
+  const doc = {
+    getElementById(id) {
+      if (id === 'feed') return feed;
+      if (!String(feed.innerHTML).includes('id="' + id + '"')) { made.delete(id); return null; }
+      if (!made.has(id)) made.set(id, { id, innerHTML: '', onclick: null });
+      return made.get(id);
+    },
+  };
   const ctx = {
     console: { log(){}, warn(){}, error(){} }, setTimeout, clearTimeout, AbortController, Promise, JSON, Math, Number, String, Object,
     Array, RegExp, isNaN, parseInt, parseFloat, Error, TypeError, URL, URLSearchParams,
@@ -33,6 +44,7 @@ export function boot({ fetcher }) {
   runInNewContext(readFileSync(SRC, 'utf8'), ctx, { filename: 'monero-wallet.js' });
   return {
     feed,
+    el: id => (made.get(id) || null),
     api: ctx.PCMoneroWallet,
     PC: ctx.__PC,
     advance(ms) { skew += ms; },

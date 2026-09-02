@@ -74,3 +74,24 @@ def test_an_absent_wallet_still_says_external_wallet_mode(seen):
     """The distinction has to cut both ways, or it is just a nicer word for every failure."""
     assert seen["absentCard"]["external"] is True
     assert seen["absentCard"]["syncing"] is False
+
+
+def test_a_client_side_abort_is_read_as_busy_too(seen):
+    """WHOEVER'S CLOCK RAN OUT FIRST. The node answers 503 with its own wording when its RPC budget
+    (8s by default) expires — the usual case — but that budget is an operator setting allowed up to
+    30s and this client aborts at 20. Above 20 the abort wins and the message is OURS. Matching only
+    the node's wording would make the "catching up" card quietly stop appearing on exactly the nodes
+    whose wallet is slowest, which is the population it exists for."""
+    assert seen["abortCard"]["syncing"] is True, (
+        "a wallet that blew the client's own timeout is described as absent again")
+    assert seen["abortCard"]["external"] is False
+
+
+def test_the_sync_question_is_asked_once_per_visit_not_once_per_paint(seen):
+    """`bind()` runs from EVERY paint, `render` paints twice (cached, then fresh) and `_watch`
+    repaints behind that. Each ask makes the node call `refresh` — real work on the very wallet
+    being reported as too busy to answer. Four paints here; one request."""
+    assert seen["syncCalls"]["calls"] == 1, (
+        f"the wallet was asked to refresh {seen['syncCalls']['calls']} times for one visit")
+    assert seen["syncCalls"]["banner"] is True, (
+        "de-duplicating the request also stopped the banner appearing, which defeats the point")

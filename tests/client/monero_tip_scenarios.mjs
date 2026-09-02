@@ -67,4 +67,31 @@ function mainnetWallet() {
                      syncing: w.feed.innerHTML.includes('mw-syncing') };
 }
 
+// 6. The sync question is asked ONCE per visit, not once per paint.
+{
+  const w = boot({ fetcher: mainnetWallet() });
+  let syncCalls = 0;
+  const inner = mainnetWallet();
+  w.PC.authFetch = p => {
+    if (p.includes('/sync')) { syncCalls++; return OK({ checked: true, scanning: true, blocks_fetched: 9 }); }
+    return inner(p);
+  };
+  await w.api.render();                       // paints twice: cached, then fresh
+  await new Promise(r => setTimeout(r, 60));
+  await w.api.render();                       // and again, as _watch would
+  await new Promise(r => setTimeout(r, 60));
+  const note = w.el('mw-sync');
+  out.syncCalls = { calls: syncCalls,
+                    banner: !!(note && note.innerHTML.includes('catching up')) };
+}
+
+// 7. A CLIENT-SIDE abort must read as busy too — the node's own timeout is configurable past ours.
+{
+  const w = boot({ fetcher: mainnetWallet() });
+  w.PC.authFetch = async () => { throw new Error('the wallet did not answer within 20s: /api/wallet/xmr/status'); };
+  await w.api.render();
+  out.abortCard = { syncing: w.feed.innerHTML.includes('mw-syncing'),
+                    external: w.feed.innerHTML.includes('external-wallet mode') };
+}
+
 console.log(JSON.stringify(out));

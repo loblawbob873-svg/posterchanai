@@ -123,8 +123,13 @@
     }catch(e){
       const detail=(e&&e.message)||String(e||'local wallet unavailable');
       try{console.error('[monero wallet] probe failed',e);}catch(_){}
+      /* BUSY EITHER WAY, whoever's clock ran out first. The node answers 503 with its own wording
+         when its RPC budget (8s by default) expires, which is the usual case. But that budget is an
+         operator setting allowed up to 30s, and this client aborts at 20 — above 20 the abort wins
+         and the message is ours, not the node's. Matching only the node's wording would make the
+         "catching up" card quietly stop appearing on exactly the nodes whose wallet is slowest. */
       state={available:false,error:detail,network:'stagenet',
-             busy:/still reading the chain|is busy/i.test(String(detail||''))};
+             busy:/still reading the chain|is busy|did not answer within/i.test(String(detail||''))};
     }
     return state;
   }
@@ -186,10 +191,23 @@
    * Asked for AFTER the paint, never before it: `refresh` does real work on a wallet that is behind,
    * and the balance must not wait on it. An unknown answer says nothing at all rather than claiming
    * this wallet is up to date — the reassuring answer is the one that would be wrong. */
+  let _syncAt=0, _syncing=null, _syncLast=null;
   async function syncNote(){
     const host=document.getElementById('mw-sync'); if(!host)return;
-    let st=null;
-    try{ st=await request('/api/wallet/xmr/sync'); }catch(_){ return; }
+    /* ASK ONCE, NOT ONCE PER PAINT. `bind()` runs from every paint and `render` paints twice (the
+       cached answer, then the fresh one), with `_watch` repainting behind that — so this fired a
+       `/sync` per paint, and each one makes the node call `refresh`, which is real work on the very
+       wallet we are reporting as too busy to answer. Cached briefly, and never two in flight. */
+    let st=_syncLast;
+    if(!st || Date.now()-_syncAt > 30000){
+      if(!_syncing){
+        _syncing = request('/api/wallet/xmr/sync')
+          .then(r=>{ _syncLast=r; _syncAt=Date.now(); return r; })
+          .catch(()=>null)
+          .then(r=>{ _syncing=null; return r; });
+      }
+      st = await _syncing;
+    }
     if(!st||!st.checked||!st.scanning)return;
     if(PC.VIEW!=='wallet')return;
     const again=document.getElementById('mw-sync'); if(!again)return;
