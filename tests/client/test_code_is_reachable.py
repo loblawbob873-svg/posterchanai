@@ -71,10 +71,21 @@ class CodeIsReachable(unittest.TestCase):
     def test_every_sidebar_view_is_one_the_client_can_render(self):
         """The desktop turns each of these into an app icon. A row naming a view renderView cannot
         route is a launcher entry that opens a dead screen."""
-        rows = set(re.findall(r'nav-item"?\s+data-view="([a-z0-9_]+)"', self.tpl))
+        # `class="nav-item sub"` too, or every row inside a nav-group is invisible to this check —
+        # which silently exempted Contacts, Calendar and Email from it for as long as they have
+        # been grouped, and would have exempted Code the moment it moved in with them.
+        rows = set(re.findall(r'nav-item[a-z ]*"\s+data-view="([a-z0-9_]+)"', self.tpl))
         self.assertIn("code", rows)
         handled = set(re.findall(r"VIEW===\s*'([a-z0-9_]+)'", self.app))
         handled |= set(re.findall(r"renderModuleView\('([a-z0-9_]+)'", self.app))
+        # Games route through one dispatch (`window.PCGames[VIEW]`), not a per-view branch, so they
+        # are renderable without ever naming themselves in the two patterns above. Widening the row
+        # regex to see grouped rows is what first exposed them — they had been outside this check.
+        if "window.PCGames && window.PCGames[VIEW]" in self.app:
+            games = re.search(r"key: 'games',[^]]*views: \[([^]]*)\]",
+                              _read(OS_JS))
+            if games:
+                handled |= set(re.findall(r"'([a-z0-9_]+)'", games.group(1)))
         missing = sorted(r for r in rows if r not in handled)
         self.assertEqual(missing, [], f"sidebar rows nothing renders: {missing}")
 

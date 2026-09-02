@@ -248,13 +248,12 @@
                  rather than inside Discover — it is a thing you reach for mid-thought, like AI. -->
             {% if not nostr_only %}<button class="nav-item" data-view="websearch"><svg class="ic"><use href="#i-search"></use></svg><span>Web Search</span></button>{% endif %}
             {% if not nostr_only %}<button class="nav-item" data-view="terminal"><svg class="ic"><use href="#i-terminal"></use></svg><span>Terminal</span></button>{% endif %}
-            <!-- PosterChan Code sits beside the Terminal because they are the same job on the same
-                 node — one edits its files, the other runs its commands, and they share one gate.
-                 IT HAD NO SIDEBAR ROW AT ALL, which is why it could not be found anywhere except
-                 the mobile "More" sheet: the desktop shell builds its start menu and app grid from
-                 `$$('.sidebar .nav .nav-item[data-view]')` (os.js `apps()`), so a view with no row
-                 here exists on a phone and nowhere else — the exact opposite of what it is for. -->
-            {% if not nostr_only %}<button class="nav-item" data-view="code"><svg class="ic"><use href="#i-terminal"></use></svg><span>PosterChan Code</span></button>{% endif %}
+            <!-- PosterChan Code now lives under Office, with the other things you sit down and work
+                 in. It used to sit beside the Terminal (same node, one edits its files and the other
+                 runs its commands) — a defensible grouping, but Office is where it is looked for.
+                 IT MUST KEEP A SIDEBAR ROW WHEREVER IT SITS: the desktop shell builds its start menu
+                 and app grid from `$$('.sidebar .nav .nav-item[data-view]')` (os.js `apps()`), so a
+                 view with no row here exists on a phone and nowhere else. -->
             <button class="nav-item" data-view="messages"><svg class="ic"><use href="#i-speech"></use></svg><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
             <!-- Email is its OWN view, directly under Messages, rather than a tab inside it. The two
                  share nothing but a metaphor: one is NIP-17 DMs held on relays, the other is IMAP
@@ -276,6 +275,7 @@
                     <!-- Calendar: this node's own CalDAV server, so the same calendar syncs to a phone. -->
                     {% if not nostr_only %}<button class="nav-item sub" data-view="calendar"><svg class="ic"><use href="#i-clock"></use></svg><span>Calendar</span></button>{% endif %}
                     {% if not nostr_only %}<button class="nav-item sub" data-view="mail"><svg class="ic"><use href="#i-mail"></use></svg><span>Email<i id="mail-badge" class="badge hidden"></i></span></button>{% endif %}
+                    {% if not nostr_only %}<button class="nav-item sub" data-view="code"><svg class="ic"><use href="#i-terminal"></use></svg><span>PosterChan Code</span></button>{% endif %}
                 </div>
             </div>
             <button class="nav-item" data-view="bookmarks"><svg class="ic"><use href="#i-bookmark"></use></svg><span>Bookmarks</span></button>

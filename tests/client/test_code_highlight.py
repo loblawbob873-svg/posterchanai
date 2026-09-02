@@ -325,15 +325,21 @@ class TheViewIsWiredInEveryPlace(unittest.TestCase):
         all. The desktop shell builds its start menu and app grid by reading the sidebar
         (`$$('.sidebar .nav .nav-item[data-view]')` in os.js), so a view with a More entry and no
         sidebar row is reachable on a phone and NOWHERE ELSE — reported as "I don't even see it on
-        the web version". An editor for a node's files is desktop work; it belongs beside the
-        Terminal, which is the other half of the same job."""
+        the web version". An editor for a node's files is desktop work.
+
+        WHERE it sits is a product decision and has moved: it used to be pinned beside the Terminal
+        (same node, same gate — one edits its files, the other runs its commands) and now lives in
+        the Office group, which is where people look for it. So this asserts the thing that actually
+        breaks — HAVING a row, in a group the desktop turns into a folder — rather than a byte
+        distance from another row, which is a layout preference the next change will trip over."""
         self.assertIn('data-view="code"', self.html,
                       "no sidebar row: Code is missing from the web sidebar, the desktop start menu "
                       "and the desktop app grid all at once")
-        # Beside the Terminal, because they share a node and a gate.
-        i = self.html.index('data-view="terminal"')
-        self.assertIn('data-view="code"', self.html[i:i + 1400],
-                      "the Code row drifted away from the Terminal it belongs with")
+        office = self.html.index('id="office-sub"')
+        end = self.html.index("</div>", office)
+        self.assertIn('data-view="code"', self.html[office:end],
+                      "Code is no longer inside the Office group; the desktop's Office folder lists "
+                      "it (os.js FOLDERS), so the two would disagree about where it lives")
 
     def test_a_server_less_build_does_not_offer_it(self):
         """The whole screen is the server: no workspace to open, no formatter, nothing to save to."""

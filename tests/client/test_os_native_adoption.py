@@ -8,8 +8,14 @@ OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 
 def test_every_shell_lookup_accepts_electron_44_wayland_app_id_case():
     """Otherwise the shell adopts itself as a recursive black native window."""
-    # Adoption, native sync, Task Manager focus, and Alt+Tab's shell-focus handoff.
-    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 4
+    # Adoption, native sync, Task Manager focus, Alt+Tab's shell-focus handoff, and the raise that
+    # puts the Alt+Tab chooser above the floating apps (a tiled surface is painted under them, so
+    # focusing it is not enough — see _altRaiseShell).
+    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 5
+    # And no site spells it any other way: a lookup that misses `place.poster.desktop` adopts the
+    # shell as a recursive black native window, which is the failure this guard exists for.
+    assert "posterchan(?:-desktop)?" not in OS.replace(
+        "/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i", "")
 
 
 def test_late_xwayland_metadata_gets_a_reconciliation_pass():
@@ -87,7 +93,9 @@ def test_recovery_restores_sways_focused_native_after_enumerating_all_frames():
     start = OS.index("async function adoptAll()")
     end = OS.index("function closeWin(w, opts)", start)
     adopt = OS[start:end]
-    created = adopt.index("for(const r of rows) if(!nativeWins()")
+    # `!r.own` joined the condition when a popped-out PosterChan window became a taskbar row: it is
+    # our own toplevel, and hosting it would wrap this client in a screenshot of itself.
+    created = adopt.index("for(const r of rows) if(!r.own && !nativeWins()")
     restored = adopt.index("const focusedNative = rows.find")
     assert restored > created
     assert "focusWin(fw, false)" in adopt[restored:]

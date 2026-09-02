@@ -214,7 +214,7 @@
      * anything added to the group later still lands in it — and if the folder has been renamed, the
      * newcomer joins the renamed one rather than making a second beside it. */
     { key: 'office', label: 'Office', icon: '#i-folder',
-      views: ['contacts', 'calendar', 'mail'] },
+      views: ['contacts', 'calendar', 'mail', 'code'] },
   ];
 
   /* ---- YOUR layout -----------------------------------------------------------------------------
