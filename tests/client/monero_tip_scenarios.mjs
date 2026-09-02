@@ -269,4 +269,48 @@ function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 
   out.noUserWallets = { fallsBackToNodeMessage: /node operator|external-wallet mode/.test(w.feed.innerHTML) };
 }
 
+// 22. A WALLET THAT NEVER ANSWERS MUST NOT EAT THE TIP. `request()` begins with
+//     `ensureAiSession()`, which for a Nostr login mints a bearer THROUGH THE SIGNER and can block
+//     or wait on a human approval. Reported as "i am trying to zap a post and chose Monero wallet
+//     and nothing happens".
+{
+  const w = boot({ fetcher: mainnetWallet() });
+  let never;
+  w.PC.ensureAiSession = () => new Promise(r => { never = r; });   // signer never answers
+  const began = Date.now();
+  const answered = await w.api.tip({ address: ADDR, name: 'x' });
+  out.signerHangs = { tookMs: Date.now() - began, answered };
+  if (never) never();
+}
+{
+  const w = boot({ fetcher: mainnetWallet() });
+  let never2;
+  w.PC.ensureAiSession = () => new Promise(r => { never2 = r; });
+  const began = Date.now();
+  const answered = await w.api.meTip({ address: ADDR, name: 'x' });
+  out.signerHangsMe = { tookMs: Date.now() - began, answered };
+  if (never2) never2();
+}
+
+// 23. NOT SIGNED IN YET: the module must not record the session refusal as the wallet's own
+//     error and paint it on the wallet screen. Reported as "not even the wallet works — sign in
+//     with a Nostr account to start an app session", by somebody who WAS signed in.
+{
+  const w = boot({ fetcher: mainnetWallet() });
+  w.PC.viewer = () => ({});                                  // boot: no identity yet
+  w.PC.ensureAiSession = async () => { throw new Error('sign in with a Nostr account to start an app session'); };
+  await w.api.render();
+  const painted = w.feed.innerHTML;
+  out.beforeSignIn = {
+    showsSessionError: /start an app session/.test(painted),
+    showsSpinner: /class="spinner"/.test(painted),
+  };
+  // and once signed in, a fresh probe answers properly rather than reusing the refusal
+  w.PC.viewer = () => ({ pubkey: 'a'.repeat(64) });
+  w.PC.ensureAiSession = async () => {};
+  await w.api.render();
+  out.afterSignIn = { showsBalance: /1,500,000,000,000|1\.5/.test(w.feed.innerHTML),
+                      stillShowsSessionError: /start an app session/.test(w.feed.innerHTML) };
+}
+
 console.log(JSON.stringify(out));

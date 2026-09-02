@@ -152,6 +152,14 @@
          operator setting allowed up to 30s, and this client aborts at 20 — above 20 the abort wins
          and the message is ours, not the node's. Matching only the node's wording would make the
          "catching up" card quietly stop appearing on exactly the nodes whose wallet is slowest. */
+      /* A SESSION REFUSAL IS NOT A WALLET FAULT. "sign in with a Nostr account to start an app
+         session" describes the CLIENT not being ready, and storing it as the wallet's state paints
+         it on the wallet screen — where it reads as the wallet being broken. Left unrecorded, the
+         next probe (by which time there is a session) answers properly. */
+      if(/start an app session|sign in with a nostr/i.test(String(detail||''))){
+        if(seq === _probeSeq){ state=null; checkedAt=0; }
+        return state;
+      }
       const _fail={available:false,error:detail,network:'stagenet',
              busy:/still reading the chain|is busy|did not answer within/i.test(String(detail||''))};
       if(seq === _probeSeq) state=_fail;
@@ -540,7 +548,38 @@
    * module loads, so by the time anybody clicks ɱ the answer is almost always already here; when it
    * is not, this waits for it. `probe` has its own ceiling, and the wallet screen's own paths are
    * unchanged. */
-  function warm(){ try{ Promise.resolve(probe(false)).catch(()=>null); }catch(_){ } }
+  /* NEVER WARM BEFORE THERE IS SOMEBODY TO WARM FOR.
+   *
+   * Warming at module load is what makes the tip decision instant and deterministic — and the module
+   * loads during boot, or on the first tip, which can both be BEFORE sign-in has finished. Every
+   * wallet call starts with `ensureAiSession()`, which throws "sign in with a Nostr account to start
+   * an app session" when there is no identity yet. That refusal was then stored as the wallet's own
+   * error and printed on the wallet screen. Reported as "not even the wallet works — sign in with a
+   * Nostr account to start an app session", by somebody who WAS signed in: the state had been
+   * recorded a moment earlier, before they were.
+   *
+   * So a warm is skipped entirely until there is a viewer, and retried when there is one. A probe
+   * asked for by a person (opening the screen, pressing Retry, tapping a tip) is never skipped —
+   * that one has a session by definition. */
+  function _haveViewer(){
+    try{ const v = PC && PC.viewer && PC.viewer(); return !!(v && v.pubkey); }catch(_){ return false; }
+  }
+  let _warmTries = 0;
+  function warm(){
+    if(!_haveViewer()){
+      // Boot is not instant and sign-in is not synchronous. Look again a few times, then stop.
+      if(_warmTries++ < 20){
+        /* `unref` for the same reason `_watch`'s timer has it: a pending retry keeps Node's event
+           loop alive, so a test that drives this module never exits and times out instead of
+           failing honestly. Browsers ignore the call. */
+        const t = setTimeout(warm, 1500);
+        try{ if(t && t.unref) t.unref(); }catch(_){ }
+      }
+      return;
+    }
+    try{ Promise.resolve(probe(false)).catch(()=>null); }catch(_){ }
+    try{ Promise.resolve(meProbe(false)).catch(()=>null); }catch(_){ }
+  }
   /* ── THE USER'S OWN WALLET ─────────────────────────────────────────────────────────────────
    *
    * Everything above this line is the NODE's wallet, which is admin-only: for anybody who is not
@@ -572,7 +611,7 @@
   }
 
   async function meTip(opts){
-    const s = await meProbe(false);
+    const s = await _bounded(meProbe(false));
     if(!s || !s.enabled) return false;
     if(!validAddress(opts && opts.address, s.network)) return false;
     // Nothing spendable: hand it to the external flow rather than open a sheet that would be refused.
@@ -623,6 +662,29 @@
       });
   }
 
+  /* A WALLET THAT DOES NOT ANSWER MUST NOT EAT THE TIP.
+   *
+   * `request()` begins with `ensureAiSession()`, which for a Nostr login mints a bearer THROUGH THE
+   * SIGNER — that can wait on a phone, on a human approval, or on nothing at all. Reported as "i am
+   * trying to zap a post and chose Monero wallet and nothing happens": the tip button awaited a
+   * probe that never resolved, so no dialog ever opened and the non-custodial QR flow — which needs
+   * no session whatsoever — was never reached.
+   *
+   * The deadline is on the PROBE, not on the caller. Bounding the whole flow could let a dialog open
+   * seconds after the fallback had already drawn one; bounding the probe means a slow wallet simply
+   * declines, and the flow that always works takes over.
+   *
+   * It is not a coin toss between wallets: both probes are warmed when this module loads, so by the
+   * time anybody clicks the answer is already here. This only fires when something is genuinely
+   * stuck, and there a dead button is the worse outcome. */
+  const PROBE_DEADLINE_MS = 2500;
+  function _bounded(promise){
+    return Promise.race([
+      Promise.resolve(promise).catch(() => null),
+      new Promise(r => setTimeout(() => r(null), PROBE_DEADLINE_MS)),
+    ]);
+  }
+
   async function tip(opts){
     /* A FAILURE IS NOT A DURABLE ANSWER — and trusting one is what broke this.
      *
@@ -637,7 +699,7 @@
      * So only a POSITIVE answer is cached, and only briefly. Anything else asks again — which is
      * still deterministic, because the answer comes from the wallet rather than from a timer. */
     let s = (state && state.available && Date.now()-checkedAt < 30000) ? state : null;
-    if(!s){ try{ s = await probe(true); }catch(_){ s = null; } }
+    if(!s){ try{ s = await _bounded(probe(true)); }catch(_){ s = null; } }
     if(!s||!s.available||!validAddress(opts&&opts.address,s.network))return false;
     /* AN EMPTY WALLET MUST NOT OFFER TO SPEND.
      *

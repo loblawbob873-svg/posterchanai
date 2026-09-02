@@ -40,6 +40,9 @@ export function boot({ fetcher }) {
     $: sel => (sel === '#feed' ? feed : null),
     authFetch: (...a) => fetcher(...a),
     toast() {}, closeModal() {}, switchView() {},
+    // warm() refuses to probe before there is an identity — the client throws
+    // "sign in with a Nostr account to start an app session" until then.
+    viewer: () => ({ pubkey: 'a'.repeat(64) }),
   };
   runInNewContext(readFileSync(SRC, 'utf8'), ctx, { filename: 'monero-wallet.js' });
   return {

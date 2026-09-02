@@ -267,3 +267,40 @@ def test_a_node_without_user_wallets_still_explains_itself(seen):
     """Most nodes will not offer this. With nothing of the user's to show, the node wallet's own
     message is the honest one — the fix must not blank the screen for those."""
     assert seen["noUserWallets"]["fallsBackToNodeMessage"] is True
+
+
+def test_a_wallet_that_never_answers_does_not_eat_the_tip(seen):
+    """Reported as "i am trying to zap a post and chose Monero wallet and nothing happens".
+
+    `request()` begins with `ensureAiSession()`, which for a Nostr login mints a bearer THROUGH THE
+    SIGNER — that can wait on a phone, on a human approval, or on nothing at all. The tip awaited a
+    probe that never resolved, so no dialog opened and the non-custodial QR flow, which needs no
+    session whatsoever, was never reached. Reproduced here: with the signer never answering the
+    scenario hung outright until the probe was bounded.
+
+    The deadline is on the PROBE, not the caller — bounding the whole flow could let a dialog open
+    seconds after the fallback had already drawn one."""
+    for key in ("signerHangs", "signerHangsMe"):
+        assert seen[key]["answered"] is False, f"{key}: a stuck wallet swallowed the tip"
+        assert seen[key]["tookMs"] < 5000, (
+            f"{key}: the tip button waited {seen[key]['tookMs']}ms on a wallet that never answered")
+
+
+def test_a_session_refusal_is_never_painted_as_a_wallet_fault(seen):
+    """Reported as "not even the wallet works — sign in with a Nostr account to start an app
+    session", by somebody who WAS signed in.
+
+    Warming the probe at module load is what makes the tip decision instant, and the module loads
+    during boot or on the first tip — both of which can precede sign-in. `ensureAiSession()` throws
+    that sentence when there is no identity yet, and it was being stored as the WALLET's error and
+    printed on the wallet screen."""
+    assert seen["beforeSignIn"]["showsSessionError"] is False, (
+        "the client's own not-signed-in message is painted as a wallet failure")
+    assert seen["beforeSignIn"]["showsSpinner"] is True, (
+        "with nothing readable yet, a spinner is the honest answer")
+
+
+def test_the_wallet_works_once_the_session_exists(seen):
+    """The refusal must not latch — the next probe has a session and has to answer properly."""
+    assert seen["afterSignIn"]["showsBalance"] is True
+    assert seen["afterSignIn"]["stillShowsSessionError"] is False
