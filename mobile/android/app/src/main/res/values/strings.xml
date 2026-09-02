@@ -73,6 +73,7 @@
     <string name="sms_backup_rescanning">Re-reading every message on this phone…</string>
     <string name="sms_back">Back</string>
     <string name="sms_call">Call</string>
+    <string name="sms_add_contact">Add contact</string>
     <string name="sms_menu">More</string>
     <string name="sms_send">Send</string>
     <string name="sms_add_attachment">Attach Files</string>
@@ -128,6 +129,7 @@
     <string name="sms_deleted_here">Deleted from this phone</string>
     <string name="sms_deleted_both">Deleted here and from your archive</string>
     <string name="sms_call_no_dialer">Nothing on this phone can place a call</string>
+    <string name="sms_contact_no_app">Nothing on this phone can add a contact</string>
     <!-- Phone (the opt-in dialer). "Call over the mobile network", deliberately worded apart from
          PosterChan's own Calls screen, which is a call over the internet to another Nostr user. -->
     <string name="tel_title">Phone</string>

@@ -329,10 +329,11 @@
         </div>`).join('');
     }
 
-    function editCard(card){
+    function editCard(card, phone){
       const isNew = !card;
       if(!S.book){ makeBook(); return; }
       const c = card ? JSON.parse(JSON.stringify(card)) : V().blank();
+      if(!card && String(phone || '').trim()) c.tels = [{ type:'cell', value:String(phone).trim() }];
       if(card) c.other = card.other || [];        // JSON round trip keeps it, but be explicit
       const n = c.n || { family:'', given:'', middle:'', prefix:'', suffix:'' };
       const a = (c.adrs && c.adrs[0]) || { street:'', city:'', region:'', code:'', country:'' };
@@ -475,7 +476,25 @@
       return true;
     }
 
+    async function addPhone(number){
+      const phone = String(number || '').trim();
+      if(!phone) return false;
+      if(!S.ready || S.error) await load();
+      if(!inView()) return false;
+      const wanted = _numKey(phone);
+      const card = wanted && cards().find(c =>
+        (c.tels || []).some(t => _numKey(t && t.value) === wanted));
+      editCard(card || null, card ? '' : phone);
+      return true;
+    }
+
     function consumePhoneLanding(){
+      const add = window.__PC_CONTACT_ADD_PHONE;
+      if(add){
+        window.__PC_CONTACT_ADD_PHONE = '';
+        addPhone(add).catch(()=>{});
+        return;
+      }
       const number = window.__PC_CONTACT_PHONE;
       if(!number) return;
       window.__PC_CONTACT_PHONE = '';
@@ -1303,6 +1322,7 @@
         else consumePhoneLanding();
       },
       openPhone,
+      addPhone,
       reload: load,
       /* ⋯ → Addressbooks, reachable without the DOM. The row that decides whether this phone can
        * sync to its own Contacts app is inside it, and "it renders nothing at all" is precisely the

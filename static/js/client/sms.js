@@ -3683,6 +3683,7 @@
           <button class="btn small" id="sms-back">${ICO('arrow-left','b-ic')}</button>
           <div class="sms-title"><span>${enc(who)}</span>${who!==t.address?`<small>${enc(t.address)}</small>`:''}</div>
           <div class="sms-contact-actions">
+            ${who===t.address?`<button class="btn small" id="sms-add-contact" aria-label="Add ${enc(t.address)} to contacts">Add contact</button>`:''}
             <button class="btn small" id="sms-call" aria-label="Call ${enc(who)}">Call</button>
             <button class="btn small" id="sms-copy-number" aria-label="Copy phone number">Copy</button>
           </div>
@@ -3731,6 +3732,10 @@
         </div>
       </div>`;
     PC.$('#sms-back').onclick = () => { clearAttachment(); S.open = ''; paint(); };
+    const addContact=PC.$('#sms-add-contact');if(addContact)addContact.onclick=()=>{
+      window.__PC_CONTACT_ADD_PHONE=String(t.address||'');
+      PC.switchView('contacts');
+    };
     const call=PC.$('#sms-call');if(call)call.onclick=()=>{
       window.location.href='tel:'+encodeURIComponent(String(t.address||''));
     };

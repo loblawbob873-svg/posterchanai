@@ -15,6 +15,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Telephony;
+import android.provider.ContactsContract;
 import android.provider.OpenableColumns;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -158,6 +159,9 @@ public class ThreadActivity extends PcActivity {
         findViewById(R.id.pc_th_call).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { call(); }
         });
+        findViewById(R.id.pc_th_add_contact).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { addContact(); }
+        });
         findViewById(R.id.pc_th_menu).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { threadMenu(); }
         });
@@ -234,6 +238,15 @@ public class ThreadActivity extends PcActivity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // The system contact editor returns here. Drop the negative lookup cached when this screen
+        // opened so the saved name replaces the number and the Add contact button disappears.
+        PhoneBook.forget();
+        if (name != null) applySkin();
+    }
+
+    @Override
     protected void onStop() {
         super.onStop();
         if (watcher != null) {
@@ -257,10 +270,12 @@ public class ThreadActivity extends PcActivity {
         sub.setText(label.equals(address) ? "" : address);
         sub.setTextColor(pal.muted);
         android.graphics.drawable.Drawable photo = PhoneBook.photoDrawable(this, address);
+        findViewById(R.id.pc_th_add_contact).setVisibility(label.equals(address) ? View.VISIBLE : View.GONE);
         avatar.setText(photo == null ? initials(label) : "");
         avatar.setBackground(photo == null ? Skin.avatar(this, pal, label) : photo);
         icon(R.id.pc_th_back, R.drawable.ic_pc_arrow_left, pal.text);
         icon(R.id.pc_th_call, R.drawable.ic_pc_call, pal.accent);
+        icon(R.id.pc_th_add_contact, R.drawable.ic_pc_user, pal.accent);
         icon(R.id.pc_th_menu, R.drawable.ic_pc_menu, pal.muted);
         icon(R.id.pc_th_send, R.drawable.ic_pc_send, pal.onAccent());
         icon(R.id.pc_th_attach, R.drawable.ic_pc_paperclip, pal.accent);
@@ -589,6 +604,16 @@ public class ThreadActivity extends PcActivity {
             startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode(address))));
         } catch (Throwable t) {
             say(getString(R.string.sms_call_no_dialer));
+        }
+    }
+
+    private void addContact() {
+        try {
+            Intent add = new Intent(Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI)
+                    .putExtra(ContactsContract.Intents.Insert.PHONE, address);
+            startActivity(add);
+        } catch (Throwable t) {
+            say(getString(R.string.sms_contact_no_app));
         }
     }
 

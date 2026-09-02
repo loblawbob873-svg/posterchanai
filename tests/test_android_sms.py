@@ -28,6 +28,8 @@ ROOT = ac.ROOT
 SMS = os.path.join(ac.JAVA, "place", "poster", "app", "sms")
 MANIFEST = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "AndroidManifest.xml")
 SMSJS = os.path.join(ROOT, "static", "js", "client", "sms.js")
+THREAD_ACTIVITY = os.path.join(SMS, "ThreadActivity.java")
+THREAD_LAYOUT = os.path.join(ROOT, "mobile", "android", "app", "src", "main", "res", "layout", "sms_thread.xml")
 JAVAC = shutil.which("javac")
 JAVARUN = shutil.which("java")
 NODE = shutil.which("node")
@@ -382,6 +384,14 @@ class SmsSources(unittest.TestCase):
         plugin = src.index("SmsPlugin.onIncoming")
         self.assertLess(store, notify, "the notification is posted before the message is stored")
         self.assertLess(notify, plugin, "the app is told before the person is")
+
+    def test_unknown_number_can_be_added_to_the_phone_contacts(self):
+        src = self._code(THREAD_ACTIVITY)
+        layout = open(THREAD_LAYOUT, encoding="utf-8").read()
+        self.assertIn('android:id="@+id/pc_th_add_contact"', layout)
+        self.assertIn("Intent.ACTION_INSERT, ContactsContract.Contacts.CONTENT_URI", src)
+        self.assertIn("ContactsContract.Intents.Insert.PHONE, address", src)
+        self.assertIn("PhoneBook.forget()", src)
 
     def test_each_step_of_delivery_is_guarded_separately(self):
         """One try around all three would mean a failing notification costs the message."""

@@ -8,10 +8,15 @@ OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 
 def test_every_shell_lookup_accepts_electron_44_wayland_app_id_case():
     """Otherwise the shell adopts itself as a recursive black native window."""
-    # Adoption, native sync, Task Manager focus, Alt+Tab's shell-focus handoff, and the raise that
-    # puts the Alt+Tab chooser above the floating apps (a tiled surface is painted under them, so
-    # focusing it is not enough — see _altRaiseShell).
-    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 5
+    # Adoption, native sync, Task Manager focus, Alt+Tab's shell-focus handoff, the raise that puts
+    # the Alt+Tab chooser above the floating apps, and the same raise for the start menu and the
+    # notification panel (_raiseShellOverlay) — a tiled surface is painted under floating windows,
+    # so focusing it is never enough.
+    #
+    # THE COUNT IS A PROXY AND THE PROPERTY IS BELOW. It has now been bumped twice by legitimate new
+    # call sites; what actually matters is that no site spells the lookup any other way, which the
+    # next assertion checks directly.
+    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 6
     # And no site spells it any other way: a lookup that misses `place.poster.desktop` adopts the
     # shell as a recursive black native window, which is the failure this guard exists for.
     assert "posterchan(?:-desktop)?" not in OS.replace(
