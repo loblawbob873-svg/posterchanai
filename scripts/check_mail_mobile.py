@@ -188,10 +188,17 @@ AUDIT = r"""(() => {
   out.chrome = {
     top:     px(document.querySelector('.mail-list-top')),
     folders: px(document.querySelector('.mail-folders')),
+    /* THE BLOCK, not just the chip strip inside it. `.mail-folders` measured the chips and missed
+       the account select and Compose sitting above them, so the row that was actually costing
+       114-130px on every phone was invisible to this audit. */
+    side:    px(document.querySelector('.mail-side')),
+    bulk:    px(document.querySelector('.mail-bulk')),
     head:    px(document.querySelector('.mail-head')),
     acct:    px(document.querySelector('.mail-accounts')),
     nav:     px(document.querySelector('.mobilenav')),
   };
+  out.selallVisible = (() => { const e = document.getElementById('mail-selall');
+                               return !!(e && vis(e)); })();
   out.listH = px(document.querySelector('.mail-items'));
   out.readH = px(document.querySelector('.mail-read'));
   out.listFrac = out.vh ? +(out.listH / out.vh).toFixed(2) : 0;
@@ -540,6 +547,28 @@ async def drive(url):
                         problems.append((label, "tiny-tap-target", f"{t['cls']} is {t['h']}px tall"))
                     for z in r["zoomy"]:
                         problems.append((label, "ios-zoom-trap", f"{z['cls']} is {z['fs']}px"))
+                    # THE CHROME ABOVE THE LIST, ASSERTED. `listFrac` is computed here and only
+                    # ever printed — and it cannot carry the assertion, because this harness's
+                    # `.mail-items` is content-sized (two stub rows), so it reports 210px whatever
+                    # the layout does. What IS measured correctly is the chrome, and the chrome is
+                    # what "you get less than half the screen" was made of. Measured at 360px
+                    # before the fix: a folder rail that went from 114px to 130px the moment a
+                    # fourth folder existed and never came back down, above a 40px bar whose only
+                    # content was a Select checkbox. The vertical BUDGET itself is asserted at real
+                    # device sizes in tests/client/test_mail_uses_the_phone_screen.py.
+                    _ch = r.get("chrome") or {}
+                    if _ch.get("side", 0) > 90:
+                        problems.append((label, "folder-rail-two-rows",
+                                         f"the folder rail is {_ch['side']}px tall — it has wrapped "
+                                         f"to a second row and never comes back down"))
+                    if _ch.get("bulk", 0) > 0:
+                        problems.append((label, "bulk-bar-always-open",
+                                         f"the bulk-actions bar is {_ch['bulk']}px tall with nothing "
+                                         f"selected"))
+                    if not r.get("selallVisible"):
+                        problems.append((label, "missing-control",
+                                         "select-all is not reachable — it moved out of the bulk "
+                                         "bar and has to be in the search row"))
                     if r["listBottom"] > r["navTop"] + 1:
                         problems.append((label, "under-nav",
                                          f"the message list's bottom ({r['listBottom']}px) is under "

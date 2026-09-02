@@ -37,9 +37,9 @@ def msg(uid, folder="INBOX", subject="Quote", mid="", irt="", refs="", ts=0):
             "in_reply_to": irt, "references": refs, "ts": ts}
 
 
-def sent(uid, subject="Quote", mid="", ts=0):
+def sent(uid, subject="Quote", mid="", irt="", refs="", ts=0):
     """A message in a Sent folder — `_is_own_sent` keys on the folder name."""
-    return msg(uid, folder="INBOX.Sent", subject=subject, mid=mid, ts=ts)
+    return msg(uid, folder="INBOX.Sent", subject=subject, mid=mid, irt=irt, refs=refs, ts=ts)
 
 
 def uids(thread):
@@ -67,18 +67,33 @@ def test_it_still_works_when_the_thread_already_has_two_messages():
     assert uids(got) == {"1", "2", "3"}
 
 
-def test_a_sent_message_that_has_an_id_is_left_to_the_headers():
-    """A subject match is a guess; headers are evidence. Anything threadable must not be threaded by
-    guesswork — otherwise two unrelated conversations that share a subject merge."""
+def test_a_sent_message_the_graph_can_reach_is_left_to_the_headers():
+    """A subject match is a guess; headers are evidence. Anything the reference graph can REACH must
+    not be threaded by guesswork — otherwise two unrelated conversations that share a subject merge.
+
+    SUPERSEDED IN PART, DELIBERATELY. This test used to demand that a sent message be excluded
+    whenever it carried a Message-ID at all, and that was the wrong test: an ID is not evidence
+    about which conversation a message belongs to. Evidence is a reference that RESOLVES — its ID
+    pointed at by something we hold, or its own In-Reply-To/References landing on something we hold.
+    Measured on the reporting mailbox: 622 of the user's 907 sent messages are reachable by the
+    graph in NEITHER direction, and 441 of those share a normalised subject with a message that is
+    not theirs; the ID test admitted only the 341 with no ID, so 100 outgoing messages stayed out of
+    conversations they demonstrably belong to (+11 per account, which is how threading really runs).
+    See `_graph_isolated` and tests/test_mail_thread_reaches_the_whole_mailbox.py.
+
+    What this test now pins is the half that was always right: a link that resolves wins."""
     # The thread must already hold two messages, or this exercises the OLDER headerless fallback
     # (thread-of-one → group by subject) instead, which is deliberate and predates this repair.
     seed = msg(1, mid="<a@x>", subject="Invoice", ts=10)
     theirs = msg(9, mid="<b@x>", irt="<a@x>", subject="Re: Invoice", ts=20)
-    unrelated_sent = sent(2, subject="Invoice", mid="<z@x>", ts=99)   # has an ID, links to nothing
-    got = _build_thread(seed, [seed, theirs, unrelated_sent])
+    elsewhere = msg(7, mid="<other@x>", subject="Invoice", ts=1)      # a different conversation
+    unrelated_sent = sent(2, subject="Invoice", mid="<z@x>", irt="<other@x>", ts=99)
+    got = _build_thread(seed, [seed, theirs, elsewhere, unrelated_sent])
     assert "2" not in uids(got), (
-        "a sent message with its own Message-ID was merged on subject alone — that is a guess "
-        "overriding evidence, and it merges unrelated conversations that share a subject")
+        "a sent message whose In-Reply-To resolves to a message we hold was merged on subject "
+        "alone — that is a guess overriding evidence, and it merges unrelated conversations")
+    assert "2" in uids(_build_thread(elsewhere, [seed, theirs, elsewhere, unrelated_sent])), (
+        "…and it is missing from the conversation its headers actually name")
 
 
 def test_an_empty_subject_pulls_in_nothing():

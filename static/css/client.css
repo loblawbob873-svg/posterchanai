@@ -4447,19 +4447,36 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
      360px phone renders a 210px sidebar, a 330px list and a reading pane squeezed to nothing — and
      every rule below (which assumes flex children) styles a grid that is still three columns. */
   .mail-wrap{display:flex;flex-direction:column;grid-template-columns:none}
-  .mail-side{flex:0 0 auto;flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px;border-inline-end:none;border-bottom:1px solid var(--line);padding:8px}
+  /* ONE ROW, NOT TWO. `flex-wrap:wrap` plus a `width:100%` folder strip made this block two rows
+     tall — 114px with three folders and 130px with six, permanently, above a message list that had
+     274px left of a 693px phone (40%) and 134px of a 553px one (24%: ONE row of mail). Reported as
+     "you get less than half the screen". Account, Compose and the folders now share a single row
+     and the folders scroll horizontally, so the block is a fixed ~54px however many folders the
+     server has — nine folders used to squeeze into slivers here as well as costing a second row. */
+  .mail-side{flex:0 0 auto;flex-direction:row;flex-wrap:nowrap;align-items:center;gap:8px;border-inline-end:none;border-bottom:1px solid var(--line);padding:8px;overflow:visible}
   /* 16px on every text field: below it iOS zooms on focus and never zooms back, and mail is search
      boxes and a compose form — nothing but text fields. */
   .mail-search, .mail-list-top .input{font-size:16px}
   #cm-to, #cm-cc, #cm-subj, #cm-body{font-size:16px}
-  .mail-side .mail-acct{flex:1;min-width:130px;width:auto}
+  .mail-side .mail-acct{flex:0 1 auto;min-width:0;width:auto;max-width:36%}
   .mail-compose{width:auto;flex:0 0 auto}
-  .mail-folders{flex-direction:row;width:100%;margin-top:0;gap:6px}
-  .mail-folder{flex:1;text-align:center}
+  /* `flex:1 1 0` + `min-width:0` so the strip takes what is left of the row and no more; the chips
+     keep their own width and the strip scrolls. `scrollbar-width:none` because a horizontal
+     scrollbar in a 38px chip row is taller than the affordance it describes. */
+  .mail-folders{flex:1 1 0;min-width:0;flex-direction:row;flex-wrap:nowrap;width:auto;margin-top:0;gap:6px;
+    overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .mail-folders::-webkit-scrollbar{display:none}
+  .mail-folder{flex:0 0 auto;text-align:center;white-space:nowrap}
   .mail-list{flex:1;min-height:0;border-inline-end:none}
   .mail-items{padding-bottom:calc(62px + env(safe-area-inset-bottom))}
   .mail-read{display:none}
-  .mail-read.has-open{display:flex;position:fixed;inset:0;z-index:46;background:var(--bg);padding-bottom:calc(62px + env(safe-area-inset-bottom))}
+  /* THE NAV IS UNDERNEATH THIS, NOT BESIDE IT. `.mobilenav` is `z-index:40` and this overlay is
+     `position:fixed;inset:0;z-index:46` with an opaque background, so the bar is COVERED — measured
+     with elementFromPoint at the bottom strip of the screen, which answers `.mail-read`. Reserving
+     62px for it spent a tenth of a 553px phone on a control nothing can see: the reading band
+     between the sticky header and the reply row measured 380px of 553 (69%) on a 360x640 handset.
+     The safe-area inset stays: the home indicator is real. */
+  .mail-read.has-open{display:flex;position:fixed;inset:0;z-index:46;background:var(--bg);padding-bottom:env(safe-area-inset-bottom)}
   .mail-read-hd{position:sticky;top:0;z-index:3;background:color-mix(in srgb,var(--panel) 96%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
   /* Sized to its content by `_sizeMailFrames`, so the message scrolls with the page instead of
    inside a 62dvh porthole. The floor is only what an empty or unmeasurable body falls back to. */
@@ -4571,6 +4588,13 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    then either clipped Delete off the edge or hid it inside a scroll container, which is the same
    thing from the user's side: an action that is not there. */
 .mail-bulk{flex:0 0 auto;display:flex;align-items:center;gap:6px 8px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--muted);flex-wrap:wrap;min-height:40px}
+/* NOTHING SELECTED, NOTHING TO SHOW. This bar carried the select-all checkbox, so it stood open at
+   40px on every screen for the whole time nothing was selected — which is nearly all of it. The
+   checkbox lives in the search row now (see `Mail.draw`), so this bar is purely the bulk ACTIONS
+   and has no reason to exist until `updateBulk` puts buttons in it. */
+.mail-bulk:not(:has(.btn)){display:none}
+/* …and it keeps its place in the search row it moved to. */
+.mail-list-top .mail-selall{flex:0 0 auto;color:var(--muted);font-size:12.5px}
 .mail-selall{display:inline-flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap}
 .mail-bulk-act{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1 1 100%}
 .mail-bulk-act .btn{flex:1 1 auto;min-width:0;justify-content:center}

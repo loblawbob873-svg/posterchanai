@@ -25719,8 +25719,15 @@
           <div class="mail-folders">${(this.acct==='__all'?['INBOX','Sent','Drafts']:this.folders).map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('')}</div>
         </div>
         <div class="mail-list">
-          <div class="mail-list-top"><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
-          <div class="mail-bulk"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><span class="mail-bulk-act" id="mail-bulk-act"></span></div>
+          <!-- SELECT-ALL RIDES THE SEARCH ROW. It used to be the only thing in a 40px bar of its own,
+               which meant a permanent strip of chrome saying "Select" above a phone list that had
+               already lost more than half the screen to the folder rail, the search box and the nav.
+               The bar below is now the BULK ACTIONS' bar and collapses to nothing until there is a
+               selection to act on (.mail-bulk:not(:has(.btn)) in client.css). NO BACKTICKS IN
+               HERE: this comment lives inside a template literal, and one would close it and take
+               the whole module out at parse time. -->
+          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
+          <div class="mail-bulk"><span class="mail-bulk-act" id="mail-bulk-act"></span></div>
           <div class="mail-items" id="mail-items"><div class="spinner"></div></div>
         </div>
         <div class="mail-read" id="mail-read"><div class="empty">Select a message to read</div></div>
@@ -25728,6 +25735,17 @@
       $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.folder='INBOX'; this.folders=['INBOX','Sent','Drafts']; if(this.sel) this.sel.clear(); this.draw(); this.loadList(); this.sync(); };
       $('#mail-compose',root).onclick=()=>this.compose({});
       $$('[data-folder]',root).forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
+      /* THE FOLDER STRIP SCROLLS SIDEWAYS ON A PHONE, so the folder you are IN can be off-screen.
+       * It is one row by design (two rows cost 130px of a 553px screen, permanently), and the price
+       * of one row is that a mailbox with nine folders does not fit in it. Bring the active chip
+       * back into view after every draw — by writing scrollLeft on the strip itself, never
+       * scrollIntoView, which is free to scroll the whole page and every ancestor with it. */
+      { const strip=$('.mail-folders',root), on=$('.mail-folder.on',root);
+        if(strip && on && strip.scrollWidth > strip.clientWidth + 1){
+          const l=on.offsetLeft, r=l+on.offsetWidth;
+          if(l < strip.scrollLeft) strip.scrollLeft = Math.max(0, l-8);
+          else if(r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth + 8;
+        } }
       { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ this.q=s.value.trim(); this.loadList(); },300); }; } }
       $('#mail-refresh',root).onclick=()=>this.sync(true);
       /* Decide from the SELECTION, never from the box's own checked state.

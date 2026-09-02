@@ -439,11 +439,16 @@ async def mail_message(account: str, uid: str, folder: str = "INBOX",
 async def mail_search(q: str, account: str = "", folder: str = "",
                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     sk = _seckey(db, current_user)
+    # PAGED, for the reason /thread is. `list_messages(..., limit=0)` is ONE page and the relay
+    # clamps it to 5000: measured on the reporting mailbox, unified search saw 5,000 of 17,921
+    # documents — 3 of 2,717 archived messages and 1 of 807 in INBOX.Sent — and a single account
+    # over the cap lost 449 of its 5,469. A search that only looks at the newest page is not a
+    # search, and it fails SILENTLY: a truncated read is indistinguishable from "no matches".
     if account == "__all":
-        msgs = await mail_store.list_messages(sk, None, None, limit=0)
+        msgs = await mail_store.list_all_messages(sk, None, None)
     else:
         acc = _resolve_account(db, current_user, account)
-        msgs = await mail_store.list_messages(sk, acc.email if acc else None, folder or None, limit=0)
+        msgs = await mail_store.list_all_messages(sk, acc.email if acc else None, folder or None)
     return {"messages": [_summary(m) for m in mail_store.search(msgs, q)]}
 
 
@@ -821,6 +826,51 @@ def _is_own_sent(m: dict) -> bool:
     return _looks_sent(m.get("logical")) or _looks_sent(m.get("folder"))
 
 
+def _graph_isolated(allmsgs: list):
+    """A predicate: can the reference graph reach this message, in either direction?
+
+    "HAS NO MESSAGE-ID" WAS THE WRONG QUESTION, and it is the one the additive own-sent pass used
+    to ask. A Message-ID is not evidence about which conversation a message belongs to — evidence is
+    an `In-Reply-To`/`References` that resolves to a message we hold, or an ID that some message we
+    hold points AT. Plenty of this app's own outgoing mail carries an ID that nothing ever
+    referenced and references nothing itself: the graph can neither reach it nor be reached from it,
+    so a subject match adds information rather than overriding anything, exactly as it does for a
+    message with no ID at all.
+
+    Measured on the reporting mailbox (17,921 messages, 907 of them the user's own sent mail):
+    622 sent messages are graph-isolated, of which 441 share a normalised subject with a message
+    that is not theirs. The old ID test admitted only the 341 with no ID, leaving 100 outgoing
+    messages out of conversations they demonstrably belong to. Measured per ACCOUNT, which is how
+    threading actually runs, that is +11 sent messages reachable (369 → 380).
+
+    The two sets are computed once per call and closed over: `_build_thread` runs this over the
+    whole cached mailbox scan, so a per-message rescan would be O(n²)."""
+    held, referenced = set(), set()
+    for m in allmsgs:
+        mid = (m.get("message_id") or "").strip()
+        if mid:
+            held.add(mid)
+        irt = (m.get("in_reply_to") or "").strip()
+        if irt:
+            referenced.add(irt)
+        for r in (m.get("references") or "").split():
+            r = r.strip()
+            if r:
+                referenced.add(r)
+
+    def isolated(m: dict) -> bool:
+        mid = (m.get("message_id") or "").strip()
+        if mid and mid in referenced:          # somebody replied to it — the graph reaches it
+            return False
+        for x in [(m.get("in_reply_to") or "").strip()] + (m.get("references") or "").split():
+            x = x.strip()
+            if x and x in held:                # it points at something we hold — it reaches the graph
+                return False
+        return True
+
+    return isolated
+
+
 def _build_thread(seed: dict, allmsgs: list) -> list:
     """Group a conversation: close the Message-ID/References/In-Reply-To reference graph, with a
     normalized-subject fallback when there are no usable headers. Cross-folder. Oldest→newest."""
@@ -865,11 +915,12 @@ def _build_thread(seed: dict, allmsgs: list) -> list:
     # evidence.
     ns_own = _normsubj(seed.get("subject", ""))
     if ns_own:
+        isolated = _graph_isolated(allmsgs)
         held = {(m.get("folder"), m.get("uid")) for m in msgs}
         for m in allmsgs:
             if (m.get("folder"), m.get("uid")) in held:
                 continue
-            if not _is_own_sent(m) or (m.get("message_id") or "").strip():
+            if not _is_own_sent(m) or not isolated(m):
                 continue
             if _normsubj(m.get("subject", "")) == ns_own:
                 msgs.append(m)
@@ -883,13 +934,23 @@ _THREAD_SCAN: dict = {}
 _THREAD_SCAN_TTL = 60.0
 
 
-async def _thread_scan(sk: bytes, account_email: str | None) -> list:
-    """The whole mailbox for threading, cached briefly per account.
+async def _thread_scan(sk: bytes, account_email: str | None, user_id) -> list:
+    """The whole mailbox for threading, cached briefly per (user, account).
 
-    Keyed on the account, not the user: the key material is the caller's own and never leaves this
-    process, and the value is only ever handed back to the same reader."""
+    KEYED ON THE USER'S ID, NEVER `id(sk)` — AND THAT ONE WORD IS WHY THE CACHE NEVER WORKED.
+    `_seckey` ends in `bytes.fromhex(...)`, which mints a NEW object on every call, so `id(sk)` was
+    a different integer for every request: measured back to back, 139845150742352 then
+    139845082027296. The lookup therefore missed every single time, and each miss is a full paged
+    walk of the mailbox — measured at 17,921 documents in 13.6 seconds of NIP-44 decrypts, on the
+    single uvicorn worker, for EVERY message opened. That is what "the conversation doesn't load"
+    feels like from the outside: the thread arrives thirteen seconds after the message, or the user
+    has moved on before it does.
+
+    The recycled-address hazard went with it: CPython reuses a freed object's id, so two users
+    reading the unified mailbox (`account_email is None`) could in principle have collided on one
+    cache entry. A user id cannot be recycled."""
     import time as _time
-    key = (id(sk), account_email or "*")
+    key = (user_id, account_email or "*")
     hit = _THREAD_SCAN.get(key)
     now = _time.monotonic()
     if hit and now - hit[0] < _THREAD_SCAN_TTL:
@@ -916,8 +977,22 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
     # such thing as an account named "null", so nothing legitimate is reinterpreted here.
     if account in ("null", "undefined", "", None):
         account = "__all"
+    allm = None
     if account == "__all":
-        seed = next((m for m in await mail_store.list_messages(sk, None, None, limit=0)
+        # THE UNIFIED SEED CAME OUT OF ONE 5000-DOCUMENT PAGE, AND THAT IS A 404 FOR MOST OF A REAL
+        # MAILBOX. `list_messages(..., limit=0)` reads a single page and the relay clamps any filter
+        # to 5000, newest-first by the time the document was WRITTEN. Measured on the reporting
+        # mailbox (17,921 documents, four accounts, so the client opens on All inboxes): that page
+        # held 3,161 Trash and 1,711 Deleted Messages, and of the mail somebody actually reads it
+        # could find 32 of 39 in INBOX and **3 of 2,717 in INBOX.Archive**. For the other 2,714 this
+        # endpoint answered "Message not found", the client logged it to the console and the
+        # conversation never upgraded past the one message that was clicked — indistinguishable from
+        # threading that simply found nothing.
+        #
+        # The paged scan is the same one the thread builder needs anyway, so finding the seed in it
+        # costs nothing extra and cannot be short.
+        allm = await _thread_scan(sk, None, current_user.id)
+        seed = next((m for m in allm
                      if str(m.get("uid")) == str(uid) and m.get("folder") == folder), None)
     else:
         acc = _resolve_account(db, current_user, account)
@@ -929,9 +1004,24 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
     # A root message has no In-Reply-To/References of its own, but later replies point at its
     # Message-ID. Treating that root as a singleton made the same conversation appear complete when
     # opened from a reply and incomplete when opened from the first message. A usable Message-ID is
-    # therefore enough to search the reference graph; truly headerless messages keep the fast path.
+    # therefore enough to search the reference graph.
+    #
+    # AND A MESSAGE WITH NO HEADERS AT ALL IS NOT A SINGLETON EITHER — IT IS THE ONE THAT NEEDS THE
+    # SCAN MOST. The short circuit here used to end the request for any seed carrying no
+    # Message-ID, In-Reply-To or References, which is exactly the shape this app's own older
+    # outgoing mail has: opening one of your own sent messages could only ever show that message,
+    # for ever, however complete the conversation around it was. Measured on the reporting mailbox,
+    # per account: 393 sent seeds and 478 inbound seeds take this branch, and the subject fallback
+    # would give 319 of the sent ones and 174 of the inbound ones a real conversation — 493
+    # messages that could not show one at all.
+    #
+    # It was a cost guard, and the cost it was guarding against was a bug: `_thread_scan` keyed its
+    # cache on `id(sk)`, so it missed every time and every open paid 13.6 seconds. With the cache
+    # actually hitting, this is one scan per account per minute. The only seed still short-circuited
+    # is one with nothing whatsoever to match on — no headers AND no subject once the Re:/Fwd:
+    # prefixes come off — where the scan could not find anything however long it ran.
     if not (seed.get("message_id") or seed.get("in_reply_to") or
-            (seed.get("references") or "").strip()):
+            (seed.get("references") or "").strip() or _normsubj(seed.get("subject", ""))):
         thread = [seed]
     else:
         # PAGED, AND CACHED FOR A MINUTE.
@@ -945,7 +1035,8 @@ async def mail_thread(account: str, uid: str, folder: str = "INBOX",
         # Walking every page costs ~10s of NIP-44 decrypts there, which is why it is cached: the
         # client renders the message immediately and upgrades when this returns, so the READ is
         # never blocked by it, and opening several messages in a row pays for one scan.
-        allm = await _thread_scan(sk, acc.email if acc else None)
+        if allm is None:
+            allm = await _thread_scan(sk, acc.email if acc else None, current_user.id)
         thread = _build_thread(seed, allm)
     for m in thread:                                    # rehydrate offloaded bodies (bounded by thread size)
         if m.get("body_ref"):
