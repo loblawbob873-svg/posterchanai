@@ -313,4 +313,37 @@ function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 
                       stillShowsSessionError: /start an app session/.test(w.feed.innerHTML) };
 }
 
+// 24. THE WALLET SCREEN must not spin for ever when the signer never answers. Reported as
+//     "Monero wallet is not even loading now" — render() was the one path still unbounded.
+{
+  const w = boot({ fetcher: mainnetWallet() });
+  let never;
+  w.PC.ensureAiSession = () => new Promise(r => { never = r; });
+  const began = Date.now();
+  await w.api.render();
+  out.screenHangs = { tookMs: Date.now() - began,
+                      spinner: /class="spinner"/.test(w.feed.innerHTML),
+                      saysSo: /did not answer/.test(w.feed.innerHTML),
+                      hasRetry: /mw-retry/.test(w.feed.innerHTML) };
+  if (never) never();
+}
+
+// 25. THE SIGNER EXTENSION IS DEAD — a browser fault, not a wallet one. Taken verbatim from the
+//     console: "could not establish your app session: Could not establish connection. Receiving end
+//     does not exist." at __pcNostrProvider, with "theme sync skipped" failing identically.
+{
+  const w = boot({ fetcher: mainnetWallet() });
+  w.PC.ensureAiSession = async () => {
+    throw new Error('could not establish your app session: Could not establish connection. Receiving end does not exist.');
+  };
+  await w.api.render();
+  const h = w.feed.innerHTML;
+  out.signerDead = {
+    namesTheSigner: /signer extension is not responding/i.test(h),
+    exoneratesTheWallet: /Nothing is wrong with the wallet/i.test(h),
+    hasRetry: /mw-retry/.test(h),
+    spinner: /class="spinner"/.test(h),
+  };
+}
+
 console.log(JSON.stringify(out));

@@ -4,7 +4,7 @@
  * bridge and treats every failure as "external wallet mode". */
 (function(root){
   'use strict';
-  let PC=null, state=null, checkedAt=0, booted=false, _probeSeq=0;
+  let PC=null, state=null, checkedAt=0, booted=false, _probeSeq=0, _signerLogged=false;
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const amount=v=>{ const n=Number(v); return Number.isFinite(n)&&n>=0?n:0; };
   /* RPC amounts arrive as decimal STRINGS. Never pass atomic units through Number: wallet balances
@@ -146,7 +146,13 @@
       if(seq === _probeSeq) state=_next;
     }catch(e){
       const detail=(e&&e.message)||String(e||'local wallet unavailable');
-      try{console.error('[monero wallet] probe failed',e);}catch(_){}
+      /* One line, not one per warmed probe. Two warms plus a render made the same extension
+         failure appear three times, which reads as three faults. */
+      try{ if(!/could not establish your app session|receiving end does not exist/i.test(String(detail||'')))
+             console.error('[monero wallet] probe failed', e);
+           else if(!_signerLogged){ _signerLogged = true;
+             console.warn('[monero wallet] no app session — the Nostr signer extension is not responding'); }
+      }catch(_){}
       /* BUSY EITHER WAY, whoever's clock ran out first. The node answers 503 with its own wording
          when its RPC budget (8s by default) expires, which is the usual case. But that budget is an
          operator setting allowed up to 30s, and this client aborts at 20 — above 20 the abort wins
@@ -156,8 +162,29 @@
          session" describes the CLIENT not being ready, and storing it as the wallet's state paints
          it on the wallet screen — where it reads as the wallet being broken. Left unrecorded, the
          next probe (by which time there is a session) answers properly. */
+      /* A BROKEN APP SESSION IS NOT A BROKEN WALLET, and neither of these is about Monero.
+       *
+       *   "sign in with a Nostr account to start an app session"  — boot has not finished
+       *   "could not establish your app session: Could not establish connection.
+       *    Receiving end does not exist."                          — the NIP-07 EXTENSION's content
+       *                                                              script cannot reach its own
+       *                                                              background worker
+       *
+       * The second is a browser-extension fault: measured in the console alongside "theme sync
+       * skipped" failing identically, because every authenticated call goes through the same signer.
+       * Recording it as the wallet's state paints it on the wallet screen, where it reads as the
+       * wallet being broken and sends somebody looking at monerod. */
       if(/start an app session|sign in with a nostr/i.test(String(detail||''))){
         if(seq === _probeSeq){ state=null; checkedAt=0; }
+        return state;
+      }
+      if(/could not establish your app session|receiving end does not exist/i.test(String(detail||''))){
+        if(seq === _probeSeq){
+          state = {available:false, network:'stagenet', signer:true,
+                   error:'Your Nostr signer extension is not responding, so this app has no session. '
+                       + 'Reload the page, or disable and re-enable the extension.'};
+          checkedAt = Date.now();
+        }
         return state;
       }
       const _fail={available:false,error:detail,network:'stagenet',
@@ -204,6 +231,16 @@
     // Nothing to paint is not an error — an in-flight probe can hand back no state at all.
     if(!s||!PC||PC.VIEW!=='wallet')return;
     const f=document.getElementById('feed'); if(!f)return;
+    if(!s.available && s.signer){
+      f.innerHTML = '<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">\u0271</span>'
+        + '<div><h2>Monero Wallet</h2><span class="mw-net">SIGNER</span></div></header>'
+        + '<section class="mw-card mw-unavailable"><h3>Your signer extension is not responding</h3>'
+        + '<p>' + esc(s.error) + '</p><p class="muted small">Nothing is wrong with the wallet or the '
+        + 'Monero node \u2014 every signed-in feature needs the signer, which is why the theme and '
+        + 'other server data fail at the same time.</p>'
+        + '<button class="btn btn-cyan" id="mw-retry">Try again</button></section></div>';
+      bind(); return;
+    }
     if(!s.available){f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">LOCAL WALLET</span></div></header>'+warning(s)+(s.busy?busyHtml():fallbackHtml(s.error))+'</div>'; bind(); return;}
     const address=String(s.address||''), balance=s.balance_atomic!=null?s.balance_atomic:s.balance;
     f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">'+esc((s.network||'stagenet').toUpperCase())+(s.network==='stagenet'?' · testing only':'')+'</span></div><button class="btn btn-ghost small" id="mw-refresh">Refresh</button></header>'
@@ -485,8 +522,26 @@
     const f=PC.$&&PC.$('#feed');
     if(state) paint(state);
     else if(f) f.innerHTML='<div class="spinner"></div>';
-    const s=await probe(!!force);
+    /* BOUNDED HERE TOO. The deadline was put on `tip()` and `meTip()` and NOT on this, so opening
+       the wallet screen still awaited a probe that begins with `ensureAiSession()` — which for a
+       Nostr login goes through the signer and can wait on a phone, an approval, or nothing at all.
+       The screen then sat on its spinner for ever. Reported as "Monero wallet is not even loading
+       now": the same root cause as the tip that did nothing, through a different door. */
+    let s=await _bounded(probe(!!force));
     if(PC.VIEW!=='wallet')return;
+    if(s === TIMED_OUT){
+      /* NO ANSWER IS A STATE, NOT A REASON TO KEEP SPINNING. Say so, and leave a way to ask again. */
+      const f3 = document.getElementById('feed');
+      if(f3 && !state) f3.innerHTML = '<div class="mw-wrap"><header class="mw-head">'
+        + '<span class="mw-logo">\u0271</span><div><h2>Monero Wallet</h2>'
+        + '<span class="mw-net">LOCAL WALLET</span></div></header>'
+        + '<section class="mw-card mw-unavailable"><h3>The wallet did not answer</h3>'
+        + '<p>It did not reply in time. If you have just signed in, give it a moment \u2014 '
+        + 'signing in has to finish before the wallet can be read.</p>'
+        + '<button class="btn btn-cyan" id="mw-retry">Try again</button></section></div>';
+      if(f3 && !state) bind();
+      return;
+    }
     /* A REFUSAL FROM THE NODE WALLET IS NOT THIS USER'S ANSWER. It is admin-only, so for everybody
        else it always 403s — showing them that message is showing them somebody else's error. If
        this node keeps a wallet for them, that is the wallet this screen is about. */
@@ -621,7 +676,7 @@
   }
 
   async function meTip(opts){
-    const s = await _bounded(meProbe(false));
+    let s = await _bounded(meProbe(false)); if(s === TIMED_OUT) s = null;
     if(!s || !s.enabled) return false;
     if(!validAddress(opts && opts.address, s.network)) return false;
     // Nothing spendable: hand it to the external flow rather than open a sheet that would be refused.
@@ -691,10 +746,17 @@
    * time anybody clicks the answer is already here. This only fires when something is genuinely
    * stuck, and there a dead button is the worse outcome. */
   const PROBE_DEADLINE_MS = 2500;
+  /* TWO KINDS OF "NO ANSWER", AND THEY ARE NOT THE SAME THING TO SAY.
+   *   - the deadline expired      -> something is stuck; say so and offer Retry
+   *   - the probe answered null   -> the app session is not ready yet (boot, sign-in in progress);
+   *                                  a spinner is the honest answer and a "did not answer" card is
+   *                                  a lie told to somebody who is three seconds from being ready.
+   * The timeout resolves to a sentinel so the caller can tell them apart. */
+  const TIMED_OUT = {__timeout:true};
   function _bounded(promise){
     return Promise.race([
       Promise.resolve(promise).catch(() => null),
-      new Promise(r => setTimeout(() => r(null), PROBE_DEADLINE_MS)),
+      new Promise(r => setTimeout(() => r(TIMED_OUT), PROBE_DEADLINE_MS)),
     ]);
   }
 
@@ -712,7 +774,7 @@
      * So only a POSITIVE answer is cached, and only briefly. Anything else asks again — which is
      * still deterministic, because the answer comes from the wallet rather than from a timer. */
     let s = (state && state.available && Date.now()-checkedAt < 30000) ? state : null;
-    if(!s){ try{ s = await _bounded(probe(true)); }catch(_){ s = null; } }
+    if(!s){ try{ s = await _bounded(probe(true)); if(s === TIMED_OUT) s = null; }catch(_){ s = null; } }
     if(!s||!s.available||!validAddress(opts&&opts.address,s.network))return false;
     /* AN EMPTY WALLET MUST NOT OFFER TO SPEND.
      *

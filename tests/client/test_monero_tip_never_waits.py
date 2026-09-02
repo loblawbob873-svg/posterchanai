@@ -304,3 +304,30 @@ def test_the_wallet_works_once_the_session_exists(seen):
     """The refusal must not latch — the next probe has a session and has to answer properly."""
     assert seen["afterSignIn"]["showsBalance"] is True
     assert seen["afterSignIn"]["stillShowsSessionError"] is False
+
+
+def test_a_dead_signer_extension_is_not_reported_as_a_broken_wallet(seen):
+    """Taken verbatim from the console: "could not establish your app session: Could not establish
+    connection. Receiving end does not exist." at `__pcNostrProvider`, with "theme sync skipped"
+    failing identically in the same session.
+
+    That is a browser-EXTENSION fault — a NIP-07 content script that cannot reach its own background
+    worker. Every authenticated call goes through the signer, so the wallet is merely the loudest
+    thing about it. Reported as "Monero wallet is not even loading now", which sent us looking at
+    monerod, the pool daemon and the wallet RPC — all of which were healthy."""
+    assert seen["signerDead"]["namesTheSigner"] is True, (
+        "a dead signer extension is still presented as a wallet failure")
+    assert seen["signerDead"]["exoneratesTheWallet"] is True, (
+        "nothing tells the reader the wallet and the node are fine")
+    assert seen["signerDead"]["hasRetry"] is True
+    assert seen["signerDead"]["spinner"] is False
+
+
+def test_the_wallet_screen_never_spins_for_ever(seen):
+    """The deadline was on `tip()` and `meTip()` and NOT on `render()`, so opening the screen still
+    awaited a probe that begins with `ensureAiSession()`. Same root cause as the tip that did
+    nothing, through a different door."""
+    assert seen["screenHangs"]["tookMs"] < 5000, (
+        f"the wallet screen waited {seen['screenHangs']['tookMs']}ms on a signer that never answered")
+    assert seen["screenHangs"]["spinner"] is False, "it is still spinning with no answer"
+    assert seen["screenHangs"]["saysSo"] is True and seen["screenHangs"]["hasRetry"] is True
