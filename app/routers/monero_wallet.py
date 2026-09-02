@@ -49,6 +49,23 @@ async def sync_state(user: WalletOwner):
         raise _bad(exc) from exc
 
 
+class SplitRequest(BaseModel):
+    outputs: int = Field(ge=2, le=16)
+
+
+@router.post("/split")
+async def split_outputs(body: SplitRequest, user: WalletOwner):
+    """Make the wallet able to pay several people in a row.
+
+    A wallet holding ONE unspent output can send once and then nothing until the change unlocks —
+    10 blocks, about twenty minutes. Splitting the balance into N outputs is what lets N tips follow
+    each other. It is a real transaction with a real fee, so it is only ever done on request."""
+    try:
+        return await _wallet().split_outputs(body.outputs)
+    except WalletError as exc:
+        raise _bad(exc) from exc
+
+
 @router.get("/node-status")
 async def node_status(user: WalletOwner):
     try:

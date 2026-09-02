@@ -217,7 +217,18 @@ class MoneroWallet:
         return result
 
     async def balance(self) -> dict[str, Any]:
-        return normalize_amounts(await self.rpc("get_balance", {"account_index": 0}))
+        """Balance, plus HOW MANY OUTPUTS it is made of.
+
+        `num_unspent_outputs` lives inside `per_subaddress` and is the number that decides whether
+        this wallet can pay two people in a row — one output means one tip until the change unlocks.
+        Lifted to the top level so the client does not have to know that shape."""
+        got = normalize_amounts(await self.rpc("get_balance", {"account_index": 0}))
+        try:
+            subs = got.get("per_subaddress") or []
+            got["num_unspent_outputs"] = sum(int(x.get("num_unspent_outputs") or 0) for x in subs)
+        except Exception:
+            got["num_unspent_outputs"] = None
+        return got
 
     async def address(self) -> dict[str, Any]:
         return await self.rpc("get_address", {"account_index": 0})
@@ -283,6 +294,36 @@ class MoneroWallet:
             if isinstance(result.get(key), list):
                 result[key] = result[key][-limit:]
         return normalize_amounts(result)
+
+    async def split_outputs(self, count: int) -> dict[str, Any]:
+        """Split the wallet's balance into `count` independently spendable outputs.
+
+        ONE OUTPUT MEANS ONE TIP AT A TIME, whatever the balance says. Monero spends whole outputs
+        and locks the change for 10 blocks, so a wallet holding a single output can send once and
+        then nothing for ~20 minutes — measured here as `num_unspent_outputs: 1` while five tips
+        went out one at a time. On a node where many people tip, that is the actual ceiling.
+
+        `sweep_all` to the wallet's OWN address with `outputs: N` is how a Monero wallet fixes that:
+        the balance comes back as N outputs, each spendable on its own, so N tips can follow each
+        other without waiting.
+
+        It is a real transaction — it costs a fee and its own outputs lock for 10 blocks before they
+        can be used. So it is an explicit operator action, never automatic: a wallet that quietly
+        spent its own funds on a timer would be a worse surprise than the wait."""
+        if not 2 <= int(count) <= 16:
+            raise WalletError("Split the wallet into between 2 and 16 outputs")
+        addr = await self.address()
+        own = str(addr.get("address") or "")
+        if not own:
+            raise WalletError("The wallet did not return its own address")
+        validate_address(own, self.config.network)
+        return normalize_amounts(await self.rpc("sweep_all", {
+            "address": own,
+            "account_index": 0,
+            "outputs": int(count),
+            "priority": 1,
+            "get_tx_keys": False,
+        }))
 
     async def make_uri(self, address: str, amount_atomic: int, description: str = "") -> dict[str, Any]:
         validate_address(address, self.config.network)

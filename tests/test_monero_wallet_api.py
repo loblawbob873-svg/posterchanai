@@ -127,6 +127,9 @@ ROUTES = [
     # "Am I still reading the chain?" — the same owner-only gate as every other wallet route, and
     # listed here so the whole sweep (auth, method, disabled-wallet) covers it too.
     ("GET", "/api/wallet/xmr/sync", None),
+    # Splitting the balance into spendable outputs is a real transaction — owner-only like every
+    # other route here, and listed so the whole sweep (auth, method, disabled-wallet) covers it.
+    ("POST", "/api/wallet/xmr/split", {"outputs": 8}),
     ("GET", "/api/wallet/xmr/balance", None),
     ("GET", "/api/wallet/xmr/address", None),
     ("GET", "/api/wallet/xmr/history", None),
@@ -394,7 +397,8 @@ def test_balances_leave_the_process_as_decimal_strings_never_json_numbers(client
     assert response.status_code == 200
     assert "9007199254740993" not in response.text, "an atomic integer crossed the wire unconverted"
     assert response.json() == {"balance": "9007.199254740993",
-                               "unlocked_balance": "0.000000000001", "blocks_to_unlock": 12}
+                               "unlocked_balance": "0.000000000001", "blocks_to_unlock": 12,
+                               "num_unspent_outputs": 0}
 
 
 def test_history_amounts_are_converted_inside_every_bucket(client, rpc_calls):

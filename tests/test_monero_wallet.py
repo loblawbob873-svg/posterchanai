@@ -114,7 +114,11 @@ def test_rpc_uses_digest_auth_no_proxy_redirects_and_safe_error(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", Client)
     result = asyncio.run(MoneroWallet(config()).balance())
-    assert result == {"balance": "0.000000000009"}
+    # `num_unspent_outputs` is summed in from `per_subaddress` — it is the number that decides
+    # whether this wallet can pay two people in a row. What this test is about is the AMOUNT staying
+    # an exact decimal string and never a JSON number.
+    assert result["balance"] == "0.000000000009"
+    assert set(result) <= {"balance", "num_unspent_outputs"}
     assert isinstance(observed["auth"], httpx.DigestAuth)
     assert observed["trust_env"] is False
     assert observed["follow_redirects"] is False
