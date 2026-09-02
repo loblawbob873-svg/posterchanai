@@ -100,11 +100,46 @@ async def _session(ws, flow, query):
         await call("Page.enable")
         await call("Runtime.enable")
         # Phone metrics: this is the surface all three were reported on.
+        # Phone metrics by default: this is the surface all three were reported on. `PC_CHECK_WIDTH`
+        # re-runs the same flows at a desktop viewport, because "clicking a profile shows nothing"
+        # was reported on desktop classic and the layout decides which renderer draws the list.
+        _w = int(os.environ.get("PC_CHECK_WIDTH", "390"))
         await call("Emulation.setDeviceMetricsOverride",
-                   {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True})
+                   {"width": _w, "height": 900 if _w > 700 else 844,
+                    "deviceScaleFactor": 1 if _w > 700 else 2, "mobile": _w <= 700})
         await call("Page.addScriptToEvaluateOnNewDocument",
                    {"source": "try{localStorage.setItem('pc_nostr_session',JSON.stringify({sk:%s}));}catch(e){}"
                               % json.dumps(SK)})
+
+        if flow == "profile_click":
+            # CLICKING a profile is not the same code path as opening its URL, and only the URL was
+            # ever checked here. A cold load boots the whole client at the profile; a click is an
+            # in-app navigation that paints from the Store cache and refreshes behind it. Reported
+            # as "clicking on users profile loads empty profile screen with no notes" while a cold
+            # /client/<npub> was perfectly fine — which is exactly the gap this flow closes.
+            await call("Page.navigate", {"url": BASE + "/client"})
+            for _ in range(80):
+                await asyncio.sleep(0.4)
+                if await js("!!window.__PC && document.querySelectorAll('#tl-notes article.note').length>2"):
+                    break
+            await asyncio.sleep(2.0)
+            # Click the author the way a finger does: the delegated [data-prof] hook on a real card.
+            clicked = await js("""(()=>{const el=document.querySelector('#tl-notes article.note [data-prof]');
+                if(!el) return 'no author element on any card';
+                el.click(); return 'ok';})()""")
+            if clicked != "ok":
+                return False, json.dumps({"clicked": clicked})
+            await asyncio.sleep(18)
+            st = await js("""JSON.stringify({
+                posts: document.querySelectorAll('#prof-list article.note').length,
+                tabs:  document.querySelectorAll('.prof-tab').length,
+                copy:  !!(document.getElementById('copy-npub')||{}).onclick,
+                empty: !!document.querySelector('#prof-list .empty, #prof-list .muted'),
+                title: (document.getElementById('view-title')||{}).textContent})""")
+            d = json.loads(st)
+            # Same trio as the cold flow: they die together when a render aborts half way.
+            return (d.get("title") == "Profile" and d.get("tabs") == 5 and d.get("copy")
+                    and d.get("posts", 0) > 0), st
 
         if flow in ("profile", "profile_replies"):
             who = NPUB_REPLIES if flow == "profile_replies" else NPUB
@@ -178,9 +213,9 @@ async def main():
         print("SKIP  no Chrome on this box")
         return 2
 
-    tally = {"timeline": [0, 0], "profile": [0, 0], "profile_replies": [0, 0], "search": [0, 0]}
+    tally = {"timeline": [0, 0], "profile": [0, 0], "profile_click": [0, 0], "profile_replies": [0, 0], "search": [0, 0]}
     for i in range(SESSIONS):
-        for flow in ("timeline", "profile", "profile_replies", "search"):
+        for flow in ("timeline", "profile", "profile_click", "profile_replies", "search"):
             shutil.rmtree(PROFILE_DIR, ignore_errors=True)
             proc = subprocess.Popen(
                 ["google-chrome-stable", "--headless=new", "--disable-gpu", "--no-sandbox",

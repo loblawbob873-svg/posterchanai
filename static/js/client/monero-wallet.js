@@ -110,8 +110,12 @@
         request('/api/wallet/xmr/history?limit=50').catch(error=>({__error:error}))]);
       const hist=histResult&&typeof histResult==='object'&&!histResult.__error?histResult:{};
       const transfers=[];
-      for(const kind of ['in','out','pending','failed']) for(const row of (hist[kind]||[]))
-        transfers.push(Object.assign({direction:kind},row));
+      /* `pool` is INCOMING UNCONFIRMED — a payment that has been broadcast and not yet mined.
+         It used not to be requested at all, so the one window in which somebody checks ("they said
+         they sent it") showed nothing. It is marked, because an unconfirmed credit is not the same
+         promise as a confirmed one. */
+      for(const kind of ['in','out','pending','failed','pool']) for(const row of (hist[kind]||[]))
+        transfers.push(Object.assign({direction:kind, unconfirmed:(kind==='pool'||kind==='pending')},row));
       transfers.sort((a,b)=>Number(b.timestamp||b.height||0)-Number(a.timestamp||a.height||0));
       state={available:true,network:meta.network,warning:meta.warning,balance:bal.balance,
         unlocked_balance:bal.unlocked_balance,
@@ -119,7 +123,8 @@
     }catch(e){
       const detail=(e&&e.message)||String(e||'local wallet unavailable');
       try{console.error('[monero wallet] probe failed',e);}catch(_){}
-      state={available:false,error:detail,network:'stagenet'};
+      state={available:false,error:detail,network:'stagenet',
+             busy:/still reading the chain|is busy/i.test(String(detail||''))};
     }
     return state;
   }
@@ -127,6 +132,11 @@
     try{ const src=root.PCQR&&root.PCQR.dataUrl(String(text)); return src?'<img src="'+esc(src)+'" alt="'+esc(alt)+'">':''; }catch(_){return '';}
   }
   function warning(s){const main=s&&s.network==='mainnet';return '<div class="mw-warning" role="note"><b>'+(main?'MAINNET HOT WALLET — REAL FUNDS.':'Small tips only.')+'</b> '+(main?'Keep only small tipping funds here. ':'This is a hot spending wallet. ')+'Keep substantial Monero in Feather, Monero GUI, or hardware storage.</div>';}
+  /* TWO DIFFERENT FACTS, TWO DIFFERENT SENTENCES. A refused connection means no wallet is running
+     here and external-wallet mode is the correct description. A wallet that accepted the connection
+     and then went quiet is SCANNING, and telling that person they are "in safe external-wallet
+     mode" is both wrong and alarming — it is the state a node is in for hours after it is set up. */
+  function busyHtml(){return '<section class="mw-card mw-syncing"><h3>Wallet is catching up</h3><p>It is reading blocks it has not seen yet and cannot answer until it has. Balances and history appear once it reaches the tip of the chain — nothing is lost, and tipping still works through your own wallet meanwhile.</p><button class="btn btn-cyan" id="mw-retry">Check again</button></section>';}
   function fallbackHtml(error){return '<section class="mw-card mw-unavailable"><h3>Local wallet unavailable</h3><p>This device is in safe external-wallet mode. Tips still open Feather, Monero GUI, or another installed wallet; PosterChan never receives your spend key.</p>'+(error?'<p class="muted small mw-error">'+esc(error)+'</p>':'')+'<button class="btn btn-cyan" id="mw-retry">Retry local wallet</button></section>';}
   function historyDate(v){
     if(v==null||v==='')return 'pending';
@@ -146,7 +156,8 @@
     if(!Array.isArray(rows)||!rows.length)return '<div class="mw-empty">No transactions yet</div>';
     return '<div class="mw-history">'+rows.slice(0,50).map(t=>{
       const row=transferView(t), incoming=row.incoming;
-      return '<div class="mw-tx"><span class="mw-dir '+(incoming?'in':'out')+'">'+(incoming?'↓':'↑')+'</span><span><b>'+(incoming?'Received':'Sent')+'</b><small>'+esc(row.date)+'</small></span><strong>'+(incoming?'+':'−')+row.amount+' XMR</strong></div>';
+      const pend=!!t.unconfirmed;
+      return '<div class="mw-tx'+(pend?' mw-tx-pending':'')+'"><span class="mw-dir '+(incoming?'in':'out')+'">'+(incoming?'↓':'↑')+'</span><span><b>'+(incoming?'Received':'Sent')+(pend?' · unconfirmed':'')+'</b><small>'+esc(row.date)+'</small></span><strong>'+(incoming?'+':'−')+row.amount+' XMR</strong></div>';
     }).join('')+'</div>';
   }
   function paint(s){
@@ -154,17 +165,42 @@
     // navigation (including login landing, resume, or a relay-driven repaint).
     if(!PC||PC.VIEW!=='wallet')return;
     const f=document.getElementById('feed'); if(!f)return;
-    if(!s.available){f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">LOCAL WALLET</span></div></header>'+warning(s)+fallbackHtml(s.error)+'</div>'; bind(); return;}
+    if(!s.available){f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">LOCAL WALLET</span></div></header>'+warning(s)+(s.busy?busyHtml():fallbackHtml(s.error))+'</div>'; bind(); return;}
     const address=String(s.address||''), balance=s.balance_atomic!=null?s.balance_atomic:s.balance;
     f.innerHTML='<div class="mw-wrap"><header class="mw-head"><span class="mw-logo">ɱ</span><div><h2>Monero Wallet</h2><span class="mw-net">'+esc((s.network||'stagenet').toUpperCase())+(s.network==='stagenet'?' · testing only':'')+'</span></div><button class="btn btn-ghost small" id="mw-refresh">Refresh</button></header>'
       +warning(s)+'<section class="mw-balance"><span>Available balance</span><strong>'+xmr(balance,s.balance_atomic!=null)+' <small>XMR</small></strong><span class="muted small">'+xmr(s.unlocked_balance_atomic!=null?s.unlocked_balance_atomic:balance,s.unlocked_balance_atomic!=null||s.balance_atomic!=null)+' XMR unlocked</span></section>'
       +'<div class="mw-actions"><button class="btn btn-neon" id="mw-send">Send</button><button class="btn btn-cyan" id="mw-receive">Receive</button></div>'
+      +'<div id="mw-sync"></div>'
       +'<section class="mw-card"><h3>Recent activity</h3>'+transferRows(s.transfers||s.history)+'</section>'
       +'<section class="mw-card mw-address"><h3>Receive address</h3><code>'+esc(address||'Wallet has not returned an address')+'</code><button class="btn btn-ghost small" id="mw-copy">Copy</button></section></div>';
     bind();
   }
+  /* WHY A ZERO IS A ZERO.
+   *
+   * Reported as "people have been zapping my monero address but wallet still says 0". Measured on
+   * the node: monerod was 284,871 blocks behind and syncing, so the wallet had never seen the blocks
+   * those payments were in. `balance: 0` was correct and the screen was unreadable — an empty wallet
+   * and a wallet that has not finished reading the chain looked identical, on the one screen where
+   * that difference is somebody's money.
+   *
+   * Asked for AFTER the paint, never before it: `refresh` does real work on a wallet that is behind,
+   * and the balance must not wait on it. An unknown answer says nothing at all rather than claiming
+   * this wallet is up to date — the reassuring answer is the one that would be wrong. */
+  async function syncNote(){
+    const host=document.getElementById('mw-sync'); if(!host)return;
+    let st=null;
+    try{ st=await request('/api/wallet/xmr/sync'); }catch(_){ return; }
+    if(!st||!st.checked||!st.scanning)return;
+    if(PC.VIEW!=='wallet')return;
+    const again=document.getElementById('mw-sync'); if(!again)return;
+    again.innerHTML='<section class="mw-card mw-syncing"><h3>Still catching up with the chain</h3>'
+      +'<p>This node is reading blocks it has not seen yet, so recent payments are not counted in the '
+      +'balance above. Nothing is lost — the balance fills in as it catches up.</p></section>';
+  }
+
   function bind(){
     const by=id=>document.getElementById(id);
+    try{ syncNote(); }catch(_){ }
     if(by('mw-retry'))by('mw-retry').onclick=()=>render(true);
     if(by('mw-refresh'))by('mw-refresh').onclick=()=>render(true);
     if(by('mw-send'))by('mw-send').onclick=()=>sendDialog({});
@@ -312,8 +348,25 @@
     }, _watchDelay);
     try{ if(_watchTimer && _watchTimer.unref) _watchTimer.unref(); }catch(_){ }
   }
+  /* TIPPING MUST NEVER WAIT ON THE LOCAL WALLET.
+   *
+   * `doXmrTip` calls this first and falls through to the non-custodial URI/QR flow when it answers
+   * false — which is the right design and was undone by the await. `probe` is allowed 20 seconds,
+   * and monero-wallet-rpc BLOCKS while it scans, so on a node that is catching up (hours, at
+   * launch) tapping ɱ did nothing at all for twenty seconds before the modal appeared. The
+   * fallback exists so tipping does not depend on this optional wallet; it has to not depend on
+   * its LATENCY either.
+   *
+   * A fresh cached answer is used as-is. Otherwise the probe is started — it is still worth having
+   * for the next tip — and given a moment to answer before we get out of the way. */
+  const TIP_WAIT_MS = 1200;
   async function tip(opts){
-    const s=await probe(false);if(!s.available||!validAddress(opts&&opts.address,s.network))return false;
+    let s = (state && Date.now()-checkedAt < 8000) ? state : null;
+    if(!s){
+      const asked = Promise.resolve(probe(false)).catch(()=>null);
+      s = await Promise.race([asked, new Promise(r=>setTimeout(()=>r(null), TIP_WAIT_MS))]);
+    }
+    if(!s||!s.available||!validAddress(opts&&opts.address,s.network))return false;
     sendDialog(opts||{});return true;
   }
   async function openReceive(){

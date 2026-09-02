@@ -38,6 +38,17 @@ async def wallet_status(user: WalletOwner):
     }
 
 
+@router.get("/sync")
+async def sync_state(user: WalletOwner):
+    """Deliberately its OWN route, asked for AFTER the wallet has painted. `refresh` does real work
+    on a wallet that is behind, and the balance must never wait on it — the screen paints what it
+    knows and this fills in the reason a 0 is a 0."""
+    try:
+        return await _wallet().sync_state()
+    except WalletError as exc:
+        raise _bad(exc) from exc
+
+
 @router.get("/node-status")
 async def node_status(user: WalletOwner):
     try:

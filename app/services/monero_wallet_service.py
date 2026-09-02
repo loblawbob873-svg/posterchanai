@@ -32,6 +32,18 @@ class WalletError(Exception):
     """A safe, client-displayable wallet error."""
 
 
+class WalletBusy(WalletError):
+    """THE WALLET IS THERE AND IT IS WORKING — it just has not answered yet.
+
+    monero-wallet-rpc BLOCKS while it scans blocks, so on a node that is catching up every call
+    times out. Both outcomes used to become "Local Monero wallet is unavailable", which the screen
+    renders as "This device is in safe external-wallet mode" — a sentence that describes a wallet
+    that is not configured, shown for hours to somebody whose wallet is fine and busy.
+
+    A refused CONNECTION is genuinely "not there". A connection that was accepted and then went
+    quiet is the opposite: something is on the other end, doing work. They must not read the same."""
+
+
 @dataclass(frozen=True)
 class WalletConfig:
     enabled: bool
@@ -169,6 +181,11 @@ class MoneroWallet:
                 response = await client.post(self.config.url, json=payload)
                 response.raise_for_status()
                 body = response.json()
+        except httpx.ConnectTimeout as exc:
+            # Nothing accepted the connection — that is "not there", not "busy".
+            raise WalletError("Local Monero wallet is unavailable") from exc
+        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+            raise WalletBusy("Local Monero wallet is busy — it is still reading the chain") from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise WalletError("Local Monero wallet is unavailable") from exc
         if not isinstance(body, dict):
@@ -186,6 +203,37 @@ class MoneroWallet:
 
     async def address(self) -> dict[str, Any]:
         return await self.rpc("get_address", {"account_index": 0})
+
+    async def sync_state(self) -> dict[str, Any]:
+        """IS THIS WALLET AT THE TIP OF THE CHAIN, OR STILL READING ITS WAY THERE?
+
+        Reported as "people have been zapping my monero address but wallet still says 0". Measured
+        on the real node: monerod was at 3,468,468 of 3,753,339 — 284,871 blocks behind, actively
+        syncing — so the wallet had simply never seen the blocks those payments were in. It reported
+        `balance: 0` perfectly correctly, and a bare 0 is indistinguishable from "you have nothing".
+
+        `sync_info` and `get_info` are DAEMON methods and monero-wallet-rpc answers `Method not
+        found` for both (verified against the live wallet), so the daemon's target height cannot be
+        read from here at all. `refresh` can: it returns `blocks_fetched`, which is 0 for a wallet
+        at the tip and >0 for one still catching up. That is the only signal available and it is a
+        real one.
+
+        A failure answers "I could not tell" — never "synchronised". This is the same rule the drive
+        check and the uptime doc follow, and it matters more here: the reassuring answer is the one
+        that would be wrong."""
+        try:
+            got = await self.rpc("refresh")
+        except WalletBusy:
+            # A wallet that accepted the connection and then did not answer within the budget is
+            # scanning — which is exactly the state this call exists to report, and the one in which
+            # it is least able to reply. Reporting "unknown" here would silence the banner precisely
+            # when it is true.
+            return {"checked": True, "scanning": True, "blocks_fetched": 0, "busy": True}
+        except WalletError:
+            return {"checked": False, "scanning": None, "blocks_fetched": 0}
+        fetched = got.get("blocks_fetched")
+        fetched = fetched if isinstance(fetched, int) and not isinstance(fetched, bool) else 0
+        return {"checked": True, "scanning": fetched > 0, "blocks_fetched": fetched}
 
     async def node_status(self) -> dict[str, Any]:
         """Minimal operational health only: no addresses, transfers, keys, or RPC credentials."""
@@ -208,8 +256,12 @@ class MoneroWallet:
     async def history(self, *, limit: int = 50) -> dict[str, Any]:
         if not 1 <= limit <= 100:
             raise WalletError("History limit must be between 1 and 100")
-        result = await self.rpc("get_transfers", {"in": True, "out": True, "pending": True, "failed": True})
-        for key in ("in", "out", "pending", "failed"):
+        # `pending` is OUTGOING unconfirmed; `pool` is INCOMING unconfirmed. Asking for one and not
+        # the other made a tip that had not been mined yet invisible in Recent activity — the exact
+        # window in which somebody looks, having just been told the payment was sent.
+        result = await self.rpc("get_transfers",
+                                {"in": True, "out": True, "pending": True, "failed": True, "pool": True})
+        for key in ("in", "out", "pending", "failed", "pool"):
             if isinstance(result.get(key), list):
                 result[key] = result[key][-limit:]
         return normalize_amounts(result)

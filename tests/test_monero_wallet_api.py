@@ -124,6 +124,9 @@ def client(env, gate, rpc_calls):
 ROUTES = [
     ("GET", "/api/wallet/xmr/status", None),
     ("GET", "/api/wallet/xmr/node-status", None),
+    # "Am I still reading the chain?" — the same owner-only gate as every other wallet route, and
+    # listed here so the whole sweep (auth, method, disabled-wallet) covers it too.
+    ("GET", "/api/wallet/xmr/sync", None),
     ("GET", "/api/wallet/xmr/balance", None),
     ("GET", "/api/wallet/xmr/address", None),
     ("GET", "/api/wallet/xmr/history", None),
