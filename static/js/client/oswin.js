@@ -97,8 +97,24 @@
 
   /* Open one. Returns the child window handle, or null when this build/platform cannot — the caller
    * falls back to the in-page window, which is what web and Android always use. */
+  /* A WINDOW IS ONLY WORTH OPENING FOR SOMETHING THE CLIENT CAN RENDER.
+   *
+   * `switchView` does not validate its argument: an unknown view sets VIEW and falls through to the
+   * default timeline. So a window opened on a name nothing routes does not fail — it succeeds, with
+   * the wrong contents and the right title, which is how "System settings just loaded a social
+   * feed" happened. The caller that got it wrong has been fixed; this is the rule stated where no
+   * future caller can get round it. `.nav-item[data-view]` is the same list the desktop reads to
+   * draw its icons, so a view added to the nav is poppable for free and one that is not, is not. */
+  function routable(view){
+    const v = String(view || '');
+    if(!v || !/^[a-z0-9_-]+$/i.test(v)) return false;
+    try{ return !!root.document.querySelector('.nav-item[data-view="' + v + '"]'); }
+    catch(_){ return false; }
+  }
+
   function open(view, label, opts){
     if(!enabled()) return null;
+    if(!routable(view)) return null;
     const o = opts || {};
     const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''));
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron
@@ -129,7 +145,7 @@
     return state;
   }
 
-  const API = { isWindow, viewOf, desktop, enabled, open, adopt, PARAM, TITLE };
+  const API = { isWindow, viewOf, desktop, enabled, open, routable, adopt, PARAM, TITLE };
   root.PCOSWin = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

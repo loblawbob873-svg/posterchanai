@@ -1519,10 +1519,39 @@
    * Deliberately per-window rather than a switch for everything. The in-page windows carry the
    * folder/EXTRAS/Messages-tab/monitor-handoff machinery, and moving all of it at once is how a
    * desktop rewrite produces a black screen. This moves one window, and nothing else changes. */
+  /* A WINDOW MUST NOT OPEN ON SOMETHING IT CANNOT SHOW.
+   *
+   * Reported as "System settings just loaded a social feed", and that is exactly what happened:
+   * popOut derived the new window's view by STRIPPING `doc:`, so the System Settings frame
+   * (`doc:os-settings`) asked for `os-settings` — a name nothing routes — and `switchView` does not
+   * validate, so an unknown view falls through to the default timeline. The window opened, took the
+   * title "System Settings", and painted the social feed. Nothing threw and nothing logged.
+   *
+   * Stripping the prefix was the wrong repair in the first place: os.js already carries the real
+   * mapping a few thousand lines down (routeView's `doc:os-settings` → 'settings'). But the honest
+   * answer for these frames is that they cannot be popped out AT ALL. Settings, Task Manager, VMs
+   * and Remote Desktop are EXTRAS this shell BUILDS into an in-page frame — there is no app view a
+   * fresh page could render — and a folder is not an app either.
+   *
+   * So the destination has to be a view the nav actually knows, which is the same list the desktop
+   * reads to draw its icons. Anything else refuses, keeps the frame it was going to close, and says
+   * so. A window that lies about what it contains is worse than a button that declines. */
+  function popOutView(w){
+    const v = String((w && (w.appView || w.view)) || '');
+    if(!v || v.indexOf('doc:') === 0 || v.indexOf('__') === 0 || v.indexOf('folder:') === 0) return '';
+    if(!/^[a-z0-9_-]+$/i.test(v)) return '';
+    try{ return document.querySelector('.nav-item[data-view="' + v + '"]') ? v : ''; }
+    catch(_){ return ''; }
+  }
+
   function popOut(w){
     if(!w) return null;
     let child = null;
-    const view = String((w.appView || w.view || '').replace(/^doc:/, ''));
+    const view = popOutView(w);
+    if(!view){
+      try{ PC().toast('this window cannot be opened on its own'); }catch(_){ }
+      return null;
+    }
     try{
       const r = w.el ? w.el.getBoundingClientRect() : null;
       child = window.PCOSWin && PCOSWin.open(view, w.label || view,
@@ -1630,7 +1659,7 @@
      * absent one. */
     { const pop = $('.osw-b[data-w="pop"]', el);
       let can = false;
-      try{ can = !!(window.PCOSWin && PCOSWin.enabled()); }catch(_){ }
+      try{ can = !!(window.PCOSWin && PCOSWin.enabled()) && !!popOutView(w); }catch(_){ }
       if(pop && !can) pop.remove(); }
     const maxBtn = $('.osw-b[data-w="max"]', el);
     const aiBtn = $('.osw-ai', el);

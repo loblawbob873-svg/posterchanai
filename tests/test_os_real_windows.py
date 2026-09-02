@@ -47,14 +47,21 @@ NODE = shutil.which("node") or shutil.which("nodejs")
 
 def run_js(body: str):
     """Drive the SHIPPED oswin.js against a stubbed window."""
-    src = f"""
+    src = rf"""
       const path = {json.dumps(str(OSWIN))};
       const make = (over) => {{
         const w = Object.assign({{
           location: {{ search: '', pathname: '/client' }},
           localStorage: {{ _v: {{}}, getItem(k){{ return this._v[k] ?? null; }},
                            setItem(k,v){{ this._v[k]=String(v); }} }},
-          document: {{ title:'', documentElement:{{ classList:{{ add(){{}} }} }} }},
+          /* `open()` refuses a view the nav does not know (a window that cannot show what it
+             says is worse than no window), so the stub has to model that nav. */
+          document: {{ title:'', documentElement:{{ classList:{{ add(){{}} }} }},
+                       querySelector(sel){{
+                         const m = /^\.nav-item\[data-view="(.*)"\]$/.exec(sel);
+                         const nav = this._nav || ['home','global','notes','mail','settings'];
+                         return m ? (nav.indexOf(m[1]) >= 0 ? {{ dataset:{{ view:m[1] }} }} : null) : null;
+                       }} }},
           open(){{ return null; }},
         }}, over || {{}});
         delete require.cache[require.resolve(path)];
@@ -394,7 +401,19 @@ def test_the_control_is_absent_where_it_could_not_work():
 def test_it_pops_the_view_the_window_is_actually_showing():
     """`appView` is the tab a Messages frame is on; `view` is the frame's identity. Popping the
     frame identity would open Direct Messages for a window showing Communities."""
-    body = _popout()
-    assert "w.appView || w.view" in body
-    assert "replace(/^doc:/, '')" in body, (
-        "a document window's view keeps its `doc:` prefix, which routes to nothing")
+    rule = OS_JS[OS_JS.index("  function popOutView(w){"):OS_JS.index("  function popOut(w){")]
+    assert "w.appView || w.view" in rule
+    assert "popOutView(w)" in _popout(), "popOut no longer goes through the shared rule"
+
+
+def test_a_document_window_is_refused_rather_than_stripped():
+    """THIS TEST USED TO ASSERT THE BUG. It demanded `replace(/^doc:/, '')` on the reasoning that
+    "a document window's view keeps its `doc:` prefix, which routes to nothing" — the observation
+    was right and the remedy was backwards. Stripping it does not make `doc:os-settings` routable,
+    it makes it `os-settings`, which routes to nothing either — and `switchView` does not validate,
+    so the window opened on the DEFAULT TIMELINE under the title "System Settings". Reported as
+    "Systems settings just loaded a social feed"."""
+    rule = OS_JS[OS_JS.index("  function popOutView(w){"):OS_JS.index("  function popOut(w){")]
+    assert "replace(/^doc:/" not in rule, "the doc: prefix is being stripped again"
+    assert "'doc:'" in rule and "return ''" in rule, (
+        "a doc: window is no longer refused a pop-out")
