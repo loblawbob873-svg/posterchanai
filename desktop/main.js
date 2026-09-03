@@ -2033,17 +2033,27 @@ ipcMain.handle('pc:wm:fullscreen', async (e, id, on) => {
   return result;
 });
 ipcMain.handle('pc:wm:snap', (e, id, zone) => { fsGuard(e); return wm().snap(Number(id), String(zone||'')); });
+function remoteAbsolutePoint(displays, displayId, cursor, nx, ny){
+  nx=Number(nx);ny=Number(ny);
+  if(!Number.isFinite(nx)||!Number.isFinite(ny)||nx<0||nx>1||ny<0||ny>1)return null;
+  displays=Array.isArray(displays)?displays:[];
+  const display=displays.find(d=>String(d&&d.id)===String(displayId))
+    || screen.getDisplayNearestPoint(cursor);
+  if(!display||!display.bounds)return null;
+  const b=display.bounds;
+  return {x:b.x+Math.round(nx*Math.max(0,b.width-1)),
+          y:b.y+Math.round(ny*Math.max(0,b.height-1))};
+}
 ipcMain.handle('pc:remote:input', (e, input) => {
   fsGuard(e);
   if(!SHELL_MODE) return false;
-  if(input && input.type === 'absolute') {
+  if(input && (input.type === 'absolute' || input.type === 'button') &&
+      (input.type === 'absolute' || input.x != null || input.y != null)) {
     const nx = Number(input.x), ny = Number(input.y);
-    if(!Number.isFinite(nx) || !Number.isFinite(ny) || nx < 0 || nx > 1 || ny < 0 || ny > 1) return false;
     const point = screen.getCursorScreenPoint();
-    const display = screen.getAllDisplays().find(d => String(d.id) === remoteControlDisplayId)
-      || screen.getDisplayNearestPoint(point);
-    const b = display.bounds;
-    input = { type:'absolute', x:b.x + Math.round(nx * Math.max(0,b.width-1)), y:b.y + Math.round(ny * Math.max(0,b.height-1)) };
+    const mapped=remoteAbsolutePoint(screen.getAllDisplays(),remoteControlDisplayId,point,nx,ny);
+    if(!mapped)return false;
+    input = Object.assign({}, input, mapped);
   }
   return remotecontrol.input(input);
 });

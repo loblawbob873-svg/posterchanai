@@ -35536,8 +35536,12 @@
     try{
       const track=stream&&stream.getVideoTracks&&stream.getVideoTracks()[0];
       const s=track&&track.getSettings?track.getSettings():{};
-      if(window.pcRemoteControl&&pcRemoteControl.configure&&s.width&&s.height)
-        Promise.resolve(pcRemoteControl.configure({width:s.width,height:s.height})).catch(()=>{});
+      if(s.width&&s.height){
+        if(_call&&_call.remoteDesktop)_call.localGeometry={width:s.width,height:s.height};
+        if(window.pcRemoteControl&&pcRemoteControl.configure)
+          Promise.resolve(pcRemoteControl.configure({width:s.width,height:s.height})).catch(()=>{});
+        _rdSend({t:'geometry',width:s.width,height:s.height});
+      }
     }catch(_){}
   }
   function _rdWatchScreen(local){
@@ -35577,6 +35581,7 @@
       // control as part of connecting so device-to-self sessions do not need a redundant Request
       // click. The host still grants through the channel (rather than trusting viewer-side state).
       if(!_call.caller&&_call.peer===ME.pubkey)_rdSend({t:'request'});
+      if(_call.caller&&_call.localGeometry)_rdSend(Object.assign({t:'geometry'},_call.localGeometry));
       _callUI();
     };ch.onclose=()=>{if(_call&&_call.control===ch){_call.control=null;_call.controlGranted=false;_call.controlRequested=false;_rdReleaseNative();_callUI();}};
     ch.onmessage=e=>{if(!_call||_call.control!==ch)return;let m;try{if(String(e.data||'').length>512)return;m=JSON.parse(e.data);}catch(_){return;}
@@ -35591,14 +35596,23 @@
       }
       if(m.t==='release'&&_call.caller){_call.controlRequested=false;_call.controlGranted=false;_rdReleaseNative();_callUI();return;}
       if(m.t==='grant'&&!_call.caller){_call.controlGranted=!!m.on;_callUI();return;}
+      if(m.t==='geometry'&&!_call.caller){
+        const width=Math.round(Number(m.width)),height=Math.round(Number(m.height));
+        if(width>=64&&height>=64&&width<=32768&&height<=32768){
+          _call.remoteGeometry={width,height};_callUI();
+        }
+        return;
+      }
       if(m.t==='input'&&_call.caller&&_call.controlGranted&&window.pcRemoteControl&&pcRemoteControl.input)
         Promise.resolve(pcRemoteControl.input(m.e||{})).catch(()=>{});
     };
   }
   function _rdGrant(on){if(!_call||!_call.remoteDesktop||!_call.caller)return;_call.controlRequested=false;_call.controlGranted=!!on;if(!on)_rdReleaseNative();_rdSend({t:'grant',on:!!on});_callUI();}
-  function _rdVideoPoint(video,e){
+  function _rdVideoPoint(video,e,geometry){
     const r=video.getBoundingClientRect();
-    const va=(video.videoWidth||r.width)/Math.max(1,video.videoHeight||r.height),ra=r.width/Math.max(1,r.height);
+    const vw=video.videoWidth||(geometry&&geometry.width)||r.width;
+    const vh=video.videoHeight||(geometry&&geometry.height)||r.height;
+    const va=vw/Math.max(1,vh),ra=r.width/Math.max(1,r.height);
     let left=r.left,top=r.top,width=r.width,height=r.height;
     if(ra>va){width=height*va;left+=(r.width-width)/2;}else{height=width/va;top+=(r.height-height)/2;}
     return {x:Math.max(0,Math.min(1,(e.clientX-left)/Math.max(1,width))),
@@ -35607,13 +35621,14 @@
   function _rdBindViewer(video){
     if(!video||video.dataset.rdControl)return;video.dataset.rdControl='1';let px=null,py=null;
     const active=()=>!!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted);
-    video.addEventListener('pointerdown',e=>{if(!active())return;px=e.clientX;py=e.clientY;try{video.setPointerCapture(e.pointerId);}catch(_){} _rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:true}});e.preventDefault();});
+    const point=e=>_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
+    video.addEventListener('pointerdown',e=>{if(!active())return;px=e.clientX;py=e.clientY;try{video.setPointerCapture(e.pointerId);}catch(_){} const p=point(e);_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:true,x:p.x,y:p.y}});e.preventDefault();});
     // Mouse movement must work while merely hovering. The old px===null guard initialized px only
     // on pointerdown, effectively turning remote control into drag-only control.
-    video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}const p=_rdVideoPoint(video,e);
+    video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}const p=point(e);
       _rdSend({t:'input',e:{type:'absolute',x:p.x,y:p.y}});
       px=e.clientX;py=e.clientY;e.preventDefault();});
-    const up=e=>{if(!active())return;px=e.clientX;py=e.clientY;_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false}});e.preventDefault();};
+    const up=e=>{if(!active())return;px=e.clientX;py=e.clientY;const p=point(e);_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false,x:p.x,y:p.y}});e.preventDefault();};
     video.addEventListener('pointerup',up);video.addEventListener('pointercancel',up);video.addEventListener('pointerleave',()=>{px=py=null;});
     video.addEventListener('wheel',e=>{if(!active())return;_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});
     video.addEventListener('contextmenu',e=>{if(active())e.preventDefault();});

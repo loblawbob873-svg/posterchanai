@@ -24,7 +24,13 @@ function run(args){
   return new Promise(resolve=>execFile('/usr/bin/ydotool', args, {timeout:1500},
     err=>resolve(!err)));
 }
-function enqueue(args){queue=queue.then(()=>run(args),()=>run(args));return queue;}
+function enqueueJob(job){queue=queue.then(job,job);return queue;}
+function enqueue(args){return enqueueJob(()=>run(args));}
+function setCursor(x,y){
+  return new Promise(resolve=>execFile('/usr/bin/swaymsg',
+    ['seat','seat0','cursor','set',String(x),String(y)],{timeout:1500},err=>resolve(!err)));
+}
+function enqueueCursor(x,y){return enqueueJob(()=>setCursor(x,y));}
 function start(){
   if(started) return;
   started=true;
@@ -46,7 +52,7 @@ async function input(raw){
   if(e.type==='absolute'){
     const x=Math.round(Number(e.x)),y=Math.round(Number(e.y));
     if(!Number.isFinite(x)||!Number.isFinite(y)||Math.abs(x)>100000||Math.abs(y)>100000) return false;
-    return new Promise(resolve=>execFile('/usr/bin/swaymsg',['seat','seat0','cursor','set',String(x),String(y)],{timeout:1500},err=>resolve(!err)));
+    return enqueueCursor(x,y);
   }
   if(e.type==='wheel'){
     const dy=Math.round(Number(e.dy));
@@ -55,8 +61,22 @@ async function input(raw){
   }
   if(e.type==='button'){
     const b=BUTTONS[e.button]; if(b===undefined || typeof e.down!=='boolean') return false;
-    const ok=await enqueue(['click',(e.down?'0x4':'0x8')+b]);
-    if(ok){if(e.down)heldButtons.add(b);else heldButtons.delete(b);}return ok;
+    /* A button packet carries the point from the same browser event. Pointermove is deliberately
+       rate-limited, and IPC/native scheduling can otherwise let the click overtake the final
+       absolute move. Put position and button on the same ordered native queue. */
+    let x=null,y=null;
+    if(e.x!=null||e.y!=null){
+      x=Math.round(Number(e.x));y=Math.round(Number(e.y));
+      if(!Number.isFinite(x)||!Number.isFinite(y)||Math.abs(x)>100000||Math.abs(y)>100000)return false;
+    }
+    return enqueueJob(async()=>{
+      /* Ignore browser duplicate releases (pointercancel after pointerup) without emitting another
+         native click. A duplicate press is equally non-actionable while the button is held. */
+      if(e.down?heldButtons.has(b):!heldButtons.has(b))return true;
+      if(x!=null&&!await setCursor(x,y))return false;
+      const ok=await run(['click',(e.down?'0x4':'0x8')+b]);
+      if(ok){if(e.down)heldButtons.add(b);else heldButtons.delete(b);}return ok;
+    });
   }
   if(e.type==='key'){
     const code=Math.round(Number(e.code));

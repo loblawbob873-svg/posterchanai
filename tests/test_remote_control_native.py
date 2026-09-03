@@ -39,9 +39,42 @@ def test_native_remote_input_is_bounded_and_rate_limited():
 def test_absolute_remote_pointer_maps_through_the_host_display():
     assert "input.type === 'absolute'" in MAIN
     assert "screen.getCursorScreenPoint()" in MAIN
-    assert "screen.getAllDisplays().find" in MAIN
-    assert "screen.getDisplayNearestPoint(point)" in MAIN
-    assert "execFile('/usr/bin/swaymsg',['seat','seat0','cursor','set'" in NATIVE
+    assert "remoteAbsolutePoint(screen.getAllDisplays()" in MAIN
+    assert "screen.getDisplayNearestPoint(cursor)" in MAIN
+    assert "execFile('/usr/bin/swaymsg'" in NATIVE
+    assert "['seat','seat0','cursor','set'" in NATIVE
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_host_mapping_hits_exact_edges_on_the_frozen_monitor(tmp_path):
+    start = MAIN.index("function remoteAbsolutePoint(")
+    end = MAIN.index("ipcMain.handle('pc:remote:input'", start)
+    helper = MAIN[start:end]
+    driver = tmp_path / "map.js"
+    driver.write_text(textwrap.dedent(f"""
+      const screen={{getDisplayNearestPoint:()=>displays[0]}};
+      {helper}
+      const displays=[
+        {{id:'left',bounds:{{x:-1920,y:0,width:1920,height:1080}}}},
+        {{id:'right',bounds:{{x:0,y:-120,width:3840,height:2160}}}}
+      ];
+      const out=[
+        remoteAbsolutePoint(displays,'left',{{x:0,y:0}},0,0),
+        remoteAbsolutePoint(displays,'left',{{x:0,y:0}},1,1),
+        remoteAbsolutePoint(displays,'right',{{x:0,y:0}},0,0),
+        remoteAbsolutePoint(displays,'right',{{x:0,y:0}},1,1),
+        remoteAbsolutePoint(displays,'right',{{x:0,y:0}},.5,.5),
+        remoteAbsolutePoint(displays,'right',{{x:0,y:0}},1.01,.5)
+      ];
+      console.log(JSON.stringify(out));
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == [
+        {"x": -1920, "y": 0}, {"x": -1, "y": 1079},
+        {"x": 0, "y": -120}, {"x": 3839, "y": 2039},
+        {"x": 1920, "y": 960}, None,
+    ]
 
 
 def test_posterchanos_installs_and_enables_private_user_input_daemon():
@@ -75,3 +108,30 @@ def test_native_bridge_executes_only_validated_argument_arrays(tmp_path):
     assert result["validKey"] is True and result["badKey"] is False
     ydotool = [args for file, args in result["calls"] if file == "/usr/bin/ydotool"]
     assert ydotool == [["mousemove", "12", "-9"], ["key", "30:1"], ["mousemove", "--wheel", "0", "1"], ["key", "30:0"]]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_position_and_button_are_atomic_ordered_and_duplicate_release_is_ignored(tmp_path):
+    driver = tmp_path / "remote-button.js"
+    driver.write_text(textwrap.dedent(f"""
+      const cp=require('child_process'), calls=[];
+      cp.execFile=(file,args,opts,cb)=>setTimeout(()=>{{calls.push([file,args]);cb&&cb(null,'','');}},2);
+      const rc=require({json.dumps(str(ROOT / 'desktop/remotecontrol.js'))});
+      (async()=>{{
+        const down=rc.input({{type:'button',button:0,down:true,x:100,y:200}});
+        const up=rc.input({{type:'button',button:0,down:false,x:300,y:400}});
+        const duplicate=rc.input({{type:'button',button:0,down:false,x:500,y:600}});
+        console.log(JSON.stringify({{result:await Promise.all([down,up,duplicate]),calls}}));
+      }})().catch(e=>{{console.error(e);process.exit(1)}});
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result["result"] == [True, True, True]
+    input_calls = [call for call in result["calls"] if call[0] != "/usr/bin/systemctl"]
+    assert input_calls == [
+        ["/usr/bin/swaymsg", ["seat", "seat0", "cursor", "set", "100", "200"]],
+        ["/usr/bin/ydotool", ["click", "0x40"]],
+        ["/usr/bin/swaymsg", ["seat", "seat0", "cursor", "set", "300", "400"]],
+        ["/usr/bin/ydotool", ["click", "0x80"]],
+    ]

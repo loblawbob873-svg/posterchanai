@@ -201,13 +201,13 @@ def test_remote_pointer_moves_without_requiring_a_pressed_button():
     block = APP[start:APP.index("document.addEventListener('keydown'", start)]
     move = block[block.index("pointermove"):block.index("const up=", block.index("pointermove"))]
     assert "px===null)return" not in move
-    assert "const p=_rdVideoPoint(video,e)" in move
+    assert "const p=point(e)" in move
     assert "type:'absolute',x:p.x,y:p.y" in move
     assert "addEventListener('wheel'" in block
 
 
 def test_remote_pointer_is_scaled_to_the_shared_monitor():
-    start = APP.index("function _rdVideoPoint(video,e)")
+    start = APP.index("function _rdVideoPoint(video,e,geometry)")
     helper = APP[start:APP.index("function _rdBindViewer(video)", start)]
     assert "video.getBoundingClientRect()" in helper
     assert "video.videoWidth" in helper and "video.videoHeight" in helper

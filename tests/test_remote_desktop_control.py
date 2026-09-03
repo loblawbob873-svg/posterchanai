@@ -73,9 +73,28 @@ def test_native_host_freezes_and_configures_the_captured_display():
     assert "_rdConfigureNative(next)" in APP
 
 
+def test_geometry_is_renegotiated_on_connect_and_screen_switch():
+    assert "_call.localGeometry={width:s.width,height:s.height}" in APP
+    assert "_rdSend({t:'geometry',width:s.width,height:s.height})" in APP
+    assert "_call.caller&&_call.localGeometry" in APP
+    assert "m.t==='geometry'&&!_call.caller" in APP
+    assert "_call.remoteGeometry={width,height}" in APP
+
+
+def test_button_carries_its_exact_absolute_point_and_native_queue_serializes_it():
+    assert "type:'button',button:Math.min(2,e.button|0),down:true,x:p.x,y:p.y" in APP
+    assert "type:'button',button:Math.min(2,e.button|0),down:false,x:p.x,y:p.y" in APP
+    native = (ROOT / "desktop/remotecontrol.js").read_text()
+    button = native[native.index("if(e.type==='button')"):native.index("if(e.type==='key')")]
+    assert "return enqueueJob(async()=>" in button
+    assert "if(x!=null&&!await setCursor(x,y))" in button
+    assert button.index("await setCursor(x,y)") < button.index("await run(['click'")
+    assert "heldButtons.has(b)" in button
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_pointer_mapping_tracks_the_contained_video_after_viewer_resize():
-    start = APP.index("  function _rdVideoPoint(video,e){")
+    start = APP.index("  function _rdVideoPoint(video,e,geometry){")
     end = APP.index("  function _rdBindViewer(video){", start)
     fn = APP[start:end]
     js = f"""
@@ -87,6 +106,8 @@ def test_pointer_mapping_tracks_the_contained_video_after_viewer_resize():
                     _rdVideoPoint(video,{{clientX:400,clientY:0}})];
       video.getBoundingClientRect=()=>({{left:0,top:0,width:1200,height:600}});
       points.push(_rdVideoPoint(video,{{clientX:600,clientY:300}}));
+      video.videoWidth=0; video.videoHeight=0;
+      points.push(_rdVideoPoint(video,{{clientX:1200,clientY:600}},{{width:3840,height:2160}}));
       console.log(JSON.stringify(points));
     """
     run = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
@@ -97,3 +118,4 @@ def test_pointer_mapping_tracks_the_contained_video_after_viewer_resize():
     assert points[2]["y"] == 0, "top letterbox must clamp to the remote screen edge"
     assert points[3]["x"] == pytest.approx(.5)
     assert points[3]["y"] == pytest.approx(.5)
+    assert points[4] == {"x": 1, "y": 1}
