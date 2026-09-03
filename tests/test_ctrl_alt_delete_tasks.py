@@ -15,7 +15,8 @@ class CtrlAltDelete(unittest.TestCase):
         i = src.index("else if(p === 'pc:tasks')")
         body = src[i:i+700]
         self.assertIn("openTaskManager()", body)
-        self.assertIn("pcWM.focus", body)
+        self.assertIn("const taskFocusToken=_claimFocus()", body)
+        self.assertIn("_focusCompositorCurrent(sh.id,taskFocusToken)", body)
 
 
 if __name__ == "__main__":
