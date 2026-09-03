@@ -1748,11 +1748,11 @@ async function openPopupWindow(e, kind, rect, arg){
     width: num(r.width, 220, 1400, 420), height: num(r.height, 160, 2200, 560),
     x: Number.isFinite(Number(r.x)) ? Math.round(Number(r.x)) : undefined,
     y: Number.isFinite(Number(r.y)) ? Math.round(Number(r.y)) : undefined,
-    backgroundColor: '#0a0a10', autoHideMenuBar: true,
+    transparent: true, backgroundColor: '#00000000', autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true, nodeIntegration: false,
       preload: path.join(__dirname, 'preload.js'),
-      additionalArguments: ['--pc-preload-dir=' + __dirname, '--pc-secondary-surface'],
+      additionalArguments: ['--pc-preload-dir=' + __dirname, '--pc-secondary-surface', '--pc-popup-surface'],
     },
   });
   _popupWin = p;
@@ -1803,11 +1803,15 @@ async function placePopupWindow(win, want){
          * geometry, otherwise Wayland's unavoidable initial centre placement visibly flashes. */
         await wm().placeAndReveal(Number(row.id), Math.round(want.x), Math.round(want.y),
                                   Math.round(want.w), Math.round(want.h));
+        try{ win.webContents.send('pc:host:popup-placed'); }catch(_){ }
         return;
       }
     }catch(_){ /* no compositor, or it refused — the popup stays where it was put */ }
     await new Promise(res => setTimeout(res, 60));
   }
+  /* Do not leave the renderer permanently shielded on a non-Sway compositor. It may honour the
+   * BrowserWindow x/y directly; even when it does not, a delayed centred menu is still usable. */
+  try{ if(!win.isDestroyed())win.webContents.send('pc:host:popup-placed'); }catch(_){ }
 }
 ipcMain.handle('pc:popup:close', (e) => { fsGuard(e); closePopupWindow(); return true; });
 /* What the popup chose, handed to the SHELL. The popup is its own renderer and cannot call the

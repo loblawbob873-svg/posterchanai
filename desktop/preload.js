@@ -12,7 +12,22 @@
  * a downloaded HTML file the same native powers as shell.html. Every handler in main.js re-checks
  * the sender rather than trusting this.
  */
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
+
+/* A WAYLAND MENU MUST NOT PAINT BEFORE THE COMPOSITOR HAS POSITIONED IT. Sway's title rule is still
+ * the outer safety net, but a newly mapped surface can contribute one frame before that rule wins.
+ * Hide the renderer independently, then let main.js remove this sheet only after placeAndReveal.
+ * The BrowserWindow itself is transparent too, so neither the client background nor a dark native
+ * backing rectangle can flash in the centre of the monitor. */
+if(process.argv.includes('--pc-popup-surface')){
+  let placed=false,shield='';
+  Promise.resolve(webFrame.insertCSS('html,body{opacity:0!important;background:transparent!important}'))
+    .then(key=>{shield=key||'';if(placed&&shield)webFrame.removeInsertedCSS(shield);}).catch(()=>{});
+  ipcRenderer.once('pc:host:popup-placed',()=>{
+    placed=true;
+    if(shield)Promise.resolve(webFrame.removeInsertedCSS(shield)).catch(()=>{});
+  });
+}
 
 /* Sandboxed Electron preloads may require Electron and a small built-in allowlist only. A relative
  * require works in ordinary Node tests and even leaves page-trust.js inside app.asar, but fails in
