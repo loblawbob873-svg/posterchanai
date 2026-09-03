@@ -1507,7 +1507,7 @@ async function newShellContainer(before){
 async function placeShellSurface(record, assignment){
   record.assignment = assignment;
   _shellScopes.set(record.browser.webContents.id, assignment);
-  for(const command of shellDisplays.placement(record.conId, assignment)) await wm().command(command);
+  await wm().assignShell(record.conId,assignment);
 }
 async function reconcileShellDisplays(){
   if(!SHELL_MODE || !wm().available()) return;
@@ -1935,7 +1935,7 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction, drop) => {
       if(prepared.x<Number(b.x)||prepared.y<Number(b.y)||prepared.x+prepared.w>right||
          prepared.y+prepared.h>bottom) throw new Error('destination frame geometry is outside output');
       await wm().finishMove(nativeId);
-      await wm().command('[con_id='+nativeId+'] move container to workspace number '+target.workspace);
+      await wm().moveToAssignment(nativeId,target);
       await wm().place(nativeId,prepared.x,prepared.y,prepared.w,prepared.h);
       _nativeOwners.set(nativeId,String(target.workspace));
       const moved=(await wm().windows()).find(row=>Number(row.id)===nativeId);
@@ -1948,7 +1948,8 @@ ipcMain.handle('pc:wm:handoff', async (e, id, direction, drop) => {
     rollback:async()=>{
       try{
         if(sourceWorkspace){
-          await wm().command('[con_id='+nativeId+'] move container to workspace number '+sourceWorkspace);
+          const source=Array.from(_shellSurfaces.values()).find(r=>r&&r.assignment&&String(r.assignment.workspace)===sourceWorkspace);
+          if(source)await wm().moveToAssignment(nativeId,source.assignment);
           await wm().place(nativeId,before.rect.x,before.rect.y,before.rect.width,before.rect.height);
           _nativeOwners.set(nativeId,sourceWorkspace);
           await wm().focus(nativeId);
@@ -2102,8 +2103,7 @@ async function decorateNative(id, hosted){
    *
    * So it follows the hosting decision instead of assuming it. Unhosted, sway draws its own
    * titlebar: a title, a drag handle, right-click for its menu, and double-click to fullscreen. */
-  const border = hosted ? 'border none' : 'border normal 3';
-  return wm().command('[con_id=' + Number(id) + '] ' + border + ', sticky disable');
+  return wm().decorate(Number(id),!!hosted);
 }
 ipcMain.handle('pc:wm:decorate', async (e, id, hosted) => {
   fsGuard(e);

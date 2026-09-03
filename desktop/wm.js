@@ -291,6 +291,18 @@ class WM {
   outputs(){ return this._send(MSG.GET_OUTPUTS, ''); }
   workspaces(){ return this._send(MSG.GET_WORKSPACES, ''); }
 
+  async assignShell(id, assignment){
+    const shellDisplays=require('./shell-displays.js');
+    for(const cmd of shellDisplays.placement(id,assignment))await this.command(cmd);
+    return true;
+  }
+  moveToAssignment(id, assignment){
+    return this.command('[con_id='+Number(id)+'] move container to workspace number '+String(assignment&&assignment.workspace||''));
+  }
+  decorate(id, hosted){
+    return this.command('[con_id='+Number(id)+'] '+(hosted?'border none':'border normal 3')+', sticky disable');
+  }
+
   async windows(){ return flatten(await this.tree(), [], ''); }
 
   /* Addressing a window by id is `[con_id=N]`, and it is the only stable handle: a title changes as

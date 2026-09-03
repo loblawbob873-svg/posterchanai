@@ -356,9 +356,11 @@ def test_every_adopted_native_window_loses_stale_sticky_state_by_identity():
     # shell HOSTS the window: hosted, the PosterChan frame is the only chrome; unhosted, sway must
     # draw its own or Firefox has no decoration at all ("cant maximize and minimize"). Sticky is
     # cleared either way, which is what this test is actually about.
-    assert "[con_id=' + Number(id) + '] ' + border + ', sticky disable" in decorate
-    assert "hosted ? 'border none' : 'border normal 3'" in decorate, (
-        "an unhosted native window gets no decoration from anybody")
+    assert "wm().decorate(Number(id),!!hosted)" in decorate
+    sway = (ROOT / "desktop/wm.js").read_text()
+    assert "(hosted?'border none':'border normal 3')+', sticky disable'" in sway
+    assert "hosted?'border none':'border normal 3'" in sway, (
+        "the Sway rollback backend must still decorate an unhosted native window")
     assert "fullscreen disable" not in decorate, "adoption must preserve app-requested fullscreen"
 
 

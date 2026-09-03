@@ -33,13 +33,13 @@ function normalizeView(v){
     xwayland:!!(v&&(v.type==='xwayland'||v['app-id']==null&&v.app_id==null)),stashed:!!(v&&v.minimized),rect:g};
 }
 function normalizeOutput(o){const g=o&&((o.geometry||o.workarea)||{});return {name:String(o&&o.name||o&&o.id||''),active:o&&o.active!==false,
-  primary:!!(o&&o.focused),current_workspace:String(o&&((o['wset-index']??o.id)??'')),scale:Number(o&&o.scale)||1,
+  primary:!!(o&&o.focused),focused:!!(o&&o.focused),current_workspace:String(o&&((o['wset-index']??o.id)??'')),scale:Number(o&&o.scale)||1,
   transform:String(o&&o.transform||'normal'),make:String(o&&o.make||''),model:String(o&&o.model||''),serial:String(o&&o.serial||''),
   rect:{x:Number(g.x)||0,y:Number(g.y)||0,width:Number(g.width)||0,height:Number(g.height)||0},id:Number(o&&o.id)};}
 function procParents(){const out=[];if(process.platform!=='linux')return out;try{for(const n of fs.readdirSync('/proc'))if(/^\d+$/.test(n))try{const s=fs.readFileSync('/proc/'+n+'/stat','utf8'),i=s.lastIndexOf(')'),f=s.slice(i+1).trim().split(/\s+/);out.push({pid:Number(n),ppid:Number(f[1])});}catch(_){}}catch(_){}return out;}
 
 class WayfireWM{
-  constructor(sockPath){this.backend='wayfire';this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;}
+  constructor(sockPath){this.backend='wayfire';this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this.actionServer=null;}
   available(){return this.paths.length>0;}
   _connect(){if(this.sock)return Promise.resolve(this.sock);if(this.connecting)return this.connecting;if(!this.paths.length)return Promise.reject(new Error('no compositor socket — WAYFIRE_SOCKET is not set'));this.connecting=(async()=>{let last;for(const p of this.paths)try{return await this._connectPath(p);}catch(e){last=e;}throw last||new Error('no live Wayfire socket');})().finally(()=>{this.connecting=null;});return this.connecting;}
   _connectPath(p){return new Promise((resolve,reject)=>{const s=net.createConnection(p);let settled=false;const feed=wfDecoder(msg=>{if(msg&&msg.event){this._event(msg);return;}const q=this.pending.shift();if(q){if(msg&&msg.error)q.reject(new Error(msg.error));else q.resolve(msg);}});s.on('data',c=>{try{feed(c);}catch(e){s.destroy(e);}});s.on('error',e=>{if(!settled){settled=true;reject(e);}this._fail(e);});s.on('close',()=>{if(this.sock===s)this.sock=null;this._fail(new Error('Wayfire IPC closed'));});s.on('connect',()=>{if(settled)return;settled=true;this.sock=s;this.path=p;resolve(s);});});}
@@ -49,6 +49,9 @@ class WayfireWM{
   version(){return this._send('list-methods').then(r=>({human_readable:'Wayfire IPC',methods:r&&r.methods||[]}));}
   async outputs(){const r=await this._send('window-rules/list-outputs');return (Array.isArray(r)?r:r&&r.outputs||[]).map(normalizeOutput);}
   workspaces(){return this.outputs().then(xs=>xs.map(x=>({name:x.current_workspace,focused:x.primary,output:x.name})));}
+  async assignShell(id,assignment){const outs=await this.outputs(),o=outs.find(x=>x.name===String(assignment&&assignment.output));if(!o)throw new Error('Wayfire output not found');const b=assignment.rect||o.rect;await this.fullscreen(id,false);return this._viewConfig(id,{x:b.x,y:b.y,w:b.width,h:b.height},{output_id:o.id});}
+  async moveToAssignment(id,assignment){const outs=await this.outputs(),o=outs.find(x=>x.name===String(assignment&&assignment.output));if(!o)throw new Error('Wayfire output not found');return this._viewConfig(id,null,{output_id:o.id});}
+  decorate(){return Promise.resolve(true);} // UI chrome is theme-owned; Wayfire rules exclude it.
   async windows(){const r=await this._send('window-rules/list-views');return (Array.isArray(r)?r:r&&r.views||[]).filter(v=>v&&v.mapped!==false&&v.role!=='desktop-environment').map(normalizeView);}
   tree(){return this.windows().then(rows=>({type:'root',nodes:rows}));}
   focus(id){return this._send('window-rules/focus-view',{id:Number(id)});}
@@ -58,7 +61,7 @@ class WayfireWM{
   hide(id){return this._send('wm-actions/set-minimized',{'view_id':Number(id),state:true});}
   show(id){return this._send('wm-actions/set-minimized',{'view_id':Number(id),state:false});}
   async _viewConfig(id,rect,extra){const data=Object.assign({id:Number(id)},extra||{});if(rect)data.geometry={x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.w),height:Math.round(rect.h)};return this._send('window-rules/configure-view',data);}
-  async place(id,x,y,w,h){let at={x,y,w,h};try{at=clampRectToOutputs(at,await this.outputs());}catch(_){}return this._viewConfig(id,at,{'tiled-edges':0});}
+  async place(id,x,y,w,h){let at={x,y,w,h};try{at=clampRectToOutputs(at,await this.outputs());}catch(_){}return this._viewConfig(id,at);}
   async placeAndReveal(id,x,y,w,h){return this.place(id,x,y,w,h);}
   async restore(id,x,y,w,h){await this.show(id);return this.place(id,x,y,w,h);}
   async placeOnOutput(id,b,direction){const l=Number(b&&b.x)||0,t=Number(b&&b.y)||0,ow=Math.max(1,Number(b&&b.width)||1),oh=Math.max(1,Number(b&&b.height)||1),gap=12;const row=(await this.windows()).find(x=>x.id===Number(id)),r=row&&row.rect||{};const w=Math.min(Math.max(320,Number(r.width)||ow*.72),Math.max(1,ow-gap*2)),h=Math.min(Math.max(220,Number(r.height)||oh*.72),Math.max(1,oh-gap*2));let x=Math.min(Math.max(Number(r.x)||l+gap,l+gap),l+ow-w-gap),y=Math.min(Math.max(Number(r.y)||t+gap,t+gap),t+oh-h-gap);if(direction==='right')x=l+gap;else if(direction==='left')x=l+ow-w-gap;else if(direction==='down')y=t+gap;else if(direction==='up')y=t+oh-h-gap;await this.place(id,x,y,w,h);return{x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};}
@@ -66,7 +69,16 @@ class WayfireWM{
   move(id,x,y){const key=Number(id);let state=this.moves.get(key);const at={x:Math.round(x),y:Math.round(y)};if(state){state.next=at;return state.promise;}state={next:at,promise:null};state.promise=(async()=>{while(state.next){const p=state.next;state.next=null;const row=(await this.windows()).find(v=>v.id===key);if(row)await this.place(key,p.x,p.y,row.rect.width,row.rect.height);}})().finally(()=>{if(this.moves.get(key)===state)this.moves.delete(key);});this.moves.set(key,state);return state.promise;}
   finishMove(id){const s=this.moves.get(Number(id));if(!s)return Promise.resolve();s.next=null;return s.promise||Promise.resolve();}
   applyChrome(){return Promise.resolve(true);} // PosterChanUI owns both macOS and Windows chrome.
-  async subscribe(){if(this.subscribed)return;await this._send('window-rules/events/watch',{events:['view-mapped','view-unmapped','view-focused','view-title-changed','view-app-id-changed','view-set-output','view-geometry-changed','view-minimized','view-fullscreen','output-layout-changed','workspace-activated','posterchan-tick']});this.subscribed=true;}
+  _openActionSocket(){
+    if(this.actionServer||process.platform!=='linux')return;
+    const runtime=process.env.XDG_RUNTIME_DIR||(typeof process.getuid==='function'?'/run/user/'+process.getuid():'');
+    if(!runtime)return;const socketPath=path.join(runtime,'posterchan-action.sock');
+    try{const st=fs.lstatSync(socketPath);if(st.isSocket())fs.unlinkSync(socketPath);else return;}catch(e){if(e&&e.code!=='ENOENT')return;}
+    const server=net.createServer(c=>{let data='';c.setEncoding('utf8');c.on('data',x=>{data+=x;if(data.length>256)c.destroy();});c.on('end',()=>{const payload=data.trim();if(/^pc:[a-z0-9:_-]{1,220}$/i.test(payload))this._event({event:'posterchan-tick',payload});});});
+    server.on('error',()=>{if(this.actionServer===server)this.actionServer=null;});
+    server.listen(socketPath,()=>{try{fs.chmodSync(socketPath,0o600);}catch(_){}});this.actionServer=server;
+  }
+  async subscribe(){if(this.subscribed)return;await this._send('window-rules/events/watch',{events:['view-mapped','view-unmapped','view-focused','view-title-changed','view-app-id-changed','view-set-output','view-geometry-changed','view-minimized','view-fullscreen','output-layout-changed','workspace-activated']});this._openActionSocket();this.subscribed=true;}
   on(name,fn){if(!this.listeners.has(name))this.listeners.set(name,new Set());this.listeners.get(name).add(fn);return()=>this.listeners.get(name).delete(fn);}
   launch(argv,opts){const o=opts||{},child=spawn(argv[0],argv.slice(1),{detached:true,stdio:'ignore',cwd:o.cwd||undefined,env:Object.assign({},process.env,o.env||{})});let fail;const failed=new Promise(r=>{fail=r;});child.on('error',e=>fail(e&&e.code==='ENOENT'?argv[0]+' is not installed':String(e&&e.message||e)));child.unref();return{pid:child.pid,failed};}
   async waitForWindow(pid,ms,kin){const end=Date.now()+(ms||15000),roots=[Number(pid),...(kin||[]).map(Number)];let family=pidFamily(roots,[]);for(;;){family=pidFamily([...family],procParents());const hit=(await this.windows().catch(()=>[])).find(w=>family.has(w.pid));if(hit)return hit;if(Date.now()>end)return null;await new Promise(r=>setTimeout(r,250));}}

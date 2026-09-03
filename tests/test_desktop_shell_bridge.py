@@ -195,7 +195,9 @@ class Bridge(unittest.TestCase):
     def test_native_windows_can_be_handed_to_an_adjacent_display(self):
         self.assertIn("'pc:wm:handoff'", self.main)
         self.assertIn("handoff:", self.pre)
-        self.assertIn("move container to workspace number", self.main)
+        self.assertIn("wm().moveToAssignment(nativeId,target)", self.main)
+        self.assertIn("move container to workspace number",
+                      open(os.path.join(ROOT, "desktop", "wm.js"), encoding="utf-8").read())
         self.assertIn("finishMove(nativeId)", self.main)
         self.assertLess(self.main.index("pc:wm:native-handoff-prepare"),
                         self.main.index("finishMove(nativeId)"))

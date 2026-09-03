@@ -47,7 +47,7 @@ def test_wayfire_backend_contract_and_wire_protocol(tmp_path):
     ]
     configured = result["calls"][-2]["data"]
     assert configured["geometry"] == {"x": 2200, "y": 100, "width": 800, "height": 600}
-    assert configured["tiled-edges"] == 0
+    assert "tiled-edges" not in configured, "Wayfire 0.10 configure-view accepts geometry, not theme/tiling chrome"
 
 
 def test_wayfire_backend_is_theme_neutral_and_sway_is_rollback_default():
@@ -70,3 +70,44 @@ def test_wayfire_frames_decode_fragmented_and_coalesced_messages():
     run = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == [{"ok": 1}, {"event": "view-focused"}]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_snap_matrix_uses_the_window_monitor_and_reserves_the_taskbar():
+    js = f"""
+      const {{WayfireWM}}=require({json.dumps(str(ROOT / 'desktop/wm-wayfire.js'))});
+      const w=new WayfireWM('/tmp/not-used'),placed=[];
+      w.windows=async()=>[{{id:9,rect:{{x:2200,y:200,width:700,height:500}}}}];
+      w.outputs=async()=>[{{rect:{{x:0,y:0,width:1920,height:1080}}}},{{rect:{{x:1920,y:0,width:2560,height:1440}}}}];
+      w.place=async(id,x,y,width,height)=>{{placed.push({{id,x,y,width,height}});return true;}};
+      (async()=>{{for(const z of ['left','right','top-left','top-right','bottom-left','bottom-right','max'])await w.snap(9,z);console.log(JSON.stringify(placed));}})();
+    """
+    run = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    rows = json.loads(run.stdout)
+    assert rows == [
+        {"id": 9, "x": 1920, "y": 0, "width": 1280, "height": 1368},
+        {"id": 9, "x": 3200, "y": 0, "width": 1280, "height": 1368},
+        {"id": 9, "x": 1920, "y": 0, "width": 1280, "height": 684},
+        {"id": 9, "x": 3200, "y": 0, "width": 1280, "height": 684},
+        {"id": 9, "x": 1920, "y": 684, "width": 1280, "height": 684},
+        {"id": 9, "x": 3200, "y": 684, "width": 1280, "height": 684},
+        {"id": 9, "x": 1920, "y": 0, "width": 2560, "height": 1368},
+    ]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_wayfire_key_action_reaches_shell_once_without_sway_tick(tmp_path):
+    js = f"""
+      const cp=require('child_process'),fs=require('fs');process.env.XDG_RUNTIME_DIR={json.dumps(str(tmp_path))};
+      const {{WayfireWM}}=require({json.dumps(str(ROOT / 'desktop/wm-wayfire.js'))}),w=new WayfireWM('/tmp/not-used');
+      let count=0,payload='';w.on('tick',e=>{{count++;payload=e.payload;}});w._openActionSocket();
+      const socket=process.env.XDG_RUNTIME_DIR+'/posterchan-action.sock';
+      const wait=()=>fs.existsSync(socket)?Promise.resolve():new Promise(r=>setTimeout(()=>r(wait()),5));
+      wait().then(()=>cp.execFile({json.dumps(str(ROOT / 'os/bin/pc-wayfire-action'))},['pc:start'],{{env:process.env}},e=>{{
+        if(e)throw e;setTimeout(()=>{{console.log(JSON.stringify({{count,payload,mode:fs.statSync(socket).mode&0o777}}));w.actionServer.close();}},20);
+      }}));
+    """
+    run = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == {"count": 1, "payload": "pc:start", "mode": 0o600}

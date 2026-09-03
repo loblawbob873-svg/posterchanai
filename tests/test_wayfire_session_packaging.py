@@ -74,7 +74,8 @@ def test_wayfire_and_fallback_are_shipped_together():
     assert "ipc ipc-rules" in config
     assert "fullscreen then maximize" not in config
     assert "ignore_views" in config and "PosterChan Window" in config
-    for action in ("pc:start", "pc:terminal", "pc:tasks", "pc:close"):
+    assert "pc-super tap" in config
+    for action in ("pc:terminal", "pc:tasks", "pc:close"):
         assert f"pc-wayfire-action {action}" in config
     assert "pc-wayfire-action" in ebuild and "pc-wayfire-action" in gentoo
 
@@ -106,3 +107,16 @@ def test_source_and_packaged_launcher_do_not_drift():
     assert "PC_WAYFIRE_READY_FILE" in text
     restart = (ROOT / "os/bin/pc-shell-restart").read_text(encoding="utf-8")
     assert "WAYFIRE_SOCKET" in restart and "pc-shell-start-wayfire" in restart
+
+
+def test_super_opens_start_only_when_not_used_for_snap_drag_or_resize():
+    config = (FILES / "wayfire.ini").read_text(encoding="utf-8")
+    super_helper = (FILES / "pc-super").read_text(encoding="utf-8")
+    assert "release_binding_start = KEY_LEFTMETA" in config
+    assert "command_start = /usr/local/bin/pc-super tap" in config
+    for gesture in ("<super> KEY_LEFT", "<super> KEY_RIGHT", "<super> KEY_UP", "<super> KEY_DOWN",
+                    "<super> BTN_LEFT", "<super> BTN_RIGHT"):
+        assert gesture in config
+    assert config.count("/usr/local/bin/pc-super used") >= 6
+    assert "WAYFIRE_SOCKET" in super_helper
+    assert "pc-wayfire-action pc:start" in super_helper

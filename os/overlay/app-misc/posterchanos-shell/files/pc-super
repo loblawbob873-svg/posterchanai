@@ -26,6 +26,9 @@ case "$1" in
     # A missing marker is "no combo has ever fired", not an error: 0 is older than any window.
     was=$(stat -c %Y "$F" 2>/dev/null || echo 0)
     [ "$((now - was))" -lt "$COMBO_WINDOW_SECONDS" ] && exit 0
+    if [ -n "${WAYFIRE_SOCKET:-}" ]; then
+      exec /usr/local/bin/pc-wayfire-action pc:start
+    fi
     exec swaymsg -t send_tick pc:start
     ;;
   *)

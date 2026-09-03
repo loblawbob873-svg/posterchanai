@@ -1,0 +1,15 @@
+#!/bin/sh
+# Deliver a Wayfire key binding to PosterChan's shell without Sway's proprietary send_tick IPC.
+set -eu
+case "${1:-}" in pc:[a-zA-Z0-9:_-]*) payload=$1 ;; *) exit 64 ;; esac
+runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+socket=$runtime/posterchan-action.sock
+[ -S "$socket" ] || exit 1
+exec python3 - "$socket" "$payload" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(1.0)
+s.connect(sys.argv[1])
+s.sendall((sys.argv[2] + "\n").encode("ascii"))
+s.close()
+PY
