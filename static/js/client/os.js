@@ -1636,6 +1636,9 @@
        * app that silently does nothing is the other way to read this as broken. */
       const mine = nativeTasks.find(r => r && r.own && r.view && r.view === view);
       if(mine && window.pcWM){
+        /* The native window may have navigated within its app (Social → profile). Focus does not
+           change that renderer's route, so explicitly return it to the app the launcher names. */
+        try{ if(window.PCOSWin && PCOSWin.routeExisting) PCOSWin.routeExisting(view); }catch(_){ }
         try{
           if(mine.stashed && pcWM.show) Promise.resolve(pcWM.show(mine.id))
             .then(() => _focusNativeDecorated(mine.id)).catch(()=>{});

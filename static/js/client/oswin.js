@@ -29,6 +29,7 @@
 
   const PARAM = 'pcwin';                 // the view this window was opened for
   const TITLE = 'PosterChan Window';     // sway keys its floating rule on this — see sway.config
+  const ROUTE_CHANNEL = 'pc-os-window-route-v1';
 
   /* Is this document a window rather than the desktop? Asked of the URL, not of a flag: a window is
    * opened WITH the parameter, so a child must behave as one even if the flag was turned off in the
@@ -144,6 +145,30 @@
     return win;
   }
 
+  /* A launcher click may come from either monitor's shell renderer, while the already-open app is
+   * a different renderer. Focusing its compositor surface is not navigation: if Social currently
+   * shows a profile, focus alone strands the person on that profile forever. Broadcast the
+   * canonical app route across the shared app:// origin; only the window whose latched identity
+   * matches consumes it. This also works when the window was opened by the other monitor. */
+  function routeExisting(view){
+    const v=String(view||'');
+    if(!v||!routable(v)||typeof root.BroadcastChannel!=='function')return false;
+    try{const ch=new root.BroadcastChannel(ROUTE_CHANNEL);ch.postMessage({view:v});ch.close();return true;}
+    catch(_){return false;}
+  }
+
+  try{
+    if(typeof root.BroadcastChannel==='function'){
+      const ch=new root.BroadcastChannel(ROUTE_CHANNEL);
+      ch.onmessage=(event)=>{
+        const v=String(event&&event.data&&event.data.view||''),state=root.__PC_WIN_STATE__;
+        if(!state||String(state.view||'')!==v)return;
+        try{if(root.__PC&&typeof root.__PC.switchView==='function')root.__PC.switchView(v);}catch(_){}
+        try{root.focus();}catch(_){}
+      };
+    }
+  }catch(_){}
+
   /* Called by the child as early as it can. Stage 1 does two things and no more: name the window so
    * the compositor can tell it from the desktop, and record whether the shared client is reachable
    * — which is the one assumption the whole design rests on and the one worth failing loudly. */
@@ -160,7 +185,7 @@
     return state;
   }
 
-  const API = { isWindow, viewOf, desktop, enabled, open, routable, adopt, PARAM, TITLE };
+  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt, PARAM, TITLE };
   root.PCOSWin = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
