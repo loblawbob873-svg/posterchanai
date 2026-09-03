@@ -393,6 +393,13 @@ class SmsSources(unittest.TestCase):
         self.assertIn("ContactsContract.Intents.Insert.PHONE, address", src)
         self.assertIn("PhoneBook.forget()", src)
 
+        device = open(os.path.join(ROOT, "mobile", "android", "app", "src", "androidTest", "java",
+                                   "place", "poster", "app", "sms", "SmsContactDeviceTest.java"),
+                      encoding="utf-8").read()
+        self.assertIn("add.performClick()", device)
+        self.assertIn("Intent.ACTION_INSERT", device)
+        self.assertIn("monitor.getHits()", device)
+
     def test_each_step_of_delivery_is_guarded_separately(self):
         """One try around all three would mean a failing notification costs the message."""
         src = self._code(os.path.join(SMS, "SmsDeliverReceiver.java"))
