@@ -1,25 +1,25 @@
-"""THE SHELL'S OWN POPUPS HAVE TO GET ABOVE FLOATING APPLICATIONS.
+"""RAISING THE SHELL FOR A PANEL THAT STAYS OPEN HIDES THE WHOLE DESKTOP — do not do it.
 
-Reported separately, minutes apart: "start menu is not going over windows" and "notifications do not
-go over open windows". They are one bug.
+This file previously asserted the opposite, and that was wrong.
 
-sway paints floating windows above tiled ones unconditionally, and this shell IS the tiled window.
-Anything drawn inside its surface — the start menu, the notification panel, the Alt+Tab chooser — is
-therefore underneath Firefox and Telegram whatever z-index it carries. It was measured for the
-chooser with `grim`: a screenshot of the chooser's exact rectangle came back as Firefox's page.
-Focus is not stacking, and nothing inside the page can change it.
+The problem is real: sway paints floating windows above tiled ones unconditionally and this shell IS
+the tiled window, so the start menu and the notification panel really do open underneath Firefox and
+Telegram ("start menu is not going over windows", "notifications do not go over open windows").
 
-The chooser already worked around it by fullscreening the shell for the length of the gesture.
-Nobody applied that to the other two, so two of the three surfaces a person uses constantly were
-invisible whenever an application was open.
+But the only lever available is FULLSCREENING the shell, and a fullscreen surface hides every other
+window on the workspace. For the Alt+Tab chooser that is acceptable — the gesture lasts a moment and
+looking at the switcher is the entire point. For a menu that stays open it means pressing Start makes
+the desktop vanish, which is what happened: "why does pressing the start menu hide everything on the
+desktop! wtf is this", minutes after it shipped. `_altRaiseShell`'s own comment had already warned
+that a shell left fullscreen hides every window with nothing on screen to say why; I applied it to a
+persistent surface anyway.
 
-Refcounted, because these overlap: the notification panel closes the start menu on its way up, and
-an unconditional release would lower the shell out from under whichever is still open. Released only
-on the EDGES for the same reason — `toggleStart(false)` is called defensively from several places.
+A menu drawn under an application is a smaller harm than a menu that hides the application. Doing
+this properly needs a layer-shell surface — a real overlay the compositor stacks above everything —
+which is a piece of work, not a flag.
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 OS_JS = (Path(__file__).resolve().parents[2] / "static/js/client/os.js").read_text(encoding="utf-8")
@@ -38,51 +38,27 @@ def _fn(name: str) -> str:
     raise AssertionError(name)
 
 
-def test_the_start_menu_raises_the_shell():
-    assert "_raiseShellOverlay(true)" in _fn("toggleStart"), (
-        "the start menu opens underneath every floating application")
+def test_the_start_menu_does_not_fullscreen_the_shell():
+    """THE REGRESSION, named. Pressing Start must never make the desktop disappear."""
+    assert "_raiseShellOverlay" not in _fn("toggleStart"), (
+        "the start menu raises the shell again — a fullscreen shell hides every window on the "
+        "workspace, so opening the menu empties the desktop")
 
 
-def test_the_notification_panel_raises_the_shell():
-    assert "_raiseShellOverlay(true)" in _fn("toggleNoti"), (
-        "the notification panel opens underneath every floating application")
+def test_the_notification_panel_does_not_either():
+    for fn in ("toggleNoti", "hideNoti"):
+        assert "_raiseShellOverlay" not in _fn(fn), f"{fn} raises the shell again"
 
 
-def test_both_release_it_again():
-    for fn in ("toggleStart", "toggleNoti", "hideNoti"):
-        assert "_raiseShellOverlay(false)" in _fn(fn), f"{fn} never lowers the shell again"
+def test_the_helper_is_gone_entirely():
+    """Left in place unused it is an invitation: the next panel that wants to be on top finds a
+    ready-made way to empty the desktop. The only surface allowed to fullscreen the shell is the
+    Alt+Tab gesture, which has its own function and ends on its own."""
+    assert "_raiseShellOverlay" not in OS_JS, (
+        "the general shell-raise helper is back; nothing persistent may use it")
 
 
-def test_it_is_refcounted_so_overlapping_popups_do_not_fight():
-    body = _fn("_raiseShellOverlay")
-    assert "_ovlN" in body
-    assert "if(_ovlN > 0) return;" in body, (
-        "closing one popup lowers the shell while another is still open")
-
-
-def test_release_only_happens_on_the_closing_edge():
-    """`toggleStart(false)` is called defensively when no menu is open; releasing there would
-    decrement a refcount it never incremented."""
-    for fn, flag in (("toggleStart", "wasStart"), ("toggleNoti", "was")):
-        body = _fn(fn)
-        assert f"if({flag}) _raiseShellOverlay(false)" in body or \
-               f"if(!{flag}) _raiseShellOverlay(true)" in body, fn
-
-
-def test_a_shell_already_fullscreen_is_left_alone():
-    """Lowering it afterwards would un-fullscreen something the user put there themselves."""
-    body = _fn("_raiseShellOverlay")
-    assert "shell.fullscreen" in body
-
-
-def test_there_is_a_backstop():
-    """A shell left fullscreen hides every window on the workspace with nothing on screen to say
-    why — the failure mode the chooser's own comment warns about."""
-    body = _fn("_raiseShellOverlay")
-    assert re.search(r"setTimeout\(.*_raiseShellOverlay\(false\).*\d{4,}\)", body, re.S)
-
-
-def test_it_degrades_where_there_is_no_compositor():
-    """In a browser there is no pcWM at all, and every one of these surfaces must still open."""
-    body = _fn("_raiseShellOverlay")
-    assert "if(!window.pcWM || !pcWM.fullscreen) return;" in body
+def test_the_alt_tab_chooser_keeps_its_own_raise():
+    """It is a momentary gesture and the switcher is what you are looking at — the one case where
+    hiding the windows behind it is correct."""
+    assert "_altRaiseShell(true)" in OS_JS

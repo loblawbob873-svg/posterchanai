@@ -36,22 +36,31 @@ def test_the_button_and_its_controls_are_one_group():
     assert "os-task" in bar and "os-native-controls" in bar, "the controls left the group"
 
 
-def test_the_controls_are_hidden_until_wanted():
-    assert ".os-taskgroup .os-native-controls{display:none}" in CSS
+def test_the_controls_are_always_visible():
+    """THE CORRECTION. These were briefly hover-only to save bar space, and that was wrong: sway
+    draws no title-bar buttons and neither Firefox nor Telegram will negotiate CSD, so the taskbar
+    is the ONLY place a window's controls exist. Hidden behind hover, they are a secret — reported
+    within minutes as "there is no window controls"."""
+    assert ".os-taskgroup .os-native-controls{display:inline-flex}" in CSS
+    assert ".os-taskgroup .os-native-controls{display:none}" not in CSS, (
+        "the window controls are hidden again; on this desktop that means there are none")
 
 
-def test_they_appear_on_hover_and_on_keyboard_focus():
-    """Hover alone would make them unreachable without a mouse."""
-    rule = CSS[CSS.index(".os-taskgroup:hover"):CSS.index(".os-native-controls{display:inline-flex}",
-                                                          CSS.index(".os-taskgroup:hover")) + 40]
-    assert ":hover" in rule and ":focus-within" in rule
+def test_they_are_not_hidden_by_any_other_means_either():
+    block = CSS[CSS.index(".os-taskgroup{"):CSS.index(".os-native-controls{display:inline-flex;align")]
+    for hide in ("opacity:0", "visibility:hidden", "display:none"):
+        assert hide not in block, f"the controls are hidden with {hide}"
 
 
-def test_hiding_is_display_none_not_opacity():
-    """An invisible control that still occupies its width fixes nothing — that IS the report."""
-    block = CSS[CSS.index(".os-taskgroup{"):CSS.index(".os-native-controls{display:inline-flex")]
-    assert "opacity:0" not in block, "the controls are merely transparent and still take the space"
-    assert "visibility:hidden" not in block
+def test_they_are_compact_so_the_space_complaint_is_still_answered():
+    """The space complaint was real. It is answered by making them cheap, not by hiding them:
+    18px and no gap, so three now cost less bar than two did at 22px with gaps."""
+    rule = CSS.split(".os-native-controls button{", 1)[1].split("}", 1)[0]
+    assert "width:18px" in rule and "height:18px" in rule
+    # The FIRST `.os-native-controls{` is the group override; the sizing rule is the one that
+    # carries align-items. Splitting on the bare selector matched the wrong block.
+    gap = CSS.split(".os-native-controls{display:inline-flex;align-items:center;", 1)[1].split("}", 1)[0]
+    assert "gap:0" in gap
 
 
 def test_all_three_controls_are_still_there():
