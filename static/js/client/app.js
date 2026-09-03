@@ -5408,6 +5408,26 @@
     if (list.length) Relay.configure({ urls: list, verify: true });
   }
 
+  /* A PERSON-PRESSED RECONNECT IS A FULL RECOVERY, not a repaint and not merely a socket poke.
+   * The taskbar button used to call Relay.wake() only. That is a no-op when cold-start config failed
+   * and the pool has no Conn objects, and it keeps retrying an obsolete endpoint when the server
+   * configuration changed. Re-read the tiny instance config, rebuild the pool, force every socket
+   * open with reset backoff, then wait for proof that at least one relay is carrying traffic. */
+  async function reconnectNetwork(){
+    if(!_standalone()){
+      let timer=null;
+      try{
+        const ctl=typeof AbortController==='function' ? new AbortController() : null;
+        if(ctl) timer=setTimeout(()=>ctl.abort(),5000);
+        const r=await fetch('/client/config',{cache:'no-store',signal:ctl?ctl.signal:undefined});
+        if(r.ok){ const c=await r.json(); if(c&&c.relay_url){ CFG=Object.assign({},CFG,c);_cfgCache(CFG); } }
+      }catch(_){} finally{ if(timer)clearTimeout(timer); }
+    }
+    connectRelays();
+    try{ Relay.wake(); }catch(_){}
+    try{ return await Relay.ready(5000); }catch(_){ return false; }
+  }
+
   /* DRAIN THE PRIVATE QUEUES ON RECONNECT — notes and the password vault.
    *
    * The generic Outbox refuses replaceable kinds on purpose (blind replay is what wiped a follows
@@ -36263,7 +36283,7 @@
   window.__PC = {
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
     // automatically after a relay change). Exposed for the sub-modules and for the console.
-    carryPrivateToRelays,
+    carryPrivateToRelays, reconnectNetwork,
     /* Shared-feed modules may finish network/deferred work after navigation. They must ask who owns
      * the feed before painting; otherwise a late Concord render can replace Code (and vice versa). */
     isView: view => VIEW === view,

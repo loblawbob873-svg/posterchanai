@@ -7532,13 +7532,17 @@
                           ? '<div class="os-net-empty muted small">Preparing the relay connection…</div>'
                           : '<div class="os-net-empty muted small">This client has no relays to talk to. Add one in Settings → Relays.</div>'}</div>
        ${netStatsHtml()}`;
-    { const b = $('#os-net-again', panel); if(b) b.onclick = (e) => {
+    { const b = $('#os-net-again', panel); if(b) b.onclick = async (e) => {
         e.stopPropagation();
-        /* wake(), not reviveStale(): this is someone telling the machine the connection is wrong,
-         * and reviveStale deliberately spares sockets that merely LOOK fine — which is every socket
-         * in the case that makes a person reach for this button (a zombie reads OPEN). */
-        try{ window.Relay && Relay.wake && Relay.wake(); }catch(_){}
+        b.disabled=true;b.textContent='Connecting…';
+        let ok=false;
+        try{
+          const api=PC();
+          if(api&&api.reconnectNetwork) ok=await api.reconnectNetwork();
+          else if(window.Relay&&Relay.wake){Relay.wake();ok=await Relay.ready(5000);}
+        }catch(_){}
         paintNet();
+        if(!ok){try{const again=$('#os-net-again',panel);if(again)again.textContent='Try again';}catch(_){}}
       }; }
     { const b = $('#os-net-relays', panel); if(b) b.onclick = (e) => {
         e.stopPropagation(); hideNet();
