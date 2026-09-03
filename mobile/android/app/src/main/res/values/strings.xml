@@ -81,6 +81,7 @@
     <string name="sms_emoji_title">Choose emoji</string>
     <string name="sms_attachment_ready">File attached</string>
     <string name="sms_attachment_bad">That photo or video could not be opened</string>
+    <string name="sms_attachment_permission">Access to that file expired. Choose it again from Device.</string>
     <string name="sms_mms_sent">Media message sending</string>
     <string name="sms_hint">Text message</string>
     <string name="sms_empty">No messages yet</string>

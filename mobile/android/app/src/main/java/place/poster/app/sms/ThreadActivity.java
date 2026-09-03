@@ -511,40 +511,53 @@ public class ThreadActivity extends PcActivity {
         Uri picked = data.getData();
         if (picked == null) return;
         try {
-            getContentResolver().takePersistableUriPermission(picked,
-                    data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                     | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+            int flags = data.getFlags();
+            if ((flags & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0) {
+                getContentResolver().takePersistableUriPermission(picked,
+                        flags & (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                               | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+            }
         } catch (Throwable ignored) { }
         attachment = picked;
         attachmentMime = getContentResolver().getType(picked);
         if (attachmentMime == null) attachmentMime = "application/octet-stream";
         attachmentName = "attachment";
+        long attachmentSize = -1;
         try (Cursor c = getContentResolver().query(picked,
-                new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE}, null, null, null)) {
             if (c != null && c.moveToFirst()) {
                 String found = c.getString(0);
                 if (found != null && !found.trim().isEmpty()) attachmentName = found;
+                if (!c.isNull(1)) attachmentSize = c.getLong(1);
             }
         } catch (Throwable ignored) { }
         attachmentMime = MmsSender.normalizedMime(attachmentMime, attachmentName);
         if (!attachmentMime.startsWith("image/") && !attachmentMime.startsWith("video/")) {
             attachment = null; say(getString(R.string.sms_attachment_bad)); return;
         }
-        try (InputStream in = getContentResolver().openInputStream(picked)) {
-            stageAttachment(readAttachment(in), attachmentMime, attachmentName);
-        } catch (Throwable t) { attachment = null; say(getString(R.string.sms_attachment_bad)); return; }
+        int readLimit = attachmentMime.startsWith("video/")
+                ? MmsSender.videoLimit() : MmsAttachment.MAX_STAGED_BYTES;
+        try {
+            if (attachmentMime.startsWith("video/"))
+                MmsAttachment.rejectKnownVideoSize(attachmentSize, readLimit);
+            try (InputStream in = getContentResolver().openInputStream(picked)) {
+                stageAttachment(MmsAttachment.read(in, readLimit), attachmentMime, attachmentName);
+            }
+        } catch (MmsAttachment.TooLarge large) {
+            attachment = null;
+            say(MmsAttachment.tooLargeMessage(attachmentSize >= 0 ? attachmentSize : large.size,
+                    large.limit));
+            return;
+        } catch (SecurityException denied) {
+            attachment = null; say(getString(R.string.sms_attachment_permission)); return;
+        } catch (Throwable t) {
+            attachment = null; say(getString(R.string.sms_attachment_bad)); return;
+        }
         say(getString(R.string.sms_attachment_ready));
     }
 
     private byte[] readAttachment(InputStream in) throws Exception {
-        if (in == null) throw new Exception("attachment cannot be read");
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buf = new byte[64 * 1024]; int n, total = 0;
-        while ((n = in.read(buf)) >= 0) {
-            total += n; if (total > 8 * 1024 * 1024) throw new Exception("media message is too large");
-            out.write(buf, 0, n);
-        }
-        return out.toByteArray();
+        return MmsAttachment.read(in, MmsAttachment.MAX_STAGED_BYTES);
     }
 
     /** Build a carrier MMS PDU and hand it to Android's public system MMS transport. */

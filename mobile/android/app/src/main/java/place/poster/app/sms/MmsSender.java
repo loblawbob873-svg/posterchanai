@@ -30,23 +30,30 @@ public final class MmsSender {
         SmsSender.Result r = new SmsSender.Result();
         if (to == null || to.trim().isEmpty()) { r.error = "missing recipient"; return r; }
         if (raw == null || raw.length == 0) { r.error = "missing attachment"; return r; }
-        if (raw.length > 8 * 1024 * 1024) { r.error = "media message is too large"; return r; }
+        String type = normalizedMime(mime, name);
+        boolean video = type.startsWith("video/");
+        int videoLimit = video ? videoLimit() : 0;
+        // A video is too large for this carrier MMS when it exceeds this SIM's payload ceiling.
+        if (video && raw.length > videoLimit) {
+            r.error = MmsAttachment.tooLargeMessage(raw.length, videoLimit); return r;
+        }
+        // MAX_STAGED_BYTES is intentionally 8 * 1024 * 1024; keep transport and picker aligned.
+        if (raw.length > MmsAttachment.MAX_STAGED_BYTES) {
+            r.error = "That " + MmsAttachment.size(raw.length)
+                    + " file is above the 8.0 MB attachment staging limit."; return r;
+        }
         if (!MmsFlight.claim(ctx)) {
             r.error = "another picture message is still being sent";
             return r;
         }
         try {
             r.sentAt = System.currentTimeMillis();
-            String type = normalizedMime(mime, name);
-            boolean video = type.startsWith("video/");
             if (!video && !type.startsWith("image/"))
                 throw new IllegalArgumentException("MMS supports photos and videos");
             /* Unlike photos, mmslib cannot resize/transcode a video. Refuse it synchronously above
              * the SIM's own ceiling instead of accepting a transaction the MMSC will silently drop.
              * The Web composer checks the same limit first and turns the file into an encrypted
              * Files link; this guard protects native/retry/background entry points too. */
-            if (video && raw.length > Math.max(64 * 1024, carrierLimit() - 8 * 1024))
-                throw new IllegalArgumentException("video is too large for this carrier MMS");
             Settings settings = new Settings();
             settings.setUseSystemSending(true);
             /* MMS must leave through the subscription selected for messages. Relying on the
@@ -93,7 +100,7 @@ public final class MmsSender {
         return r;
     }
 
-    private static int carrierLimit() {
+    static int carrierLimit() {
         try {
             Bundle cfg = SmsManager.getDefault().getCarrierConfigValues();
             int bytes = cfg == null ? 0 : cfg.getInt("maxMessageSize", 0);
@@ -101,6 +108,8 @@ public final class MmsSender {
         } catch (Throwable ignored) { }
         return 300 * 1024;
     }
+
+    static int videoLimit() { return Math.max(64 * 1024, carrierLimit() - 8 * 1024); }
 
     static String normalizedMime(String mime, String name) {
         String type = mime == null ? "" : mime.split(";", 2)[0].trim()
