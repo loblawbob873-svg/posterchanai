@@ -74,7 +74,8 @@ def test_clicking_that_button_focuses_minimises_and_restores():
     handler = handler[:handler.index("const w = wins.find(")]
     assert "pcWM.hide(w.id)" in handler        # focused → minimise
     assert "pcWM.show(w.id)" in handler        # parked → restore
-    assert "_focusNativeDecorated(w.id)" in handler
+    assert "const focusToken=_claimFocus()" in handler
+    assert "_focusNativeDecorated(w.id,focusToken)" in handler
     assert "await pcWM.snapshot()" in handler, (
         "Steam's cached focus flag can lag its helper windows, so its task button cannot reliably minimise")
     assert "if(live.focused && !live.stashed) await pcWM.hide(w.id)" in handler
