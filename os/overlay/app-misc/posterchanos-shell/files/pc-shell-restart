@@ -12,7 +12,10 @@ set -u
 # The launcher's path, overridable so this script can be RUN by a test rather than read by one.
 # The default is absolute on purpose: this is driven from a key binding and from sway, neither of
 # which is guaranteed a useful PATH.
-: "${PC_SHELL_START:=/usr/local/bin/pc-shell-start}"
+if [ -z "${PC_SHELL_START:-}" ]; then
+	[ -z "${WAYFIRE_SOCKET:-}" ] && PC_SHELL_START=/usr/local/bin/pc-shell-start || \
+		PC_SHELL_START=/usr/local/bin/pc-shell-start-wayfire
+fi
 # The update acknowledgement supplies the exact process that owns the canonical singleton.  The
 # keyboard shortcut has no caller PID, so it discovers candidates, then applies the same strict
 # identity check.  Never pattern-kill /opt/posterchan: installed diagnostic instances deliberately

@@ -156,6 +156,7 @@ VIDEO_CARDS="intel amdgpu radeon radeonsi virgl"
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
 SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -kms -pipewire" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "gui-wm/sway X" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+SPECIAL_PACKAGE_USE+=("gui-wm/wayfire X dbus gles3" "gui-libs/wlroots x11-backend" "gui-wm/gamescope libei pipewire wsi-layer")
 #
 # External desktop monitors expose brightness over DDC/CI rather than /sys/class/backlight.
 BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
@@ -220,7 +221,7 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # a tool goes missing on the next fresh build with nothing to say why.
 # Audited against desktop/*.js: grim slurp wl-copy wpctl nmcli systemctl xdg-open script sudo
 # swaymsg (+ brightnessctl, see above). `tests/test_posterchanos_profile.py` re-runs that audit.
-POSTERCHANOS_PACKAGES="gui-wm/sway gui-apps/swaybg x11-base/xwayland gui-apps/foot app-misc/ddcutil \
+POSTERCHANOS_PACKAGES="gui-wm/sway gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/swaybg x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
 net-print/cups \
@@ -259,6 +260,7 @@ BUILD_PATH="/raid/gentoo-desktop.lan"
 RSYNC_EXCLUDES=" --exclude=-/var/lib/containers --exclude=/var/lib/containerd --exclude=/var/lib/docker --exclude=/var/lib/flatpak --exclude=/home --exclude=/var/lib/pleroma/uploads --exclude=/var/lib/distfiles --exclude=/var/lib/owncloud --exclude=/etc/disk --exclude=/etc/mtab --exclude=/swap --exclude=@swap --exclude=/mnt --exclude=/snapshots --exclude=/backup --exclude=/raid --exclude=/var/tmp/* --exclude=/tmp/* --exclude=/var/lib/libvirt/* --exclude=/var/cache --exclude=/var/notmpfs --exclude=/var/lib/systemd/coredump/* --exclude=/var/cache/* --exclude=/.snapshots/* --exclude=/sys/* --exclude=/dev/* --exclude=/proc/* --exclude=/run/*"
 #Add Masked Packages to the Array
 MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher net-im/telegram-desktop-bin)
+MASKED_PACKAGES+=(=gui-wm/gamescope-3.16.25-r1)
 
 fixSound() {
 	/usr/bin/systemctl --user disable --now pulseaudio.socket pulseaudio.service
@@ -709,7 +711,7 @@ finalizeInstall() {
 	cat >"$TARGET/home/posterchan/.bash_profile" <<-'POSTERCHAN_PROFILE'
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
-	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+	export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
 	# agetty immediately starts another autologin when Sway exits. Without a guard, one fatal
 	# compositor/GPU error becomes an endless Sway/VT restart loop which virt-viewer displays as
@@ -726,7 +728,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
 		return 0 2>/dev/null || exit 0
 	fi
-	exec sway >"$HOME/.local/state/posterchanos/sway.log" 2>&1
+	exec /usr/local/bin/pc-compositor-session
 fi
 POSTERCHAN_PROFILE
 	printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin posterchan --noclear %%I $TERM\n' \
@@ -746,7 +748,7 @@ POSTERCHAN_PROFILE
 	# RELEASE GATE, NOT A BEST-EFFORT CHECK. These are the exact omissions that otherwise produce a
 	# technically booted machine at a tty and a stock splash, after the installer claimed success.
 	# Check the target files themselves after every phase that can overwrite them.
-	if ! grep -q 'exec sway' "$TARGET/home/posterchan/.bash_profile" 2>/dev/null; then
+	if ! grep -q 'exec /usr/local/bin/pc-compositor-session' "$TARGET/home/posterchan/.bash_profile" 2>/dev/null; then
 		echo -e "\033[1;31mPosterChan session profile was not installed — refusing to report success.\033[0m"
 		return 1
 	fi
@@ -1542,7 +1544,7 @@ posterchanShell() {
 		cat >"${TARGET}/home/$SHELL_USER/.bash_profile" <<-'PROFILE'
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
-	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+	export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
 	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
 	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
@@ -1556,7 +1558,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
 		return 0 2>/dev/null || exit 0
 	fi
-	exec sway >"$HOME/.local/state/posterchanos/sway.log" 2>&1
+	exec /usr/local/bin/pc-compositor-session
 fi
 PROFILE
 		chown -R "$SHELL_USER:$SHELL_USER" "${TARGET}/home/$SHELL_USER/.bash_profile" \
@@ -2021,7 +2023,7 @@ PROFILE
 	# Keep this list in step with the commands /etc/sway/config executes. Snap and Screenshot lived
 	# only in the overlay package's FILESDIR; a direct/fresh installer run therefore wrote working
 	# key bindings to executables it never copied, and mouse/Super snapping simply did nothing.
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-compositor-session pc-wayfire-action pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ]; then
@@ -3099,6 +3101,18 @@ FSTAB
 		echo "Looked beside gentoo.sh and in /var/db/repos/posterchan." >>"$LOG"
 		return 1
 	fi
+	local LIVE_WAYFIRE=""
+	for F in \
+		"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/wayfire.ini" \
+		"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/wayfire.ini"; do
+		if [ -f "$F" ] && grep -q '/usr/local/bin/pc-shell-start-wayfire' "$F"; then
+			LIVE_WAYFIRE="$F"; break
+		fi
+	done
+	if [ -z "$LIVE_WAYFIRE" ]; then
+		echo -e "${COLOR_RED}PosterChanOS Wayfire fallback config was not found; refusing to build an incomplete ISO.${COLOR_RESET}"
+		return 1
+	fi
 	# Parse it before the multi-gigabyte squashfs is made. A headless backend lets validation run
 	# from an SSH/build session with no seat; without it sway tries DRM first and reports a backend
 	# failure before it ever reaches the config parser.
@@ -3118,6 +3132,7 @@ FSTAB
 		# Always replace /etc/sway/config. mksquashfs otherwise silently keeps the source host's file
 		# when a pseudo-file targets an existing path (PSEUDO_REPLACED excludes it below).
 		pseudoput "etc/sway/config" f 644 0 0 "cat \"$LIVE_SWAY\""
+		pseudoput "etc/wayfire.ini" f 644 0 0 "cat \"$LIVE_WAYFIRE\""
 		# The installed machine's dracut.conf is host boot state, not live-image configuration.
 		# bootloader() puts its encrypted-root UUID, unlock helper and LUKS key path here. /boot is
 		# deliberately excluded from the squashfs, so retaining this file leaves the live session
@@ -3235,7 +3250,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && { [ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/t
 	if [ "$(id -un)" = live ] && ! systemctl is-active --quiet NetworkManager.service; then
 		sudo -n systemctl start NetworkManager.service
 	fi
-	export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
+	export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
 	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
 	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
@@ -3249,7 +3264,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && { [ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/t
 		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
 		return 0 2>/dev/null || exit 0
 	fi
-	exec sway
+	exec /usr/local/bin/pc-compositor-session
 fi
 PROFILE
 

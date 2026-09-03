@@ -15,13 +15,16 @@ SLOT="0"
 # are masked on every stable install, which is every PosterChanOS machine, and the error
 # a person sees is "all ebuilds have been masked" about software their own OS ships.
 KEYWORDS="amd64"
-IUSE="monero"
+IUSE="monero gamescope"
 
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
 RDEPEND="
 	app-misc/posterchan-desktop
 	dev-vcs/ngit
 	gui-wm/sway
+	gui-wm/wayfire
+	gui-libs/wayfire-plugins-extra
+	gamescope? ( gui-wm/gamescope )
 	gui-apps/swayidle
 	gui-apps/foot
 	gui-apps/grim
@@ -41,7 +44,7 @@ src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-compositor-session pc-wayfire-action pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
 	insinto /usr/lib/systemd/user
@@ -67,6 +70,10 @@ src_install() {
 	# Sway reads /etc/sway/config. `doins sway.config` preserves the source filename and silently
 	# creates /etc/sway/sway.config instead, leaving the compositor on the distro's old config.
 	newins "${FILESDIR}/sway.config" config
+	# Wayfire is staged beside, never over, the proven Sway session. The selector defaults and falls
+	# back to Sway, so installing this config cannot make an existing machine unbootable.
+	insinto /etc
+	doins "${FILESDIR}/wayfire.ini"
 	# Portage owns /etc/sway/config, so an `etc-update --automode -5` replaces a hand-edited one
 	# with ours. That is the intended behaviour for a shipped session — and it is exactly what
 	# silently reverted the config during development, so it is worth stating rather than

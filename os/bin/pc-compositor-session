@@ -1,0 +1,63 @@
+#!/bin/sh
+# PosterChanOS compositor selector. Sway remains the proven default because the desktop's native
+# window bridge currently speaks Sway IPC. Wayfire can be selected for staged testing without
+# removing the known-good session: write "wayfire" to ~/.config/posterchanos/compositor.
+set -u
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/posterchanos"
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/posterchanos"
+selection_file="$config_dir/compositor"
+mkdir -p "$state_dir"
+
+selected="${PC_COMPOSITOR:-}"
+if [ -z "$selected" ] && [ -r "$selection_file" ]; then
+	IFS= read -r selected <"$selection_file"
+fi
+case "$selected" in
+	wayfire|sway) ;;
+	*) selected=sway ;;
+esac
+
+run_sway() {
+	export XDG_CURRENT_DESKTOP=sway
+	export XDG_SESSION_DESKTOP=sway
+	exec sway >"$state_dir/sway.log" 2>&1
+}
+
+if [ "$selected" = wayfire ]; then
+	if command -v wayfire >/dev/null 2>&1; then
+		export XDG_CURRENT_DESKTOP=wayfire
+		export XDG_SESSION_DESKTOP=wayfire
+		: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+		export XDG_RUNTIME_DIR
+		PC_WAYFIRE_READY_FILE="$XDG_RUNTIME_DIR/posterchan-wayfire-ready"
+		PC_WAYFIRE_SHELL_PID_FILE="$XDG_RUNTIME_DIR/posterchan-wayfire-shell.pid"
+		export PC_WAYFIRE_READY_FILE PC_WAYFIRE_SHELL_PID_FILE
+		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
+		wayfire -c "${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}" >"$state_dir/wayfire.log" 2>&1 &
+		wayfire_pid=$!
+		n=0
+		while kill -0 "$wayfire_pid" 2>/dev/null && [ ! -e "$PC_WAYFIRE_READY_FILE" ] && [ "$n" -lt 600 ]; do
+			sleep 0.1; n=$((n + 1))
+		done
+		if [ ! -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
+			kill "$wayfire_pid" 2>/dev/null || true
+		elif [ -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
+			shell_pid=''
+			[ ! -r "$PC_WAYFIRE_SHELL_PID_FILE" ] || IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
+			case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
+			while [ -n "$shell_pid" ] && kill -0 "$wayfire_pid" 2>/dev/null && kill -0 "$shell_pid" 2>/dev/null; do sleep 1; done
+			kill -0 "$wayfire_pid" 2>/dev/null && kill "$wayfire_pid" 2>/dev/null || true
+		fi
+		wait "$wayfire_pid"
+		status=$?
+		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
+		printf '%s\n' "Wayfire exited with status $status; falling back to Sway for this login." \
+			>>"$state_dir/compositor-fallback.log"
+	else
+		printf '%s\n' "Wayfire was selected but is not installed; falling back to Sway." \
+			>>"$state_dir/compositor-fallback.log"
+	fi
+fi
+
+run_sway

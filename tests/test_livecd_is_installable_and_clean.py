@@ -487,7 +487,8 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         profile = self.fn[i:self.fn.index("\nPROFILE", i)]
         self.assertIn("systemctl is-active --quiet NetworkManager.service", profile)
         self.assertIn("sudo -n systemctl start NetworkManager.service", profile)
-        self.assertLess(profile.index("systemctl start NetworkManager.service"), profile.index("exec sway"))
+        self.assertLess(profile.index("systemctl start NetworkManager.service"),
+                        profile.index("exec /usr/local/bin/pc-compositor-session"))
 
     def test_live_boot_has_a_root_owned_network_gate(self):
         self.assertIn('cat >"$WORK/live-network.service"', self.fn)
@@ -502,7 +503,7 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
     def test_it_starts_the_compositor(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
         profile = self.fn[i:self.fn.index("\nPROFILE", i)]
-        self.assertIn("exec sway", profile)
+        self.assertIn("exec /usr/local/bin/pc-compositor-session", profile)
 
     def test_it_only_does_so_on_the_first_tty(self):
         """A second console must still be a console."""

@@ -657,7 +657,10 @@ class PosterChanOSProfile(unittest.TestCase):
                      "media-libs/vulkan-loader", "dev-util/vulkan-tools"):
             self.assertIn(atom, self.pkgs, f"{atom} is missing from the regular install")
         steam = self._fn("installSteam")
-        self.assertNotIn("gui-wm/gamescope", self.pkgs, "Gamescope must not bloat every install")
+        self.assertIn("gui-wm/gamescope", self.pkgs,
+                      "Gamescope is the supported fullscreen game session on PosterChanOS")
+        self.assertIn("=gui-wm/gamescope-3.16.25-r1", self.src,
+                      "testing Gamescope needs one narrow amd64 keyword exception")
         self.assertNotIn("gui-wm/gamescope", steam, "Steam must work through Sway/XWayland directly")
         self.assertIn("games-util/steam-launcher", steam, "Steam must be installed by Portage")
         self.assertNotIn("com.valvesoftware.Steam", steam, "the Flatpak Steam path came back")
@@ -764,7 +767,7 @@ class GentooOwnsOsRelease(unittest.TestCase):
         start = self.src.index("finalizeInstall() {")
         body = self.src[start:self.src.index("\n}", start)]
         complete = body.index("Gentoo Installation Complete")
-        for required in ("exec sway", "--autologin posterchan", "Theme=posterchanos",
+        for required in ("exec /usr/local/bin/pc-compositor-session", "--autologin posterchan", "Theme=posterchanos",
                          "themes/posterchanos/posterchanos.plymouth"):
             with self.subTest(required=required):
                 self.assertIn(required, body)
@@ -914,7 +917,7 @@ class TheDisplayTurnsItselfOff(unittest.TestCase):
 
     def test_it_ships_with_the_other_helpers(self):
         i = self.src.index("for helper in")
-        self.assertIn("pc-idle", self.src[i:i + 200],
+        self.assertIn("pc-idle", self.src[i:i + 300],
                       "pc-idle is started but never copied onto the machine")
 
     def test_two_minutes_is_the_default(self):

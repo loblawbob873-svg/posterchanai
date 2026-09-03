@@ -1,0 +1,40 @@
+#!/bin/sh
+# Wayfire-specific shell startup; the outer selector owns bounded rollback to Sway.
+set -u
+: "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+: "${PC_WAYFIRE_READY_FILE:=$XDG_RUNTIME_DIR/posterchan-wayfire-ready}"
+: "${PC_WAYFIRE_SHELL_PID_FILE:=$XDG_RUNTIME_DIR/posterchan-wayfire-shell.pid}"
+export HOME XDG_RUNTIME_DIR
+[ -n "${WAYFIRE_SOCKET:-}" ] || { echo "Wayfire IPC socket is unavailable" >&2; exit 1; }
+exec 9>"$XDG_RUNTIME_DIR/posterchan-shell-start.lock"
+flock -n 9 || exit 0
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=wayfire XDG_SESSION_DESKTOP=wayfire
+export ELECTRON_ENABLE_LOGGING=1 ELECTRON_OZONE_PLATFORM_HINT=wayland
+export GDK_BACKEND="${GDK_BACKEND:-wayland}" GTK_THEME="${GTK_THEME:-Adwaita:dark}"
+export GTK_APPLICATION_PREFER_DARK_THEME=1
+systemctl --user import-environment WAYLAND_DISPLAY WAYFIRE_SOCKET XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE >/dev/null 2>&1 || true
+command -v dbus-update-activation-environment >/dev/null 2>&1 && dbus-update-activation-environment --systemd WAYLAND_DISPLAY WAYFIRE_SOCKET XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE >/dev/null 2>&1 || true
+launcher=/usr/local/bin/posterchan
+[ -x "$launcher" ] || launcher=/usr/bin/posterchan
+[ -x "$launcher" ] || { echo "PosterChan desktop launcher is unavailable" >&2; exit 1; }
+if ! pgrep -u "$(id -u)" -f '^/opt/posterchan/posterchan-desktop .*--shell' >/dev/null 2>&1; then
+	rm -f "$HOME/.config/posterchan-desktop/SingletonLock" "$HOME/.config/posterchan-desktop/SingletonSocket" "$HOME/.config/posterchan-desktop/SingletonCookie"
+fi
+log="$HOME/.config/posterchan-desktop/shell.log"
+mkdir -p "${log%/*}"
+# shellcheck disable=SC2086
+"$launcher" --shell --ozone-platform=wayland ${PC_SHELL_EXTRA_ARGS:-} 9>&- >>"$log" 2>&1 &
+shell_pid=$!
+pid_tmp="$PC_WAYFIRE_SHELL_PID_FILE.tmp.$$"
+printf '%s\n' "$shell_pid" >"$pid_tmp"
+mv -f "$pid_tmp" "$PC_WAYFIRE_SHELL_PID_FILE"
+trap 'rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE" "$pid_tmp"' EXIT HUP INT TERM
+n=0
+while [ "$n" -lt 100 ]; do
+	kill -0 "$shell_pid" 2>/dev/null || { wait "$shell_pid"; exit $?; }
+	[ "$n" -lt 30 ] || { : >"$PC_WAYFIRE_READY_FILE"; break; }
+	sleep 0.1
+	n=$((n + 1))
+done
+wait "$shell_pid"
