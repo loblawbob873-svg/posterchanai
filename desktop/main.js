@@ -1329,11 +1329,39 @@ async function forwardShellTick(ev){
       {name:'tick',change:ev&&ev.change,payload:ev&&ev.payload,window:null}); }catch(_){}
   }
 }
+/* Proton commonly maps an anonymous XWayland surface and publishes `steam_app_<id>` only on a
+ * later title/class event. Sway's `for_window` rule is map-time, while a renderer can be scoped to
+ * the other output or busy loading; neither is an authoritative place to catch that transition.
+ * The native event subscriber sees every final container on every output. Promote each game
+ * surface once, including games which create two handoff surfaces, then leave subsequent user
+ * fullscreen/windowed choices alone. */
+const _nativeGameFullscreenAsked = new Set();
+function enforceNativeGameFullscreen(ev){
+  const c=ev&&ev.container;
+  if(!c)return;
+  const id=Number(c.id);
+  if(!Number.isFinite(id))return;
+  if(ev.change==='close'){
+    _nativeGameFullscreenAsked.delete(id);
+    return;
+  }
+  const p=c.window_properties||{};
+  const identity=String(c.app_id||p.class||p.instance||'');
+  if(!/^(?:steam_app_\d+|gamescope)/i.test(identity))return;
+  if(c.fullscreen_mode){
+    _nativeGameFullscreenAsked.add(id);
+    return;
+  }
+  if(_nativeGameFullscreenAsked.has(id))return;
+  _nativeGameFullscreenAsked.add(id);
+  wm().fullscreen(id,true).catch(()=>_nativeGameFullscreenAsked.delete(id));
+}
 async function wireShellRecovery(){
   if(!SHELL_MODE || _shellRecoveryWired || !wm().available()) return;
   _shellRecoveryWired = true;
   try{
     await wm().subscribe(['window','workspace','output','tick']);
+    wm().on('window', enforceNativeGameFullscreen);
     wm().on('tick', (ev) => {
       if(!ev || ev.first) return;
       if(ev.payload !== 'pc:restart'){

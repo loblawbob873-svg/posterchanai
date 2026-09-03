@@ -173,6 +173,20 @@ def test_proton_gets_bounded_late_metadata_reconciliation():
     assert "for(const ms of [180,900,2500]) setTimeout(reconcile, ms)" in OS_JS
 
 
+def test_native_event_path_fullscreens_every_late_proton_surface_once():
+    """The actual Cyberpunk launch creates two 1030x771 surfaces after REDlauncher exits. Both
+    final-class events must be handled in main, independent of renderer/output timing."""
+    main = (ROOT / "desktop" / "main.js").read_text(encoding="utf-8")
+    fn = main[main.index("function enforceNativeGameFullscreen(ev){"):]
+    fn = fn[:fn.index("\nasync function wireShellRecovery")]
+    assert r"steam_app_\d+" in fn and "gamescope" in fn
+    assert "c.window_properties" in fn and "p.class" in fn
+    assert "wm().fullscreen(id,true)" in fn
+    assert "_nativeGameFullscreenAsked.has(id)" in fn
+    assert "ev.change==='close'" in fn and "_nativeGameFullscreenAsked.delete(id)" in fn
+    assert "wm().on('window', enforceNativeGameFullscreen)" in main
+
+
 def test_the_class_is_read_from_either_wayland_or_x11():
     """Steam and most games are XWayland, so `app_id` is empty and the class is the only name they
     have — wm.js folds both into `app` for exactly this reason."""
