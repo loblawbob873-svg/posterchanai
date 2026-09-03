@@ -80,6 +80,8 @@ def test_wayfire_and_fallback_are_shipped_together():
     assert "ipc ipc-rules" in config
     assert "fullscreen then maximize" not in config
     assert "ignore_views" in config and "PosterChan Window" in config
+    assert 'title contains "PosterChan Window"' in config
+    assert "startswith" not in config
     assert "pc-super tap" in config
     for action in ("pc:terminal", "pc:tasks", "pc:close"):
         assert f"pc-wayfire-action {action}" in config
