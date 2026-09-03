@@ -31,7 +31,7 @@ def _reply_for(parent):
     m = re.search(r"function _commentScope\(parent\)\{.*?\n  function replyTags\(parent, id, pk\)\{"
                   r".*?\n  \}", src, re.S)
     assert m, "could not find _commentScope/replyKindFor/replyTags in app.js — did they move?"
-    js = ("const CFG={relay_url:'wss://r'};\n" + m.group(0) + """
+    js = ("const CFG={relay_url:'wss://r'}; const Store={get:()=>null};\n" + m.group(0) + """
         const parent = JSON.parse(process.argv[1]);
         console.log(JSON.stringify({ kind: replyKindFor(parent),
                                      tags: replyTags(parent, parent.id, parent.pubkey) }));""")
@@ -70,13 +70,30 @@ def test_a_patch_reply_too():
     assert _reply_for(dict(ISSUE, kind=1618))["kind"] == 1111
 
 
-def test_an_ordinary_note_still_gets_a_kind1_nip10_reply():
+def test_an_ordinary_note_gets_a_nip22_comment():
     note = {"id": "e" * 64, "pubkey": "b" * 64, "kind": 1, "created_at": 1, "content": "gm",
             "tags": []}
     r = _reply_for(note)
-    assert r["kind"] == 1
-    assert _tag(r["tags"], "e")[0][3] == "root"
-    assert not _tag(r["tags"], "E")
+    assert r["kind"] == 1111
+    assert _tag(r["tags"], "E") == [["E", note["id"], "wss://r", note["pubkey"]]]
+    assert _tag(r["tags"], "K") == [["K", "1"]]
+    assert _tag(r["tags"], "P") == [["P", note["pubkey"], "wss://r"]]
+    assert _tag(r["tags"], "e") == [["e", note["id"], "wss://r", note["pubkey"]]]
+    assert _tag(r["tags"], "k") == [["k", "1"]]
+
+
+def test_a_new_reply_to_a_legacy_nip10_child_keeps_the_kind1_root():
+    root_pk, child_pk = "a" * 64, "b" * 64
+    child = {"id": "c" * 64, "pubkey": child_pk, "kind": 1, "content": "old child",
+             "tags": [["e", "d" * 64, "wss://root.example", "root"],
+                      ["p", child_pk], ["p", root_pk]]}
+    r = _reply_for(child)
+    assert r["kind"] == 1111
+    assert _tag(r["tags"], "E") == [["E", "d" * 64, "wss://root.example", root_pk]]
+    assert _tag(r["tags"], "e") == [["e", child["id"], "wss://r", child_pk]]
+    assert _tag(r["tags"], "K") == [["K", "1"]]
+    assert _tag(r["tags"], "k") == [["k", "1"]]
+    assert {t[1] for t in _tag(r["tags"], "p")} >= {root_pk, child_pk}
 
 
 def test_a_rootless_1111_still_falls_back_to_kind1():
@@ -94,3 +111,4 @@ def test_a_scoped_1111_reply_stays_in_its_thread():
     assert r["kind"] == 1111
     assert _tag(r["tags"], "E")[0][1] == "d" * 64   # root scope copied verbatim, not rebuilt
     assert _tag(r["tags"], "e")[0][1] == comment["id"]   # lowercase parent = the comment replied to
+    assert _tag(r["tags"], "k")[0][1] == "1111"

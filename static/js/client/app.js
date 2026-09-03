@@ -8316,7 +8316,7 @@
     const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
     return ev => ev.kind!==34550
               && (!follows || follows(ev))
-              && !(hideR && ev.kind===1 && isReply(ev))
+              && !(hideR && isReply(ev))
               && !(hideFedi && isFediBridged(ev));
   }
   function _drawTimeline(preserveScroll){
@@ -8618,7 +8618,13 @@
    *                           NIP-18 quotes commonly carry both.
    */
   function isReply(ev){
-    if(!ev || ev.kind!==1 || !Array.isArray(ev.tags)) return false;
+    if(!ev || !Array.isArray(ev.tags)) return false;
+    if(ev.kind===1111){
+      const root=ev.tags.some(t=>Array.isArray(t)&&['E','A','I'].includes(t[0])&&t[1]);
+      const parent=ev.tags.some(t=>Array.isArray(t)&&['e','a','i'].includes(t[0])&&t[1]);
+      return root&&parent; // malformed/rootless comments are never promoted into reply surfaces
+    }
+    if(ev.kind!==1) return false;
     const es=ev.tags.filter(t=>Array.isArray(t) && t[0]==='e' && t[1]);
     if(!es.length) return false;
     const quoted=new Set(ev.tags.filter(t=>Array.isArray(t) && t[0]==='q' && t[1]).map(t=>t[1]));
@@ -11914,7 +11920,7 @@
   function feedNoteHtml(ev){
     const card = noteHtml(ev) || '';   // noteHtml catches its own renderers — see its guard
     if(!card) return '';
-    return (ev.kind===1 && isReply(ev))
+    return isReply(ev)
       ? `<div class="reply-pair">${replyContextHtml(ev)}${card}</div>`
       : card;
   }
@@ -12735,7 +12741,7 @@
   function replyParentId(ev){ const t=replyParentTag(ev); return t?t[1]:null; }
   // Every wss:// relay hint carried on an event's e-tags — fed to fetchEvent so an ancestor whose
   // author is outside our WoT (never stored on our relay) is fetched from where the thread lives.
-  const eTagRelays = ev => (ev.tags||[]).filter(t=>t[0]==='e'&&t[2]&&/^wss?:\/\//i.test(t[2])).map(t=>t[2]);
+  const eTagRelays = ev => (ev.tags||[]).filter(t=>(t[0]==='e'||t[0]==='E')&&t[2]&&/^wss?:\/\//i.test(t[2])).map(t=>t[2]);
   // Compact "↩ replying to <name>" LABEL shown above a reply — NOT the parent's full card. Rendering the
   // whole parent inline duplicated it all over a busy feed: a reply's parent is often itself a shown reply
   // or a popular post that many people reply to, so its card repeated dozens of times ("duplicate replies").
@@ -12744,7 +12750,7 @@
   function replyContextHtml(ev){
     const pid=replyParentId(ev); if(!pid) return '';
     const o=Store.get(pid);
-    const pk=(o&&o.pubkey)||((ev.tags.filter(t=>t[0]==='p'&&t[1]).slice(-1)[0]||[])[1]);
+    const parentTag=replyParentTag(ev),pk=(o&&o.pubkey)||(ev.kind===1111&&parentTag&&parentTag[3])||((ev.tags.filter(t=>t[0]==='p'&&t[1]).slice(-1)[0]||[])[1]);
     if(!o) needEvent(pid);
     if(!pk) return `<div class="reply-ctx"><span class="reply-ctx-lbl">↩ reply</span></div>`;
     const p=profOf(pk); needProfile(pk); const nm=p.name||p.display_name;
@@ -12941,12 +12947,12 @@
     for(const e of Store.all()){
      try{
       const id = lastE(e); if(!id) continue;
-      if(e.kind===1){
+      if(e.kind===1||e.kind===1111){
         // An ADDRESS tip (Monero `t:monerotip` / BCH `t:bchtip`) is a kind-1 carrying an `e` tag, so it
         // used to be counted as a REPLY and shown nowhere as a tip — you'd receive 0.00022 XMR and the
         // note would just gain a phantom reply. It isn't a zap receipt either (no kind 9735, no sats:
         // the payment happens wallet-to-wallet off Nostr), so it needs its own tally, per unit.
-        const tip=_tipNote(e);
+        const tip=e.kind===1?_tipNote(e):null;
         if(tip){
           const n=parseFloat(tip.amt)||0;
           (c.tips[id]=c.tips[id]||{})[tip.unit]=(c.tips[id][tip.unit]||0)+n;
@@ -15927,10 +15933,22 @@
   function _dtLocal(d){ const p=n=>String(n).padStart(2,'0');
     return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
   // The root scope of a NIP-22 comment thread: its uppercase E/A/I (+K/P) tags, which every comment in
-  // the thread repeats verbatim. Returns [] when the parent isn't a scoped comment, which is what makes
-  // `replyKindFor` fall back to a plain NIP-10 kind-1 rather than emit a rootless 1111.
+  // the thread repeats verbatim. Ordinary kind-1 roots are promoted into an E/K/P scope here; [] is
+  // reserved for unsupported or malformed parents so `replyKindFor` never emits a rootless 1111.
   function _commentScope(parent){
     if(!parent) return [];
+    /* NIP-22 now covers ordinary note conversations too. A legacy NIP-10 reply can be the parent,
+     * so recover its immutable root from the marked/positional e-tags and, when held, the root event
+     * itself. This lets a mixed old/new tree converge without rewriting or hiding the old child. */
+    if(parent.kind===1){
+      const es=(parent.tags||[]).filter(t=>t&&t[0]==='e'&&t[1]&&String(t[3]||'').toLowerCase()!=='mention'),
+        marked=es.find(t=>String(t[3]||'').toLowerCase()==='root'),rootTag=marked||es[0],rootId=rootTag?rootTag[1]:parent.id,
+        held=(typeof Store!=='undefined'&&Store.get)?Store.get(rootId):null,
+        ps=(parent.tags||[]).filter(t=>t&&t[0]==='p'&&t[1]),rootPk=(held&&held.pubkey)||(rootId===parent.id?parent.pubkey:'')||((ps[ps.length-1]||[])[1])||parent.pubkey||'',
+        relay=(rootTag&&/^wss?:\/\//i.test(String(rootTag[2]||''))?rootTag[2]:(CFG.relay_url||''));
+      if(!rootId||!rootPk)return [];
+      return [['E',rootId,relay,rootPk],['K','1'],['P',rootPk,relay]];
+    }
     // A NIP-34 issue (1621) / patch (1617) / PR (1618) ROOT starts a NIP-22 thread: current NIP-34
     // dropped kind-1622 replies ("replies … should follow NIP-22 comment"), so gitworkshop and its
     // peers render issue discussion from 1111 comments only — a kind-1 reply into an issue thread is
@@ -15943,9 +15961,8 @@
     const up=parent.tags.filter(t=>['E','A','I','K','P'].includes(t[0]));
     return up.some(t=>t[0]==='E'||t[0]==='A'||t[0]==='I') ? up.map(t=>t.slice()) : [];
   }
-  // Replying to a comment has to STAY a comment. A kind-1 reply into a NIP-22 thread is not threaded by
-  // clients that use NIP-22 for it (Amethyst), so the answer silently never appears under the comment it
-  // was written for — it just shows up as a loose note.
+  // Every new reply is a NIP-22 comment. Old NIP-10 kind-1 replies remain readable and can be the
+  // immediate parent, but are never written by this path again.
   function replyKindFor(parent){ return _commentScope(parent).length ? 1111 : 1; }
   function replyTags(parent, id, pk){
     const scope=_commentScope(parent);
@@ -24103,7 +24120,7 @@
       : ev.kind===1984?'🚩 reported you'
       : ev.kind===7?`reacted ${reactDisp(ev)}`
       : ev.kind===6?'reposted you'
-      : ev.kind===1111?'👥 replied to you in a community'
+      : ev.kind===1111?'replied to you'
       : ev.kind===1621?'🐛 opened an issue on your repo'
       : ev.kind===1617?'🩹 sent a patch to your repo'
       : isReply(ev)?'replied to you' : 'mentioned you';
@@ -24557,7 +24574,7 @@
     else if(e.kind===1984){cls='report';ic='🚩';const tg=e.tags.find(t=>t[0]==='p'&&t[1]===ME.pubkey)||e.tags.find(t=>t[0]==='e');const ty=(tg&&tg[2])||(e.tags.find(t=>t[0]==='report')||[])[1]||'other';txt=`reported you <b>${enc(ty)}</b>${e.content?': '+enc(_notifPreview(e.content).slice(0,80)):''}`;}
     else if(e.kind===7){cls='like';ic='♥';txt=`reacted ${reactDisp(e)} to your post`;}
     else if(e.kind===6){cls='rt';ic='↻';txt='reposted your note';}
-    else if(e.kind===1111){cls='reply';ic='👥';txt='commented'+_notifSaid(e);}
+    else if(e.kind===1111){cls='reply';ic='💬';txt='replied'+_notifSaid(e);}
     // NIP-34 collaboration on a repo you own/maintain. The `subject` tag IS the title, so show it
     // instead of _notifSaid's content preview — an issue body's first line is rarely the headline.
     else if(e.kind===1621||e.kind===1617){cls='reply';ic=e.kind===1617?'🩹':'🐛';const _s=_repoTag(e,'subject');txt=(e.kind===1617?'sent a patch':'opened an issue')+(_s?': <b>'+enc(_s.slice(0,80))+'</b>':_notifSaid(e));}
@@ -27701,7 +27718,7 @@
     let pinnedIds = new Set();
     const listFor=(tab)=>{
       const lim=_prof.limit;
-      if(tab==='replies'){ const r=Store.feed(e=>e.pubkey===pk && isReply(e)).slice(0,lim);
+      if(tab==='replies'){ const r=Store.query([{authors:[pk],kinds:[1,1111]}]).filter(isReply).slice(0,lim);
         return r.length ? r.map(feedNoteHtml).join('') : '<div class="empty">No replies yet.</div>'; }   // feedNoteHtml wraps a reply in the same reply-pair+context markup
       if(tab==='media'){ const m=Store.feed(e=>e.pubkey===pk && hasMedia(e)).slice(0,lim);
         if(!m.length) return '<div class="empty">No media yet.</div>';
@@ -27717,7 +27734,7 @@
       /* "No posts yet." is a claim, and for a reply-heavy author it is a FALSE one — their replies
        * are on your timeline right now. Say which of the two this is, and offer the tab that has
        * them, rather than telling somebody an active account is empty. */
-      const _reps = Store.feed(e=>e.pubkey===pk && isReply(e)).length;
+      const _reps = Store.query([{authors:[pk],kinds:[1,1111]}]).filter(isReply).length;
       return pinnedHtml + (_reps
         ? `<div class="empty">No top-level posts — everything loaded from this account is a reply.
              <button class="btn btn-cyan small prof-see-replies" style="margin-top:10px">See ${_reps} repl${_reps===1?'y':'ies'}</button></div>`
@@ -33000,7 +33017,8 @@
     const seen=new Set([ev.id]);
     let cur=ev, depth=0;
     while(depth++ < 12){
-      const rt=(cur.tags.filter(t=>t[0]==='e'&&t[1]).find(t=>t[3]==='root')||[])[1];
+      const rt=((cur.kind===1111?cur.tags.find(t=>t[0]==='E'&&t[1]):null)||
+        cur.tags.filter(t=>t[0]==='e'&&t[1]).find(t=>t[3]==='root')||[])[1];
       const pid = rt || replyParentId(cur);
       if(!pid || pid===cur.id || seen.has(pid)) return { rootId:cur.id, chain };   // no parent / cycle → this is the top
       const par=Store.get(pid) || await fetchEvent(pid, H(cur));

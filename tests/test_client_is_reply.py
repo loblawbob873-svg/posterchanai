@@ -96,7 +96,16 @@ def test_markers(tags, want, why):
     assert _is_reply(_ev(tags)) is want, why
 
 
-def test_only_kind_1():
+def test_nip22_requires_both_root_and_parent_scope():
+    assert _is_reply(_ev([["E", OTHER, "wss://r", "aa" * 32],
+                         ["K", "1"], ["P", "aa" * 32, "wss://r"],
+                         ["e", OTHER, "wss://r", "aa" * 32],
+                         ["k", "1"], ["p", "aa" * 32, "wss://r"]], kind=1111)) is True
+    assert _is_reply(_ev([["e", OTHER]], kind=1111)) is False
+    assert _is_reply(_ev([["E", OTHER]], kind=1111)) is False
+
+
+def test_unrelated_event_kinds_are_not_replies():
     assert _is_reply(_ev([["e", OTHER, "", "reply"]], kind=6)) is False
     assert _is_reply(_ev([["e", OTHER, "", "reply"]], kind=7)) is False
 
