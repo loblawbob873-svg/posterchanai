@@ -12,6 +12,8 @@ import json
 import asyncio
 import logging
 import ipaddress
+import secrets
+from urllib.parse import urlsplit
 from collections import deque
 
 from websockets.datastructures import Headers
@@ -228,10 +230,12 @@ class SubscriptionManager:
         """Open subscriptions across every connection — the fan-out cost per stored event."""
         return sum(len(s) for s in self._subs.values())
 
-    def fanout(self, ev: dict, send) -> None:
+    def fanout(self, ev: dict, send, allow=None) -> None:
         """Enqueue `ev` to every matching open subscription via `send(conn, obj)` (a
         non-blocking, drop-on-slow enqueue) — so one slow client can't stall the firehose."""
         for conn, subs in list(self._subs.items()):
+            if allow is not None and not allow(conn, ev):
+                continue
             for sub_id, filters in list(subs.items()):
                 if _matches(filters, ev):
                     send(conn, ["EVENT", sub_id, ev])
@@ -354,6 +358,11 @@ class RelayServer:
         self._neg: dict = {}   # conn -> {sub_id: negentropy item set} (NIP-77 sessions)
         self._outq: dict = {}  # conn -> bounded outbound queue (decouples slow clients)
         self._conn_ips: dict = {}  # conn -> client IP (for the deduped "online people" estimate)
+        # NIP-42 state is connection-scoped. A client may authenticate multiple identities on one
+        # socket; NIP-78 then permits each identity to read/write only its own app-data events.
+        self._auth_challenges: dict = {}  # conn -> random challenge
+        self._auth_pubkeys: dict = {}     # conn -> set[hex pubkey]
+        self._relay_urls: dict = {}       # conn -> public URL observed at the WS handshake
         self._call_seen: dict = {}  # pubkey -> last kind-25050 (call signaling) time, for the live "in call" tally
         # Fediverse-bridge NIP-05: local-part -> puppet pubkey, populated as puppet kind-0 profiles
         # are stored (and warmed from the store at startup). Resolved on ?name= lookups only; never
@@ -438,9 +447,9 @@ class RelayServer:
             "description": c.get("description") or "Web-of-trust relay",
             "software": "https://github.com/loblawbob873-svg/posterchanai",
             # 1 core, 2 contacts, 9 deletes, 11 info, 17 private DMs, 22 comments, 23 long-form,
-            # 40 expiration, 44 encryption, 45 COUNT, 50 search, 59 gift wrap, 65 relay-list,
-            # 77 negentropy sync
-            "supported_nips": [1, 2, 9, 11, 17, 22, 23, 40, 44, 45, 50, 59, 65, 77],
+            # 40 expiration, 42 relay AUTH, 44 encryption, 45 COUNT, 50 search, 59 gift wrap,
+            # 65 relay-list, 77 negentropy sync, 78 private app data
+            "supported_nips": [1, 2, 9, 11, 17, 22, 23, 40, 42, 44, 45, 50, 59, 65, 77, 78],
             # Concord is a CORD family rather than a NIP, so advertise it separately.
             "concord": {"cords": [1, 2, 3, 4, 5, 6, 7, 8], "giftwrap_streams": True},
             "limitation": {
@@ -566,6 +575,10 @@ class RelayServer:
             if hdrs.get("Upgrade", "").lower() == "websocket":
                 try:
                     setattr(connection, "_pcai_ip", _client_ip(hdrs, connection))
+                    host = _one_header(hdrs, "Host") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"
+                    path = (getattr(request, "path", "") or "/relay").split("?", 1)[0]
+                    proto = "ws" if str(host).startswith(("localhost", "127.0.0.1", "[::1]")) else "wss"
+                    setattr(connection, "_pcai_relay_url", f"{proto}://{host}{path}")
                 except Exception:
                     pass
                 return None  # let the WebSocket handshake proceed
@@ -628,8 +641,15 @@ class RelayServer:
         # costs EVENTS, which is the difference between a stale feed and a hung query.
         q = _OutQ(self.cfg.get("outq_size", 8192))
         self._outq[conn] = q
+        challenge = secrets.token_urlsafe(32)
+        self._auth_challenges[conn] = challenge
+        self._auth_pubkeys[conn] = set()
+        self._relay_urls[conn] = getattr(conn, "_pcai_relay_url", "") or ""
         writer = asyncio.create_task(self._writer(conn, q))
         keepalive = asyncio.create_task(self._keepalive(conn))
+        # Send this on connect so a later auth-required CLOSED/OK can be answered without another
+        # round trip. Clients remain free to ignore it until they request private NIP-78 data.
+        self._send(conn, ["AUTH", challenge])
         opened = time.time()
         try:
             async for raw in conn:
@@ -643,6 +663,9 @@ class RelayServer:
             self._log_session(conn, ip, opened, q)
             self._outq.pop(conn, None)
             self._conn_ips.pop(conn, None)
+            self._auth_challenges.pop(conn, None)
+            self._auth_pubkeys.pop(conn, None)
+            self._relay_urls.pop(conn, None)
             self.subs.remove_conn(conn)
             self._neg.pop(conn, None)
             self._conns -= 1
@@ -754,8 +777,65 @@ class RelayServer:
             await self._on_neg_msg(conn, msg[1], msg[2])
         elif typ == "NEG-CLOSE" and len(msg) >= 2:
             self._neg.get(conn, {}).pop(msg[1], None)
-        elif typ == "AUTH":
-            pass  # NIP-42 not required (open reads); ignore
+        elif typ == "AUTH" and len(msg) >= 2:
+            self._on_auth(conn, msg[1])
+
+    @staticmethod
+    def _tag_value(ev: dict, name: str) -> str:
+        return next((str(t[1]) for t in ev.get("tags", [])
+                     if isinstance(t, list) and len(t) >= 2 and t[0] == name), "")
+
+    @staticmethod
+    def _same_relay_url(got: str, expected: str) -> bool:
+        """NIP-42 permits URL normalization; compare scheme/host/port/path, ignoring a final slash."""
+        try:
+            a, b = urlsplit(got), urlsplit(expected)
+            # NIP-42 explicitly permits domain-based matching. Reverse proxies terminate TLS, so
+            # the relay process may observe ws while the client correctly signs wss (or vice versa
+            # on a direct LAN URL); scheme equality would reject that legitimate deployment.
+            return (a.netloc.lower(), a.path.rstrip("/")) == (b.netloc.lower(), b.path.rstrip("/"))
+        except Exception:
+            return False
+
+    def _on_auth(self, conn, ev) -> None:
+        eid = ev.get("id", "") if isinstance(ev, dict) else ""
+        why = ""
+        if not isinstance(ev, dict) or not verify_event(ev):
+            why = "invalid: bad AUTH event signature"
+        elif ev.get("kind") != 22242:
+            why = "invalid: AUTH event must be kind 22242"
+        elif abs(int(time.time()) - int(ev.get("created_at", 0))) > 600:
+            why = "invalid: AUTH event timestamp is stale"
+        elif self._tag_value(ev, "challenge") != self._auth_challenges.get(conn, ""):
+            why = "invalid: AUTH challenge does not match"
+        else:
+            expected = self._relay_urls.get(conn, "")
+            if expected and not self._same_relay_url(self._tag_value(ev, "relay"), expected):
+                why = "invalid: AUTH relay URL does not match"
+        if why:
+            self._send(conn, ["OK", eid, False, why])
+            return
+        self._auth_pubkeys.setdefault(conn, set()).add(ev["pubkey"])
+        self._send(conn, ["OK", eid, True, ""])
+
+    def _nip78_owner(self, conn, pubkey: str) -> bool:
+        return pubkey in self._auth_pubkeys.get(conn, set())
+
+    def _challenge(self, conn) -> None:
+        challenge = self._auth_challenges.get(conn)
+        if challenge:
+            self._send(conn, ["AUTH", challenge])
+
+    @staticmethod
+    def _filter_explicitly_requests_nip78(filters) -> bool:
+        for f in filters:
+            for kind in f.get("kinds") or []:
+                try:
+                    if int(kind) in (78, 30078):
+                        return True
+                except (TypeError, ValueError):
+                    pass
+        return False
 
     # NIP-04 (kind 4) / NIP-17 gift wrap (1059) / NIP-59 seal (13) DMs. The author of a gift
     # wrap is a random throwaway key, so the WoT gate can't apply — instead we accept a DM only
@@ -808,6 +888,18 @@ class RelayServer:
             self._refuse(conn, eid, ev, "invalid: bad id or signature")
             return
         kind = int(ev.get("kind", 1))
+        # NIP-42 authentication events are protocol messages, never publishable events. In
+        # particular they MUST NOT reach subscriptions (where they disclose a live challenge).
+        if kind == 22242:
+            self._refuse(conn, eid, ev, "invalid: kind 22242 is only valid in an AUTH message")
+            return
+        # NIP-78 (2026-09-03 revision): app data is private to its author. A valid event signature
+        # proves authorship of the EVENT, but not that the websocket client is its owner (an outbox
+        # can replay anybody's signed event), so same-key NIP-42 authentication is required too.
+        if kind in (78, 30078) and not self._nip78_owner(conn, ev.get("pubkey", "")):
+            self._challenge(conn)
+            self._refuse(conn, eid, ev, "auth-required: authenticate as the NIP-78 event author")
+            return
         # PosterChan's public-room protocol is Concord/CORD (opaque kind-1059 wraps). The retired
         # NIP-28 client is gone, so do not keep accepting or storing its channel event family.
         if 40 <= kind <= 44:
@@ -1022,7 +1114,7 @@ class RelayServer:
         # WoT/lang gating above still applies; we just skip storage + the upstream blaster.
         if _is_ephemeral(kind):
             self._send(conn, ["OK", eid, True, ""])
-            self.subs.fanout(ev, self._send)
+            self.subs.fanout(ev, self._send, self._can_serve_event)
             return
         # origin="direct": a client chose THIS relay as a destination (entrusted data), as
         # opposed to "wot" (a mirror of the public feed we pulled via sync/firehose). Prune
@@ -1064,7 +1156,7 @@ class RelayServer:
         if True:
             if _is_puppet and kind == 0:
                 self._register_bridge_nip05(ev)   # serve this puppet's <name>@host identity
-            self.subs.fanout(ev, self._send)
+            self.subs.fanout(ev, self._send, self._can_serve_event)
             # The private mirror is a different list with a different rule, so it is a separate
             # decision — an event is never on both paths.
             #
@@ -1098,6 +1190,16 @@ class RelayServer:
             self._send(conn, ["CLOSED", sub_id, "rate-limited: too many subscriptions"])
             return
         filters = [f for f in filters if isinstance(f, dict)][: self.cfg.get("max_filters_per_req", 10)]
+        if self._filter_explicitly_requests_nip78(filters):
+            owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
+            authed = self._auth_pubkeys.get(conn, set())
+            # An owner-bound authors filter is mandatory: omitting it would ask the relay to expose
+            # every user's private documents to one authenticated identity.
+            if not owners or not owners.issubset(authed):
+                self._challenge(conn)
+                self._send(conn, ["CLOSED", sub_id,
+                                  "auth-required: NIP-78 reads require AUTH and matching authors"])
+                return
         try:
             events = await self.store.query(filters)
         except Exception as e:
@@ -1109,6 +1211,8 @@ class RelayServer:
         # subs also enqueuing) overflows it and this client loses events it asked for. (The EOSE
         # itself is safe either way now: _OutQ never drops a control frame.)
         for n, ev in enumerate(reversed(events)):
+            if not self._can_serve_event(conn, ev):
+                continue
             self._send(conn, ["EVENT", sub_id, ev])
             if n % 512 == 511:
                 await asyncio.sleep(0)
@@ -1117,8 +1221,18 @@ class RelayServer:
 
     async def _on_count(self, conn, sub_id, filters) -> None:
         filters = [f for f in filters if isinstance(f, dict)]
+        if self._filter_explicitly_requests_nip78(filters):
+            owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
+            if not owners or not owners.issubset(self._auth_pubkeys.get(conn, set())):
+                self._challenge(conn)
+                self._send(conn, ["CLOSED", sub_id,
+                                  "auth-required: NIP-78 counts require AUTH and matching authors"])
+                return
         n = await self.store.count_filtered(filters)   # SQL COUNT(*) — don't materialize rows just to len()
         self._send(conn, ["COUNT", sub_id, {"count": n}])
+
+    def _can_serve_event(self, conn, ev: dict) -> bool:
+        return int(ev.get("kind", 0)) not in (78, 30078) or self._nip78_owner(conn, ev.get("pubkey", ""))
 
     # --- NIP-77 negentropy --------------------------------------------------
 
@@ -1128,6 +1242,22 @@ class RelayServer:
         back to a normal REQ."""
         if not isinstance(sub_id, str):
             return
+        # Negentropy reveals event ids and timestamps rather than EVENT frames, but that is still
+        # serving private NIP-78 records. Require an explicit public-kind filter, or the same
+        # authenticated owner-bound filter as REQ; a broad reconciliation cannot safely include
+        # every user's app-data address space.
+        if isinstance(filt, dict):
+            kinds = filt.get("kinds")
+            if not kinds:
+                self._send(conn, ["NEG-ERR", sub_id, "restricted: broad sync may include private NIP-78 data"])
+                return
+            if self._filter_explicitly_requests_nip78([filt]):
+                owners = {str(pk) for pk in (filt.get("authors") or [])}
+                if not owners or not owners.issubset(self._auth_pubkeys.get(conn, set())):
+                    self._challenge(conn)
+                    self._send(conn, ["NEG-ERR", sub_id,
+                                      "auth-required: NIP-78 sync requires AUTH and matching authors"])
+                    return
         try:
             flts = [filt] if isinstance(filt, dict) else []
             items = await self.store.neg_items(flts, cap=self.cfg.get("neg_max_items", 50000))

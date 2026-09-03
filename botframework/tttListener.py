@@ -4,7 +4,7 @@ Mirrors the #chesstr bot: START by posting "tictactoe @opponent" (or "ttt @oppon
 bot — the invited player is X and moves first; with no opponent you play the bot (you're X, bot is O).
 MOVE by replying with a cell number 1-9 (top-left → bottom-right). The bot validates, renders a
 cyberpunk board, posts it tagging the other player, and calls the win/draw. State is a replaceable
-kind-30078 doc keyed by the game root id, so games never expire. Every post carries #tictactoe.
+dedicated kind-30388 doc keyed by the game root id, so games never expire. Every post carries #tictactoe.
 """
 import os
 import re
@@ -24,7 +24,7 @@ import nostr as _nk
 from config import NOSTR_NSEC
 from app.services.nostr import event as _ev
 
-_KIND_APP = 30078
+_KIND_APP = 30388
 # Must name THIS game — a bare "start" used to match, but every game listener shares the one bot
 # identity, so "start #hangman" fired tic-tac-toe too. The app always posts the #tictactoe tag.
 _START_RE = re.compile(r"\b(?:tic\s*tac\s*toe|tictactoe|ttt)\b", re.IGNORECASE)
@@ -90,7 +90,7 @@ def _claim(note_id):
     return _claim_in(_IDS_FILE, note_id)
 
 
-# ---- state store (kind-30078) ---------------------------------------------
+# ---- state store (kind-30388) ---------------------------------------------
 def _dtag(gameid):
     return f"pcai:ttt:{gameid}"
 

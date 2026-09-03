@@ -1,8 +1,8 @@
 """#hangman — guess-the-word over Nostr, refereed by the bot. The bot picks a random word; the
 guesser replies with single LETTERS (or the whole word). START with "hangman" (you guess) or
 "hangman @opponent" (they guess); both watch. The secret word is stored NIP-44 self-encrypted in the
-game state so it's NOT visible in the public kind-30078 doc — only the bot can read it to score
-guesses. Mirrors the chess/ttt bots (separate files, kind-30078 state, post-text footer)."""
+game state so it's NOT visible in the public kind-30388 doc — only the bot can read it to score
+guesses. Mirrors the chess/ttt bots (separate files, kind-30388 state, post-text footer)."""
 import os
 import re
 import sys
@@ -22,7 +22,7 @@ import nostr as _nk
 from config import NOSTR_NSEC
 from app.services.nostr import event as _ev, nip44 as _nip44
 
-_KIND_APP = 30078
+_KIND_APP = 30388
 _MAX_WRONG = 6
 # Must name THIS game — a bare "start" used to match, but every game listener shares the one bot
 # identity, so "start connect4" fired hangman too. The app always posts the #hangman tag.

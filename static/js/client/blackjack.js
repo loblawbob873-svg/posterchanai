@@ -1,6 +1,6 @@
 /* #blackjack — Blackjack (21) vs the bot dealer with chips, betting + a persistent table. Reliable,
- * OFF-TIMELINE control via a kind-30078 command channel (#t=blackjackcmd) — solo start + every move.
- * Reads the bot's kind-30078 table doc (dealer hole card + deck hidden; player hands open). Registers
+ * OFF-TIMELINE control via a dedicated kind-30388 command channel (#t=blackjackcmd) — solo start + every move.
+ * Reads the bot's kind-30388 table doc (dealer hole card + deck hidden; player hands open). Registers
  * in window.PCGames. Mirrors holdem.js. */
 (function(){
   function init(){
@@ -40,7 +40,7 @@
     async function _cmd(payload){
       const botPk=safePk(PC.CFG.blackjack_bot_npub); if(!botPk) throw new Error('no bot');
       const tags=[['d',`pcai:blackjack:cmd:${PC.ME.pubkey}`],['t','blackjackcmd'],['p',botPk],['nofederate','1']];
-      const r = await publish(30078, JSON.stringify({...payload, ts:Date.now()}), tags);
+      const r = await publish(30388, JSON.stringify({...payload, ts:Date.now()}), tags);
       if(r && r.ok===false) throw new Error(r.msg||'rejected');
       return r;
     }
@@ -126,7 +126,7 @@
       const list=$('#bj-games'); if(!list) return;
       const botPk=safePk(PC.CFG.blackjack_bot_npub);
       if(!botPk){ list.innerHTML='<div class="empty">No bot configured.</div>'; return; }
-      let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30078], limit:500 }]); }catch(_){}
+      let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30388], limit:500 }]); }catch(_){}
       const hidden=_hidden(), byGame={};
       for(const e of evs){
         const d=((e.tags.find(t=>t[0]==='d')||[])[1])||'';

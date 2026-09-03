@@ -56,6 +56,7 @@
     constructor(url, pool, trusted){
       this.url = url; this.pool = pool; this.trusted = trusted;
       this.ws = null; this.status = 'init'; this._backoff = 600; this._rt = null;
+      this.challenge = null; this.authPubkeys = new Set(); this._authPromise = null;
       this._open();
     }
     _open(){
@@ -74,6 +75,7 @@
       catch(e){ this._openingAt = 0; this._setStatus('off'); this._retry(); return; }
       this._setStatus('connecting');
       this.ws.onopen = () => {
+        this.challenge = null; this.authPubkeys.clear(); this._authPromise = null;
         this._openingAt = 0;
         this._backoff = 600;                       // reset reconnect backoff on a good connection
         this._lastRx = Date.now();
@@ -168,6 +170,24 @@
     _queryFromPurposeCooldown: new Map(),
     _queryFromStops: new Set(),
     _queryFromBlockedHosts: new Set(['relay.ditto.pub','relay.damus.io']),
+    _authSigner: null,
+
+    // The application owns the active signer (local key, NIP-07, NIP-46 or NIP-55). Keeping only
+    // this callback here lets the transport answer NIP-42 without learning or retaining key data.
+    setAuthSigner(fn){ this._authSigner = typeof fn === 'function' ? fn : null; },
+    _authenticate(conn, wantPubkey){
+      if(wantPubkey && conn.authPubkeys.has(wantPubkey))return Promise.resolve(true);
+      if(conn._authPromise)return conn._authPromise;
+      if(!conn.challenge || !this._authSigner)return Promise.resolve(false);
+      conn._authPromise=Promise.resolve(this._authSigner({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
+        tags:[['relay',conn.url],['challenge',String(conn.challenge)]]})).then(ev=>new Promise(resolve=>{
+          if(!ev||!ev.id)return resolve(false);
+          const tm=setTimeout(()=>{this._okWaiters.delete(ev.id);resolve(false);},8000);
+          this._okWaiters.set(ev.id,{auth:true,settle:r=>{clearTimeout(tm);if(r&&r.ok&&ev.pubkey)conn.authPubkeys.add(ev.pubkey);resolve(!!(r&&r.ok));}});
+          conn._send(['AUTH',ev]);
+        })).catch(()=>false).finally(()=>{conn._authPromise=null;});
+      return conn._authPromise;
+    },
 
     /* Ephemeral external reads belong to the screen that requested them. A route change closes all
        of them synchronously; per-call AbortSignals remain useful for finer owners inside a view. */
@@ -339,7 +359,9 @@
     _onMessage(conn, raw){
       let m; try { m = JSON.parse(raw); } catch(_){ return; }
       const typ = m[0];
-      if (typ === 'EVENT'){
+      if (typ === 'AUTH'){
+        conn.challenge=String(m[1]||'');
+      } else if (typ === 'EVENT'){
         /* A trusted relay echoing the exact signed id is delivery evidence even if its separate OK
          * frame was lost during a phone radio handoff. Settle the active publish before looking up
          * the subscription: the echo can arrive on any live REQ, and delivery must not depend on
@@ -358,6 +380,14 @@
         else { this._vq.push({ ev, sub }); if (!this._vt) this._vt = setTimeout(()=>this._flush(), 40); }
       } else if (typ === 'EOSE' || typ === 'CLOSED'){
         const sub = this._subs.get(m[1]); if (!sub) return;
+        if(typ==='CLOSED' && String(m[2]||'').toLowerCase().startsWith('auth-required')){
+          // Retry the exact subscription only after this socket authenticates. Other sockets may
+          // answer meanwhile; sub.sent/eosed are per URL, so this cannot duplicate completion.
+          sub.sent.delete(conn.url); sub.eosed.delete(conn.url);
+          const owner=((sub.filters||[]).find(f=>Array.isArray(f.authors)&&f.authors.length===1)||{}).authors?.[0];
+          this._authenticate(conn,owner).then(ok=>{if(ok&&this._subs.has(m[1])&&conn._send(['REQ',m[1],...sub.filters]))sub.sent.add(conn.url);});
+          return;
+        }
         sub.eosed.add(conn.url);
         if (sub.onEose && this._eoseDone(sub)){
           // for untrusted relays, drain pending verifications so the last events aren't lost
@@ -381,6 +411,12 @@
          * relay we sent to has refused — or, failing that, it is what the timeout reports instead of
          * the word "timeout". */
         else if (w){
+          if(!w.auth && String(m[3]||'').toLowerCase().startsWith('auth-required')){
+            // A signed NIP-78 event must be replayed after same-owner connection AUTH. Do not count
+            // the pre-auth refusal as final; it is the relay's challenge flow, not a failed write.
+            this._authenticate(conn,w.event&&w.event.pubkey).then(ok=>{if(ok)conn._send(['EVENT',w.event]);});
+            return;
+          }
           w.no = (w.no || 0) + 1;
           w.why = m[3] || 'refused';
           if (w.sent && w.no >= w.sent){ this._okWaiters.delete(m[1]); w.settle({ ok:false, msg:w.why }); }
@@ -578,7 +614,7 @@
       return new Promise((res)=>{
         let settled = false;
         let confirmT = null;
-        const w = { settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); clearTimeout(confirmT);
+        const w = { event, settle: (r)=>{ if(!settled){ settled = true; clearTimeout(t); clearTimeout(confirmT);
                                                this._okWaiters.delete(event.id); res(r); } } };
         // The reason, when there was one: a refused publish must not be reported as silence.
         const t = setTimeout(()=>{ if(!settled){ settled = true; this._okWaiters.delete(event.id);

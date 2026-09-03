@@ -10,7 +10,7 @@ Flow:
   • GAME OVER: checkmate / stalemate / draw / resign → a final board + result post.
 
 Every post carries the #chesstr hashtag (text + a `t` tag). Game state is stored as a replaceable
-kind-30078 app-data event keyed by the game's root note id, so games survive restarts and never
+dedicated kind-30388 event keyed by the game's root note id, so games survive restarts and never
 expire — they just wait for the next reply, however many days later.
 """
 import os
@@ -32,7 +32,7 @@ import nostr as _nk
 from config import NOSTR_NSEC
 from app.services.nostr import event as _ev
 
-_KIND_APP = 30078
+_KIND_APP = 30388
 # Must name THIS game — a bare "start" used to match, but every game listener shares the one bot
 # identity, so "start #hangman" fired chess too. The app always posts the #chess tag.
 _START_RE = re.compile(r"\b(?:chess(?:tr)?)\b", re.IGNORECASE)
@@ -124,7 +124,7 @@ def _claim(note_id: str) -> bool:
         return False
 
 
-# ---- game state store (replaceable kind-30078, keyed by game root id) --------
+# ---- game state store (replaceable kind-30388, keyed by game root id) --------
 def _dtag(gameid: str) -> str:
     return f"pcai:chesstr:{gameid}"
 

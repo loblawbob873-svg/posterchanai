@@ -2,7 +2,7 @@
 START with "connect4 @opponent" (or "c4 @opponent"); with no opponent you play the bot. MOVE by
 replying with a column number 1-7 (the disc drops to the lowest empty slot). The bot validates,
 renders a cyberpunk board, posts it tagging the other player, and calls 4-in-a-row / draw. State is
-a replaceable kind-30078 doc keyed by the game root id (never expires). Every post carries
+a replaceable dedicated kind-30388 doc keyed by the game root id (never expires). Every post carries
 #connect4 #nostr #gamestr; only the opening + final posts federate (mid-game is local-only)."""
 import os
 import re
@@ -22,7 +22,7 @@ import nostr as _nk
 from config import NOSTR_NSEC
 from app.services.nostr import event as _ev
 
-_KIND_APP = 30078
+_KIND_APP = 30388
 COLS, ROWS = 7, 6
 # A start must name THIS game. A bare "start" used to match here too, but every game listener shares
 # the one bot identity, so a bare "start" (e.g. "start #hangman") fired ALL of them at once — spawning

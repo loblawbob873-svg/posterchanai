@@ -78,7 +78,7 @@
       const list=$('#c4-games'); if(!list) return;
       const botPk=safePk(PC.CFG.connect4_bot_npub);
       if(!botPk){ list.innerHTML='<div class="empty">No bot configured.</div>'; return; }
-      let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30078], limit:500 }]); }catch(_){}
+      let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30388], limit:500 }]); }catch(_){}
       const hidden=_hidden(), byGame={};
       for(const e of evs){
         const d=((e.tags.find(t=>t[0]==='d')||[])[1])||'';

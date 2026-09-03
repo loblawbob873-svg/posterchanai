@@ -121,17 +121,37 @@ def _pub_state():
     return loop, key, _pub_locks[key]
 
 
-async def _publish_once(port: int, event: dict, timeout: float, ws) -> tuple[bool, str]:
+def _auth_event(uri: str, challenge: str, seckey: bytes) -> dict:
+    return build_event(seckey, 22242, "", tags=[["relay", uri], ["challenge", challenge]])
+
+
+async def _publish_once(port: int, event: dict, timeout: float, ws,
+                        auth_seckey: bytes | None = None) -> tuple[bool, str]:
     await ws.send(json.dumps(["EVENT", event]))
+    auth_id = None
     while True:
         msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
+        if msg and msg[0] == "AUTH" and len(msg) >= 2 and auth_seckey:
+            auth = _auth_event(f"ws://127.0.0.1:{port}/relay", str(msg[1]), auth_seckey)
+            auth_id = auth["id"]
+            await ws.send(json.dumps(["AUTH", auth]))
+            continue
+        if msg and msg[0] == "OK" and msg[1] == auth_id:
+            if not msg[2]:
+                return False, "auth rejected: " + (msg[3] if len(msg) > 3 else "")
+            await ws.send(json.dumps(["EVENT", event]))
+            continue
         # Anything that is not our OK is other traffic on this connection (the relay sends nothing
         # unsolicited to a subscription-less socket, but be explicit rather than assume it).
         if msg and msg[0] == "OK" and msg[1] == event["id"]:
-            return bool(msg[2]), (msg[3] if len(msg) > 3 else "")
+            reason = msg[3] if len(msg) > 3 else ""
+            if not msg[2] and str(reason).startswith("auth-required") and auth_seckey:
+                continue
+            return bool(msg[2]), reason
 
 
-async def _ws_publish(port: int, event: dict, timeout: float = 8.0) -> tuple[bool, str]:
+async def _ws_publish(port: int, event: dict, timeout: float = 8.0,
+                      auth_seckey: bytes | None = None) -> tuple[bool, str]:
     import websockets
     uri = f"ws://127.0.0.1:{port}/relay"
     loop, key, lock = _pub_state()
@@ -145,7 +165,7 @@ async def _ws_publish(port: int, event: dict, timeout: float = 8.0) -> tuple[boo
                     ws = await websockets.connect(uri, open_timeout=timeout, close_timeout=2,
                                                   max_size=None)
                     _pub_pool[key] = (loop, ws)
-                return await _publish_once(port, event, timeout, ws)
+                return await _publish_once(port, event, timeout, ws, auth_seckey)
             except Exception as e:
                 _pub_pool.pop(key, None)
                 try:
@@ -179,7 +199,8 @@ async def publish_event(port: int, event: dict, timeout: float = 8.0) -> tuple[b
     return await _ws_publish(port, event, timeout=timeout)
 
 
-async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: bool = False) -> list:
+async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: bool = False,
+                    auth_seckey: bytes | None = None) -> list:
     """Query the local relay. Returns the matching events.
 
     `strict` decides what a FAILURE looks like. By default a dead socket or a timeout is swallowed and
@@ -195,10 +216,26 @@ async def _ws_query(port: int, filters: list, timeout: float = 6.0, *, strict: b
     try:
         async with websockets.connect(uri, open_timeout=timeout, close_timeout=2) as ws:
             await ws.send(json.dumps(["REQ", sub, *filters]))
+            auth_id = None
+            retried = False
             while True:
                 msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=timeout))
-                if msg[0] == "EVENT" and msg[1] == sub:
+                if msg[0] == "AUTH" and len(msg) >= 2 and auth_seckey:
+                    auth = _auth_event(uri, str(msg[1]), auth_seckey)
+                    auth_id = auth["id"]
+                    await ws.send(json.dumps(["AUTH", auth]))
+                elif msg[0] == "OK" and msg[1] == auth_id:
+                    if not msg[2]:
+                        raise PermissionError("relay rejected NIP-42 AUTH")
+                    if not retried:
+                        retried = True
+                        await ws.send(json.dumps(["REQ", sub, *filters]))
+                elif msg[0] == "EVENT" and msg[1] == sub:
                     out.append(msg[2])
+                elif msg[0] == "CLOSED" and msg[1] == sub and str(msg[2] if len(msg)>2 else "").startswith("auth-required") and auth_seckey:
+                    # The connect challenge is already queued ahead of this on compliant relays;
+                    # wait for its AUTH OK, which triggers the exact REQ replay above.
+                    continue
                 elif msg[0] in ("EOSE", "CLOSED") and msg[1] == sub:
                     break
     except Exception as e:
@@ -246,7 +283,7 @@ async def put_doc(port: int, seckey: bytes, d_tag: str, data,
         return build_event(seckey, kind, body, tags=[["d", d_tag]] + (tags or []), created_at=at)
 
     ev = await asyncio.to_thread(_seal)
-    ok, msg = await _ws_publish(port, ev)
+    ok, msg = await _ws_publish(port, ev, auth_seckey=seckey)
     # THE SAME-SECOND TIE-BREAK REFUSES HALF OF RAPID UPDATES. A replaceable doc updated twice in
     # one second ties on created_at, NIP-01 settles ties by LOWER id, and ids are random — so a
     # journal batching several publishes per second lost ~half of them to "not stored, retry"
@@ -258,7 +295,7 @@ async def put_doc(port: int, seckey: bytes, d_tag: str, data,
         if ok or "not stored" not in str(msg or ""):
             break
         ev = await asyncio.to_thread(_seal, int(ev.get("created_at", 0)) + bump)
-        ok, msg = await _ws_publish(port, ev)
+        ok, msg = await _ws_publish(port, ev, auth_seckey=seckey)
     if not ok:
         logger.warning("[nostr-store] put %s rejected: %s", d_tag, msg)
     return ok
@@ -275,7 +312,7 @@ async def get_doc(port: int, d_tag: str, *, seckey: bytes | None = None, pubkey:
     if not pk:
         raise ValueError("get_doc needs seckey or pubkey")
     evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": [d_tag], "limit": 1}],
-                          strict=strict)
+                          strict=strict, auth_seckey=seckey)
     if not evs:
         return None
     evs.sort(key=lambda e: e.get("created_at", 0), reverse=True)   # newest wins (defensive)
@@ -321,7 +358,7 @@ async def list_docs(port: int, prefix: str, *, seckey: bytes | None = None, pubk
         flt["since"] = int(since)
     if cursor:
         flt["_cursor"] = [int(cursor[0]), str(cursor[1])]
-    evs = await _ws_query(port, [flt], strict=strict)
+    evs = await _ws_query(port, [flt], strict=strict, auth_seckey=seckey)
     best: dict = {}
     for ev in evs:
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
@@ -366,7 +403,7 @@ async def list_dtags(port: int, prefix: str, *, seckey: bytes | None = None,
         flt["#d~"] = [prefix]      # see list_docs: ask for the namespace, not the whole key
     if until:
         flt["until"] = int(until)
-    evs = await _ws_query(port, [flt])
+    evs = await _ws_query(port, [flt], auth_seckey=seckey)
     out = set()
     oldest = None
     for ev in evs:
@@ -402,7 +439,7 @@ async def get_docs(port: int, d_tags, *, seckey: bytes | None = None, pubkey: st
     for i in range(0, len(tags), max(1, chunk)):
         part = tags[i:i + max(1, chunk)]
         evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": part,
-                                      "limit": len(part) * 2}], strict=strict)
+                                      "limit": len(part) * 2}], strict=strict, auth_seckey=seckey)
         for ev in evs:
             d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), None)
             if not d:
@@ -415,7 +452,8 @@ async def get_docs(port: int, d_tags, *, seckey: bytes | None = None, pubkey: st
 async def delete_doc(port: int, seckey: bytes, d_tag: str, *, kind: int = APP_KIND) -> bool:
     """Delete document `d_tag` (NIP-09 kind-5 referencing the current event + its addressable coord)."""
     pk = bip340.pubkey_from_seckey(seckey).hex()
-    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": [d_tag], "limit": 1}])
+    evs = await _ws_query(port, [{"authors": [pk], "kinds": [kind], "#d": [d_tag], "limit": 1}],
+                          auth_seckey=seckey)
     if not evs:
         return True   # nothing to delete
     eid = evs[0].get("id")

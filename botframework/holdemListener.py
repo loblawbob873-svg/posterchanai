@@ -8,7 +8,7 @@ all-ins, and posts the showdown. Play-money chips; everyone starts with the same
 
 NO AI / LLM and NO firehose: like the other game bots it only touches its own mentions + move DMs
 (claim-deduped, bounded queries), and the poker math is O(21) per showdown — negligible CPU. State
-is a kind-30078 doc (`pcai:holdem:<gameid>`) the web client also reads. Mirrors blackjackListener.
+is a dedicated kind-30388 doc (`pcai:holdem:<gameid>`) the web client also reads. Mirrors blackjackListener.
 """
 
 import os
@@ -38,7 +38,7 @@ def _footer():
            "\n🃏 Play Texas Hold'em on PosterChan"
     return play + "\n#holdem #poker #nostr #gamestr"
 
-_KIND_APP = 30078
+_KIND_APP = 30388
 _MAX_SEATS = int(os.getenv("HOLDEM_MAX_SEATS", "6"))
 _START_RE = re.compile(r"\b(?:hold\s*'?em|holdem|poker)\b", re.IGNORECASE)
 _DM_GAME_RE = re.compile(r"\bg:([0-9a-f]{64})\b", re.IGNORECASE)
@@ -109,7 +109,7 @@ def _claim_cmd(eid):
     return _claim_in(_CMD_IDS_FILE, eid)
 
 
-# ---- state store (kind-30078) ---------------------------------------------
+# ---- state store (dedicated kind-30388) -----------------------------------
 def _dtag(gameid):
     return f"pcai:holdem:{gameid}"
 
@@ -400,7 +400,7 @@ def _start_game(note, own_pk):
 
 
 def _start_solo(sender, own_pk):
-    """Start a PRIVATE heads-up game vs the bot, triggered by a kind-30078 command (the app's 'New
+    """Start a PRIVATE heads-up game vs the bot, triggered by a kind-30388 command (the app's 'New
     game vs bot' button). No public timeline post. Guards against a player spinning up many tables."""
     if not sender or sender == own_pk:
         return
@@ -441,7 +441,7 @@ def _start_solo(sender, own_pk):
 
 
 def _handle_cmd(author, payload, own_pk):
-    """A reliable, off-timeline command (kind-30078 #t=holdemcmd): {action, gameid?, amount?}. The app
+    """A reliable, off-timeline command (kind-30388 #t=holdemcmd): {action, gameid?, amount?}. The app
     uses this for solo start + ALL moves instead of public kind-1 notes / flaky NIP-17 DMs. The reply
     is a no-op — the player sees the result in the app (it reads the game doc)."""
     action = (payload.get("action") or "").lower().strip()
@@ -748,7 +748,7 @@ def process_holdem():
         _resume_stalled_tables()
     else:
         _resume_countdown -= 1
-    # PRIMARY channel: reliable, off-timeline kind-30078 commands (#t=holdemcmd) from the app — solo
+    # PRIMARY channel: reliable, off-timeline kind-30388 commands (#t=holdemcmd) from the app — solo
     # start + every move. content = {"action","gameid"?,"amount"?}; one replaceable doc per player.
     try:
         cmds = _nk._run(_nk._svc.relay.query(

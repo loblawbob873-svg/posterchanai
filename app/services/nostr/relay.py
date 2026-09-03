@@ -395,13 +395,16 @@ async def publish(relays, event: dict, direct: bool = False) -> int:
     return len(await publish_to(relays, event, direct))
 
 
-async def _query_one(relay: str, filters: list, out: dict, timeout: float, direct: bool = False) -> None:
+async def _query_one(relay: str, filters: list, out: dict, timeout: float, direct: bool = False,
+                     auth_seckey: bytes | None = None) -> None:
     if not _is_local(relay) and _relay_paused(relay):
         return   # circuit breaker: relay paused after repeated connect failures — skip silently
     sub_id = uuid.uuid4().hex[:16]
     try:
         async with _connect(relay, direct) as ws:
             await ws.send(json.dumps(["REQ", sub_id] + filters))
+            auth_id = None
+            retried = False
             deadline = asyncio.get_event_loop().time() + timeout
             while True:
                 remaining = deadline - asyncio.get_event_loop().time()
@@ -417,7 +420,20 @@ async def _query_one(relay: str, filters: list, out: dict, timeout: float, direc
                     continue
                 if not isinstance(msg, list) or not msg:
                     continue
-                if msg[0] == "EVENT" and len(msg) >= 3 and msg[1] == sub_id:
+                if msg[0] == "AUTH" and len(msg) >= 2 and auth_seckey:
+                    from app.services.nostr.event import build_event
+                    auth = build_event(auth_seckey, 22242, "",
+                                       [["relay", relay], ["challenge", str(msg[1])]])
+                    auth_id = auth["id"]
+                    await ws.send(json.dumps(["AUTH", auth]))
+                elif msg[0] == "OK" and len(msg) >= 3 and msg[1] == auth_id:
+                    if msg[2] and not retried:
+                        retried = True
+                        await ws.send(json.dumps(["REQ", sub_id] + filters))
+                elif msg[0] == "CLOSED" and len(msg) >= 3 and msg[1] == sub_id \
+                        and str(msg[2]).startswith("auth-required") and auth_seckey:
+                    continue
+                elif msg[0] == "EVENT" and len(msg) >= 3 and msg[1] == sub_id:
                     ev = msg[2]
                     if isinstance(ev, dict) and ev.get("id"):
                         out[ev["id"]] = ev
@@ -432,14 +448,14 @@ async def _query_one(relay: str, filters: list, out: dict, timeout: float, direc
 
 
 async def query(relays, filters: list, timeout: float = _DEFAULT_QUERY_TIMEOUT,
-                direct: bool = False) -> list[dict]:
+                direct: bool = False, auth_seckey: bytes | None = None) -> list[dict]:
     """Run a REQ with `filters` against all relays; return deduped events (newest-first)."""
     relays = normalize_relays(relays)
     if not relays:
         return []
     out: dict = {}
     await asyncio.gather(
-        *[_query_one(r, filters, out, timeout, direct) for r in relays],
+        *[_query_one(r, filters, out, timeout, direct, auth_seckey) for r in relays],
         return_exceptions=True,
     )
     return sorted(out.values(), key=lambda e: e.get("created_at", 0), reverse=True)

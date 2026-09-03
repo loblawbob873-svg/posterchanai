@@ -13,7 +13,7 @@ from app.services.nostr import nip17, bip340, event as _ev, relay as R, bech32 a
 
 RELAYS = ["ws://127.0.0.1:3052/relay"]
 CONTROL_DIR = os.path.join(os.getcwd(), "data", "nostr_relay.control.d")
-KIND_APP = 30078
+KIND_APP = 30388
 
 GAMES = {
     "chess":    {"flag": "chess_bot_npub",    "dtag": "pcai:chesstr:",  "tag": "chess"},
@@ -76,7 +76,7 @@ def count_bot_dms(bot_hex, player_sk, player_hex, gameid):
     return n
 
 
-# ---- per-game move logic (reads the kind-30078 state, returns a move string or None if not our turn) --
+# ---- per-game move logic (reads dedicated kind-30388 state, returns a move string or None if not our turn) --
 def move_chess(state, me):
     import chess
     board = chess.Board(state["fen"])

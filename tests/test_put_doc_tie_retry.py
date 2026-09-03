@@ -14,7 +14,9 @@ from app.services import nostr_store
 class TieRetry(unittest.TestCase):
     def _run(self, answers):
         calls = []
-        async def fake_publish(port, ev):
+        async def fake_publish(port, ev, *, auth_seckey=None):
+            self.assertEqual(auth_seckey, b"\x01" * 32,
+                             "NIP-78 write lost the same-owner NIP-42 signing key")
             calls.append(int(ev["created_at"]))
             return answers[min(len(calls) - 1, len(answers) - 1)]
         with mock.patch.object(nostr_store, "_ws_publish", side_effect=fake_publish):

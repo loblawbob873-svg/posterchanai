@@ -68,6 +68,10 @@ public final class Nip46Core {
             if (t.isEmpty()) continue;
             if (t.equals(method)) return true;
             if (kind >= 0 && method.equals("sign_event") && t.equals("sign_event:" + kind)) return true;
+            // NIP-78 added same-owner NIP-42 AUTH after existing pairings were issued. Permission
+            // to sign private app data includes its ephemeral access proof; otherwise every old
+            // full pairing loses vault/SMS sync until manually re-paired.
+            if (kind == 22242 && method.equals("sign_event") && t.equals("sign_event:30078")) return true;
         }
         return false;
     }

@@ -598,6 +598,27 @@ public class SignerRelayService extends Service {
     private void recv(String url, String raw) {
         JSONArray m;
         try { m = new JSONArray(raw); } catch (Throwable t) { return; }
+        if (m.length() >= 2 && "AUTH".equals(m.optString(0, ""))) {
+            /* NIP-78 (2026-09-03): the SMS archive is private app data, so this connection must
+             * authenticate as the same key before its kind-30078 REQ/EVENT traffic is accepted.
+             * AUTH and the replay are written in order on the same OkHttp socket. */
+            try {
+                byte[] key = sec();
+                WebSocket socket = socks.get(url);
+                if (key == null || socket == null) return;
+                String pubHex = SmsOutbox.hex(Nostr.pubkey(key));
+                java.util.List<java.util.List<String>> tags = new java.util.ArrayList<>();
+                tags.add(java.util.Arrays.asList("relay", url));
+                tags.add(java.util.Arrays.asList("challenge", m.optString(1, "")));
+                JSONObject auth = SmsOutbox.signed(key, pubHex,
+                        System.currentTimeMillis() / 1000L, 22242, tags, "");
+                socket.send(new JSONArray().put("AUTH").put(auth).toString());
+                socket.send(new JSONArray().put("REQ").put(smsSubId)
+                        .put(SmsOutbox.filter(pubHex)).toString());
+                publishSmsArchive();
+            } catch (Throwable t) { lastError = "relay AUTH failed"; }
+            return;
+        }
         if (m.length() < 3 || !"EVENT".equals(m.optString(0, ""))) return;
         String sub = m.optString(1, "");
         if (String.valueOf(smsSubId).equals(sub)) { smsOutbox(url, m.optJSONObject(2)); return; }

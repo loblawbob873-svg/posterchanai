@@ -1,5 +1,5 @@
 /* #holdem — multiplayer Texas Hold'em, dealt + refereed by the bot. Mobile-first cyberpunk UI.
- * Reads the bot's kind-30078 table doc; your OWN hole cards are NIP-44-encrypted in it (only you can
+ * Reads the bot's dedicated kind-30388 table doc; your OWN hole cards are NIP-44-encrypted in it (only you can
  * decrypt them — PC.nip44dec). Act in the app or by DMing the bot. Persistent table: it re-deals
  * until everyone leaves. Registers in window.PCGames. */
 (function(){
@@ -92,13 +92,13 @@
           draw(Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,8));
         }, 250); };
     }
-    // Reliable, OFF-TIMELINE command channel: a signed kind-30078 (no nip44 encryption to fail, not a
+    // Reliable, OFF-TIMELINE command channel: a signed kind-30388 (no nip44 encryption to fail, not a
     // kind-1 note) published to the local relay. The bot polls #t=holdemcmd. Used for solo start + all
     // moves so nothing hits your public timeline and moves don't depend on flaky DM encryption.
     async function _cmd(payload){
       const botPk=safePk(PC.CFG.holdem_bot_npub); if(!botPk) throw new Error('no bot');
       const tags=[['d',`pcai:holdem:cmd:${PC.ME.pubkey}`],['t','holdemcmd'],['p',botPk],['nofederate','1']];
-      const r = await PC.publish(30078, JSON.stringify({...payload, ts:Date.now()}), tags);
+      const r = await PC.publish(30388, JSON.stringify({...payload, ts:Date.now()}), tags);
       if(r && r.ok===false) throw new Error(r.msg||'rejected');
       return r;
     }
@@ -127,7 +127,7 @@
       if(_ae && _ae.classList && _ae.classList.contains('pk-amt')) return;
       const botPk=safePk(PC.CFG.holdem_bot_npub);
       if(!botPk){ list.innerHTML='<div class="empty">No bot configured.</div>'; return; }
-      let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30078], limit:500 }]); }catch(_){}
+      let evs=[]; try{ evs=await Relay.query([{ authors:[botPk], kinds:[30388], limit:500 }]); }catch(_){}
       const hidden=_hidden(), byGame={};
       for(const e of evs){
         const d=((e.tags.find(t=>t[0]==='d')||[])[1])||'';
@@ -250,7 +250,7 @@
       _hide(g._gid||g.root); _load();
     }
     async function move(game, action, amount){
-      // Moves go through the reliable kind-30078 command channel (not a flaky NIP-17 DM). Retry a few
+      // Moves go through the reliable kind-30388 command channel (not a flaky NIP-17 DM). Retry a few
       // times in case the local relay momentarily rejects.
       let ok=false;
       for(let i=0;i<3 && !ok;i++){

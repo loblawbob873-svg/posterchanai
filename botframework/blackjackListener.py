@@ -4,7 +4,7 @@ table — solo (private) OR a multi-seat table.
 Each player plays their OWN hand vs the SAME dealer (hit/stand), wagering chips each round; the dealer
 draws to 17 and pays out (blackjack 3:2). The table KEEPS GOING — it auto-deals the next round, carrying
 stacks, until you leave or bust out. Mirrors holdemListener: the app drives play through a reliable,
-OFF-TIMELINE command channel (kind-30078 #t=blackjackcmd) — no public timeline spam, no flaky DM
+OFF-TIMELINE command channel (dedicated kind-30388 #t=blackjackcmd) — no public timeline spam, no flaky DM
 encryption. The dealer's hole card + the undealt deck are self-encrypted (bot-only) in the state doc;
 player hands are open. Solo games are private (in-app results; one public wrap-up when the table closes);
 multiplayer tables post each round's result publicly with the table image + app promo.
@@ -29,7 +29,7 @@ from config import NOSTR_NSEC
 from app.services.nostr import event as _ev
 from app.services.nostr import nip44 as _nip44
 
-_KIND_APP = 30078
+_KIND_APP = 30388
 _START_RE = re.compile(r"\b(blackjack|black\s*jack)\b", re.IGNORECASE)
 _DM_GAME_RE = re.compile(r"\bg:([0-9a-f]{64})\b", re.IGNORECASE)
 _NOSTR_TOKEN_RE = re.compile(
@@ -103,7 +103,7 @@ def _claim_cmd(eid):
     return _claim_in(_CMD_IDS_FILE, eid)
 
 
-# ---- state store (kind-30078): hide dealer hole card + deck --------------------
+# ---- state store (dedicated kind-30388): hide dealer hole card + deck -----------
 def _dtag(gameid):
     return f"pcai:blackjack:{gameid}"
 
@@ -311,7 +311,7 @@ def _new_state(seats, own_pk, gameid, private, bets=None):
 
 
 def _start_solo(sender, own_pk, bet=None):
-    """Private heads-up game vs the dealer from a kind-30078 command (the app's 'New hand'). No public
+    """Private heads-up game vs the dealer from a kind-30388 command (the app's 'New hand'). No public
     post. Guards against a player spinning up many tables."""
     if not sender or sender == own_pk:
         return

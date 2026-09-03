@@ -575,7 +575,8 @@ async def restore_from_upstream(db) -> int:
         return 0
     upstream = _relay.normalize_relays(get("nostr_relay_upstream_relays", "")) or list(nostr_service.DEFAULT_RELAYS)
     try:
-        evs = await _relay.query(upstream, [{"authors": [op_hex], "kinds": [store.APP_KIND]}], timeout=25)
+        evs = await _relay.query(upstream, [{"authors": [op_hex], "kinds": [store.APP_KIND]}],
+                                 timeout=25, auth_seckey=op_sk)
     except Exception as e:
         logger.warning("[settings-store] restore: upstream query failed: %s", e)
         return 0
