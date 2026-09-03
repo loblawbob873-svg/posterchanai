@@ -124,10 +124,23 @@ def test_no_bare_kill_binding_survives_in_the_shipped_config():
     assert not bare, f"these close chords still kill the focused container outright: {bare}"
 
 
-@pytest.mark.parametrize("chord", ["$mod+q", "Mod1+F4"])
+@pytest.mark.parametrize("chord", ["$mod+q", "$mod+1", "Mod1+F4"])
 def test_both_close_chords_run_the_helper(chord):
     conf = SWAY_CONF.read_text(encoding="utf-8")
     assert f"bindsym {chord} exec /usr/local/bin/pc-window-close" in conf
+
+
+def test_super_one_closes_the_single_focused_native_firefox_through_the_safe_helper():
+    """The binding does not broadcast to either monitor renderer: the helper reads Sway's one
+    focused container and kills that exact Firefox con_id."""
+    conf = SWAY_CONF.read_text(encoding="utf-8")
+    assert "bindsym $mod+1 exec /usr/local/bin/pc-window-close" in conf
+    assert run_action(FIREFOX) == [("[con_id=33]", "kill")]
+
+
+def test_existing_user_configs_gain_super_one_on_package_upgrade():
+    ebuild = EBUILD.read_text(encoding="utf-8")
+    assert "'bindsym $mod+1 exec /usr/local/bin/pc-window-close'" in ebuild
 
 
 def test_the_helper_is_installed_by_the_package():

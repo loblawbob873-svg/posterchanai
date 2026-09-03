@@ -1820,6 +1820,7 @@ PROFILE
 	# pc-window-close asks who is focused first: the shell gets a tick and closes its own window,
 	# while a popped-out window and a native app are real toplevels the compositor still kills.
 	bindsym $mod+q exec /usr/local/bin/pc-window-close, exec /usr/local/bin/pc-super used
+	bindsym $mod+1 exec /usr/local/bin/pc-window-close, exec /usr/local/bin/pc-super used
 	bindsym Mod1+F4 exec /usr/local/bin/pc-window-close
 
 	# THE DESKTOP ITSELF STAYS PUT. It is maximized on the output it started on, and `focus output`

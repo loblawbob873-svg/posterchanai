@@ -211,9 +211,10 @@ pkg_postinst() {
 		# focused first. Matching only a trailing bare `kill` leaves a hand-written
 		# binding that runs anything else alone.
 		sed -i -E '/^bindsym[[:space:]]+(\$mod\+q|Mod1\+F4)[[:space:]]+kill[[:space:]]*$/d' "${cfg}"
-		sed -i -E '/^bindsym[[:space:]]+(\$mod\+q|Mod1\+F4)[[:space:]]+exec[[:space:]]+\/usr\/local\/bin\/pc-window-close[[:space:]]*$/d' "${cfg}"
+		sed -i -E '/^bindsym[[:space:]]+(\$mod\+(q|1)|Mod1\+F4)[[:space:]]+exec[[:space:]]+\/usr\/local\/bin\/pc-window-close([[:space:]]*,.*)?[[:space:]]*$/d' "${cfg}"
 		for line in \
 			'bindsym $mod+q exec /usr/local/bin/pc-window-close' \
+			'bindsym $mod+1 exec /usr/local/bin/pc-window-close' \
 			'bindsym Mod1+F4 exec /usr/local/bin/pc-window-close'; do
 			echo "${line}" >>"${cfg}"
 		done
