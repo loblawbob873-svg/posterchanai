@@ -14,6 +14,31 @@
  */
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
+/* Surface metadata only proves that Wayfire accepted a buffer; it does not prove that a physical
+ * output is displaying the renderer.  The session watchdog captures every output and looks for
+ * this tiny, deterministic 8x8 marker before declaring the desktop ready.  It is intentionally
+ * installed by the preload (not page JavaScript), so a stalled client bootstrap still fails the
+ * visual gate.  Four solid quadrants survive fractional output scaling and colour rounding while
+ * remaining smaller than a title-bar icon. */
+if(process.argv.includes('--pc-shell-health-marker')){
+  const installHealthMarker=()=>{
+    if(document.getElementById('pc-shell-health-marker'))return;
+    const marker=document.createElement('div');
+    marker.id='pc-shell-health-marker';
+    marker.setAttribute('aria-hidden','true');
+    marker.innerHTML='<i></i><i></i><i></i><i></i>';
+    Object.assign(marker.style,{position:'fixed',left:'1px',top:'1px',width:'8px',height:'8px',
+      display:'grid',gridTemplateColumns:'4px 4px',gridTemplateRows:'4px 4px',zIndex:'2147483647',
+      pointerEvents:'none',contain:'strict'});
+    ['#d12e91','#23cde8','#79d447','#f0b429'].forEach((colour,index)=>{
+      marker.children[index].style.cssText=`display:block;background:${colour}!important`;
+    });
+    (document.documentElement||document.body).appendChild(marker);
+  };
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',installHealthMarker,{once:true});
+  else installHealthMarker();
+}
+
 /* A WAYLAND MENU MUST NOT PAINT BEFORE THE COMPOSITOR HAS POSITIONED IT. Sway's title rule is still
  * the outer safety net, but a newly mapped surface can contribute one frame before that rule wins.
  * Hide the renderer independently, then let main.js remove this sheet only after placeAndReveal.

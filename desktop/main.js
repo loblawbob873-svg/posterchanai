@@ -546,7 +546,9 @@ function createWindow(assignment) {
       preload: path.join(__dirname, 'preload.js'),
       /* A companion display is a view, not a second background agent. The preload uses this marker
        * to withhold folder-sync ownership so adding a monitor cannot run two writers over one tree. */
-      additionalArguments: ['--pc-preload-dir=' + __dirname].concat(primary ? [] : ['--pc-secondary-surface']),
+      additionalArguments: ['--pc-preload-dir=' + __dirname]
+        .concat(SHELL_MODE ? ['--pc-shell-health-marker'] : [])
+        .concat(primary ? [] : ['--pc-secondary-surface']),
     },
   });
   if(primary) win = created;

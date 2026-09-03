@@ -4,12 +4,16 @@ import json
 import os
 import socket
 import struct
+import subprocess
 import sys
+import tempfile
 import time
+import zlib
 
 
 SOCKET = os.environ.get("WAYFIRE_SOCKET", "")
 APP_IDS = {"posterchan-desktop", "PosterChan", "place.poster.desktop"}
+MARKER = ((209, 46, 145), (35, 205, 232), (121, 212, 71), (240, 180, 41))
 
 
 def request(method, data=None):
@@ -64,7 +68,7 @@ def preflight():
         raise RuntimeError("Wayfire IPC methods missing: " + ", ".join(missing))
 
 
-def healthy(pid):
+def shell_layout(pid):
     outputs = rows(request("window-rules/list-outputs"), "outputs")
     output_ids = {int(row["id"]) for row in outputs if row.get("id") is not None}
     views = rows(request("window-rules/list-views"), "views")
@@ -73,12 +77,85 @@ def healthy(pid):
               and str(row.get("app-id") or row.get("app_id") or row.get("app") or "") in APP_IDS
               and "Popup" not in str(row.get("title") or "")]
     if not output_ids or len(shells) != len(output_ids):
-        return False
+        return None
     if any(int(row.get("pid") or 0) != pid for row in shells):
-        return False
+        return None
     owned_outputs = {int(row.get("output-id") if row.get("output-id") is not None
                          else row.get("output_id", -1)) for row in shells}
-    return owned_outputs == output_ids
+    if owned_outputs != output_ids:
+        return None
+    return outputs, shells
+
+
+def png_rgb(path):
+    """Decode the non-interlaced 8-bit RGB/RGBA PNG emitted by grim, without optional Pillow."""
+    raw = open(path, "rb").read()
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise RuntimeError("grim did not produce PNG")
+    pos, width, height, colour, interlace, packed = 8, 0, 0, 0, 0, bytearray()
+    while pos + 12 <= len(raw):
+        size = struct.unpack(">I", raw[pos:pos + 4])[0]
+        kind, data = raw[pos + 4:pos + 8], raw[pos + 8:pos + 8 + size]
+        pos += 12 + size
+        if kind == b"IHDR":
+            width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", data)
+            if depth != 8 or colour not in (2, 6) or interlace:
+                raise RuntimeError("unsupported grim PNG format")
+        elif kind == b"IDAT": packed.extend(data)
+        elif kind == b"IEND": break
+    channels = 3 if colour == 2 else 4
+    scan = zlib.decompress(bytes(packed)); stride = width * channels
+    rows, offset, prior = [], 0, bytearray(stride)
+    for _ in range(height):
+        mode, offset = scan[offset], offset + 1
+        current = bytearray(scan[offset:offset + stride]); offset += stride
+        for x in range(stride):
+            left = current[x - channels] if x >= channels else 0
+            up = prior[x]; upper_left = prior[x - channels] if x >= channels else 0
+            if mode == 1: current[x] = (current[x] + left) & 255
+            elif mode == 2: current[x] = (current[x] + up) & 255
+            elif mode == 3: current[x] = (current[x] + ((left + up) >> 1)) & 255
+            elif mode == 4:
+                p = left + up - upper_left
+                pa, pb, pc = abs(p-left), abs(p-up), abs(p-upper_left)
+                current[x] = (current[x] + (left if pa <= pb and pa <= pc else up if pb <= pc else upper_left)) & 255
+            elif mode != 0: raise RuntimeError("unsupported PNG filter")
+        rows.append(current); prior = current
+    return width, height, channels, rows
+
+
+def has_marker(path):
+    width, height, channels, rows = png_rgb(path)
+    if width < 8 or height < 8:
+        return False
+    # The marker is at the shell's output-local top-left. Search a bounded corner because fractional
+    # scaling can move/duplicate its pixels, but never accept a matching app image elsewhere.
+    pixels = [tuple(row[x:x + 3]) for row in rows[:min(height, 96)]
+              for x in range(0, min(width, 96) * channels, channels)
+              if channels == 3 or row[x + 3] >= 240]
+    return all(any(max(abs(pixel[i] - wanted[i]) for i in range(3)) <= 12
+                   for pixel in pixels) for wanted in MARKER)
+
+
+def rendered(outputs):
+    grim = os.environ.get("PC_GRIM", "grim")
+    capture_timeout = float(os.environ.get("PC_GRIM_TIMEOUT", "4"))
+    with tempfile.TemporaryDirectory(prefix="pc-wayfire-health-") as directory:
+        for output in outputs:
+            name = str(output.get("name") or "")
+            if not name:
+                raise RuntimeError("Wayfire output has no capture name")
+            target = os.path.join(directory, str(output.get("id")) + ".png")
+            done = subprocess.run([grim, "-o", name, target], stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.PIPE, timeout=capture_timeout, check=False)
+            if done.returncode or not os.path.isfile(target) or not has_marker(target):
+                return False
+    return True
+
+
+def healthy(pid):
+    layout = shell_layout(pid)
+    return bool(layout and rendered(layout[0]))
 
 
 def process_alive(pid):
@@ -119,7 +196,7 @@ def main():
         except (OSError, RuntimeError, ValueError):
             pass
         time.sleep(0.1)
-    raise RuntimeError("desktop did not map exactly one shell surface per output")
+    raise RuntimeError("desktop did not render exactly one verified shell surface on every output")
 
 
 if __name__ == "__main__":

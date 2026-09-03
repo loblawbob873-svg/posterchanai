@@ -5,6 +5,7 @@ import struct
 import subprocess
 import threading
 import time
+import zlib
 from pathlib import Path
 
 
@@ -72,14 +73,47 @@ def test_bundle_gate_rejects_the_old_sway_only_desktop(tmp_path):
                           env=os.environ | {"PC_DESKTOP_ASAR": str(asar)}).returncode == 0
 
 
-def test_health_requires_exactly_one_owned_surface_per_output(tmp_path):
+MARKER = [(209, 46, 145), (35, 205, 232), (121, 212, 71), (240, 180, 41)]
+
+
+def _png(path, marker=True, transparent=False):
+    width = height = 32
+    pixels = bytearray()
+    for y in range(height):
+        pixels.append(0)
+        for x in range(width):
+            rgb = (0, 0, 0)
+            if marker and 1 <= x < 9 and 1 <= y < 9:
+                rgb = MARKER[(y >= 5) * 2 + (x >= 5)]
+            pixels.extend((*rgb, 0 if transparent else 255))
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) +
+                     chunk(b"IDAT", zlib.compress(bytes(pixels))) + chunk(b"IEND", b""))
+
+
+def _grim(tmp_path, captures):
+    bindir = tmp_path / "bin"; bindir.mkdir(exist_ok=True)
+    tool = bindir / "grim"
+    mapping = tmp_path / "captures"
+    mapping.mkdir(exist_ok=True)
+    for name, source in captures.items():
+        (mapping / name).write_bytes(source.read_bytes())
+    _fake(tool, f'cp "{mapping}/$2" "$3"\n')
+    return tool
+
+
+def test_health_requires_exactly_one_rendered_owned_surface_per_output(tmp_path):
     asar = tmp_path / "app.asar"
     asar.write_bytes(b'wm-wayfire.js')
-    outputs = [{"id": 1}, {"id": 2}]
+    outputs = [{"id": 1, "name": "DP-1"}, {"id": 2, "name": "DP-2"}]
     views = [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
              {"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 2}]
     stub = WayfireStub(tmp_path / "wayfire.socket", outputs, views)
-    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar)}
+    visible = tmp_path / "visible.png"; _png(visible)
+    grim = _grim(tmp_path, {"DP-1": visible, "DP-2": visible})
+    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar),
+                        "PC_GRIM": str(grim), "PC_GRIM_TIMEOUT": ".05"}
     try:
         assert subprocess.run([str(HEALTH), "preflight"], env=env).returncode == 0
         assert subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".3"], env=env).returncode == 0
@@ -87,9 +121,70 @@ def test_health_requires_exactly_one_owned_surface_per_output(tmp_path):
         failed = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".2"], env=env,
                                 text=True, capture_output=True)
         assert failed.returncode == 1
-        assert "exactly one shell surface per output" in failed.stderr
+        assert "verified shell surface on every output" in failed.stderr
     finally:
         stub.close()
+
+
+def test_mapped_shell_with_black_transparent_or_stale_output_fails_visual_gate(tmp_path):
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    visible = tmp_path / "visible.png"; black = tmp_path / "black.png"; transparent = tmp_path / "transparent.png"
+    _png(visible); _png(black, marker=False); _png(transparent, marker=True, transparent=True)
+    outputs = [{"id": 1, "name": "DP-1"}, {"id": 2, "name": "DP-2"}]
+    views = [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
+             {"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 2}]
+    stub = WayfireStub(tmp_path / "wf.socket", outputs, views)
+    try:
+        for bad in (black, transparent):
+            grim = _grim(tmp_path, {"DP-1": visible, "DP-2": bad})
+            env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar), "PC_GRIM": str(grim)}
+            assert subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".15"], env=env).returncode == 1
+            for child in (tmp_path / "bin", tmp_path / "captures"):
+                for item in child.iterdir(): item.unlink()
+                child.rmdir()
+    finally:
+        stub.close()
+
+
+def test_wrong_output_assignment_and_capture_failure_fail_closed(tmp_path):
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    visible = tmp_path / "visible.png"; _png(visible)
+    outputs = [{"id": 1, "name": "DP-1"}, {"id": 2, "name": "DP-2"}]
+    views = [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
+             {"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1}]
+    stub = WayfireStub(tmp_path / "wf.socket", outputs, views)
+    grim = _grim(tmp_path, {"DP-1": visible, "DP-2": visible})
+    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar), "PC_GRIM": str(grim)}
+    try:
+        assert subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".15"], env=env).returncode == 1
+        stub.views[1]["output-id"] = 2
+        Path(grim).write_text("#!/bin/sh\nexit 1\n"); Path(grim).chmod(0o755)
+        assert subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".15"], env=env).returncode == 1
+    finally:
+        stub.close()
+
+
+def test_zero_damage_capture_timeout_never_declares_ready(tmp_path):
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    stub = WayfireStub(tmp_path / "wf.socket", [{"id": 1, "name": "DP-1"}],
+                       [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1}])
+    grim = tmp_path / "grim"; _fake(grim, "sleep 2\n")
+    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar),
+                        "PC_GRIM": str(grim), "PC_GRIM_TIMEOUT": ".05"}
+    try:
+        done = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".1"], env=env,
+                              capture_output=True, timeout=5)
+        assert done.returncode == 1
+    finally:
+        stub.close()
+
+
+def test_shell_surfaces_always_receive_visual_health_marker_argument():
+    main = (ROOT / "desktop/main.js").read_text()
+    preload = (ROOT / "desktop/preload.js").read_text()
+    assert "SHELL_MODE ? ['--pc-shell-health-marker']" in main
+    assert "process.argv.includes('--pc-shell-health-marker')" in preload
+    assert all("#%02x%02x%02x" % colour in preload for colour in MARKER)
 
 
 def test_unreaped_gpu_process_is_not_mistaken_for_a_live_shell(tmp_path):
@@ -97,7 +192,7 @@ def test_unreaped_gpu_process_is_not_mistaken_for_a_live_shell(tmp_path):
     child = subprocess.Popen(["/bin/true"])
     time.sleep(.05)  # exited but deliberately not wait()ed: a real launcher-owned zombie
     views = [{"pid": child.pid, "app-id": "place.poster.desktop", "output-id": 1}]
-    stub = WayfireStub(tmp_path / "wayfire.socket", [{"id": 1}], views)
+    stub = WayfireStub(tmp_path / "wayfire.socket", [{"id": 1, "name": "DP-1"}], views)
     env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar)}
     started = time.monotonic()
     try:
