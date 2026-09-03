@@ -96,7 +96,7 @@ fn(...Object.values(ctx));
   _shellScopes.set(1,{workspace:'shared',output:'DP-1'});
   _shellScopes.set(2,{workspace:'shared',output:'DP-2'});
   wmObj.workspaces=async()=>[{name:'shared',focused:true}];
-  const routes=['pc:open:global','pc:open:texts','pc:open:concord','pc:open:monero',
+  const routes=['pc:terminal','pc:open:global','pc:open:texts','pc:open:concord','pc:open:monero',
     'pc:open:office','pc:open:drafts','pc:open:settings','pc:open:firefox',
     'pc:act:view:social','pc:act:thread:event','pc:act:find:https%3A%2F%2Fexample.com'];
   for(const payload of routes){
