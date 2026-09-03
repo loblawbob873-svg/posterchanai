@@ -187,6 +187,22 @@ def test_native_event_path_fullscreens_every_late_proton_surface_once():
     assert "wm().on('window', enforceNativeGameFullscreen)" in main
 
 
+def test_native_event_path_requeries_the_tree_for_wm_class():
+    """Live Sway emitted no class-change event: the event stayed anonymous while get_tree already
+    exposed steam_app_1091500. Bounded native sweeps must therefore inspect wm.windows()."""
+    main = (ROOT / "desktop" / "main.js").read_text(encoding="utf-8")
+    fn = main[main.index("async function reconcileNativeGameFullscreen(){"):]
+    fn = fn[:fn.index("function enforceNativeGameFullscreen(ev){")]
+    assert "await wm().windows()" in fn
+    assert "row&&row.app" in fn
+    assert "wm().fullscreen(id,true)" in fn
+    assert "for(const ms of [180,900,2500])" in fn
+    assert "if(_nativeGameReconcileTimers.size)return" in fn
+    event = main[main.index("function enforceNativeGameFullscreen(ev){"):]
+    event = event[:event.index("async function wireShellRecovery")]
+    assert "scheduleNativeGameReconcile()" in event
+
+
 def test_the_class_is_read_from_either_wayland_or_x11():
     """Steam and most games are XWayland, so `app_id` is empty and the class is the only name they
     have — wm.js folds both into `app` for exactly this reason."""

@@ -1336,6 +1336,33 @@ async function forwardShellTick(ev){
  * surface once, including games which create two handoff surfaces, then leave subsequent user
  * fullscreen/windowed choices alone. */
 const _nativeGameFullscreenAsked = new Set();
+const _nativeGameReconcileTimers = new Set();
+async function reconcileNativeGameFullscreen(){
+  let rows=[];
+  try{ rows=await wm().windows(); }catch(_){ return; }
+  const alive=new Set(rows.map(row=>Number(row&&row.id)).filter(Number.isFinite));
+  for(const id of [..._nativeGameFullscreenAsked]) if(!alive.has(id)) _nativeGameFullscreenAsked.delete(id);
+  for(const row of rows){
+    const id=Number(row&&row.id), identity=String(row&&row.app||'');
+    if(!Number.isFinite(id)||!/^(?:steam_app_\d+|gamescope)/i.test(identity))continue;
+    if(row.fullscreen){ _nativeGameFullscreenAsked.add(id); continue; }
+    if(_nativeGameFullscreenAsked.has(id))continue;
+    _nativeGameFullscreenAsked.add(id);
+    wm().fullscreen(id,true).catch(()=>_nativeGameFullscreenAsked.delete(id));
+  }
+}
+function scheduleNativeGameReconcile(){
+  /* One XWayland map may cause several title/focus events. Share a single bounded sweep rather
+   * than multiplying full-tree requests, while still covering Proton's delayed WM_CLASS. */
+  if(_nativeGameReconcileTimers.size)return;
+  for(const ms of [180,900,2500]){
+    const timer=setTimeout(()=>{
+      _nativeGameReconcileTimers.delete(timer);
+      reconcileNativeGameFullscreen().catch(()=>{});
+    },ms);
+    _nativeGameReconcileTimers.add(timer);
+  }
+}
 function enforceNativeGameFullscreen(ev){
   const c=ev&&ev.container;
   if(!c)return;
@@ -1345,6 +1372,7 @@ function enforceNativeGameFullscreen(ev){
     _nativeGameFullscreenAsked.delete(id);
     return;
   }
+  scheduleNativeGameReconcile();
   const p=c.window_properties||{};
   const identity=String(c.app_id||p.class||p.instance||'');
   if(!/^(?:steam_app_\d+|gamescope)/i.test(identity))return;
