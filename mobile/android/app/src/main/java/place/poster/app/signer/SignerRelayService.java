@@ -606,7 +606,7 @@ public class SignerRelayService extends Service {
                 byte[] key = sec();
                 WebSocket socket = socks.get(url);
                 if (key == null || socket == null) return;
-                String pubHex = SmsOutbox.hex(Nostr.pubkey(key));
+                String pubHex = Nostr.hex(Nostr.pubkey(key));
                 java.util.List<java.util.List<String>> tags = new java.util.ArrayList<>();
                 tags.add(java.util.Arrays.asList("relay", url));
                 tags.add(java.util.Arrays.asList("challenge", m.optString(1, "")));
