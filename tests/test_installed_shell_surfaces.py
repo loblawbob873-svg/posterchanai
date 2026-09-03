@@ -16,7 +16,7 @@ def output(name, x):
 
 
 def surface(con_id, x, visible=True):
-    return {"id": con_id, "app_id": "place.poster.desktop", "visible": visible,
+    return {"id": con_id, "name": "PosterChan · Nostr", "app_id": "place.poster.desktop", "visible": visible,
             "rect": {"x": x, "y": 0, "width": 1920, "height": 1080}}
 
 
@@ -44,6 +44,14 @@ def test_inactive_outputs_do_not_require_a_renderer():
     disconnected = output("DP-2", 1920)
     disconnected["active"] = False
     assert GATE.validate([output("DP-1", 0), disconnected], tree(surface(10, 0)))["outputs"] == 1
+
+
+def test_normal_floating_app_windows_are_not_misreported_as_extra_desktops():
+    app = {"id": 12, "name": "PosterChan Window — terminal",
+           "app_id": "place.poster.desktop", "visible": True,
+           "rect": {"x": 200, "y": 100, "width": 1100, "height": 760}}
+    got = GATE.validate([output("DP-1", 0)], tree(surface(10, 0), app))
+    assert got["surfaces"] == 1
 
 
 def test_headless_host_is_an_explicit_missing_prerequisite(monkeypatch):

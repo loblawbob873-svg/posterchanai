@@ -23,7 +23,11 @@ def walk(node):
 
 def validate(outputs, tree):
     active = [o for o in outputs if o.get("active") and o.get("rect", {}).get("width", 0) > 0]
-    surfaces = [n for n in walk(tree) if n.get("app_id") in APP_IDS]
+    # App windows deliberately share the desktop's app_id; Sway distinguishes them by the stable
+    # ``PosterChan Window`` title prefix (the same contract used by sway.config and pc-window-snap).
+    # Counting those as monitor shells makes this gate fail whenever any real app is open.
+    surfaces = [n for n in walk(tree) if n.get("app_id") in APP_IDS
+                and not str(n.get("name") or "").startswith("PosterChan Window")]
     failures = []
     for output in active:
         rect = output["rect"]
