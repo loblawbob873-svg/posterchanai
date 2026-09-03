@@ -5,6 +5,7 @@ clear from one write before the replacement text from the next is perceived as s
 OS wrapper raises Foot's deliberately provided delayed-render window while keeping both bounds under
 one 60 Hz frame.  This is package/runtime behavior, not just an installer-only tweak.
 """
+import re
 from pathlib import Path
 
 
@@ -36,5 +37,11 @@ def test_delays_are_ordered_and_less_than_one_60hz_frame():
 def test_wrapper_is_owned_by_the_upgrade_package_and_live_installer():
     ebuild = EBUILD.read_text(encoding="utf-8")
     installer = INSTALLER.read_text(encoding="utf-8")
-    assert "for helper in foot pc-provision-user" in ebuild
-    assert "for helper in foot pc-provision-user" in installer
+    # The PROPERTY, not the adjacency: `foot` is installed by both halves. Pinning the two names
+    # that happened to sit next to each other made adding any helper a failure in a test about the
+    # terminal wrapper — which is how `pc-super` first showed up here.
+    for where, text in (("ebuild", ebuild), ("installer", installer)):
+        helpers = re.search(r"for helper in ([^;]+); do", text)
+        assert helpers, f"the {where} no longer installs a list of helpers"
+        assert "foot" in helpers.group(1).split(), (
+            f"the {where} stopped installing the foot wrapper")

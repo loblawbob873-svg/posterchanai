@@ -9960,3 +9960,26 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
 .os-popup-item:hover,.os-popup-item:focus-visible{background:var(--panel2,#171b24);outline:0}
 .os-popup-item .ic,.os-popup-item svg,.os-popup-item img{width:20px;height:20px;flex:0 0 20px}
 .os-popup-empty{color:var(--muted,#8b93a7);padding:12px 10px}
+/* A PANEL HOSTED IN A POPUP WINDOW FILLS IT. `.os-noti` is written to float in the corner of the
+   desktop — fixed, inset from the edges, rounded, with a drop shadow onto the wallpaper behind it.
+   In its own window there is nothing behind it and no corner to sit in: the window IS the panel, so
+   the positioning and the shadow come off and it takes the whole surface. Without this the centre
+   renders 8px inside a window sized to it and clips its own last row. */
+.os-popup-body .os-noti{position:static;width:100%;max-height:none;height:100vh;
+  border-radius:0;border:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+.os-popup-body .os-noti-list{flex:1 1 auto;min-height:0}
+/* The tray flyout, hosted the same way. `.os-pop` is absolutely positioned beside its chip and
+   `positionPop` writes left/top into it; under `position:static` those writes are inert and the
+   panel simply fills the window, which is what a flyout that IS a window should do. */
+.os-popup-body .os-pop{position:static;width:100%;max-width:none;height:100vh;max-height:none;
+  border-radius:0;border:0;box-shadow:none;margin:0}
+.os-tray-popup{overflow:hidden}
+/* The client's own DOM stays in the document (its bindings need it) and is simply not painted. */
+.os-popup-body:not(.os-popup-compose) > *:not(#os-popup-host){display:none!important}
+#os-popup-host{display:block;position:fixed;inset:0;overflow:hidden}
+/* A COMPOSE popup shows the client's own modal layer instead of a host of its own — the composer is
+   the client's, drawn by the client, and #modal-root is where every modal already goes. Written as
+   its own rule rather than an exception to the one above, because `:not(#id)` carries an ID's
+   specificity and no class-only rule can override it. */
+.os-popup-body.os-popup-compose > *:not(#modal-root){display:none!important}
+.os-popup-body.os-popup-compose #modal-root .modal-bg{position:fixed;inset:0}

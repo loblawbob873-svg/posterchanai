@@ -36,6 +36,26 @@
   const SNAP = 8;                  // edge gutter when tiling
 
   let root = null, bar = null, desk = null;
+  /* THIS RENDERER IS THE START MENU'S WINDOW. Set by renderStartPopup before it opens the REAL
+   * menu — the same builder the desktop uses, not a second, poorer copy of it. The first attempt
+   * did write a second copy, and it showed: a flat list of app names, with no folders, no machine
+   * programs, no drive results, no local files and no footer, replacing a menu that has all six.
+   * Only the ACTIONS differ here, because this window is 420px and every one of them opens
+   * something that belongs on the desktop behind it. */
+  let _menuInPopup = false;
+  function _menuAct(kind, arg){
+    if(!_menuInPopup) return false;
+    try{
+      if(window.pcPopup && pcPopup.act){
+        /* Percent-encoded: a search query or a file path carries spaces, slashes and punctuation,
+           and this crosses a process boundary as one string. */
+        pcPopup.act(arg == null || arg === '' ? kind : kind + ':' + encodeURIComponent(String(arg)));
+        return true;
+      }
+    }catch(_){ }
+    try{ window.close(); }catch(_){ }
+    return true;
+  }
   let wins = [];                   // [{id, view, title, el, body, min, max, rect}]
   let seq = 0, zTop = 10, on = false, startOpen = false;
   /* One physical Super release can arrive twice on PosterChanOS: Sway emits `pc:start`, focuses the
@@ -1803,6 +1823,7 @@
    * keep every desktop LAUNCHER surface on the same contract without changing explicit Home or
    * Nostrverse tab navigation inside an open Social window. */
   function openLauncherApp(view){
+    if(_menuAct('view', view)) return;      // the app opens on the desktop, not in the menu
     let target=view;
     if(view==='global' && PC().socialTimeline){
       try{ target=PC().socialTimeline()||view; }catch(_){}
@@ -6840,6 +6861,7 @@
    * for the older WebView the APK can ship on. */
   const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
   async function toggleFull(){
+    if(_menuAct('full')) return;
     try{
       if(isFull()){
         if(document.exitFullscreen) await document.exitFullscreen();
@@ -6933,7 +6955,12 @@
          <svg class="ic" aria-hidden="true"><use href="#i-search"></use></svg>
          <input id="os-q-bar" class="os-qin" type="search" autocomplete="off"
                 value="${enc(barQuery)}" placeholder="Search Nostr" aria-label="Search Nostr"></div>
-       <div class="os-tasks">${pinHtml + wins.map(w =>
+       <div class="os-tasks"><!-- NO BACKTICKS IN THIS COMMENT: this is template TEXT, not code, so
+            a backtick here closes the string and the whole module stops parsing -- every icon in the
+            client goes blank, with nothing thrown and nothing logged. It has happened. tests/client/
+            test_every_shipped_module_parses.py mutates this line to prove that check is real, so the
+            marker is load-bearing: deleting it turns the guard red rather than silently blind. The
+            dashes are -- and not em-dashes for the same reason: keep this plain. -->${pinHtml + wins.map(w =>
          `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
                   data-id="${w.id}" data-kind="web"${tint(w.machineApp ? w.machineApp.id : w.view)} title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
@@ -7136,6 +7163,50 @@
     /* Same correction as the start menu: raising the shell for a panel that stays open hides every
        window on the workspace. See toggleStart. */
     toggleStart(false); toggleNet(false);
+    /* A PANEL THAT HAS TO BE ABOVE APPLICATIONS CANNOT BE DRAWN INSIDE THE SHELL.
+     *
+     * Reported twice — "notifications do not go over open windows" and "notifications still hides
+     * behind windows" — and it is the same compositor fact the start menu ran into: sway paints
+     * floating windows above tiled ones, the shell IS the tiled one, and no z-index inside a page
+     * can lift part of that page above another window. So on PosterChanOS the centre is its own
+     * floating window and the compositor stacks it for us.
+     *
+     * Reading it still counts as reading it HERE, because the popup is a separate renderer and the
+     * bell, the clock badge and the sidebar all read this process's numbers. */
+    if(window.pcPopup && pcPopup.open){
+      let mailNow = 0;
+      try{ mailNow = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ }
+      mailAck = mailNow;
+      try{ PC().notifsRead && PC().notifsRead(); }catch(_){ }
+      const w = 380, h = Math.min(620, Math.max(320, Math.round((window.innerHeight || 900) * 0.6)));
+      let x = Math.max(0, (window.innerWidth || 1280) - w - 8), y = 8;
+      try{
+        const b = $('#os-bell', bar), r = b && b.getBoundingClientRect();
+        if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
+      }catch(_){ }
+      Promise.resolve(pcPopup.open('noti', { x, y, width: w, height: h }))
+        .then(ok => { if(!ok){ notiOpen = false; drawBar(); } })
+        .catch(() => { notiOpen = false; drawBar(); });
+      drawBar();
+      return;
+    }
+    root.appendChild(buildNotiPanel(false));
+    try{ PC().notifsRead && PC().notifsRead(); }catch(_){}
+    drawBar();
+  }
+
+  /* THE NOTIFICATION CENTRE ITSELF, built once for both hosts — the panel inside the shell and the
+   * floating popup window above. `inPopup` changes only WHERE an action happens: this window is
+   * 380px of menu and a post has to open in the desktop behind it, so those clicks are handed to
+   * the shell through `pcPopup.act` instead of being performed here. Everything else — the rows,
+   * the permission offer, the mail row, the sound toggle — is identical, because two renderings of
+   * one list is how they drift. */
+  function buildNotiPanel(inPopup){
+    const shut = () => { if(inPopup){ try{ window.close(); }catch(_){ } } else hideNoti(); };
+    const send = (action) => {
+      try{ if(window.pcPopup && pcPopup.act){ pcPopup.act(action); return true; } }catch(_){ }
+      return false;
+    };
     const panel = document.createElement('div');
     panel.id = 'os-noti';
     panel.className = 'os-noti';
@@ -7174,7 +7245,9 @@
          </span></div>
        ${permRow}${mailRow}
        <div class="os-noti-list">${rows || '<div class="empty">Nothing new.</div>'}</div>`;
-    root.appendChild(panel);
+    /* The builder does not place the panel — its two hosts do, into `root` here and into the popup
+       window's body there. Appending to `root` from inside would put the popup's copy into the
+       desktop it is meant to float above, on the renderer that has no desktop at all. */
 
     { const pb = $('#os-noti-perm', panel);
       if(pb && pb.tagName === 'BUTTON') pb.onclick = async (e) => {
@@ -7182,14 +7255,21 @@
         try{ await PC().askOsNotify(); }catch(_){}
         toggleNoti(true);                 // repaint: the row goes away once it is granted
       }; }
-    if(mail > 0) $('#os-noti-mail', panel).onclick = () => { hideNoti(); openApp('mail'); };
+    if(mail > 0) $('#os-noti-mail', panel).onclick = () => {
+      if(inPopup){ send('view:mail'); return; }
+      hideNoti(); openApp('mail');
+    };
     mailAck = mail;                              // looking at the centre counts as looking
-    $('#os-noti-all', panel).onclick = () => { hideNoti(); openApp('notifications'); };
+    $('#os-noti-all', panel).onclick = () => {
+      if(inPopup){ send('view:notifications'); return; }
+      hideNoti(); openApp('notifications');
+    };
     $('#os-noti-ding', panel).onclick = (e) => {
       e.stopPropagation();
       const nowOn = !settings().get('osDing', true);
       settings().set('osDing', nowOn);
       if(nowOn) ding();                    // hear what you just switched on
+      if(inPopup){ const h = popupHost(); h.innerHTML = ''; h.appendChild(buildNotiPanel(true)); return; }
       toggleNoti(true);                    // repaint the header
     };
 
@@ -7198,6 +7278,14 @@
     panel.querySelectorAll('.notif:not(.upd-notif)').forEach(n => {
       n.onclick = (ev) => {
         if(ev.target.closest('.os-noti-act')) return;
+        /* THE POST OPENS IN THE DESKTOP, NOT IN THE MENU. Calling openThread here would render a
+           thread inside a 380px popup that closes on blur — the shell is where a post is read. */
+        if(inPopup){
+          if(n.dataset.prof) send('profile:' + n.dataset.prof);
+          else if(n.dataset.open) send('thread:' + n.dataset.open);
+          else shut();
+          return;
+        }
         hideNoti();
         try{
           if(n.dataset.prof) PC().openProfile(n.dataset.prof);
@@ -7216,16 +7304,22 @@
       $$('.os-na', acts).forEach(b => b.onclick = (ev) => {
         ev.stopPropagation();
         try{
-          if(b.dataset.a === 'reply'){ hideNoti(); PC().compose({ reply: id, replyPk: pk }); }
+          if(b.dataset.a === 'reply'){
+            /* A composer is a window's worth of UI (attachments, a preview, a picker). It belongs
+               to the shell, which has room for it and keeps the draft. */
+            if(inPopup){ send('reply:' + id + ':' + pk); return; }
+            hideNoti(); PC().compose({ reply: id, replyPk: pk });
+          }
           else PC().reactTo(id, pk, b);       // the emoji picker anchors itself to this button
         }catch(_){ try{ PC().toast('could not do that here'); }catch(__){} }
       });
     });
 
     // Looking at the centre IS reading them — and it is recorded where the whole app can see it
-    // (seenNotif.last), never as a private count in this file.
-    try{ PC().notifsRead && PC().notifsRead(); }catch(_){}
-    drawBar();
+    // (seenNotif.last), never as a private count in this file. The popup host marks them read in
+    // the SHELL before opening, because that is the process whose bell and badge are painted from it.
+    if(inPopup){ try{ PC().notifsRead && PC().notifsRead(); }catch(_){} }
+    return panel;
   }
 
   /* Repaint the BELL IN PLACE. Same reason as paintNetButton: drawBar() rebuilds bar.innerHTML,
@@ -7588,6 +7682,9 @@
   }
 
   function toggleStart(force){
+    /* Every handler in the menu below ends with `toggleStart(false)`. In the window that means the
+       window — stated once here rather than at ~15 call sites. */
+    if(_menuInPopup && force === false){ try{ window.close(); }catch(_){ } return; }
     const wasStart = startOpen;
     startOpen = (force === undefined) ? !startOpen : !!force;
     let menu = $('#os-startmenu', root);
@@ -7606,7 +7703,7 @@
      *
      * The in-page path stays for everywhere else — a browser, the Windows/macOS builds, any shell
      * with no popup bridge — and is what runs when `pcPopup` is absent. */
-    if(window.pcPopup && pcPopup.open){
+    if(!_menuInPopup && window.pcPopup && pcPopup.open){
       let rect = null;
       try{ const b = $('#os-start', root); rect = b ? b.getBoundingClientRect() : null; }catch(_){ }
       const h = Math.min(560, Math.max(320, Math.round((window.innerHeight || 900) * 0.55)));
@@ -7618,7 +7715,7 @@
       drawBar();
       return;
     }
-    _nativeMenuLayer(true);
+    if(!_menuInPopup) _nativeMenuLayer(true);   // a compositor layer belongs to the desktop
     /* NO SHELL RAISE HERE, AND THAT IS A CORRECTION.
      *
      * This briefly fullscreened the shell so the menu would draw above floating apps —
@@ -7676,6 +7773,7 @@
     }
 
     const searchNostr = (q) => {
+      if(_menuAct('find', q)) return;               // the Search window belongs to the desktop
       toggleStart(false);
       // `rerun` — searching again from the start menu must show the NEW query, not re-run the one
       // the Search window was opened with. See openDoc.
@@ -7760,6 +7858,7 @@
       /* A DRIVE RESULT OPENS FILES ON THAT FILE, not on Files. `driveReveal` sets the folder and the
        * drive's own name filter, so the thing that was searched for is the thing on screen. */
       $$('.os-app[data-sha]', menu).forEach(b => b.onclick = () => {
+        if(_menuAct('sha', b.dataset.sha)) return;   // Files opens on the desktop
         toggleStart(false);
         try{ PC().driveReveal && PC().driveReveal(b.dataset.sha); }catch(_){}
       });
@@ -7988,6 +8087,8 @@
       return;
     }
     on = true;
+    /* The composer opens as its own window while the desktop is up — see _composeInWindow. */
+    try{ window.__PC_COMPOSE_HOST = _composeInWindow; }catch(_){ }
     _deskLayoutSize={w:Math.round(vwL()),h:Math.round(vhL())};
     _keyboardViewport=false;
     _desktopEditBlurUntil=0;
@@ -8129,6 +8230,41 @@
             else if(p.indexOf('pc:open:') === 0){
               toggleStart(false);
               try{ openLauncherApp(p.slice('pc:open:'.length)); }catch(_){ }
+            }
+            /* WHAT A POPUP DID, PERFORMED IN THE SHELL. A view name goes through `pc:open:` above;
+               everything else — open this post, this profile, reply to this event — arrives here,
+               because a 380px menu that closes on blur is not where a thread is read or a post is
+               written. The popup has already closed itself by the time this runs. */
+            else if(p.indexOf('pc:act:') === 0){
+              const act = p.slice('pc:act:'.length);
+              const cut = act.indexOf(':');
+              const kind = cut < 0 ? act : act.slice(0, cut);
+              const rest = cut < 0 ? '' : act.slice(cut + 1);
+              notiOpen = false;
+              /* Percent-encoded by _menuAct, because a search query or a file path carries
+                 spaces and slashes and this arrived as one string. */
+              let val = rest;
+              try{ val = decodeURIComponent(rest); }catch(_){ }
+              try{
+                if(kind === 'view') openLauncherApp(val);
+                else if(kind === 'profile') PC().openProfile(val);
+                else if(kind === 'thread') PC().openThread(val);
+                else if(kind === 'reply'){
+                  const at = rest.indexOf(':');
+                  PC().compose(at < 0 ? { reply: rest }
+                                      : { reply: rest.slice(0, at), replyPk: rest.slice(at + 1) });
+                }
+                /* The start menu's own results, performed on the desktop that has room for them. */
+                else if(kind === 'sha') PC().driveReveal && PC().driveReveal(val);
+                else if(kind === 'find'){
+                  openDoc('search', 'Search', 'i-search', () => {
+                    try{ PC().runSearch && PC().runSearch(val); }catch(_){ }
+                  }, false, true);
+                }
+                else if(kind === 'full') toggleFull();
+                else if(kind === 'classic') exit();
+              }catch(_){ }
+              drawBar();
             }
             else if(p === 'pc:tasks'){
               toggleStart(false);
@@ -8443,8 +8579,10 @@
   }
 
   function exit(remember){
+    if(_menuAct('classic')) return;
     if(!on) return;
     on = false;
+    try{ delete window.__PC_COMPOSE_HOST; }catch(_){ window.__PC_COMPOSE_HOST = null; }
     _deskLayoutSize=null;
     _keyboardViewport=false;
     _desktopEditBlurUntil=0;
@@ -8692,6 +8830,117 @@
   /* Restore on load when the screen is wide enough. A remembered desktop on a window that has since
    * been made narrow must not strand somebody in a UI they cannot use, so the size check applies to
    * the restore as well as to the click. */
+  /* THE COMPOSER, IN ITS OWN WINDOW. Installed by enter() and removed by exit(), so this only ever
+   * applies on the windowed desktop with a compositor to give the window to.
+   *
+   * WHAT IT REFUSES IS THE INTERESTING HALF. A popup is addressed by a query string, so it can only
+   * carry values that survive one: ids, pubkeys, text. `files` is a FileList somebody just picked,
+   * `community` and the article parents are live event objects — none of them can cross, and
+   * pretending otherwise would open an empty composer that silently lost the attachment. Those keep
+   * the in-page modal, which works and is merely behind a window; losing a draft would be worse.
+   *
+   * Measured on the machine: a popup maps in ~0.26s, which is what makes this acceptable for a
+   * composer at all rather than only for a menu. */
+  function _composeInWindow(opts){
+    if(!on || popupKind()) return false;                 // not the desktop, or already a popup
+    if(!(window.pcPopup && pcPopup.open)) return false;  // no compositor to hand a window to
+    const o = opts || {};
+    if(o.files || o.community || o.articleComment || o.articleParent || o.open) return false;
+    const arg = {};
+    for(const k of ['reply', 'replyPk', 'quote', 'draftId', 'text', 'cwReason']){
+      if(o[k]) arg[k] = String(o[k]);
+    }
+    if(o.cw) arg.cw = 1;
+    let payload;
+    try{ payload = JSON.stringify(arg); }catch(_){ return false; }
+    /* main.js caps the argument. A draft long enough to overflow it belongs in the in-page
+       composer, where nothing has to survive a URL. */
+    if(payload.length > 380) return false;
+    const w = Math.min(720, Math.max(420, Math.round(vwL() * 0.42)));
+    const h = Math.min(760, Math.max(380, Math.round(vhL() * 0.62)));
+    try{
+      pcPopup.open('compose', { x: Math.round((vwL() - w) / 2), y: Math.round((vhL() - h) / 2),
+                                width: w, height: h }, payload);
+    }catch(_){ return false; }
+    return true;
+  }
+
+  /* Drawn INSIDE that window: the client's own composer, on a surface that is above applications.
+   * It publishes from here — same origin, same key, same relays — and the desktop behind it sees
+   * the new post arrive through its own subscription, with nothing to hand back. */
+  function renderComposePopup(){
+    document.body.classList.add('os-popup-body', 'os-popup-compose');
+    let arg = {};
+    try{ arg = JSON.parse(new URLSearchParams(window.location.search).get('pcarg') || '{}'); }
+    catch(_){ }
+    const opts = {};
+    for(const k of ['reply', 'replyPk', 'quote', 'draftId', 'text', 'cwReason']){
+      if(arg[k]) opts[k] = String(arg[k]);
+    }
+    if(arg.cw) opts.cw = true;
+    /* THE "REPLYING TO" CARD NEEDS THE POST, AND THIS PAGE HAS NEVER SEEN IT.
+     *
+     * compose() renders that card from `Store.get(id)` at the moment the modal is built. In the
+     * desktop that event is already in the Store — it is what the person clicked. This window is a
+     * FRESH page with a cold Store, so the card silently came out empty and the composer was "an
+     * empty box with no reminder of what you were answering", which is the exact thing the card was
+     * added to fix.
+     *
+     * So the event is fetched first, and BOUNDED: the reply is correctly tagged either way (the id
+     * and the author travelled in the argument), so a slow relay must cost the preview, never the
+     * composer. */
+    const need = opts.reply || opts.quote || '';
+    const draw = () => { try{ PC().compose(opts); }catch(_){ } };
+    if(!need || (window.Store && Store.get(need))){ draw(); return; }
+    let drawn = false;
+    const once = () => { if(!drawn){ drawn = true; draw(); } };
+    setTimeout(once, 2200);
+    (async () => {
+      try{
+        if(window.Relay && Relay.ready) await Relay.ready(1500);
+        /* `query` RESOLVES WITH THE EVENTS AND STORES NOTHING — measured: the fetch succeeded and
+           the card was still empty, because compose() reads Store.get() and nothing had put it
+           there. The subscription path saves; a one-shot query is the caller's to keep. */
+        const got = (window.Relay && Relay.query) ? await Relay.query([{ ids: [need] }], 1500) : [];
+        for(const ev of (got || [])){
+          try{ window.Store && Store.saveEvent && Store.saveEvent(ev); }catch(_){ }
+        }
+      }catch(_){ }
+      once();
+    })();
+    /* CLOSING THE MODAL CLOSES THE WINDOW. Without this, cancelling a reply leaves an empty
+       floating rectangle on the desktop — the modal is gone and the window it lived in is not. */
+    const root = document.getElementById('modal-root');
+    if(root){
+      new MutationObserver(() => {
+        if(!root.querySelector('.modal-bg')) try{ window.close(); }catch(_){ }
+      }).observe(root, { childList: true });
+    }
+  }
+
+  /* WHERE A POPUP DRAWS — AN ADDED ELEMENT, NEVER A REPLACED BODY.
+   *
+   * These renderers used to do `document.body.innerHTML = ''`, and it cost a real error on every
+   * open: the popup loads the WHOLE client, and app.js goes on binding its own UI after os.js has
+   * run. Emptying the body deletes the elements those bindings are looking for, so boot died on
+   * `Cannot set properties of null (setting 'onclick')` — caught by the error net, logged, and
+   * shown as "action failed" in the corner of a menu. The menu still drew, which is exactly why it
+   * survived: it looked like it worked.
+   *
+   * So the client's DOM stays where it is and CSS hides it (.os-popup-body > *), which costs
+   * nothing and keeps every binding pointing at something real. */
+  function popupHost(){
+    document.body.classList.add('os-popup-body');
+    let host = document.getElementById && document.getElementById('os-popup-host');
+    if(!host){
+      host = document.createElement('div');
+      host.id = 'os-popup-host';
+      host.className = 'os-popup-host';
+      document.body.appendChild(host);
+    }
+    return host;
+  }
+
   /* THE START MENU, DRAWN IN ITS OWN WINDOW.
    *
    * The list comes from `apps()`, which reads the sidebar — the same source the desktop icons and
@@ -8702,41 +8951,42 @@
    * Escape closes. Blur closes it too (main.js), which is what makes clicking away behave like a
    * menu rather than leaving a window stranded on another monitor. */
   function renderStartPopup(){
-    const list = apps().filter(a => a && a.view && !a.off);
-    const pick = (view) => {
-      try{ if(window.pcPopup && pcPopup.pick) { pcPopup.pick(view); return; } }catch(_){ }
-      try{ window.close(); }catch(_){ }
-    };
-    const body = document.body;
-    body.className = 'os-popup-body';
-    body.innerHTML = '<div class="os-popup"><input class="input os-popup-q" id="pop-q" '
-      + 'placeholder="Search apps" autocomplete="off" spellcheck="false">'
-      + '<div class="os-popup-list" id="pop-list"></div></div>';
-    const listEl = document.getElementById('pop-list');
-    const draw = (q) => {
-      const needle = String(q || '').trim().toLowerCase();
-      const rows = list.filter(a => !needle || String(a.label || '').toLowerCase().includes(needle));
-      listEl.innerHTML = rows.map(a =>
-        '<button class="os-popup-item" data-view="' + PC().enc(a.view) + '">'
-        + appIcon(a) + '<span>' + PC().enc(a.label || a.view) + '</span></button>').join('')
-        || '<div class="os-popup-empty">Nothing matches</div>';
-      Array.prototype.forEach.call(listEl.querySelectorAll('[data-view]'), (b) => {
-        b.onclick = () => pick(b.dataset.view);
-      });
-    };
-    draw('');
-    const q = document.getElementById('pop-q');
-    if(q){
-      q.oninput = () => draw(q.value);
-      /* Enter runs the first match, which is what a search box in a launcher is for. */
-      q.onkeydown = (e) => {
-        if(e.key === 'Escape'){ try{ window.close(); }catch(_){ } return; }
-        if(e.key !== 'Enter') return;
-        const first = listEl.querySelector('[data-view]');
-        if(first) pick(first.dataset.view);
-      };
-      try{ q.focus(); }catch(_){ }
+    /* THE REAL MENU, IN THIS WINDOW. `toggleStart` builds it — search box, folders, "This
+     * computer", "Your files", "Files on this computer", the footer — and it is pointed at this
+     * window's host instead of the desktop's root. Reimplementing it here is what produced a flat
+     * list of names and "start menu is ass"; there is one start menu and this is it. */
+    const host = popupHost();
+    _menuInPopup = true;
+    root = host;
+    startOpen = false;
+    try{
+      toggleStart(true);
+    }catch(err){
+      /* If the real menu cannot be built here for any reason, a plain list of apps still opens
+         them — a degraded menu beats an empty window. */
+      try{
+        host.innerHTML = '<div class="os-popup"><div class="os-popup-list" id="pop-list"></div></div>';
+        const listEl = document.getElementById('pop-list');
+        listEl.innerHTML = apps().filter(a => a && a.view && !a.off).map(a =>
+          '<button class="os-popup-item" data-view="' + PC().enc(a.view) + '">'
+          + appIcon(a) + '<span>' + PC().enc(a.label || a.view) + '</span></button>').join('');
+        Array.prototype.forEach.call(listEl.querySelectorAll('[data-view]'), (bt) => {
+          bt.onclick = () => _menuAct('view', bt.dataset.view);
+        });
+      }catch(_){ }
     }
+    document.addEventListener('keydown', (e) => {
+      if(e.key === 'Escape') try{ window.close(); }catch(_){ }
+    });
+  }
+
+  /* THE NOTIFICATION CENTRE, DRAWN IN ITS OWN WINDOW — same builder as the in-shell panel, hosted
+   * here instead of in the desktop. Escape closes, blur closes (main.js), and anything that opens a
+   * post or a composer is handed to the shell, which is the window with room for it. */
+  function renderNotiPopup(){
+    const host = popupHost();
+    host.innerHTML = '';
+    host.appendChild(buildNotiPanel(true));
     document.addEventListener('keydown', (e) => {
       if(e.key === 'Escape') try{ window.close(); }catch(_){ }
     });
@@ -8746,7 +8996,17 @@
     /* A POPUP WINDOW IS A MENU. It loads the whole client because it is the same bundle, but the
        only thing it draws is the launcher — see renderStartPopup. */
     if(popupKind()){
-      try{ if(popupKind() === 'start') renderStartPopup(); }catch(_){ }
+      try{
+        const k = popupKind();
+        if(k === 'start') renderStartPopup();
+        else if(k === 'noti') renderNotiPopup();
+        else if(k === 'compose') renderComposePopup();
+        /* The tray draws itself — it is osshell.js's panel, built from the machine's own bridges,
+           and those exist in this renderer exactly as they do in the desktop's. */
+        else if(k === 'tray'){
+          if(window.PCOSShell && PCOSShell.openTrayPopup) PCOSShell.openTrayPopup();
+        }
+      }catch(_){ }
       return;
     }
     /* A POPOUT IS NOT A DESKTOP, and the size check cannot tell the difference.

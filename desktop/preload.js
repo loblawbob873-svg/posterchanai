@@ -203,9 +203,14 @@ if (isOurPage) {
    * a real floating window for it instead — see pc:popup:open in main.js. `pick` is how that
    * window, which is its own renderer, tells the shell what was chosen. */
   contextBridge.exposeInMainWorld('pcPopup', {
-    open: (kind, rect) => ipcRenderer.invoke('pc:popup:open', String(kind || ''), rect || {}),
+    open: (kind, rect, arg) =>
+      ipcRenderer.invoke('pc:popup:open', String(kind || ''), rect || {}, String(arg == null ? '' : arg)),
     close: () => ipcRenderer.invoke('pc:popup:close'),
     pick: (view) => ipcRenderer.invoke('pc:popup:pick', String(view || '')),
+    /* Anything that is not a view name — open this post, reply to this event, run this tray action.
+     * `keepOpen` leaves the popup up, which is what a settings flyout needs and a menu does not. */
+    act: (action, keepOpen) =>
+      ipcRenderer.invoke('pc:popup:act', String(action || ''), !!keepOpen),
   });
 
   contextBridge.exposeInMainWorld('pcDisplays', {

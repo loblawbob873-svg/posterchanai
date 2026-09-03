@@ -135,8 +135,13 @@ def test_reloadable_sway_config_has_no_startup_only_xwayland_force():
 
 def test_super_is_a_global_physical_key_binding_not_a_bare_modifier_binding():
     cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
-    assert "bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start" in cfg
-    assert "bindsym --release --no-repeat $mod exec swaymsg -t send_tick pc:start" not in cfg
+    assert "bindsym --release --no-repeat Super_L exec /usr/local/bin/pc-super tap" in cfg, (
+        "Super no longer opens the start menu. It is bound through `pc-super tap` rather than "
+        "sending the tick directly, because sway fires this release whether or not the key was "
+        "used as a modifier — so a direct binding made Super+Left a snap AND, on the way back up, "
+        "the start menu")
+    assert "bindsym --release --no-repeat $mod exec" not in cfg, (
+        "bound to the bare modifier again, which is not a physical key")
 
 
 def test_alt_tab_is_compositor_owned_and_migrated_to_existing_accounts():

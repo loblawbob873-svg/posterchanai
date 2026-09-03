@@ -1519,13 +1519,21 @@ ipcMain.handle('pc:wm:preview', async (e, id) => {
  * One at a time, closed on blur — a menu you have clicked away from is closed, which is also what
  * stops a stranded popup surviving on another output. */
 let _popupWin = null;
+const POPUP_TITLE = 'PosterChan Popup';
 function closePopupWindow(){
   const p = _popupWin; _popupWin = null;
   if(p && !p.isDestroyed()) { try{ p.close(); }catch(_){ } }
 }
-ipcMain.handle('pc:popup:open', async (e, kind, rect) => {
+/* A COMPOSER IS NOT A MENU. Every other popup is a menu and closes when you click away, which is
+ * what makes it feel like a menu rather than a window somebody has to dismiss. A composer that did
+ * that would throw away what you typed the first time you clicked the desktop or reached for a file
+ * dialog — the exact loss `.modal-sticky` exists to prevent on the web. So these kinds keep focus
+ * discipline of their own: they close when the user closes them. */
+const STICKY_POPUPS = new Set(['compose']);
+ipcMain.handle('pc:popup:open', async (e, kind, rect, arg) => {
   fsGuard(e);
   const k = String(kind || '').replace(/[^a-z-]/g, '').slice(0, 24) || 'start';
+  const sticky = STICKY_POPUPS.has(k);
   const r = (rect && typeof rect === 'object') ? rect : {};
   const num = (v, min, max, dflt) => {
     const n = Number(v);
@@ -1533,8 +1541,8 @@ ipcMain.handle('pc:popup:open', async (e, kind, rect) => {
   };
   closePopupWindow();
   const p = new BrowserWindow({
-    show: false, frame: false, resizable: false, skipTaskbar: true,
-    title: 'PosterChan Popup',
+    show: false, frame: false, resizable: sticky, skipTaskbar: true,
+    title: POPUP_TITLE,
     width: num(r.width, 220, 900, 420), height: num(r.height, 160, 1400, 560),
     x: Number.isFinite(Number(r.x)) ? Math.round(Number(r.x)) : undefined,
     y: Number.isFinite(Number(r.y)) ? Math.round(Number(r.y)) : undefined,
@@ -1546,13 +1554,50 @@ ipcMain.handle('pc:popup:open', async (e, kind, rect) => {
     },
   });
   _popupWin = p;
-  p.once('ready-to-show', () => { if(!p.isDestroyed()) p.show(); });
-  p.on('blur', () => { if(_popupWin === p) closePopupWindow(); });
+  /* THE TITLE IS THE HANDLE, so the page must not take it. Electron hands a window its page's
+   * <title> — every popup would be called "PosterChan · Nostr", indistinguishable from the two
+   * desktop surfaces. That matters twice: sway can only be told to move a window it can name, and
+   * pc-window-snap decides what a window IS from its title. */
+  p.on('page-title-updated', (e) => e.preventDefault());
+  p.once('ready-to-show', () => {
+    if(p.isDestroyed()) return;
+    p.show();
+    placePopupWindow(p, { x: num(r.x, -20000, 20000, 0), y: num(r.y, -20000, 20000, 0),
+                          w: p.getBounds().width, h: p.getBounds().height });
+  });
+  if(!sticky) p.on('blur', () => { if(_popupWin === p) closePopupWindow(); });
   p.on('closed', () => { if(_popupWin === p) _popupWin = null; });
-  try{ await p.loadURL(APP_URL + '?pcpopup=' + encodeURIComponent(k)); }
+  const extra = String(arg == null ? '' : arg).slice(0, 400);
+  try{ await p.loadURL(APP_URL + '?pcpopup=' + encodeURIComponent(k)
+                       + (extra ? '&pcarg=' + encodeURIComponent(extra) : '')); }
   catch(err){ closePopupWindow(); return false; }
   return true;
 });
+/* WAYLAND GIVES A CLIENT NO SAY IN WHERE ITS WINDOW GOES, and this is the whole reason this
+ * function exists. `new BrowserWindow({x, y})` is honoured on X11 and Windows and IGNORED here:
+ * xdg-shell has no toplevel positioning, so sway placed the first start menu dead centre —
+ * measured at 1070,573 for a 420x560 window on a 2560x1706 output, which is (2560-420)/2 and
+ * (1706-560)/2 exactly. A menu anchored to the Start button appeared in the middle of the screen.
+ *
+ * So the compositor is ASKED, by con_id, once the surface exists. It cannot be asked before that:
+ * the window is not in the tree until it maps, which is why this polls rather than firing once.
+ * Failure is silent and harmless — a centred popup is worse than an anchored one and better than
+ * no popup, so nothing here is allowed to throw into the open path. */
+async function placePopupWindow(win, want){
+  for(let attempt = 0; attempt < 12; attempt++){
+    if(win.isDestroyed() || _popupWin !== win) return;
+    try{
+      const rows = await wm().windows();
+      const row = rows.find(x => String(x.title || '') === POPUP_TITLE);
+      if(row){
+        await wm().place(Number(row.id), Math.round(want.x), Math.round(want.y),
+                         Math.round(want.w), Math.round(want.h));
+        return;
+      }
+    }catch(_){ /* no compositor, or it refused — the popup stays where it was put */ }
+    await new Promise(res => setTimeout(res, 60));
+  }
+}
 ipcMain.handle('pc:popup:close', (e) => { fsGuard(e); closePopupWindow(); return true; });
 /* What the popup chose, handed to the SHELL. The popup is its own renderer and cannot call the
  * desktop's openApp directly; the shell already routes `pc:` ticks (that is how Super opens Start
@@ -1562,6 +1607,23 @@ ipcMain.handle('pc:popup:pick', (e, view) => {
   const v = String(view || '').replace(/[^a-z0-9_:-]/gi, '').slice(0, 48);
   closePopupWindow();
   if(v) forwardShellTick({ change: 'run', payload: 'pc:open:' + v });
+  return true;
+});
+/* THE SAME PATH FOR ANYTHING THAT IS NOT A VIEW NAME. A notification row opens one post, and a
+ * reply button opens the composer for one event — neither is an app the launcher can name, and both
+ * have to happen in the SHELL rather than inside a 380px popup. `pick` stays the view-name case it
+ * has always been; this carries the rest as an opaque string the shell's tick router parses.
+ *
+ * `keepOpen` is for the surfaces that are not menus: the quick-settings flyout changes the volume
+ * without dismissing itself, exactly like the taskbar flyout it replaced. */
+ipcMain.handle('pc:popup:act', (e, action, keepOpen) => {
+  fsGuard(e);
+  /* `%` is allowed because _menuAct percent-encodes its argument — a search query or a file path
+   * carries spaces and slashes, and this is one string crossing a process boundary. The shell
+   * decodes it; everything outside this set is still dropped. */
+  const a = String(action || '').replace(/[^a-z0-9_:.@%-]/gi, '').slice(0, 400);
+  if(!keepOpen) closePopupWindow();
+  if(a) forwardShellTick({ change: 'run', payload: 'pc:act:' + a });
   return true;
 });
 

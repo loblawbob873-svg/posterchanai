@@ -123,12 +123,38 @@ def test_the_menu_is_built_from_the_sidebar_like_every_other_launcher_surface():
     """Same source as the desktop icons and the in-page menu, so a new feature appears here for free
     and the two can never disagree about what exists."""
     body = _fn(OS_JS, "  function renderStartPopup(){")
-    assert "apps()" in body and "a.off" in body
+    assert "toggleStart(true)" in body, (
+        "the window builds its own menu again. There is ONE start menu — the one toggleStart draws, "
+        "with folders, machine programs, drive results and local files in it. A second, simpler copy "
+        "is what shipped first and it was reported as 'start menu is ass': a flat list of app names "
+        "replacing a menu that has all of that.")
+    assert "_menuInPopup = true" in body, "the menu would try to open a window from inside its own"
 
 
 def test_choosing_goes_through_the_bridge():
-    body = _fn(OS_JS, "  function renderStartPopup(){")
-    assert "pcPopup.pick(view)" in body
+    """The menu is the real one; only its ACTIONS differ, because a 420px window is not where an
+    app, a file or a search result opens."""
+    assert "function _menuAct(kind, arg){" in OS_JS
+    body = _fn(OS_JS, "  function _menuAct(kind, arg){")
+    assert "pcPopup.act(" in body
+    assert "encodeURIComponent" in body, (
+        "a search query or a file path carries spaces and slashes and crosses a process boundary "
+        "as one string")
+
+
+def test_every_action_that_opens_something_reaches_the_desktop():
+    """Each of these opens a window, and it must be the desktop's, not the menu's."""
+    for fn, kind in [("  function openLauncherApp(view){", "view"),
+                     ("  async function toggleFull(){", "full"),
+                     ("  function exit(remember){", "classic")]:
+        assert f"_menuAct('{kind}'" in _fn(OS_JS, fn), f"{fn.strip()} does not reach the desktop"
+
+
+def test_closing_the_menu_in_a_window_closes_the_window():
+    """Every handler in the menu ends with `toggleStart(false)`. Stated once, at the top."""
+    body = _fn(OS_JS, "  function toggleStart(force){")
+    assert "_menuInPopup && force === false" in body
+    assert "window.close()" in body
 
 
 def test_escape_closes_it():
@@ -136,9 +162,14 @@ def test_escape_closes_it():
     assert "'Escape'" in body
 
 
-def test_it_is_searchable_and_enter_runs_the_first_match():
-    body = _fn(OS_JS, "  function renderStartPopup(){")
-    assert "os-popup-q" in body and "'Enter'" in body
+def test_it_is_searchable_because_it_is_the_real_menu():
+    """The search box is the menu's own (`os-q` / `.os-search`), and it searches Nostr, the app
+    list, this computer's programs, your drive and local files — none of which the window's first
+    implementation had."""
+    body = _fn(OS_JS, "  function toggleStart(force){")
+    assert 'id="os-q"' in body
+    for what in ("This computer", "Your files", "Files on this computer"):
+        assert what in body, f"the start menu no longer offers {what!r}"
 
 
 # ── the fallback ─────────────────────────────────────────────────────────────────────────────────
@@ -147,8 +178,10 @@ def test_the_in_page_menu_survives_where_there_is_no_bridge():
     """A browser and the Windows/macOS builds have no compositor and no popup bridge. The branch is
     on the BRIDGE existing, never on a platform string."""
     body = _fn(OS_JS, "  function toggleStart(force){")
-    assert "if(window.pcPopup && pcPopup.open){" in body
-    assert "_nativeMenuLayer(true);" in body, "the in-page path was removed"
+    assert "window.pcPopup && pcPopup.open" in body
+    assert "_nativeMenuLayer(true)" in body, "the in-page path was removed"
+    assert "!_menuInPopup && window.pcPopup" in body, (
+        "the menu running INSIDE the window would open a second window from itself")
 
 
 def test_a_refused_window_does_not_leave_start_stuck_open():

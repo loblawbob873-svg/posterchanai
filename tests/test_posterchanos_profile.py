@@ -447,12 +447,21 @@ class PosterChanOSProfile(unittest.TestCase):
             texts["overlay sway.config"] = open(overlay, encoding="utf-8").read()
         for where, text in texts.items():
             line = [ln for ln in text.splitlines()
-                    if "send_tick" in ln and "pc:start" in ln]
+                    if "Super_L" in ln and "pc-super tap" in ln]
             self.assertTrue(line, f"{where} has no Super binding — the start menu cannot be "
                                   f"opened from inside another app")
             self.assertIn("--release", line[0],
                           f"{where} binds Super on the PRESS, which swallows it and breaks "
                           f"every $mod+key shortcut")
+        # The tick moved one step away: the binding runs `pc-super tap`, which sends it UNLESS a
+        # Super combo has just fired. Without that, Super+Left is a snap AND, on the way back up,
+        # the start menu — reported as "every time i use super key for sway controls the start menu
+        # pops open". So the helper is now the thing that must reach the shell.
+        helper = open(os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
+                                   "files", "pc-super"), encoding="utf-8").read()
+        self.assertIn("send_tick pc:start", helper,
+                      "pc-super no longer opens the start menu, so Super does nothing at all")
+        self.assertIn("used)", helper, "pc-super cannot be told a combo fired")
 
     def test_the_backlight_is_writable_without_root(self):
         """sysfs is root-owned, so a session can read the brightness and not change it — a slider

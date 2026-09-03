@@ -574,9 +574,28 @@
    * as soon as you have.
    */
   let _pop = null;
-  function closePop(){
+  /* THIS RENDERER IS THE TRAY WINDOW, NOT THE DESKTOP.
+   *
+   * The tray flyout has the same problem the start menu and the notification centre had: sway
+   * paints floating windows above tiled ones, the shell is the tiled one, and a panel drawn inside
+   * it opens underneath every application. Reported as "volume mixer widget and nostr widget still
+   * hide behind the damn windows".
+   *
+   * So on PosterChanOS the flyout is its own floating window — and because that window loads the
+   * same bundle, this file runs in BOTH. Everything below branches on which one it is: the desktop
+   * hands the panel to the compositor, the popup draws it. */
+  const IN_POPUP = (() => {
+    try{ return !!new URLSearchParams((root.location && root.location.search) || '').get('pcpopup'); }
+    catch(_){ return false; }
+  })();
+
+  /* `internal` is openPop clearing the way for the panel it is about to draw. Every OTHER caller
+   * means "the person is done with this flyout" — which, in a window, means the window. Without the
+   * distinction the tray window would close itself the instant it opened. */
+  function closePop(internal){
     if(_pop){ try{ _pop.remove(); }catch(_){} _pop = null; }
     if(_popOff){ document.removeEventListener('pointerdown', _popOff, true); _popOff = null; }
+    if(IN_POPUP && !internal){ try{ root.close(); }catch(_){} }
   }
   let _popOff = null;
 
@@ -641,12 +660,15 @@
       return sub;
     }
     _asSub = false;
-    closePop();
+    closePop(true);
     const o = opts || {};
     const d = document.createElement('div');
     d.className = 'os-pop' + (o.cls ? ' ' + o.cls : '');
     d.innerHTML = html;
-    document.body.appendChild(d);
+    /* In the tray WINDOW the client's own DOM is hidden by `.os-popup-body > *`, so a panel
+       appended to the body would be hidden with it — an empty window and no error anywhere. */
+    const _host = document.getElementById && document.getElementById('os-popup-host');
+    (_host || document.body).appendChild(d);
     _popAnchor = anchor;
     _popAnchorKey = (anchor && anchor.dataset && anchor.dataset.os) || '';
     _popOpts = o;
@@ -672,8 +694,13 @@
     }catch(_){}
     /* Closed by a press ANYWHERE else, captured — a click inside a window would otherwise leave it
      * open behind whatever the person went on to do. */
-    _popOff = (e) => { if(_pop && !_pop.contains(e.target)) closePop(); };
-    setTimeout(() => document.addEventListener('pointerdown', _popOff, true), 0);
+    /* In the tray WINDOW there is no "anywhere else" on this surface: the panel fills it, and
+       clicking away means another window, which the compositor reports as a blur and main.js closes
+       on. Registering it here would let a stray press on the window's own padding close the tray. */
+    if(!IN_POPUP){
+      _popOff = (e) => { if(_pop && !_pop.contains(e.target)) closePop(); };
+      setTimeout(() => document.addEventListener('pointerdown', _popOff, true), 0);
+    }
     _pop = d;
     return d;
   }
@@ -945,6 +972,44 @@
     try{ _shotCan = await sh.available(); }
     catch(_){ _shotCan = { ok: false, region: false, why: '' }; }
     return _shotCan;
+  }
+
+  /* Ask the shell's main process for a floating surface, anchored to the tray chip. */
+  function openTrayWindow(anchor){
+    const w = 360;
+    const h = Math.min(640, Math.max(360, Math.round((root.innerHeight || 900) * 0.62)));
+    let x = Math.max(0, (root.innerWidth || 1280) - w - 8), y = 8;
+    try{
+      const r = anchor.getBoundingClientRect();
+      x = Math.max(0, Math.round(r.right - w));
+      y = Math.max(0, Math.round(r.top - h - 8));
+    }catch(_){}
+    try{ root.pcPopup.open('tray', { x, y, width: w, height: h }); }catch(_){}
+  }
+
+  /* Drawn INSIDE that window. The anchor is synthetic because there is no tray chip on this
+   * surface — the panel fills the window (see .os-popup-body .os-pop) and positionPop's offsets are
+   * ignored under `position:static`, so it only has to exist, not to be anywhere. */
+  async function openTrayPopup(){
+    /* An ADDED host, never a replaced body — see popupHost() in os.js. Emptying the body deletes
+     * the elements app.js binds after this runs, which threw on every open. */
+    document.body.classList.add('os-popup-body', 'os-tray-popup');
+    let host = document.getElementById && document.getElementById('os-popup-host');
+    if(!host){
+      host = document.createElement('div');
+      host.id = 'os-popup-host';
+      host.className = 'os-popup-host';
+      document.body.appendChild(host);
+    }
+    host.innerHTML = '';
+    try{ await refresh(); }catch(_){}
+    const anchor = document.createElement('div');
+    anchor.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;opacity:0';
+    host.appendChild(anchor);
+    document.addEventListener('keydown', (e) => {
+      if(e.key === 'Escape') try{ root.close(); }catch(_){}
+    });
+    return quickPop(anchor);
   }
 
   async function quickPop(anchor){
@@ -1251,7 +1316,16 @@
         if(a) a.setMuted(!muted, 'sink').then(repaintQuick, (err) => toast(String((err && err.message) || err)));
         return;
       }
-      closePop();
+      /* THE WHOLE TRAY IS ONE BUTTON, so this is the only interception the flyout needs: every
+         other panel — network, Tor, power, the output switcher and the volume mixer — is a
+         SUB-PANEL that replaces this one's body, and they all draw inside whichever surface this
+         opened on. One branch, five panels. */
+      if(kind === 'quick' && !IN_POPUP && root.pcPopup && root.pcPopup.open){
+        closePop(true);
+        openTrayWindow(b);
+        return;
+      }
+      closePop(true);
       const done = (d) => { if(d) d.dataset.kind = kind; };
       if(kind === 'quick') quickPop(b).then(() => done(_pop));
       else if(kind === 'net') netPop(b).then(() => done(_pop));
@@ -1352,7 +1426,7 @@
                 profileMenu, machineApps, mergedApps, allApps, wifiIcon, volIcon, batterySvg,
                 ensureAccount, provisioned, identity, activateAccount, logoutSession,
                 panelHTML, quickHTML, taskbarHTML, launcherHTML, render, watch,
-                takeShot, shotAvailable, closePop, openControl,
+                takeShot, shotAvailable, closePop, openControl, openTrayPopup,
                 setViewOpener, refresh, paintTray, bindApps, bindPanel,
                 summary: () => _sum, rows: () => _rows, readAt: () => _readAt };
   root.PCOSShell = API;

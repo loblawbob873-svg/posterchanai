@@ -1770,7 +1770,7 @@ PROFILE
 	bindsym --locked XF86AudioNext exec /usr/local/bin/pc-key next
 	bindsym --locked XF86AudioPrev exec /usr/local/bin/pc-key previous
 
-	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit'
+	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit', exec /usr/local/bin/pc-super used
 	# THE SAME TWO BINDINGS THE SHELL PACKAGE SHIPS. They drifted: this file still opened `foot` on
 	# Alt+Return long after the overlay's copy had been changed to raise PosterChan's own terminal,
 	# so a machine installed from the ISO got the old behaviour and one updated through the package
@@ -1778,7 +1778,7 @@ PROFILE
 	# on an install where the fix had been made and shipped to the other copy.
 	bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal
 	bindsym Ctrl+Mod1+Delete exec swaymsg -t send_tick pc:tasks
-	bindsym $mod+Shift+Return exec foot
+	bindsym $mod+Shift+Return exec foot, exec /usr/local/bin/pc-super used
 
 	# ── MORE THAN ONE SCREEN ───────────────────────────────────────────────────────────────────────
 	#
@@ -1791,23 +1791,23 @@ PROFILE
 	# Direction words, not output names. `focus output right` follows whatever the arrangement
 	# actually is, so it keeps working when a monitor is unplugged, moved, or was never there --
 	# where a binding naming HDMI-A-1 is dead on a laptop with nothing attached.
-	bindsym $mod+Left  exec /usr/local/bin/pc-window-snap left
-	bindsym $mod+Right exec /usr/local/bin/pc-window-snap right
-	bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max
+	bindsym $mod+Left  exec /usr/local/bin/pc-window-snap left, exec /usr/local/bin/pc-super used
+	bindsym $mod+Right exec /usr/local/bin/pc-window-snap right, exec /usr/local/bin/pc-super used
+	bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max, exec /usr/local/bin/pc-super used
 	# Down was the only arrow bound to nothing. `minimise` is the taskbar's own function, so
 	# the window keeps its button and comes back the way it always has.
-	bindsym $mod+Down  exec /usr/local/bin/pc-window-snap minimise
+	bindsym $mod+Down  exec /usr/local/bin/pc-window-snap minimise, exec /usr/local/bin/pc-super used
 	bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge
-	bindsym Ctrl+$mod+Left  focus output left
-	bindsym Ctrl+$mod+Right focus output right
-	bindsym Ctrl+$mod+Up    focus output up
-	bindsym Ctrl+$mod+Down  focus output down
+	bindsym Ctrl+$mod+Left  focus output left, exec /usr/local/bin/pc-super used
+	bindsym Ctrl+$mod+Right focus output right, exec /usr/local/bin/pc-super used
+	bindsym Ctrl+$mod+Up    focus output up, exec /usr/local/bin/pc-super used
+	bindsym Ctrl+$mod+Down  focus output down, exec /usr/local/bin/pc-super used
 	# The window goes with you: moved to the next screen AND followed, because a window that leaves
 	# the screen you are looking at with the focus staying behind reads as having closed it.
-	bindsym $mod+Shift+Left  exec /usr/local/bin/pc-window-snap move-left
-	bindsym $mod+Shift+Right exec /usr/local/bin/pc-window-snap move-right
-	bindsym $mod+Shift+Up    exec /usr/local/bin/pc-window-snap move-up
-	bindsym $mod+Shift+Down  exec /usr/local/bin/pc-window-snap move-down
+	bindsym $mod+Shift+Left  exec /usr/local/bin/pc-window-snap move-left, exec /usr/local/bin/pc-super used
+	bindsym $mod+Shift+Right exec /usr/local/bin/pc-window-snap move-right, exec /usr/local/bin/pc-super used
+	bindsym $mod+Shift+Up    exec /usr/local/bin/pc-window-snap move-up, exec /usr/local/bin/pc-super used
+	bindsym $mod+Shift+Down  exec /usr/local/bin/pc-window-snap move-down, exec /usr/local/bin/pc-super used
 	# Closing one, which nothing else here offered. The compositor draws no chrome -- PosterChan does
 	# -- so a floating app has no titlebar and can only be closed from inside itself, and not every
 	# app has a way.
@@ -1819,7 +1819,7 @@ PROFILE
 	# reload, not on exit), so what was left was a black screen needing Ctrl+Alt+Backspace.
 	# pc-window-close asks who is focused first: the shell gets a tick and closes its own window,
 	# while a popped-out window and a native app are real toplevels the compositor still kills.
-	bindsym $mod+q exec /usr/local/bin/pc-window-close
+	bindsym $mod+q exec /usr/local/bin/pc-window-close, exec /usr/local/bin/pc-super used
 	bindsym Mod1+F4 exec /usr/local/bin/pc-window-close
 
 	# THE DESKTOP ITSELF STAYS PUT. It is maximized on the output it started on, and `focus output`
@@ -1838,7 +1838,10 @@ PROFILE
 	# --release, because a binding on the press swallows it: sway would then never deliver Super as
 	# the modifier of $mod+Return, and every other shortcut on this machine would stop working.
 	# --no-repeat so holding it does not open and close the menu at the key repeat rate.
-	bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start
+	# Super ALONE opens the start menu. `pc-super tap` declines when a Super COMBO has just
+	# fired: sway sends this release whether or not the key was used as a modifier, so without
+	# it Super+Left is a snap AND, on the way back up, the start menu.
+	bindsym --release --no-repeat Super_L exec /usr/local/bin/pc-super tap
 
 	# Recovery for the UI only. Sway and native applications remain running.
 	bindsym --no-repeat Ctrl+Mod1+BackSpace exec /usr/local/bin/pc-shell-restart
@@ -2017,7 +2020,7 @@ PROFILE
 	# Keep this list in step with the commands /etc/sway/config executes. Snap and Screenshot lived
 	# only in the overlay package's FILESDIR; a direct/fresh installer run therefore wrote working
 	# key bindings to executables it never copied, and mouse/Super snapping simply did nothing.
-	for helper in foot pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-shell-start pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ]; then

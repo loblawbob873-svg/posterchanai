@@ -15258,6 +15258,21 @@
     return null;
   }
   function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason='', files=null, open=null}={}){
+    /* A COMPOSER THAT OPENS UNDER ANOTHER WINDOW IS NOT A COMPOSER — "the new post, reply, modal
+     * gets stuck behind windows". On PosterChanOS the desktop shell is a TILED sway window and
+     * floating applications paint above it unconditionally, so this modal cannot be raised from
+     * inside the page at any z-index. os.js installs a host that opens it as its own floating
+     * window instead; everywhere else there is no host and nothing changes.
+     *
+     * The host takes only what survives a URL — an id, a pubkey, some text. A composer carrying
+     * FILES or a community OBJECT is not serialisable, so the host declines it and it opens right
+     * here, exactly as it always has. */
+    if(window.__PC_COMPOSE_HOST){
+      try{
+        if(window.__PC_COMPOSE_HOST({reply, replyPk, quote, draftId, text, community,
+                                     articleComment, articleParent, cw, cwReason, files, open})) return;
+      }catch(_){ }
+    }
     const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
     // Show the post being replied to / quoted, ditto-style — replying used to give you an empty box with
     // no reminder of what you were answering.

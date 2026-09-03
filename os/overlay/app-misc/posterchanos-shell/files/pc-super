@@ -1,0 +1,35 @@
+#!/bin/sh
+# SUPER ALONE OPENS THE START MENU; SUPER AS A MODIFIER MUST NOT.
+#
+# Reported as "it's really annoying every time i use super key for sway controls the start menu pops
+# open". Sway fires a `--release Super_L` binding whether or not the key was used as a modifier, so
+# Super+Left (snap) is Super+Left AND, on the way back up, Start.
+#
+# Sway cannot tell a binding "another binding just consumed this modifier", so the bindings say so
+# themselves: every Super combo runs `pc-super used` alongside its real command, and the release
+# binding runs `pc-super tap`, which declines when a combo has just fired.
+#
+# The window is deliberately generous and the asymmetry is deliberate too. A missed tap costs one
+# more tap; a false open costs the menu covering whatever you were doing, which is the thing being
+# complained about. The only case it still gets wrong is holding Super for longer than the window
+# after a combo before letting go.
+COMBO_WINDOW_SECONDS=3
+F="${XDG_RUNTIME_DIR:-/tmp}/pc-super-combo"
+
+case "$1" in
+  used)
+    # `:` truncates rather than creating — the mtime is the whole signal.
+    : > "$F" 2>/dev/null || exit 0
+    ;;
+  tap)
+    now=$(date +%s 2>/dev/null) || exit 0
+    # A missing marker is "no combo has ever fired", not an error: 0 is older than any window.
+    was=$(stat -c %Y "$F" 2>/dev/null || echo 0)
+    [ "$((now - was))" -lt "$COMBO_WINDOW_SECONDS" ] && exit 0
+    exec swaymsg -t send_tick pc:start
+    ;;
+  *)
+    echo "usage: pc-super used|tap" >&2
+    exit 2
+    ;;
+esac

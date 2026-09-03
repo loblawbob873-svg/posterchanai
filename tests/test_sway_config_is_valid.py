@@ -84,3 +84,52 @@ def test_every_helper_a_binding_runs_is_shipped():
         if not (files / helper).exists() and not (ROOT / "os/bin" / helper).exists():
             missing.append(helper)
     assert not missing, f"bindings call helpers that are not shipped: {missing}"
+
+
+# ── what `sway --validate` cannot answer ─────────────────────────────────────────────────────────
+#
+# MEASURED on the live compositor, because validation is blind here and reasoning got it wrong once:
+#
+#     swaymsg 'exec touch /tmp/a; touch /tmp/b'
+#       -> {"success": false, "error": "Unknown/invalid command 'touch'"}   /tmp/a made, /tmp/b NOT
+#     swaymsg 'exec "touch /tmp/a; touch /tmp/b"'
+#       -> {"success": true}                                               both made
+#
+# `;` separates SWAY commands, so an unquoted `exec A; B` runs A and then hands B to sway, which
+# does not know it. And `sway --validate` does not check binding commands AT ALL — a config whose
+# every binding is nonsense validates clean (checked: `bindsym Mod4+z definitely_not_a_command`
+# exits 0). So the only thing standing between a shipped config and every Super shortcut silently
+# doing half its job is this test.
+
+def _bindings():
+    for n, line in enumerate(CONFIG.read_text(encoding="utf-8").splitlines(), 1):
+        st = line.strip()
+        if st.startswith("bindsym") or st.startswith("bindcode"):
+            yield n, st
+
+
+def test_a_shell_command_containing_a_semicolon_is_quoted():
+    """THE BUG THIS FILE EXISTS FOR, second instance. Unquoted, the marker would be written and the
+    real command — snap, close, launch a terminal — would never run."""
+    for n, st in _bindings():
+        if " exec " not in st:
+            continue
+        cmd = st.split(" exec ", 1)[1].strip()
+        if ";" not in cmd:
+            continue
+        assert cmd.startswith('"') and cmd.rstrip().endswith('"'), (
+            f"sway.config:{n} — `exec` with an unquoted `;`. sway splits there and hands the second "
+            f"half to itself as a command, so only the first half runs:\n    {st}")
+
+
+def test_every_helper_a_binding_runs_is_shipped_by_the_package():
+    """A binding pointing at a path no ebuild installs is a key that does nothing, on a fresh
+    install only — which is the install nobody here tests by hand."""
+    import re as _re
+    ebuild = next((CONFIG.parent.parent).glob("posterchanos-shell-*.ebuild")).read_text(encoding="utf-8")
+    installed = set(_re.search(r"for helper in ([^;]+); do", ebuild).group(1).split())
+    for n, st in _bindings():
+        for path in _re.findall(r"/usr/local/bin/([a-z0-9-]+)", st):
+            assert path in installed, (
+                f"sway.config:{n} runs /usr/local/bin/{path}, which the ebuild does not install — "
+                f"that binding is dead on a fresh machine")
