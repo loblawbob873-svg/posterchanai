@@ -1152,6 +1152,44 @@ would have handled it fine).
   video (`media_service._video_encoder_candidates`) and runs on the GPU's **media engine**, which is separate
   silicon from the compute cores — it does NOT contend with LLM/image/music/video generation, and so
   deliberately does NOT take `GPUResourceLock` (a 3-hour stream would hold it for 3 hours).
+  **A VIEWER'S UPSTREAM PATH IS DECIDED ONCE PER PUBLISH SESSION, AND ONLY EVER MOVES SOURCE→CLAMPED.**
+  `<token>` and `<token>_clamped` are two SEPARATE MediaMTX muxers, each with its own init segment and its
+  own media-sequence numbering, so moving a player between them is a decoder reset — a stall, sometimes a
+  fatal player error. `_upstream_path` used to re-decide on EVERY request from a 5s-cached liveness probe,
+  so one probe that failed to answer re-routed every viewer. Measured on a single nine-minute production
+  stream, the path changed **five times**: at go-live (viewers deliberately started on the source and were
+  swapped when the clamp came up ~46s in — a guaranteed stall on every stream ever served), twice around a
+  publisher reconnect, and once at 14:30:21 for **no reason at all** beyond a probe that was slow. The
+  session is the source path's `readyTime` (MediaMTX stamps it fresh per publish, so a reconnect is a new
+  decision while a blip inside one session is not), the pin is **monotonic** (source→clamped once — that
+  is clamp.sh catching a source that climbed over the ceiling mid-stream, worth one stall — and never
+  back), and the FIRST playlist request may be **held** up to 8s while a session settles. Holding is a
+  slow response, never a 503: hls.js, native HLS on iOS Safari and third-party NIP-53 players all
+  understand a slow answer and none of them understand an error status as anything but a broken stream.
+  Giving up on the hold must **pin the source**, or the next playlist refresh waits all over again — a
+  stall mid-playback, which is worse than the swap the hold prevents. `tests/test_stream_path_stability.py`
+  drives the resolver as a SEQUENCE, because every individual answer the old code gave was defensible and
+  only the order was wrong — which is exactly why a single-shot test never saw it.
+  **clamp.sh SAYS WHAT IT DECIDED** (`streamserver/state/<token>.decision`: `pending` at start, then
+  `clamped` or `source`, each carrying the session it describes). That is what makes the hold safe: without
+  it the proxy cannot tell "a clamp is starting" from "there will never be one", and a phone streaming
+  under the ceiling — which stands down and is never clamped — would make every viewer wait out the full
+  grace. A verdict naming a different session is ignored, because the file outlives the stream it describes.
+  **THE SETTLE IS PAID ONLY BY WEBRTC, AND THE MEASUREMENT IS CACHED.** A 9-second OBS reconnect cost
+  viewers **57 seconds**, nearly all of it re-deriving a bitrate that had not changed — the publisher's
+  encoder setting does not move because the network dropped. OBS/SRT publish at their configured rate from
+  the first frame, so they settle 2s/sample 4s; only a WHIP phone (whose bandwidth estimate genuinely ramps
+  over many seconds) still gets 15/10. The measurement is cached per token for 600s so a respawn re-arms in
+  about a second — and **standing down DELETES that cache**, because the stand-down exit exists precisely to
+  re-measure and a cache would answer its own re-check with the number that caused it. The source type is
+  read **anchored on `"source"`**: `readers[].type` has the same shape and the clamp's own RTSP session is a
+  reader, so unanchored a restarted clamp reads `rtspSession` back, skips the settle a phone needs and pins
+  the ceiling to a ramp-up measurement for the whole broadcast.
+  **MEDIAMTX'S LOG IS PIPED INTO THE APP LOGGER (`[mediamtx]`).** Inherited, it landed in a journal stream
+  `journalctl -u posterchanai.service` does not show — so MediaMTX's log, and every decision clamp.sh prints
+  (which ceiling, stood down or not, hardware or CPU encoder), reached nobody, and the five-swap flap above
+  went unnoticed for as long as it existed. The pipe MUST be drained or MediaMTX blocks when it fills, which
+  is what the `mediamtx-log` daemon thread is for.
   Four gotchas, all measured against MediaMTX v1.19.2, not guessed:
   (1) **Never authorize the clamp's publish by IP** — MediaMTX reports a *LAN* address for a connection made
   to a `127.0.0.1`-bound listener, so a loopback check denies every clamp and viewers silently get the

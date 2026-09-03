@@ -147,6 +147,35 @@ def mark_publishing(db, user_id: int) -> None:
 
 # ---------------------------------------------------------------- liveness + publishing
 
+async def path_state(token: str) -> Optional[dict]:
+    """MediaMTX's record for a path: a dict, `{}` for "no such path", or None for "could not ask".
+
+    Three answers, not two, for the same reason `is_publishing` has three: an unreachable control API and a
+    path that has ended are indistinguishable from the caller's side unless the probe says which, and one of
+    them must never be acted on. `{}` is a DEFINITE absence (MediaMTX answered 404); None is ignorance.
+
+    The HLS proxy needs the record rather than a bool because it pins a viewer's upstream path per PUBLISH
+    SESSION, and `readyTime` is what identifies one — MediaMTX stamps it fresh on every (re)publish, so an
+    OBS reconnect is a new session while a probe blip inside one session changes nothing.
+    """
+    port = stream_service.api_port()          # must match what MediaMTX actually bound
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:
+            r = await client.get(f"http://127.0.0.1:{port}/v3/paths/get/{token}")
+    except Exception:
+        return None                       # MediaMTX unreachable — unknown, never "gone"
+    if r.status_code == 404:
+        return {}                         # MediaMTX is up and has no such path — definitively not publishing
+    if r.status_code != 200:
+        return None
+    try:
+        d = r.json()
+    except Exception:
+        return None
+    return d if isinstance(d, dict) else None
+
+
 async def is_publishing(token: str) -> Optional[bool]:
     """Is a source publishing this path? True / False / None = can't tell. (Public: stream_vod_service and
     the HLS proxy's clamp resolver both ask this, so it is the one MediaMTX liveness probe in the codebase.)
@@ -160,21 +189,10 @@ async def is_publishing(token: str) -> Optional[bool]:
     must NOT score a strike. Ending a live stream is unrecoverable — the browser only signs a `live` event at
     Go Live, so nothing can put it back.
     """
-    port = stream_service.api_port()          # must match what MediaMTX actually bound
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:
-            r = await client.get(f"http://127.0.0.1:{port}/v3/paths/get/{token}")
-    except Exception:
-        return None                       # MediaMTX unreachable — unknown, never "gone"
-    if r.status_code == 404:
-        return False                      # MediaMTX is up and has no such path — definitively not publishing
-    if r.status_code != 200:
+    st = await path_state(token)
+    if st is None:
         return None
-    try:
-        return bool((r.json() or {}).get("ready"))
-    except Exception:
-        return None
+    return bool(st.get("ready"))
 
 
 async def _publish_end(user_id: int, data: dict) -> bool:

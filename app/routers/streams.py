@@ -15,6 +15,7 @@ system, per the design decision.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -80,8 +81,25 @@ def _count_viewers(token: str) -> int:
 # `ACAO: *`. All upstream requests come from 127.0.0.1 (this proxy), so one session per token serves every
 # viewer. NB: httpx's cookie jar drops the *Secure* hlsSession over our plain-http hop, so we parse it out
 # of Set-Cookie by hand rather than relying on the jar.
-_HLS_SESSION_TTL = 20.0
+# Long, and REACTIVE rather than timed. Priming opens a brand-new MediaMTX HLS session and abandons the
+# previous one, so a short TTL is pure churn: at the old 20s, one stream produced a new session every few
+# seconds, all of them closing as "inactive" in MediaMTX's log. Nothing needed them to expire on a clock —
+# the proxy already force-refreshes the moment MediaMTX rejects a request (400/401/403), which is the only
+# thing that actually invalidates a session.
+_HLS_SESSION_TTL = 300.0
 _hls_sessions: dict[str, tuple[str, float]] = {}   # token -> ("cookieCheck=1; hlsSession=..", monotonic_ts)
+_hls_locks: dict[str, "asyncio.Lock"] = {}
+
+
+def _hls_lock(token: str) -> "asyncio.Lock":
+    """One lock per token, so concurrent viewers prime ONE session instead of one each. Without it every
+    request that arrived while a prime was in flight started its own — which is how three sessions were
+    being created in the same second for a single stream."""
+    lk = _hls_locks.get(token)
+    if lk is None:
+        lk = _hls_locks[token] = asyncio.Lock()
+        _trim(_hls_locks)
+    return lk
 
 
 async def _hls_session_cookie(hls_port: str, token: str, force: bool = False) -> "str | None":
@@ -91,6 +109,19 @@ async def _hls_session_cookie(hls_port: str, token: str, force: bool = False) ->
         ent = _hls_sessions.get(token)
         if ent and (now - ent[1]) < _HLS_SESSION_TTL:
             return ent[0]
+    async with _hls_lock(token):
+        # Whoever held the lock may have primed exactly what we came for. `>= now` is the test even when
+        # `force` is set: a forced refresh is asking to replace the session we FOUND, not to stack another
+        # one behind a refresh that has already happened while we queued.
+        ent = _hls_sessions.get(token)
+        if ent and ent[1] >= now:
+            return ent[0]
+        if not force and ent and (time.monotonic() - ent[1]) < _HLS_SESSION_TTL:
+            return ent[0]
+        return await _prime_hls_session(hls_port, token)
+
+
+async def _prime_hls_session(hls_port: str, token: str) -> "str | None":
     import httpx
     url = f"http://127.0.0.1:{hls_port}/{token}/index.m3u8?cookieCheck=1"
     try:
@@ -104,7 +135,11 @@ async def _hls_session_cookie(hls_port: str, token: str, force: bool = False) ->
                 if sc.startswith("hlsSession="):
                     hs = sc.split(";", 1)[0].split("=", 1)[1].strip()
             cookie = "cookieCheck=1" + (f"; hlsSession={hs}" if hs else "")
-            _hls_sessions[token] = (cookie, now)
+            # Stamped when the session was actually OBTAINED, not when the caller started waiting — that
+            # timestamp is what tells a queued forced-refresh this session is newer than the one it wanted
+            # replaced.
+            _hls_sessions[token] = (cookie, time.monotonic())
+            _trim(_hls_sessions)
             return cookie
     except Exception:
         return None
@@ -185,11 +220,61 @@ def _cache_control(path: str) -> str:
     return "public, max-age=31536000, immutable, no-transform"
 
 
-# Which MediaMTX path a viewer is served: the clamped transcode when it's up, else the raw source. Probed
-# against MediaMTX's control API and memoised briefly — a live viewer re-fetches every couple of seconds, so
-# without the memo every viewer would add a control-API round-trip to every segment.
-_CLAMP_TTL = 5.0
-_clamp_ready: dict[str, tuple[bool, float]] = {}
+# ---------------------------------------------------------------- which MediaMTX path a viewer reads
+# `<token>` and `<token>_clamped` are two SEPARATE MediaMTX muxers. Each has its own init segment and its
+# own media-sequence numbering, so moving a viewer from one to the other mid-playback is not a redirect,
+# it is a decoder reset: a stall, and on some players a fatal error.
+#
+# This used to be re-decided on EVERY request from a 5-second-cached liveness probe, which meant any
+# momentary failure to answer re-routed every viewer. Measured on one nine-minute production stream, the
+# upstream path changed FIVE times:
+#     14:23:35  source  -> clamped   (the clamp finishing its measurement — a guaranteed stall per stream)
+#     14:27:23  clamped -> source    (publisher reconnect)
+#     14:27:47  source  -> clamped
+#     14:30:21  clamped -> source    (nothing wrong; one probe simply did not answer in time)
+#     14:31:41  source  -> clamped
+#
+# So the decision is made ONCE PER PUBLISH SESSION and is MONOTONIC. A session may go source -> clamped
+# exactly once — the clamp coming up, or clamp.sh deciding mid-stream that a source which was under the
+# ceiling no longer is, which is a real bandwidth emergency worth one stall — and may NEVER go back.
+# Every flap above was clamped -> source -> clamped, so the monotonic rule removes all of them while
+# keeping the one transition that protects the uplink.
+#
+# A publish session is the SOURCE path's `readyTime`: MediaMTX stamps it fresh on every (re)publish, so an
+# OBS reconnect is a new session and a new decision, while a probe blip inside one session changes nothing.
+# Two memo windows, because the two questions have different costs and different urgencies.
+# While a session is UNDECIDED a viewer is being held, so noticing the clamp a second late is a second of
+# black screen — probe often. Once a session is pinned to the SOURCE the only thing left to watch for is
+# clamp.sh changing its mind at its next re-check (~45s away at the earliest), so probing once a second
+# for the rest of a broadcast would be thousands of control-API calls to learn nothing.
+_CLAMP_TTL = 1.0
+_CLAMP_TTL_SETTLED = 5.0
+_clamp_ready: dict[str, tuple[bool, float]] = {}    # clamped path -> (is up, when probed) — per-request memo
+# The SOURCE path's record is read on every request too (that is where the session comes from), so it needs
+# a memo of its own or a popular stream turns every segment fetch into a control-API round trip. Short,
+# because this is also what notices a reconnect: at 2s a new publish session is picked up within one
+# segment, which is well inside the window where nobody is being served the wrong thing anyway.
+_STATE_TTL = 2.0
+_state_memo: dict[str, tuple[dict, float]] = {}
+_pins: dict[str, tuple[str, str]] = {}              # token -> (session readyTime, chosen MediaMTX path)
+_sess_first: dict[str, tuple[str, float]] = {}      # token -> (session readyTime, when we first saw it)
+
+# How long a viewer's FIRST playlist request may be held while the session's path is being decided.
+# Holding is deliberately not answering 503: a slow response is understood by hls.js, by native HLS on
+# iOS Safari and by third-party NIP-53 players alike, where an error status is understood by none of them
+# and would show a broken stream. The hold is only ever paid once per viewer, at the very start.
+_HOLD_MAX = 8.0
+_HOLD_STEP = 0.25
+# How long to wait for clamp.sh to say ANYTHING before concluding it is not running (config frozen on an
+# orphaned MediaMTX, no ffmpeg on the node, clamping turned off mid-stream). It writes `pending` as its
+# first act, so this only has to cover process startup.
+_VERDICT_GRACE = 3.0
+_PIN_MAX = 512
+
+
+def _trim(d: dict) -> None:
+    if len(d) > _PIN_MAX:
+        d.clear()          # streams are few and short-lived; a periodic sweep is not worth the bookkeeping
 
 
 async def _hls_gone_or_502(name: str) -> Response:
@@ -211,26 +296,106 @@ async def _hls_gone_or_502(name: str) -> Response:
     return Response(status_code=502 if live else 404)
 
 
-async def _upstream_path(token: str) -> str:
-    """The MediaMTX path to proxy for `token` — `<token>_clamped` while the clamp is publishing it.
+async def _clamp_is_up(clamped: str, ttl: float = _CLAMP_TTL) -> bool:
+    """Is the clamp publishing? Memoised — a live viewer re-fetches every couple of seconds, so without
+    this every segment would add a control-API round trip."""
+    now = time.monotonic()
+    ent = _clamp_ready.get(clamped)
+    if ent is not None and now - ent[1] < ttl:
+        return ent[0]
+    ready = bool(await stream_end_service.is_publishing(clamped))
+    _clamp_ready[clamped] = (ready, now)
+    _trim(_clamp_ready)
+    return ready
 
-    Falls back to the source path whenever the clamp isn't up: during the second or two after go-live before
-    ffmpeg has produced anything, when the admin has clamping off, and when MediaMTX can't be reached (in
-    which case the source won't work either, but failing to the unclamped path can only be less broken).
+
+async def _resolve_path(token: str, settle: bool = False) -> "str | None":
+    """The MediaMTX path to serve for `token`, or None meaning "not decided yet — worth waiting a moment".
+
+    `settle` says the caller has finished waiting and needs an answer it can keep: an undecided session
+    resolves to the source AND is pinned there. Pinning is the whole point — without it the request that
+    gave up would hand the player a source playlist and then make its NEXT playlist refresh wait all over
+    again, which is a stall in the middle of a stream that was playing perfectly. The monotonic upgrade
+    still applies afterwards, so a clamp that finally arrives is still picked up, once.
     """
     if not stream_service.clamp_enabled():
         return token
-    name = f"{token}{stream_service.CLAMP_SUFFIX}"
+    clamped = f"{token}{stream_service.CLAMP_SUFFIX}"
+
     now = time.monotonic()
-    ent = _clamp_ready.get(name)
-    if ent is not None and now - ent[1] < _CLAMP_TTL:
-        return name if ent[0] else token
-    ready = bool(await stream_end_service.is_publishing(name))
-    _clamp_ready[name] = (ready, now)
-    if len(_clamp_ready) > 512:                 # bound the memo; entries are re-probed on demand anyway
-        for k in [k for k, v in _clamp_ready.items() if now - v[1] > _CLAMP_TTL]:
-            _clamp_ready.pop(k, None)
-    return name if ready else token
+    ent = _state_memo.get(token)
+    if ent is not None and now - ent[1] < _STATE_TTL:
+        state = ent[0]
+    else:
+        state = await stream_end_service.path_state(token)
+        if state is not None:               # never memoise "could not ask" — the next request must retry
+            _state_memo[token] = (state, now)
+            _trim(_state_memo)
+    if not state:
+        # Not publishing, or MediaMTX could not be asked. Either way there is no session to pin — hand back
+        # the source and let the caller's own gone/502 handling decide what the viewer is told.
+        return token
+    sess = str(state.get("readyTime") or "")
+    if not sess:
+        return token
+
+    pin = _pins.get(token)
+    if pin is not None and pin[0] != sess:
+        pin = None                          # a new publish session voids the previous decision
+        _pins.pop(token, None)
+    if pin is not None and pin[1] == clamped:
+        return clamped                      # MONOTONIC: once clamped, clamped for the rest of the session
+
+    if await _clamp_is_up(clamped, _CLAMP_TTL_SETTLED if pin is not None else _CLAMP_TTL):
+        _pins[token] = (sess, clamped)
+        _trim(_pins)
+        return clamped
+    if pin is not None:
+        return pin[1]                       # already settled on the source for this session
+
+    verdict, vsess = stream_service.clamp_decision(token)
+    if vsess and vsess != sess:
+        verdict = ""                        # a verdict about the PREVIOUS publish describes a dead stream
+    if verdict == "source":
+        _pins[token] = (sess, token)        # under the ceiling: there will never be a clamped path
+        _trim(_pins)
+        return token
+    if verdict not in ("pending", "clamped"):
+        # clamp.sh has not spoken at all. It writes `pending` as its first act, so this is either the
+        # instant before it does, or it is not running (an orphaned MediaMTX on a frozen config, clamping
+        # switched off mid-stream). Give it a moment, then stop asking.
+        first = _sess_first.get(token)
+        if first is None or first[0] != sess:
+            _sess_first[token] = (sess, time.monotonic())
+            _trim(_sess_first)
+        elif time.monotonic() - first[1] >= _VERDICT_GRACE:
+            settle = True
+    if not settle:
+        return None                         # a clamp is coming — worth holding a moment for
+    _pins[token] = (sess, token)
+    _trim(_pins)
+    return token
+
+
+async def _upstream_path(token: str, hold: float = 0.0) -> str:
+    """`_resolve_path`, waiting up to `hold` seconds for an undecided session to settle.
+
+    Only the playlist request holds. Starting a viewer on the source and moving them to the clamped path a
+    few seconds later is exactly the swap this whole mechanism exists to prevent, so the request that
+    decides which muxer a player attaches to is the one worth making wait. Segments never wait: by then the
+    session is pinned, and a segment is fetched against the path the playlist already named.
+
+    Falling through to the source when the hold expires is deliberate. A stream that is genuinely playable
+    right now beats a correct answer nobody is watching.
+    """
+    deadline = time.monotonic() + max(0.0, hold)
+    while True:
+        got = await _resolve_path(token)
+        if got is not None:
+            return got
+        if time.monotonic() >= deadline:
+            return await _resolve_path(token, settle=True) or token
+        await asyncio.sleep(_HOLD_STEP)
 
 
 def _may_stream(user) -> bool:
@@ -634,7 +799,10 @@ async def stream_hls_proxy(token: str, path: str, request: Request):
     # Viewers always address the PUBLIC token (it's what rides the kind-30311); the clamped transcode is an
     # internal path they never see, so the swap happens here. Segment URLs inside a MediaMTX playlist are
     # relative, so the follow-up segment requests come back to this same route and resolve identically.
-    src = await _upstream_path(token)
+    # Only the playlist waits for an undecided session (see _upstream_path). A segment is always fetched
+    # against the path its playlist already named, so holding one would delay playback to re-answer a
+    # question that has been settled.
+    src = await _upstream_path(token, hold=_HOLD_MAX if path.endswith(".m3u8") else 0.0)
     upstream = f"http://127.0.0.1:{hls_port}/{src}/{path}?cookieCheck=1"
     _mark_viewer(token, _client_fingerprint(request))   # headcount by client fingerprint (no per-viewer cookie now)
     import httpx

@@ -48,6 +48,14 @@ def setUpModule():
         p = mock.patch.object(S, attr, d / name)
         p.start()
         _PATCHES.append(p)
+    # _STREAM_DIR too, because quality_dir()/state_dir() derive from it AT CALL TIME. Without this the
+    # generated script points at the live streamserver/state and these tests — which RUN the script — leave
+    # their verdict and cached-bitrate files in it. That is the same class as the config patch above, with
+    # an extra sting: the measurement cache is READ on the next run, so one test's leftovers silently
+    # change what the next test (and, on a node serving streams, the next real stream) measures.
+    pd = mock.patch.object(S, "_STREAM_DIR", d)
+    pd.start()
+    _PATCHES.append(pd)
 
 
 def tearDownModule():
@@ -465,6 +473,12 @@ class TestClampEnabled(unittest.TestCase):
 
 
 
+# The measurement window clamp.sh uses for an RTMP/SRT source (a WebRTC source is watched far longer —
+# see the source-type branch in the generated script). The curl stub below stages its byte counter against
+# this, so it has to track the script.
+_SAMPLE_WINDOW = 4
+
+
 class TestStandDown(_TmpMixin, unittest.TestCase):
     """The clamp must decide WHETHER to run, not only how hard.
 
@@ -482,27 +496,34 @@ class TestStandDown(_TmpMixin, unittest.TestCase):
            "stream_rtsp_port": "8554", "stream_api_port": "9997", "stream_auth_secret": "s3cret"}
     CEIL_TOTAL = 1628                       # stream_clamp_bitrate + stream_clamp_audio_bitrate
 
-    def _stubs(self, api_kbps, remux_kbps=None):
+    def _stubs(self, api_kbps, remux_kbps=None, stype="rtmpConn"):
         """A PATH of stubs. `curl` reports a MediaMTX byte counter that advances at `api_kbps` across one
         SAMPLE window; `ffmpeg` records its args and, for the measurement remux, writes a file whose SIZE
         encodes `remux_kbps` so the RTSP fallback measures a real rate rather than 0; `sleep` returns at
         once so a 45s pause costs nothing."""
         remux_kbps = api_kbps if remux_kbps is None else remux_kbps
         binp = self.tmp / "bin"
-        binp.mkdir()
+        binp.mkdir(exist_ok=True)
         state = self.tmp / "bytes.state"
         marker = self.tmp / "ffmpeg.ran"
+        # The counter advances by exactly one SAMPLE window on EVERY call, never on alternate ones. Call
+        # PARITY was the original design and it is too brittle to keep: the script also reads this same
+        # endpoint once at startup (for the publish session and the source type), so one extra read
+        # inverted the pairing and every measurement came back as the staged rate regardless of input —
+        # a test that fails for a reason unrelated to what it is testing. Advancing per call makes the
+        # delta between any two consecutive reads the right one, however many other reads happen.
+        # NB this pins SAMPLE: bytes = kbit/s * 1000 / 8 * window. Change the window in the generated
+        # script and these tests fail loudly rather than measuring the wrong rate quietly.
         (binp / "curl").write_text(f"""#!/usr/bin/env python3
-import sys
 state = {str(state)!r}
 try:
-    n, total = (int(x) for x in open(state).read().split())
+    total = int(open(state).read().strip())
 except Exception:
-    n, total = 0, 0
-if n % 2 == 1:                       # 2nd call of a pair: advance one SAMPLE window at the staged rate
-    total += {api_kbps} * 1250       # kbit/s -> bytes over 10s
-open(state, "w").write(f"{{n + 1}} {{total}}")
-print('{{"name":"t","ready":true,"bytesReceived":%d,"readers":[]}}' % total)
+    total = 0
+total += {api_kbps} * 125 * {_SAMPLE_WINDOW}
+open(state, "w").write(str(total))
+print('{{"name":"t","ready":true,"readyTime":"2026-09-03T14:27:06.3-06:00",'
+      '"source":{{"type":"{stype}"}},"bytesReceived":%d,"readers":[]}}' % total)
 """)
         # The remux measurement is `ffmpeg ... -t 4 -c copy -f matroska -y <tmp>`, then ffprobe reads its
         # duration. Writing rate*500 bytes makes bytes*8/4s/1000 come back as `remux_kbps`.
@@ -520,20 +541,30 @@ if "matroska" in args:
             f.chmod(0o755)
         return binp, marker
 
-    def _run(self, api_kbps, tier=None, remux_kbps=None, no_curl=False, **cfg_over):
-        binp, marker = self._stubs(api_kbps, remux_kbps)
+    def _run(self, api_kbps, tier=None, remux_kbps=None, no_curl=False, stype="rtmpConn",
+             fail_ffmpeg=False, **cfg_over):
+        binp, marker = self._stubs(api_kbps, remux_kbps, stype)
+        # per-run, so a test that runs the script twice can tell the two apart
+        for f in ("slept.txt", "ffmpeg.ran"):
+            (self.tmp / f).unlink(missing_ok=True)
         if no_curl:
             (binp / "curl").write_text("#!/bin/sh\nexit 7\n")     # no curl / wrong port / API down
             (binp / "curl").chmod(0o755)
+        if fail_ffmpeg:
+            (binp / "ffmpeg").write_text("#!/bin/sh\nexit 1\n")   # no encoder / the transcode died
+            (binp / "ffmpeg").chmod(0o755)
         qdir = self.tmp / "quality"
-        qdir.mkdir()
+        qdir.mkdir(exist_ok=True)
         if tier:
             (qdir / "tok").write_text(tier)
         script = self.tmp / "clamp.sh"
         cfg = dict(self.CFG)
         cfg.update(cfg_over)
+        sdir = self.sdir = self.tmp / "state"
+        sdir.mkdir(exist_ok=True)
         with mock.patch.object(S, "_CLAMP_SCRIPT", script), \
              mock.patch.object(S, "quality_dir", lambda: str(qdir)), \
+             mock.patch.object(S, "state_dir", lambda: str(sdir)), \
              mock.patch("app.services.media_service.resolve_ffmpeg", lambda: str(binp / "ffmpeg")):
             S._write_clamp_script(cfg)
         out = self.tmp / "out.txt"
@@ -608,6 +639,89 @@ if "matroska" in args:
         t = Path(str(S._CLAMP_SCRIPT)).read_text()
         block = t[t.index("serving the source unchanged"):]
         self.assertLess(block.index('sleep "$RECHECK"'), block.index("exit 0"))
+
+
+class TestVerdictAndMeasurementCache(TestStandDown):
+    """How fast a stream becomes watchable, and whether anyone can tell what the clamp decided.
+
+    Two production failures live here. A nine-second OBS reconnect cost viewers fifty-seven seconds,
+    almost all of it re-deriving a measurement that had not changed — the publisher's encoder setting does
+    not move because the network dropped. And nothing the clamp decided was visible anywhere: which
+    ceiling it chose, whether it stood down, whether it fell back to the CPU encoder, all of it went to a
+    log stream `journalctl -u posterchanai.service` does not show.
+
+    Inherits TestStandDown's harness because these need the same thing: the REAL generated script, run.
+    """
+
+    def _decision(self):
+        f = self.sdir / "tok.decision"
+        return f.read_text().strip() if f.exists() else ""
+
+    def test_a_clamping_stream_declares_itself_before_handing_off_to_ffmpeg(self):
+        """The proxy holds a viewer's first playlist request on the strength of this, rather than starting
+        them on the source and moving them to the clamped muxer a few seconds later."""
+        self._run(10000)
+        self.assertTrue(self._decision().startswith("clamped"), self._decision())
+
+    def test_a_stood_down_stream_says_source_so_nobody_waits_for_a_clamp_that_is_not_coming(self):
+        """The distinction the hold depends on. Without it the proxy cannot tell "the clamp is starting"
+        from "there will never be a clamp", and every viewer of an under-ceiling phone stream would wait
+        out the full grace before seeing a frame."""
+        self._run(500)
+        self.assertTrue(self._decision().startswith("source"), self._decision())
+
+    def test_the_verdict_names_the_publish_session_it_describes(self):
+        """A decision file outlives the stream it was written for. Read without the session, a `source`
+        left over from this morning stands down a broadcast that is being clamped right now."""
+        self._run(500)
+        self.assertIn("2026-09-03T14:27:06.3-06:00", self._decision())
+
+    def test_a_failed_transcode_retracts_its_claim(self):
+        """`clamped` is written before the exec, so a node whose ffmpeg is missing or whose encoder dies
+        would otherwise leave a claim standing that holds every viewer for the full grace, for ever."""
+        self._run(10000)
+        self.assertTrue(self._decision().startswith("clamped"))
+        self._run(10000, fail_ffmpeg=True)
+        self.assertTrue(self._decision().startswith("source"), self._decision())
+
+    def test_a_measurement_is_cached_and_reused_instead_of_re_derived(self):
+        """The reconnect fix. MediaMTX kills this script when the source drops and respawns it when the
+        source returns, so a blip used to pay the full settle+sample again — with viewers watching, which
+        is not true of the measurement at go-live."""
+        self._run(10000)
+        self.assertTrue((self.sdir / "tok.kbps").exists(), "nothing cached to reuse on the respawn")
+        text, _, _ = self._run(10000)
+        self.assertIn("not re-measuring", text)
+        self.assertNotIn(str(_SAMPLE_WINDOW), self.slept,
+                         f"re-measured on the respawn anyway; slept: {self.slept}")
+
+    def test_standing_down_drops_the_cache_so_its_respawn_really_re_measures(self):
+        """The stand-down loop exists to notice a source that climbs over the ceiling mid-stream. A cache
+        that answered its re-measurement would leave the loop running and deciding nothing."""
+        self._run(500)
+        self.assertFalse((self.sdir / "tok.kbps").exists(),
+                         "the re-check loop would keep reading its own stale answer")
+
+    def test_a_stale_measurement_is_not_reused(self):
+        """A cached number is a claim about a stream running RIGHT NOW. Reused across "they went live
+        again this evening with different OBS settings" it would pin a whole broadcast to yesterday's
+        ceiling, with nothing in the picture to say why."""
+        self._run(10000)
+        cache = self.sdir / "tok.kbps"
+        kbps = cache.read_text().split()[0]
+        cache.write_text(f"{kbps} 1000000000\n")            # measured in 2001
+        text, _, _ = self._run(10000)
+        self.assertNotIn("not re-measuring", text)
+
+    def test_only_webrtc_pays_the_long_settle(self):
+        """WebRTC bandwidth estimation ramps up over many seconds, so a phone genuinely must be watched
+        before it is believed. OBS publishes at its configured rate from the first frame — waiting fifteen
+        seconds to measure it delayed every stream to learn something that was true at t=1."""
+        self._run(500, stype="rtmpConn")
+        rtmp_settle = list(self.slept)
+        self._run(500, stype="webRTCSession")
+        self.assertIn("15", self.slept, f"a phone was not given time to ramp up; slept: {self.slept}")
+        self.assertNotIn("15", rtmp_settle, f"OBS was made to wait for nothing; slept: {rtmp_settle}")
 
 
 class TestPerStreamerQualityTiers(unittest.TestCase):

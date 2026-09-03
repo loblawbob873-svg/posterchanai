@@ -65,6 +65,45 @@ def quality_dir() -> str:
     return str(d)
 
 
+def state_dir() -> str:
+    """Directory clamp.sh writes its per-stream working state into: the verdict it reached for a token and
+    the bitrate it measured. Same shape and constraints as `quality_dir` (created on demand, plain path with
+    no shell metacharacters, interpolated into the generated script)."""
+    d = _STREAM_DIR / "state"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.warning("[stream] could not create %s: %s", d, e)
+    return str(d)
+
+
+# What clamp.sh has decided to do about one publish session. It writes `pending` the moment it starts,
+# then `clamped` or `source` once it knows — so the HLS proxy can tell "the clamp is coming, hold on" apart
+# from "this source is under the ceiling and there will never be a clamped path". Without that distinction
+# the proxy can only guess with a timeout, and it guesses wrong in the case that matters most: a phone
+# streaming under the ceiling would make every viewer wait out the full grace before playing anything.
+CLAMP_VERDICTS = ("pending", "clamped", "source")
+
+
+def clamp_decision(token: str) -> tuple:
+    """(verdict, session) for `token`, or ("", "") when clamp.sh has not spoken.
+
+    `session` is the source path's MediaMTX `readyTime` as clamp.sh read it. The caller compares it against
+    the session it is currently serving, because a verdict from the PREVIOUS publish is worse than no
+    verdict at all — it describes a stream that has already ended.
+    """
+    if not _quality_token_ok(token):
+        return ("", "")
+    try:
+        with open(os.path.join(state_dir(), token + ".decision")) as fh:
+            parts = fh.read().strip().split(None, 1)
+    except OSError:
+        return ("", "")
+    if not parts or parts[0] not in CLAMP_VERDICTS:
+        return ("", "")
+    return (parts[0], parts[1].strip() if len(parts) > 1 else "")
+
+
 def _quality_token_ok(token: str) -> bool:
     """A token is a path segment in MediaMTX AND a filename here — allow only what both accept."""
     return bool(token) and len(token) <= 128 and all(c.isalnum() or c in "-_" for c in token)
@@ -401,6 +440,7 @@ def _write_clamp_script(cfg: dict) -> None:
     # FUNCTION object (it did — the generated script had a literal `<function quality_dir at 0x…>` as
     # its path, which sh -n happily accepts because it is syntactically a fine string).
     qdir = quality_dir()
+    sdir = state_dir()
     audio_kbps = _rate_kbps(p["abitrate"], default=128)
     hw_pre, hw_post = _clamp_video_args(encoder, p)
     sw_pre, sw_post = _clamp_video_args("libx264", p)
@@ -488,12 +528,49 @@ esac
 AUD_CFG={audio_kbps}         # configured AAC bitrate; scaled DOWN on weak sources (see below)
 VMIN=150                     # never target something absurd if the probe reads very low
 AUD_MIN=48                   # below this speech stops being intelligible
-SETTLE=15                    # seconds to let the publisher's bitrate settle before measuring
-SAMPLE=10                    # length of one API measurement window — long enough that a single scene
-                             # change or WebRTC probe cannot decide whether to clamp (see api_kbps)
+# How long to watch before measuring. This is the single biggest cost in getting a stream playable, and
+# it is paid ONLY by WebRTC — see the ramp-up note below. OBS (RTMP) and SRT publish at their configured
+# rate from the first frame, so waiting 15s to measure them delayed every stream by 25 seconds to learn
+# something that was true at t=1. Measured on this node: a 9-second OBS reconnect cost viewers 57 seconds,
+# almost all of it here.
+SETTLE=2
+SAMPLE=4
 RECHECK=45                   # pause before a stood-down clamp exits and MediaMTX respawns it to re-measure
 RECHECK_SLOW=300             # …but far less often when only the expensive measurement is available
 STANDDOWN={standdown}        # 0 when the public url has the clamped path baked in (stream_hls_base)
+SDIR="{sdir}"                # clamp.sh's own working state: the verdict and the cached measurement
+CACHE_TTL=600                # a cached measurement is reused for this long (see the cache block below)
+
+# Who is publishing, and which publish this is. Both come from one control-API read, and both matter:
+#   - the SOURCE TYPE decides whether the long WebRTC settle is needed at all;
+#   - `readyTime` identifies the publish SESSION, so the verdict written below can be matched against the
+#     session the HLS proxy is actually serving. A verdict left over from the previous publish is worse
+#     than none — it describes a stream that has already ended.
+_INFO=$(curl -sS -m 4 "http://127.0.0.1:{api_port}/v3/paths/get/$SRC" 2>/dev/null)
+SESS=$(printf '%s' "$_INFO" | tr ',' '\\n' | sed -n 's/.*"readyTime"[: ]*"\\([^"]*\\)".*/\\1/p' | head -1)
+# ANCHORED on "source": `readers[].type` has the same shape and MediaMTX lists readers first when there
+# are any — and the clamp's own RTSP session IS a reader. Unanchored, a restarted clamp on a WebRTC phone
+# reads its own `rtspSession` back, skips the long settle it is the one ingest that needs, and pins the
+# ceiling to a ramp-up measurement for the whole broadcast.
+STYPE=$(printf '%s' "$_INFO" | tr ',' '\\n' | sed -n 's/.*"source":[{{ ]*"type"[: ]*"\\([^"]*\\)".*/\\1/p' | head -1)
+case "$STYPE" in
+  # WebRTC bandwidth estimation ramps UP over many seconds, so the opening of a WHIP publish is NOT
+  # representative and this is the one ingest that must be watched before it is believed.
+  *ebRTC*|*ebrtc*) SETTLE=15; SAMPLE=10 ;;
+esac
+
+# Tell the HLS proxy a decision is coming. It holds a viewer's first playlist request for a moment rather
+# than starting them on the source and moving them to the clamped path seconds later — those are two
+# different MediaMTX muxers, with their own init segment and their own media-sequence numbering, so the
+# move is a decoder reset for every viewer. `pending` is what makes that hold safe: without it the proxy
+# cannot tell "the clamp is coming" from "clamp.sh is not running", and it would have to wait out a
+# timeout on every stream that legitimately never clamps.
+say_verdict() {{
+  [ -n "$SDIR" ] || return 0
+  printf '%s %s\\n' "$1" "$SESS" > "$SDIR/$SRC.decision.tmp" 2>/dev/null \\
+    && mv "$SDIR/$SRC.decision.tmp" "$SDIR/$SRC.decision" 2>/dev/null
+}}
+say_verdict pending
 
 # WebRTC bandwidth estimation ramps UP over many seconds, so the opening of a WHIP publish is NOT
 # representative. Measured against a real phone: steady state 1489 kbit/s, but sampling at t=3-7s read
@@ -543,17 +620,48 @@ api_kbps() {{
   awk -v a="$_b1" -v b="$_b2" -v w="$1" 'BEGIN{{ if (b+0 > a+0 && w+0 > 0) printf "%d", (b-a)*8/w/1000; else print 0 }}'
 }}
 
-sleep "$SETTLE"
-# The API if it answers, the RTSP remux otherwise — a node whose API moved or that has no curl keeps
-# exactly the measurement it had before. The two cost wildly different amounts, and standing down makes
-# the measurement REPEAT (once per respawn cycle), so the pace has to follow the cost: the API sample is
-# two HTTP reads of a byte counter, while the remux attaches a second 4-second RTSP reader to the live
-# source — the contention api_kbps's comment blames for the decode corruption. Once a minute is fine for
-# the first; once every five is the most the second should ever run.
-SRC_KBPS=$(api_kbps "$SAMPLE" 2>/dev/null) || SRC_KBPS=0
+# ---- reuse a recent measurement rather than re-deriving it ----------------------------------------
+# What is being measured is the PUBLISHER'S ENCODER SETTING, and that does not change because the network
+# dropped for nine seconds. MediaMTX kills this script whenever the source goes away and respawns it when
+# the source returns, so a reconnect blip used to pay the full settle+sample again — with viewers watching,
+# which is not true of the measurement at go-live. Reusing a measurement taken minutes ago makes a
+# reconnect re-arm the clamp in about a second.
+#
+# The TTL is short on purpose. A cached number is a claim about a stream that is running RIGHT NOW, so it
+# may be reused across a restart and must not be reused across "they went live again this evening with
+# different OBS settings" — that would pin a whole broadcast to yesterday's ceiling, and nothing in the
+# picture would say why.
+CACHE="$SDIR/$SRC.kbps"
+SRC_KBPS=0
+if [ -n "$SDIR" ] && [ -f "$CACHE" ]; then
+  _cv=$(tr -cd '0-9 ' < "$CACHE" 2>/dev/null)
+  _ck=$(printf '%s' "$_cv" | cut -d' ' -f1)
+  _ct=$(printf '%s' "$_cv" | cut -d' ' -f2)
+  _now=$(date +%s)
+  if [ -n "${{_ck:-}}" ] && [ -n "${{_ct:-}}" ] && [ "$_ck" -gt 0 ] 2>/dev/null \\
+     && [ $((_now - _ct)) -ge 0 ] && [ $((_now - _ct)) -lt "$CACHE_TTL" ] 2>/dev/null; then
+    SRC_KBPS=$_ck
+    echo "clamp: $SRC reusing a $((_now - _ct))s-old measurement of $SRC_KBPS kbit/s — not re-measuring" >&2
+  fi
+fi
+
 if [ "${{SRC_KBPS:-0}}" -le 0 ]; then
-  SRC_KBPS=$(measure_src_kbps)
-  RECHECK=$RECHECK_SLOW
+  sleep "$SETTLE"
+  # The API if it answers, the RTSP remux otherwise — a node whose API moved or that has no curl keeps
+  # exactly the measurement it had before. The two cost wildly different amounts, and standing down makes
+  # the measurement REPEAT (once per respawn cycle), so the pace has to follow the cost: the API sample is
+  # two HTTP reads of a byte counter, while the remux attaches a second 4-second RTSP reader to the live
+  # source — the contention api_kbps's comment blames for the decode corruption. Once a minute is fine for
+  # the first; once every five is the most the second should ever run.
+  SRC_KBPS=$(api_kbps "$SAMPLE" 2>/dev/null) || SRC_KBPS=0
+  if [ "${{SRC_KBPS:-0}}" -le 0 ]; then
+    SRC_KBPS=$(measure_src_kbps)
+    RECHECK=$RECHECK_SLOW
+  fi
+  if [ -n "$SDIR" ] && [ "${{SRC_KBPS:-0}}" -gt 0 ]; then
+    printf '%s %s\\n' "$SRC_KBPS" "$(date +%s)" > "$SDIR/$SRC.kbps.tmp" 2>/dev/null \\
+      && mv "$SDIR/$SRC.kbps.tmp" "$CACHE" 2>/dev/null
+  fi
 fi
 
 # ---- stand down when there is nothing to clamp ----------------------------------------------------
@@ -586,6 +694,15 @@ fi
 if [ "$STANDDOWN" = 1 ] && [ "$Q" = auto ] && [ "${{SRC_KBPS:-0}}" -gt 0 ] \
    && [ "$SRC_KBPS" -le $((VMAX_CFG + AUD_CFG)) ]; then
   echo "clamp: $SRC is $SRC_KBPS kbit/s, within the $((VMAX_CFG + AUD_CFG)) kbit/s ceiling — serving the source unchanged" >&2
+  # Tell the proxy there will be no clamped path, so a viewer is served the source at once instead of
+  # waiting out a hold for a transcode that is never coming.
+  say_verdict source
+  # DROP the cached measurement. Standing down exits ON PURPOSE so MediaMTX respawns us and we measure
+  # again — that respawn IS the re-check, and it is the only thing that notices a source climbing over the
+  # ceiling mid-stream (916 kbit/s early and 10 Mbit/s later, measured across one evening on this node).
+  # Left in place the cache would answer that re-measurement with the number that caused the stand-down,
+  # so the loop would keep running and keep deciding nothing for as long as the cache lived.
+  rm -f "$CACHE"
   sleep "$RECHECK"          # MediaMTX respawns us on exit; this is what paces the re-measurement
   exit 0
 fi
@@ -662,6 +779,10 @@ hw_ok() {{
 }}
 
 START=$(date +%s)
+# From here a clamped path IS coming (ffmpeg needs a second or two to connect and produce). The proxy
+# holds a viewer's first playlist request across that gap rather than starting them on the source, so
+# saying this before the exec is what turns a swap into a short wait.
+say_verdict clamped
 if [ "{encoder}" = "libx264" ] || hw_ok; then
   # Any later failure is a source-side problem, NOT the encoder — exit and let MediaMTX's
   # runOnReadyRestart bring us back, which re-probes and stays on hardware.
@@ -677,6 +798,9 @@ fi
 # to one attempt every few seconds. Viewers are unaffected either way: with no clamped path published, the
 # HLS proxy falls back to serving the source (see _upstream_path).
 END=$(date +%s)
+# Retract the `clamped` claim: no transcode means no clamped path, and a stale claim would make the proxy
+# hold every viewer for the full grace on a node whose ffmpeg is missing or whose encoder just died.
+say_verdict source
 [ $((END - START)) -lt 5 ] && sleep 5
 echo "clamp: transcode attempt for $SRC ended — viewers get the unclamped source until it recovers" >&2
 exit 1
@@ -952,13 +1076,50 @@ def _clear_pidfile() -> None:
         pass
 
 
+def _drain_log(proc: subprocess.Popen) -> None:
+    """Relay MediaMTX's stdout into the app log, one line at a time, forever.
+
+    This thread is load-bearing beyond logging: with stdout a pipe, nothing reading it means MediaMTX
+    blocks on its next write once the pipe buffer fills — so the loop must not be allowed to die on a
+    single bad line. Decode errors are already handled by errors="replace"; anything else is swallowed
+    per line so draining continues.
+    """
+    stream = proc.stdout
+    if stream is None:
+        return
+    try:
+        for line in stream:
+            try:
+                line = line.rstrip()
+                if line:
+                    logger.info("[mediamtx] %s", line)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
 def _spawn(cfg: dict) -> None:
     global _proc
     try:
         _write_config(cfg)
         _kill_stale()          # before binding: a survivor already holds :1935/:8888
+        # Piped, not inherited. MediaMTX logs to stdout, and inherited that landed in a journal stream
+        # `journalctl -u posterchanai.service` does not show — so MediaMTX's log, and with it every
+        # decision clamp.sh prints (which ceiling it chose, whether it stood down, whether it fell back to
+        # the CPU encoder), reached nobody. A wrong clamp is silent enough already.
+        # The pipe MUST be drained or MediaMTX blocks forever once the buffer fills, which is what
+        # _drain_log exists for; it is a daemon thread and ends on EOF when MediaMTX exits.
         _proc = subprocess.Popen([str(_STREAM_BIN), str(_STREAM_CFG)], cwd=str(_STREAM_DIR),
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 bufsize=1, text=True, errors="replace",
                                  preexec_fn=_pdeathsig)
+        threading.Thread(target=_drain_log, args=(_proc,), name="mediamtx-log", daemon=True).start()
         try:
             _PIDFILE.write_text(str(_proc.pid))
         except Exception as e:
