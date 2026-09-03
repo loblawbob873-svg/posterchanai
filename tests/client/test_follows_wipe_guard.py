@@ -27,6 +27,26 @@ APP = HERE.parent.parent / "static" / "js" / "client" / "app.js"
 
 
 class FollowsSurviveAShortRead(unittest.TestCase):
+    def test_deliberate_large_shrink_is_confirmed_and_committed_atomically(self):
+        p = subprocess.run(["node", str(HERE / "follow_shrink_confirm_runtime.mjs")],
+                           text=True, capture_output=True, timeout=120)
+        self.assertEqual(p.returncode, 0, p.stdout[-2000:] + p.stderr[-4000:])
+        got = json.loads(p.stdout)
+        self.assertTrue(got["cancel"]["cancelled"])
+        self.assertEqual((got["cancelSigned"], got["cancelPublished"]), (0, 0),
+                         "cancelling a destructive shrink still signed or published it")
+        self.assertEqual(got["cancelBaseline"], 1163)
+        self.assertFalse(got["failed"]["ok"])
+        self.assertEqual((got["failureBaseline"], got["failureReset"]), (1163, 10),
+                         "a failed relay write reset recovery history")
+        self.assertTrue(got["success"]["ok"])
+        self.assertEqual((got["successBaseline"], got["successReset"]), (8, 200))
+        self.assertIn("1,163", got["question"]["message"])
+        self.assertIn("8", got["question"]["message"])
+        self.assertTrue(got["question"]["opts"]["danger"])
+        self.assertTrue(got["autoBlocked"], "an automatic/poisoned publish bypassed the hard guard")
+        self.assertEqual(got["autoAsked"], 0, "a non-user relay path displayed destructive confirmation")
+
     def test_a_short_read_neither_shrinks_the_list_nor_disarms_the_guard(self):
         p = subprocess.run(["node", str(HERE / "follows_wipe_runtime.mjs")],
                            text=True, capture_output=True, timeout=120)
@@ -63,6 +83,8 @@ class FollowsSurviveAShortRead(unittest.TestCase):
         self.assertEqual(got["fromStoredHistory"], 55,
                          "the retained older kind-3 was ignored, so a cleared/poisoned localStorage "
                          "still made the newest short list authoritative")
+        self.assertEqual(got["afterConcurrentOldReplay"], 8,
+                         "an older large kind-3 replay undid the user's confirmed baseline reset")
 
     def test_the_write_guard_does_not_trust_localstorage_alone(self):
         """A device with no localStorage (fresh profile, cleared WebView, new install) read 0 for

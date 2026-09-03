@@ -1439,8 +1439,19 @@
         if(held){ const n=(held.tags||[]).filter(t=>t[0]===letter&&t[1]).length; if(n>known) known=n; }
       }catch(_){}
       if(known>=8 && outP < Math.floor(known/2)){
-        toast('safety: refused to erase your '+label+' list — reload and try again');
-        throw new Error('replaceable-list shrink guard: '+outP+'<'+known);
+        /* A relay read can NEVER ask this question. Only a click path which explicitly declares a
+         * user follow edit may offer the destructive override. This keeps a poisoned hydration,
+         * background sync, or future accidental publish(3) call from laundering corruption into a
+         * new trusted baseline. The baseline is changed below only after Relay.publish succeeds. */
+        if(kind===3 && opts && opts.userFollowEdit){
+          const yes=await uiConfirm('Your follow list will shrink from '+known.toLocaleString()+' people to '+outP.toLocaleString()+'. This is a large permanent change.',
+                                    {ok:'Remove '+(known-outP).toLocaleString()+' follows',cancel:'Keep my follows',danger:true});
+          if(!yes) return {ok:false,cancelled:true};
+          opts._confirmedFollowBaseline={count:outP};
+        } else {
+          toast('safety: refused to erase your '+label+' list — reload and try again');
+          throw new Error('replaceable-list shrink guard: '+outP+'<'+known);
+        }
       }
     }
     // Interop (OPT-IN, default off): stamp your Monero address on your kind-1 notes (like Nosmero) so ANY
@@ -1482,6 +1493,15 @@
       try{ Store.removeEvent(ev.id); }catch(_){} invalidateCounts();
       // Callers that show their OWN specific failure message pass {quiet:true} so we don't double-toast.
       if(!(opts && opts.quiet)) toast('couldn’t reach the relay — try again in a moment');
+    }
+    if(r.ok && kind===3 && opts && opts._confirmedFollowBaseline){
+      /* Commit the new recovery baseline only AFTER the signed event is accepted. Cancellation,
+       * signer refusal and relay failure leave both the old members and old history floor intact.
+       * resetAt makes older retained kind-3 versions recovery history, not evidence that can undo
+       * this confirmed choice on reload. */
+      const members=[...new Set((tags||[]).filter(t=>t[0]==='p'&&t[1]&&t[1]!==ME.pubkey).map(t=>t[1]))];
+      ClientSettings.set('followsSafetyCache',members);
+      ClientSettings.set('followsSafetyResetAt',Number(ev.created_at)||Math.floor(Date.now()/1000));
     }
     return { ev, ...r };
   }
@@ -5999,7 +6019,8 @@
     /* Store intentionally retains old replaceable versions by id even though query() collapses them.
      * Use that local history as recovery evidence: if a bad newer kind-3 says 8 while this device
      * still has the earlier 1,163-tag event, newest-wins must not erase the only good witness. */
-    try{ for(const ev of Store.all()){ if(ev.kind!==3 || ev.pubkey!==ME.pubkey) continue;
+    const resetAt=Number(ClientSettings.get('followsSafetyResetAt',0))||0;
+    try{ for(const ev of Store.all()){ if(ev.kind!==3 || ev.pubkey!==ME.pubkey || Number(ev.created_at)<resetAt) continue;
       const p=[...new Set((ev.tags||[]).filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]))];
       if(p.length>best.length) best=p;
     } }catch(_){}
@@ -6175,7 +6196,7 @@
                      : (kind===10000 ? [...MUTED_WORDS].map(w=>['word',w]).concat([...MUTED_THREADS].map(e=>['e',e])) : []);
     // Don't publish a self-follow p-tag (ME is kept in FOLLOWS only for the home-feed filter).
     const tags = nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p]));
-    const r = await publish(kind, cur?cur.content:'', tags);
+    const r = await publish(kind, cur?cur.content:'', tags, kind===3?{userFollowEdit:true}:undefined);
     return !!(r && r.ok);   // callers apply the local change + toast ONLY on success (no ghost follow/mute)
   }
   // Follow many at once (e.g. "Follow all back") in a SINGLE kind-3 publish, merged onto the union of
@@ -6189,7 +6210,7 @@
     for(const pk of pks){ if(pk && pk!==ME.pubkey && !pset.has(pk)){ pset.add(pk); FOLLOWS.add(pk); added++; fresh.push(pk); } }
     if(!added) return 0;
     const nonP = cur ? cur.tags.filter(t=>t[0]!=='p') : [];
-    const r=await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])));
+    const r=await publish(3, cur?cur.content:'', nonP.concat([...pset].filter(p=>p!==ME.pubkey).map(p=>['p',p])), {userFollowEdit:true});
     if(!(r && r.ok)){ fresh.forEach(pk=>FOLLOWS.delete(pk)); return 0; }   // relay didn't store it → revert the local adds
     _persistFollows();
     // follow-bridge the newly-followed bridged accounts on Pleroma too (same as single toggleFollow)

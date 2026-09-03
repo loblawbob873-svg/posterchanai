@@ -94,6 +94,18 @@ const run = new Function('kind3', 'person', `return (async()=>{
                              {...kind3(2,'newer-bad'), kind:3, pubkey:ME.pubkey}];
   await fetchFollows();
   out.fromStoredHistory = [...FOLLOWS].filter(p => p !== ME.pubkey).length;
+
+  // After an explicitly confirmed reset, an older large event replayed by another relay is history,
+  // not authority. The reset timestamp prevents it from rehydrating the removed follows.
+  ClientSettings.set('followsCache', Array.from({length:8},(_,i)=>person(i)));
+  ClientSettings.set('followsSafetyCache', Array.from({length:8},(_,i)=>person(i)));
+  ClientSettings.set('followsSafetyResetAt', 150);
+  FOLLOWS = new Set();
+  globalThis.storedEvents = [{...kind3(55,'concurrent-old-replay'), kind:3, pubkey:ME.pubkey, created_at:100},
+                             {...kind3(8,'confirmed-new'), kind:3, pubkey:ME.pubkey, created_at:200}];
+  globalThis.relayAnswer = {...kind3(8,'confirmed-new'), created_at:200};
+  await fetchFollows();
+  out.afterConcurrentOldReplay = [...FOLLOWS].filter(p => p !== ME.pubkey).length;
   return out;
 })()`);
 
