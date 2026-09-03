@@ -157,6 +157,17 @@ def test_the_flag_is_set_when_the_window_is_adopted_and_kept_current():
         "normal window for ever")
 
 
+def test_late_xwayland_game_class_gets_one_fullscreen_request():
+    """Sway's map-time rule cannot match a WM_CLASS that Proton publishes after mapping."""
+    block = OS_JS[OS_JS.index("const liveGameIds = new Set"):]
+    block = block[:block.index("/* A window opened for a view")]
+    assert "isGameApp(r)" in block
+    assert "await pcWM.fullscreen(id,true)" in block
+    assert "_gameFullscreenAsked.has(id)" in block
+    assert "_gameFullscreenAsked.add(id)" in block
+    assert "_gameFullscreenAsked.delete(id)" in block
+
+
 def test_the_class_is_read_from_either_wayland_or_x11():
     """Steam and most games are XWayland, so `app_id` is empty and the class is the only name they
     have — wm.js folds both into `app` for exactly this reason."""

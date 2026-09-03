@@ -3253,6 +3253,7 @@
    * it fullscreen; short enough that a WINDOWED game stops owning the screen. */
   const GAME_SETTLE_MS = 45000;
   const _GAME_APP = /^(?:steam_app_\d+|gamescope)/i;
+  const _gameFullscreenAsked = new Set();
   function isGameApp(nw){
     try{ return _GAME_APP.test(String((nw && (nw.app || nw.class)) || '')); }
     catch(_){ return false; }
@@ -3300,6 +3301,19 @@
     try{ if(PCOSShell.machineApps) await PCOSShell.machineApps(); }catch(_){}
     if(pass !== _nativeAdoptPass) return false;
     try{ rows = PCOSShell.taskbarRows(list); }catch(_){ rows = []; }
+    /* Proton/XWayland often publishes WM_CLASS only AFTER the surface maps. Sway's for_window rule
+     * is evaluated at map time, so a real game can miss it and remain a small 1030x771 window (live
+     * Cyberpunk measurement). Reconciliation sees the final class: request fullscreen once per
+     * compositor surface. Once means the user can deliberately leave fullscreen afterwards. */
+    const liveGameIds = new Set(rows.map(r => Number(r && r.id)).filter(Number.isFinite));
+    for(const id of [..._gameFullscreenAsked]) if(!liveGameIds.has(id)) _gameFullscreenAsked.delete(id);
+    for(const r of rows){
+      const id=Number(r&&r.id);
+      if(!Number.isFinite(id)||!isGameApp(r)||r.fullscreen||_gameFullscreenAsked.has(id))continue;
+      _gameFullscreenAsked.add(id);
+      try{ await pcWM.fullscreen(id,true); r.fullscreen=true; }
+      catch(_){ _gameFullscreenAsked.delete(id); }
+    }
     /* A window opened for a view wears that view's icon and label — the same ones its desktop icon
      * and start-menu row carry. osshell.js cannot know them (it is the machine's half and has no
      * app list); this is the half that does. */
