@@ -227,7 +227,11 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     assert 'id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"' in CONCORD
     assert "leaveShortcut.onclick=()=>{const action=$('#cc-leave-community');if(action)action.click();}" in CONCORD
     assert 'async function leaveArmadaMembership(p,room)' in CONCORD
-    assert "tombs.set(room.communityId,{community_id:room.communityId,removed_at:Date.now()})" in CONCORD
+    assert "tombs.set(room.communityId,{community_id:room.communityId,removed_at:removedAt})" in CONCORD
+    assert "rememberLeftCommunity(viewer.pubkey,room,removedAt)" in CONCORD
+    assert "forgetLeftCommunity(viewer.pubkey,room)" in CONCORD
+    assert "wasLocallyLeft(viewer.pubkey,item)" in CONCORD
+    assert "kept=rooms.filter(room=>!dead.has(room.communityId)&&!wasLocallyLeft(viewer.pubkey,room))" in CONCORD
     assert "await p.publish(13302,content,[])" in CONCORD
     handler = CONCORD.split("const leave=$('#cc-leave-community')", 1)[1].split("const settingsSave", 1)[0]
     assert handler.index('await leaveArmadaMembership(p,room)') < handler.index('const latest=saved()')

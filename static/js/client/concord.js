@@ -883,9 +883,35 @@
     const matches=String(text||'').match(/https?:\/\/[^\s<>]+\/invite\/naddr1[023456789acdefghjklmnpqrstuvwxyz]+#[A-Za-z0-9_-]+/gi)||[];
     return matches.map(url=>url.replace(/[),.;!?]+$/,'' )).map(url=>{ const parsed=inviteParts(url); if(!parsed)return null; const blurb=String(text).replace(url,'').replace(/#[\w-]+/g,'').replace(/\s+/g,' ').trim(); return {...parsed,name:blurb.slice(0,80)||'Public Concord community',description:blurb,source}; }).filter(Boolean);
   }
+  const LEFT_COMMUNITIES_KEY='pc.concord.left.v1';
+  function leftCommunities(pubkey){
+    if(!pubkey)return [];
+    try{const all=JSON.parse(localStorage.getItem(LEFT_COMMUNITIES_KEY)||'{}'),rows=all&&all[pubkey];return Array.isArray(rows)?rows:[];}catch(_){return [];}
+  }
+  function saveLeftCommunities(pubkey,rows){
+    if(!pubkey)return;
+    let all={};try{all=JSON.parse(localStorage.getItem(LEFT_COMMUNITIES_KEY)||'{}')||{};}catch(_){}
+    all[pubkey]=(rows||[]).slice(-256);localStorage.setItem(LEFT_COMMUNITIES_KEY,JSON.stringify(all));
+  }
+  function leftMatches(row,room){
+    const id=roomIdentity(room),naddr=String(room&&room.naddr||''),url=String(room&&room.url||'');
+    return !!row&&(!!id&&row.communityId===id||!!naddr&&row.naddr===naddr||!!url&&row.url===url);
+  }
+  function rememberLeftCommunity(pubkey,room,removedAt=Date.now()){
+    const rows=leftCommunities(pubkey).filter(row=>!leftMatches(row,room));
+    rows.push({communityId:roomIdentity(room),naddr:String(room&&room.naddr||''),url:String(room&&room.url||''),removedAt:Number(removedAt)||Date.now()});
+    saveLeftCommunities(pubkey,rows);
+  }
+  function forgetLeftCommunity(pubkey,room){saveLeftCommunities(pubkey,leftCommunities(pubkey).filter(row=>!leftMatches(row,room)));}
+  function wasLocallyLeft(pubkey,room){return leftCommunities(pubkey).some(row=>leftMatches(row,room));}
   function recoverOwnedInvite(p,item){
     const viewer=p.viewer?p.viewer():{};
     if(!item||!viewer.pubkey||item.source.pubkey!==viewer.pubkey||recoveredOwnedInvites.has(item.naddr))return;
+    /* An announcement is not membership. Owners commonly announce the invite once and later leave
+     * the Soapbox room; discovery replays that old kind-1 on every reconnect. Never turn it back
+     * into a joined room after an explicit leave. An intentional Join clears this ledger only
+     * after its replacement membership document publishes successfully. */
+    if(wasLocallyLeft(viewer.pubkey,item))return;
     recoveredOwnedInvites.add(item.naddr);
     const rooms=saved();
     if(rooms.some(r=>r.naddr===item.naddr||r.url===item.url))return;
@@ -1178,8 +1204,20 @@
         const compatible=e.current?e:{...e,current:e.seed};
         const old=entries.get(e.community_id);if(!old||Number(e.added_at||0)>Number(old.added_at||0))entries.set(e.community_id,compatible);
       }
-      const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)); if(!live.length)return;
-      const rooms=saved(); let changed=false;
+      const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)&&
+        !wasLocallyLeft(viewer.pubkey,{communityId:e.community_id,url:inviteRefUrl(e.invite_ref)}));
+      let rooms=saved(),changed=false;
+      /* A tombstone must also REMOVE a room already rebuilt by cached membership or an old public
+       * invite. The previous fold only declined to add it, leaving the stale local row untouched. */
+      const dead=new Set([...tombs].filter(([id,at])=>Number(at)>=Number((entries.get(id)||{}).added_at||0)).map(([id])=>id));
+      const activeId=state.community==null?'':roomIdentity(rooms[state.community]),kept=rooms.filter(room=>!dead.has(room.communityId)&&!wasLocallyLeft(viewer.pubkey,room));
+      if(kept.length!==rooms.length){
+        rooms=kept;changed=true;
+        if(activeId){const at=rooms.findIndex(room=>roomIdentity(room)===activeId);state.community=at>=0?at:(rooms.length?0:null);state.channel=state.community==null?null:'general';}
+        save(rooms);
+        if(state.community==null)localStorage.removeItem('pc.concord.active');else localStorage.setItem('pc.concord.active',String(state.community));
+      }
+      if(!live.length){if(changed)backgroundRender();return;}
       for(const e of live){
         if(state.community!=null&&!localOnly)return;
         const current=e.current||{},url=inviteRefUrl(e.invite_ref),
@@ -1248,6 +1286,7 @@
     const content=await p.nip44enc(viewer.pubkey,JSON.stringify(list));
     const made=await p.publish(13302,content,[]);
     if(made&&made.ev&&p.relayPublishTo)await p.relayPublishTo(CORD_RELAYS,made.ev);
+    forgetLeftCommunity(viewer.pubkey,room);
     return true;
   }
   async function leaveArmadaMembership(p,room){
@@ -1261,9 +1300,10 @@
         for(const t of Array.isArray(list.tombstones)?list.tombstones:[]){if(t&&t.community_id&&Number(t.removed_at||0)>=Number((tombs.get(t.community_id)||{}).removed_at||0))tombs.set(t.community_id,t);}
       }catch(_){}
     }
-    tombs.set(room.communityId,{community_id:room.communityId,removed_at:Date.now()});
+    const removedAt=Date.now();tombs.set(room.communityId,{community_id:room.communityId,removed_at:removedAt});
     const content=await p.nip44enc(viewer.pubkey,JSON.stringify({entries:[...entries.values()],tombstones:[...tombs.values()]})),made=await p.publish(13302,content,[]);
     if(made&&made.ev&&p.relayPublishTo){const accepted=await p.relayPublishTo(CORD_RELAYS,made.ev);if(!accepted)throw new Error('membership relays rejected the leave update');}
+    rememberLeftCommunity(viewer.pubkey,room,removedAt);
     return true;
   }
   async function hydrateRoomStreams(p,index,expectedIdentity=''){
@@ -2149,7 +2189,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,membershipEvents,decodeMembershipLists,mergeArmadaBundle,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
