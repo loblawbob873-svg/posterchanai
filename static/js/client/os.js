@@ -7594,7 +7594,30 @@
     /* Only on the EDGES. `toggleStart(false)` is called defensively from several places, and an
        unconditional release would decrement the overlay refcount for a menu that was never open —
        lowering the shell out from under whatever else is up (the notification panel calls this). */
-    if(!startOpen){ if(menu) menu.remove(); _nativeMenuLayer(false); drawBar(); return; }
+    if(!startOpen){ if(menu) menu.remove(); _nativeMenuLayer(false);
+                    try{ if(window.pcPopup && pcPopup.close) pcPopup.close(); }catch(_){ }
+                    drawBar(); return; }
+    /* A REAL WINDOW WHERE THERE IS A COMPOSITOR TO GIVE IT TO.
+     *
+     * The in-page menu below is drawn inside the shell, which is the TILED sway window — so it
+     * opens underneath every floating application and no z-index can lift it. Measured on the
+     * machine: a brand-new floating window maps ABOVE Telegram and both PosterChan windows. So on
+     * PosterChanOS the menu is its own floating window and the compositor stacks it for us.
+     *
+     * The in-page path stays for everywhere else — a browser, the Windows/macOS builds, any shell
+     * with no popup bridge — and is what runs when `pcPopup` is absent. */
+    if(window.pcPopup && pcPopup.open){
+      let rect = null;
+      try{ const b = $('#os-start', root); rect = b ? b.getBoundingClientRect() : null; }catch(_){ }
+      const h = Math.min(560, Math.max(320, Math.round((window.innerHeight || 900) * 0.55)));
+      const x = Math.max(0, Math.round((rect ? rect.left : 8)));
+      const y = Math.max(0, Math.round((rect ? rect.top : (window.innerHeight || 900)) - h - 8));
+      Promise.resolve(pcPopup.open('start', { x, y, width: 420, height: h }))
+        .then(ok => { if(!ok){ startOpen = false; drawBar(); } })
+        .catch(() => { startOpen = false; drawBar(); });
+      drawBar();
+      return;
+    }
     _nativeMenuLayer(true);
     /* NO SHELL RAISE HERE, AND THAT IS A CORRECTION.
      *
@@ -7922,6 +7945,14 @@
       });
   }
 
+  /* This page is a POPUP surface (the start menu in its own window), not a desktop and not an app
+     window. Kept as a function rather than a constant because `restore()` and `enter()` both ask,
+     and a constant read before the query string is parsed has been a bug here before. */
+  function popupKind(){
+    try{ return String(new URLSearchParams(window.location.search).get('pcpopup') || ''); }
+    catch(_){ return ''; }
+  }
+
   function enter(){
     if(on) return;
     /* A WINDOW IS NOT A DESKTOP, AND THIS IS THE ONE PLACE THAT CANNOT BE ROUTED AROUND.
@@ -7943,6 +7974,9 @@
        * not guard — which for this one is a second desktop built inside a window. */
       if((window.PCOSWin && window.PCOSWin.isWindow()) || window.__PC_WIN_STATE__ ||
          new URLSearchParams(window.location.search).has('pcwin')) return;
+      /* A popup is a menu, not a desktop. Without this it would build a whole second desktop inside
+         a 420x560 window — the same failure the terminal window had. */
+      if(popupKind()) return;
     }catch(_){}
     if(!fits() && !isSystemShell()){
       // A tablet held upright is the common case here, and "needs a wider screen" is useless advice
@@ -8087,6 +8121,14 @@
                * in its own comment, and had NO CALLERS AT ALL — the key that is meant to be the one
                * unambiguous way to a shell on this machine was the one path that skipped it. */
               openTerminalHere();
+            }
+            /* WHAT THE POPUP CHOSE. The start menu is its own floating window now (see
+               pc:popup:open in main.js) because a menu drawn inside this tiled surface can never be
+               above a floating application. That window is a separate renderer, so it hands the
+               choice back through the tick path the shell already routes. */
+            else if(p.indexOf('pc:open:') === 0){
+              toggleStart(false);
+              try{ openLauncherApp(p.slice('pc:open:'.length)); }catch(_){ }
             }
             else if(p === 'pc:tasks'){
               toggleStart(false);
@@ -8650,7 +8692,63 @@
   /* Restore on load when the screen is wide enough. A remembered desktop on a window that has since
    * been made narrow must not strand somebody in a UI they cannot use, so the size check applies to
    * the restore as well as to the click. */
+  /* THE START MENU, DRAWN IN ITS OWN WINDOW.
+   *
+   * The list comes from `apps()`, which reads the sidebar — the same source the desktop icons and
+   * the in-page menu use, so a feature added to the nav appears here for free and the two can never
+   * disagree about what exists. Choosing hands the view back to the shell through `pcPopup.pick`,
+   * because this window is a separate renderer and cannot call the desktop's openApp.
+   *
+   * Escape closes. Blur closes it too (main.js), which is what makes clicking away behave like a
+   * menu rather than leaving a window stranded on another monitor. */
+  function renderStartPopup(){
+    const list = apps().filter(a => a && a.view && !a.off);
+    const pick = (view) => {
+      try{ if(window.pcPopup && pcPopup.pick) { pcPopup.pick(view); return; } }catch(_){ }
+      try{ window.close(); }catch(_){ }
+    };
+    const body = document.body;
+    body.className = 'os-popup-body';
+    body.innerHTML = '<div class="os-popup"><input class="input os-popup-q" id="pop-q" '
+      + 'placeholder="Search apps" autocomplete="off" spellcheck="false">'
+      + '<div class="os-popup-list" id="pop-list"></div></div>';
+    const listEl = document.getElementById('pop-list');
+    const draw = (q) => {
+      const needle = String(q || '').trim().toLowerCase();
+      const rows = list.filter(a => !needle || String(a.label || '').toLowerCase().includes(needle));
+      listEl.innerHTML = rows.map(a =>
+        '<button class="os-popup-item" data-view="' + PC().enc(a.view) + '">'
+        + appIcon(a) + '<span>' + PC().enc(a.label || a.view) + '</span></button>').join('')
+        || '<div class="os-popup-empty">Nothing matches</div>';
+      Array.prototype.forEach.call(listEl.querySelectorAll('[data-view]'), (b) => {
+        b.onclick = () => pick(b.dataset.view);
+      });
+    };
+    draw('');
+    const q = document.getElementById('pop-q');
+    if(q){
+      q.oninput = () => draw(q.value);
+      /* Enter runs the first match, which is what a search box in a launcher is for. */
+      q.onkeydown = (e) => {
+        if(e.key === 'Escape'){ try{ window.close(); }catch(_){ } return; }
+        if(e.key !== 'Enter') return;
+        const first = listEl.querySelector('[data-view]');
+        if(first) pick(first.dataset.view);
+      };
+      try{ q.focus(); }catch(_){ }
+    }
+    document.addEventListener('keydown', (e) => {
+      if(e.key === 'Escape') try{ window.close(); }catch(_){ }
+    });
+  }
+
   function restore(){
+    /* A POPUP WINDOW IS A MENU. It loads the whole client because it is the same bundle, but the
+       only thing it draws is the launcher — see renderStartPopup. */
+    if(popupKind()){
+      try{ if(popupKind() === 'start') renderStartPopup(); }catch(_){ }
+      return;
+    }
     /* A POPOUT IS NOT A DESKTOP, and the size check cannot tell the difference.
      *
      * "🗔 Open in a window" opens ONE view — a stream — drawn without sidebar, nav or rightbar, at

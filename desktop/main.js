@@ -1499,6 +1499,72 @@ ipcMain.handle('pc:wm:preview', async (e, id) => {
   if(overlap)return '';
   try{return await require('./native-preview.js').capture(r);}catch(_){return '';}
 });
+/* A POPUP THAT MUST APPEAR ABOVE APPLICATIONS HAS TO BE ITS OWN WINDOW.
+ *
+ * sway paints floating windows above tiled ones unconditionally, and the desktop shell is the TILED
+ * window — so the start menu, the tray flyouts and the notification panel, all drawn inside that
+ * surface, are underneath Firefox and Telegram no matter what z-index they carry. Reported over and
+ * over: "start menu is not going over windows", "notifications do not go over open windows",
+ * "volume mixer widget and nostr widget still hide behind the damn windows".
+ *
+ * Two workarounds were tried and both were wrong. Fullscreening the shell puts it on top and HIDES
+ * every other window on the workspace — pressing Start emptied the desktop. Hosting the apps inside
+ * the shell fixes the stacking but is the code path that breaks fullscreen games.
+ *
+ * A separate floating window has neither problem, and the assumption was measured on the real
+ * machine before this was written: a brand-new floating window mapped ABOVE Telegram and both
+ * PosterChan windows, last in sway's floating stack. So the popup is a real surface the compositor
+ * stacks for us, and nothing has to be hidden or reparented.
+ *
+ * One at a time, closed on blur — a menu you have clicked away from is closed, which is also what
+ * stops a stranded popup surviving on another output. */
+let _popupWin = null;
+function closePopupWindow(){
+  const p = _popupWin; _popupWin = null;
+  if(p && !p.isDestroyed()) { try{ p.close(); }catch(_){ } }
+}
+ipcMain.handle('pc:popup:open', async (e, kind, rect) => {
+  fsGuard(e);
+  const k = String(kind || '').replace(/[^a-z-]/g, '').slice(0, 24) || 'start';
+  const r = (rect && typeof rect === 'object') ? rect : {};
+  const num = (v, min, max, dflt) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : dflt;
+  };
+  closePopupWindow();
+  const p = new BrowserWindow({
+    show: false, frame: false, resizable: false, skipTaskbar: true,
+    title: 'PosterChan Popup',
+    width: num(r.width, 220, 900, 420), height: num(r.height, 160, 1400, 560),
+    x: Number.isFinite(Number(r.x)) ? Math.round(Number(r.x)) : undefined,
+    y: Number.isFinite(Number(r.y)) ? Math.round(Number(r.y)) : undefined,
+    backgroundColor: '#0a0a10', autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true, nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.js'),
+      additionalArguments: ['--pc-preload-dir=' + __dirname, '--pc-secondary-surface'],
+    },
+  });
+  _popupWin = p;
+  p.once('ready-to-show', () => { if(!p.isDestroyed()) p.show(); });
+  p.on('blur', () => { if(_popupWin === p) closePopupWindow(); });
+  p.on('closed', () => { if(_popupWin === p) _popupWin = null; });
+  try{ await p.loadURL(APP_URL + '?pcpopup=' + encodeURIComponent(k)); }
+  catch(err){ closePopupWindow(); return false; }
+  return true;
+});
+ipcMain.handle('pc:popup:close', (e) => { fsGuard(e); closePopupWindow(); return true; });
+/* What the popup chose, handed to the SHELL. The popup is its own renderer and cannot call the
+ * desktop's openApp directly; the shell already routes `pc:` ticks (that is how Super opens Start
+ * and Ctrl+Alt+Del opens the task manager), so this reuses that path rather than inventing one. */
+ipcMain.handle('pc:popup:pick', (e, view) => {
+  fsGuard(e);
+  const v = String(view || '').replace(/[^a-z0-9_:-]/gi, '').slice(0, 48);
+  closePopupWindow();
+  if(v) forwardShellTick({ change: 'run', payload: 'pc:open:' + v });
+  return true;
+});
+
 ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(id)); });
 ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
   fsGuard(e); return wm().place(Number(id), Number(x), Number(y), Number(w), Number(h));

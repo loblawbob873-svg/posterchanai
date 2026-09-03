@@ -198,6 +198,16 @@ if (isOurPage) {
     },
   });
 
+  /* THE POPUP SURFACE. A menu that must sit above applications cannot be drawn inside the desktop
+   * shell: sway paints floating windows above tiled ones and the shell is the tiled one. This opens
+   * a real floating window for it instead — see pc:popup:open in main.js. `pick` is how that
+   * window, which is its own renderer, tells the shell what was chosen. */
+  contextBridge.exposeInMainWorld('pcPopup', {
+    open: (kind, rect) => ipcRenderer.invoke('pc:popup:open', String(kind || ''), rect || {}),
+    close: () => ipcRenderer.invoke('pc:popup:close'),
+    pick: (view) => ipcRenderer.invoke('pc:popup:pick', String(view || '')),
+  });
+
   contextBridge.exposeInMainWorld('pcDisplays', {
     status: () => ipcRenderer.invoke('pc:display:status'),
     preview: rows => ipcRenderer.invoke('pc:display:preview', Array.isArray(rows) ? rows : []),
