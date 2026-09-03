@@ -131,6 +131,10 @@
   function open(view, label, opts){
     if(!enabled()) return null;
     if(!routable(view)) return null;
+    /* Harmless when no window exists, essential when main rejects this request because another
+     * monitor (or a click one frame earlier) already created the singleton. It also returns a
+     * navigated Social window before the compositor snapshot catches up. */
+    routeExisting(view);
     const o = opts || {};
     const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''));
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron

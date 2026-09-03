@@ -56,6 +56,40 @@ const APP_URL = APP_ORIGIN + '/index.html';
 const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;             // re-check every 6h for long-running windows
 const WWW = path.join(__dirname, 'www');
 
+/* ONE NATIVE TOPLEVEL PER POSTERCHAN APP, PROCESS-WIDE.
+ * Renderer task snapshots are necessarily a little late, and there can be a shell renderer on
+ * each monitor. Two quick launcher clicks can therefore both ask Electron to create the same app.
+ * Reserve the identity while the child is being created; main is the one authority shared by every
+ * renderer. The timeout only releases a reservation if Electron never creates the child. */
+const pcAppWindows = new Map();
+const DENY_WINDOW_OPEN = Object.freeze({ action: 'deny' });
+function pcWindowView(raw) {
+  try {
+    const u = new URL(String(raw || ''));
+    if (u.protocol !== 'app:' || u.hostname !== 'posterchan') return '';
+    return String(u.searchParams.get('pcwin') || '');
+  } catch (_) { return ''; }
+}
+function claimPcAppWindow(raw) {
+  const view = pcWindowView(raw);
+  if (!view) return false;
+  const prior = pcAppWindows.get(view);
+  if (prior) {
+    if (prior.pending) return true;
+    if (!prior.isDestroyed()) {
+      try { if (prior.isMinimized()) prior.restore(); prior.show(); prior.focus(); } catch (_) {}
+      return true;
+    }
+    pcAppWindows.delete(view);
+  }
+  const reservation = { pending: true };
+  pcAppWindows.set(view, reservation);
+  setTimeout(() => {
+    if (pcAppWindows.get(view) === reservation) pcAppWindows.delete(view);
+  }, 5000);
+  return false;
+}
+
 /* Tray / background state.
  *   quitting    — a REAL quit is under way, so window.close must not be turned into a hide.
  *   startHidden — this process was started by the login item; the first window loads out of sight.
@@ -639,6 +673,14 @@ function createWindow(assignment) {
   // raw Electron child leaves it outside PCOS bookkeeping, with no PosterChan title bar and no
   // reliable way to close it on a compositor. blob:/data: cannot be handed to another process, so
   // those retain a small, conventional native frame of their own.
+  created.webContents.on('did-create-window', (child, details) => {
+    const view = pcWindowView(details && details.url);
+    if (!view) return;
+    pcAppWindows.set(view, child);
+    child.once('closed', () => {
+      if (pcAppWindows.get(view) === child) pcAppWindows.delete(view);
+    });
+  });
   created.webContents.setWindowOpenHandler(({ url, features }) => {
     /* A PosterChan WINDOW — see static/js/client/oswin.js. On PosterChanOS a window is its own
      * compositor toplevel so sway stacks it with Telegram and Firefox natively, instead of the
@@ -648,6 +690,10 @@ function createWindow(assignment) {
      * identical in a browser tab and in a real window. sway is told to float these by TITLE (the
      * app_id is shared with the desktop, which must stay tiled) — see sway.config. */
     if (isOurs(url) && /[?&]pcwin=/.test(url)) {
+      /* `typeof` keeps the small shipped-handler simulation self-contained while production always
+       * takes this process-wide path. Return the shared frozen result so the title-at-map regression
+       * test can continue to distinguish this early singleton exit from the ordinary-link deny. */
+      if (typeof claimPcAppWindow === 'function' && claimPcAppWindow(url)) return DENY_WINDOW_OPEN;
       const num = (name, fallback) => {
         const m = new RegExp(name + '=(\\d+)').exec(String(features || ''));
         const v = m ? Number(m[1]) : NaN;
