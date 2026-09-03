@@ -12922,6 +12922,35 @@
    * So space does nothing here — EXCEPT where it already means something, and those exceptions are
    * not negotiable: it types in a field, and it ACTIVATES a focused control, which is how the
    * keyboard operates a button. Suppressing either of those would trade one bug for a worse one. */
+  /* A WAY BACK, FROM ANYWHERE, WITHOUT A SIDEBAR.
+   *
+   * Reported three times in a row and each time it read as a different bug: "opened a profile from
+   * social and now can't go back to social", "added contact in texts and no way to go back to
+   * texts, I am stuck in Contacts", "clicking on Messages, opening a convo, click on avatar, you go
+   * to a profile page, problem is no way back to messages".
+   *
+   * They are one thing. A desktop WINDOW has no sidebar and no browser chrome, and the screens that
+   * navigate inside it — a profile, a thread, Contacts — set the client's VIEW directly rather than
+   * going through switchView, so the window still calls itself Messages while showing a profile.
+   * Pressing the app's icon focuses that window and hands the profile straight back.
+   *
+   * The app has a real history (`_navPushed`, popstate) and Android's back button already walks it.
+   * Nothing on a desktop did. Alt+Left is the binding every browser and file manager uses, so it
+   * needs no explaining, and it works in a window, on the web and in the desktop shell alike. */
+  function _bindAltLeftGoesBack(){
+    document.addEventListener('keydown', e => {
+      if(e.key !== 'ArrowLeft' || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const t = e.target;
+      try{
+        const tag = String((t && t.tagName) || '').toLowerCase();
+        if(t && (t.isContentEditable || tag === 'input' || tag === 'textarea' || tag === 'select')) return;
+      }catch(_){ return; }
+      if(!(typeof _navPushed !== 'undefined' && _navPushed > 0)) return;   // nothing of ours to pop
+      e.preventDefault();
+      try{ history.back(); }catch(_){ }
+    }, false);
+  }
+
   function _bindSpaceDoesNotJump(){
     document.addEventListener('keydown', e => {
       if(e.key !== ' ' && e.key !== 'Spacebar') return;
@@ -12943,6 +12972,7 @@
 
   function bindFeedActions(){
     _bindSpaceDoesNotJump();
+    _bindAltLeftGoesBack();
     $('#feed').addEventListener('click', async (e)=>{
       if(e.target.closest('.yt-embed')) return;  // YouTube facade → handled by the player loader; don't lightbox the thumb
       const mn=e.target.closest('.mention'); if(mn){ e.preventDefault(); const pk=safePk(mn.dataset.np); if(pk) renderProfileView(pk); return; }
