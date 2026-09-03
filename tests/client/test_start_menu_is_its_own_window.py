@@ -26,6 +26,7 @@ the bridge existing, never on a platform string.
 """
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -148,6 +149,24 @@ def test_every_action_that_opens_something_reaches_the_desktop():
                      ("  async function toggleFull(){", "full"),
                      ("  function exit(remember){", "classic")]:
         assert f"_menuAct('{kind}'" in _fn(OS_JS, fn), f"{fn.strip()} does not reach the desktop"
+
+
+def test_machine_program_is_routed_before_the_popup_closes():
+    """Closing the popup destroys its renderer, so it cannot launch a process after close."""
+    body = _fn(OS_JS, "  function toggleStart(force){")
+    machine = body[body.index("if(b.dataset.app){"):body.index("toggleStart(false); openLauncherApp", body.index("if(b.dataset.app){"))]
+    assert "_menuAct('app', b.dataset.app)" in machine
+    assert machine.index("_menuAct('app', b.dataset.app)") < machine.index("toggleStart(false)")
+    actions = OS_JS.split("else if(p.indexOf('pc:act:') === 0)",1)[1].split("else if(p === 'pc:tasks')",1)[0]
+    assert "kind === 'app'" in actions and "PCOSShell.launch(val)" in actions
+
+
+def test_scanned_program_launch_matrix_runs_end_to_end():
+    done = subprocess.run(
+        ["node", str(ROOT / "tests/client/start_native_launch_runtime.js")],
+        cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "OK installed Start programs launch" in done.stdout
 
 
 def test_closing_the_menu_in_a_window_closes_the_window():

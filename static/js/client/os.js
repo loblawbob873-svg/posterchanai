@@ -8038,6 +8038,11 @@
         /* A native app is STARTED, which takes as long as it takes — the menu closes first so the
          * desktop is not frozen behind a menu while firefox loads, and the launch reports itself. */
         if(b.dataset.app){
+          /* This renderer IS the native Start popup. Closing it before calling launch destroys the
+           * renderer and cancels the IPC that was supposed to start Firefox/Steam — every row
+           * looked pressable and did nothing. Hand the id to the authoritative shell first, using
+           * the same exact-one popup action route as PosterChan views. */
+          if(_menuAct('app', b.dataset.app)) return;
           toggleStart(false);
           try{
             PCOSShell.launch(b.dataset.app).then(
@@ -8394,6 +8399,12 @@
               try{ val = decodeURIComponent(rest); }catch(_){ }
               try{
                 if(kind === 'view') openLauncherApp(val);
+                else if(kind === 'app'){
+                  if(window.PCOSShell && PCOSShell.launch)
+                    Promise.resolve(PCOSShell.launch(val)).then(
+                      r=>{if(r&&r.why)PC().toast(r.why);},
+                      e=>PC().toast(String(e&&e.message||e)));
+                }
                 else if(kind === 'profile') PC().openProfile(val);
                 else if(kind === 'thread') PC().openThread(val);
                 else if(kind === 'reply'){

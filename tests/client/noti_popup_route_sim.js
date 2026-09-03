@@ -28,6 +28,8 @@ function liftRouter() {
     let notiOpen = true;
     const PC = () => ctx.pc;
     const openLauncherApp = ctx.openLauncherApp;
+    const PCOSShell = ctx.shell;
+    const window = { PCOSShell };
     const drawBar = ctx.drawBar;
     if (false) {}
     ${branch}
@@ -56,6 +58,7 @@ function ctx() {
       compose: (o) => calls.push(['compose', o]),
     },
     openLauncherApp: (v) => calls.push(['view', v]),
+    shell: { launch: (v) => { calls.push(['app', v]); return Promise.resolve({}); } },
     drawBar: () => calls.push(['drawBar']),
   };
 }
@@ -66,6 +69,11 @@ const PK = 'b'.repeat(64);
 check('a view name opens the app', () => {
   const c = ctx(); route('pc:act:view:mail', c);
   eq(c.calls[0], ['view', 'mail']);
+});
+
+check('an installed desktop entry launches through the authoritative shell', () => {
+  const c = ctx(); route('pc:act:app:app%3Afirefox-bin', c);
+  eq(c.calls[0], ['app', 'app:firefox-bin']);
 });
 
 check('a profile action opens that profile', () => {

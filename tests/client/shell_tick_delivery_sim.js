@@ -98,6 +98,8 @@ fn(...Object.values(ctx));
   wmObj.workspaces=async()=>[{name:'shared',focused:true}];
   const routes=['pc:terminal','pc:open:global','pc:open:texts','pc:open:concord','pc:open:monero',
     'pc:open:office','pc:open:drafts','pc:open:settings','pc:open:firefox',
+    'pc:act:app:app%3Afirefox-bin','pc:act:app:app%3Asteam','pc:act:app:app%3Alibreoffice-writer',
+    'pc:act:app:app%3Aorg.example.Generic',
     'pc:act:view:social','pc:act:profile:alice','pc:act:thread:event',
     'pc:act:find:https%3A%2F%2Fexample.com'];
   for(const payload of routes){
