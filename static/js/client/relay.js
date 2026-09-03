@@ -381,11 +381,25 @@
       } else if (typ === 'EOSE' || typ === 'CLOSED'){
         const sub = this._subs.get(m[1]); if (!sub) return;
         if(typ==='CLOSED' && String(m[2]||'').toLowerCase().startsWith('auth-required')){
-          // Retry the exact subscription only after this socket authenticates. Other sockets may
-          // answer meanwhile; sub.sent/eosed are per URL, so this cannot duplicate completion.
-          sub.sent.delete(conn.url); sub.eosed.delete(conn.url);
-          const owner=((sub.filters||[]).find(f=>Array.isArray(f.authors)&&f.authors.length===1)||{}).authors?.[0];
-          this._authenticate(conn,owner).then(ok=>{if(ok&&this._subs.has(m[1])&&conn._send(['REQ',m[1],...sub.filters]))sub.sent.add(conn.url);});
+          // A private owner-bound subscription gets ONE AUTH attempt on this relay. A filter with
+          // no owner, several owners, or a repeated refusal can never be satisfied by the active
+          // account; blindly re-signing here was an unbounded NIP-46/NIP-55 prompt storm.
+          sub.eosed.delete(conn.url);
+          const priv=(sub.filters||[]).filter(f=>(f.kinds||[]).some(k=>Number(k)===78||Number(k)===30078));
+          const owners=[...new Set(priv.flatMap(f=>Array.isArray(f.authors)&&f.authors.length===1?[String(f.authors[0])]:[]))];
+          const possible=priv.length>0&&owners.length===1&&priv.every(f=>Array.isArray(f.authors)&&f.authors.length===1);
+          sub.authTried=sub.authTried||new Set();
+          const finishDenied=()=>{
+            sub.eosed.add(conn.url);
+            if(sub.onEose&&this._eoseDone(sub))this._fireEose(sub);
+          };
+          if(!possible||sub.authTried.has(conn.url)){finishDenied();return;}
+          sub.authTried.add(conn.url);
+          this._authenticate(conn,owners[0]).then(ok=>{
+            if(!this._subs.has(m[1]))return;
+            if(ok&&conn._send(['REQ',m[1],...sub.filters]))sub.sent.add(conn.url);
+            else finishDenied();
+          });
           return;
         }
         sub.eosed.add(conn.url);
@@ -411,10 +425,21 @@
          * relay we sent to has refused — or, failing that, it is what the timeout reports instead of
          * the word "timeout". */
         else if (w){
-          if(!w.auth && String(m[3]||'').toLowerCase().startsWith('auth-required')){
+          if(w.auth){
+            // AUTH has one authoritative verdict from this relay. It isn't a multi-relay publish,
+            // so `sent` is intentionally absent and waiting for it only turns a useful rejection
+            // into an eight-second timeout.
+            this._okWaiters.delete(m[1]); w.settle({ok:false,msg:m[3]||'auth rejected'}); return;
+          }
+          w.authTried=w.authTried||new Set();
+          if(String(m[3]||'').toLowerCase().startsWith('auth-required')&&!w.authTried.has(conn.url)){
             // A signed NIP-78 event must be replayed after same-owner connection AUTH. Do not count
             // the pre-auth refusal as final; it is the relay's challenge flow, not a failed write.
-            this._authenticate(conn,w.event&&w.event.pubkey).then(ok=>{if(ok)conn._send(['EVENT',w.event]);});
+            w.authTried.add(conn.url);
+            this._authenticate(conn,w.event&&w.event.pubkey).then(ok=>{
+              if(ok)conn._send(['EVENT',w.event]);
+              else {w.no=(w.no||0)+1;w.why='auth rejected';if(w.sent&&w.no>=w.sent){this._okWaiters.delete(w.event.id);w.settle({ok:false,msg:w.why});}}
+            });
             return;
           }
           w.no = (w.no || 0) + 1;

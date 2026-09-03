@@ -15,8 +15,16 @@ class Store:
     async def query(self, filters, **_kw):
         return [event for event in self.events if _matches(filters, event)]
 
-    async def count_filtered(self, filters):
-        return len(self.events)
+    async def count_filtered(self, filters, protect_nip78=False):
+        total = 0
+        for flt in filters:
+            kinds = flt.get("kinds")
+            explicit_private = isinstance(kinds, list) and any(k in (78, 30078) for k in kinds)
+            total += len([event for event in self.events
+                          if not (protect_nip78 and not explicit_private
+                                  and event.get("kind") in (78, 30078))
+                          and _matches([flt], event)])
+        return total
 
     async def add_event(self, event, **_kw):
         self.stored.append(event)
@@ -143,6 +151,35 @@ def test_private_nip78_is_never_federated_to_public_upstreams():
     sk = bytes.fromhex("19" * 32)
     assert not _broadcastable(signed(sk, 78, [["d", "third-party:log"]]))
     assert not _broadcastable(signed(sk, 30078, [["d", "third-party:settings"]]))
+
+
+def test_live_game_protocol_is_local_only_not_publicly_federated():
+    sk = bytes.fromhex("20" * 32)
+    assert not _broadcastable(signed(sk, 30388, [["d", "chess:match-1"]], "move"))
+
+
+def test_broad_count_excludes_private_documents_even_for_same_author():
+    sk = bytes.fromhex("21" * 32)
+    private = signed(sk, 30078, [["d", "app:secret"]])
+    public = signed(sk, 1, [], "public")
+    conn = object()
+    srv = server([private, public])
+
+    asyncio.run(srv._on_count(conn, "broad", [{"authors": [private["pubkey"]]}]))
+    assert srv.sent[-1][1] == ["COUNT", "broad", {"count": 1}]
+
+    srv.sent.clear()
+    srv._auth_pubkeys[conn] = {private["pubkey"]}
+    asyncio.run(srv._on_count(conn, "private", [{"kinds": [30078], "authors": [private["pubkey"]]}]))
+    assert srv.sent[-1][1] == ["COUNT", "private", {"count": 1}]
+
+    # A valid private arm must not disable protection on a second broad OR-filter.
+    srv.sent.clear()
+    asyncio.run(srv._on_count(conn, "mixed", [
+        {"kinds": [30078], "authors": [private["pubkey"]]},
+        {"authors": [private["pubkey"]]},
+    ]))
+    assert srv.sent[-1][1] == ["COUNT", "mixed", {"count": 2}]
 
 
 def test_negentropy_cannot_bypass_private_read_authorization():

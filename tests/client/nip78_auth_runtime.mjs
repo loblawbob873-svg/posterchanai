@@ -16,12 +16,13 @@ ctx.window=ctx;ctx.self=ctx;ctx.globalThis=ctx;
 vm.createContext(ctx);vm.runInContext(src,ctx);
 const R=ctx.Relay, fail=m=>{throw new Error(m)};
 let signed=0;
-R.setAuthSigner(async tpl=>{signed++;return {...tpl,pubkey:'a'.repeat(64),id:'f'.repeat(64),sig:'e'.repeat(128)};});
+R.setAuthSigner(async tpl=>{signed++;return {...tpl,pubkey:'a'.repeat(64),id:String(signed).padStart(64,'f'),sig:'e'.repeat(128)};});
 R.configure({urls:['wss://relay.example/relay'],verify:false});
 await sleep(20);
 const ws=WS.all[0];
 ws.reply(['AUTH','challenge-1']);
-const id=R.subscribe([{kinds:[30078],authors:['a'.repeat(64)]}],{onEvent(){},onEose(){},live:true});
+let ended=0;
+const id=R.subscribe([{kinds:[30078],authors:['a'.repeat(64)]}],{onEvent(){},onEose(){ended++;},live:true});
 ws.reply(['CLOSED',id,'auth-required: matching owner required']);
 await sleep(20);
 const auth=ws.sent.find(m=>m[0]==='AUTH');
@@ -34,5 +35,33 @@ await sleep(20);
 const reqs=ws.sent.filter(m=>m[0]==='REQ'&&m[1]===id);
 if(reqs.length!==2)fail(`private REQ was not replayed exactly once after AUTH (${reqs.length})`);
 if(signed!==1)fail(`one challenge caused ${signed} signer calls`);
+
+// A second auth-required verdict is final for this relay/subscription. It must not re-sign forever.
+ws.reply(['CLOSED',id,'auth-required: owner still mismatched']);
+await sleep(20);
+if(signed!==1)fail('repeated refusal caused another AUTH signature');
+if(ended!==1)fail('repeated refusal left subscription waiting for EOSE forever');
+
+// An ownerless private filter can never meet the relay rule: do not prompt a signer even once.
+let impossibleEnded=0;
+const impossible=R.subscribe([{kinds:[30078]}],{onEvent(){},onEose(){impossibleEnded++;},live:true});
+ws.reply(['CLOSED',impossible,'auth-required: matching authors required']);
+await sleep(20);
+if(signed!==1)fail('impossible ownerless filter prompted the signer');
+if(impossibleEnded!==1)fail('impossible private subscription never completed');
+
+// A negative AUTH OK settles immediately and completes the denied subscription; no 8s timeout.
+R.configure({urls:['wss://reject.example/relay'],verify:false});
+await sleep(20);
+const reject=WS.all.at(-1); reject.reply(['AUTH','challenge-2']);
+let rejectEnded=0;
+const rid=R.subscribe([{kinds:[30078],authors:['a'.repeat(64)]}],{onEvent(){},onEose(){rejectEnded++;},live:true});
+reject.reply(['CLOSED',rid,'auth-required: authenticate']);
+await sleep(20);
+const rejectedAuth=reject.sent.find(m=>m[0]==='AUTH');
+if(!rejectedAuth)fail('rejected relay received no AUTH');
+reject.reply(['OK',rejectedAuth[1].id,false,'invalid: challenge expired']);
+await sleep(30);
+if(rejectEnded!==1)fail('rejected AUTH left subscription loading');
 console.log('nip78 auth challenge and private subscription retry ok');
 process.exit(0);

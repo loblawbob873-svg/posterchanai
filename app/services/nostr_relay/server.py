@@ -96,7 +96,7 @@ def _broadcastable(ev, cfg=None) -> bool:
     accounts/per-user config/bots). They're NIP-44 ciphertext to everyone but the operator, and a
     fresh node restores them from upstream with the operator nsec."""
     k = ev.get("kind")
-    if k in (30024, 30403):   # NIP-23 article drafts / NIP-99 listing drafts — stay local until published
+    if k in (30024, 30403, 30388):   # drafts and PosterChan live-game traffic stay local
         return False
     if k in (78, 30078):
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
@@ -1223,14 +1223,18 @@ class RelayServer:
 
     async def _on_count(self, conn, sub_id, filters) -> None:
         filters = [f for f in filters if isinstance(f, dict)]
-        if self._filter_explicitly_requests_nip78(filters):
+        explicit_private = self._filter_explicitly_requests_nip78(filters)
+        if explicit_private:
             owners = {str(pk) for f in filters for pk in (f.get("authors") or [])}
             if not owners or not owners.issubset(self._auth_pubkeys.get(conn, set())):
                 self._challenge(conn)
                 self._send(conn, ["CLOSED", sub_id,
                                   "auth-required: NIP-78 counts require AUTH and matching authors"])
                 return
-        n = await self.store.count_filtered(filters)   # SQL COUNT(*) — don't materialize rows just to len()
+        # A broad COUNT has no EVENT frames on which `_can_serve_event` can enforce owner privacy.
+        # Exclude NIP-78 storage at SQL level unless the caller explicitly requested it and passed
+        # the owner-auth gate above; otherwise the number alone reveals a user's private documents.
+        n = await self.store.count_filtered(filters, protect_nip78=True)
         self._send(conn, ["COUNT", sub_id, {"count": n}])
 
     def _can_serve_event(self, conn, ev: dict) -> bool:

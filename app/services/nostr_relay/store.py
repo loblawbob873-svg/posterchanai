@@ -1267,7 +1267,7 @@ class RelayStore:
     async def count(self) -> int:
         return await self._r(self._count_sync)
 
-    def _count_filtered_sync(self, filters: list) -> int:
+    def _count_filtered_sync(self, filters: list, protect_nip78: bool = False) -> int:
         """COUNT(*) for a NIP-45 COUNT request — never materializes or json.loads rows (the old path
         loaded up to 1000 full kind-3 contact-list blobs just to len() them: the 'profile click' spike)."""
         conn = self._conn()
@@ -1280,6 +1280,20 @@ class RelayStore:
             if built is None:
                 continue
             where, params = built
+            # COUNT filters are OR-ed and counted independently. Apply this per filter: a request
+            # may combine one authenticated explicit NIP-78 filter with a broad public filter, and
+            # the latter must not regain access to every author's private document count.
+            kinds = flt.get("kinds") if isinstance(flt, dict) else None
+            explicit_private = False
+            if isinstance(kinds, list):
+                for kind in kinds:
+                    try:
+                        explicit_private = explicit_private or int(kind) in (78, 30078)
+                    except (TypeError, ValueError):
+                        pass
+            if protect_nip78 and not explicit_private:
+                where.append("e.kind NOT IN (?,?)")
+                params.extend((78, 30078))
             sql = "SELECT COUNT(*) AS c FROM events e"
             if where:
                 sql += " WHERE " + " AND ".join(where)
@@ -1289,5 +1303,5 @@ class RelayStore:
                 continue
         return total
 
-    async def count_filtered(self, filters: list) -> int:
-        return await self._r(self._count_filtered_sync, filters)
+    async def count_filtered(self, filters: list, protect_nip78: bool = False) -> int:
+        return await self._r(self._count_filtered_sync, filters, protect_nip78)
