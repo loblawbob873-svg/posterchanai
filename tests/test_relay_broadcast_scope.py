@@ -91,9 +91,13 @@ class DoesLeave(unittest.TestCase):
                 self.assertTrue(_broadcastable(ev(30078, d), {"backup_datastore": True}))
                 self.assertFalse(_broadcastable(ev(30078, d), {"backup_datastore": False}))
 
-    def test_a_plain_30078_from_another_app_is_not_ours_to_withhold(self):
-        """Only the `pcai:` namespace is this node's internal state."""
-        self.assertTrue(_broadcastable(ev(30078, "some-other-app"), {}))
+    def test_a_plain_30078_from_another_app_remains_private(self):
+        """NIP-78 requires owner AUTH because even a document's existence is private metadata.
+
+        Publicly federating an authenticated third-party document would undo the read boundary at
+        the next relay, regardless of whether its ``d`` tag uses our internal namespace.
+        """
+        self.assertFalse(_broadcastable(ev(30078, "some-other-app"), {}))
 
     def test_drafts_and_nofederate_stay_local(self):
         self.assertFalse(_broadcastable(ev(30024, "draft"), {}))       # NIP-23 article draft
