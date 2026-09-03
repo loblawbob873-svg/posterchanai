@@ -108,3 +108,32 @@ explicit diagnostic session flag.  Preserve a boot-menu or TTY recovery path
 that starts the known-good Sway session.  Promote Wayfire to the default only
 after the complete matrix passes on the installed desktop and LiveCD; remove
 Sway only in a later release after rollback telemetry is no longer needed.
+
+Before the first switch on physical hardware:
+
+1. Confirm the Sway session still boots and save its output layout; confirm an
+   unused VT can log in and run the compositor selector with `sway` forced.
+2. Verify `wayfire --version`, XWayland, every configured plugin, the IPC socket,
+   and the adapter's list-methods/list-outputs/list-views probes without changing
+   the running session.
+3. Keep the persistent selector on `sway`.  Start the first Wayfire test from a
+   one-login environment override so a reboot cannot return to a broken choice.
+4. Require a bounded shell-ready signal: compositor alive with no mapped,
+   responsive PosterChan shell is a failure and must terminate the diagnostic
+   compositor and fall back to Sway.  Compositor exit alone is not a sufficient
+   health check.
+5. Leave remote/TTY access open during the first real-GPU test.  The rollback
+   operation must be only deleting the Wayfire selection (or forcing `sway`) and
+   ending the diagnostic session; it must not require editing the image.
+
+The ISO gate is similarly explicit: build from the exact commit that passed the
+suite, record its SHA-256 and package manifest, boot it in UEFI and legacy/CSM
+VMs, exercise both compositor choices and automatic fallback, install to a new
+encrypted virtual disk, power off, detach the ISO, then boot that installed disk.
+Repeat the shell/focus/launch/portal/mixed-resolution tests after installation
+and after the first update.  Finally smoke-test the same ISO on real AMD and
+Intel graphics before publishing; NVIDIA remains unsupported unless its own
+explicit-sync, suspend/resume, XWayland, and Proton matrix passes.  Publication
+must atomically expose the ISO, checksum/signature, version metadata, and the
+matching binary-package repository, with the previous image retained for
+rollback.
