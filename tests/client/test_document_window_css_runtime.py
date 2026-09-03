@@ -21,10 +21,14 @@ def test_live_document_slots_are_opaque_and_own_their_layout():
     page = f"""<!doctype html><style>{css}</style>
       <div id=office class='osw-slot office-win'></div>
       <div id=preview class='osw-slot pv-host pv-win'></div>
+      <div id=classic-feed class='feed feed-office' style='width:1000px;height:700px'>
+        <div id=classic-office class='office-win office-view'><iframe class=office-frame></iframe></div>
+      </div>
       <script>
       const pick=id=>{{const s=getComputedStyle(document.getElementById(id));
         return {{opacity:s.opacity,padding:s.padding,overflow:s.overflow}}}};
-      document.title=JSON.stringify({{office:pick('office'),preview:pick('preview')}});
+      const rect=id=>{{const r=document.getElementById(id).getBoundingClientRect();return {{w:r.width,h:r.height}}}};
+      document.title=JSON.stringify({{office:pick('office'),preview:pick('preview'),feed:rect('classic-feed'),classic:rect('classic-office')}});
       </script>"""
     with tempfile.TemporaryDirectory(prefix="pc-document-css-") as tmp:
         html = Path(tmp) / "index.html"
@@ -37,3 +41,4 @@ def test_live_document_slots_are_opaque_and_own_their_layout():
     got = json.loads(html_lib.unescape(titles[-1]))
     assert got["office"] == {"opacity": "1", "padding": "10px", "overflow": "hidden"}
     assert got["preview"] == {"opacity": "1", "padding": "0px", "overflow": "hidden"}
+    assert got["classic"] == got["feed"], "classic Office does not fill the available WebUI pane"

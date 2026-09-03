@@ -4025,6 +4025,7 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 @keyframes reminderPulse{0%,100%{box-shadow:0 0 40px 6px rgba(var(--accent-rgb),.55)}50%{box-shadow:0 0 70px 16px rgba(255,0,128,.7)}}
 .reminder-card{max-width:520px;width:100%;text-align:center;background:var(--bg2);border:2px solid var(--neon);border-radius:16px;padding:34px 26px;animation:reminderPulse 1.4s ease-in-out infinite}
 .feed.feed-admin{padding:0;overflow:hidden}
+.feed.feed-office{padding:0;overflow:hidden;display:flex;flex-direction:column}
 .admin-frame{width:100%;height:100%;border:none;display:block;background:var(--bg);transition:opacity .2s}
 #admin-host{flex:1;min-height:0;overflow:hidden;display:none}   /* persistent admin iframe host (sibling of #feed) */
 .draft-art{display:flex;align-items:center;gap:8px;padding:10px 14px;margin:0 16px 6px;border:1px solid var(--line);border-radius:10px;background:rgba(8,5,18,.4)}
@@ -9733,7 +9734,7 @@ audio.sms-att-img{min-width:220px}
 /* THE EDITOR AS A VIEW (web/classic): it takes the height it is given rather than a dialog's box.
    `#feed` is a scroll container, so the editor has to be told how tall it may be — without this it
    collapses to its content and the iframe gets no height at all, which is a blank white panel. */
-.office-view{height:82vh;min-height:420px;padding:0}
+.office-view{flex:1 1 auto;width:100%;height:auto;min-height:0;padding:0}
 /* A no-feed document lives in `.osw-slot` permanently, including while focused. The generic slot
    is a subdued parked-app snapshot (opacity + outer padding + scrolling); none of those belong on
    a live maximised editor. Keep Office's own deliberate 10px inner spacing. */

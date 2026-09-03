@@ -10,6 +10,7 @@ the one openOfficeFile already implements. So this asserts the wiring reuses the
 rather than growing parallel ones.
 """
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -23,6 +24,10 @@ def _fn(name, until):
 
 
 class NewDocumentIsReachableAndReusesTheDrive(unittest.TestCase):
+    def test_create_button_runtime_success_and_failure_paths(self):
+        subprocess.run(["node", str(Path(__file__).with_name("office_new_document_runtime.mjs"))],
+                       cwd=Path(__file__).resolve().parents[2], check=True)
+
     def test_the_button_exists_and_is_bound(self):
         self.assertIn('id="bl-newdoc"', APP, "Files has no New document button")
         self.assertIn("$('#bl-newdoc',pane); if(nd) nd.onclick=_newDocumentModal;", APP,

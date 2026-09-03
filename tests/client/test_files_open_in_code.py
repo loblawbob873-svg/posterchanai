@@ -478,6 +478,18 @@ class TheOfficeEditorGetsTheScreen(unittest.TestCase):
         self.assertNotIn("vw", rule, "the frame still sizes itself against the viewport, not its box")
         self.assertIn("flex:1 1 auto", rule, "the frame does not grow to fill the sheet")
 
+    def test_classic_office_owns_the_entire_feed_instead_of_an_82vh_rectangle(self):
+        self.assertIn("feed.classList.toggle('feed-office', VIEW==='office')", self.app)
+        self.assertIn("feed.classList.add('feed-office')", self.app)
+        self.assertIn(".feed.feed-office{padding:0;overflow:hidden;display:flex;flex-direction:column}",
+                      self.css)
+        rule = next(body for sel, body in re.findall(r"([^{}]*)\{([^{}]*)\}",
+                         re.sub(r"/\*.*?\*/", "", self.css, flags=re.S))
+                    if sel.strip() == ".office-view")
+        self.assertIn("flex:1 1 auto", rule)
+        self.assertIn("min-height:0", rule)
+        self.assertNotIn("vh", rule, "classic Office still sizes itself against the viewport")
+
     def test_it_is_marked_before_the_editor_is_launched(self):
         """The form submits into the iframe; sizing it afterwards reloads the layout under a
         document that is already loading.

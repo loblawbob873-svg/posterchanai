@@ -6878,6 +6878,7 @@
     feed.classList.toggle('feed-translate', VIEW==='translate');   // full-height Live Translate layout
     feed.classList.toggle('feed-meme', VIEW==='meme');     // full-height Meme Builder (stage + one pane)
     feed.classList.toggle('feed-admin', VIEW==='admin');   // full-height admin iframe
+    feed.classList.toggle('feed-office', VIEW==='office'); // full-height Collabora editor
     feed.classList.toggle('feed-term', VIEW==='terminal');  // full-height terminal
     /* Code adds this class while painting, but it must also be REMOVED centrally when the shared
      * feed moves into another desktop window.  Without that half, Code → Terminal parked a
@@ -21304,6 +21305,7 @@
         const feed = document.getElementById('feed');
         if(feed){
           try{ switchView('office'); }catch(_){ }
+          feed.classList.add('feed-office');
           feed.innerHTML = '';
           const host = document.createElement('div');
           host.className = 'office-win office-view';
@@ -21455,12 +21457,13 @@
         const nm=$('#nd-name',root); if(nm) nm.focus();
         const c=$('#nd-cancel',root); if(c) c.onclick=closeModal;
         const go=async ()=>{
-          const btn=$('#nd-create',root); if(btn) btn.disabled=true;
+          const btn=$('#nd-create',root); if(btn){btn.disabled=true;btn.textContent='Creating…';}
           const kind=(($('input[name="nd-kind"]:checked',root)||{}).value)||'text';
           try{
+            toast('creating document…');
             const d=await _createOfficeDocument((nm&&nm.value)||'', kind);
             closeModal(); renderBlossom(); await openOfficeFile(d);
-          }catch(e){ if(btn) btn.disabled=false; toast('could not create it: '+((e&&e.message)||e)); }
+          }catch(e){ if(btn){btn.disabled=false;btn.textContent='Create';} toast('could not create it: '+((e&&e.message)||e)); }
         };
         const g=$('#nd-create',root); if(g) g.onclick=go;
         if(nm) nm.addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
