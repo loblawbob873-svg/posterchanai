@@ -487,8 +487,11 @@ class TheOfficeEditorGetsTheScreen(unittest.TestCase):
                          re.sub(r"/\*.*?\*/", "", self.css, flags=re.S))
                     if sel.strip() == ".office-view")
         self.assertIn("flex:1 1 auto", rule)
-        self.assertIn("min-height:0", rule)
+        self.assertIn("min-height:560px", rule,
+                      "an early/legacy Office mount can still collapse to its toolbar height")
         self.assertNotIn("vh", rule, "classic Office still sizes itself against the viewport")
+        self.assertIn(".feed.feed-office .office-view{height:auto;min-height:0}", self.css,
+                      "the bounded classic workspace cannot shrink on short screens")
 
     def test_it_is_marked_before_the_editor_is_launched(self):
         """The form submits into the iframe; sizing it afterwards reloads the layout under a

@@ -9734,7 +9734,12 @@ audio.sms-att-img{min-width:220px}
 /* THE EDITOR AS A VIEW (web/classic): it takes the height it is given rather than a dialog's box.
    `#feed` is a scroll container, so the editor has to be told how tall it may be — without this it
    collapses to its content and the iframe gets no height at all, which is a blank white panel. */
-.office-view{flex:1 1 auto;width:100%;height:auto;min-height:0;padding:0}
+.office-view{flex:1 1 auto;width:100%;height:560px;min-height:560px;padding:0}
+/* The real classic workspace has a bounded flex parent and may be shorter than 560px on a phone.
+   Let it shrink to the space it owns there.  Keeping the fallback above matters during startup and
+   for legacy/deep-link mounts which can paint the editor one frame before `feed-office` is applied;
+   those otherwise collapse to the toolbar's content height and look like a tiny white rectangle. */
+.feed.feed-office .office-view{height:auto;min-height:0}
 /* A no-feed document lives in `.osw-slot` permanently, including while focused. The generic slot
    is a subdued parked-app snapshot (opacity + outer padding + scrolling); none of those belong on
    a live maximised editor. Keep Office's own deliberate 10px inner spacing. */
