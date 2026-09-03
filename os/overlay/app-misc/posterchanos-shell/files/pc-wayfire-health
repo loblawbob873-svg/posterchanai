@@ -1,0 +1,115 @@
+#!/usr/bin/python3
+"""Small fail-closed Wayfire session probe used before the desktop is declared ready."""
+import json
+import os
+import socket
+import struct
+import sys
+import time
+
+
+SOCKET = os.environ.get("WAYFIRE_SOCKET", "")
+APP_IDS = {"posterchan-desktop", "PosterChan", "place.poster.desktop"}
+
+
+def request(method, data=None):
+    body = json.dumps({"method": method, "data": data or {}}, separators=(",", ":")).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(2)
+        client.connect(SOCKET)
+        client.sendall(struct.pack("<I", len(body)) + body)
+        raw = b""
+        while len(raw) < 4:
+            part = client.recv(4 - len(raw))
+            if not part:
+                raise RuntimeError("Wayfire IPC closed")
+            raw += part
+        size = struct.unpack("<I", raw)[0]
+        raw = b""
+        while len(raw) < size:
+            part = client.recv(size - len(raw))
+            if not part:
+                raise RuntimeError("Wayfire IPC closed")
+            raw += part
+    result = json.loads(raw)
+    if isinstance(result, dict) and result.get("error"):
+        raise RuntimeError(str(result["error"]))
+    return result
+
+
+def rows(result, key):
+    if isinstance(result, list):
+        return result
+    return result.get(key, []) if isinstance(result, dict) else []
+
+
+def bundle_preflight():
+    asar = os.environ.get("PC_DESKTOP_ASAR", "/opt/posterchan/resources/app.asar")
+    with open(asar, "rb") as stream:
+        header = stream.read(4 * 1024 * 1024)
+    if b'wm-wayfire.js' not in header:
+        raise RuntimeError("installed desktop lacks the Wayfire backend")
+
+
+def preflight():
+    bundle_preflight()
+    if not SOCKET or not os.path.exists(SOCKET):
+        raise RuntimeError("Wayfire IPC socket is unavailable")
+    methods = request("list-methods")
+    methods = methods.get("methods", []) if isinstance(methods, dict) else []
+    required = {"window-rules/list-outputs", "window-rules/list-views",
+                "window-rules/configure-view", "window-rules/focus-view"}
+    missing = sorted(required - set(methods))
+    if missing:
+        raise RuntimeError("Wayfire IPC methods missing: " + ", ".join(missing))
+
+
+def healthy(pid):
+    outputs = rows(request("window-rules/list-outputs"), "outputs")
+    output_ids = {int(row["id"]) for row in outputs if row.get("id") is not None}
+    views = rows(request("window-rules/list-views"), "views")
+    shells = [row for row in views
+              if row.get("mapped", True)
+              and str(row.get("app-id") or row.get("app_id") or row.get("app") or "") in APP_IDS
+              and "Popup" not in str(row.get("title") or "")]
+    if not output_ids or len(shells) != len(output_ids):
+        return False
+    if any(int(row.get("pid") or 0) != pid for row in shells):
+        return False
+    owned_outputs = {int(row.get("output-id") if row.get("output-id") is not None
+                         else row.get("output_id", -1)) for row in shells}
+    return owned_outputs == output_ids
+
+
+def main():
+    mode = sys.argv[1] if len(sys.argv) > 1 else "preflight"
+    if mode == "bundle":
+        bundle_preflight()
+        return 0
+    if mode == "preflight":
+        preflight()
+        return 0
+    if mode != "wait" or len(sys.argv) < 3:
+        raise RuntimeError("usage: pc-wayfire-health preflight | wait PID [SECONDS]")
+    pid = int(sys.argv[2])
+    timeout = float(sys.argv[3]) if len(sys.argv) > 3 else 30.0
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+            if healthy(pid):
+                return 0
+        except ProcessLookupError:
+            break
+        except (OSError, RuntimeError, ValueError):
+            pass
+        time.sleep(0.1)
+    raise RuntimeError("desktop did not map exactly one shell surface per output")
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        print(f"pc-wayfire-health: {error}", file=sys.stderr)
+        raise SystemExit(1)

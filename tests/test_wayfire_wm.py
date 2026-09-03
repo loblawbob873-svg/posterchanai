@@ -26,7 +26,7 @@ def test_wayfire_backend_contract_and_wire_protocol(tmp_path):
       server.listen(sock,async()=>{{
         process.env.WAYFIRE_SOCKET=sock;const {{WM}}=require({json.dumps(str(ROOT / 'desktop/wm.js'))});const w=new WM();
         const list=await w.windows(),outs=await w.outputs();await w.focus(7);await w.hide(7);await w.show(7);
-        await w.fullscreen(7,true);await w.place(7,2200,100,800,600);await w.close(7);await w.applyChrome();
+        await w.fullscreen(7,true);await w.placeAndReveal(7,2200,100,800,600);await w.close(7);await w.applyChrome();
         console.log(JSON.stringify({{backend:w.backend,list,outs,calls}}));w.sock.destroy();server.close();
       }});
     """), encoding="utf-8")
@@ -46,7 +46,10 @@ def test_wayfire_backend_contract_and_wire_protocol(tmp_path):
         "window-rules/close-view",
     ]
     configured = result["calls"][-2]["data"]
-    assert configured["geometry"] == {"x": 2200, "y": 100, "width": 800, "height": 600}
+    assert configured["output_id"] == 2
+    assert configured["geometry"] == {"x": 280, "y": 100, "width": 800, "height": 600}
+    # This is the Start/popup path: global renderer coordinates on RIGHT must become
+    # output-local coordinates in the same configure transaction, never a detached centre frame.
     assert "tiled-edges" not in configured, "Wayfire 0.10 configure-view accepts geometry, not theme/tiling chrome"
 
 

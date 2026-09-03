@@ -24,13 +24,31 @@ def _run(tmp_path, selected=None, wayfire_status=0, wayfire_body=None):
     calls = tmp_path / "calls"
     _fake(bindir, "sway", f'echo "sway:$XDG_CURRENT_DESKTOP" >>"{calls}"\nexit 0\n')
     body = wayfire_body or f"exit {wayfire_status}\n"
-    _fake(bindir, "wayfire", f'echo "wayfire:$XDG_CURRENT_DESKTOP:$*" >>"{calls}"\n{body}')
-    env = os.environ | {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(home)}
+    _fake(bindir, "wayfire", f'[ "$1" = --version ] && exit 0\necho "wayfire:$XDG_CURRENT_DESKTOP:$*" >>"{calls}"\n{body}')
+    _fake(bindir, "pc-wayfire-health", 'exit "${PC_HEALTH_STATUS:-0}"\n')
+    env = os.environ | {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(home),
+                        "PC_WAYFIRE_HEALTH": str(bindir / "pc-wayfire-health")}
     if selected:
         env["PC_COMPOSITOR"] = selected
     done = subprocess.run(["/bin/sh", str(LAUNCHER)], env=env, text=True,
                           capture_output=True, timeout=10)
     return done, calls.read_text(encoding="utf-8").splitlines()
+
+
+def test_old_desktop_backend_is_rejected_before_wayfire_takes_the_display(tmp_path):
+    old = os.environ.get("PC_HEALTH_STATUS")
+    os.environ["PC_HEALTH_STATUS"] = "1"
+    try:
+        done, calls = _run(tmp_path, "wayfire")
+    finally:
+        if old is None:
+            os.environ.pop("PC_HEALTH_STATUS", None)
+        else:
+            os.environ["PC_HEALTH_STATUS"] = old
+    assert done.returncode == 0
+    assert calls == ["sway:sway"]
+    log = tmp_path / "home/.local/state/posterchanos/compositor-fallback.log"
+    assert "installed desktop is not Wayfire-ready" in log.read_text(encoding="utf-8")
 
 
 def test_sway_is_the_safe_default(tmp_path):
@@ -86,6 +104,7 @@ def test_wayfire_and_fallback_are_shipped_together():
     for action in ("pc:terminal", "pc:tasks", "pc:close"):
         assert f"pc-wayfire-action {action}" in config
     assert "pc-wayfire-action" in ebuild and "pc-wayfire-action" in gentoo
+    assert "pc-wayfire-health" in ebuild and "pc-wayfire-health" in gentoo
 
 
 def test_native_drag_snap_has_edges_corners_restore_and_no_seam_switch():
@@ -109,6 +128,7 @@ def test_source_and_packaged_launcher_do_not_drift():
     source_shell = ROOT / "os/bin/pc-shell-start-wayfire"
     packaged_shell = FILES / "pc-shell-start-wayfire"
     assert source_shell.read_bytes() == packaged_shell.read_bytes()
+    assert (ROOT / "os/bin/pc-wayfire-health").read_bytes() == (FILES / "pc-wayfire-health").read_bytes()
     text = packaged_shell.read_text(encoding="utf-8")
     assert "WAYFIRE_SOCKET" in text
     assert "SWAYSOCK" not in text and "swaymsg" not in text

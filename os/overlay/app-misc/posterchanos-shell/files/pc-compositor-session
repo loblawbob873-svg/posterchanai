@@ -25,7 +25,17 @@ run_sway() {
 }
 
 if [ "$selected" = wayfire ]; then
-	if command -v wayfire >/dev/null 2>&1; then
+	health=${PC_WAYFIRE_HEALTH:-/usr/local/bin/pc-wayfire-health}
+	# Refuse the compositor switch while the installed Electron package is still Sway-only.  This
+	# runs before DRM ownership changes, so an overlay/Desktop publication race cannot black-screen
+	# the session and rely on the later watchdog to put it back.
+	if ! command -v wayfire >/dev/null 2>&1 || ! wayfire --version >/dev/null 2>&1; then
+		printf '%s\n' "Wayfire was selected but its executable/ABI is unavailable; falling back to Sway." \
+			>>"$state_dir/compositor-fallback.log"
+	elif [ ! -x "$health" ] || ! "$health" bundle >>"$state_dir/compositor-fallback.log" 2>&1; then
+		printf '%s\n' "Wayfire was selected but the installed desktop is not Wayfire-ready; falling back to Sway." \
+			>>"$state_dir/compositor-fallback.log"
+	else
 		export XDG_CURRENT_DESKTOP=wayfire
 		export XDG_SESSION_DESKTOP=wayfire
 		: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
@@ -53,9 +63,6 @@ if [ "$selected" = wayfire ]; then
 		status=$?
 		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
 		printf '%s\n' "Wayfire exited with status $status; falling back to Sway for this login." \
-			>>"$state_dir/compositor-fallback.log"
-	else
-		printf '%s\n' "Wayfire was selected but is not installed; falling back to Sway." \
 			>>"$state_dir/compositor-fallback.log"
 	fi
 fi

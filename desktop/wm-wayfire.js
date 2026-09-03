@@ -61,7 +61,20 @@ class WayfireWM{
   hide(id){return this._send('wm-actions/set-minimized',{'view_id':Number(id),state:true});}
   show(id){return this._send('wm-actions/set-minimized',{'view_id':Number(id),state:false});}
   async _viewConfig(id,rect,extra){const data=Object.assign({id:Number(id)},extra||{});if(rect)data.geometry={x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.w),height:Math.round(rect.h)};return this._send('window-rules/configure-view',data);}
-  async place(id,x,y,w,h){let at={x,y,w,h};try{at=clampRectToOutputs(at,await this.outputs());}catch(_){}return this._viewConfig(id,at);}
+  async place(id,x,y,w,h){
+    let at={x,y,w,h},extra={};
+    try{
+      const outs=await this.outputs();at=clampRectToOutputs(at,outs);
+      /* Wayfire configure-view geometry is OUTPUT-LOCAL. Passing Electron's global coordinates
+       * happened to work on the left display and detached Start by a whole monitor width on the
+       * right. Select the output from the requested global rectangle, move there atomically, then
+       * translate to its local coordinate space. */
+      const cx=at.x+Math.max(1,at.w)/2,cy=at.y+Math.max(1,at.h)/2;
+      const o=outs.find(v=>cx>=v.rect.x&&cx<v.rect.x+v.rect.width&&cy>=v.rect.y&&cy<v.rect.y+v.rect.height);
+      if(o){extra.output_id=o.id;at={x:at.x-o.rect.x,y:at.y-o.rect.y,w:at.w,h:at.h};}
+    }catch(_){}
+    return this._viewConfig(id,at,extra);
+  }
   async placeAndReveal(id,x,y,w,h){return this.place(id,x,y,w,h);}
   async restore(id,x,y,w,h){await this.show(id);return this.place(id,x,y,w,h);}
   async placeOnOutput(id,b,direction){const l=Number(b&&b.x)||0,t=Number(b&&b.y)||0,ow=Math.max(1,Number(b&&b.width)||1),oh=Math.max(1,Number(b&&b.height)||1),gap=12;const row=(await this.windows()).find(x=>x.id===Number(id)),r=row&&row.rect||{};const w=Math.min(Math.max(320,Number(r.width)||ow*.72),Math.max(1,ow-gap*2)),h=Math.min(Math.max(220,Number(r.height)||oh*.72),Math.max(1,oh-gap*2));let x=Math.min(Math.max(Number(r.x)||l+gap,l+gap),l+ow-w-gap),y=Math.min(Math.max(Number(r.y)||t+gap,t+gap),t+oh-h-gap);if(direction==='right')x=l+gap;else if(direction==='left')x=l+ow-w-gap;else if(direction==='down')y=t+gap;else if(direction==='up')y=t+oh-h-gap;await this.place(id,x,y,w,h);return{x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};}
