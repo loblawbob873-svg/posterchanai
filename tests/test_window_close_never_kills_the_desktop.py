@@ -40,8 +40,8 @@ EBUILD = ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0
 OS_JS = ROOT / "static/js/client/os.js"
 
 
-def run_close(win, source: str | None = None):
-    """Run the helper's `close` action against one focused window; return every sway call made.
+def run_action(win, action="close", source: str | None = None):
+    """Run one helper action against one focused window; return every sway call made.
 
     The tree is the shape `focused()` walks: an output holding a floating container. Only `sway`
     and `subprocess` are stubbed, so the real argument-parsing, the real ordering of the three
@@ -66,7 +66,7 @@ def run_close(win, source: str | None = None):
     ns["sway"] = fake_sway
     # A stub module, never the real `sys`: assigning to `ns["sys"].argv` rewrites the interpreter's
     # own argv for every test that runs after this one.
-    ns["sys"] = types.SimpleNamespace(argv=["pc-window-snap", "close"])
+    ns["sys"] = types.SimpleNamespace(argv=["pc-window-snap", action])
     # Likewise a stub `subprocess` — a stray check_call would be a compositor command escaping the
     # recorder, and patching the real module would leak out of this call.
     ns["subprocess"] = types.SimpleNamespace(
@@ -83,7 +83,7 @@ FIREFOX = {"id": 33, "app_id": "firefox", "name": "Mozilla Firefox", "pid": None
 
 def test_closing_on_the_desktop_never_kills_the_shell_surface():
     """THE BUG. This container hosts every PosterChan window; killing it takes the lot."""
-    calls = run_close(DESKTOP)
+    calls = run_action(DESKTOP)
     assert calls == [("-t", "send_tick", "pc:close")], calls
     assert not any("kill" in str(c) for c in calls), (
         "the desktop surface is being killed — this is the whole bug, and it costs the session")
@@ -91,12 +91,12 @@ def test_closing_on_the_desktop_never_kills_the_shell_surface():
 
 def test_a_popped_out_window_is_still_closed_by_the_compositor():
     """It is an ordinary floating toplevel with no paired frame; sway owns it."""
-    assert run_close(POPPED) == [("[con_id=22]", "kill")]
+    assert run_action(POPPED) == [("[con_id=22]", "kill")]
 
 
 def test_a_native_application_is_still_closed_by_the_compositor():
     """Firefox's frame is reaped from sway's own window::close, the same as quitting it itself."""
-    assert run_close(FIREFOX) == [("[con_id=33]", "kill")]
+    assert run_action(FIREFOX) == [("[con_id=33]", "kill")]
 
 
 def test_close_is_decided_before_the_geometry_branches():
@@ -112,7 +112,7 @@ def test_this_check_can_fail():
         '            sway("-t", "send_tick", "pc:close")\n            return\n',
         '            sway("[con_id=%d]" % int(win["id"]), "kill")\n            return\n', 1)
     assert broken != SNAP.read_text(encoding="utf-8"), "could not rebuild the bug — re-read this test"
-    assert run_close(DESKTOP, broken) == [("[con_id=11]", "kill")], (
+    assert run_action(DESKTOP, source=broken) == [("[con_id=11]", "kill")], (
         "the mutation did not reach the desktop, so these checks prove nothing")
 
 
@@ -172,3 +172,72 @@ def test_no_focused_window_is_a_no_op():
     branch = js[js.index("else if(p === 'pc:close')"):][:400]
     assert re.search(r"if\(w\)\s*closeWin\(w\)", branch), (
         "the close branch acts without checking there IS a focused window")
+
+
+# ── $mod+DOWN: THE ONE ARROW BOUND TO NOTHING ──────────────────────────────────────────────────
+#
+# Left, Right and Up have snapped and maximised since this session grew window bindings. Down was
+# never bound at all, so three quarters of the arrow set worked and the fourth was silent — which
+# reads as a broken key, not a missing feature.
+#
+# The compositor has no minimise. What it has is the scratchpad, and a window put there comes back
+# only through something that remembers it — so this is routed to the RENDERER, whose `minimise` is
+# the taskbar's own function and keeps the window's button.
+
+def test_minimising_on_the_desktop_asks_the_renderer():
+    assert run_action(DESKTOP, "minimise") == [("-t", "send_tick", "pc:minimise")]
+
+
+def test_minimising_a_native_app_is_addressed_to_the_renderer_that_owns_its_frame():
+    """Every renderer sees the tick, so the con_id is what stops the others acting on it."""
+    assert run_action(FIREFOX, "minimise") == [("-t", "send_tick", "pc:minimise-native:33")]
+
+
+def test_a_popped_out_window_is_never_stashed():
+    """It has no HTML frame and no taskbar entry, so a scratchpad stash would simply lose it."""
+    assert run_action(POPPED, "minimise") == []
+
+
+def test_minimise_never_reaches_the_geometry_branches():
+    """`minimise` takes no side; falling through would resize a window that was asked to go away."""
+    body = SNAP.read_text(encoding="utf-8").split("def main()", 1)[1]
+    assert body.index('"pc:minimise"') < body.index('box = out.get("rect")')
+
+
+def test_the_minimise_checks_can_fail():
+    """MUTATION: let a popped-out window fall through to the native stash and it is lost."""
+    broken = SNAP.read_text(encoding="utf-8").replace(
+        "        if not is_popped_out_window(win):\n", "        if True:\n", 1)
+    assert broken != SNAP.read_text(encoding="utf-8"), "could not rebuild the bug"
+    assert run_action(POPPED, "minimise", source=broken) == [
+        ("-t", "send_tick", "pc:minimise-native:22")], "the mutation changed nothing"
+
+
+@pytest.mark.parametrize("path,indent", [
+    ("os/overlay/app-misc/posterchanos-shell/files/sway.config", ""),
+    ("os/gentoo.sh", "\t"),
+])
+def test_down_is_bound_in_both_configs(path, indent):
+    src = (ROOT / path).read_text(encoding="utf-8")
+    assert "$mod+Down" in src and "pc-window-snap minimise" in src, (
+        f"{path}: $mod+Down is still the one arrow that does nothing")
+
+
+def test_the_whole_arrow_set_is_bound():
+    """Three working arrows and one silent one is the shape this closes."""
+    src = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(encoding="utf-8")
+    for arrow in ("Left", "Right", "Up", "Down"):
+        assert re.search(rf"^bindsym \$mod\+{arrow}\s+exec ", src, re.M), f"$mod+{arrow} is unbound"
+
+
+def test_an_existing_account_gets_the_new_arrow():
+    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text(encoding="utf-8")
+    assert "'bindsym $mod+Down exec /usr/local/bin/pc-window-snap minimise'" in ebuild
+
+
+def test_the_shell_minimises_through_the_taskbars_own_function():
+    """`minimise` keeps the window's taskbar button; anything else strands it."""
+    js = OS_JS.read_text(encoding="utf-8")
+    branch = js[js.index("else if(p === 'pc:minimise')"):][:520]
+    assert "minimise(w)" in branch
+    assert re.search(r"if\(w\)\s*minimise\(w\)", branch), "it acts without checking there is one"

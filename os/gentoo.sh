@@ -1794,6 +1794,9 @@ PROFILE
 	bindsym $mod+Left  exec /usr/local/bin/pc-window-snap left
 	bindsym $mod+Right exec /usr/local/bin/pc-window-snap right
 	bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max
+	# Down was the only arrow bound to nothing. `minimise` is the taskbar's own function, so
+	# the window keeps its button and comes back the way it always has.
+	bindsym $mod+Down  exec /usr/local/bin/pc-window-snap minimise
 	bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge
 	bindsym Ctrl+$mod+Left  focus output left
 	bindsym Ctrl+$mod+Right focus output right

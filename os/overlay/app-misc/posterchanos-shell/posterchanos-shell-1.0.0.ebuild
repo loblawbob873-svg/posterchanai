@@ -217,6 +217,10 @@ pkg_postinst() {
 			'bindsym Mod1+F4 exec /usr/local/bin/pc-window-close'; do
 			echo "${line}" >>"${cfg}"
 		done
+		# $mod+Down was never bound on any existing account: three arrows worked and the
+		# fourth was silent.
+		sed -i -E '/^bindsym[[:space:]]+\$mod\+Down[[:space:]]+exec[[:space:]]+\/usr\/local\/bin\/pc-window-snap[[:space:]]+minimise[[:space:]]*$/d' "${cfg}"
+		echo 'bindsym $mod+Down exec /usr/local/bin/pc-window-snap minimise' >>"${cfg}"
 		sed -i -E '/bindsym .*button1 exec \/usr\/local\/bin\/pc-window-snap edge/d' "${cfg}"
 		echo 'bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge' >>"${cfg}"
 		cat >>"${cfg}" <<-'SWAY_RECOVERY'

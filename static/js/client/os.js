@@ -1618,7 +1618,30 @@
        * focused, but it still shows Communities.  Treat an explicit launch of the other Messages
        * tab as a selection even when the canonical frame identity already equals the request. */
       if(existing.view === view && !shouldSelectMessagesTab(existing, view)){
-        focusWin(existing); return existing;
+        focusWin(existing);
+        /* ...AND IF THAT WINDOW HAS BEEN NAVIGATED INSIDE, TAKE IT BACK TO THE APP.
+         *
+         * Reported as "i just opened a profile from social and now can't go back to social".
+         * `renderProfileView` and `renderThread` set the client's VIEW themselves and never go
+         * through switchView, so the WINDOW still calls itself `home` while its feed holds a
+         * profile. Focusing it therefore returned the profile, and the Social icon — the one thing
+         * a person would press to get out — was the very thing that put them back in it. There is
+         * no other way home from a desktop window.
+         *
+         * The Messages/Concord branch below has always repainted for exactly this reason. This is
+         * the same rule for every other app: a launch is a request for the APP, not merely for its
+         * frame. Guarded on the live view actually differing, so an ordinary focus still costs
+         * nothing, and under `repainting` so switchView cannot route outward and manufacture a
+         * second window. */
+        let live = '';
+        try{ live = String((PC() && PC().VIEW) || ''); }catch(_){ live = ''; }
+        if(live && live !== view){
+          existing.appView = view; existing.appPath = '';
+          repainting++;
+          try{ PC().switchView && PC().switchView(view); }catch(_){ }
+          finally{ repainting--; }
+        }
+        return existing;
       }
       /* Messages and Concord are tabs, not separate desktop applications. An icon/start-menu
        * launch comes directly through openApp (not routeView), so the old literal lookup missed a
@@ -8097,6 +8120,24 @@
             else if(p === 'pc:close'){
               const w=wins.find(x=>x.el.classList.contains('focused'));
               if(w) closeWin(w);
+            }
+            /* $mod+Down, the one arrow that did nothing. Left, Right and Up have snapped and
+             * maximised since this session grew window bindings; Down was never bound, so three
+             * quarters of the arrow set worked and the fourth was silent — which reads as a broken
+             * key, not a missing feature.
+             *
+             * `minimise` is the taskbar's own function, so the window keeps its button and comes
+             * back the way it always has. That is also what makes this safe for a NATIVE app: the
+             * frame stays in `wins`, so the app is stashed in the compositor's scratchpad with a
+             * taskbar entry to bring it back. A window with no frame would have neither, which is
+             * why pc-window-snap does not send a popped-out window here at all. */
+            else if(p === 'pc:minimise'){
+              const w=wins.find(x=>x.el.classList.contains('focused'));
+              if(w) minimise(w);
+            }
+            else if(/^pc:minimise-native:\d+$/.test(p)){
+              const w=nativeWins().find(x=>Number(x.native)===Number(p.slice(19)));
+              if(w) minimise(w);
             }
             else if(/^pc:move-output:(left|right|up|down)$/.test(p)){
               /* TWO SILENT NO-OPS LIVED HERE, AND BOTH READ AS "THE KEY DOES NOTHING".

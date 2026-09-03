@@ -93,9 +93,9 @@ def main():
     side = sys.argv[1] if len(sys.argv) > 1 else ""
     moves = {"move-left": "left", "move-right": "right",
              "move-up": "up", "move-down": "down"}
-    if side not in ("left", "right", "max", "edge", "close", *moves):
+    if side not in ("left", "right", "max", "edge", "close", "minimise", *moves):
         raise SystemExit(
-            "usage: pc-window-snap left|right|max|edge|close"
+            "usage: pc-window-snap left|right|max|edge|close|minimise"
             "|move-left|move-right|move-up|move-down")
     hit = focused(json.loads(sway("-t", "get_tree", "-r")))
     if not hit:
@@ -109,6 +109,9 @@ def main():
     # the same physical key back to the shell so its ordinary snapTo() path handles the focused
     # PosterChan window.
     if is_posterchan_shell(win):
+        if side == "minimise":
+            sway("-t", "send_tick", "pc:minimise")
+            return
         if side == "close":
             # NEVER `kill` HERE. This container is the desktop: one surface hosting every PosterChan
             # window, so killing it takes the lot. sway execs pc-shell-start once and does not
@@ -126,6 +129,15 @@ def main():
             sway("-t", "send_tick", "pc:move-output:" + moves[side])
         elif side != "edge":
             sway("-t", "send_tick", "pc:snap:" + side)
+        return
+    if side == "minimise":
+        # THE COMPOSITOR HAS NO MINIMISE. What it has is the scratchpad, and a window put there is
+        # only recoverable through the frame that remembers it — which is why this is routed by
+        # con_id to the renderer that OWNS the frame (`minimise` keeps the taskbar button), and why
+        # a popped-out window is deliberately left alone: it has no frame and no taskbar entry, so
+        # stashing it would be losing it. Every renderer sees the tick; only the owner acts.
+        if not is_popped_out_window(win):
+            sway("-t", "send_tick", "pc:minimise-native:%d" % int(win["id"]))
         return
     if side == "close":
         # A popped-out PosterChan window and a native application are both real toplevels, and
