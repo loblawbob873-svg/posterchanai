@@ -7384,7 +7384,7 @@
    * pool reads 'ok' while three of its five relays are down, and "online" over a half-dead pool is
    * how you spend ten minutes wondering why your posts are not showing up on someone else's client.
    */
-  let netOpen = false, _netOff = null, _netT = null;
+  let netOpen = false, _netOff = null, _netT = null, _popupNetState = null;
 
   /* Past this, a socket is not talking. The heartbeat answers its own ping every 25s and a trusted
    * socket that reaches 40s idle tears itself down and reconnects, so 45s means the reconnect is
@@ -7516,7 +7516,11 @@
   function paintNet(){
     const panel = $('#os-net-panel', root);
     if(!panel) return;
-    const s = netState();
+    /* A native popup is a second Chromium renderer. Its Relay singleton starts cold and is NOT the
+       connection used by the desktop behind it. The shell passes its authoritative snapshot in
+       pcarg; falling back to this renderer's netState made the flyout say Connecting while the
+       taskbar (correctly) said Connected. */
+    const s = _popupNetState || netState();
     panel.innerHTML =
       `<div class="os-noti-head"><b>Nostr</b>
          <span class="os-noti-hb">
@@ -7535,6 +7539,12 @@
     { const b = $('#os-net-again', panel); if(b) b.onclick = async (e) => {
         e.stopPropagation();
         b.disabled=true;b.textContent='Connecting…';
+        /* Reconnect the SHELL'S pool, not this popup renderer's short-lived private pool. Closing
+           also ensures the next open receives a fresh shell snapshot. */
+        if(_popupNetState && window.pcPopup && pcPopup.act){
+          try{ await pcPopup.act('net-reconnect'); }catch(_){ }
+          return;
+        }
         let ok=false;
         try{
           const api=PC();
@@ -7621,7 +7631,15 @@
         const b = $('#os-net', bar), r = b && b.getBoundingClientRect();
         if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
       }catch(_){ }
-      Promise.resolve(pcPopup.toggle('net', { x, y, width:w, height:h }))
+      const state = netState();
+      /* Only plain connection facts cross the renderer boundary. Do not pass WebSockets or relay
+         objects; apart from not being serializable, they belong to the authoritative shell. */
+      const snapshot = JSON.stringify({ net: {
+        level: state.level, up: state.up, total: state.total, online: state.online,
+        conns: state.conns.slice(0,20).map(c => ({ url:String(c.url || '').slice(0,256), status:String(c.status || '').slice(0,32),
+          open:!!c.open, idle:c.idle == null ? null : Number(c.idle), trusted:!!c.trusted }))
+      }});
+      Promise.resolve(pcPopup.toggle('net', { x, y, width:w, height:h }, snapshot))
         .then(open => { netOpen=!!open; drawBar(); })
         .catch(() => { netOpen=false; drawBar(); });
       drawBar();
@@ -8312,6 +8330,7 @@
               const kind = p.slice('pc:popup-closed:'.length);
               if(kind === 'start') startOpen = false;
               else if(kind === 'noti') notiOpen = false;
+              else if(kind === 'net') netOpen = false;
               drawBar();
             }
             /* WHAT A POPUP DID, PERFORMED IN THE SHELL. A view name goes through `pc:open:` above;
@@ -8346,6 +8365,11 @@
                 }
                 else if(kind === 'full') toggleFull();
                 else if(kind === 'classic') exit();
+                else if(kind === 'net-reconnect'){
+                  const api=PC();
+                  if(api&&api.reconnectNetwork) Promise.resolve(api.reconnectNetwork()).catch(()=>{});
+                  else if(window.Relay&&Relay.wake) Relay.wake();
+                }
               }catch(_){ }
               drawBar();
             }
@@ -9094,6 +9118,11 @@
     panel.id = 'os-net-panel';
     panel.className = 'os-noti os-net-panel';
     host.appendChild(panel);
+    try{
+      const arg = JSON.parse(new URLSearchParams(window.location.search).get('pcarg') || '{}');
+      const s = arg && arg.net;
+      if(s && typeof s.level === 'string' && Array.isArray(s.conns)) _popupNetState = s;
+    }catch(_){ _popupNetState = null; }
     paintNet();
     document.addEventListener('keydown', (e) => {
       if(e.key === 'Escape') try{ window.close(); }catch(_){ }

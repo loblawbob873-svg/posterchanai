@@ -347,7 +347,8 @@ class Bridge(unittest.TestCase):
 
     def test_global_shell_keys_only_reach_the_focused_monitor(self):
         self.assertIn("(await wm().workspaces()).find(x=>x && x.focused)", self.main)
-        self.assertIn("ev.payload !== 'pc:start:close'", self.main)
+        self.assertIn("(await wm().outputs()).find(x=>x&&x.focused)", self.main)
+        self.assertIn("payload==='pc:start:close'", self.main)
 
     def test_global_shell_keys_are_forwarded_by_the_always_on_main_subscription(self):
         recovery = self.main[self.main.index("async function wireShellRecovery"):

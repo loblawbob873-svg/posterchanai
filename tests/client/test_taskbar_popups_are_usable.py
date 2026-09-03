@@ -31,3 +31,34 @@ def test_popup_window_can_accept_the_requested_tall_sizes():
 def test_connectivity_settings_action_routes_back_to_the_shell():
     net = OS.split("function paintNet(){", 1)[1].split("/* ONE click-away handler", 1)[0]
     assert "pcPopup.pick('settings')" in net
+
+
+def test_connectivity_popup_uses_shell_snapshot_not_its_cold_relay_pool():
+    toggle = OS.split("  function toggleNet(force){", 1)[1].split("  // Arrival toasts", 1)[0]
+    render = OS.split("  function renderNetPopup(){", 1)[1].split("  function restore(){", 1)[0]
+    paint = OS.split("  function paintNet(){", 1)[1].split("/* ONE click-away handler", 1)[0]
+    assert "const state = netState();" in toggle
+    assert "state.conns.slice(0,20)" in toggle
+    assert "pcPopup.toggle('net', { x, y, width:w, height:h }, snapshot)" in toggle
+    assert "URLSearchParams(window.location.search).get('pcarg')" in render
+    assert "_popupNetState = s" in render
+    assert "const s = _popupNetState || netState();" in paint
+
+
+def test_connectivity_popup_reconnects_authoritative_shell_pool():
+    paint = OS.split("  function paintNet(){", 1)[1].split("/* ONE click-away handler", 1)[0]
+    actions = OS.split("else if(p.indexOf('pc:act:') === 0)", 1)[1].split("else if(p === 'pc:tasks')", 1)[0]
+    assert "pcPopup.act('net-reconnect')" in paint
+    assert "kind === 'net-reconnect'" in actions
+    assert "api.reconnectNetwork" in actions
+
+
+def test_popup_argument_limit_fits_normal_relay_snapshots():
+    popup = MAIN.split("async function openPopupWindow(", 1)[1].split("async function placePopupWindow", 1)[0]
+    assert ".slice(0, 8192)" in popup
+
+
+def test_closing_native_connectivity_popup_clears_shell_open_latch():
+    closed = OS.split("p.indexOf('pc:popup-closed:') === 0", 1)[1].split("drawBar();", 1)[0]
+    assert "kind === 'net'" in closed
+    assert "netOpen = false" in closed

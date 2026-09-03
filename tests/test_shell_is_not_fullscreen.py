@@ -84,6 +84,16 @@ class TheStartScriptStillDisablesIt(unittest.TestCase):
     def test_pc_shell_start_disables_fullscreen(self):
         self.assertIn("fullscreen disable", START.read_text())
 
+    def test_main_process_clears_fullscreen_if_renderer_timer_is_throttled(self):
+        src = MAIN.read_text()
+        handler = src.split("ipcMain.handle('pc:wm:fullscreen'", 1)[1]
+        handler = handler[:handler.index("ipcMain.handle('pc:wm:snap'")]
+        self.assertIn("_shellFullscreenFailsafes", src)
+        self.assertIn("setTimeout", handler)
+        self.assertIn("wm().fullscreen(n,false)", handler)
+        self.assertIn("shellWindow", handler)
+        self.assertIn("row.title", handler)
+
     def test_and_tiles_the_window(self):
         """`floating disable` is what makes it fill the workspace without being fullscreen."""
         src = START.read_text()

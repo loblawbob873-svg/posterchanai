@@ -24,6 +24,7 @@ const wmObj={
   subscribe:async()=>true,
   on:(name,fn)=>{(handlers[name]=handlers[name]||[]).push(fn);},
   workspaces:async()=>[{name:'ws-left',focused:true}],
+  outputs:async()=>[{name:'DP-1',focused:true},{name:'DP-2',focused:false}],
   windows:async()=>[],
 };
 
@@ -57,6 +58,7 @@ const ctx={handlers,wm,BrowserWindow,_shellScopes,_shellSurfaces,SHELL_MODE,
   process:{pid:1},require:require_};
 
 const body='(async()=>{\n'+forwardSrc+'\n'+
+  'globalThis.__pcTestForwardShellTick=forwardShellTick;\n'+
   'const w=wm();\n'+subSrc+'\n'+
   '/* wireShellRecovery\'s one listener, which is the authoritative keyboard path. */\n'+
   'w.on("tick",(ev)=>{ if(!ev||ev.first)return; if(ev.payload!=="pc:restart") forwardShellTick(ev).catch(()=>{}); });\n'+
@@ -83,6 +85,25 @@ fn(...Object.values(ctx));
   for(const f of handlers.tick) f({change:'run',payload:'pc:start'});
   await new Promise(r=>setTimeout(r,30));
   ok('a tick is not delivered to an unfocused output',delivered.length===0);
+
+  /* Two shell renderers can share a workspace name. Every actionable route must still have one
+   * focused-output owner; testing the route matrix catches a central dispatcher regression instead
+   * of blessing Drafts while Texts or an external browser link still duplicates. */
+  const routed=[];
+  const left={webContents:{id:1,send:(ch,ev)=>{if(ch==='pc:wm:event')routed.push([1,ev.payload]);}},isDestroyed:()=>false};
+  const right={webContents:{id:2,send:(ch,ev)=>{if(ch==='pc:wm:event')routed.push([2,ev.payload]);}},isDestroyed:()=>false};
+  BrowserWindow.getAllWindows=()=>[left,right];
+  _shellScopes.set(1,{workspace:'shared',output:'DP-1'});
+  _shellScopes.set(2,{workspace:'shared',output:'DP-2'});
+  wmObj.workspaces=async()=>[{name:'shared',focused:true}];
+  const routes=['pc:open:global','pc:open:texts','pc:open:concord','pc:open:monero',
+    'pc:open:office','pc:open:drafts','pc:open:settings','pc:open:firefox',
+    'pc:act:view:social','pc:act:thread:event','pc:act:find:https%3A%2F%2Fexample.com'];
+  for(const payload of routes){
+    routed.length=0;
+    await globalThis.__pcTestForwardShellTick({change:'run',payload});
+    ok(payload+' is claimed by exactly one shell',routed.length===1&&routed[0][0]===1);
+  }
 
   console.log('OK one press is one tick');
 })().catch(e=>{console.error(e.stack||e);process.exitCode=1;});

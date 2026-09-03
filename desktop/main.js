@@ -1326,16 +1326,33 @@ ipcMain.handle('pc:shell:update-idle',(e,token)=>{
 });
 async function forwardShellTick(ev){
   let targets=BrowserWindow.getAllWindows();
-  /* One desktop renderer exists per output. A global key belongs to the focused output only;
-   * close is intentionally broadcast so an old menu cannot remain stranded on another screen. */
-  if(ev && ev.payload !== 'pc:start:close'){
+  /* One desktop renderer exists per output, but a gesture has exactly ONE owner. Filtering only by
+   * workspace was insufficient: two outputs may legitimately show the same named workspace, so a
+   * single Start/popup choice opened Drafts (and every other app route) twice. Resolve the focused
+   * OUTPUT first. State-clearing messages remain broadcasts so stale open flags cannot strand a
+   * popup on the other surface. */
+  const payload=String(ev&&ev.payload||'');
+  const broadcast=payload==='pc:start:close'||payload.indexOf('pc:popup-closed:')===0;
+  if(ev && !broadcast){
     try{
+      const focusedOutput=(await wm().outputs()).find(x=>x&&x.focused);
       const active=(await wm().workspaces()).find(x=>x && x.focused);
-      if(active) targets=targets.filter(target=>{
+      let owned=focusedOutput&&targets.filter(target=>{
         const scope=_shellScopes.get(target.webContents.id);
-        return !scope || String(scope.workspace)===String(active.name);
+        return scope&&String(scope.output)===String(focusedOutput.name);
       });
+      if(!owned||!owned.length) owned=active&&targets.filter(target=>{
+        const scope=_shellScopes.get(target.webContents.id);
+        return scope&&String(scope.workspace)===String(active.name);
+      });
+      /* Never broadcast an action merely because compositor discovery raced startup. A single
+       * existing shell is a safer owner than duplicating every app/data action across monitors. */
+      if(owned&&owned.length) targets=[owned[0]];
+      else if(focusedOutput||active) targets=[];
+      else if(targets.length>1) targets=[targets.find(t=>t.isFocused&&t.isFocused())||targets[0]];
     }catch(_){}
+    /* A transient IPC failure must degrade to one owner, never back to a broadcast. */
+    if(targets.length>1) targets=[targets.find(t=>t.isFocused&&t.isFocused())||targets[0]];
   }
   for(const target of targets){
     try{ target.webContents.send('pc:wm:event',
@@ -1776,7 +1793,10 @@ async function openPopupWindow(e, kind, rect, arg){
     _popupWin = null; _popupKind = '';
     if(kind) { try{ forwardShellTick({ change: 'run', payload: 'pc:popup-closed:' + kind }); }catch(_){ } }
   });
-  const extra = String(arg == null ? '' : arg).slice(0, 400);
+  /* Connectivity snapshots include one bounded record per configured relay. 400 bytes truncated
+   * perfectly valid JSON on ordinary 8-relay accounts, silently putting the popup back on its cold
+   * local Relay state. This is still a small URL and is renderer-generated, not shell-evaluated. */
+  const extra = String(arg == null ? '' : arg).slice(0, 8192);
   try{ await p.loadURL(APP_URL + '?pcpopup=' + encodeURIComponent(k)
                        + (extra ? '&pcarg=' + encodeURIComponent(extra) : '')); }
   catch(err){ closePopupWindow(); return false; }
@@ -1983,7 +2003,35 @@ ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id
 ipcMain.handle('pc:wm:restore', (e, id, x, y, w, h) => {
   fsGuard(e); return wm().restore(Number(id),Number(x),Number(y),Number(w),Number(h));
 });
-ipcMain.handle('pc:wm:fullscreen', (e, id, on) => { fsGuard(e); return wm().fullscreen(Number(id), !!on); });
+/* Renderer timers are throttled/frozen when Chromium loses visibility. Alt+Tab briefly raises the
+ * tiled desktop with compositor fullscreen so its chooser is visible above floating apps; if its
+ * keyup/timer is frozen, that fullscreen shell hides every other window indefinitely. Keep the
+ * mandatory failsafe in the main process, whose timers are not renderer-lifecycle dependent. */
+const _shellFullscreenFailsafes = new Map();
+ipcMain.handle('pc:wm:fullscreen', async (e, id, on) => {
+  fsGuard(e);
+  const n=Number(id), enable=!!on;
+  const old=_shellFullscreenFailsafes.get(n);
+  if(old){ clearTimeout(old); _shellFullscreenFailsafes.delete(n); }
+  const result=await wm().fullscreen(n, enable);
+  let shellWindow=false;
+  if(enable && SHELL_MODE){
+    try{
+      const rows=await wm().windows();
+      const row=(rows||[]).find(x=>Number(x&&x.id)===n);
+      shellWindow=!!(row && /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(row.app||''))
+        && /^PosterChan(?: · Nostr)?$/i.test(String(row.title||'')));
+    }catch(_){ shellWindow=false; }
+  }
+  if(shellWindow){
+    const timer=setTimeout(()=>{
+      _shellFullscreenFailsafes.delete(n);
+      wm().fullscreen(n,false).catch(()=>{});
+    }, 3000);
+    _shellFullscreenFailsafes.set(n,timer);
+  }
+  return result;
+});
 ipcMain.handle('pc:wm:snap', (e, id, zone) => { fsGuard(e); return wm().snap(Number(id), String(zone||'')); });
 ipcMain.handle('pc:remote:input', (e, input) => {
   fsGuard(e);
