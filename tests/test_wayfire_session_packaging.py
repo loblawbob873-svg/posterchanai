@@ -68,6 +68,12 @@ def test_wayfire_and_fallback_are_shipped_together():
     assert 'doins "${FILESDIR}/wayfire.ini"' in ebuild
     assert "pc-compositor-session" in ebuild
     assert "gui-wm/wayfire" in gentoo and "gui-wm/sway" in gentoo
+    # Gentoo's Wayfire build references the Vulkan renderer helper.  Keeping
+    # wlroots' Vulkan backend explicit prevents a load-time undefined symbol.
+    assert '"gui-libs/wlroots x11-backend vulkan"' in gentoo
+    # Gamescope requires SDL's OpenGL or GLES backend in addition to Vulkan.
+    assert '"media-libs/libsdl2 -pipewire vulkan opengl"' in gentoo
+    assert '"media-libs/mesa vulkan wayland"' in gentoo
     assert "/usr/local/bin/pc-compositor-session" in gentoo
     assert "xwayland = true" in config
     assert "pc-shell-start-wayfire" in config
