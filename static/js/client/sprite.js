@@ -92,6 +92,7 @@
   <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.4" y="5.4" width="17.2" height="15.2" rx="2.2"/><path d="M3.4 10h17.2"/><path d="M8.2 3.4v4M15.8 3.4v4"/><path d="M7.6 13.6h2M11 13.6h2M14.4 13.6h2M7.6 17h2M11 17h2"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M12 6.9V12l3.4 2"/></symbol>
   <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9.4"/><path d="M18 12v3.2M20.8 12v2.4"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10"/><path d="M12 14v2.5"/></symbol>
   <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4.4 7.6h3l1.4-2.2h6.4l1.4 2.2h3a1.8 1.8 0 011.8 1.8v8.2a1.8 1.8 0 01-1.8 1.8H4.4a1.8 1.8 0 01-1.8-1.8V9.4a1.8 1.8 0 011.8-1.8z"/><circle cx="12" cy="13.2" r="3.4"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.6 12.6l4.8 4.8 10-10.8"/></symbol>
   <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3.6 6.6h3.6l9.2 10.8h4"/><path d="M3.6 17.4h3.6l3.4-4"/><path d="M13.8 8.2l2.6-.8 4-.8"/><path d="M18.2 4.4l2.2 2.2-2.2 2.2M18.2 15.2l2.2 2.2-2.2 2.2"/></symbol>

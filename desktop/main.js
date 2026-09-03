@@ -1708,8 +1708,10 @@ async function placePopupWindow(win, want){
       const rows = await wm().windows();
       const row = rows.find(x => String(x.title || '') === POPUP_TITLE);
       if(row){
-        await wm().place(Number(row.id), Math.round(want.x), Math.round(want.y),
-                         Math.round(want.w), Math.round(want.h));
+        /* sway.config maps this title transparent. Reveal only in the SAME transaction as its final
+         * geometry, otherwise Wayland's unavoidable initial centre placement visibly flashes. */
+        await wm().placeAndReveal(Number(row.id), Math.round(want.x), Math.round(want.y),
+                                  Math.round(want.w), Math.round(want.h));
         return;
       }
     }catch(_){ /* no compositor, or it refused — the popup stays where it was put */ }

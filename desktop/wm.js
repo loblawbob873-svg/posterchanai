@@ -351,6 +351,17 @@ class WM {
       + Math.round(at.x) + ' ' + Math.round(at.y));
   }
 
+  /* Menus map transparent (sway.config) because Wayland initially centres every new toplevel.
+   * Geometry and reveal must be one compositor transaction: revealing in a later command merely
+   * trades the centre flash for a correctly-positioned blank flash. */
+  async placeAndReveal(id, x, y, w, h){
+    let at={x,y,w,h};
+    try{ at=clampRectToOutputs(at,await this.outputs()); }catch(_){}
+    return this.command('[con_id=' + Number(id) + '] floating enable, resize set '
+      + Math.round(at.w) + ' ' + Math.round(at.h) + ', move absolute position '
+      + Math.round(at.x) + ' ' + Math.round(at.y) + ', opacity set 1');
+  }
+
   /* Commit a cross-output handoff INSIDE the destination output. Moving a floating container to a
    * workspace preserves its old absolute coordinates; on unequal or offset monitors that can leave
    * Steam half outside the new output. This uses the destination explicitly (not nearest-output

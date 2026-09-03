@@ -1,0 +1,29 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SWAY = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
+MAIN = (ROOT / "desktop/main.js").read_text()
+WM = (ROOT / "desktop/wm.js").read_text()
+
+
+def test_popup_maps_invisible_until_wayland_position_is_known():
+    rule = next(line for line in SWAY.splitlines() if 'title="^PosterChan Popup$"' in line)
+    assert "opacity set 0" in rule
+
+
+def test_popup_geometry_and_reveal_are_one_compositor_transaction():
+    body = WM.split("async placeAndReveal(", 1)[1].split("async placeOnOutput(", 1)[0]
+    command = body.split("return this.command(", 1)[1]
+    assert "resize set" in command
+    assert "move absolute position" in command
+    assert "opacity set 1" in command
+    assert command.count("this.command(") == 0
+
+
+def test_popup_main_path_uses_atomic_reveal_not_plain_place():
+    body = MAIN.split("async function placePopupWindow", 1)[1].split(
+        "ipcMain.handle('pc:popup:close'", 1
+    )[0]
+    assert "placeAndReveal" in body
+    assert ".place(Number(row.id)" not in body
