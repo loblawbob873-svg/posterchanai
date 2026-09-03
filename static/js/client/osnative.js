@@ -158,6 +158,24 @@
     return { stash, show };
   }
 
+  /* A real PosterChan toplevel participates in Sway's ordinary floating stack and only needs
+   * focus. A legacy/fallback DOM frame lives inside the tiled shell and can never rise above a
+   * floating Telegram/Firefox surface, so overlapping external surfaces must be parked while that
+   * frame owns focus. Keep this decision pure: os.js supplies rectangles in compositor pixels and
+   * performs the bounded hide/show operations. */
+  function domStackPlan(rows, focusedRect){
+    const hide=[], show=[];
+    for(const row of (rows||[])){
+      if(!row || row.id==null || row.own || row.fullscreen) continue;
+      const r=row.rect;
+      const covered=!!(focusedRect && r && coversMoreThanASliver(
+        {left:Number(r.x)||0,top:Number(r.y)||0,width:Number(r.width)||0,height:Number(r.height)||0},
+        focusedRect));
+      (covered?hide:show).push(Number(row.id));
+    }
+    return {hide,show};
+  }
+
   /* Only what CHANGED. Every one of these is a round trip to the compositor and a reconfigure the
    * app must handle; re-sending an identical rectangle sixty times a second is how a browser is
    * made to relayout continuously while somebody drags a window that is not even theirs. */
@@ -233,7 +251,7 @@
   }
 
   const API = { scaleFrom, mapRect, clampLocalRect, overlaps, coversMoreThanASliver,
-                stashPlan, changed, driftPlan,
+                stashPlan, domStackPlan, changed, driftPlan,
                 previewIsBlank };
   root.PCOSNative = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;

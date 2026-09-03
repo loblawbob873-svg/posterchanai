@@ -1289,6 +1289,43 @@
   // ---- windows -------------------------------------------------------------------------------
 
   let repainting = 0;      // >0 while a window is repainting itself; see focusWin
+  const _domCoveredNative = new Set();
+  let _domStackGen = 0;
+
+  async function _stackDomAboveNative(w){
+    if(!w || w.native != null || !window.pcWM || !NAT() || !NAT().domStackPlan) return;
+    const gen=++_domStackGen;
+    let snap=null;
+    try{ snap=pcWM.snapshot ? await pcWM.snapshot() : {windows:await pcWM.windows()}; }catch(_){ return; }
+    if(gen!==_domStackGen)return;       // a real/native window took focus while the snapshot waited
+    const rows=Array.isArray(snap&&snap.windows)?snap.windows:[];
+    const shellId=Number(snap&&snap.shellId);
+    const shell=rows.find(x=>Number(x&&x.id)===shellId)||_natShell;
+    const visual=window.visualViewport;
+    const scale=NAT().scaleFrom(shell&&shell.rect,
+      visual&&visual.width>0?visual.width:window.innerWidth,
+      visual&&visual.height>0?visual.height:window.innerHeight);
+    const mapped=scale&&NAT().mapRect(_frameRect(w),scale);
+    if(!mapped)return;
+    const rect={left:mapped.x,top:mapped.y,width:mapped.w,height:mapped.h};
+    const plan=NAT().domStackPlan(rows,rect);
+    for(const id of plan.show) if(_domCoveredNative.has(id)){
+      try{ await pcWM.show(id); _domCoveredNative.delete(id); }catch(_){}
+      if(gen!==_domStackGen)return;
+    }
+    for(const id of plan.hide) if(!_domCoveredNative.has(id)){
+      try{ await pcWM.hide(id); _domCoveredNative.add(id); }catch(_){}
+      if(gen!==_domStackGen)return;
+    }
+  }
+
+  async function _releaseDomCoveredNative(except){
+    ++_domStackGen;                    // cancel a late DOM snapshot before restoring compositor focus
+    for(const id of [..._domCoveredNative]){
+      if(Number(id)===Number(except)) { _domCoveredNative.delete(id); continue; }
+      try{ await pcWM.show(id); _domCoveredNative.delete(id); }catch(_){}
+    }
+  }
 
   function focusWin(w, render){
     if(!w) return;
@@ -1336,11 +1373,13 @@
      * can arrange. Clicking a browser's title bar and then typing into the desktop underneath is
      * exactly the sort of thing that makes a shell feel like a costume. */
     if(w.native != null && !_natFocusHold){
+      _domCoveredNative.delete(Number(w.native));
       /* Focusing a scratchpad container can make Sway reveal it at scratchpad geometry before our
        * frame is ready — the focus-loss black flash/tiny Firefox window. Restore and place first. */
       if(_natSent.get(Number(w.native))==='hidden') _focusNativeWhenShown(w);
       else _focusNativeDecorated(w.native);
     }
+    else if(w.native == null) _stackDomAboveNative(w).catch(()=>{});
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     if(w.isolated){
@@ -1640,9 +1679,11 @@
            change that renderer's route, so explicitly return it to the app the launcher names. */
         try{ if(window.PCOSWin && PCOSWin.routeExisting) PCOSWin.routeExisting(view); }catch(_){ }
         try{
-          if(mine.stashed && pcWM.show) Promise.resolve(pcWM.show(mine.id))
-            .then(() => _focusNativeDecorated(mine.id)).catch(()=>{});
-          else _focusNativeDecorated(mine.id);
+          Promise.resolve(_releaseDomCoveredNative(mine.id)).then(()=>{
+            if(mine.stashed && pcWM.show) return Promise.resolve(pcWM.show(mine.id))
+              .then(() => _focusNativeDecorated(mine.id));
+            return _focusNativeDecorated(mine.id);
+          }).catch(()=>{});
         }catch(_){ }
         return null;
       }
@@ -7068,8 +7109,12 @@
           let live=w;
           try{ const s=await pcWM.snapshot();live=(s.windows||[]).find(x=>Number(x.id)===Number(w.id))||w; }catch(_){}
           if(live.focused && !live.stashed) await pcWM.hide(w.id);
-          else if(live.stashed){ await pcWM.show(w.id); await _focusNativeDecorated(w.id); }
-          else await _focusNativeDecorated(w.id);
+          else {
+            await _releaseDomCoveredNative(w.id);
+            if(live.stashed) await pcWM.show(w.id);
+            _domCoveredNative.delete(Number(w.id));
+            await _focusNativeDecorated(w.id);
+          }
         }catch(_){}
         return;
       }
