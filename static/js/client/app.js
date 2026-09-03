@@ -13218,6 +13218,16 @@
     return a.length ? a.slice(0,8) : dflt.slice();
   }
   function zapPresets(){ return _parsePresets(ClientSettings.get('zapPresets',''), _ZAP_DEFAULTS, true); }
+  /* What this node charges, as either wallet module last saw it. The external tip sheet has no
+     wallet of its own to ask and must not open a request to find out; 0 keeps it silent rather than
+     printing "0%". */
+  function _xmrFeePct(){
+    try{
+      const w = window.PCMoneroWallet;
+      if(w && w.feePercent) return Number(w.feePercent()) || 0;
+    }catch(_){ }
+    return 0;
+  }
   function xmrPresets(){ return _parsePresets(ClientSettings.get('xmrPresets',''), _XMR_DEFAULTS); }
   function bchPresets(){ return _parsePresets(ClientSettings.get('bchPresets',''), _BCH_DEFAULTS); }
   async function doZap(noteId, pk){
@@ -13349,8 +13359,24 @@
     }catch(_){}
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');
+    /* THE THIRD PATH SAID NOTHING ABOUT THE FEE, AND IT IS THE ONE EVERY DECLINE FALLS INTO.
+     *
+     * Reported four times as "I see nothing about service fees when I zap". Both wallet sheets DO
+     * state it — the operator's, and the per-user one down to "they receive 0.0098 XMR". This flow
+     * did not, so on any node where the built-in wallet is unavailable, locked or empty the fee was
+     * invisible on the only path left, and an operator who had just configured one could not tell
+     * working-as-intended from a setting that never saved.
+     *
+     * What it says is that nothing is taken HERE, which is true and is the point: this pays them
+     * directly from a wallet the server never touches. Saying so makes the fee legible as a
+     * property of the custodial wallets rather than as a silence. */
+    const _xmrFee = _xmrFeePct();
+    const _extFee = _xmrFee > 0
+      ? `<p class="muted small">No service fee on this route — it pays them directly from your own
+           wallet. A tip sent from a wallet this server holds for you carries ${enc(String(_xmrFee))}%.</p>`
+      : '';
     modal(`<h3>ɱ Tip ${name} · Monero</h3>
-      <p class="muted small">Enter the amount → Open wallet (it pre-fills that amount) → pay → tap “I sent it”. Non-custodial: nothing touches this server.</p>
+      <p class="muted small">Enter the amount → Open wallet (it pre-fills that amount) → pay → tap “I sent it”. Non-custodial: nothing touches this server.</p>${_extFee}
       <div class="row" style="gap:8px;margin:8px 0"><input class="input" id="xmr-amt" type="number" min="0" step="0.0001" value="${enc(ClientSettings.get('xmrLastAmt','')||'')}" placeholder="amount (XMR) — fills your wallet & shows in the note"><a class="btn btn-neon small" id="xmr-open" href="${uri('')}"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Open wallet</a></div>
       <div class="xmr-presets" id="xmr-presets">${xmrPresets().map(a=>`<button class="xmr-preset" data-amt="${a}">ɱ ${a}</button>`).join('')}</div>
       <div class="xmr-qr" id="xmr-qr"><div class="muted small">generating QR…</div></div>
@@ -25873,7 +25899,7 @@
       if(remapSent){ this.msgs=[]; this.loadList(); this.refreshFolder(resolvedSent); }
     },
     async selectFolder(f){
-      this.folder=f; this.openUid=null; this.q=''; this.msgs=[]; if(this.sel) this.sel.clear();
+      this.folder=f; this.openUid=null; this.q=''; this.msgs=[]; this.convSent=[]; if(this.sel) this.sel.clear();
       if(this.root) this.root.querySelectorAll('.mail-folder').forEach(b=> b.classList.toggle('on', b.dataset.folder===f));
       // SHOW WHAT IS ALREADY MIRRORED FIRST. This used to await a full IMAP pull of the folder
       // before rendering anything, so opening an Archive of thousands of messages was a spinner for
@@ -25943,6 +25969,40 @@
         this.msgs=[]; this._next=0;
       }
       this.drawList();
+      this.loadConvSent(seq);
+    },
+    /* YOUR HALF OF THE CONVERSATION, IN THE LIST.
+     *
+     * Asked for more times than anything else here: "email is still not showing my part of the
+     * conversation in the message list". The reader has threaded both sides for a while — what was
+     * missing is one step earlier. `loadList` fetches ONE folder, so in the Inbox the rows are built
+     * from received mail only: a conversation you have answered three times still shows their last
+     * message, with no sign that you replied at all.
+     *
+     * So the Sent folder is fetched alongside and merged into the ROWS — never into `msgs`. That
+     * distinction is load-bearing: `msgs` drives paging, the cursor, and the checkbox keys that
+     * delete things. Putting sent mail in there would make "delete this conversation" delete your
+     * own copies too, which is not what anybody selecting a row in their Inbox means.
+     *
+     * Skipped in the Sent folder itself (it is already both halves) and while searching (the search
+     * already spans folders). */
+    async loadConvSent(seq){
+      const sent = this._sentFolder();
+      if(this.q || !sent || this.folder === sent || this.folder === 'Sent' || this.folder === 'Drafts'){
+        this.convSent = []; return;
+      }
+      const account = this.acct, folder = this.folder, root = this.root;
+      try{
+        const r = await this.api('/messages?account='+encodeURIComponent(account)
+                                 +'&folder='+encodeURIComponent(sent));
+        if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder) return;
+        this.convSent = r.messages || [];
+      }catch(_){
+        /* A Sent folder that cannot be read leaves the list exactly as it was — their side alone is
+           the old behaviour, and it is better than an empty list. */
+        return;
+      }
+      this.drawList();
     },
     /* The IMAP name of the Sent folder for this account — 'Sent', 'Sent Messages' and 'INBOX.Sent'
      * are all in the wild, so it is resolved from the server's own labelling rather than guessed. */
@@ -25988,8 +26048,23 @@
         const k = this._convKey(m);
         const seen = byKey.get(k);
         if(seen){ seen.all.push(m); if(!m.read) seen.unread = true; continue; }
-        const row = { key:k, head:m, all:[m], unread:!m.read };
+        const row = { key:k, head:m, all:[m], mine:[], unread:!m.read };
         byKey.set(k, row); out.push(row);
+      }
+      /* Your replies join a conversation that is ALREADY here; they never start a row of their own.
+         A message you sent that nobody answered belongs in Sent, not in the Inbox. */
+      for(const m of (this.convSent || [])){
+        const row = byKey.get(this._convKey(m));
+        if(row) row.mine.push(m);
+      }
+      for(const row of out){
+        /* The row shows the LATEST message either way — that is what makes your reply visible.
+           `head` stays whatever is newest; `all` (and therefore the checkbox keys) is untouched. */
+        let newest = row.head;
+        for(const m of row.mine) if((m.ts || 0) > (newest.ts || 0)) newest = m;
+        row.head = newest;
+        row.headIsMine = row.mine.indexOf(newest) >= 0;
+        row.count = row.all.length + row.mine.length;
       }
       return out;
     },
@@ -26006,14 +26081,20 @@
          whole conversation, because deleting half of one is not something anybody means to do. */
       const convs = this._conversations();
       box.innerHTML=convs.map(c=>{ const m=c.head, keys=c.all.map(x=>this._key(x)), key=keys[0];
-        const cur = (this.msgs.indexOf(m) === this.cursor) ? ' cursor' : '';
-        const openInThis = c.all.some(x => String(x.uid) === String(this.openUid));
-        const n = c.all.length;
-        return `<div class="mail-item${c.unread?' unread':''}${cur}${openInThis?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}" data-keys="${enc(keys.join(','))}">
+        const cur = (this.msgs.indexOf(c.all[0]) === this.cursor) ? ' cursor' : '';
+        const openInThis = c.all.concat(c.mine || []).some(x => String(x.uid) === String(this.openUid));
+        const n = c.count || c.all.length;
+        /* A row whose newest message is YOURS says so, the way every mail client does — otherwise
+           the reply you just sent looks like another message from them. */
+        const mineHead = !!c.headIsMine;
+        /* Opening addresses a message THIS FOLDER holds. `head` may be your own reply, which
+           lives in Sent — opening by that uid would ask the Inbox for a uid it does not have. */
+        const openM = c.all[0] || m;
+        return `<div class="mail-item${c.unread?' unread':''}${cur}${openInThis?' active':''}" data-uid="${enc(String(openM.uid))}" data-folder="${enc(openM.folder||this.folder)}" data-account="${enc(openM.account||'')}" data-key="${enc(key)}" data-keys="${enc(keys.join(','))}">
         <input type="checkbox" class="mi-chk"${keys.every(k=>this.sel.has(k))?' checked':''}>
         <div class="mi-content">
-          <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${enc((isSent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}${n>1?`<span class="mi-count" title="${n} messages in this conversation">${n}</span>`:''}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
-          <div class="mi-subj">${c.all.some(x=>x.attachments)?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
+          <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${mineHead?'<span class="mi-you">You:</span> ':''}${enc(((isSent||mineHead)?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}${n>1?`<span class="mi-count" title="${n} messages in this conversation">${n}</span>`:''}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
+          <div class="mi-subj">${c.all.concat(c.mine||[]).some(x=>x.attachments)?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
           <div class="mi-prev muted small">${enc(m.preview||'')}</div>
         </div></div>`; }).join('');
       if(this._next){
@@ -26074,9 +26155,29 @@
       }
       const pane=$('#mail-read', this.root); if(!pane) return; pane.innerHTML='<div class="spinner"></div>'; pane.classList.add('has-open');
       if(!msg){ pane.innerHTML='<div class="empty">Could not load this message.</div>'; return; }
-      // Render the message immediately, then upgrade to the full conversation when /thread returns
-      // (threading scans the whole mailbox, so don't block the read on it).
-      this._renderThread(pane, [msg], folder, acct, uid, 'loading');
+      /* PAINT THE CONVERSATION FROM WHAT THIS PAGE ALREADY HOLDS, before asking the server.
+       *
+       * "the email thread should show sent messages in order with the replies" — it does, and it
+       * always did; what it did not do was show them for the first ELEVEN SECONDS. /thread walks
+       * the whole mailbox (measured at 11.0s cold on the reporting account, 17,921 documents of
+       * NIP-44 decrypts), and until it answered the reader showed exactly one message: theirs. Ten
+       * reports of "you are only showing their side" describe that window, not the threading.
+       *
+       * The list has already fetched the Sent folder for its conversation rows, so both halves are
+       * in memory here. Sorted oldest-first, which is what "in order with the replies" means, and
+       * replaced wholesale when /thread answers with the authoritative set.
+       *
+       * It states nothing it has not checked: with nothing cached this is the seed alone and the
+       * "Loading…" line, exactly as before. */
+      const _seedKey = this._convKey(msg);
+      const _local = [];
+      for(const x of (this.msgs || []).concat(this.convSent || [])){
+        if(this._key(x) === this._key(msg)) continue;              // the seed is added below
+        if(this._convKey(x) === _seedKey) _local.push(x);
+      }
+      _local.push(msg);
+      _local.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      this._renderThread(pane, _local, folder, acct, uid, _local.length > 1 ? 'loading' : 'loading');
       this.api('/thread?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid))
         .then(t=>{ if(!(this.openUid===uid && pane.isConnected)) return;
           const got = (t && t.messages) || [];
@@ -26084,6 +26185,10 @@
              "Loading…" line when there is not — a spinner that never resolves is the same lie as
              no message at all. */
           if(got.length>1) this._renderThread(pane, got, folder, acct, uid);
+          /* The server found nothing more — but this page may already be showing the sent side it
+             matched locally, and replacing that with the seed alone would take the conversation
+             back off the screen. */
+          else if(_local.length > 1) this._renderThread(pane, _local, folder, acct, uid);
           else this._renderThread(pane, [msg], folder, acct, uid, 'alone'); })
         /* SAY SO. Swallowing this is what made a malformed account silent for as long as it was
            wrong — the message still opened, so nothing looked broken; the conversation just never

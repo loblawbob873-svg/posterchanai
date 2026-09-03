@@ -192,3 +192,68 @@ def test_a_refused_window_does_not_leave_start_stuck_open():
 def test_the_popup_has_styling():
     for cls in (".os-popup-body{", ".os-popup-item{", ".os-popup-list{"):
         assert cls in CSS
+
+
+# ── pressing Super is not a guess ────────────────────────────────────────────────────────────────
+#
+# Reported as "start menu glitchey as fuck". Measured before the fix, Super six times:
+#   menu · nothing · menu · menu · nothing · menu
+# and after it, on both monitors:
+#   menu · closed · menu · closed · menu · closed
+#
+# Two causes, both about ownership. The shell decided open-or-close from its own `startOpen` flag,
+# which is a GUESS about a window another process owns — the popup also closes on blur, on Escape
+# and on every choice, none of which the renderer sees in time. And on two monitors the tick reaches
+# BOTH shell surfaces, so the non-focused one called open, destroyed the window the focused one had
+# just opened, and only then was declined: a keypress that did everything right and left no menu.
+
+def test_open_or_close_is_decided_by_the_process_that_owns_the_window():
+    assert "ipcMain.handle('pc:popup:toggle'" in MAIN
+    body = MAIN[MAIN.index("ipcMain.handle('pc:popup:toggle'"):]
+    body = body[:body.index("ipcMain.handle('pc:popup:open'")]
+    assert "_popupKind === k" in body, "toggle does not check what is actually open"
+    assert "closePopupWindow();" in body
+    assert "toggle: (kind, rect, arg)" in PRELOAD
+
+
+def test_the_shell_only_paints_what_it_is_told():
+    """`startOpen` may not be the decision any more — it is the taskbar highlight."""
+    body = _fn(OS_JS, "  function toggleStart(force){")
+    assert "pcPopup.toggle('start'" in body
+    assert "startOpen = !!open" in body, (
+        "the shell still decides from its own flag, which is the every-other-press dead key")
+
+
+def test_the_surface_that_owns_the_press_is_chosen_before_anything_is_destroyed():
+    """The ordering IS the bug: deciding after `closePopupWindow()` meant the second caller killed
+    the first caller's window and then declined, leaving nothing."""
+    body = MAIN[MAIN.index("async function openPopupWindow("):]
+    body = body[:body.index("ipcMain.handle('pc:popup:close'")]
+    decide = body.index("mine.name !== focused.name")
+    destroy = body.index("closePopupWindow();")
+    assert decide < destroy, (
+        "the output check runs after the existing popup has been closed — on two monitors that "
+        "destroys the menu that just opened")
+
+
+def test_the_window_is_placed_on_the_output_that_asked_for_it():
+    """Each surface measures in its own viewport, so local x=10 was global x=10 — always the
+    leftmost screen, whichever one the person was looking at."""
+    body = MAIN[MAIN.index("async function openPopupWindow("):]
+    body = body[:body.index("ipcMain.handle('pc:popup:close'")]
+    assert "originX" in body and "box.x" in body
+
+
+def test_a_defensive_close_does_not_shut_a_menu_somebody_just_opened():
+    """`toggleStart(false)` is called from several places that mean "make sure it is not showing".
+    Forwarding every one of those to the popup closed the window the toggle had just opened."""
+    body = _fn(OS_JS, "  function toggleStart(force){")
+    at = body.index("pcPopup.close()")
+    assert "wasStart" in body[max(0, at - 300):at]
+
+
+def test_the_menu_gets_the_size_the_menu_needs():
+    """420x560 is less than a third of the in-page menu's area and cut the app list off at ten —
+    "small as fuck"."""
+    body = _fn(OS_JS, "  function toggleStart(force){")
+    assert "Math.min(780" in body and "Math.min(920" in body

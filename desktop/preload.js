@@ -205,6 +205,11 @@ if (isOurPage) {
   contextBridge.exposeInMainWorld('pcPopup', {
     open: (kind, rect, arg) =>
       ipcRenderer.invoke('pc:popup:open', String(kind || ''), rect || {}, String(arg == null ? '' : arg)),
+    /* Open it, or close it if this kind is already up — decided by the process that owns the
+     * window, never by what a renderer remembers about it. Resolves true when a window is now
+     * showing, false when there is none. */
+    toggle: (kind, rect, arg) =>
+      ipcRenderer.invoke('pc:popup:toggle', String(kind || ''), rect || {}, String(arg == null ? '' : arg)),
     close: () => ipcRenderer.invoke('pc:popup:close'),
     pick: (view) => ipcRenderer.invoke('pc:popup:pick', String(view || '')),
     /* Anything that is not a view name — open this post, reply to this event, run this tray action.

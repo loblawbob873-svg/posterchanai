@@ -67,9 +67,11 @@ def test_the_centre_opens_as_a_window_when_there_is_a_compositor_to_give_it_to()
     """THE BUG, named. Without this branch the panel is appended to the shell's own DOM, which is
     the tiled surface every application floats above."""
     body = _fn("  function toggleNoti(force){")
-    assert "pcPopup.open('noti'" in body, (
+    assert "pcPopup.toggle('noti'" in body, (
         "the notification centre is still drawn inside the shell, so it opens underneath every "
-        "floating application")
+        "floating application. `toggle`, not `open`: whether it is showing is answered by the "
+        "process that owns the window, never by a flag this renderer remembers — that guess is "
+        "what made the bell work every other press")
 
 
 def test_it_is_anchored_to_the_bell_rather_than_dropped_in_a_corner():
@@ -93,7 +95,7 @@ def test_opening_the_popup_still_counts_as_reading_them_in_the_shell():
     from THIS process. Marking read only in the popup leaves the bell lit over an empty centre."""
     body = _fn("  function toggleNoti(force){")
     # The branch itself: from the bridge test to the call that hands the window over.
-    popup = body[body.index("if(window.pcPopup && pcPopup.open){"):body.index("pcPopup.open('noti'")]
+    popup = body[body.index("if(window.pcPopup && pcPopup.open){"):body.index("pcPopup.toggle('noti'")]
     assert "notifsRead" in popup, "the shell never marks them read, so the bell stays lit"
     assert "mailAck" in popup, "the mail count on the clock is never acknowledged"
 

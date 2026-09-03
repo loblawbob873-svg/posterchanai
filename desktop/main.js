@@ -1519,10 +1519,21 @@ ipcMain.handle('pc:wm:preview', async (e, id) => {
  * One at a time, closed on blur — a menu you have clicked away from is closed, which is also what
  * stops a stranded popup surviving on another output. */
 let _popupWin = null;
+let _popupKind = '';
 const POPUP_TITLE = 'PosterChan Popup';
+/* THE SHELL HAS TO BE TOLD, and not telling it was the whole of "the glitchiest thing ever".
+ *
+ * The desktop sets `startOpen = true` and asks for a window. That window then closes on its own —
+ * on blur, on Escape, or the moment you choose something — and the renderer that opened it never
+ * hears about it. So the shell still believes the menu is up, and the NEXT Super press toggles it
+ * shut and opens nothing. Measured, pressing Super four times: no menu, menu, no menu, no menu.
+ *
+ * The tick goes out on every path that closes a popup, so the flag can never be left standing. */
 function closePopupWindow(){
-  const p = _popupWin; _popupWin = null;
+  const p = _popupWin, kind = _popupKind;
+  _popupWin = null; _popupKind = '';
   if(p && !p.isDestroyed()) { try{ p.close(); }catch(_){ } }
+  if(kind) { try{ forwardShellTick({ change: 'run', payload: 'pc:popup-closed:' + kind }); }catch(_){ } }
 }
 /* A COMPOSER IS NOT A MENU. Every other popup is a menu and closes when you click away, which is
  * what makes it feel like a menu rather than a window somebody has to dismiss. A composer that did
@@ -1530,8 +1541,29 @@ function closePopupWindow(){
  * dialog — the exact loss `.modal-sticky` exists to prevent on the web. So these kinds keep focus
  * discipline of their own: they close when the user closes them. */
 const STICKY_POPUPS = new Set(['compose']);
+/* PRESSING SUPER MUST NOT DEPEND ON WHAT THE SHELL REMEMBERS.
+ *
+ * The desktop used to keep `startOpen` and decide open-or-close from it. That flag is a guess about
+ * a window this process owns: the popup also closes on blur, on Escape and on every choice, so the
+ * two drift apart constantly and the next press "closes" a menu that is not there. Measured before
+ * this: Super six times gave menu, nothing, menu, menu, nothing, menu.
+ *
+ * So the question "is it open?" is answered HERE, by the process holding the window, and the shell
+ * only paints what it is told. */
+ipcMain.handle('pc:popup:toggle', async (e, kind, rect, arg) => {
+  fsGuard(e);
+  const k = String(kind || '').replace(/[^a-z-]/g, '').slice(0, 24) || 'start';
+  if(_popupWin && !_popupWin.isDestroyed() && _popupKind === k){
+    closePopupWindow();
+    return false;                       // it was open; it is closed now
+  }
+  return openPopupWindow(e, kind, rect, arg);
+});
 ipcMain.handle('pc:popup:open', async (e, kind, rect, arg) => {
   fsGuard(e);
+  return openPopupWindow(e, kind, rect, arg);
+});
+async function openPopupWindow(e, kind, rect, arg){
   const k = String(kind || '').replace(/[^a-z-]/g, '').slice(0, 24) || 'start';
   const sticky = STICKY_POPUPS.has(k);
   const r = (rect && typeof rect === 'object') ? rect : {};
@@ -1539,11 +1571,33 @@ ipcMain.handle('pc:popup:open', async (e, kind, rect, arg) => {
     const n = Number(v);
     return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : dflt;
   };
+  /* WHICH SURFACE OWNS THIS, DECIDED BEFORE ANYTHING IS CLOSED OR CREATED.
+   *
+   * A tick reaches EVERY shell renderer, so on two monitors both call this. Deciding afterwards was
+   * a race that ate the menu: the focused surface opened its window, the other one called in, the
+   * `closePopupWindow()` below destroyed the window that had just opened, and only then was the
+   * second caller declined — leaving no menu at all, on a keypress that had done everything right.
+   * Reported as "start menu glitchey as fuck".
+   *
+   * The output also supplies the ORIGIN. Each surface measures in its own viewport, so a menu
+   * anchored to the Start button at local x=10 was placed at global x=10 — always the leftmost
+   * screen, whichever one the person was looking at. */
+  const scope = _shellScopes.get(e.sender.id);
+  let originX = 0, originY = 0;
+  try{
+    const outs = await wm().outputs();
+    const mine = scope && outs.find(o => o && o.name === scope.output);
+    const focused = outs.find(o => o && o.focused);
+    if(mine && focused && mine.name !== focused.name) return false;   // the focused surface opens it
+    const box = (mine && mine.rect) || (focused && focused.rect);
+    if(box){ originX = Math.round(box.x) || 0; originY = Math.round(box.y) || 0; }
+  }catch(_){ /* one output, or no compositor — local coordinates are global */ }
+
   closePopupWindow();
   const p = new BrowserWindow({
     show: false, frame: false, resizable: sticky, skipTaskbar: true,
     title: POPUP_TITLE,
-    width: num(r.width, 220, 900, 420), height: num(r.height, 160, 1400, 560),
+    width: num(r.width, 220, 1400, 420), height: num(r.height, 160, 2200, 560),
     x: Number.isFinite(Number(r.x)) ? Math.round(Number(r.x)) : undefined,
     y: Number.isFinite(Number(r.y)) ? Math.round(Number(r.y)) : undefined,
     backgroundColor: '#0a0a10', autoHideMenuBar: true,
@@ -1554,6 +1608,7 @@ ipcMain.handle('pc:popup:open', async (e, kind, rect, arg) => {
     },
   });
   _popupWin = p;
+  _popupKind = k;
   /* THE TITLE IS THE HANDLE, so the page must not take it. Electron hands a window its page's
    * <title> — every popup would be called "PosterChan · Nostr", indistinguishable from the two
    * desktop surfaces. That matters twice: sway can only be told to move a window it can name, and
@@ -1562,17 +1617,23 @@ ipcMain.handle('pc:popup:open', async (e, kind, rect, arg) => {
   p.once('ready-to-show', () => {
     if(p.isDestroyed()) return;
     p.show();
-    placePopupWindow(p, { x: num(r.x, -20000, 20000, 0), y: num(r.y, -20000, 20000, 0),
+    placePopupWindow(p, { x: originX + num(r.x, -20000, 20000, 0),
+                          y: originY + num(r.y, -20000, 20000, 0),
                           w: p.getBounds().width, h: p.getBounds().height });
   });
   if(!sticky) p.on('blur', () => { if(_popupWin === p) closePopupWindow(); });
-  p.on('closed', () => { if(_popupWin === p) _popupWin = null; });
+  p.on('closed', () => {
+    if(_popupWin !== p) return;              // already reported by closePopupWindow
+    const kind = _popupKind;
+    _popupWin = null; _popupKind = '';
+    if(kind) { try{ forwardShellTick({ change: 'run', payload: 'pc:popup-closed:' + kind }); }catch(_){ } }
+  });
   const extra = String(arg == null ? '' : arg).slice(0, 400);
   try{ await p.loadURL(APP_URL + '?pcpopup=' + encodeURIComponent(k)
                        + (extra ? '&pcarg=' + encodeURIComponent(extra) : '')); }
   catch(err){ closePopupWindow(); return false; }
   return true;
-});
+}
 /* WAYLAND GIVES A CLIENT NO SAY IN WHERE ITS WINDOW GOES, and this is the whole reason this
  * function exists. `new BrowserWindow({x, y})` is honoured on X11 and Windows and IGNORED here:
  * xdg-shell has no toplevel positioning, so sway placed the first start menu dead centre —

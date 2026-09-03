@@ -879,7 +879,12 @@
   }
   function boot(){
     if(booted)return;PC=root.__PC;if(!PC)return setTimeout(boot,40);booted=true;
-    root.PCMoneroWallet={render:()=>render(false),tip,meTip,meProbe,probe,openReceive,openSend,uri,validAddress,_format:xmr};
+    /* WHAT THIS NODE CHARGES, for callers with no wallet sheet of their own — the external tip
+       flow states it too, so there is no path on which the fee is invisible. Whichever probe has
+       run supplies it; both endpoints carry the same number. */
+    const feePercent = () => Number((_meState && _meState.fee_percent)
+                                    || (state && state.zap_fee_percent) || 0) || 0;
+    root.PCMoneroWallet={render:()=>render(false),tip,meTip,meProbe,probe,openReceive,openSend,uri,validAddress,feePercent,_format:xmr};
     /* Ask once, now. A tip taken from cache is instant AND deterministic; the alternative is
        deciding on a stopwatch, which is what made the chooser differ between identical clicks. */
     warm();

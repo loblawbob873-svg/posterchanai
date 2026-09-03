@@ -7178,14 +7178,17 @@
       try{ mailNow = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ }
       mailAck = mailNow;
       try{ PC().notifsRead && PC().notifsRead(); }catch(_){ }
-      const w = 380, h = Math.min(620, Math.max(320, Math.round((window.innerHeight || 900) * 0.6)));
-      let x = Math.max(0, (window.innerWidth || 1280) - w - 8), y = 8;
+      /* `.os-noti` is min(430px, 100vw-16px) wide with max-height 100vh-84px. 380x620 was smaller
+         than the panel it replaced — "notifications is also small". */
+      const w = Math.min(430, Math.max(300, Math.round(vwL() - 16)));
+      const h = Math.min(980, Math.max(320, Math.round(vhL() - 84)));
+      let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
       try{
         const b = $('#os-bell', bar), r = b && b.getBoundingClientRect();
         if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
       }catch(_){ }
-      Promise.resolve(pcPopup.open('noti', { x, y, width: w, height: h }))
-        .then(ok => { if(!ok){ notiOpen = false; drawBar(); } })
+      Promise.resolve(pcPopup.toggle('noti', { x, y, width: w, height: h }))
+        .then(open => { notiOpen = !!open; drawBar(); })
         .catch(() => { notiOpen = false; drawBar(); });
       drawBar();
       return;
@@ -7692,7 +7695,10 @@
        unconditional release would decrement the overlay refcount for a menu that was never open —
        lowering the shell out from under whatever else is up (the notification panel calls this). */
     if(!startOpen){ if(menu) menu.remove(); _nativeMenuLayer(false);
-                    try{ if(window.pcPopup && pcPopup.close) pcPopup.close(); }catch(_){ }
+                    /* Only close a popup when this really is "put it away" — never on the
+                       defensive toggleStart(false) calls scattered through this file, which would
+                       shut a menu the person had just opened. The toggle path above owns it. */
+                    if(wasStart) try{ if(window.pcPopup && pcPopup.close) pcPopup.close(); }catch(_){ }
                     drawBar(); return; }
     /* A REAL WINDOW WHERE THERE IS A COMPOSITOR TO GIVE IT TO.
      *
@@ -7706,11 +7712,19 @@
     if(!_menuInPopup && window.pcPopup && pcPopup.open){
       let rect = null;
       try{ const b = $('#os-start', root); rect = b ? b.getBoundingClientRect() : null; }catch(_){ }
-      const h = Math.min(560, Math.max(320, Math.round((window.innerHeight || 900) * 0.55)));
-      const x = Math.max(0, Math.round((rect ? rect.left : 8)));
-      const y = Math.max(0, Math.round((rect ? rect.top : (window.innerHeight || 900)) - h - 8));
-      Promise.resolve(pcPopup.open('start', { x, y, width: 420, height: h }))
-        .then(ok => { if(!ok){ startOpen = false; drawBar(); } })
+      /* THE SAME BOX THE IN-PAGE MENU GETS. `.os-startmenu` is min(780px, 100vw-20px) wide and
+         min(920px, 100vh-78px) tall; the window was 420x560, which is less than a third of the
+         area and cut the app list off at ten — reported as "small as fuck". Measured in LAYOUT
+         pixels (vwL/vhL), because that is what the stylesheet's 100vw/100vh mean under body zoom. */
+      const w = Math.min(780, Math.max(360, Math.round(vwL() - 20)));
+      const h = Math.min(920, Math.max(320, Math.round(vhL() - 78)));
+      const x = Math.max(0, Math.round((rect ? rect.left : 10)));
+      const y = Math.max(0, Math.round((rect ? rect.top : vhL()) - h - 8));
+      /* TOGGLE, decided by the main process. `startOpen` is a paint flag here, not the decision:
+         the window closes on blur, on Escape and on every choice, none of which this renderer sees
+         in time. Asking it to remember made Super work every other press, unpredictably. */
+      Promise.resolve(pcPopup.toggle('start', { x, y, width: w, height: h }))
+        .then(open => { startOpen = !!open; drawBar(); })
         .catch(() => { startOpen = false; drawBar(); });
       drawBar();
       return;
@@ -8230,6 +8244,16 @@
             else if(p.indexOf('pc:open:') === 0){
               toggleStart(false);
               try{ openLauncherApp(p.slice('pc:open:'.length)); }catch(_){ }
+            }
+            /* A POPUP WENT AWAY. The desktop set startOpen/notiOpen when it asked for the
+               window; the window closes on blur, on Escape and on every choice, and without this
+               those flags stay set — so the next Super press closes a menu that is not there and
+               opens nothing. That is the every-other-press dead key. */
+            else if(p.indexOf('pc:popup-closed:') === 0){
+              const kind = p.slice('pc:popup-closed:'.length);
+              if(kind === 'start') startOpen = false;
+              else if(kind === 'noti') notiOpen = false;
+              drawBar();
             }
             /* WHAT A POPUP DID, PERFORMED IN THE SHELL. A view name goes through `pc:open:` above;
                everything else — open this post, this profile, reply to this event — arrives here,

@@ -9944,6 +9944,7 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
 
 /* The message count on a conversation row. Small and quiet: it is a fact about the row, not a
    badge demanding attention — unread already has its own weight. */
+.mi-you{color:var(--muted);font-weight:600}
 .mi-count{display:inline-block;margin-inline-start:6px;padding:0 6px;border-radius:999px;
   background:var(--panel2);color:var(--muted);font-size:11px;font-weight:700;line-height:17px;
   vertical-align:middle}
