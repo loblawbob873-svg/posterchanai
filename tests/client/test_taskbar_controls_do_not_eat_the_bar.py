@@ -1,78 +1,79 @@
-"""ONE BUTTON PER WINDOW; ITS CONTROLS APPEAR WHEN YOU REACH FOR THEM.
+"""THE TASKBAR IS A LIST OF WINDOWS; ITS CONTROLS LIVE IN THE RIGHT-CLICK MENU.
 
-Reported as "wtf is the deal with the window control on the taskbar eating up space!", right after
-"we can't have half the windows with controls and the other half no window controls".
+This file has now been through the whole argument, and the conclusion is worth keeping because each
+step was a real report:
 
-Both are true at once, and they pull in opposite directions:
+  * the task button had maximise and close only — two thirds of a set, which reads as none:
+    "we can't have half the windows with controls and the other half no window controls";
+  * minimise was added, and three glyphs beside every app ate the bar:
+    "wtf is the deal with the window control on the taskbar eating up space";
+  * they were hidden behind hover, which on this desktop means gone, because sway draws no
+    title-bar buttons and neither Firefox nor Telegram will negotiate CSD:
+    "there is no window controls";
+  * they were made visible again, and the answer was still no: "i do not want to see _ [] X on
+    every taskbar app ... rightclick on a taskbar open app will suffice".
 
-  * sway draws a title bar with NO buttons, and neither Firefox nor Telegram will negotiate
-    client-side decorations (measured: `border csd` on both, they stayed `normal`). So for a
-    non-hosted window the taskbar is the only place controls can live.
-  * three controls beside every task button is three buttons of taskbar per open window. Measured on
-    the machine with seven PosterChan windows plus Firefox and Telegram open, that is most of the
-    bar — and it was only two controls then. Adding minimise (which was missing, and whose absence
-    is what made people read the set as "no controls") made the space problem worse.
-
-So the controls stay, and stop costing anything until they are wanted: hidden by default, revealed
-on hover or keyboard focus of the task group. `display:none`, never `opacity` — an invisible control
-still occupies its width, which is the entire complaint.
+So the inline controls are gone. Nothing is lost: the right-click menu already carried Move, Move to
+other display, Snap left, Snap right and Close, and it now carries Minimize/Restore — the one it
+never had, which is what the inline buttons were added for in the first place. The keyboard has all
+three too (Super+Q / Alt+F4 close, Super+Up maximise, Super+Down minimise).
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
+SWAY = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(encoding="utf-8")
 
 
-def test_the_button_and_its_controls_are_one_group():
-    """Hover has to reveal the controls from the BUTTON too, or you must already be on the tiny
-    controls to make them appear."""
-    assert '<span class="os-taskgroup">' in OS_JS
-    bar = OS_JS[OS_JS.index("os-taskgroup"):]
-    bar = bar[:bar.index("</div>")]
-    assert "os-task" in bar and "os-native-controls" in bar, "the controls left the group"
+def _ctx_menu() -> str:
+    start = OS_JS.index("$$('.os-task', bar).forEach(b => b.oncontextmenu")
+    return OS_JS[start:start + 2600]
 
 
-def test_the_controls_are_always_visible():
-    """THE CORRECTION. These were briefly hover-only to save bar space, and that was wrong: sway
-    draws no title-bar buttons and neither Firefox nor Telegram will negotiate CSD, so the taskbar
-    is the ONLY place a window's controls exist. Hidden behind hover, they are a secret — reported
-    within minutes as "there is no window controls"."""
-    assert ".os-taskgroup .os-native-controls{display:inline-flex}" in CSS
-    assert ".os-taskgroup .os-native-controls{display:none}" not in CSS, (
-        "the window controls are hidden again; on this desktop that means there are none")
+def test_there_are_no_inline_controls_on_a_task_button():
+    """THE REQUEST, stated as the rule."""
+    for gone in ("os-native-min", "os-native-max", "os-native-close", "os-taskgroup"):
+        assert gone not in OS_JS, f"{gone} is back on the taskbar"
 
 
-def test_they_are_not_hidden_by_any_other_means_either():
-    block = CSS[CSS.index(".os-taskgroup{"):CSS.index(".os-native-controls{display:inline-flex;align")]
-    for hide in ("opacity:0", "visibility:hidden", "display:none"):
-        assert hide not in block, f"the controls are hidden with {hide}"
+def test_their_styling_went_with_them():
+    """Dead CSS for a removed control is how it quietly comes back."""
+    for gone in ("os-native-controls", "os-taskgroup"):
+        assert gone not in CSS
 
 
-def test_they_are_compact_so_the_space_complaint_is_still_answered():
-    """The space complaint was real. It is answered by making them cheap, not by hiding them:
-    18px and no gap, so three now cost less bar than two did at 22px with gaps."""
-    rule = CSS.split(".os-native-controls button{", 1)[1].split("}", 1)[0]
-    assert "width:18px" in rule and "height:18px" in rule
-    # The FIRST `.os-native-controls{` is the group override; the sizing rule is the one that
-    # carries align-items. Splitting on the bare selector matched the wrong block.
-    gap = CSS.split(".os-native-controls{display:inline-flex;align-items:center;", 1)[1].split("}", 1)[0]
-    assert "gap:0" in gap
+def test_the_right_click_menu_has_all_three():
+    body = _ctx_menu()
+    assert "'Close'" in body
+    assert "'Maximize'" in body
+    assert "Minimize" in body and "Restore" in body, (
+        "the menu still has no minimise — which is exactly why the inline buttons were added")
 
 
-def test_all_three_controls_are_still_there():
-    """The other half of the complaint: a set missing minimise reads as no controls at all."""
-    for control in ("os-native-min", "os-native-max", "os-native-close"):
-        assert control in OS_JS, f"{control} is gone"
+def test_minimise_uses_the_same_path_as_the_task_button():
+    """`hide` is the scratchpad toggle the button already uses; a second notion of 'minimised'
+    would mean one control could not undo the other."""
+    body = _ctx_menu()
+    assert "pcWM.hide(w.id)" in body and "pcWM.show(w.id)" in body
 
 
-def test_they_are_still_bound():
-    """Controls that appear and do nothing would be the worst of both."""
-    for control, call in (("os-native-min", "pcWM.hide"), ("os-native-max", "pcWM.snap"),
-                          ("os-native-close", "pcWM.close")):
-        line = re.search(r"\$\$\('\." + control + r"',bar\)[^\n]*", OS_JS)
-        assert line, f"{control} has no binding"
-        assert call in line.group(0), f"{control} is not wired to {call}"
+def test_the_menu_still_offers_moving_and_snapping():
+    body = _ctx_menu()
+    for label in ("'Move'", "'Snap left'", "'Snap right'", "'Move to other display'"):
+        assert label in body, f"{label} was lost from the menu"
+
+
+def test_the_task_button_itself_survives():
+    """Removing the controls must not remove the window list."""
+    assert '<button class="os-task${w.focused' in OS_JS
+
+
+def test_the_keyboard_can_still_do_all_three():
+    """The menu is a convenience; the bindings are the guarantee, and they ship in sway.config."""
+    assert "bindsym $mod+q exec /usr/local/bin/pc-window-close" in SWAY
+    assert "bindsym Mod1+F4 exec /usr/local/bin/pc-window-close" in SWAY
+    assert "bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max" in SWAY
+    assert "bindsym $mod+Down  exec /usr/local/bin/pc-window-snap minimise" in SWAY

@@ -37,7 +37,7 @@ def test_running_task_context_menu_can_move_recover_and_close_windows():
     assert "{label:'Move',run:()=>nativeTaskbarMove(w)}" in SRC
     assert "if(!w)w=adoptNative(row)" in SRC
     menu = SRC[SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"):
-               SRC.index("$$('.os-native-max'", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
+               SRC.index("Unpin from taskbar", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
     assert "move position cursor" not in menu
 
 
@@ -58,7 +58,7 @@ def test_native_taskbar_move_arms_before_compositor_focus_at_runtime():
 
 def test_adopted_native_task_gets_move_and_close_without_an_ephemeral_pin():
     menu = SRC[SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"):
-               SRC.index("$$('.os-native-max'", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
+               SRC.index("Unpin from taskbar", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
     assert "running.native==null" in menu
     assert "if(running)actions.push({label:'Move'" in menu
     assert "{label:'Close',run:()=>closeWin(running)}" in menu
@@ -73,8 +73,12 @@ def test_taskbar_context_menu_is_anchored_in_the_desktops_scaled_coordinate_spac
     assert "desk.offsetWidth" in body and "desk.offsetHeight" in body
     assert "ar.left-dr.left" in helper and "ar.top-dr.top" in helper
     # Both native and PosterChan task buttons pass the button, not just viewport pointer coordinates.
-    task = SRC[SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"):
-               SRC.index("$$('.os-native-max'", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
+    # A fixed span from the handler, not an end-anchor: this slice has to cover BOTH branches (the
+    # native one and the PosterChan one), and every marker that used to sit between them has since
+    # been edited or removed — the inline _ [] X controls were an end-anchor here until they were
+    # taken off the taskbar entirely.
+    _start = SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu")
+    task = SRC[_start:_start + 4000]
     assert task.count("],b);") >= 1
     assert "showCtx(e.clientX, e.clientY, actions, b)" in task
 

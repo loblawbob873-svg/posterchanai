@@ -6938,21 +6938,17 @@
                   data-id="${w.id}" data-kind="web"${tint(w.machineApp ? w.machineApp.id : w.view)} title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
          + nativeTasks.map(w =>
-         `<span class="os-taskgroup"><button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
+         /* NO PER-APP WINDOW CONTROLS ON THE TASKBAR. They were a stopgap: sway draws a title bar
+            with no buttons and neither Firefox nor Telegram will negotiate CSD, so this was the only
+            place controls could live. It is not what a taskbar is for, and a row of tiny glyphs
+            beside every app is what it looked like: "i do not want to see _ [] X on every taskbar
+            app". The keyboard already covers all three and is bound in sway.config --
+            Super+Q / Alt+F4 close, Super+Up maximise, Super+Down minimise, Super+Left / Right snap,
+            Super+Shift+arrows move -- so nothing is lost by taking these away. Real buttons belong
+            on the window's own title bar, which needs either hosting or a client-drawn bar. */
+         `<button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
                   data-id="${w.id}" data-kind="native"${tint(w.appId || w.title)} title="${enc(w.title)}">
-            ${appIcon(w)}<span>${enc(w.title)}</span></button><span class="os-native-controls">
-              <!-- MINIMISE WAS THE MISSING ONE, AND ITS ABSENCE IS WHAT MADE THIS READ AS "NO WINDOW
-                   CONTROLS". sway draws border-normal: a title bar carrying the title and nothing
-                   else. Neither Firefox nor Telegram will negotiate client-side decorations
-                   (measured: border csd on both, they stayed normal, deco_h 30), so the only
-                   controls a non-hosted app can have are these, and shipping two thirds of a set is
-                   what a person reads as none. The task button already toggles minimise, but a
-                   toggle on an icon is not a control anybody can see.
-                   NO BACKTICKS IN THIS COMMENT: it lives inside a template literal, and one closes
-                   it and takes the whole module out at parse time. -->
-              <button class="os-native-min" data-id="${w.id}" title="Minimize ${enc(w.title)}">–</button>
-              <button class="os-native-max" data-id="${w.id}" title="Maximize ${enc(w.title)}">□</button>
-              <button class="os-native-close" data-id="${w.id}" title="Close ${enc(w.title)}">×</button></span></span>`).join('')}</div>
+            ${appIcon(w)}<span>${enc(w.title)}</span></button>`).join('')}</div>
        <div class="os-tray">
          <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"
@@ -7046,6 +7042,14 @@
           {label:'Snap left',run:()=>Promise.resolve(pcWM.snap(w.id,'left')).catch(()=>{})},
           {label:'Snap right',run:()=>Promise.resolve(pcWM.snap(w.id,'right')).catch(()=>{})},
           {label:'Maximize',run:()=>Promise.resolve(pcWM.snap(w.id,'max')).catch(()=>{})},
+          /* MINIMISE, the one this menu never had — and the reason the inline _ [] X buttons were
+             added to every task button in the first place. With it here the menu is a complete set
+             (minimise, maximise, close) and the taskbar goes back to being a list of windows:
+             "i do not want to see _ [] X on every taskbar app ... rightclick on a taskbar open app
+             will suffice". `hide` is the same scratchpad path the task button's click toggles, so
+             the two agree about what minimised means and either one brings it back. */
+          {label: w.stashed ? 'Restore' : 'Minimize',
+           run:()=>Promise.resolve(w.stashed ? pcWM.show(w.id) : pcWM.hide(w.id)).catch(()=>{})},
           {sep:true},
           {label:'Close',run:()=>Promise.resolve(pcWM.close(w.id)).catch(()=>{})}
         ],b);
@@ -7068,11 +7072,7 @@
       if(!actions.length)return;
       showCtx(e.clientX, e.clientY, actions, b);
     });
-    /* Minimise is `hide` — the same scratchpad path the task button's toggle uses, so the two agree
-       about what minimised means and `show` brings it back the same way. */
-    $$('.os-native-min',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.hide(Number(b.dataset.id))).catch(()=>{}); });
-    $$('.os-native-max',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.snap(Number(b.dataset.id),'max')).catch(()=>{}); });
-    $$('.os-native-close',bar).forEach(b=>b.onclick=e=>{ e.stopPropagation(); Promise.resolve(pcWM.close(Number(b.dataset.id))).catch(()=>{}); });
+
     placeDesktopTray();
   }
 

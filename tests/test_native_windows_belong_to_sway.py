@@ -60,7 +60,11 @@ def test_an_unhosted_window_still_gets_a_taskbar_button():
         "nativeTasks no longer collects the windows the desktop does not host")
     bar = OS_JS[OS_JS.index("+ nativeTasks.map(w =>"):]
     bar = bar[:bar.index("</div>")]
-    assert "os-native-close" in bar and "os-native-max" in bar, "the controls are gone"
+    # The inline _ [] X buttons were REMOVED at the owner's request ("i do not want to see _ [] X
+    # on every taskbar app ... rightclick on a taskbar open app will suffice"). What must survive is
+    # the window's presence in the bar and a way to act on it, which is the context menu.
+    assert 'data-kind="native"' in bar, "an unhosted window has no taskbar button at all"
+    assert "oncontextmenu" in OS_JS, "the taskbar has no right-click menu, so nothing can act on it"
     assert "appIcon(w)" in bar, "the button lost its icon"
 
 

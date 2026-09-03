@@ -332,8 +332,10 @@ class Bridge(unittest.TestCase):
 
     def test_native_taskbar_has_visible_window_controls(self):
         client = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
-        self.assertIn("os-native-max", client)
-        self.assertIn("os-native-close", client)
+        # Inline controls removed by request; the right-click menu carries them now.
+        self.assertIn('data-kind="native"', client)
+        self.assertIn("'Maximize'", client)
+        self.assertIn("'Close'", client)
         self.assertNotIn("if(w.native == null && window.pcWM && nativeTasks.length)", client)
 
     def test_terminal_handoff_keeps_the_same_pty(self):

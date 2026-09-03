@@ -9753,18 +9753,6 @@ audio.sms-att-img{min-width:220px}
   .office-actions{margin-top:2px;gap:6px}
   .office-actions .btn{min-height:38px}
 }
-/* CONTROLS ARE ALWAYS VISIBLE, AND SMALL. This was briefly hover-only, to answer "the window
-   control on the taskbar eating up space" — and that was the wrong trade, said immediately and
-   correctly: "there is no window controls". sway draws a title bar with NO buttons and neither
-   Firefox nor Telegram will negotiate CSD (measured: `border csd`, both stayed `normal`), so the
-   taskbar is the ONLY place a window's controls exist. A control you have to already know about,
-   and hover to find, is not a control — it is a secret. Space is worth something; being able to
-   close a window is worth more.
-   So they stay on screen and are made CHEAP instead: 18px instead of 22, no gaps, and the icon-only
-   glyphs they already were. Three of them now cost less bar than two did before. */
-.os-taskgroup{display:inline-flex;align-items:center}
-.os-taskgroup .os-native-controls{display:inline-flex}
-.os-native-controls{display:inline-flex;align-items:center;gap:0}.os-native-controls button{width:18px;height:18px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;line-height:16px;font-size:12px}.os-native-controls button:hover{background:rgba(255,255,255,.14)}.os-native-close:hover{background:#c42b1c!important;color:#fff}
 
 /* PREVIEW — the picture/video/PDF viewer (static/js/client/preview.js).
    Two hosts, one look: a desktop window's slot (.pv-win) and a full-screen sheet (.pv-sheet).
