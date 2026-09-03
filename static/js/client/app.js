@@ -25776,7 +25776,7 @@
   }
 
   const Mail = {
-    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, q:'', _syncing:false, sel:null, _listSeq:0,
+    unread:0, root:null, accounts:[], acct:null, folder:'INBOX', folders:['INBOX','Sent','Drafts'], folderLabels:{}, msgs:[], openUid:null, openFolder:null, openAccount:null, q:'', _syncing:false, sel:null, _listSeq:0,
     async api(path, opts={}){
       await ensureAiSession();
       const r=await fetch('/api/mail'+path,{...opts,credentials:'include',headers:{...(opts.headers||{}),...(_aiToken?{'Authorization':'Bearer '+_aiToken}:{})}});
@@ -26019,6 +26019,8 @@
                                        body:JSON.stringify({account: account||this.acct, folder})});
       }catch(_){}
       if(this.folder===folder || this.folder==='Sent' || this.folder==='Drafts') this.loadList();
+      else if(this.root && this.root.isConnected && this.openUid && this.openFolder)
+        this.open(this.openUid, this.openFolder, this.openAccount||account||this.acct||'__all');
     },
     _key(m){ return (m.account||this.acct)+'|'+(m.folder||this.folder)+'|'+m.uid; },
     /* THE POINT OF A THREAD IS THAT IT IS ONE ROW.
@@ -26146,7 +26148,8 @@
        * `.catch(()=>{})` below threw it away: the conversation silently never upgraded past the one
        * message that was clicked. Reported as "webui not showing sent items in the thread" — the
        * threading was right, the request asking for it was not. */
-      folder=folder||this.folder; const acct=account||this.acct||'__all'; this.openUid=uid; this.drawList();
+      folder=folder||this.folder; const acct=account||this.acct||'__all';
+      this.openUid=uid; this.openFolder=folder; this.openAccount=acct; this.drawList();
       let msg; try{ const r=await this.api('/message?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid)); msg=r.message; }catch(_){}
       if(folder==='Drafts'){   // a draft opens back into the composer (prefilled) rather than a read pane
         if(msg) this.compose({mode:'draft', draft:msg, acct});

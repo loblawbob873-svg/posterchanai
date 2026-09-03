@@ -634,8 +634,11 @@ function createWindow(assignment) {
     Menu.buildFromTemplate(items).popup({ window: created });
   });
 
-  // Off-site links (and target=_blank to another host) belong in the user's real browser; our own pages —
-  // plus blob:/data: (media the client builds locally) — open as a normal app window.
+  // Ordinary links belong in the user's real browser. The only frameless children this shell owns
+  // are explicit `pcwin` application surfaces; silently turning a same-origin target=_blank into a
+  // raw Electron child leaves it outside PCOS bookkeeping, with no PosterChan title bar and no
+  // reliable way to close it on a compositor. blob:/data: cannot be handed to another process, so
+  // those retain a small, conventional native frame of their own.
   created.webContents.setWindowOpenHandler(({ url, features }) => {
     /* A PosterChan WINDOW — see static/js/client/oswin.js. On PosterChanOS a window is its own
      * compositor toplevel so sway stacks it with Telegram and Firefox natively, instead of the
@@ -702,8 +705,16 @@ function createWindow(assignment) {
         },
       } };
     }
-    if (isOurs(url) || /^blob:|^data:/.test(url)) return { action: 'allow' };
-    if (/^https?:/.test(url)) shell.openExternal(url);
+    if (/^blob:|^data:/.test(url) || (isOurs(url) && !/^https?:/i.test(url))) {
+      return { action: 'allow', overrideBrowserWindowOptions: {
+      frame: true, title: 'PosterChan Preview', width: 960, height: 720,
+      minWidth: 360, minHeight: 240, autoHideMenuBar: true,
+      } };
+    }
+    /* `isOurs` is intentionally irrelevant here: target=_blank means "open a browser page", not
+     * "make another desktop application surface". Internal app navigation does not use _blank;
+     * the explicit pcwin branch above is the sole exception. */
+    if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   // A 302 out to the provider fires will-redirect, not will-navigate, so watch it too — but only to

@@ -350,6 +350,11 @@ async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depen
     """
     try:
         res = await mail_sync.sync_all(db, current_user, folders=mail_sync.ESSENTIAL)
+        # A background poll may already have mirrored the row, making every count zero while this
+        # process still holds an older conversation snapshot. A deliberate sync is an invalidation
+        # boundary whether or not this particular request performed the write.
+        for acc in (get_user_mail_accounts(current_user.id, db) or []):
+            _invalidate_thread_scan(current_user.id, acc.email)
         return {"ok": True, "new": res}
     except Exception as e:
         logger.warning("[mail] sync failed for %s: %s", current_user.id, e)
@@ -769,6 +774,7 @@ async def mail_sync_folder(request: Request, db: Session = Depends(get_db), curr
             for item in (get_user_mail_accounts(current_user.id, db) or []):
                 out[item.email] = await mail_sync.sync_one(
                     db, current_user, item.email, d.get("folder", "INBOX"))
+                _invalidate_thread_scan(current_user.id, item.email)
             return {"ok": True, "new": out}
         except Exception as e:
             logger.warning("[mail] unified sync-folder failed: %s", e)
@@ -778,6 +784,7 @@ async def mail_sync_folder(request: Request, db: Session = Depends(get_db), curr
         raise HTTPException(status_code=404, detail="Account not found")
     try:
         n = await mail_sync.sync_one(db, current_user, acc.email, d.get("folder", "INBOX"))
+        _invalidate_thread_scan(current_user.id, acc.email)
         return {"ok": True, "new": n}
     except Exception as e:
         logger.warning("[mail] sync-folder failed: %s", e)
@@ -971,6 +978,17 @@ def _build_thread(seed: dict, allmsgs: list) -> list:
 
 _THREAD_SCAN: dict = {}
 _THREAD_SCAN_TTL = 60.0
+_THREAD_SCAN_GEN: dict = {}
+
+
+def _invalidate_thread_scan(user_id, account_email: str | None = None) -> None:
+    """Drop account and unified snapshots after new mail is mirrored."""
+    keys = [(user_id, "*")]
+    if account_email:
+        keys.append((user_id, account_email))
+    for key in keys:
+        _THREAD_SCAN.pop(key, None)
+        _THREAD_SCAN_GEN[key] = _THREAD_SCAN_GEN.get(key, 0) + 1
 
 
 async def _thread_scan(sk: bytes, account_email: str | None, user_id) -> list:
@@ -994,7 +1012,12 @@ async def _thread_scan(sk: bytes, account_email: str | None, user_id) -> list:
     now = _time.monotonic()
     if hit and now - hit[0] < _THREAD_SCAN_TTL:
         return hit[1]
+    generation = _THREAD_SCAN_GEN.get(key, 0)
     msgs = await mail_store.list_all_messages(sk, account_email, None)
+    # A Sent sync may finish while this expensive scan is in flight. Its result describes the old
+    # mailbox and must neither be returned nor put back into the cache after invalidation.
+    if generation != _THREAD_SCAN_GEN.get(key, 0):
+        return await _thread_scan(sk, account_email, user_id)
     # Bounded: one entry per account, and stale ones are dropped rather than accumulated.
     for k, v in list(_THREAD_SCAN.items()):
         if now - v[0] >= _THREAD_SCAN_TTL:
