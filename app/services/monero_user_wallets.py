@@ -253,6 +253,21 @@ class UserWallets:
         if count >= OUTPUT_LOW_WATER:
             return {"account_index": index, "action": "healthy", "spendable_outputs": count}
 
+        # A successful split consumes one available source and creates outputs that stay locked for
+        # the chain's spend lock. The scheduler runs every minute (and process-local cooldowns vanish
+        # on restart), so looking only at `available` would split another reserve on every tick:
+        # 3 -> 2 -> 1 -> 0 spendable outputs. Locked outputs are an on-wallet, restart-safe witness
+        # that replenishment is already in flight. Wait for them before paying another transaction
+        # fee or consuming another source.
+        unavailable = await self.rpc("incoming_transfers", {
+            "transfer_type": "unavailable", "account_index": index,
+        })
+        locked = [t for t in (unavailable.get("transfers") or [])
+                  if int(t.get("amount") or 0) > 0]
+        if locked:
+            return {"account_index": index, "action": "waiting", "spendable_outputs": count,
+                    "locked_outputs": len(locked), "reason": "output split is still unlocking"}
+
         # sweep_single is deliberately fail-closed: without a key image we cannot preserve the
         # account's other outputs, so waiting is safer than turning maintenance into a lockout.
         candidates = [t for t in transfers if str(t.get("key_image") or "")]

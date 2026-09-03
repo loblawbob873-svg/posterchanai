@@ -142,10 +142,10 @@ function closeConn(c){
 }
 
 function openConn(url){
-  const c = conns.get(url) || { ws:null, timer:null, backoff:1000, ready:false, authed:false, authing:null };
+  const c = conns.get(url) || { ws:null, timer:null, backoff:1000, ready:false, authed:false, authing:null, authId:null };
   conns.set(url, c);
   closeConn(c);                 // detach before replacing, or the close we cause schedules a retry
-  c.ready = false; c.authed = false; c.authing = null;
+  c.ready = false; c.authed = false; c.authing = null; c.authId = null;
   try{ c.ws = new WebSocket(url); }
   catch(_){ return retry(url); }
   c.ws.onopen = () => {
@@ -158,18 +158,27 @@ function openConn(url){
   };
   c.ws.onmessage = (e) => {
     let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
-    if(m[0] === 'AUTH' && m[1] && !c.authing){
+    if(m[0] === 'AUTH' && m[1] && !c.authing && !c.authId){
       // NIP-78 private data now requires same-owner NIP-42 AUTH. Sign through whichever full
       // pairing mode owns this vault (local key or NIP-46), then replay the owner-bound REQ.
       c.authing=finalize({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
         tags:[['relay',url],['challenge',String(m[1])]]}).then(a=>{
-          c.authed=true;
+          c.authId=a.id;
           c.ws.send(JSON.stringify(['AUTH',a]));
-          c.ws.send(JSON.stringify(['REQ','pcvault',{kinds:[KIND],authors:[cfg.pubkey],'#l':[L_TAG,L_BM],limit:5000}]));
         }).catch(()=>{c.authed=false;}).finally(()=>{c.authing=null;});
     }
     else if(m[0] === 'EVENT' && m[2]) absorb(m[2]);
-    else if(m[0] === 'OK'){ const w = okWaiters.get(m[1]); if(w) w(m[2] === true); }
+    else if(m[0] === 'OK'){
+      if(c.authId && m[1] === c.authId){
+        c.authId=null; c.authed=m[2] === true;
+        // NIP-42 requires the relay's positive AUTH acknowledgement before protected traffic is
+        // retried. Sending REQ immediately after AUTH happened to work on ordered permissive
+        // relays, but strict implementations can reject it while authentication is still pending.
+        if(c.authed)c.ws.send(JSON.stringify(['REQ','pcvault',{kinds:[KIND],authors:[cfg.pubkey],'#l':[L_TAG,L_BM],limit:5000}]));
+        return;
+      }
+      const w = okWaiters.get(m[1]); if(w) w(m[2] === true);
+    }
     else if(m[0] === 'EOSE'){ c.ready = true; lastSync = Date.now(); saveItems(); flushOutbox(); refreshStatus();
       /* A relay has now answered, so anything that could not be published while the socket was down
        * can go. union() only sends what it has no record of having sent, and never deletes, so

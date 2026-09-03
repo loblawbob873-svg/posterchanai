@@ -9,7 +9,7 @@ from app.services import monero_user_wallets as mod
 from app import worker
 
 
-def wallet(transfers):
+def wallet(transfers, unavailable=()):
     w = mod.UserWallets.__new__(mod.UserWallets)
     w.url, w.user, w.password, w.network = "rpc", "u", "p", "mainnet"
     w.timeout, w._fee_address, w._fee_at = 1, None, 0
@@ -19,7 +19,7 @@ def wallet(transfers):
     async def rpc(method, params=None):
         w.calls.append((method, params or {}))
         if method == "incoming_transfers":
-            return {"transfers": transfers}
+            return {"transfers": list(unavailable) if params.get("transfer_type") == "unavailable" else transfers}
         if method == "sweep_single":
             return {"tx_hash": "ab" * 32}
         if method == "get_accounts":
@@ -71,12 +71,22 @@ def test_missing_key_images_fail_closed_instead_of_sweeping_everything(monkeypat
 
 def test_locked_outputs_do_not_fake_sequential_zap_capacity(monkeypatch):
     monkeypatch.setattr(mod, "validate_address", lambda *_: None)
-    w = wallet([
-        {"amount": 10_000_000_000, "unlocked": True, "key_image": "usable"},
-        *({"amount": 10_000_000_000, "unlocked": False, "key_image": f"locked-{i}"}
-          for i in range(20)),
-    ])
+    # Wallet RPC's `available` result must not include unavailable transfers. Verify an ordinary
+    # low-output account still splits when there is no prior split unlocking.
+    w = wallet([{"amount": 10_000_000_000, "unlocked": True, "key_image": "usable"}])
     assert asyncio.run(w.maintain_account_outputs(ACCOUNT))["action"] == "split"
+
+
+def test_scheduler_does_not_consume_another_output_while_prior_split_unlocks(monkeypatch):
+    monkeypatch.setattr(mod, "validate_address", lambda *_: None)
+    w = wallet(
+        [{"amount": 8_000_000_000, "unlocked": True, "key_image": "last-reserve"}],
+        unavailable=[{"amount": 7_000_000_000, "unlocked": False, "key_image": "split-change"}],
+    )
+    result = asyncio.run(w.maintain_account_outputs(ACCOUNT))
+    assert result["action"] == "waiting"
+    assert result["locked_outputs"] == 1
+    assert all(method != "sweep_single" for method, _ in w.calls)
 
 
 def test_production_worker_wires_the_per_user_maintainer():

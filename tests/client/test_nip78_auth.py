@@ -29,6 +29,11 @@ def test_extension_authenticates_before_replaying_private_vault_read():
     assert "kind:22242" in src
     assert "['relay',url]" in src and "['challenge',String(m[1])]" in src
     assert "['REQ','pcvault'" in src
+    auth_send = src.index("c.ws.send(JSON.stringify(['AUTH',a]))")
+    auth_ok = src.index("if(c.authId && m[1] === c.authId)", auth_send)
+    replay = src.index("c.ws.send(JSON.stringify(['REQ','pcvault'", auth_ok)
+    assert auth_send < auth_ok < replay
+    assert "if(c.authed)c.ws.send" in src
 
 
 def test_android_sms_signer_answers_auth_with_same_archive_key():
