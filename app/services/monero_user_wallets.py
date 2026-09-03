@@ -52,7 +52,11 @@ MAX_DESTINATIONS = 15
 # destination — results in the zap going out in full, unchanged. Money moving is the feature; the
 # fee is the operator's business arrangement, and an arrangement that can strand somebody's tip is
 # worse than no arrangement.
-FEE_MIN_ATOMIC = 10 ** 7          # 0.00001 XMR — below this a destination costs more than it earns
+# RingCT has no protocol dust floor for ordinary outputs.  The previous 0.00001 XMR floor silently
+# waived a 2% service fee on every zap below 0.0005 XMR -- precisely the small zaps this feature is
+# meant to cover.  One atomic unit is the only honest lower bound: if the configured percentage can
+# be represented, collect it; if rounding produces zero, leave the recipient's amount untouched.
+FEE_MIN_ATOMIC = 1
 
 
 def zap_fee_percent() -> Decimal:

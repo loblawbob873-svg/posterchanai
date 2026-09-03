@@ -15,7 +15,7 @@ Three things decide whether a fee feature is safe, and all three are tested here
    rounded DOWN so rounding always favours the recipient.
 
 3. **That it FAILS OPEN.** No configured address, an address that will not validate, a nonsense
-   percentage, or a cut too small to be worth an output — every one of them results in the zap going
+   percentage, or a cut that rounds below one atomic unit — every one of them results in the zap going
    out IN FULL. A fee that can strand somebody's tip is worse than no fee, and this is the property
    most likely to be quietly broken by a later edit.
 """
@@ -27,7 +27,7 @@ from decimal import Decimal
 import pytest
 
 from app.services.monero_user_wallets import (
-    FEE_MIN_ATOMIC, MAX_DESTINATIONS, UserWallets, split_fee, zap_fee_percent,
+    MAX_DESTINATIONS, UserWallets, split_fee, zap_fee_percent,
 )
 
 XMR = 10 ** 12
@@ -58,11 +58,19 @@ def test_rounding_favours_the_recipient():
     assert net == gross - cut
 
 
-def test_a_cut_too_small_to_be_worth_an_output_is_not_taken():
-    """An extra destination costs transaction size; below the floor it earns less than it costs."""
-    tiny = FEE_MIN_ATOMIC * 2   # 2% of this is far under the floor
+def test_a_cut_that_cannot_be_represented_is_not_taken():
+    """A fraction of one atomic unit cannot be made into an output."""
+    tiny = 49                 # 2% rounds down to zero atomic units
     net, cut = split_fee(tiny, Decimal(2))
     assert cut == 0 and net == tiny
+
+
+def test_small_zaps_are_not_silently_exempt_from_the_service_fee():
+    """The old 0.00001 XMR fee floor waived 2% on every zap below 0.0005 XMR."""
+    gross = XMR // 10_000     # 0.0001 XMR -- a normal small zap
+    net, cut = split_fee(gross, Decimal(2))
+    assert cut == 2_000_000
+    assert net + cut == gross
 
 
 def test_a_fee_can_never_consume_the_whole_payment():
@@ -167,11 +175,21 @@ def test_paying_the_operator_is_not_charged(monkeypatch):
     assert pool.sent[0] == [{"address": FEE_ADDR, "amount": XMR // 100}]
 
 
-def test_a_dust_zap_is_sent_whole(monkeypatch):
+def test_a_zap_whose_fee_rounds_to_zero_is_sent_whole(monkeypatch):
     monkeypatch.setenv("MONERO_ZAP_FEE_PERCENT", "2")
     pool = FakePool()
-    pay(pool, [(ADDR_A, FEE_MIN_ATOMIC)])
-    assert pool.sent[0] == [{"address": ADDR_A, "amount": FEE_MIN_ATOMIC}]
+    pay(pool, [(ADDR_A, 49)])
+    assert pool.sent[0] == [{"address": ADDR_A, "amount": 49}]
+
+
+def test_a_small_zap_reaches_the_operator(monkeypatch):
+    monkeypatch.setenv("MONERO_ZAP_FEE_PERCENT", "2")
+    pool = FakePool()
+    gross = XMR // 10_000
+    out = pay(pool, [(ADDR_A, gross)])
+    by = {d["address"]: d["amount"] for d in pool.sent[0]}
+    assert by == {ADDR_A: 98_000_000, FEE_ADDR: 2_000_000}
+    assert out["service_fee"] == 2_000_000 or out["service_fee"] == "0.000002"
 
 
 def test_one_aggregated_fee_output_per_transaction(monkeypatch):

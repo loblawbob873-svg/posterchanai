@@ -7052,7 +7052,7 @@
     { const bb = $('#os-bell', bar); if(bb) bb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const cb = $('#os-clock', bar); if(cb) cb.onclick = (e) => { e.stopPropagation(); toggleNoti(); }; }
     { const nb = $('#os-net', bar); if(nb) nb.onclick = (e) => { e.stopPropagation(); toggleNet(); }; }
-    $$('.os-task', bar).forEach(b => b.onclick = () => {
+    $$('.os-task', bar).forEach(b => b.onclick = async () => {
       if(b.dataset.kind === 'pin-view'){ openLauncherApp(b.dataset.pin.slice(5)); return; }
       if(b.dataset.kind === 'pin-app'){
         try{ PCOSShell.launch(b.dataset.pin.slice(4)); }catch(_){}
@@ -7062,9 +7062,14 @@
         const w = nativeTasks.find(x => String(x.id) === b.dataset.id);
         if(!w) return;
         try{
-          if(w.focused && !w.stashed) Promise.resolve(pcWM.hide(w.id)).catch(()=>{});
-          else if(w.stashed) Promise.resolve(pcWM.show(w.id)).then(() => _focusNativeDecorated(w.id)).catch(()=>{});
-          else _focusNativeDecorated(w.id);
+          /* The event-fed row can lag the click by one compositor frame. Steam focuses through
+           * several helper surfaces, so trusting `w.focused` made its active task button focus it
+           * again instead of minimising it. Ask Sway at the decision point. */
+          let live=w;
+          try{ const s=await pcWM.snapshot();live=(s.windows||[]).find(x=>Number(x.id)===Number(w.id))||w; }catch(_){}
+          if(live.focused && !live.stashed) await pcWM.hide(w.id);
+          else if(live.stashed){ await pcWM.show(w.id); await _focusNativeDecorated(w.id); }
+          else await _focusNativeDecorated(w.id);
         }catch(_){}
         return;
       }

@@ -203,6 +203,17 @@ def test_native_event_path_requeries_the_tree_for_wm_class():
     assert "scheduleNativeGameReconcile()" in event
 
 
+def test_new_firefox_window_is_expanded_once_not_left_as_a_square_preview():
+    main = (ROOT / "desktop" / "main.js").read_text(encoding="utf-8")
+    fn = main[main.index("async function reconcileNativeGameFullscreen(){"):]
+    fn = fn[:fn.index("function scheduleNativeGameReconcile(){")]
+    assert "/firefox/i.test(identity)" in fn
+    assert "wm().snap(id,'max')" in fn
+    assert "_nativeBrowserSized.has(id)" in fn
+    assert "_nativeBrowserSized.add(id)" in fn
+    assert "_nativeBrowserSized.delete(id)" in fn
+
+
 def test_the_class_is_read_from_either_wayland_or_x11():
     """Steam and most games are XWayland, so `app_id` is empty and the class is the only name they
     have — wm.js folds both into `app` for exactly this reason."""

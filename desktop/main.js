@@ -677,6 +677,19 @@ function createWindow(assignment) {
     const view = pcWindowView(details && details.url);
     if (!view) return;
     pcAppWindows.set(view, child);
+    /* A managed PosterChan window is still a browser surface. Without its own open/navigation
+     * policy, a link clicked from Social inside that window bypasses the desktop's handler and
+     * Electron creates a raw 800x600 child: no frame, no controls, and no reliable close affordance
+     * under Sway. Install the same external boundary before the user can interact with it. */
+    child.webContents['setWindow' + 'OpenHandler'](({ url }) => {
+      if (/^https?:/i.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    child.webContents.on('will-navigate', (e, url) => {
+      if (isOurs(url) || String(url || '').startsWith('file://')) return;
+      e.preventDefault();
+      if (/^https?:/i.test(url)) shell.openExternal(url);
+    });
     child.once('closed', () => {
       if (pcAppWindows.get(view) === child) pcAppWindows.delete(view);
     });
@@ -1336,19 +1349,31 @@ async function forwardShellTick(ev){
  * surface once, including games which create two handoff surfaces, then leave subsequent user
  * fullscreen/windowed choices alone. */
 const _nativeGameFullscreenAsked = new Set();
+const _nativeBrowserSized = new Set();
 const _nativeGameReconcileTimers = new Set();
 async function reconcileNativeGameFullscreen(){
   let rows=[];
   try{ rows=await wm().windows(); }catch(_){ return; }
   const alive=new Set(rows.map(row=>Number(row&&row.id)).filter(Number.isFinite));
   for(const id of [..._nativeGameFullscreenAsked]) if(!alive.has(id)) _nativeGameFullscreenAsked.delete(id);
+  for(const id of [..._nativeBrowserSized]) if(!alive.has(id)) _nativeBrowserSized.delete(id);
   for(const row of rows){
     const id=Number(row&&row.id), identity=String(row&&row.app||'');
-    if(!Number.isFinite(id)||!/^(?:steam_app_\d+|gamescope)/i.test(identity))continue;
-    if(row.fullscreen){ _nativeGameFullscreenAsked.add(id); continue; }
-    if(_nativeGameFullscreenAsked.has(id))continue;
-    _nativeGameFullscreenAsked.add(id);
-    wm().fullscreen(id,true).catch(()=>_nativeGameFullscreenAsked.delete(id));
+    if(!Number.isFinite(id))continue;
+    if(/^(?:steam_app_\d+|gamescope)/i.test(identity)){
+      if(row.fullscreen){ _nativeGameFullscreenAsked.add(id); continue; }
+      if(_nativeGameFullscreenAsked.has(id))continue;
+      _nativeGameFullscreenAsked.add(id);
+      wm().fullscreen(id,true).catch(()=>_nativeGameFullscreenAsked.delete(id));
+      continue;
+    }
+    /* A browser opened from Web Search is a normal Firefox window, not an Electron preview. The
+     * old 1400x900 map rule made it look like the same uncloseable square child we removed. Give a
+     * newly observed browser the usable output area once; later user resizing is never overridden. */
+    if(/firefox/i.test(identity)&&!_nativeBrowserSized.has(id)){
+      _nativeBrowserSized.add(id);
+      wm().snap(id,'max').catch(()=>_nativeBrowserSized.delete(id));
+    }
   }
 }
 function scheduleNativeGameReconcile(){

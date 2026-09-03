@@ -38,3 +38,23 @@ def test_generic_same_origin_allow_rule_cannot_return():
     pcwin_end = body.index("if (/^blob:|^data:/.test(url)")
     tail = body[pcwin_end:]
     assert "isOurs(url)) return { action: 'allow'" not in tail
+
+
+def test_links_from_managed_app_windows_get_the_external_policy_too():
+    """Live repro: Social in ``PosterChan Window — global`` opened YouTube as a raw 800x600
+    ``place.poster.desktop`` child because only the main desktop had an open handler."""
+    created = MAIN.split("created.webContents.on('did-create-window'", 1)[1].split(
+        "child.once('closed'", 1
+    )[0]
+    assert "child.webContents['setWindow' + 'OpenHandler']" in created
+    assert "if (/^https?:/i.test(url)) shell.openExternal(url)" in created
+    assert "return { action: 'deny' }" in created
+
+
+def test_managed_app_window_redirects_cannot_replace_social():
+    created = MAIN.split("created.webContents.on('did-create-window'", 1)[1].split(
+        "child.once('closed'", 1
+    )[0]
+    assert "child.webContents.on('will-navigate'" in created
+    assert "e.preventDefault()" in created
+    assert "shell.openExternal(url)" in created

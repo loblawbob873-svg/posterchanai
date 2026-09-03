@@ -24,11 +24,13 @@ def test_native_app_singletons_are_enforced_process_wide():
 
 def test_pending_creation_is_replaced_and_closed_windows_are_released():
     created = MAIN.split("created.webContents.on('did-create-window'", 1)[1].split(
-        "created.webContents.setWindowOpenHandler", 1
+        "child.once('closed'", 1
     )[0]
     assert "pcAppWindows.set(view, child)" in created
-    assert "child.once('closed'" in created
-    assert "pcAppWindows.delete(view)" in created
+    closed = MAIN.split("child.once('closed'", 1)[1].split(
+        "created.webContents.setWindowOpenHandler", 1
+    )[0]
+    assert "pcAppWindows.delete(view)" in closed
 
 
 def test_every_open_routes_an_existing_app_before_requesting_a_child():
