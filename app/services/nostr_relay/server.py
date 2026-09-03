@@ -98,12 +98,14 @@ def _broadcastable(ev, cfg=None) -> bool:
     k = ev.get("kind")
     if k in (30024, 30403):   # NIP-23 article drafts / NIP-99 listing drafts — stay local until published
         return False
-    if k == 30078:
+    if k in (78, 30078):
         d = next((t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "d"), "")
-        if d.startswith("pcai:"):
-            if cfg and cfg.get("backup_datastore") and d.startswith(_BACKUP_NS):
-                return True
-            return False
+        # NIP-78 now defines this entire kind family as owner-private storage. Never turn a write
+        # entrusted to this relay into a public federation event. The sole exception is the
+        # operator's explicit DR toggle for its own small encrypted configuration namespaces.
+        if k == 30078 and cfg and cfg.get("backup_datastore") and d.startswith(_BACKUP_NS):
+            return True
+        return False
     # A DELETION of a private datastore document must not be broadcast either — and this one is a
     # DISCLOSURE, not just load. The document it removes was never federated (kind 30078 with a
     # `pcai:` d-tag, above), but a kind-5 is an ordinary event that fans out to every upstream, and

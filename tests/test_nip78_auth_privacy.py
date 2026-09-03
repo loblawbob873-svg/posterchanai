@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 
 from app.services.nostr.event import build_event
-from app.services.nostr_relay.server import RelayServer, SubscriptionManager, _matches
+from app.services.nostr_relay.server import RelayServer, SubscriptionManager, _broadcastable, _matches
 from app.services import nostr_store
 
 
@@ -137,6 +137,12 @@ def test_nip11_advertises_both_auth_and_private_app_data_support():
     doc = json.loads(server().nip11_doc("relay.example"))
     assert 42 in doc["supported_nips"]
     assert 78 in doc["supported_nips"]
+
+
+def test_private_nip78_is_never_federated_to_public_upstreams():
+    sk = bytes.fromhex("19" * 32)
+    assert not _broadcastable(signed(sk, 78, [["d", "third-party:log"]]))
+    assert not _broadcastable(signed(sk, 30078, [["d", "third-party:settings"]]))
 
 
 def test_negentropy_cannot_bypass_private_read_authorization():

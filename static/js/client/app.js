@@ -1379,6 +1379,13 @@
     const tpl = { kind, content, tags, created_at: createdAt || Math.floor(Date.now()/1000), pubkey: ME.pubkey };
     return await signer.signEvent(tpl);
   }
+  // NIP-78's 2026-09-03 privacy revision requires same-owner NIP-42 authentication before a relay
+  // serves or accepts kind 78/30078. Relay owns sockets/challenges; the app owns the active signer.
+  // A closure (rather than the signer object) also follows account/signer changes without stale keys.
+  Relay.setAuthSigner(tpl => {
+    if(GUEST || !signer) throw new Error('login required for relay AUTH');
+    return signer.signEvent(Object.assign({}, tpl, {pubkey:ME.pubkey}));
+  });
   // ONE cached kind-27235 ownership proof (base64) reused by ALL /client self-auth endpoints (drafts,
   // scheduled, …). The server verifies sig + pubkey + a 5-min freshness window, NOT the content, so a
   // single proof authorizes every self-scoped call — and caching it (~4 min) means an external signer
@@ -2149,7 +2156,7 @@
       // Permissions we request up front. Amber prompts per-action so an empty list still works,
       // but iOS signers like Clave PRE-authorize from this list and deny anything not in it
       // ("No permission"). List every op/kind the client signs so the first connect grants them all.
-      const kinds=[0,1,3,4,5,6,7,1059,9734,10000,10002,10003,10050,27235,30078];
+      const kinds=[0,1,3,4,5,6,7,1059,9734,10000,10002,10003,10050,22242,27235,30078];
       const perms=['get_public_key','nip04_encrypt','nip04_decrypt','nip44_encrypt','nip44_decrypt']
         .concat(kinds.map(k=>'sign_event:'+k)).join(',');
       /* `url` goes in ONLY if it is an http(s) origin, and is omitted otherwise.
@@ -2439,6 +2446,9 @@
           kind = tpl && tpl.kind;
         }catch(_){}
         if(kind !== null && kind !== undefined && g.indexOf('sign_event:' + kind) >= 0) return true;
+        // Existing pairings predate NIP-78's AUTH requirement. A grant to store private kind-30078
+        // data necessarily includes the ephemeral kind-22242 proof needed to access that data.
+        if(Number(kind)===22242 && g.indexOf('sign_event:30078') >= 0) return true;
       }
       return false;
     },
@@ -23748,7 +23758,7 @@
   /* WATCH A GAME BOT'S BOARDS, LIVE.
    *
    * Every game here (tic-tac-toe, hold'em, chess, connect 4, hangman, blackjack) read the bot's state
-   * the same way: `Relay.query` for up to 500 of its kind-30078 docs on a 6-12 second setInterval,
+   * the same way: `Relay.query` for up to 500 of its dedicated kind-30388 docs on a 6-12 second setInterval,
    * plus a blind `setTimeout(…, 4500)` after your own move "to give the bot time". There was no live
    * subscription anywhere, so the board could only change on a timer — a move landed on screen
    * somewhere between 4.5 and 16 seconds after it was played.
@@ -23770,7 +23780,7 @@
     let t = null, sub = null, dead = false;
     const fire = () => { t = null; if(!dead) try{ onChange(); }catch(e){ console.warn('watchBot', e); } };
     try{
-      sub = Relay.subscribe([{ authors:[botPk], kinds:[30078], since: Math.floor(Date.now()/1000) }], {
+      sub = Relay.subscribe([{ authors:[botPk], kinds:[30388], since: Math.floor(Date.now()/1000) }], {
         live: true,
         onEvent: ev => { try{ Store.saveEvent(ev); }catch(_){}
                          if(!t) t = setTimeout(fire, wait == null ? 250 : wait); },
@@ -27547,6 +27557,20 @@
       return ts;
     }catch(_){ return 0; }
   }
+  const _PROFILE_TOP = `<div class="thread-top"><button class="btn btn-ghost small" id="prof-back" title="Back" aria-label="Back to previous screen"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg></button></div>`;
+  function _bindProfileBack(feed, pk){
+    const back=$('#prof-back',feed); if(!back) return;
+    back.onclick=()=>{
+      /* In the shell a profile may be a document frame over an untouched Social window; close that
+       * frame. In a real Social toplevel it is ordinary in-window history, so pop the profile and
+       * restore the exact timeline entry/scroll beneath it. A cold profile link has no app history
+       * and returns to the configured starting timeline instead of navigating out of PosterChan. */
+      try{ if(window.PCOS && PCOS.isOn() && PCOS.closeDoc
+              && PCOS.closeDoc('prof:' + pk)) return; }catch(_){}
+      if(_navPushed>0){ try{ history.back(); return; }catch(_){} }
+      switchView(_startTimeline());
+    };
+  }
   async function renderProfileView(pk){
     _rememberTlScroll();          // opening a profile is leaving the feed — see _rememberTlScroll
     // PosterChan OS: a profile opens in its OWN window, for the same reason a post does — opening
@@ -27603,7 +27627,7 @@
       return VIEW==='profile' && myGen===_profGen;
     };
     if(!_cached){
-      feed.innerHTML='<div class="spinner"></div>';
+      feed.innerHTML=_PROFILE_TOP+'<div class="spinner"></div>'; _bindProfileBack(feed,pk);
       // Opening a profile COLD — a pasted poster.place/<npub> link, a mention tap, a fresh launch — fired both
       // reads below at a still-CONNECTING socket, which silently drops them (relay.js `_send`): the header
       // rendered as "anon" and the notes retry loop below burned all 3 attempts against a dead socket.
@@ -27620,7 +27644,7 @@
     /* Nostr has no registration event. The date is filled asynchronously from a historical relay
      * search below; never derive it from this page's recent-note cache. */
     const npub=NT().nip19.npubEncode(pk);
-    feed.innerHTML=`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
+    feed.innerHTML=_PROFILE_TOP+`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
         <div class="prof-actions">${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button><button class="btn btn-ghost small" id="open-settings"><span class="lbl">⚙ Settings</span><span class="ic">⚙</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
           <button class="btn btn-ghost small" id="call-prof" title="voice/video call"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Call</button>
@@ -27641,6 +27665,7 @@
       </div></div>
       <div class="prof-tabs"><button class="prof-tab active" data-tab="notes">Notes</button><button class="prof-tab" data-tab="replies">Replies</button><button class="prof-tab" data-tab="media">Media</button><button class="prof-tab" data-tab="articles">Articles</button><button class="prof-tab" data-tab="streams">Streams</button></div>
       <div id="prof-list"></div>`;
+    _bindProfileBack(feed,pk);
     _nostrFirstSeen(pk).then(ts=>{
       if(!ts || VIEW!=='profile' || myGen!==_profGen || _prof.pk!==pk) return;
       const el=$('#prof-joined'); if(!el) return;
