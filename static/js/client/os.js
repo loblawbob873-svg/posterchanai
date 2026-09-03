@@ -7178,10 +7178,10 @@
       try{ mailNow = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ }
       mailAck = mailNow;
       try{ PC().notifsRead && PC().notifsRead(); }catch(_){ }
-      /* `.os-noti` is min(430px, 100vw-16px) wide with max-height 100vh-84px. 380x620 was smaller
-         than the panel it replaced — "notifications is also small". */
+      /* Give notifications nearly the full work area. The native popup owns its height, while the
+         CSS popup body stretches the panel to fill it. */
       const w = Math.min(430, Math.max(300, Math.round(vwL() - 16)));
-      const h = Math.min(980, Math.max(320, Math.round(vhL() - 84)));
+      const h = Math.min(1200, Math.max(420, Math.round(vhL() - 56)));
       let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
       try{
         const b = $('#os-bell', bar), r = b && b.getBoundingClientRect();
@@ -7509,7 +7509,9 @@
         paintNet();
       }; }
     { const b = $('#os-net-relays', panel); if(b) b.onclick = (e) => {
-        e.stopPropagation(); hideNet(); openApp('settings', 'Settings', '#i-gear');
+        e.stopPropagation(); hideNet();
+        if(popupKind() && window.pcPopup && pcPopup.pick) pcPopup.pick('settings');
+        else openApp('settings', 'Settings', '#i-gear');
       }; }
   }
 
@@ -7572,6 +7574,23 @@
     clearInterval(_netT); _netT = null;
     if(!netOpen){ drawBar(); return; }
     toggleStart(false); toggleNoti(false);
+    /* Like Start and Notifications, this cannot out-z-index a native application from inside the
+       tiled shell. Give it a compositor-level popup on PosterChanOS; the browser fallback below
+       stays useful for the web desktop. */
+    if(window.pcPopup && pcPopup.open){
+      const w = Math.min(520, Math.max(320, Math.round(vwL() - 16)));
+      const h = Math.min(900, Math.max(360, Math.round(vhL() - 96)));
+      let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
+      try{
+        const b = $('#os-net', bar), r = b && b.getBoundingClientRect();
+        if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
+      }catch(_){ }
+      Promise.resolve(pcPopup.toggle('net', { x, y, width:w, height:h }))
+        .then(open => { netOpen=!!open; drawBar(); })
+        .catch(() => { netOpen=false; drawBar(); });
+      drawBar();
+      return;
+    }
     const panel = document.createElement('div');
     panel.id = 'os-net-panel';
     panel.className = 'os-noti os-net-panel';
@@ -9016,6 +9035,20 @@
     });
   }
 
+  function renderNetPopup(){
+    const host = popupHost();
+    root = host;
+    netOpen = true;
+    const panel = document.createElement('div');
+    panel.id = 'os-net-panel';
+    panel.className = 'os-noti os-net-panel';
+    host.appendChild(panel);
+    paintNet();
+    document.addEventListener('keydown', (e) => {
+      if(e.key === 'Escape') try{ window.close(); }catch(_){ }
+    });
+  }
+
   function restore(){
     /* A POPUP WINDOW IS A MENU. It loads the whole client because it is the same bundle, but the
        only thing it draws is the launcher — see renderStartPopup. */
@@ -9024,6 +9057,7 @@
         const k = popupKind();
         if(k === 'start') renderStartPopup();
         else if(k === 'noti') renderNotiPopup();
+        else if(k === 'net') renderNetPopup();
         else if(k === 'compose') renderComposePopup();
         /* The tray draws itself — it is osshell.js's panel, built from the machine's own bridges,
            and those exist in this renderer exactly as they do in the desktop's. */
