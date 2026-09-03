@@ -224,6 +224,8 @@ def test_created_and_joined_communities_survive_browser_storage_loss():
 
 
 def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
+    assert 'id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"' in CONCORD
+    assert "leaveShortcut.onclick=()=>{const action=$('#cc-leave-community');if(action)action.click();}" in CONCORD
     assert 'async function leaveArmadaMembership(p,room)' in CONCORD
     assert "tombs.set(room.communityId,{community_id:room.communityId,removed_at:Date.now()})" in CONCORD
     assert "await p.publish(13302,content,[])" in CONCORD
