@@ -6938,7 +6938,7 @@
                   data-id="${w.id}" data-kind="web"${tint(w.machineApp ? w.machineApp.id : w.view)} title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
          + nativeTasks.map(w =>
-         `<button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
+         `<span class="os-taskgroup"><button class="os-task${w.focused && !w.stashed ? ' on' : ''}"
                   data-id="${w.id}" data-kind="native"${tint(w.appId || w.title)} title="${enc(w.title)}">
             ${appIcon(w)}<span>${enc(w.title)}</span></button><span class="os-native-controls">
               <!-- MINIMISE WAS THE MISSING ONE, AND ITS ABSENCE IS WHAT MADE THIS READ AS "NO WINDOW
@@ -6952,7 +6952,7 @@
                    it and takes the whole module out at parse time. -->
               <button class="os-native-min" data-id="${w.id}" title="Minimize ${enc(w.title)}">–</button>
               <button class="os-native-max" data-id="${w.id}" title="Maximize ${enc(w.title)}">□</button>
-              <button class="os-native-close" data-id="${w.id}" title="Close ${enc(w.title)}">×</button></span>`).join('')}</div>
+              <button class="os-native-close" data-id="${w.id}" title="Close ${enc(w.title)}">×</button></span></span>`).join('')}</div>
        <div class="os-tray">
          <div class="os-sys" id="os-shell"></div>
          <button class="os-net net-${netNow.level}${netOpen ? ' on' : ''}" id="os-net"

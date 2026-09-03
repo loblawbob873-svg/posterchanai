@@ -9753,6 +9753,16 @@ audio.sms-att-img{min-width:220px}
   .office-actions{margin-top:2px;gap:6px}
   .office-actions .btn{min-height:38px}
 }
+/* ONE BUTTON PER WINDOW, CONTROLS ON DEMAND — the same rule the tray follows.
+   Three controls beside every task button is three buttons of taskbar per open window, and with
+   seven windows open that is most of the bar: "wtf is the deal with the window control on the
+   taskbar eating up space". They are revealed on hover or keyboard focus of the group instead, so
+   the space is only spent when somebody is reaching for them. `display:none` and not `opacity` —
+   an invisible control still occupies the width, which is the whole complaint. */
+.os-taskgroup{display:inline-flex;align-items:center}
+.os-taskgroup .os-native-controls{display:none}
+.os-taskgroup:hover .os-native-controls,
+.os-taskgroup:focus-within .os-native-controls{display:inline-flex}
 .os-native-controls{display:inline-flex;align-items:center;gap:1px}.os-native-controls button{width:22px;height:22px;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;line-height:20px}.os-native-controls button:hover{background:rgba(255,255,255,.14)}.os-native-close:hover{background:#c42b1c!important;color:#fff}
 
 /* PREVIEW — the picture/video/PDF viewer (static/js/client/preview.js).
