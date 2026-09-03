@@ -1603,6 +1603,26 @@
      * folder or a doc: frame is never handed to it. A refusal answers null and falls through to the
      * in-page frame below, which is what web and Android always use. */
     if(!direct){
+      /* ONE WINDOW PER APP — AND THE ONES ALREADY OPEN ARE NOT IN `wins`.
+       *
+       * The `existing` lookup below searches `wins`, which holds IN-PAGE frames only. A window
+       * popped out to a real compositor toplevel lives in `nativeTasks`, so every later launch of
+       * that app sailed past the check and opened ANOTHER one. Measured on the machine:
+       * `PosterChan Window — messages` twice and `— notifications` twice, from ordinary icon
+       * presses. Same root as "opened a profile from social and now can't go back" — a launch that
+       * does not find the window you already have — one layer further out.
+       *
+       * Focus the one that exists, and bring it back if it was minimised: a launch of a minimised
+       * app that silently does nothing is the other way to read this as broken. */
+      const mine = nativeTasks.find(r => r && r.own && r.view && r.view === view);
+      if(mine && window.pcWM){
+        try{
+          if(mine.stashed && pcWM.show) Promise.resolve(pcWM.show(mine.id))
+            .then(() => _focusNativeDecorated(mine.id)).catch(()=>{});
+          else _focusNativeDecorated(mine.id);
+        }catch(_){ }
+        return null;
+      }
       let real = null;
       try{
         if(window.PCOSWin && PCOSWin.enabled() && popOutView({view, appView:view}))
@@ -2074,7 +2094,33 @@
         <label><input type="radio" name="primary" data-primary ${r.primary?'checked':''}> Primary display</label>`;
       box.querySelector('[data-enable]').onchange=e=>{r.enabled=e.target.checked;draw()};
       box.querySelector('[data-mode]').onchange=e=>{r.mode=e.target.value};
-      box.querySelector('[data-scale]').onchange=e=>{r.scale=+e.target.value};
+      /* A SCALE CHANGE RESIZES THE MONITOR, AND EVERY POSITION AROUND IT.
+       *
+       * Reported as "changing the monitor zoom in system settings breaks the monitor layout still".
+       * `r.w`/`r.h` are the LOGICAL size — `rect.width` at the CURRENT scale — and sway positions
+       * outputs in logical pixels. Setting `r.scale` alone left the width saying 3072 while the
+       * output became 3840 (scale 1.25 -> 1), so Apply sent coordinates measured against a size
+       * that no longer existed: the displays landed overlapping or with a gap between them. It also
+       * never redrew, so the map on screen still showed the old arrangement and there was nothing
+       * to suggest anything was wrong until after it was applied.
+       *
+       * Recompute the logical size from the MODE (the real pixels, which scale does not change),
+       * then shift the monitors to the right of this one by the difference so the arrangement the
+       * user built is preserved rather than repacked into somebody else's idea of a layout. */
+      box.querySelector('[data-scale]').onchange=e=>{
+        const next=+e.target.value||1; if(next===r.scale) return;
+        const m=/^(\d+)x(\d+)/.exec(String(r.mode||''));
+        const px={ w: m?+m[1]:Math.round(r.w*r.scale), h: m?+m[2]:Math.round(r.h*r.scale) };
+        const wasW=r.w, wasH=r.h;
+        r.scale=next; r.w=Math.round(px.w/next); r.h=Math.round(px.h/next);
+        const dx=r.w-wasW, dy=r.h-wasH;
+        if(dx||dy) for(const o of rows){
+          if(o===r || !o.enabled) continue;
+          if(dx && o.x >= r.x + wasW) o.x += dx;   // only what sat to the RIGHT of it
+          if(dy && o.y >= r.y + wasH) o.y += dy;   // ...and below
+        }
+        draw();
+      };
       box.querySelector('[data-transform]').onchange=e=>{r.transform=e.target.value};
       box.querySelector('[data-primary]').onchange=()=>{rows.forEach(x=>x.primary=false);r.primary=true;draw()};
     };
