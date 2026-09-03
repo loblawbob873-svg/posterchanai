@@ -9003,6 +9003,17 @@
     root = host;
     startOpen = false;
     try{
+      /* A popup is a separate renderer, so it does not inherit the shell renderer's successful
+         compositor detection. `available()` deliberately starts false until `detect()` answers;
+         without doing that here the native-app section is skipped and Firefox, Steam, and every
+         other installed .desktop entry vanish from Start even though pcApps is present. */
+      if(window.PCOSShell && PCOSShell.detect){
+        Promise.resolve(PCOSShell.detect()).then(() => {
+          if(!host.isConnected) return;
+          startOpen = false;
+          toggleStart(true);
+        }, () => {});
+      }
       toggleStart(true);
     }catch(err){
       /* If the real menu cannot be built here for any reason, a plain list of apps still opens
