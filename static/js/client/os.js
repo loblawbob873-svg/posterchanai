@@ -7539,7 +7539,7 @@
         try{
           const api=PC();
           if(api&&api.reconnectNetwork) ok=await api.reconnectNetwork();
-          else if(window.Relay&&Relay.wake){Relay.wake();ok=await Relay.ready(5000);}
+          else if(window.Relay&&Relay.wake){Relay.wake && Relay.wake();ok=await Relay.ready(5000);}
         }catch(_){}
         paintNet();
         if(!ok){try{const again=$('#os-net-again',panel);if(again)again.textContent='Try again';}catch(_){}}
