@@ -40,6 +40,23 @@ def test_private_zap_uses_armada_sealed_rumor_shape():
     assert "publishCordMessage" not in handler  # Never leak this extension onto a NIP-29 relay.
 
 
+def test_concord_offers_the_same_monero_flow_as_social_without_weakening_private_lightning_zaps():
+    helper = APP.split("function startConcordTip", 1)[1].split("function invoiceModal", 1)[0]
+    assert "isXmrAddr(xmrOf(profile))" in helper
+    assert "doXmrTip(null,pk)" in helper
+    assert "_tipMethodSheet(profile,methods" in helper
+    assert "_lightningAmountSheet(profile,onLightningAmount)" in helper
+    surface = APP.split("window.__PC =", 1)[1]
+    assert "startConcordTip," in surface
+
+    handler = CONCORD.split("$$('[data-cc-zap]')", 1)[1].split("async function webxdcCordParts", 1)[0]
+    assert "p.startConcordTip(target.pubkey,lightning)" in handler
+    # Lightning remains an encrypted Armada tally; Monero uses Social's wallet sheet and does not
+    # pretend that an XMR transfer can produce a Lightning preimage-backed kind-9735 rumor.
+    assert "const lightning=async amount=>" in handler
+    assert "publishCordNative(p,room,state.channel,'',tags,9735)" in handler
+
+
 def test_only_verified_reader_tallies_reach_the_ui():
     view = READER.split("async function inspectChat", 1)[1].split("async function createChatWrap", 1)[0]
     assert "zaps: [...timeline.zaps]" in view

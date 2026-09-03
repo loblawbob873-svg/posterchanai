@@ -13200,6 +13200,15 @@
   // Combined tip entry (the ⚡ button). If the author supports BOTH Lightning and Monero, let the user
   // pick; otherwise go straight to whichever they have (Lightning is the default, so doZap still surfaces
   // "no lightning address" when they have neither).
+  function _tipMethodSheet(profile,methods,go){
+    if(methods.length>=2){
+      modal(`<h3>Tip ${enc(profile.name||profile.display_name||'')}</h3>
+        <p class="muted small">How would you like to tip?</p>
+        <div class="tip-choices">${methods.map(([k,l,d,c])=>`<button class="btn ${c} full" data-m="${k}">${l}<span class="muted small"> — ${d}</span></button>`).join('')}</div>`,
+        root=>{ $$('.tip-choices [data-m]',root).forEach(b=> b.onclick=()=>{ closeModal(); go(b.dataset.m); }); });
+    } else if(methods.length===1) go(methods[0][0]);
+    else go('ln');
+  }
   async function doTip(noteId, pk, cardXmr){
     const p=profOf(pk)||{};
     const hasLn=!!(p.lud16||p.lud06);
@@ -13216,16 +13225,7 @@
     if(hasXmr) methods.push(['xmr', 'ɱ Monero',         'private, from your wallet', 'btn-cyan']);
     if(hasBch) methods.push(['bch', '🟢 Bitcoin Cash',  'on-chain, from your wallet','btn-cyan']);
     const go=m=>{ if(m==='ln') doZap(noteId,pk); else if(m==='xmr') doXmrTip(noteId,pk,xmrAddr); else doBchTip(pk); };
-    if(methods.length>=2){
-      modal(`<h3>Tip ${enc(p.name||p.display_name||'')}</h3>
-        <p class="muted small">How would you like to tip?</p>
-        <div class="tip-choices">${methods.map(([k,l,d,c])=>`<button class="btn ${c} full" data-m="${k}">${l}<span class="muted small"> — ${d}</span></button>`).join('')}</div>`,
-        root=>{ $$('.tip-choices [data-m]',root).forEach(b=> b.onclick=()=>{ closeModal(); go(b.dataset.m); }); });
-    } else if(methods.length===1){
-      go(methods[0][0]);
-    } else {
-      doZap(noteId,pk);
-    }
+    _tipMethodSheet(p,methods,go);
   }
   // User-defined amount presets (Settings → Zaps & tips), stored in the per-user Nostr client-prefs so they
   // follow you across devices. Comma/space separated, positive numbers, capped; fall back to sane defaults.
@@ -13253,13 +13253,16 @@
   async function doZap(noteId, pk){
     const p=profOf(pk); const addr=p.lud16||p.lud06;
     if(!addr){ toast('no lightning address on this profile'); return; }
+    _lightningAmountSheet(p,amt=>_runZap(noteId,pk,amt));
+  }
+  function _lightningAmountSheet(profile,onAmount){
     const presets=zapPresets();
-    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap ${enc(p.name||p.display_name||'')}</h3>
+    modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap ${enc(profile.name||profile.display_name||'')}</h3>
       <div class="zap-presets">${presets.map(a=>`<button class="zap-amt" data-amt="${a}">${a>=1000?(a/1000)+'k':a} sats</button>`).join('')}</div>
       <div class="row" style="gap:8px;margin-top:10px"><input class="input" id="zap-custom" type="number" min="1" placeholder="custom amount (sats)"><button class="btn btn-neon small" id="zap-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button></div>`,
       root=>{
-        $$('.zap-amt',root).forEach(b=> b.onclick=()=>{ closeModal(); _runZap(noteId, pk, +b.dataset.amt); });
-        $('#zap-go',root).onclick=()=>{ const v=parseInt(($('#zap-custom',root)||{}).value||'0',10); if(v>0){ closeModal(); _runZap(noteId, pk, v); } else toast('enter an amount'); };
+        $$('.zap-amt',root).forEach(b=> b.onclick=()=>{ closeModal(); onAmount(+b.dataset.amt); });
+        $('#zap-go',root).onclick=()=>{ const v=parseInt(($('#zap-custom',root)||{}).value||'0',10); if(v>0){ closeModal(); onAmount(v); } else toast('enter an amount'); };
         const ci=$('#zap-custom',root); if(ci) ci.addEventListener('keydown',e=>{ if(e.key==='Enter') $('#zap-go',root).click(); });
       });
   }
@@ -13305,6 +13308,21 @@
     const preimage=String(paid&&(paid.preimage||(paid.result&&paid.result.preimage))||'').toLowerCase();
     if(!/^[0-9a-f]{64}$/.test(preimage))throw new Error('payment completed, but the wallet did not return proof for the room tally');
     return {bolt11,preimage,amountMsats};
+  }
+  /* Concord uses the same payment discovery and Monero wallet sheets as Social. Keep those rules
+   * here: duplicating profile-field parsing or the three Monero wallet fallbacks in concord.js
+   * would make the two choosers disagree as soon as either format changes. Lightning can publish a
+   * cryptographically verified sealed tally; Monero remains a private on-chain payment whose
+   * existing flow posts the sender's acknowledgement after payment. */
+  function startConcordTip(pk,onLightningAmount){
+    const profile=profOf(pk)||{},methods=[];
+    if(profile.lud16||profile.lud06)methods.push(['ln','⚡ Lightning','instant zap','btn-neon']);
+    if(isXmrAddr(xmrOf(profile)))methods.push(['xmr','ɱ Monero','private, from your wallet','btn-cyan']);
+    _tipMethodSheet(profile,methods,method=>{
+      if(method==='xmr')return doXmrTip(null,pk);
+      if(!methods.some(x=>x[0]==='ln'))return toast('this member has no Lightning or Monero address');
+      _lightningAmountSheet(profile,onLightningAmount);
+    });
   }
   function invoiceModal(pr, amt){
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap ${amt} sats</h3><p class="muted small">Pay with your Lightning wallet:</p>
@@ -36339,7 +36357,7 @@
      * without one reads as code and fails the build.) */
     openMenuPopover, openEmojiPopover, gifPicker, gifEnabled: () => !!CFG.gif_enabled,
     linkify, linkCardHtml, hydrateLinkCards,
-    insertAt: _insertAt, payPrivateConcordZap,
+    insertAt: _insertAt, payPrivateConcordZap, startConcordTip,
     __remoteDesktopPoint: _rdVideoPoint,
     startGroupCall,
     uploadBlob,

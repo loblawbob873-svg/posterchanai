@@ -714,6 +714,25 @@ if([...data.entries()].some(([key,value])=>key.startsWith('pc.concord.test.') &&
   throw new Error('remote decrypted history leaked into localStorage');
 if(!calls.toasts.some(x=>x==='community joined')) throw new Error('hydrated join never completed');
 
+// Concord hands the recipient and its private-Lightning callback to Social's shared tip UI. The
+// callback must still publish an encrypted kind-9735 Armada receipt after that UI chooses an amount.
+const zapRoom=JSON.parse(data.get('pc.concord.invites'))[0],zapTarget='b'.repeat(64),zapMessage='zap-target';
+data.set('pc.concord.active','0');
+data.set('pc.concord.test.'+zapRoom.naddr,JSON.stringify([{id:zapMessage,by:'Other User',pubkey:zapTarget,text:'zap me',at:3,kind:9}]));
+PCConcord.__testState({community:0,channel:'general'});
+let lightningPays=0,concordTipTarget='',concordLightning=null;
+window.__PC.payPrivateConcordZap=async(pk,sats)=>{if(pk!==zapTarget||sats!==21)throw new Error('Lightning zap target/amount changed');lightningPays++;return{amountMsats:21000,bolt11:'ln-fixture',preimage:'1'.repeat(64)};};
+window.__PC.startConcordTip=(pk,onLightning)=>{concordTipTarget=pk;concordLightning=onLightning;};
+PCConcord.render();
+let zapButton=dollars('[data-cc-zap]').find(b=>b.dataset.ccZap===zapMessage);
+if(!zapButton)throw new Error('eligible Concord message did not render a zap action');
+zapButton.onclick();
+if(concordTipTarget!==zapTarget||typeof concordLightning!=='function'||lightningPays)throw new Error('Concord bypassed the shared Social tip UI');
+await concordLightning(21);
+if(lightningPays!==1||calls.lastChat?.kind!==9735 ||
+   !calls.lastChat.tags.some(t=>t[0]==='preimage'&&t[1]==='1'.repeat(64)))
+  throw new Error('Concord Lightning choice lost its sealed Armada receipt');
+
 // A relay/deferred callback can render after the user has opened Code. It must not own the shared
 // feed any more, nor restart Concord's live work or shell classes.
 activeView='code';
