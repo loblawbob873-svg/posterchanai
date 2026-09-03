@@ -56,7 +56,9 @@ def test_a_failed_thread_call_stops_claiming_to_be_loading():
 def test_a_one_message_answer_still_re_renders():
     """The seed is painted with 'loading'; if the answer is 'there is nothing else', the reader has
     to be redrawn to say so — returning early would strand the spinner text."""
-    block = APP[APP.index("this._renderThread(pane, [msg], folder, acct, uid, 'loading');"):]
+    # The first paint may contain locally cached siblings, but it always remains in the loading
+    # state until the authoritative thread request answers.
+    block = APP[APP.index("this._renderThread(pane, _local, folder, acct, uid,"):]
     block = block[:block.index("_linkify(")]
     assert "'alone'" in block
 

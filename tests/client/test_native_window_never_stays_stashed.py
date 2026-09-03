@@ -146,10 +146,14 @@ class AStashedSurfaceIsNotDrawnAsABlackWindow(unittest.TestCase):
         raw = OS_JS.read_text()
         adopt = body(raw, "async function adoptAll")
         # Native apps are no longer placed from a browser-side frame, so their fullscreen state is
-        # owned by Sway and there is nothing here that can accidentally cancel it.
+        # owned by Sway and there is nothing here that can accidentally cancel it. Games get one
+        # explicit fullscreen request after Proton publishes their final WM_CLASS; that request is
+        # guarded per compositor surface so a user's later exit from fullscreen is respected.
         self.assertIn("nativeTasks = rows", adopt)
         self.assertNotIn("pcWM.place", adopt)
-        self.assertNotIn("pcWM.fullscreen", adopt)
+        self.assertIn("isGameApp(r)", adopt)
+        self.assertIn("_gameFullscreenAsked.has(id)", adopt)
+        self.assertEqual(adopt.count("pcWM.fullscreen(id,true)"), 1)
 
     def test_refocusing_firefox_restores_pixels_before_keyboard_focus(self):
         raw = OS_JS.read_text()
