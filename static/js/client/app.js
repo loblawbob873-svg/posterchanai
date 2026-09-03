@@ -13266,6 +13266,26 @@
       invoiceModal(pr, amt);
     }catch(e){ toast('zap failed: '+e.message); }
   }
+  /* Armada CORD.md private zaps omit both LNURL `nostr` and `comment`, then announce the paid
+   * invoice and its preimage inside the sealed channel. External invoice handoff cannot provide
+   * that proof, so this is intentionally limited to WebLN/NWC wallets that return it. */
+  async function payPrivateConcordZap(pk, amountSats){
+    const profile=profOf(pk)||{},addr=profile.lud16||profile.lud06,amount=Number(amountSats);
+    if(!addr)throw new Error('this member has no Lightning address');
+    if(!Number.isSafeInteger(amount)||amount<1)throw new Error('enter a whole-sat amount');
+    const lnurl=await lnurlResolve(addr);if(!lnurl||!lnurl.callback)throw new Error('could not resolve '+addr);
+    const amountMsats=amount*1000;
+    if((Number(lnurl.min)||0)>amountMsats||(Number(lnurl.max)||Infinity)<amountMsats)throw new Error('amount is outside this wallet\'s limits');
+    const url=lnurl.callback+(lnurl.callback.includes('?')?'&':'?')+'amount='+amountMsats;
+    const invoice=await corsJson(url),bolt11=invoice&&invoice.pr;if(!bolt11)throw new Error('wallet did not return an invoice'+(invoice&&invoice.reason?': '+invoice.reason:''));
+    let paid=null;
+    if(window.webln){await window.webln.enable();paid=await window.webln.sendPayment(bolt11);}
+    else if(Nwc.configured())paid=await Nwc.payInvoice(bolt11);
+    else throw new Error('connect an NWC or WebLN wallet; private zaps need payment proof');
+    const preimage=String(paid&&(paid.preimage||(paid.result&&paid.result.preimage))||'').toLowerCase();
+    if(!/^[0-9a-f]{64}$/.test(preimage))throw new Error('payment completed, but the wallet did not return proof for the room tally');
+    return {bolt11,preimage,amountMsats};
+  }
   function invoiceModal(pr, amt){
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap ${amt} sats</h3><p class="muted small">Pay with your Lightning wallet:</p>
       <a class="btn btn-neon full" href="lightning:${enc(pr)}">Open in wallet</a>
@@ -32025,9 +32045,13 @@
     { const b=$('#set-relays-save'); if(b) b.onclick=async()=>{
         syncRelays();
         const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
-        ClientSettings.set('relaysEnabled', $('#set-relays-on').checked);
+        const on=$('#set-relays-on').checked;
+        ClientSettings.set('relaysEnabled', on);
         ClientSettings.set('relays', urls);
-        try{ if(urls.length) await publish(10002,'',urls.map(u=>['r',u])); }catch(_){}
+        // This dedicated button is an explicit relay-list action, but turning the local override OFF
+        // is not permission to re-announce the URLs left in the disabled editor. In particular, an
+        // old device must not make its cached list newest again after another client changed NIP-65.
+        try{ if(on && urls.length) await publish(10002,'',urls.map(u=>['r',u])); }catch(_){}
         toast('relays saved — reloading'); setTimeout(()=>location.reload(),600);
       }; }
     { const b=$('#set-media-save'); if(b) b.onclick=async()=>{
@@ -32360,7 +32384,8 @@
         syncRelays();
         const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
         const on=$('#set-relays-on').checked;
-        if(on!==!!ClientSettings.get('relaysEnabled') || JSON.stringify(urls)!==JSON.stringify(userRelays())){
+        const relayChanged = on!==!!ClientSettings.get('relaysEnabled') || JSON.stringify(urls)!==JSON.stringify(userRelays());
+        if(relayChanged){
           needReload=true;
           /* The private libraries have to follow, or the vault reads empty on the new relay and the
            * next save splits it across two. Two halves: pull them off the OLD relays NOW, while we
@@ -32369,9 +32394,12 @@
           try{ await stashPrivateBeforeRelayChange(); }catch(_){ }
         }
         ClientSettings.set('relaysEnabled', on); ClientSettings.set('relays', urls);
-        // only publish the NIP-65 list when the user actually enabled their own relays — don't mutate
-        // their relay list (which follows them to other clients) just because URLs are prefilled.
-        try{ if(on && urls.length) await publish(10002,'',urls.map(u=>['r',u])); }catch(_){}
+        // NIP-65 is replaceable: a write made from this device's stale localStorage becomes the newest
+        // global relay list and overwrites a newer edit made in Amethyst or another client. The global
+        // Save button covers every settings pane, so it may publish kind 10002 ONLY when the relay
+        // controls themselves differ from their saved local baseline. A dedicated "Save & reload"
+        // above remains the explicit force-publish route for someone intentionally restoring a list.
+        try{ if(relayChanged && on && urls.length) await publish(10002,'',urls.map(u=>['r',u])); }catch(_){}
       }
       if($('input[name=media-mode]')){
         const { enabled, url } = _mediaChoice();
@@ -36278,7 +36306,7 @@
      * without one reads as code and fails the build.) */
     openMenuPopover, openEmojiPopover, gifPicker, gifEnabled: () => !!CFG.gif_enabled,
     linkify, linkCardHtml, hydrateLinkCards,
-    insertAt: _insertAt,
+    insertAt: _insertAt, payPrivateConcordZap,
     startGroupCall,
     uploadBlob,
     /* HANDING A FILE TO THE PERSON, for the sub-modules — never a bare `<a download>`.

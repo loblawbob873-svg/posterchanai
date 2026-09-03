@@ -26680,6 +26680,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       /* Preserve NIP-30 reaction assets. foldTimeline already validates/extracts the emoji tag, but
        * the public reader used to discard its URL here, leaving Concord to render :carlJAM: text. */
       reactionUrls: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].filter(([, entry]) => entry.url).map(([emoji3, entry]) => [emoji3, entry.url])]),
+      /* foldTimeline admits only invoice/preimage-verified Armada private zaps and performs the
+       * deterministic one-payment-hash fold. Do not make the UI tally raw kind-9735 claims. */
+      zaps: [...timeline.zaps].map(([target, entries]) => [target, entries.map((entry) => ({ ...entry }))]),
       /* Poll votes, for the same reason reactionUrls is here: foldTimeline already folds kind-1018
        * into pollVotes and the public reader then dropped it on the floor, so a poll posted from
        * Armada arrived in Concord as a question nobody could see the answers to — and Concord
