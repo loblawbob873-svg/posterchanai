@@ -1421,6 +1421,11 @@
        * because the guard's question is "could this be a wipe?", and the honest answer comes from
        * the biggest list we have ever held, not the most recent one we were handed. */
       let known=ClientSettings.get(kind===3?'followsCount':kind===10000?'mutedUsersCount':'pubChatsCount',0)||0;
+      if(kind===3){
+        // Unlike followsCount, this witness never decreases after a short/adversarial read.
+        const safe=_followSafetyMembers();
+        if(safe.length>known) known=safe.length;
+      }
       try{
         const held=(Store.query([{authors:[ME.pubkey],kinds:[kind],limit:1}])||[])
                      .sort((a,b)=>b.created_at-a.created_at)[0];
@@ -5978,10 +5983,42 @@
   function _persistMutes(){ const u=[...MUTED].filter(p=>p!==ME.pubkey);
     ClientSettings.set('mutedUsers', u); ClientSettings.set('mutedWords', [...MUTED_WORDS]); ClientSettings.set('mutedThreads', [...MUTED_THREADS]); ClientSettings.set('mutedUsersCount', u.length); }
   let _followShrinkWarned=false;   // one line per session, not one per refresh
+  function _followSafetyMembers(){
+    let best=ClientSettings.get('followsSafetyCache',[])||[];
+    const live=[...FOLLOWS].filter(p=>p!==ME.pubkey); if(live.length>best.length) best=live;
+    /* Store intentionally retains old replaceable versions by id even though query() collapses them.
+     * Use that local history as recovery evidence: if a bad newer kind-3 says 8 while this device
+     * still has the earlier 1,163-tag event, newest-wins must not erase the only good witness. */
+    try{ for(const ev of Store.all()){ if(ev.kind!==3 || ev.pubkey!==ME.pubkey) continue;
+      const p=[...new Set((ev.tags||[]).filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]))];
+      if(p.length>best.length) best=p;
+    } }catch(_){}
+    return [...new Set(best)].filter(p=>p&&p!==ME.pubkey);
+  }
   function _persistFollows(){ const f=[...FOLLOWS].filter(p=>p!==ME.pubkey);
-    ClientSettings.set('followsCache', f); ClientSettings.set('followsCount', f.length); }
+    ClientSettings.set('followsCache', f); ClientSettings.set('followsCount', f.length);
+    /* Keep a NON-RATCHETING recovery witness. `followsCache` is the current list and therefore must
+     * shrink after a real unfollow; it cannot also be the evidence that a future 1,163 -> 8 answer
+     * is corrupt. The largest complete list this device has seen is kept separately and is never
+     * replaced by a shorter relay answer. It is both a cold-start recovery source and the floor used
+     * by publish() below. Deliberate single-person unfollows remain possible; no network response is
+     * allowed to silently redefine the safety baseline. */
+    const safe=ClientSettings.get('followsSafetyCache',[])||[];
+    if(f.length>safe.length) ClientSettings.set('followsSafetyCache', f); }
+  function _protectedProfileFollows(pk, incoming){
+    incoming=[...new Set(incoming||[])];
+    if(pk!==ME.pubkey) return incoming;
+    const held=[...FOLLOWS].filter(p=>p!==ME.pubkey);
+    return held.length>=8 && incoming.length<Math.floor(held.length/2) ? held : incoming;
+  }
   async function fetchFollows(){
     (ClientSettings.get('followsCache',[])||[]).forEach(p=>FOLLOWS.add(p));   // seed → never an empty base
+    const recovery=_followSafetyMembers(), currentN=[...FOLLOWS].filter(p=>p!==ME.pubkey).length;
+    // Recovery is for a wipe-sized loss, not an append-only follow list. A normal 40 -> 38 change
+    // must stay 38 after reload instead of the high-water snapshot resurrecting two real unfollows.
+    if(recovery.length && currentN<Math.floor(recovery.length/2)) recovery.forEach(p=>FOLLOWS.add(p));
+    { const recovered=[...FOLLOWS].filter(p=>p!==ME.pubkey), safe=ClientSettings.get('followsSafetyCache',[])||[];
+      if(recovered.length>safe.length) ClientSettings.set('followsSafetyCache',recovered); }
     let ev=null; try{ const l=await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]); ev=l.sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
     // Adopt the relay's list ONLY when it returned an event (respects unfollows). No event = timeout /
     // not-yet-synced → keep the seeded cache rather than shrinking to empty.
@@ -27846,7 +27883,18 @@
         if(VIEW!=='profile' || _prof.pk!==pk || myGen!==_profGen) return;
         if(acount>followerCount){ followerCount=acount; const fr=$('#show-followers b'); if(fr) fr.textContent=followerCount; }
         if(aposts>postCount){ postCount=aposts; const pr=$('#show-posts b'); if(pr) pr.textContent=postCount; }
-        if(ak3.length){ k3=ak3; _prof.following=k3.sort((a,b)=>b.created_at-a.created_at)[0].tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]); const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length; }
+        if(ak3.length){
+          k3=ak3;
+          const incoming=[...new Set(k3.sort((a,b)=>b.created_at-a.created_at)[0].tags
+            .filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]))];
+          /* My profile must not bypass fetchFollows' wipe protection. It used to paint the raw
+           * one-shot relay answer, so the taskbar/feed could correctly retain 1,163 follows while
+           * the profile announced "Following 8". For our own identity, the already-protected live
+           * set is authoritative whenever the response is a wipe-sized regression. Other people's
+           * profiles still show their published contact list. */
+          _prof.following=_protectedProfileFollows(pk,incoming);
+          const ff=$('#show-following b'); if(ff) ff.textContent=_prof.following.length;
+        }
         if(apins.length) pinList=apins;
         if(followerCount && k3.length) break;
         await new Promise(r=>setTimeout(r, 800*(attempt+1)));

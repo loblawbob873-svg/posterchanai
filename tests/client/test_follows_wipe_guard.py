@@ -50,6 +50,19 @@ class FollowsSurviveAShortRead(unittest.TestCase):
         self.assertEqual(got["afterOrdinaryShrink"], 38,
                          "an ordinary unfollow from another device is no longer adopted — the "
                          "guard is about wipes, not about every list that got shorter")
+        self.assertEqual(got["afterOrdinaryReload"], 38,
+                         "the recovery high-water mark resurrected legitimate unfollows on reload")
+        self.assertEqual(got["safetyCount"], 40,
+                         "a normal shrink ratcheted down the independent recovery snapshot")
+        self.assertEqual(got["afterPoisonedReload"], 40,
+                         "a poisoned mutable cache defeated recovery on the next cold start")
+        self.assertEqual(got["ownProfile"], 40,
+                         "our profile bypassed protected follow state and displayed the short relay answer")
+        self.assertEqual(got["otherProfile"], 2,
+                         "protecting our own profile contaminated another person's published following list")
+        self.assertEqual(got["fromStoredHistory"], 55,
+                         "the retained older kind-3 was ignored, so a cleared/poisoned localStorage "
+                         "still made the newest short list authoritative")
 
     def test_the_write_guard_does_not_trust_localstorage_alone(self):
         """A device with no localStorage (fresh profile, cleared WebView, new install) read 0 for
@@ -61,6 +74,10 @@ class FollowsSurviveAShortRead(unittest.TestCase):
         self.assertIn("Store.query([{authors:[ME.pubkey],kinds:[kind],limit:1}])", guard,
                       "the shrink guard trusts localStorage alone again — a cleared profile "
                       "publishes a wipe unopposed")
+        self.assertIn("const safe=_followSafetyMembers()", guard,
+                      "the central publish guard lost its non-ratcheting follow witness")
+        self.assertIn("ClientSettings.get('followsSafetyCache',[])", src,
+                      "the recovery witness is no longer persisted independently of current follows")
 
 
 if __name__ == "__main__":

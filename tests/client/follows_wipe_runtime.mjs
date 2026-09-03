@@ -17,7 +17,7 @@ const app = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta
  * variable. Anchoring on the fix means the pre-fix run dies at extraction with "fetchFollows moved",
  * which is a test that fails for the wrong reason and would hide a real behavioural regression
  * behind a plumbing error. */
-const start = app.indexOf('  function _persistFollows(){');
+const start = app.indexOf('  let _followShrinkWarned=false;');
 const end = app.indexOf('  async function fetchMutes(){', start);
 if (start < 0 || end < 0) throw new Error('fetchFollows moved');
 const shipped = app.slice(start, end);
@@ -35,6 +35,8 @@ globalThis.ClientSettings = {
   get: (k, d) => (k in store ? store[k] : d),
   set: (k, v) => { store[k] = v; },
 };
+globalThis.storedEvents = [];
+globalThis.Store = { all: () => globalThis.storedEvents };
 
 const person = (n) => String(n).padStart(64, '0');
 const kind3 = (n, id) => ({ id, created_at: 100 + n, tags: Array.from({length:n}, (_, i) => ['p', person(i)]) });
@@ -44,7 +46,6 @@ globalThis.Relay = { query: async () => (globalThis.relayAnswer ? [globalThis.re
 
 const run = new Function('kind3', 'person', `return (async()=>{
   let FOLLOWS = new Set();
-  let _followShrinkWarned = false;   // declared by the fix; harmless, and lets the OLD code run too
   ${shipped}
   const out = {};
 
@@ -66,6 +67,33 @@ const run = new Function('kind3', 'person', `return (async()=>{
   globalThis.relayAnswer = kind3(38, 'ordinary-unfollow');
   await fetchFollows();
   out.afterOrdinaryShrink = [...FOLLOWS].filter(p => p !== ME.pubkey).length;
+  await fetchFollows();
+  out.afterOrdinaryReload = [...FOLLOWS].filter(p => p !== ME.pubkey).length;
+
+  // Simulate a reload after the mutable current cache was already poisoned. The independent
+  // high-water snapshot must reconstruct the complete base; otherwise the next follow edit would
+  // publish the short list and make the loss permanent.
+  FOLLOWS = new Set();
+  ClientSettings.set('followsCache', [person(0), person(1)]);
+  globalThis.relayAnswer = kind3(2, 'short-after-reload');
+  await fetchFollows();
+  out.afterPoisonedReload = [...FOLLOWS].filter(p => p !== ME.pubkey).length;
+  out.safetyCount = (ClientSettings.get('followsSafetyCache', [])||[]).length;
+
+  // The own-profile header uses the same protected state, while another person's published list
+  // remains their own and is never contaminated with our follows.
+  out.ownProfile = _protectedProfileFollows(ME.pubkey, [person(0),person(1)]).length;
+  out.otherProfile = _protectedProfileFollows(person(999), [person(0),person(1)]).length;
+
+  // Even if both localStorage values were poisoned/cleared, the Store keeps replaceable versions
+  // by event id. Recover from the largest historical kind-3 rather than blindly trusting newest.
+  ClientSettings.set('followsCache', []);
+  ClientSettings.set('followsSafetyCache', []);
+  FOLLOWS = new Set();
+  globalThis.storedEvents = [{...kind3(55,'older-good'), kind:3, pubkey:ME.pubkey},
+                             {...kind3(2,'newer-bad'), kind:3, pubkey:ME.pubkey}];
+  await fetchFollows();
+  out.fromStoredHistory = [...FOLLOWS].filter(p => p !== ME.pubkey).length;
   return out;
 })()`);
 
