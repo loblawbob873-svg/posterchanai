@@ -8218,7 +8218,11 @@
                 if(changed) drawBar();
               }).catch(()=>{});
               reconcile();
-              if(ev.change === 'new') setTimeout(reconcile, 180);
+              /* XWayland metadata is not merely one event-loop turn late. Proton launchers observed
+               * on hardware have published the final steam_app class after >1s; one 180ms retry
+               * missed Cyberpunk and left its 1030x771 startup geometry intact. These are bounded
+               * startup passes, not a fullscreen watchdog, so a user can still leave fullscreen. */
+              if(ev.change === 'new') for(const ms of [180,900,2500]) setTimeout(reconcile, ms);
               return;
             }
             if(ev.name !== 'tick') return;

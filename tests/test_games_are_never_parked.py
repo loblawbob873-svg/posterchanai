@@ -168,6 +168,11 @@ def test_late_xwayland_game_class_gets_one_fullscreen_request():
     assert "_gameFullscreenAsked.delete(id)" in block
 
 
+def test_proton_gets_bounded_late_metadata_reconciliation():
+    """A final steam_app WM_CLASS can arrive well after the first XWayland map event."""
+    assert "for(const ms of [180,900,2500]) setTimeout(reconcile, ms)" in OS_JS
+
+
 def test_the_class_is_read_from_either_wayland_or_x11():
     """Steam and most games are XWayland, so `app_id` is empty and the class is the only name they
     have — wm.js folds both into `app` for exactly this reason."""

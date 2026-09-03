@@ -189,6 +189,9 @@ class WM {
     this.sock = null;
     this.connecting = null;
     this.subSock = null;
+    this.subConnecting = null;
+    this.subNames = [];
+    this.subRetry = null;
     this.pending = [];           // FIFO of {type, resolve, reject} — sway answers in order
     this.listeners = new Map();  // event name -> Set(fn)
     this.moves = new Map();      // con_id -> latest-wins drag queue (never replay stale positions)
@@ -446,22 +449,59 @@ class WM {
 
   /** Subscribe on its OWN socket. sway will not answer ordinary requests on a subscribed one. */
   async subscribe(names){
+    const requested=Array.isArray(names)&&names.length ? names : ['window','workspace'];
+    this.subNames=[...new Set([...this.subNames,...requested])];
     if(this.subSock) return;
+    if(this.subConnecting) return this.subConnecting;
+    clearTimeout(this.subRetry);this.subRetry=null;
+    this.subConnecting=this._openSubscription().finally(()=>{this.subConnecting=null;});
+    return this.subConnecting;
+  }
+
+  async _openSubscription(){
     // Resolve a live recovered socket first.  Creating against this.path directly used the first
     // stale filename and produced ERR_SOCKET_BAD_PORT when no environment variable was inherited.
     await this._connect();
     const s = net.createConnection(this.path);
-    this.subSock = s;
+    let lost=false, connected=false;
+    const retry=()=>{
+      if(lost)return;lost=true;
+      if(this.subSock===s)this.subSock=null;
+      /* main.js installs its forwarding listeners once for the lifetime of the process.  Losing
+       * this socket must therefore heal HERE: main's `__forwarding` guard correctly prevents a
+       * second listener set, but it also means no renderer will call subscribe again. */
+      if(!this.subRetry&&this.subNames.length){
+        this.subRetry=setTimeout(()=>{
+          this.subRetry=null;
+          this.subscribe(this.subNames).catch(()=>this._scheduleSubscriptionRetry());
+        },250);
+        if(this.subRetry.unref)this.subRetry.unref();
+      }
+    };
     const feed = decoder((type, json) => {
       if(!(type & EVENT_BIT)) return;                       // the SUBSCRIBE reply itself
       const name = EVENT[type & ~EVENT_BIT] || String(type & ~EVENT_BIT);
       for(const fn of (this.listeners.get(name) || [])) { try{ fn(json); }catch(_){} }
     });
     s.on('data', (c) => { try{ feed(c); }catch(_){ s.destroy(); } });
-    s.on('close', () => { this.subSock = null; });
-    s.on('error', () => { this.subSock = null; });
-    await new Promise((res) => s.on('connect', res));
-    s.write(frame(MSG.SUBSCRIBE, JSON.stringify(names || ['window', 'workspace'])));
+    s.on('close', retry);
+    s.on('error', retry);
+    await new Promise((res,rej) => {
+      s.once('connect',()=>{connected=true;res();});
+      s.once('error',e=>{if(!connected)rej(e);});
+    });
+    if(lost)throw new Error('compositor subscription closed while connecting');
+    this.subSock = s;
+    s.write(frame(MSG.SUBSCRIBE, JSON.stringify(this.subNames)));
+  }
+
+  _scheduleSubscriptionRetry(){
+    if(this.subRetry||!this.subNames.length)return;
+    this.subRetry=setTimeout(()=>{
+      this.subRetry=null;
+      this.subscribe(this.subNames).catch(()=>this._scheduleSubscriptionRetry());
+    },500);
+    if(this.subRetry.unref)this.subRetry.unref();
   }
 
   on(name, fn){

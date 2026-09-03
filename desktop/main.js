@@ -953,10 +953,19 @@ function wirePermissions() {
   // supply one). On macOS 15+ the native picker takes over and this handler is never called.
   ses.setDisplayMediaRequestHandler(async (req, cb) => {
     if (!isOurs((req && req.frame && req.frame.url) || (req && req.securityOrigin) || '')) return cb({});
+    /* Wayland's portal source often has no display_id (its id is a synthetic, ever-increasing
+     * `screen:N:0:s`). Remember the display where the share gesture began BEFORE the portal moves
+     * the cursor. Recomputing "nearest cursor" for every remote packet made the mapping switch
+     * monitors as the remote pointer itself moved. */
+    try{
+      const d=screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+      remoteControlDisplayId=d ? String(d.id) : '';
+    }catch(_){ remoteControlDisplayId=''; }
+    remoteControlDisplayExplicit=false;
     let source = null;
     try { source = await pickScreenSource(); } catch (e) { screenLog('request failed: ' + ((e && (e.stack || e.message)) || e)); }
     if (!source) return cb({});   // cancelled → the page sees a plain NotAllowedError, as in a browser
-    remoteControlDisplayId = String(source.display_id || '');
+    if(source.display_id){ remoteControlDisplayId=String(source.display_id);remoteControlDisplayExplicit=true; }
     // 'loopback' = share the system audio too, which only Windows supports. The client asks for
     // video-only today; this costs nothing and is right the day it asks for audio.
     cb(req && req.audioRequested && process.platform === 'win32'
@@ -973,6 +982,7 @@ function wirePermissions() {
 let pendingSources = [];
 let pickerOpen = false;
 let remoteControlDisplayId = '';
+let remoteControlDisplayExplicit = false;
 function screenLog(message) {
   const line = new Date().toISOString() + ' ' + String(message) + '\n';
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'screen-share.log'), line); } catch (_) {}
@@ -1903,6 +1913,26 @@ ipcMain.handle('pc:remote:input', (e, input) => {
     input = { type:'absolute', x:b.x + Math.round(nx * Math.max(0,b.width-1)), y:b.y + Math.round(ny * Math.max(0,b.height-1)) };
   }
   return remotecontrol.input(input);
+});
+ipcMain.handle('pc:remote:configure', (e, raw) => {
+  fsGuard(e);
+  if(!SHELL_MODE)return false;
+  const width=Math.round(Number(raw&&raw.width)),height=Math.round(Number(raw&&raw.height));
+  if(!Number.isFinite(width)||!Number.isFinite(height)||width<64||height<64||width>32768||height>32768)
+    return false;
+  /* A portal-selected source without display_id can still be identified by its captured pixel
+   * dimensions. Accept a UNIQUE best match only; equal-resolution monitors deliberately retain
+   * the display frozen when sharing began instead of jumping nondeterministically. */
+  if(!remoteControlDisplayExplicit){
+    const ranked=screen.getAllDisplays().filter(d=>d&&d.bounds).map(d=>{
+      const b=d.bounds,s=Math.max(.1,Number(d.scaleFactor)||1);
+      const score=Math.min(Math.abs(b.width-width)+Math.abs(b.height-height),
+                           Math.abs(Math.round(b.width*s)-width)+Math.abs(Math.round(b.height*s)-height));
+      return {d,score};
+    }).sort((a,b)=>a.score-b.score);
+    if(ranked.length&&(!ranked[1]||ranked[0].score<ranked[1].score))remoteControlDisplayId=String(ranked[0].d.id);
+  }
+  return {ok:true,displayId:remoteControlDisplayId,width,height};
 });
 ipcMain.handle('pc:remote:release', (e) => { fsGuard(e); return SHELL_MODE ? remotecontrol.release() : false; });
 /* Decorating the FIRST native window is also when the palette is (re)applied: it is the earliest

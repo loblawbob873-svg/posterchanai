@@ -1,4 +1,9 @@
+import json
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,3 +59,41 @@ def test_remote_packets_are_bounded_before_crossing_the_native_bridge():
     assert "Math.max(-12,Math.min(12,Math.sign(e.deltaY)))" in APP
     assert "window.pcRemoteControl&&pcRemoteControl.input" in APP
     assert "const _RD_KEYS=" in APP
+
+
+def test_native_host_freezes_and_configures_the_captured_display():
+    main = (ROOT / "desktop/main.js").read_text()
+    preload = (ROOT / "desktop/preload.js").read_text()
+    assert "remoteControlDisplayId=d ? String(d.id) : ''" in main
+    assert "if(source.display_id){ remoteControlDisplayId=String(source.display_id)" in main
+    assert "ipcMain.handle('pc:remote:configure'" in main
+    assert "ranked[0].score<ranked[1].score" in main
+    assert "configure: info => ipcRenderer.invoke('pc:remote:configure'" in preload
+    assert "_rdConfigureNative(local)" in APP
+    assert "_rdConfigureNative(next)" in APP
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_pointer_mapping_tracks_the_contained_video_after_viewer_resize():
+    start = APP.index("  function _rdVideoPoint(video,e){")
+    end = APP.index("  function _rdBindViewer(video){", start)
+    fn = APP[start:end]
+    js = f"""
+      {fn}
+      const video={{videoWidth:1920,videoHeight:1080,
+        getBoundingClientRect:()=>({{left:0,top:0,width:800,height:600}})}};
+      const points=[_rdVideoPoint(video,{{clientX:0,clientY:75}}),
+                    _rdVideoPoint(video,{{clientX:800,clientY:525}}),
+                    _rdVideoPoint(video,{{clientX:400,clientY:0}})];
+      video.getBoundingClientRect=()=>({{left:0,top:0,width:1200,height:600}});
+      points.push(_rdVideoPoint(video,{{clientX:600,clientY:300}}));
+      console.log(JSON.stringify(points));
+    """
+    run = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    points = json.loads(run.stdout)
+    assert points[0] == {"x": 0, "y": 0}
+    assert points[1] == {"x": 1, "y": 1}
+    assert points[2]["y"] == 0, "top letterbox must clamp to the remote screen edge"
+    assert points[3]["x"] == pytest.approx(.5)
+    assert points[3]["y"] == pytest.approx(.5)

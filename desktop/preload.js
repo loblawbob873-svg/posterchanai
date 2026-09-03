@@ -226,6 +226,7 @@ if (isOurPage) {
   });
 
   contextBridge.exposeInMainWorld('pcRemoteControl', {
+    configure: info => ipcRenderer.invoke('pc:remote:configure', info && typeof info==='object' ? info : {}),
     input: event => ipcRenderer.invoke('pc:remote:input', event && typeof event==='object' ? event : {}),
     release: () => ipcRenderer.invoke('pc:remote:release'),
   });

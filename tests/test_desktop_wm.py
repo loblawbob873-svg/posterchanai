@@ -33,6 +33,7 @@ const net = require('net'), fs = require('fs'), os = require('os'), path = requi
 const MAGIC = Buffer.from('i3-ipc'), HEAD = 14;
 const sock = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pcwm-')), 's');
 const seen = [];                       // [{type, payload}] — what the client actually sent
+let subscribeCount = 0, dropFirstSubscription = false;
 
 const TREE = __TREE__;
 
@@ -63,9 +64,11 @@ const server = net.createServer((c) => {
       ])); }
       else if(type === 7){ c.write(frame(7, { human_readable:'fake 1.9' })); }
       else if(type === 2){                                // SUBSCRIBE, then push an event
+        subscribeCount++;
         c.write(frame(2, { success:true }));
         setTimeout(() => c.write(frame(0x80000003,
           { change:'new', container:{ id: 42, name:'Mozilla Firefox' } })), 30);
+        if(dropFirstSubscription && subscribeCount === 1) setTimeout(() => c.destroy(), 60);
       } else { c.write(frame(type, {})); }
     }
   });
@@ -293,6 +296,21 @@ server.listen(sock,async()=>{delete process.env.SWAYSOCK;delete process.env.I3SO
         self.assertEqual(out.get("events"), ["new"], out)
         self.assertEqual(out.get("stillAnswers"), "fake 1.9",
                          "the command socket stopped answering once something subscribed")
+
+    def test_subscription_reconnects_after_the_compositor_closes_it(self):
+        """Main installs forwarders once. A dead event socket must reconnect inside WM or every
+        later window/focus/tick event silently disappears for the rest of the login session."""
+        out = self.run_js("""
+          dropFirstSubscription = true;
+          const got = [];
+          wm.on('window', (e) => got.push(e.change));
+          await wm.subscribe(['window']);
+          await new Promise(r => setTimeout(r, 900));
+          out.events = got;
+          out.subscriptions = subscribeCount;
+        """)
+        self.assertGreaterEqual(out.get("subscriptions", 0), 2, out)
+        self.assertGreaterEqual(len(out.get("events", [])), 2, out)
 
     def test_an_event_type_is_read_unsigned(self):
         """An event is the ordinary shape with the HIGH BIT of the type set. Read signed it arrives

@@ -201,15 +201,17 @@ def test_remote_pointer_moves_without_requiring_a_pressed_button():
     block = APP[start:APP.index("document.addEventListener('keydown'", start)]
     move = block[block.index("pointermove"):block.index("const up=", block.index("pointermove"))]
     assert "px===null)return" not in move
-    assert "type:'absolute',x:nx,y:ny" in move
+    assert "const p=_rdVideoPoint(video,e)" in move
+    assert "type:'absolute',x:p.x,y:p.y" in move
     assert "addEventListener('wheel'" in block
 
 
 def test_remote_pointer_is_scaled_to_the_shared_monitor():
-    start = APP.index("function _rdBindViewer(video)")
-    block = APP[start:APP.index("document.addEventListener('keydown'", start)]
-    assert "video.getBoundingClientRect()" in block
-    assert "type:'absolute',x:nx,y:ny" in block
+    start = APP.index("function _rdVideoPoint(video,e)")
+    helper = APP[start:APP.index("function _rdBindViewer(video)", start)]
+    assert "video.getBoundingClientRect()" in helper
+    assert "video.videoWidth" in helper and "video.videoHeight" in helper
+    assert "Math.max(0,Math.min(1" in helper
 
 
 def test_sharer_can_switch_monitor_without_ending_the_session():
