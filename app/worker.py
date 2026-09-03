@@ -47,6 +47,10 @@ _SCHEDULERS = [
     # `mail_poll_enabled` is on, and it lives HERE rather than in the app process because an IMAP
     # round trip per account is exactly the long await that should not share the request loop.
     ("mail-notify", "app.services.mail_notify_service", "start_mail_notify_scheduler"),
+    # Local Wallet is a pooled Monero wallet with one account per user. Maintain each account's
+    # independently spendable outputs here; the operator-only timer cannot see these funds.
+    ("monero-user-outputs", "app.services.monero_user_wallets",
+     "start_user_wallet_output_scheduler"),
 ]
 
 _worker_process: Optional[subprocess.Popen] = None

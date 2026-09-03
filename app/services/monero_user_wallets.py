@@ -23,6 +23,7 @@ import importlib
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any
 
@@ -37,6 +38,13 @@ logger = logging.getLogger(__name__)
 #: Monero caps the outputs in one transaction and the change takes a slot. Measured against the real
 #: daemon: 15 destinations built one transaction, 16 was refused.
 MAX_DESTINATIONS = 15
+
+# Keep enough independent outputs for repeated zaps.  This policy belongs to the per-user pooled
+# wallet, not the operator wallet: every account owns a disjoint set of outputs.
+OUTPUT_TARGET = 8
+OUTPUT_LOW_WATER = 4
+OUTPUT_MIN_ATOMIC = 10**9       # 0.001 XMR per resulting output
+OUTPUT_MAINTENANCE_SECONDS = 60
 
 
 # ── The operator's zap fee ───────────────────────────────────────────────────────────────────────
@@ -222,6 +230,69 @@ class UserWallets:
             "outputs": sum(int(x.get("num_unspent_outputs") or 0) for x in subs),
         }
 
+    async def maintain_account_outputs(self, account: dict[str, Any]) -> dict[str, Any]:
+        """Top up one user's *spendable* output capacity without blocking their remaining zaps.
+
+        ``num_unspent_outputs`` includes locked change and cannot drive this decision.  We inspect
+        the individual available transfers and split only the largest unlocked output with
+        ``sweep_single``.  Splitting the whole account with ``sweep_all`` would lock every usable
+        output for ten blocks and manufacture the very outage this job exists to prevent.
+        """
+        index = int(account.get("account_index"))
+        address = str(account.get("base_address") or "").strip()
+        label = str(account.get("label") or "")
+        if not label.startswith("pc:") or not address:
+            return {"account_index": index, "action": "ignored"}
+        validate_address(address, self.network)
+        got = await self.rpc("incoming_transfers", {
+            "transfer_type": "available", "account_index": index,
+        })
+        transfers = [t for t in (got.get("transfers") or [])
+                     if t.get("unlocked", True) and int(t.get("amount") or 0) > 0]
+        count = len(transfers)
+        if count >= OUTPUT_LOW_WATER:
+            return {"account_index": index, "action": "healthy", "spendable_outputs": count}
+
+        # sweep_single is deliberately fail-closed: without a key image we cannot preserve the
+        # account's other outputs, so waiting is safer than turning maintenance into a lockout.
+        candidates = [t for t in transfers if str(t.get("key_image") or "")]
+        if not candidates:
+            return {"account_index": index, "action": "waiting", "spendable_outputs": count,
+                    "reason": "no individually spendable output reported"}
+        source = max(candidates, key=lambda t: int(t.get("amount") or 0))
+        amount = int(source.get("amount") or 0)
+        preserved = max(0, count - 1)
+        wanted = OUTPUT_TARGET - preserved
+        outputs = min(wanted, amount // OUTPUT_MIN_ATOMIC)
+        if outputs < 2:
+            return {"account_index": index, "action": "waiting", "spendable_outputs": count,
+                    "reason": "not enough unlocked value for useful outputs"}
+        result = await self.rpc("sweep_single", {
+            "address": address, "account_index": index,
+            "key_image": str(source["key_image"]), "outputs": int(outputs),
+            "priority": 1, "get_tx_keys": False,
+        })
+        hashes = result.get("tx_hash_list") or ([result["tx_hash"]] if result.get("tx_hash") else [])
+        return {"account_index": index, "action": "split", "spendable_outputs": count,
+                "outputs_created": int(outputs), "tx_hash_list": hashes}
+
+    async def maintain_outputs(self) -> dict[str, Any]:
+        """Maintain all existing per-user accounts; one bad account cannot stop the rest."""
+        if not self.enabled():
+            return {"enabled": False, "accounts": []}
+        accounts = (await self.rpc("get_accounts")).get("subaddress_accounts") or []
+        results = []
+        for account in accounts:
+            if not str(account.get("label") or "").startswith("pc:"):
+                continue
+            try:
+                results.append(await self.maintain_account_outputs(account))
+            except Exception as exc:
+                logger.warning("[monero-users] output maintenance failed for account %s: %s",
+                               account.get("account_index"), exc)
+                results.append({"account_index": account.get("account_index"), "action": "error"})
+        return {"enabled": True, "accounts": results}
+
     #: How long the NODE-WALLET fallback address is reused. The configured setting is
     #: never cached — see fee_address().
     FEE_ADDRESS_TTL = 60.0
@@ -353,3 +424,25 @@ class UserWallets:
 
 
 user_wallets = UserWallets()
+
+user_wallet_output_scheduler = None
+
+
+def start_user_wallet_output_scheduler():
+    """Start the production worker's per-user output maintainer (idempotently)."""
+    global user_wallet_output_scheduler
+    if user_wallet_output_scheduler is not None:
+        return user_wallet_output_scheduler
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    async def tick():
+        await user_wallets.maintain_outputs()
+
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler.add_job(tick, IntervalTrigger(seconds=OUTPUT_MAINTENANCE_SECONDS),
+                      id="monero-user-output-maintenance", replace_existing=True,
+                      max_instances=1, coalesce=True, next_run_time=datetime.now(timezone.utc))
+    scheduler.start()
+    user_wallet_output_scheduler = scheduler
+    return scheduler
