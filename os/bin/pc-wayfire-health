@@ -81,6 +81,20 @@ def healthy(pid):
     return owned_outputs == output_ids
 
 
+def process_alive(pid):
+    os.kill(pid, 0)
+    try:
+        # kill(2) still succeeds for an unreaped child. Treating that zombie as alive made a GPU
+        # startup crash consume the entire health timeout before the clean retry could begin.
+        stat = open(f"/proc/{pid}/stat", encoding="ascii").read()
+        end = stat.rfind(")")
+        return end >= 0 and stat[end + 2:end + 3] != "Z"
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "preflight"
     if mode == "bundle":
@@ -96,7 +110,8 @@ def main():
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         try:
-            os.kill(pid, 0)
+            if not process_alive(pid):
+                break
             if healthy(pid):
                 return 0
         except ProcessLookupError:

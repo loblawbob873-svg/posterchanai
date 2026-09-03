@@ -92,6 +92,23 @@ def test_health_requires_exactly_one_owned_surface_per_output(tmp_path):
         stub.close()
 
 
+def test_unreaped_gpu_process_is_not_mistaken_for_a_live_shell(tmp_path):
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    child = subprocess.Popen(["/bin/true"])
+    time.sleep(.05)  # exited but deliberately not wait()ed: a real launcher-owned zombie
+    views = [{"pid": child.pid, "app-id": "place.poster.desktop", "output-id": 1}]
+    stub = WayfireStub(tmp_path / "wayfire.socket", [{"id": 1}], views)
+    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar)}
+    started = time.monotonic()
+    try:
+        done = subprocess.run([str(HEALTH), "wait", str(child.pid), "2"], env=env,
+                              text=True, capture_output=True)
+        assert done.returncode == 1
+        assert time.monotonic() - started < .8
+    finally:
+        child.wait(); stub.close()
+
+
 def _fake(path, body):
     path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
     path.chmod(0o755)
