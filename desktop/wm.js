@@ -575,4 +575,14 @@ class WM {
   }
 }
 
-module.exports = { WM, frame, decoder, flatten, clampRectToOutputs, pidFamily, MSG, EVENT, EVENT_BIT };
+const SwayWM=WM;
+/* Backend selection is environment-only and therefore rollback-safe: a Sway session exports
+ * SWAYSOCK, a Wayfire session exports WAYFIRE_SOCKET. The renderer sees the same theme-neutral API. */
+function DesktopWM(sockPath){
+  if(!sockPath&&process.env.WAYFIRE_SOCKET&&!process.env.POSTERCHAN_WM_FORCE_SWAY){
+    const {WayfireWM}=require('./wm-wayfire.js');return new WayfireWM();
+  }
+  return new SwayWM(sockPath);
+}
+DesktopWM.CHROME=SwayWM.CHROME;
+module.exports = { WM:DesktopWM, SwayWM, frame, decoder, flatten, clampRectToOutputs, pidFamily, MSG, EVENT, EVENT_BIT };

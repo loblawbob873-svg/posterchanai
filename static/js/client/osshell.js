@@ -293,9 +293,10 @@
      * cannot know how this distribution installed the program; a scanned entry already carries the
      * one argv its .desktop file names, resolved against this disk when it was listed. Passing an
      * argv as a candidate list would try to exec its first WORD as a whole command line. */
+    const game = app.group === 'Games';
     const r = app.argv
-      ? await wm.launch(app.argv, { waitMs: 20000 })
-      : await wm.launch(app.candidates, { waitMs: 20000, candidates: true });
+      ? await wm.launch(app.argv, { waitMs: 20000, game })
+      : await wm.launch(app.candidates, { waitMs: 20000, candidates: true, game });
     /* A launch that produced no window is REPORTED, not swallowed. The most common cause is the
      * program not being installed — Steam is optional here — and "nothing happened" is the least
      * useful thing a launcher can say. */

@@ -1406,6 +1406,14 @@ function scheduleNativeGameReconcile(){
   }
 }
 function enforceNativeGameFullscreen(ev){
+  if(ev&&ev.wayfireView){
+    const row=ev.wayfireView,id=Number(row.id),identity=String(row.app||'');
+    if(!Number.isFinite(id))return;
+    if(/unmapped/.test(String(ev.change||''))){_nativeGameFullscreenAsked.delete(id);return;}
+    scheduleNativeGameReconcile();
+    if(!/^(?:steam_app_\d+|gamescope)/i.test(identity)||row.fullscreen||_nativeGameFullscreenAsked.has(id))return;
+    _nativeGameFullscreenAsked.add(id);wm().fullscreen(id,true).catch(()=>_nativeGameFullscreenAsked.delete(id));return;
+  }
   const c=ev&&ev.container;
   if(!c)return;
   const id=Number(c.id);
@@ -2149,6 +2157,18 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   }
   if (!list.length) throw new Error('nothing to launch');
   let launchOpts = opts || {};
+  /* Wayfire is floating-first; games get their own nested compositor so resolution changes,
+   * pointer constraints and Proton helper surfaces cannot destabilize the desktop compositor.
+   * The active Wayfire output owns the new fullscreen surface, so this naturally follows the
+   * monitor whose Start menu launched it. Sway remains an untouched rollback backend. */
+  if(opts&&opts.game&&process.env.WAYFIRE_SOCKET){
+    const gamescope='/usr/bin/gamescope';
+    try{
+      fs.accessSync(gamescope,fs.constants.X_OK);
+      const steam=/^steam(?:-native)?$/i.test(path.basename(list[0]));
+      list=[gamescope,'-f','-b','--force-windows-fullscreen',...(steam?['-e']:[]),'--',...list];
+    }catch(_){ return {pid:null,window:null,why:'gamescope is required to launch games on PosterChanOS'}; }
+  }
   /* TELEGRAM 7 + QT 6.9 ON SWAY: its native Wayland QRhi window probes AMD OpenGL correctly,
    * then Qt fails `EGL_WL_bind_wayland_display`. The window paints its spinner and turns black as
    * soon as rendering moves to that surface. XWayland on the same Mesa driver initializes GLX and
@@ -2440,7 +2460,8 @@ ipcMain.handle('pc:wm:subscribe', async (e) => {
        * appears, then its PosterChan frame catches up. Send the one normalized leaf with the event;
        * the ordinary tree refresh remains the recovery path for rename/close/workspace changes. */
       let window = null;
-      if (name === 'window' && ev && ev.container) {
+      if(name === 'window' && ev && ev.wayfireView) window=ev.wayfireView;
+      else if (name === 'window' && ev && ev.container) {
         try {
           const { flatten } = require('./wm.js');
           window = flatten(ev.container, [], '')[0] || null;
