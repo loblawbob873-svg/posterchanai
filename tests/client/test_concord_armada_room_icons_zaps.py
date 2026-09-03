@@ -81,3 +81,11 @@ def test_avatar_rail_navigation_runtime_keeps_the_existing_image_node():
         cwd=ROOT,
         check=True,
     )
+
+
+def test_concord_tip_choice_runtime_uses_socials_monero_and_lightning_flows():
+    subprocess.run(
+        ["node", str(ROOT / "tests/client/concord_tip_choice_runtime.mjs")],
+        cwd=ROOT,
+        check=True,
+    )
