@@ -383,7 +383,11 @@
            right now" tells somebody their number is wrong without telling them the right one, so
            the only way to find it is to guess — and the balance on screen is the TOTAL, which is
            not what a transfer can draw on when part of it is still locking. */
-        if(amount(val) > amount(state && state.unlocked_balance)){
+        /* A missing balance means the cheap access check succeeded while wallet-rpc was busy.
+           Let the server review the amount instead of turning unknown into zero and rejecting every
+           payment in the browser. A known balance is still enforced here. */
+        if(state && state.unlocked_balance != null
+            && amount(val) > amount(state.unlocked_balance)){
           const have = xmr(state && state.unlocked_balance, false);
           PC.toast(_lockedOnly
             ? ('only ' + have + ' XMR can be sent right now — the rest unlocks in about '
@@ -831,7 +835,30 @@
      * So only a POSITIVE answer is cached, and only briefly. Anything else asks again — which is
      * still deterministic, because the answer comes from the wallet rather than from a timer. */
     let s = (state && state.available && Date.now()-checkedAt < 30000) ? state : null;
-    if(!s){ try{ s = await _bounded(probe(true)); if(s === TIMED_OUT) s = null; }catch(_){ s = null; } }
+    if(!s){
+      /* `/status` authenticates the operator and names the network without touching wallet-rpc.
+       * Use it as the click-time availability check. The old path waited for balance, address and
+       * history RPCs; two browser/desktop surfaces asking together made one exceed 2.5s, so the
+       * click silently abandoned a funded local wallet as "busy". Keep the detailed probe running
+      * for balance display, but never make RPC contention decide whether the local sheet opens. */
+      try{
+        /* Start this beside the detailed probe, not after it. If the signer itself is stuck both
+           deadlines expire together; serial deadlines made one click wait five seconds. */
+        const access = _bounded(request('/api/wallet/xmr/status'));
+        s = await _bounded(probe(true));
+        if(s === TIMED_OUT || !s || (!s.available && s.busy)){
+          const meta = await access;
+          if(meta && meta !== TIMED_OUT && meta.network){
+            /* Invalidate the still-running detailed probe. Its eventual busy result must not close
+               this known-authorized path underneath the sheet we are about to open. */
+            _probeSeq++;
+            s = Object.assign({}, (state && state.available) ? state : {}, meta,
+                              {available:true, network:meta.network});
+            state=s; checkedAt=Date.now();
+          }else s=null;
+        }
+      }catch(_){ s = null; }
+    }
     if(!s||!s.available||!validAddress(opts&&opts.address,s.network))return false;
     /* AN EMPTY WALLET MUST NOT OFFER TO SPEND.
      *
@@ -857,7 +884,7 @@
      * the external flow — which works right now — and SAYS why, so the built-in wallet going quiet
      * for a while is explained rather than mysterious. It takes over again by itself. */
     const spendable = Number(String(s.unlocked_balance == null ? 0 : s.unlocked_balance).replace(/,/g,''));
-    if(!Number.isFinite(spendable) || spendable <= 0){
+    if(s.unlocked_balance != null && (!Number.isFinite(spendable) || spendable <= 0)){
       const held = Number(String(s.balance == null ? 0 : s.balance).replace(/,/g,''));
       const mins = Math.max(1, Number(s.blocks_to_unlock) || 0) * 2;
       if(Number.isFinite(held) && held > 0){

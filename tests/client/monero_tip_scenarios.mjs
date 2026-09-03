@@ -361,6 +361,48 @@ function meWallet({ enabled = true, unlocked = '1.5', balance = '1.5', blocks = 
   if (never) never();
 }
 
+// 25. TWO SURFACES MAY HIT ONE WALLET-RPC. The cheap authenticated status answer must open the
+//     operator's local-wallet sheet even while every detailed RPC is busy. Drive the real Review →
+//     confirmation → Send handlers and prove the payment boundary is reached exactly once.
+{
+  const calls = [];
+  let never;
+  const w = boot({ fetcher: (path, opts = {}) => {
+    calls.push({ path, method: opts.method || 'GET' });
+    if (path === '/api/wallet/xmr/status') return OK({ network:'mainnet', zap_fee_percent:'2' });
+    if (path === '/api/wallet/xmr/transfer/prepare')
+      return OK({ confirmation:'tok-'+'z'.repeat(40) });
+    if (path === '/api/wallet/xmr/transfer/confirm') return OK({ tx_hash:'d'.repeat(64) });
+    return new Promise(r => { never = r; });                 // wallet-rpc reads are contended
+  }});
+  let stage = 0, first = null, second = null;
+  w.PC.modal = (html, mounted) => {
+    stage++;
+    if (stage === 1) {
+      const els = {
+        '#mw-scan': {}, '#mw-to': {value:ADDR}, '#mw-amount': {value:'0.01'},
+        '#mw-note': {value:''}, '#mw-review': {},
+      };
+      first = { querySelector:s=>els[s] || {}, querySelectorAll:()=>[] };
+      mounted(first);
+    } else {
+      const els = {'#mw-understand':{checked:false}, '#mw-confirm':{disabled:true,textContent:''}};
+      second = { querySelector:s=>els[s] || {} };
+      mounted(second);
+    }
+  };
+  const began=Date.now(), answered=await w.api.tip({address:ADDR,name:'x',amount:'0.01'});
+  first.querySelector('#mw-review').onclick();
+  const check=second.querySelector('#mw-understand'), send=second.querySelector('#mw-confirm');
+  check.checked=true; check.onchange(); await send.onclick();
+  out.busyRpcStillSends = {
+    answered, tookMs:Date.now()-began,
+    prepare:calls.filter(x=>x.path==='/api/wallet/xmr/transfer/prepare').length,
+    confirm:calls.filter(x=>x.path==='/api/wallet/xmr/transfer/confirm').length,
+  };
+  if (never) never(OK({}));
+}
+
 // 25. THE SIGNER EXTENSION IS DEAD — a browser fault, not a wallet one. Taken verbatim from the
 //     console: "could not establish your app session: Could not establish connection. Receiving end
 //     does not exist." at __pcNostrProvider, with "theme sync skipped" failing identically.

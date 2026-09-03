@@ -364,3 +364,14 @@ def test_the_service_fee_is_stated_before_anybody_sends(seen):
 def test_a_node_with_no_fee_says_nothing_about_one(seen):
     """Most nodes will not charge, and a sheet that talks about a 0% fee invents a concern."""
     assert seen["userWalletNoFee"]["silent"] is True
+
+
+def test_busy_wallet_rpc_does_not_disable_the_local_zap_path(seen):
+    """Two web/desktop surfaces may read one wallet concurrently. The authenticated status route
+    does not touch wallet-rpc, so contention must not make a funded operator's local-wallet button
+    silently fall through. This drives the shipped sheet's real Review and Send callbacks."""
+    got = seen["busyRpcStillSends"]
+    assert got["answered"] is True, "wallet-rpc contention disabled the local-wallet zap path"
+    assert got["tookMs"] < 4000, "the zap button waited through the wallet RPC's full timeout"
+    assert got["prepare"] == 1, "Review did not reach transfer preparation exactly once"
+    assert got["confirm"] == 1, "Send did not reach transfer confirmation exactly once"
