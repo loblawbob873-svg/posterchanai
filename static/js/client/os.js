@@ -7398,8 +7398,14 @@
     const conns = netConns();
     const up = conns.filter(netLive).length;
     const total = conns.length;
+    /* Desktop Mode can enter before app.js reaches connectRelays().  In that interval `_conns` is
+     * correctly empty but the POOL is still `init`; calling that "No connection — no relays
+     * configured" turns an ordinary cold start into an apparent data-loss emergency.  The pool's
+     * own state distinguishes "not configured yet" from an initialized empty/off pool. */
+    let pool = 'off';
+    try{ pool = (window.Relay && typeof Relay.status === 'string') ? Relay.status : 'off'; }catch(_){}
     let level;
-    if(!total) level = 'off';
+    if(!total) level = (pool === 'init' || pool === 'connecting') ? 'connecting' : 'off';
     else if(up === 0) level = conns.some(c => c.status === 'connecting') ? 'connecting' : 'off';
     else if(up < total) level = 'partial';
     else level = 'ok';
@@ -7415,10 +7421,12 @@
   // "3 of 5 relays" — the summary the tray icon is standing in for.
   function netSummary(s){
     if(!s.online) return 'This device is offline';
+    /* Check the lifecycle before the count: a cold-start pool deliberately has zero Conn objects
+     * until connectRelays() runs, but it is not a configured-empty pool. */
+    if(s.level === 'connecting') return 'Connecting…';
     if(!s.total) return 'No relays configured';
     if(s.level === 'ok') return s.total === 1 ? 'Connected to 1 relay'
                                              : `Connected to all ${s.total} relays`;
-    if(s.level === 'connecting') return 'Connecting…';
     if(s.level === 'off') return s.total === 1 ? 'Relay unreachable'
                                               : `None of ${s.total} relays reachable`;
     return `${s.up} of ${s.total} relays connected`;
@@ -7515,7 +7523,9 @@
          <span><b>${enc(NET_LABEL[s.level] || '')}</b><i>${enc(netSummary(s))}</i></span></div>
        <div class="os-net-list">${
          s.conns.length ? s.conns.map(netRow).join('')
-                        : '<div class="os-net-empty muted small">This client has no relays to talk to. Add one in Settings → Relays.</div>'}</div>
+                        : s.level === 'connecting'
+                          ? '<div class="os-net-empty muted small">Preparing the relay connection…</div>'
+                          : '<div class="os-net-empty muted small">This client has no relays to talk to. Add one in Settings → Relays.</div>'}</div>
        ${netStatsHtml()}`;
     { const b = $('#os-net-again', panel); if(b) b.onclick = (e) => {
         e.stopPropagation();
@@ -9321,6 +9331,9 @@
                   __clockZones: (cfg) => _clockZones(cfg),
                   __newsWindow: (items, off, n) => _newsWindow(items, off, n),
                   __statCells: (st) => _statCells(st),
+                  /* The connection lifecycle decision is testable without opening a tray popup.
+                   * In particular, an unpopulated `init` pool is connecting, never unconfigured. */
+                  __netState: () => netState(), __netSummary: (s) => netSummary(s),
                   __wgtPeriodOf: (everies) => _wgtPeriodOf(everies),
                   // How long after a refresh a widget becomes due again. Shorter than `every` on
                   // purpose — see _wgtRefreshOne. Exported because "the clock skips a second" is the

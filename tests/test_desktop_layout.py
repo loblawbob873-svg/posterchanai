@@ -292,6 +292,45 @@ class ShadowTests(unittest.TestCase):
             self.assertIn(use, self.SRC, f"expected os.js to use the global pool via {use!r}")
 
 
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class RelayTrayLifecycleTests(unittest.TestCase):
+    """A cold relay pool is pending, not an empty user configuration."""
+
+    def state(self, status, conns, online=True):
+        return _node(f"""
+          if (!global.navigator) global.navigator = {{}};
+          Object.defineProperty(global.navigator, 'onLine',
+                                {{ value: {json.dumps(online)}, configurable: true }});
+          global.Relay = window.Relay = {{ status: {json.dumps(status)},
+                                          conns() {{ return {json.dumps(conns)}; }} }};
+          const state = PCOS.__netState();
+          console.log(JSON.stringify({{ state, summary: PCOS.__netSummary(state) }}));
+        """)
+
+    def test_cold_start_never_claims_the_user_has_no_relays(self):
+        got = self.state("init", [])
+        self.assertEqual(got["state"]["level"], "connecting")
+        self.assertEqual(got["summary"], "Connecting…")
+        self.assertNotIn("No relays", got["summary"])
+
+    def test_initialized_empty_pool_is_reported_honestly(self):
+        got = self.state("off", [])
+        self.assertEqual(got["state"]["level"], "off")
+        self.assertEqual(got["summary"], "No relays configured")
+
+    def test_live_relay_is_connected(self):
+        got = self.state("ok", [{"url": "wss://relay.poster.place/", "status": "ok",
+                                  "trusted": True, "open": True, "idle": 100}])
+        self.assertEqual(got["state"]["level"], "ok")
+        self.assertEqual(got["summary"], "Connected to 1 relay")
+
+    def test_offline_device_outranks_an_open_socket(self):
+        got = self.state("ok", [{"url": "wss://relay.poster.place/", "status": "ok",
+                                  "trusted": True, "open": True, "idle": 100}], False)
+        self.assertEqual(got["state"]["level"], "off")
+        self.assertEqual(got["summary"], "This device is offline")
+
+
 class RegistrationTests(unittest.TestCase):
     """The two registrations every private document in this client has got wrong at least once.
 
