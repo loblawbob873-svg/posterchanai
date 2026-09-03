@@ -25916,6 +25916,38 @@
       if(this.folder===folder || this.folder==='Sent' || this.folder==='Drafts') this.loadList();
     },
     _key(m){ return (m.account||this.acct)+'|'+(m.folder||this.folder)+'|'+m.uid; },
+    /* THE POINT OF A THREAD IS THAT IT IS ONE ROW.
+     *
+     * Reported as "threading is showing multiple messages in Inbox, the point of threads is to
+     * consolidate". The reader has grouped a conversation for a while; the LIST never did, so a
+     * back-and-forth with one person filled the screen with near-identical rows and the newest was
+     * wherever it happened to fall.
+     *
+     * Grouped on the normalised subject — every reply/forward prefix stripped, not just the first,
+     * because mail accretes them ("Re: Re: Fwd: quote" is ordinary after a few round trips). It is
+     * the SAME rule the server threads with, so the list and the reader agree about what one
+     * conversation is; disagreeing would be worse than not grouping at all.
+     *
+     * A message with no usable subject is its own row: grouping those together would put every
+     * subject-less message in the mailbox under one heading. */
+    _convKey(m){
+      const raw = String((m && m.subject) || '');
+      const norm = raw.replace(/^(?:\s*(?:re|fwd|fw)\s*:\s*)+/i, '').trim().toLowerCase();
+      return norm ? 'subj:' + norm : 'uid:' + this._key(m);
+    },
+    /* One entry per conversation, newest first, each carrying the messages it stands for.
+     * `this.msgs` is already newest-first, so first-seen order IS newest-first. */
+    _conversations(){
+      const out = [], byKey = new Map();
+      for(const m of (this.msgs || [])){
+        const k = this._convKey(m);
+        const seen = byKey.get(k);
+        if(seen){ seen.all.push(m); if(!m.read) seen.unread = true; continue; }
+        const row = { key:k, head:m, all:[m], unread:!m.read };
+        byKey.set(k, row); out.push(row);
+      }
+      return out;
+    },
     drawList(){
       const box=$('#mail-items', this.root); if(!box) return;
       this.sel=this.sel||new Set();
@@ -25923,13 +25955,20 @@
       // Unified mode uses the logical name and has no per-account folderLabels map. Treat it as
       // Sent too, or its rows show the sender (yourself) instead of the useful "To:" recipient.
       const isSent=this.folder==='Sent'||this.folderLabels[this.folder]==='📤 Sent', unified=this.acct==='__all';
-      box.innerHTML=this.msgs.map(m=>{ const key=this._key(m);
+      /* ONE ROW PER CONVERSATION. The reader has grouped a thread for a while and the list did
+         not, so a back-and-forth filled the screen with near-identical rows — "the point of threads
+         is to consolidate". The row shows the NEWEST message and a count; the checkbox selects the
+         whole conversation, because deleting half of one is not something anybody means to do. */
+      const convs = this._conversations();
+      box.innerHTML=convs.map(c=>{ const m=c.head, keys=c.all.map(x=>this._key(x)), key=keys[0];
         const cur = (this.msgs.indexOf(m) === this.cursor) ? ' cursor' : '';
-        return `<div class="mail-item${m.read?'':' unread'}${cur}${String(m.uid)===String(this.openUid)?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}">
-        <input type="checkbox" class="mi-chk"${this.sel.has(key)?' checked':''}>
+        const openInThis = c.all.some(x => String(x.uid) === String(this.openUid));
+        const n = c.all.length;
+        return `<div class="mail-item${c.unread?' unread':''}${cur}${openInThis?' active':''}" data-uid="${enc(String(m.uid))}" data-folder="${enc(m.folder||this.folder)}" data-account="${enc(m.account||'')}" data-key="${enc(key)}" data-keys="${enc(keys.join(','))}">
+        <input type="checkbox" class="mi-chk"${keys.every(k=>this.sel.has(k))?' checked':''}>
         <div class="mi-content">
-          <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${enc((isSent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
-          <div class="mi-subj">${m.attachments?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
+          <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${enc((isSent?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}${n>1?`<span class="mi-count" title="${n} messages in this conversation">${n}</span>`:''}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
+          <div class="mi-subj">${c.all.some(x=>x.attachments)?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
           <div class="mi-prev muted small">${enc(m.preview||'')}</div>
         </div></div>`; }).join('');
       if(this._next){
@@ -25938,7 +25977,12 @@
         const mb=$('#mail-more-btn', this.root); if(mb) mb.onclick=()=>this.loadMore();
       }
       $$('.mail-item',box).forEach(el=>{
-        const cb=el.querySelector('.mi-chk'); if(cb) cb.onclick=(e)=>{ e.stopPropagation(); if(cb.checked) this.sel.add(el.dataset.key); else this.sel.delete(el.dataset.key); this.updateBulk(); };
+        /* The checkbox selects the WHOLE conversation — every message the row stands for. Acting
+           on only the newest would delete or move half a thread and leave the rest behind. */
+        const cb=el.querySelector('.mi-chk'); if(cb) cb.onclick=(e)=>{ e.stopPropagation();
+          const keys=String(el.dataset.keys||el.dataset.key||'').split(',').filter(Boolean);
+          for(const k of keys){ if(cb.checked) this.sel.add(k); else this.sel.delete(k); }
+          this.updateBulk(); };
         const c=el.querySelector('.mi-content');
         if(c) c.onclick=()=>{ this.cursor=this.msgs.findIndex(m=>String(m.uid)===String(el.dataset.uid));
                               this.open(el.dataset.uid, el.dataset.folder, el.dataset.account); };

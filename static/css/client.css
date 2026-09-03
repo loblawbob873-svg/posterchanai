@@ -9952,3 +9952,9 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
 .ua-rank{font:700 12px/1 var(--mono,monospace);color:var(--muted)}.ua-copy{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ua-copy small{display:block;margin-top:4px}.ua-postnums{text-align:right}.ua-postnums b,.ua-postnums small{display:block}.ua-arrow{color:var(--neon,#22d3ee)}
 .ua-empty{margin:70px auto;text-align:center;max-width:420px}.ua-empty>span{font-size:54px;color:var(--neon,#22d3ee)}.ua-empty h2{margin:14px 0 8px}.ua-empty p,.ua-foot{color:var(--muted)}.ua-foot{text-align:center;font-size:11px;margin-top:18px}
 @media(max-width:700px){.ua-page{padding:20px 12px 90px}.ua-head{align-items:flex-start;flex-direction:column}.ua-ranges{align-self:stretch}.ua-ranges button{flex:1}.ua-metrics{grid-template-columns:1fr 1fr}.ua-metric.hero{grid-column:span 2}.ua-chartgrid{grid-template-columns:1fr}.ua-metric{min-height:116px;padding:15px}.ua-posts button{grid-template-columns:30px minmax(0,1fr) 20px}.ua-postnums{display:none}.ua-bars{height:125px}}
+
+/* The message count on a conversation row. Small and quiet: it is a fact about the row, not a
+   badge demanding attention — unread already has its own weight. */
+.mi-count{display:inline-block;margin-inline-start:6px;padding:0 6px;border-radius:999px;
+  background:var(--panel2);color:var(--muted);font-size:11px;font-weight:700;line-height:17px;
+  vertical-align:middle}
