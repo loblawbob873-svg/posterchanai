@@ -125,7 +125,7 @@ def test_a_cached_profile_skips_every_blocking_read(profile):
     guard = profile.index("if(!_cached){")
     end = profile.index("const p=Store.profile(pk)||{}; const mine=pk===ME.pubkey;")
     cold = profile[guard:end]
-    for blocking in ('feed.innerHTML=\'<div class="spinner">', "await Relay.ready()",
+    for blocking in ("feed.innerHTML=_PROFILE_TOP+", '<div class="spinner">', "await Relay.ready()",
                      "kinds:[0],limit:1", "_loadNotes()"):
         assert blocking in cold, f"{blocking!r} must sit inside the cold-only branch"
     # …and nothing blocking is left outside it, before the paint. `_loadNotes` is DEFINED above the
