@@ -17,6 +17,9 @@ function fn(signature){
     focus:async id=>{calls.push('focus:'+id);return true;}
   };
   let nativeTasks=[{id:73,focused:true,stashed:false}],nativeMenuHidden=[];
+  let nativeMenuFocusGeneration=0,_focusGeneration=0;
+  const _claimFocus=()=>++_focusGeneration,_focusCurrent=t=>t===_focusGeneration;
+  const _focusCompositorCurrent=(id,t)=>_focusCurrent(t)?pcWM.focus(id):Promise.resolve(false);
   const nsync=async()=>{calls.push('sync');};
   // Same lexical scope as the production declarations, so this exercises their real control flow.
   const _focusNativeDecorated=eval('('+fn('function _focusNativeDecorated')+')');

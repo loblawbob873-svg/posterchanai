@@ -367,8 +367,8 @@ def test_native_decoration_is_reasserted_before_focus_and_monitor_handoff_focus(
     os_src = (ROOT / "static/js/client/os.js").read_text()
     focus = os_src[os_src.index("function _focusNativeDecorated"):
                    os_src.index("function _focusNativeWhenShown")]
-    assert "pcWM.decorate(id)" in focus and "pcWM.focus(id)" in focus
-    assert focus.index("pcWM.decorate(id)") < focus.index("pcWM.focus(id)")
+    assert "pcWM.decorate(id)" in focus and "_focusCompositorCurrent(id,lease)" in focus
+    assert focus.index("pcWM.decorate(id)") < focus.index("_focusCompositorCurrent(id,lease)")
     main = (ROOT / "desktop/main.js").read_text()
     handoff = main[main.index("ipcMain.handle('pc:wm:handoff'"):
                    main.index("ipcMain.handle('pc:wm:handoff-frame'")]

@@ -72,7 +72,7 @@ def test_switching_from_a_native_app_focuses_shell_before_internal_frame():
     start = CLIENT.index("let _altSwitch=null")
     body = CLIENT[start:CLIENT.index("// ---- snapping", start)]
     shell = body.index("posterchan(?:-desktop)?")
-    focus = body.index("pcWM.focus(shell.id)")
+    focus = body.index("_focusCompositorCurrent(shell.id,switchFocusToken)")
     staged = body.index("_drawAltSwitch(_altSwitch)")
     assert shell < focus < staged
 
@@ -159,7 +159,7 @@ def test_the_machines_own_windows_are_rows_not_only_our_frames():
     # One window is one row even while `pc_os_host_native` puts it in both lists.
     assert "if(rows.some(x=>x.native===id))continue;" in rows
     # A stashed compositor window has to come back before it can take the keyboard.
-    assert "pcWM.show(r.id)" in body and "_focusNativeDecorated(r.id)" in body
+    assert "pcWM.show(r.id)" in body and "_focusNativeDecorated(r.id,focusToken)" in body
     # And the same measurement is available to the main process, which must not hand the gesture
     # to a monitor with nothing on it.
     assert "__canCycle: () => _switchRows().length > 0" in CLIENT

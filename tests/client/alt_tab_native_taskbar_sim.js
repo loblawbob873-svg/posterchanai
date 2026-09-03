@@ -51,6 +51,8 @@ const pcWM={windows:async()=>[{id:90,app:'place.poster.desktop'}],focus:async()=
   preview:async id=>{previewed.push(Number(id));return 'data:image/png;base64,shot';},
   cycleOutput:async direction=>{crossed.push(direction);return true;}};
 const _focusNativeDecorated=id=>{decorated.push(Number(id));return Promise.resolve(true);};
+let _focusGeneration=0;const _claimFocus=()=>++_focusGeneration;
+const _focusCompositorCurrent=(id,t)=>t===_focusGeneration?pcWM.focus(id):Promise.resolve(false);
 /* The chooser lives in a TILED surface and sway paints every floating window above it, so the
  * gesture asks the compositor to fullscreen this shell while it is up. Record both directions. */
 const fsCalls=[];

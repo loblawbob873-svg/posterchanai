@@ -34,7 +34,7 @@ def test_non_overlapping_dom_app_does_not_park_telegram():
 
 def test_every_dom_app_shape_uses_the_same_central_stacking_path():
     focus=OS[OS.index("function focusWin(w, render)"):OS.index("function minimise",OS.index("function focusWin(w, render)"))]
-    assert "else if(w.native == null) _stackDomAboveNative(w)" in focus
+    assert "else if(w.native == null) _stackDomAboveNative(w,focusToken)" in focus
     for view in ("global","messages","concord","monero","office","drafts","settings","terminal"):
         assert view in OS
 
@@ -42,12 +42,12 @@ def test_every_dom_app_shape_uses_the_same_central_stacking_path():
 def test_real_posterchan_toplevel_uses_compositor_focus_after_releasing_dom_parking():
     branch=OS.split("const mine = nativeTasks.find",1)[1].split("let real = null",1)[0]
     assert "_releaseDomCoveredNative(mine.id)" in branch
-    assert "_focusNativeDecorated(mine.id)" in branch
-    assert branch.index("_releaseDomCoveredNative(mine.id)") < branch.index("_focusNativeDecorated(mine.id)")
+    assert "_focusNativeDecorated(mine.id,focusToken)" in branch
+    assert branch.index("_releaseDomCoveredNative(mine.id)") < branch.index("_focusNativeDecorated(mine.id,focusToken)")
     assert "++_domStackGen" in OS
 
 
 def test_native_taskbar_restore_releases_dom_owned_parking_before_focus():
     handler=OS[OS.index("if(b.dataset.kind === 'native')"):OS.index("const w = wins.find",OS.index("if(b.dataset.kind === 'native')"))]
     assert "await _releaseDomCoveredNative(w.id)" in handler
-    assert handler.index("_releaseDomCoveredNative(w.id)") < handler.index("_focusNativeDecorated(w.id)")
+    assert handler.index("_releaseDomCoveredNative(w.id)") < handler.index("_focusNativeDecorated(w.id,focusToken)")

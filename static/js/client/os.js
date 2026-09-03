@@ -1289,15 +1289,26 @@
   // ---- windows -------------------------------------------------------------------------------
 
   let repainting = 0;      // >0 while a window is repainting itself; see focusWin
+  /* Every asynchronous compositor-focus operation carries the user intent that created it. A
+   * decoration, restore, adoption snapshot or popup close that finishes after a later click is
+   * stale and must not take the keyboard back. One generation for every app/surface keeps this a
+   * focus invariant rather than a growing list of app-specific exceptions. */
+  let _focusGeneration = 0;
+  const _claimFocus = () => ++_focusGeneration;
+  const _focusCurrent = token => token === _focusGeneration;
+  const _focusCompositorCurrent = (id, token) => {
+    if(!_focusCurrent(token) || !window.pcWM || !pcWM.focus || !(Number(id)>0)) return Promise.resolve(false);
+    return Promise.resolve(pcWM.focus(Number(id))).catch(()=>false);
+  };
   const _domCoveredNative = new Set();
   let _domStackGen = 0;
 
-  async function _stackDomAboveNative(w){
+  async function _stackDomAboveNative(w, focusToken){
     if(!w || w.native != null || !window.pcWM || !NAT() || !NAT().domStackPlan) return;
     const gen=++_domStackGen;
     let snap=null;
     try{ snap=pcWM.snapshot ? await pcWM.snapshot() : {windows:await pcWM.windows()}; }catch(_){ return; }
-    if(gen!==_domStackGen)return;       // a real/native window took focus while the snapshot waited
+    if(gen!==_domStackGen||!_focusCurrent(focusToken))return; // a newer click won while snapshot waited
     const rows=Array.isArray(snap&&snap.windows)?snap.windows:[];
     const shellId=Number(snap&&snap.shellId);
     const shell=rows.find(x=>Number(x&&x.id)===shellId)||_natShell;
@@ -1306,17 +1317,21 @@
       visual&&visual.width>0?visual.width:window.innerWidth,
       visual&&visual.height>0?visual.height:window.innerHeight);
     const mapped=scale&&NAT().mapRect(_frameRect(w),scale);
-    if(!mapped)return;
+    if(!mapped){ if(shell)await _focusCompositorCurrent(shell.id,focusToken); return; }
     const rect={left:mapped.x,top:mapped.y,width:mapped.w,height:mapped.h};
     const plan=NAT().domStackPlan(rows,rect);
     for(const id of plan.show) if(_domCoveredNative.has(id)){
       try{ await pcWM.show(id); _domCoveredNative.delete(id); }catch(_){}
-      if(gen!==_domStackGen)return;
+      if(gen!==_domStackGen||!_focusCurrent(focusToken))return;
     }
     for(const id of plan.hide) if(!_domCoveredNative.has(id)){
       try{ await pcWM.hide(id); _domCoveredNative.add(id); }catch(_){}
-      if(gen!==_domStackGen)return;
+      if(gen!==_domStackGen||!_focusCurrent(focusToken))return;
     }
+    /* Parking the formerly-focused floating surface lets Sway choose a successor. Reassert the
+       shell only if this is still the newest user click, so DOM active/z-order and compositor
+       keyboard focus cannot disagree. */
+    if(shell)await _focusCompositorCurrent(shell.id,focusToken);
   }
 
   async function _releaseDomCoveredNative(except){
@@ -1329,6 +1344,7 @@
 
   function focusWin(w, render){
     if(!w) return;
+    const focusToken=_claimFocus();
     /* A self-contained window (folder, native surface, etc.) does not claim #feed.  Consequently
      * the feature behind it keeps its live DOM in its own frame.  Remember that fact BEFORE focus
      * bookkeeping: claimFeed quite correctly becomes a no-op below, but the old repaint tail then
@@ -1376,10 +1392,13 @@
       _domCoveredNative.delete(Number(w.native));
       /* Focusing a scratchpad container can make Sway reveal it at scratchpad geometry before our
        * frame is ready — the focus-loss black flash/tiny Firefox window. Restore and place first. */
-      if(_natSent.get(Number(w.native))==='hidden') _focusNativeWhenShown(w);
-      else _focusNativeDecorated(w.native);
+      Promise.resolve(_releaseDomCoveredNative(w.native)).then(()=>{
+        if(!_focusCurrent(focusToken))return;
+        if(_natSent.get(Number(w.native))==='hidden') _focusNativeWhenShown(w,0,focusToken);
+        else _focusNativeDecorated(w.native,focusToken);
+      }).catch(()=>{});
     }
-    else if(w.native == null) _stackDomAboveNative(w).catch(()=>{});
+    else if(w.native == null) _stackDomAboveNative(w,focusToken).catch(()=>{});
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     if(w.isolated){
@@ -1675,14 +1694,15 @@
        * app that silently does nothing is the other way to read this as broken. */
       const mine = nativeTasks.find(r => r && r.own && r.view && r.view === view);
       if(mine && window.pcWM){
+        const focusToken=_claimFocus();
         /* The native window may have navigated within its app (Social → profile). Focus does not
            change that renderer's route, so explicitly return it to the app the launcher names. */
         try{ if(window.PCOSWin && PCOSWin.routeExisting) PCOSWin.routeExisting(view); }catch(_){ }
         try{
           Promise.resolve(_releaseDomCoveredNative(mine.id)).then(()=>{
             if(mine.stashed && pcWM.show) return Promise.resolve(pcWM.show(mine.id))
-              .then(() => _focusNativeDecorated(mine.id));
-            return _focusNativeDecorated(mine.id);
+              .then(() => _focusNativeDecorated(mine.id,focusToken));
+            return _focusNativeDecorated(mine.id,focusToken);
           }).catch(()=>{});
         }catch(_){ }
         return null;
@@ -2764,22 +2784,24 @@
       w.el.classList.add('native-stash-preview');
     });
   }
-  function _focusNativeDecorated(id){
+  function _focusNativeDecorated(id, token){
     id=Number(id);if(!id||!window.pcWM)return Promise.resolve(false);
+    const lease=token==null?_focusGeneration:token;
     /* Firefox private windows and Telegram can reassert compositor state after startup. Decoration
      * is therefore a focus invariant, not a one-time adoption side effect: clear stale sticky and
      * native chrome before handing the application the keyboard. */
     const decorated=pcWM.decorate?Promise.resolve(pcWM.decorate(id)).catch(()=>false):Promise.resolve(true);
-    return decorated.then(()=>pcWM.focus(id)).catch(()=>false);
+    return decorated.then(()=>_focusCompositorCurrent(id,lease)).catch(()=>false);
   }
-  function _focusNativeWhenShown(w, attempt){
+  function _focusNativeWhenShown(w, attempt, token){
     const id=w&&Number(w.native); if(!id || !wins.includes(w))return;
+    const lease=token==null?_focusGeneration:token;
     Promise.resolve(nsync()).then(()=>{
-      if(!wins.includes(w))return;
+      if(!wins.includes(w)||!_focusCurrent(lease))return;
       if(_natSent.get(id)==='hidden' && (attempt||0)<8){
-        setTimeout(()=>_focusNativeWhenShown(w,(attempt||0)+1),60); return;
+        setTimeout(()=>_focusNativeWhenShown(w,(attempt||0)+1,lease),60); return;
       }
-      _focusNativeDecorated(id);
+      _focusNativeDecorated(id,lease);
     },()=>{});
   }
   /* Native programs are real Sway windows. They deliberately do not get an HTML doppelganger:
@@ -2788,6 +2810,7 @@
    * compositor's task metadata; Sway owns geometry, decoration, input, and monitor handoff. */
   let nativeTasks = [];
   let nativeMenuHidden = [];
+  let nativeMenuFocusGeneration = 0;
   const _nativeDecorated = new Set();
   /* GET_TREE and desktop-entry discovery are asynchronous. Window events can overlap those reads:
    * an old "Firefox still exists here" pass completing after a close or monitor handoff used to
@@ -2812,6 +2835,7 @@
   async function _nativeMenuLayer(opening){
     if(!window.pcWM) return;
     if(opening){
+      nativeMenuFocusGeneration = _focusGeneration;
       nativeMenuHidden = nativeTasks.filter(w => !!w.focused && !w.stashed)
                                     .map(w => ({ id: Number(w.id), focused: true }));
       return;
@@ -2821,7 +2845,9 @@
     // scratchpad, and the menu's rectangle only stops covering anything once nsync has run.
     try{ await nsync(); }catch(_){}
     const focused = restore.find(w => w.focused);
-    if(focused) try{ await _focusNativeDecorated(focused.id); }catch(_){}
+    if(focused && nativeMenuFocusGeneration===_focusGeneration) try{
+      const token=_claimFocus(); await _focusNativeDecorated(focused.id,token);
+    }catch(_){}
   }
 
   /* A PRESS THAT BEGINS A GESTURE MUST NOT HAND THE KEYBOARD TO A NATIVE APP — and this is why a
@@ -2867,11 +2893,12 @@
     if(!w) return;
     w.gesturing = !!on;
     if(on){ nsync(); return; }
+    const focusToken=_claimFocus();
     const done = nsync();
     /* The app has the keyboard again now that it is back on screen. After the sync, not before:
      * focusing a window that is still in the scratchpad brings it back wherever the compositor
      * feels like putting it, and the placement then has to move it a second time. */
-    try{ Promise.resolve(done).then(() => { try{ _focusNativeDecorated(w.native); }catch(_){} }, () => {}); }
+    try{ Promise.resolve(done).then(() => { try{ _focusNativeDecorated(w.native,focusToken); }catch(_){} }, () => {}); }
     catch(_){}
   }
   const _zOf = (w) => Number(w.el && w.el.style.zIndex) || 0;
@@ -3408,7 +3435,7 @@
      * Telegram commonly follows Firefox in the tree, so it inherited the top HTML z after every
      * shell restart. Re-assert Sway's authoritative focused row only after all frames exist. */
     const focusedNative = rows.find(r => r && r.focused);
-    if(focusedNative){
+    if(pass === _nativeAdoptPass && focusedNative){
       const fw = nativeWins().find(w => Number(w.native) === Number(focusedNative.id));
       if(fw && !fw.el.classList.contains('focused')) focusWin(fw, false);
     }
@@ -3628,9 +3655,10 @@
     if(!e)return false;
     if(e.win){ if(wins.includes(e.win))focusWin(e.win,false); return true; }
     const r=e.row; if(!r||r.id==null)return false;
+    const focusToken=_claimFocus();
     try{
-      if(r.stashed)Promise.resolve(pcWM.show(r.id)).then(()=>_focusNativeDecorated(r.id)).catch(()=>{});
-      else _focusNativeDecorated(r.id);
+      if(r.stashed)Promise.resolve(pcWM.show(r.id)).then(()=>_focusNativeDecorated(r.id,focusToken)).catch(()=>{});
+      else _focusNativeDecorated(r.id,focusToken);
     }catch(_){}
     return true;
   }
@@ -3793,9 +3821,10 @@
       /* The switcher belongs to this output's shell. Bring that surface forward while selection is
          staged; native targets are focused only on commit, otherwise their opaque surface would
          cover the chooser and turn Alt+Tab back into an invisible shortcut. */
+      const switchFocusToken=_claimFocus();
       try{Promise.resolve(pcWM.windows()).then(list=>{const shell=(list||[]).find(x=>
         /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
-        if(shell)return pcWM.focus(shell.id);}).catch(()=>{});}catch(_){}
+        if(shell)return _focusCompositorCurrent(shell.id,switchFocusToken);}).catch(()=>{});}catch(_){}
       /* Focus alone leaves the chooser underneath every floating application — see _altRaiseShell. */
       try{_altRaiseShell(true);}catch(_){}
       if(!entering&&atEnd)handoff(_altSwitch);
@@ -7102,6 +7131,7 @@
       if(b.dataset.kind === 'native'){
         const w = nativeTasks.find(x => String(x.id) === b.dataset.id);
         if(!w) return;
+        const focusToken=_claimFocus();
         try{
           /* The event-fed row can lag the click by one compositor frame. Steam focuses through
            * several helper surfaces, so trusting `w.focused` made its active task button focus it
@@ -7113,7 +7143,7 @@
             await _releaseDomCoveredNative(w.id);
             if(live.stashed) await pcWM.show(w.id);
             _domCoveredNative.delete(Number(w.id));
-            await _focusNativeDecorated(w.id);
+            await _focusNativeDecorated(w.id,focusToken);
           }
         }catch(_){}
         return;
@@ -8434,9 +8464,10 @@
               openTaskManager();
               /* The tick arrives even while Firefox/a VM owns compositor focus. The Task Manager
                * is DOM inside the shell, so bring that shell surface forward after drawing it. */
+              const taskFocusToken=_claimFocus();
               Promise.resolve(pcWM.windows()).then(list=>{
                 const sh=(list||[]).find(x=>/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
-                if(sh) return pcWM.focus(sh.id);
+                if(sh) return _focusCompositorCurrent(sh.id,taskFocusToken);
               }).catch(()=>{});
             }
             else if(/^pc:cycle:(next|previous)$/.test(p)) cycleWindows(p.slice(9));

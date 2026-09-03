@@ -46,6 +46,8 @@ const toggleStart=()=>{},hideCtx=()=>{},enc=String,iconSvg=x=>'<svg>'+x+'</svg>'
 let nativeTasks=[];
 const appIcon=a=>'<img class="os-app-ic" alt="">';
 const _focusNativeDecorated=id=>Promise.resolve(true);
+let _focusGeneration=0;const _claimFocus=()=>++_focusGeneration;
+const _focusCompositorCurrent=(id,t)=>t===_focusGeneration?pcWM.focus(id):Promise.resolve(false);
 global.window={};
 const asked=[];
 /* THE ONE CHANGED VALUE: this desk has one screen, so the compositor refuses the handoff. */
