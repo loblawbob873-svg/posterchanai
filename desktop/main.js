@@ -1519,9 +1519,6 @@ async function placeShellSurface(record, assignment){
   record.assignment = assignment;
   _shellScopes.set(record.browser.webContents.id, assignment);
   await wm().assignShell(record.conId,assignment);
-  /* Reassert maximized/tiled state after a forbidden compositor drag. Geometry alone fills the
-   * output but leaves the surface floating, which permits a second accidental move. */
-  if(record.browser&&!record.browser.isDestroyed()&&!record.browser.isMaximized())record.browser.maximize();
 }
 async function reconcileShellDisplays(){
   if(!SHELL_MODE || !wm().available()) return;

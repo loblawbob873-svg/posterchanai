@@ -67,7 +67,6 @@ def test_shell_drag_guard_is_exact_id_not_shared_app_id():
     main = (ROOT / "desktop/main.js").read_text()
     assert "Number(record.conId)===Number(row.id)" in main
     assert "scheduleDisplayReconcile()" in main
-    assert "record.browser.maximize()" in main
     guard = main[main.index("Wayfire's move plugin cannot exclude"):]
     guard = guard[:guard.index("wm().on('tick'")]
     assert "row.app" not in guard
