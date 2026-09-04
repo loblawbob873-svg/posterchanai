@@ -61,7 +61,9 @@ if [ "$selected" = wayfire ]; then
 		fi
 		wait "$wayfire_pid"
 		status=$?
-		if [ -z "${shell_pid:-}" ] && [ -r "$PC_WAYFIRE_SHELL_PID_FILE" ]; then
+		# Re-read unconditionally: pc-shell-start-wayfire may replace a failed first GPU/surface attempt,
+		# so the PID remembered when ready was first observed is not necessarily the final live child.
+		if [ -r "$PC_WAYFIRE_SHELL_PID_FILE" ]; then
 			IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
 			case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
 		fi
