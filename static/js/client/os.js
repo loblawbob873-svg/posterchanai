@@ -8377,7 +8377,10 @@
              * automatable/accessibility-reachable and lets the two-output ownership gate prove that
              * exactly one notification surface opens on the focused monitor. */
             else if(p === 'pc:notifications') toggleNoti(true);
-            else if(p === 'pc:notifications:close') toggleNoti(false);
+            else if(p === 'pc:notifications:close'){
+              toggleNoti(false);
+              try{ if(window.pcPopup&&pcPopup.close)pcPopup.close(); }catch(_){ }
+            }
             /* PRINT SCREEN, through the same function the tray button calls. A screenshot taken by
              * the key and one taken from the tray must land in the same folder under the same
              * naming with the same "saved to…" notice, and the only way to be sure of that is for
