@@ -31,6 +31,7 @@ if [ "$selected" = wayfire ]; then
 	# Mesa's supported llvmpipe path. This is deliberately not Electron --disable-gpu.
 	if grep -qs '^0x1af4$' /sys/class/drm/card*/device/vendor 2>/dev/null; then
 		export LIBGL_ALWAYS_SOFTWARE=1
+		export WLR_RENDERER_ALLOW_SOFTWARE=1
 		PC_SHELL_EXTRA_ARGS="${PC_SHELL_EXTRA_ARGS:+$PC_SHELL_EXTRA_ARGS }--use-angle=swiftshader --enable-unsafe-swiftshader"
 		export PC_SHELL_EXTRA_ARGS
 	fi
