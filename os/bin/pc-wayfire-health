@@ -137,7 +137,7 @@ def has_marker(path):
                    for pixel in pixels) for wanted in MARKER)
 
 
-def rendered(outputs):
+def rendered(outputs, shells):
     grim = os.environ.get("PC_GRIM", "grim")
     capture_timeout = float(os.environ.get("PC_GRIM_TIMEOUT", "10"))
     with tempfile.TemporaryDirectory(prefix="pc-wayfire-health-") as directory:
@@ -153,6 +153,11 @@ def rendered(outputs):
         # Subscribe every output before one damage event. Sequential captures could each consume
         # the wlroots frame timeout and exhaust the outer startup budget on a dual-monitor desktop.
         time.sleep(0.08)
+        for shell in shells:
+            try:
+                request("window-rules/focus-view", {"id": int(shell["id"])})
+            except (KeyError, OSError, RuntimeError, ValueError):
+                pass
         try:
             input_env = dict(os.environ)
             runtime = input_env.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
@@ -178,7 +183,7 @@ def rendered(outputs):
 
 def healthy(pid):
     layout = shell_layout(pid)
-    return bool(layout and rendered(layout[0]))
+    return bool(layout and rendered(layout[0], layout[1]))
 
 
 def process_alive(pid):
