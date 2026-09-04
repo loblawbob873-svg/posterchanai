@@ -55,21 +55,29 @@ say "launch"
 # `place.poster.app/.phone.Phone` on top in the run that then reported "the launcher would not start
 # at all", which was true of neither.
 #
-# `adb shell am start` itself can wedge after a cached AVD boots. Run 33139397404 proved the shape:
-# install returned Success, the launch heading printed, and then no command or artifact progressed
-# for 31 minutes. `-W` gives ActivityManager's own result, an outer timeout bounds a broken transport,
-# and one ADB-server restart distinguishes a transient host channel from an app that cannot launch.
+# `am start -W` itself can stay in the host kernel's dead socket path after QEMU vanishes, where even
+# GNU timeout cannot reap it (run 33852473389 sat here until the 15-minute outer bound). Submit the
+# launch without ActivityManager's synchronous `-W`, then independently poll device + foreground
+# state. Each probe has its own bound and QEMU disappearance becomes an immediate lifecycle failure.
 launch_main() {
-  # adb can print ActivityManager's final "Complete" line and still never close its host socket.
-  # A TERM-only foreground timeout does not stop that state, and the surrounding workflow's
-  # foreground timeout can then signal the emulator itself. Isolate this command and escalate.
-  timeout --kill-after=5s 30s adb shell am start -W -n "$PKG/$PKG.MainActivity"
+  require_device
+  timeout --kill-after=2s 10s adb shell am start --user 0 -n "$PKG/$PKG.MainActivity" || return 1
+  local i top
+  for i in $(seq 1 20); do
+    require_device
+    top=$(timeout --kill-after=2s 5s adb shell dumpsys activity activities 2>/dev/null \
+          | grep -m1 -E 'mResumedActivity|topResumedActivity' || true)
+    if echo "$top" | grep -q "$PKG.MainActivity"; then return 0; fi
+    sleep 1
+  done
+  return 1
 }
 if ! launch_main >"$OUT/pc-device-launch.txt" 2>&1; then
   echo "    first launch did not return; restarting the ADB transport"
-  adb kill-server >/dev/null 2>&1 || true
+  timeout --kill-after=2s 5s adb kill-server >/dev/null 2>&1 || true
   timeout --kill-after=5s 15s adb start-server >/dev/null 2>&1 || true
   timeout --kill-after=5s 30s adb wait-for-device >/dev/null 2>&1 || true
+  require_device
   if ! launch_main >>"$OUT/pc-device-launch.txt" 2>&1; then
     cat "$OUT/pc-device-launch.txt" 2>/dev/null || true
     fail "launch failed after ADB restart"

@@ -25,7 +25,11 @@ def test_device_diagnostics_still_upload_after_a_timeout():
 
 def test_first_activity_launch_cannot_hang_the_entire_device_gate():
     assert "launch_main()" in DEVICE
-    assert "timeout --kill-after=5s 30s adb shell am start -W" in DEVICE
+    launch = DEVICE.split("launch_main()", 1)[1].split("\n}", 1)[0]
+    assert "am start -W" not in launch
+    assert "timeout --kill-after=2s 10s adb shell am start" in launch
+    assert "timeout --kill-after=2s 5s adb shell dumpsys activity activities" in launch
+    assert "require_device" in launch
     assert "adb kill-server" in DEVICE and "adb start-server" in DEVICE
     assert "launch failed after ADB restart" in DEVICE
 
@@ -35,6 +39,14 @@ def test_emulator_memory_is_bounded_and_build_daemon_is_gone_before_boot():
     assert WORKFLOW.count("ram-size: 1536M") == 2
     build = WORKFLOW.split("- name: Build debug APK", 1)[1].split("- name:", 1)[0]
     assert "./gradlew --stop" in build
+
+
+def test_verdict_boot_never_restores_mutable_cached_snapshot_state():
+    assert "key: avd-clean-1536-v1-" in WORKFLOW
+    run = WORKFLOW.split("- name: Run the device checks", 1)[1]
+    options = run.split("emulator-options:", 1)[1].splitlines()[0]
+    assert "-no-snapshot " in options and "-wipe-data " in options
+    assert "-no-snapshot-save" not in options
 
 
 def test_a_disappeared_emulator_ends_lifecycle_diagnostics_promptly():
