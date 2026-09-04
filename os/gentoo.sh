@@ -3190,6 +3190,13 @@ FSTAB
 		echo "home/$SESS_USER d 755 $SESS_UID $SESS_GID"
 		echo "home/$SESS_USER/.bash_profile f 644 $SESS_UID $SESS_GID cat $WORK/live.bash_profile"
 		echo "home/$SESS_USER/.config d 700 $SESS_UID $SESS_GID"
+		echo "home/$SESS_USER/.config/posterchanos d 700 $SESS_UID $SESS_GID"
+		# The release desktop is Wayfire.  Leaving this file absent makes the selector's
+		# migration fallback choose Sway; on virtio-gpu that compositor can take the VT
+		# while exposing no active DRM output, so the LiveCD reaches login but QEMU and
+		# real machines remain at "Display output is not active".  Pin the clean live
+		# account explicitly instead of inheriting a builder account's selection.
+		pseudoput "home/$SESS_USER/.config/posterchanos/compositor" f 600 "$SESS_UID" "$SESS_GID" printf '%s\\n' wayfire
 		echo "home/$SESS_USER/.config/sway d 700 $SESS_UID $SESS_GID"
 		pseudoput "home/$SESS_USER/.config/sway/outputs.conf" f 600 "$SESS_UID" "$SESS_GID" echo -n
 

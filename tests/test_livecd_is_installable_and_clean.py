@@ -505,6 +505,16 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         profile = self.fn[i:self.fn.index("\nPROFILE", i)]
         self.assertIn("exec /usr/local/bin/pc-compositor-session", profile)
 
+    def test_clean_live_session_explicitly_selects_wayfire(self):
+        """An absent selector falls back to the retired Sway session and can own the VT with
+        no active virtio output.  The clean account must not inherit either the build host's
+        choice or that migration fallback."""
+        self.assertIn(
+            'pseudoput "home/$SESS_USER/.config/posterchanos/compositor" f 600 '
+            '"$SESS_UID" "$SESS_GID" printf \'%s\\\\n\' wayfire',
+            self.fn,
+        )
+
     def test_it_only_does_so_on_the_first_tty(self):
         """A second console must still be a console."""
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
