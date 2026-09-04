@@ -485,6 +485,42 @@ function quitApp() {
   app.quit();
 }
 
+/* THE HEALTH MARKER IS A STARTUP CONTRACT, AND IT USED TO OUTLIVE IT FOR EVER.
+ *
+ * The preload paints a deterministic 8x8 four-colour square in the corner of each shell surface so
+ * `pc-wayfire-health wait` can screenshot the outputs and prove the renderer is actually painting
+ * before the launcher declares the desktop ready. It is read EXACTLY ONCE, and then it sat there
+ * for the life of the session — on a machine whose entire job is to look like a desktop. Reported
+ * as "there is a color box on the top left of the desktop too".
+ *
+ * The verdict has a name in the filesystem: the launcher writes `$PC_WAYFIRE_READY_FILE` right
+ * after the probe passes. Watch for it and retire the marker. The fallback timeout is not a
+ * shortcut — a session started by hand, or on another compositor, has no ready file and would
+ * otherwise keep the square for ever; it is comfortably longer than the launcher's own worst case
+ * (10s for the Xwayland socket plus a 30s health gate), so it can never retire a marker the probe
+ * still needs.
+ */
+function armHealthMarkerRetirement(target){
+  const ready = process.env.PC_WAYFIRE_READY_FILE || '';
+  let done = false;
+  const retire = (why) => {
+    if(done) return;
+    done = true;
+    clearInterval(poll); clearTimeout(cap);
+    try{ if(!target.isDestroyed()) target.webContents.send('pc:host:health-marker-off'); }catch(_){ }
+    try{ console.log('health marker retired (' + why + ')'); }catch(_){ }
+  };
+  const poll = setInterval(() => {
+    if(target.isDestroyed()) { clearInterval(poll); clearTimeout(cap); return; }
+    if(!ready) return;
+    try{ if(fs.existsSync(ready)) retire('the shell was declared ready'); }catch(_){ }
+  }, 500);
+  const cap = setTimeout(() => retire(ready ? 'no ready signal within the gate\'s worst case'
+                                            : 'no launcher ready file on this session'), 90000);
+  if(poll.unref) poll.unref();
+  if(cap.unref) cap.unref();
+}
+
 // ---- window ------------------------------------------------------------------------------------
 function createWindow(assignment) {
   const primary = !assignment || assignment.primary !== false;
@@ -553,6 +589,7 @@ function createWindow(assignment) {
   });
   if(primary) win = created;
   if (primary && cfg.maximized) created.maximize();
+  if (SHELL_MODE) armHealthMarkerRetirement(created);
   /* The window still exists and the renderer still runs while hidden, which is the whole mechanism:
    * folder sync is renderer code, so "running in the background" is a hidden window, not a headless
    * process. Consumed here so a LATER createWindow (macOS activate) opens normally. */

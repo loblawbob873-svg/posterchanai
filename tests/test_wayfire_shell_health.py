@@ -458,3 +458,36 @@ def test_the_probe_still_looks_for_both_shell_markers():
     assert "PRIMARY_MARKER" in probe and "SECONDARY_MARKER" in probe
     preload = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
     assert "--pc-secondary-surface" in preload
+
+
+def test_the_marker_is_retired_once_the_shell_is_declared_ready():
+    """IT IS READ ONCE, AND IT USED TO STAY FOR EVER.
+
+    `pc-wayfire-health wait` screenshots the outputs and looks for the marker before the launcher
+    declares the desktop ready. After that nothing ever reads it again — but it sat in the corner of
+    the screen for the life of the session, on a machine whose entire job is to look like a desktop:
+    "there is a color box on the top left of the desktop too".
+
+    The verdict already has a name in the filesystem — the launcher writes `$PC_WAYFIRE_READY_FILE`
+    immediately after the probe passes — so the retirement is driven by the real signal rather than
+    by a guess about how long startup takes.
+    """
+    main = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
+    fn = main.split("function armHealthMarkerRetirement(", 1)[1].split("\n}\n", 1)[0]
+    assert "PC_WAYFIRE_READY_FILE" in fn, fn
+    assert "pc:host:health-marker-off" in fn
+    # Only the shell surfaces paint it, so only they are armed.
+    assert "if (SHELL_MODE) armHealthMarkerRetirement(created);" in main
+    # A session with no launcher (started by hand, another compositor) still loses the square, and
+    # the cap is longer than the launcher's own worst case so it cannot retire one the probe needs:
+    # 10s for the Xwayland socket plus a 30s health gate.
+    cap = int(fn.split("const cap = setTimeout(", 1)[1].rsplit(", ", 1)[1].split(")", 1)[0])
+    assert cap >= 60000, cap
+
+    preload = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
+    assert "ipcRenderer.on('pc:host:health-marker-off', dropHealthMarker)" in preload
+    drop = preload.split("const dropHealthMarker", 1)[1].split("\n  };", 1)[0]
+    # The MutationObserver re-installs the marker whenever the client replaces the document, so
+    # retiring it means stopping that too — otherwise it is put straight back.
+    assert "disconnect()" in drop
+    assert "m.remove()" in drop

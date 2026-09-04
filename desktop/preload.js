@@ -52,14 +52,29 @@ if(process.argv.includes('--pc-shell-health-marker') && _pcShellSurface()){
     });
     (document.documentElement||document.body).appendChild(marker);
   };
+  let _markerWatch=null,_markerDone=false;
+  const dropHealthMarker=()=>{
+    _markerDone=true;
+    try{ if(_markerWatch) _markerWatch.disconnect(); }catch(_){ }
+    _markerWatch=null;
+    try{ const m=document.getElementById('pc-shell-health-marker'); if(m) m.remove(); }catch(_){ }
+  };
   const keepHealthMarker=()=>{
     installHealthMarker();
     /* The client can replace documentElement/body while adopting its hydrated shell. The marker
-     * is a session watchdog contract, not a one-frame startup splash, so keep it present after
-     * hydration and later in-app navigation as well. */
-    new MutationObserver(()=>{if(!document.getElementById('pc-shell-health-marker'))installHealthMarker();})
-      .observe(document.documentElement,{childList:true,subtree:true});
+     * is a startup contract, not a one-frame splash, so keep re-installing it through hydration
+     * and in-app navigation — until the gate it exists for has passed. */
+    _markerWatch=new MutationObserver(()=>{
+      if(_markerDone) return;
+      if(!document.getElementById('pc-shell-health-marker'))installHealthMarker();});
+    _markerWatch.observe(document.documentElement,{childList:true,subtree:true});
   };
+  /* AND THEN IT GOES AWAY. It used to stay for the life of the session — a small four-colour
+   * square in the top-left corner of the desktop, for ever, on a machine whose whole job is to
+   * look like a desktop ("there is a color box on the top left of the desktop too"). It is only
+   * ever READ once: `pc-wayfire-health wait` screenshots the outputs before the launcher declares
+   * the shell ready. main.js watches for that verdict and says so here. */
+  ipcRenderer.on('pc:host:health-marker-off', dropHealthMarker);
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',keepHealthMarker,{once:true});
   else keepHealthMarker();
 }
