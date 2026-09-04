@@ -30,7 +30,10 @@ if(process.argv.includes('--pc-shell-health-marker')){
     Object.assign(marker.style,{position:'fixed',left:'1px',top:'1px',width:'8px',height:'8px',
       display:'grid',gridTemplateColumns:'4px 4px',gridTemplateRows:'4px 4px',zIndex:'2147483647',
       pointerEvents:'none',contain:'strict'});
-    ['#d12e91','#23cde8','#79d447','#f0b429'].forEach((colour,index)=>{
+    const colours=process.argv.includes('--pc-secondary-surface')
+      ? ['#4b5cff','#ff5c35','#9bdb4d','#f6d55c']
+      : ['#d12e91','#23cde8','#79d447','#f0b429'];
+    colours.forEach((colour,index)=>{
       marker.children[index].style.cssText=`display:block;background:${colour}!important`;
     });
     (document.documentElement||document.body).appendChild(marker);

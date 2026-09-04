@@ -49,7 +49,11 @@ class WayfireWM{
   version(){return this._send('list-methods').then(r=>({human_readable:'Wayfire IPC',methods:r&&r.methods||[]}));}
   async outputs(){const r=await this._send('window-rules/list-outputs');return (Array.isArray(r)?r:r&&r.outputs||[]).map(normalizeOutput);}
   workspaces(){return this.outputs().then(xs=>xs.map(x=>({name:x.current_workspace,focused:x.primary,output:x.name})));}
-  async assignShell(id,assignment){const outs=await this.outputs(),o=outs.find(x=>x.name===String(assignment&&assignment.output));if(!o)throw new Error('Wayfire output not found');const b=assignment.rect||o.rect;await this.fullscreen(id,false);return this._viewConfig(id,{x:b.x,y:b.y,w:b.width,h:b.height},{output_id:o.id});}
+  async assignShell(id,assignment){const outs=await this.outputs(),o=outs.find(x=>x.name===String(assignment&&assignment.output));if(!o)throw new Error('Wayfire output not found');const b=assignment.rect||o.rect;await this.fullscreen(id,false);
+    /* configure-view geometry is local to output_id. shell-displays deliberately carries global
+     * Electron display bounds, so applying b.x/b.y directly displaced every non-origin output a
+     * second time (DP-2 at x=3840 was configured at global x=7680). */
+    return this._viewConfig(id,{x:b.x-o.rect.x,y:b.y-o.rect.y,w:b.width,h:b.height},{output_id:o.id});}
   async moveToAssignment(id,assignment){const outs=await this.outputs(),o=outs.find(x=>x.name===String(assignment&&assignment.output));if(!o)throw new Error('Wayfire output not found');return this._viewConfig(id,null,{output_id:o.id});}
   decorate(){return Promise.resolve(true);} // UI chrome is theme-owned; Wayfire rules exclude it.
   async windows(){const r=await this._send('window-rules/list-views');return (Array.isArray(r)?r:r&&r.views||[]).filter(v=>v&&v.mapped!==false&&v.role!=='desktop-environment').map(normalizeView);}

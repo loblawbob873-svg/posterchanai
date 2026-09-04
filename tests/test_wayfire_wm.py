@@ -53,6 +53,28 @@ def test_wayfire_backend_contract_and_wire_protocol(tmp_path):
     assert "tiled-edges" not in configured, "Wayfire 0.10 configure-view accepts geometry, not theme/tiling chrome"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_shell_assignment_translates_asymmetric_secondary_output_to_local_coordinates():
+    """Electron display assignments are global; Wayfire configure-view is output-local."""
+    js = f"""
+      const {{WayfireWM}}=require({json.dumps(str(ROOT / 'desktop/wm-wayfire.js'))});
+      const w=new WayfireWM('/tmp/not-used'),calls=[];
+      w.outputs=async()=>[{{id:4,name:'DP-1',rect:{{x:-1600,y:240,width:1600,height:900}}}},
+                          {{id:9,name:'DP-2',rect:{{x:0,y:-180,width:3440,height:1440}}}}];
+      w.fullscreen=async(id,on)=>calls.push({{method:'fullscreen',id,on}});
+      w._viewConfig=async(id,rect,extra)=>calls.push({{method:'configure',id,rect,extra}});
+      (async()=>{{await w.assignShell(77,{{output:'DP-2',rect:{{x:0,y:-180,width:3440,height:1440}}}});
+        console.log(JSON.stringify(calls));}})();
+    """
+    run = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == [
+        {"method": "fullscreen", "id": 77, "on": False},
+        {"method": "configure", "id": 77,
+         "rect": {"x": 0, "y": 0, "w": 3440, "h": 1440}, "extra": {"output_id": 9}},
+    ]
+
+
 def test_wayfire_backend_is_theme_neutral_and_sway_is_rollback_default():
     src = (ROOT / "desktop/wm-wayfire.js").read_text()
     factory = (ROOT / "desktop/wm.js").read_text()

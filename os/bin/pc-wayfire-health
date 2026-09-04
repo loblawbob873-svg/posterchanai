@@ -2,6 +2,7 @@
 """Small fail-closed Wayfire session probe used before the desktop is declared ready."""
 import json
 import os
+import shutil
 import socket
 import struct
 import subprocess
@@ -13,7 +14,9 @@ import zlib
 
 SOCKET = os.environ.get("WAYFIRE_SOCKET", "")
 APP_IDS = {"posterchan-desktop", "PosterChan", "place.poster.desktop"}
-MARKER = ((209, 46, 145), (35, 205, 232), (121, 212, 71), (240, 180, 41))
+PRIMARY_MARKER = ((209, 46, 145), (35, 205, 232), (121, 212, 71), (240, 180, 41))
+SECONDARY_MARKER = ((75, 92, 255), (255, 92, 53), (155, 219, 77), (246, 213, 92))
+MARKER = PRIMARY_MARKER
 
 
 def request(method, data=None):
@@ -124,7 +127,7 @@ def png_rgb(path):
     return width, height, channels, rows
 
 
-def has_marker(path):
+def has_marker(path, colours=PRIMARY_MARKER):
     width, height, channels, rows = png_rgb(path)
     if width < 8 or height < 8:
         return False
@@ -134,7 +137,7 @@ def has_marker(path):
               for x in range(0, min(width, 96) * channels, channels)
               if channels == 3 or row[x + 3] >= 240]
     return all(any(max(abs(pixel[i] - wanted[i]) for i in range(3)) <= 12
-                   for pixel in pixels) for wanted in MARKER)
+                   for pixel in pixels) for wanted in colours)
 
 
 def rendered(outputs, shells):
@@ -168,6 +171,15 @@ def rendered(outputs, shells):
                                stderr=subprocess.DEVNULL, timeout=1, env=input_env)
         except (OSError, subprocess.TimeoutExpired):
             pass
+        by_output = {int(shell.get("output-id") if shell.get("output-id") is not None
+                         else shell.get("output_id", -1)): shell for shell in shells}
+        # Match shell-displays' deterministic fallback: focused output, then top-left output.
+        # View ids are compositor timing artifacts and can reverse across boots.
+        primary_output = next((row for row in outputs if row.get("focused")), None)
+        if primary_output is None:
+            primary_output = min(outputs, key=lambda row: (
+                int((row.get("geometry") or {}).get("x", 0)),
+                int((row.get("geometry") or {}).get("y", 0)), str(row.get("name", ""))))
         for name, target, capture in captures:
             try:
                 _, error = capture.communicate(timeout=capture_timeout)
@@ -175,8 +187,16 @@ def rendered(outputs, shells):
                 capture.kill(); capture.communicate()
                 print(f"pc-wayfire-health: {name} capture timed out", file=sys.stderr)
                 return False
-            if capture.returncode or not os.path.isfile(target) or not has_marker(target):
-                print(f"pc-wayfire-health: {name} has no rendered shell marker", file=sys.stderr)
+            output = next(row for row in outputs if str(row.get("name")) == name)
+            shell = by_output.get(int(output.get("id")))
+            colours = PRIMARY_MARKER if output is primary_output else SECONDARY_MARKER
+            if capture.returncode or not os.path.isfile(target) or not has_marker(target, colours):
+                preserved = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"),
+                                         "posterchan-health-" + name + ".png")
+                if os.path.isfile(target): shutil.copyfile(target, preserved)
+                print(f"pc-wayfire-health: {name} view={shell and shell.get('id')} marker="
+                      f"{'primary' if colours is PRIMARY_MARKER else 'secondary'} absent; capture={preserved}",
+                      file=sys.stderr)
                 return False
     return True
 

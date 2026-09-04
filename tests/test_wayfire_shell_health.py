@@ -74,9 +74,10 @@ def test_bundle_gate_rejects_the_old_sway_only_desktop(tmp_path):
 
 
 MARKER = [(209, 46, 145), (35, 205, 232), (121, 212, 71), (240, 180, 41)]
+SECONDARY_MARKER = [(75, 92, 255), (255, 92, 53), (155, 219, 77), (246, 213, 92)]
 
 
-def _png(path, marker=True, transparent=False):
+def _png(path, marker=True, transparent=False, colours=MARKER):
     width = height = 32
     pixels = bytearray()
     for y in range(height):
@@ -84,7 +85,7 @@ def _png(path, marker=True, transparent=False):
         for x in range(width):
             rgb = (0, 0, 0)
             if marker and 1 <= x < 9 and 1 <= y < 9:
-                rgb = MARKER[(y >= 5) * 2 + (x >= 5)]
+                rgb = colours[(y >= 5) * 2 + (x >= 5)]
             pixels.extend((*rgb, 0 if transparent else 255))
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
@@ -110,8 +111,9 @@ def test_health_requires_exactly_one_rendered_owned_surface_per_output(tmp_path)
     views = [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
              {"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 2}]
     stub = WayfireStub(tmp_path / "wayfire.socket", outputs, views)
-    visible = tmp_path / "visible.png"; _png(visible)
-    grim = _grim(tmp_path, {"DP-1": visible, "DP-2": visible})
+    visible = tmp_path / "visible.png"; secondary = tmp_path / "secondary.png"
+    _png(visible); _png(secondary, colours=SECONDARY_MARKER)
+    grim = _grim(tmp_path, {"DP-1": visible, "DP-2": secondary})
     env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar),
                         "PC_GRIM": str(grim), "PC_GRIM_TIMEOUT": ".05"}
     try:
@@ -129,7 +131,8 @@ def test_health_requires_exactly_one_rendered_owned_surface_per_output(tmp_path)
 def test_mapped_shell_with_black_transparent_or_stale_output_fails_visual_gate(tmp_path):
     asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
     visible = tmp_path / "visible.png"; black = tmp_path / "black.png"; transparent = tmp_path / "transparent.png"
-    _png(visible); _png(black, marker=False); _png(transparent, marker=True, transparent=True)
+    _png(visible); _png(black, marker=False); _png(transparent, marker=True, transparent=True,
+                                                   colours=SECONDARY_MARKER)
     outputs = [{"id": 1, "name": "DP-1"}, {"id": 2, "name": "DP-2"}]
     views = [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
              {"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 2}]
@@ -148,12 +151,13 @@ def test_mapped_shell_with_black_transparent_or_stale_output_fails_visual_gate(t
 
 def test_wrong_output_assignment_and_capture_failure_fail_closed(tmp_path):
     asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
-    visible = tmp_path / "visible.png"; _png(visible)
+    visible = tmp_path / "visible.png"; secondary = tmp_path / "secondary.png"
+    _png(visible); _png(secondary, colours=SECONDARY_MARKER)
     outputs = [{"id": 1, "name": "DP-1"}, {"id": 2, "name": "DP-2"}]
     views = [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
              {"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1}]
     stub = WayfireStub(tmp_path / "wf.socket", outputs, views)
-    grim = _grim(tmp_path, {"DP-1": visible, "DP-2": visible})
+    grim = _grim(tmp_path, {"DP-1": visible, "DP-2": secondary})
     env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar), "PC_GRIM": str(grim)}
     try:
         assert subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".15"], env=env).returncode == 1
@@ -185,6 +189,30 @@ def test_shell_surfaces_always_receive_visual_health_marker_argument():
     assert "SHELL_MODE ? ['--pc-shell-health-marker']" in main
     assert "process.argv.includes('--pc-shell-health-marker')" in preload
     assert all("#%02x%02x%02x" % colour in preload for colour in MARKER)
+    assert all("#%02x%02x%02x" % colour in preload for colour in SECONDARY_MARKER)
+
+
+def test_secondary_output_cannot_be_satisfied_by_primary_marker(tmp_path):
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    primary = tmp_path / "primary.png"; _png(primary)
+    outputs = [{"id": 1, "name": "DP-1", "focused": True, "geometry": {"x": 0, "y": 0}},
+               {"id": 2, "name": "DP-2", "geometry": {"x": 3840, "y": 0}}]
+    # Reverse ids to prove marker roles come from display policy, not mapping timing.
+    views = [{"id": 50, "pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
+             {"id": 2, "pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 2}]
+    stub = WayfireStub(tmp_path / "wf.socket", outputs, views)
+    grim = _grim(tmp_path, {"DP-1": primary, "DP-2": primary})
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar),
+                        "PC_GRIM": str(grim), "XDG_RUNTIME_DIR": str(runtime)}
+    try:
+        done = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".15"], env=env,
+                              text=True, capture_output=True)
+        assert done.returncode == 1
+        assert "DP-2 view=2 marker=secondary absent" in done.stderr
+        assert (runtime / "posterchan-health-DP-2.png").exists()
+    finally:
+        stub.close()
 
 
 def test_unreaped_gpu_process_is_not_mistaken_for_a_live_shell(tmp_path):
