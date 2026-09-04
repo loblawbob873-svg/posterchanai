@@ -29,6 +29,7 @@ function normalizeView(v){
   const g=geometryOf(v);return {id:Number(v&&v.id),pid:Number(v&&v.pid)>0?Number(v.pid):0,
     app:String(v&&((v['app-id']||v.app_id||v.app)||'')),title:String(v&&v.title||''),
     workspace:String(v&&((v['wset-index']??v['output-id']??v.output_id)??'')),
+    focusTime:Number(v&&(v['last-focus-timestamp']??v.last_focus_timestamp))||0,
     focused:!!(v&&(v.activated||v.focused)),fullscreen:!!(v&&v.fullscreen),floating:!(Number(v&&v['tiled-edges'])>0),
     xwayland:!!(v&&(v.type==='xwayland'||v['app-id']==null&&v.app_id==null)),stashed:!!(v&&v.minimized),rect:g};
 }

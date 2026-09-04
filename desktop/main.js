@@ -1235,6 +1235,7 @@ const _handoffReady = new Set();      // webContents ids with destination listen
 const _nativeHandoffAcks = new Map(); // token -> { contentsId, resolve, timer }
 const { recoverSurfaces } = require('./shell-recovery.js');
 const { runAtomicHandoff } = require('./native-handoff.js');
+const { createDesktopBottomGuard } = require('./desktop-bottom.js');
 let _displayReconcile = null;
 let _displayReconcileTimer = null;
 /* Recover the owner of a parked window after the shell process itself restarts.
@@ -1443,6 +1444,12 @@ async function wireShellRecovery(){
   try{
     await wm().subscribe(['window','workspace','output','tick']);
     wm().on('window', enforceNativeGameFullscreen);
+    wm().on('window', createDesktopBottomGuard({
+      backend:wm().backend,
+      shellIds:()=>Array.from(_shellSurfaces.values()).map(record=>Number(record&&record.conId)).filter(Number.isFinite),
+      windows:()=>wm().windows(),
+      focus:id=>wm().focus(id)
+    }));
     wm().on('window', (ev) => {
       const row=ev&&ev.wayfireView;
       if(!row||ev.change!=='view-geometry-changed')return;
