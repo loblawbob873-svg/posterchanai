@@ -61,13 +61,17 @@ say "launch"
 # state. Each probe has its own bound and QEMU disappearance becomes an immediate lifecycle failure.
 launch_main() {
   require_device
-  timeout --kill-after=2s 10s adb shell am start --user 0 -n "$PKG/$PKG.MainActivity" || return 1
+  # Submission output is not the verdict. adb can time out after ActivityManager accepted the
+  # request, and a retry correctly answers "intent has been delivered to currently running top-most
+  # instance". In both cases Android's resumed activity is the authoritative observable state.
+  timeout --kill-after=2s 10s adb shell am start --user 0 -n "$PKG/$PKG.MainActivity" || true
   local i top
   for i in $(seq 1 20); do
     require_device
     top=$(timeout --kill-after=2s 5s adb shell dumpsys activity activities 2>/dev/null \
           | grep -m1 -E 'mResumedActivity|topResumedActivity' || true)
-    if echo "$top" | grep -q "$PKG.MainActivity"; then return 0; fi
+    if echo "$top" | grep -Fq "$PKG/.MainActivity" \
+        || echo "$top" | grep -Fq "$PKG/$PKG.MainActivity"; then return 0; fi
     sleep 1
   done
   return 1

@@ -30,6 +30,9 @@ def test_first_activity_launch_cannot_hang_the_entire_device_gate():
     assert "timeout --kill-after=2s 10s adb shell am start" in launch
     assert "timeout --kill-after=2s 5s adb shell dumpsys activity activities" in launch
     assert "require_device" in launch
+    assert 'am start --user 0 -n "$PKG/$PKG.MainActivity" || true' in launch
+    assert 'grep -Fq "$PKG/.MainActivity"' in launch
+    assert 'grep -Fq "$PKG/$PKG.MainActivity"' in launch
     assert "adb kill-server" in DEVICE and "adb start-server" in DEVICE
     assert "launch failed after ADB restart" in DEVICE
 
