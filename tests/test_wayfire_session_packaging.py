@@ -142,6 +142,9 @@ def test_wayfire_and_fallback_are_shipped_together():
         assert f"pc-wayfire-action {action}" in config
     assert "pc-wayfire-action" in ebuild and "pc-wayfire-action" in gentoo
     assert "pc-wayfire-health" in ebuild and "pc-wayfire-health" in gentoo
+    launcher = (FILES / "pc-shell-start-wayfire").read_text(encoding="utf-8")
+    assert 'DISPLAY:=:0' in launcher
+    assert '/tmp/.X11-unix/X${DISPLAY#:}' in launcher
 
 
 def test_non_gl_virtio_uses_mesa_software_without_disabling_physical_gpu():

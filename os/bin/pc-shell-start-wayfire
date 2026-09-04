@@ -10,6 +10,13 @@ export HOME XDG_RUNTIME_DIR
 exec 9>"$XDG_RUNTIME_DIR/posterchan-shell-start.lock"
 flock -n 9 || exit 0
 export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=wayfire XDG_SESSION_DESKTOP=wayfire
+# Electron renders through native Wayland, but its GTK theme/file-dialog integration still opens
+# the X display. Wayfire starts Xwayland itself without retroactively exporting DISPLAY to already
+# queued autostart commands. Wait for that socket instead of launching into a fatal GtkStyleContext.
+: "${DISPLAY:=:0}"
+n=0
+while [ ! -S "/tmp/.X11-unix/X${DISPLAY#:}" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+export DISPLAY
 export ELECTRON_ENABLE_LOGGING=1 ELECTRON_OZONE_PLATFORM_HINT=wayland
 export GDK_BACKEND="${GDK_BACKEND:-wayland}" GTK_THEME="${GTK_THEME:-Adwaita:dark}"
 export GTK_APPLICATION_PREFER_DARK_THEME=1
