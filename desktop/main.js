@@ -1448,8 +1448,8 @@ async function wireShellRecovery(){
       /* Wayfire's move plugin cannot exclude a view by matcher. If Super+drag begins over bare
        * desktop, it can therefore grab the full-output Electron surface. Repair only a known shell
        * con_id; popouts share its app-id and must remain movable. */
-      if(Array.from(_shellSurfaces.values()).some(record=>record&&Number(record.conId)===Number(row.id)))
-        scheduleDisplayReconcile();
+      const record=Array.from(_shellSurfaces.values()).find(record=>record&&Number(record.conId)===Number(row.id));
+      if(record&&record.assignment&&shellDisplays.needsPlacement(row,record.assignment))scheduleDisplayReconcile();
     });
     wm().on('tick', (ev) => {
       if(!ev || ev.first) return;
