@@ -21,6 +21,7 @@ telling a person with a fully synced wallet that it is still syncing is simply w
 """
 from __future__ import annotations
 
+import re
 import asyncio
 from pathlib import Path
 
@@ -106,6 +107,22 @@ def test_the_client_never_calls_an_unknown_a_failure():
 
 
 def test_the_client_does_not_invite_an_immediate_retry_after_an_unknown():
-    """Re-enabling the button is what turns one uncertain payment into two real ones."""
-    assert JS.count("go.disabled = unsure") + JS.count("button.disabled = unsure") == 2, (
-        "the send button is re-enabled after a timeout, inviting the double-send")
+    """Re-enabling the button is what turns one uncertain payment into two real ones.
+
+    Counted per SPENDING SHEET rather than as a total. The total was 2 and had to be edited when a
+    third sheet -- withdraw, which sweeps the whole balance -- was given the guard it had never had.
+    A count is the wrong shape for "every one of these is guarded": it fails when a guard is ADDED
+    and passes when one is moved from a sheet that needs it to a sheet that already had it.
+    """
+    guards = re.findall(r"(?:go|button)\.disabled\s*=\s*unsure", JS)
+    # tip (/me/pay), the node send's confirm dialog, and withdraw (/me/withdraw).
+    assert len(guards) >= 3, (
+        "a spending sheet re-enables its button after a timeout, inviting the double-send: only "
+        f"{len(guards)} guarded")
+    for anchor, what in (("request('/api/wallet/xmr/me/pay'", "the tip sheet"),
+                         ("request('/api/wallet/xmr/me/withdraw'", "the withdraw sheet"),
+                         ("request('/api/wallet/xmr/transfer/confirm'", "the node send dialog")):
+        assert anchor in JS, f"{what} no longer posts where this check is looking"
+        handler = JS.split(anchor, 1)[1].split("};", 1)[0]
+        assert "unsure" in handler, (
+            f"{what} treats an unknown as a failure and offers the button again")

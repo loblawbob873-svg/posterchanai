@@ -45,6 +45,27 @@
   }
 
   const WALLET_TIMEOUT_MS = 20000;   // > the node's own 8s RPC budget, with room for its overhead
+  /* A SPEND IS NOT A READ, AND ONE TIMER FOR BOTH IS HOW A SENT PAYMENT BECAME A FAILED ONE.
+   *
+   * The node deliberately gives a money-moving RPC `SPEND_TIMEOUT = 120s` against a read's 8s, and
+   * words a spend that runs out as "This payment may have been sent — check your transaction
+   * history before trying again", precisely so nobody is invited to send twice. The browser then
+   * aborted every request at 20s regardless, threw that wording away, and reported "the wallet did
+   * not answer within 20s" — which reads as "nothing happened". Reported as zaps "not going
+   * through", followed by "ok it finally sent": the transfer was live the whole time and the
+   * client had stopped listening. `/me/pay` carries no idempotency key, so the retry that message
+   * invites is a SECOND REAL PAYMENT.
+   *
+   * So a spend waits as long as the node is allowed to work, plus its overhead. Classified by PATH
+   * rather than by a flag at the call site: a caller that forgets the flag fails this way again,
+   * silently, and only with money. */
+  const SPEND_TIMEOUT_MS = 150000;
+  const SPENDING_PATHS = ['/api/wallet/xmr/transfer/confirm','/api/wallet/xmr/me/pay',
+                          '/api/wallet/xmr/me/withdraw'];
+  function isSpend(path){
+    const p=String(path||'').split('?')[0];
+    return SPENDING_PATHS.some(x=>p===x);
+  }
   async function request(path, opts){
     // Signing/login is interactive and can legitimately take longer than the network timeout. Starting
     // the timer before it meant a slow Android signer returned successfully and then handed fetch() an
@@ -58,7 +79,8 @@
        down: status, balance, address and history all 200, the operator authenticated, nothing refused.
        Raising it costs nothing in the case that matters: a wallet that is not running refuses the
        connection immediately, so this timer only ever fires while the node is genuinely working. */
-    const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),WALLET_TIMEOUT_MS);
+    const spend=isSpend(path), budget=spend?SPEND_TIMEOUT_MS:WALLET_TIMEOUT_MS;
+    const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),budget), t0=Date.now();
     try{
       // Extension/Nostr login mints a bearer session, while the cookie may be absent after a server
       // restart. A bare fetch therefore returned 401 and mislabeled a configured wallet unavailable.
@@ -81,8 +103,19 @@
            The address and the kind are both known HERE, so say them: the next report arrives with
            the one fact that identifies the cause instead of the one word that does not. */
         const aborted=(err&&err.name==='AbortError')||ctl.signal.aborted;
+        /* THE MONEY MAY ALREADY BE GONE — but only where it could actually have left.
+           An unknown is worth stating loudly and it must stay rare, or it stops being believed:
+           the node being switched off is the common case, it sends nothing, and answering "this
+           payment may have been sent" to it every time would train people to click past the one
+           message that matters. The node draws the same line (ConnectTimeout is "unavailable",
+           ReadTimeout is "may have been sent"), and the browser can draw it from what it measured:
+           we aborted the request ourselves, so it was in flight; or it had already been in flight
+           longer than a whole READ budget, which no refused connection ever is. */
+        if(spend && (aborted || Date.now()-t0 >= WALLET_TIMEOUT_MS)) throw Object.assign(new Error(
+          'The wallet did not answer in time. This payment may have been sent — check your '
+          + 'transaction history before trying again.'), {unsure:true});
         throw new Error(aborted
-          ? ('the wallet did not answer within '+Math.round(WALLET_TIMEOUT_MS/1000)+'s: '+target)
+          ? ('the wallet did not answer within '+Math.round(budget/1000)+'s: '+target)
           : ('could not reach '+target+' — '+((err&&err.message)||err)));
       }
       let body={}; try{ body=await res.json(); }catch(_){}
@@ -516,8 +549,15 @@
                 body: JSON.stringify({address: to})});
               PC.closeModal(); PC.toast('withdrawal sent'); _meAt = 0; render(true);
             }catch(e){
-              go.disabled = false; go.textContent = 'Withdraw';
-              PC.toast('withdrawal failed: ' + ((e && e.message) || e));
+              /* A WITHDRAWAL IS A SWEEP OF THE WHOLE BALANCE, so this is the worst place of the
+                 three to call an unknown a failure. It said "withdrawal failed" and re-enabled the
+                 button, which is an invitation to sweep an account that may already be empty and
+                 in flight. Same rule as the tip and the node send: an unknown is not a failure, and
+                 the button stops offering to do it again. */
+              const msg = (e && e.message) || String(e);
+              const unsure = /may have been sent|did not answer in time/i.test(msg);
+              go.disabled = unsure; go.textContent = unsure ? 'Check your history' : 'Withdraw';
+              PC.toast(unsure ? msg : ('withdrawal failed: ' + msg));
             }
           };
         });

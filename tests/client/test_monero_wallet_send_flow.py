@@ -512,8 +512,13 @@ def test_the_request_budget_exceeds_the_nodes_own_rpc_budget():
         f"the client gives up after {client_ms}ms while the node is allowed "
         f"{default_s.group(1)}s for the RPC alone — a slow success is reported as an outage")
 
-    assert re.search(r"setTimeout\(\(\)=>ctl\.abort\(\),\s*WALLET_TIMEOUT_MS\)", js), (
+    # The budget is now chosen per request -- a spend is allowed the node's much longer spend
+    # window (see tests/client/test_monero_spend_timeout_is_the_nodes.py) -- but it must still be
+    # DERIVED from the named constants rather than a literal, or the two can drift apart again.
+    assert re.search(r"setTimeout\(\(\)=>ctl\.abort\(\),\s*budget\)", js), (
         "the abort no longer uses the named budget, so the two can drift apart again")
+    assert re.search(r"budget\s*=\s*spend\s*\?\s*SPEND_TIMEOUT_MS\s*:\s*WALLET_TIMEOUT_MS", js), (
+        "the per-request budget is no longer chosen between the two named constants")
 
 
 def test_the_abort_is_still_armed_at_all():
