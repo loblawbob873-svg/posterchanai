@@ -245,7 +245,7 @@ def _launcher_env(tmp_path):
     runtime.mkdir(); home.mkdir()
     asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
     launch = tmp_path / "posterchan"
-    _fake(launch, f'echo launch >>"{tmp_path / "launches"}"\ntrap "exit 0" TERM INT HUP\nwhile :; do sleep .1; done\n')
+    _fake(launch, f'echo launch >>"{tmp_path / "launches"}"\necho "$DISPLAY" >>"{tmp_path / "displays"}"\ntrap "exit 0" TERM INT HUP\nwhile :; do sleep .1; done\n')
     health = tmp_path / "health"
     _fake(health, 'if [ "$1" = preflight ]; then exit 0; fi\n'
                   '[ "${PC_TEST_FAIL_FIRST:-0}" = 1 ] && [ "$(wc -l <"$PC_TEST_LAUNCHES")" -eq 1 ] && exit 1\n'
@@ -256,11 +256,52 @@ def _launcher_env(tmp_path):
                                                     f"launcher={launch}"), encoding="utf-8")
     script.chmod(0o755)
     env = os.environ | {"HOME": str(home), "XDG_RUNTIME_DIR": str(runtime),
+                        "DISPLAY": ":99",
                         "WAYFIRE_SOCKET": str(runtime / "wf.socket"),
                         "PC_WAYFIRE_HEALTH": str(health), "PC_DESKTOP_ASAR": str(asar),
                         "PC_TEST_HEALTHY": str(tmp_path / "healthy"),
                         "PC_TEST_LAUNCHES": str(tmp_path / "launches")}
     return script, env
+
+
+def test_wayfire_launcher_xwayland_wait_is_bounded_and_testable():
+    source = LAUNCHER.read_text()
+    assert 'if [ -z "${DISPLAY:-}" ]' in source
+    assert 'PC_XWAYLAND_SOCKET:-/tmp/.X11-unix/X0' in source
+    assert 'PC_XWAYLAND_WAIT_TENTHS:-100' in source
+    assert 'export DISPLAY' in source
+
+
+def test_wayfire_launcher_waits_for_xwayland_socket_and_exports_display(tmp_path):
+    script, env = _launcher_env(tmp_path)
+    env.pop("DISPLAY", None)
+    xsocket = tmp_path / "X0"
+    env["PC_XWAYLAND_SOCKET"] = str(xsocket)
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(str(xsocket))
+    proc = subprocess.Popen([str(script)], env=env)
+    try:
+        for _ in range(100):
+            if (tmp_path / "healthy").exists(): break
+            time.sleep(.02)
+        assert (tmp_path / "displays").read_text().splitlines() == [":0"]
+    finally:
+        proc.terminate(); proc.wait(timeout=3); server.close()
+
+
+def test_wayfire_launcher_xwayland_wait_times_out_without_blocking_launch(tmp_path):
+    script, env = _launcher_env(tmp_path)
+    env.pop("DISPLAY", None)
+    env["PC_XWAYLAND_SOCKET"] = str(tmp_path / "missing-X0")
+    env["PC_XWAYLAND_WAIT_TENTHS"] = "1"
+    proc = subprocess.Popen([str(script)], env=env)
+    try:
+        for _ in range(100):
+            if (tmp_path / "healthy").exists(): break
+            time.sleep(.02)
+        assert (tmp_path / "displays").read_text().splitlines() == [":0"]
+    finally:
+        proc.terminate(); proc.wait(timeout=3)
 
 
 def test_simultaneous_wayfire_launchers_create_one_shell(tmp_path):
