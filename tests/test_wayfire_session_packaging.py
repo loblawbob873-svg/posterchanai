@@ -1,6 +1,7 @@
 import os
 import subprocess
 import time
+import re
 from pathlib import Path
 
 
@@ -327,3 +328,38 @@ while :; do sleep 0.1; done
     done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
     assert done.returncode == 0
     assert time.monotonic() - started < 8, "an hour-old marker still bought the full restart window"
+
+
+def test_the_ready_wait_follows_the_launcher_rather_than_a_clock():
+    """SIXTEEN SECONDS OF GRACE AFTER FORTY-FOUR SECONDS OF HONEST WORK.
+
+    The session waited a flat 60s from WAYFIRE's start for the shell's ready signal — but the
+    launcher's own budget does not fit inside that on slow hardware: up to 10s for the Xwayland
+    socket, then up to 30s on the surface/GPU health gate, and all of it begins only once Electron
+    has started, which under llvmpipe is itself tens of seconds.
+
+    Measured booting the release ISO in a VM: Wayfire up at 16:25:21, the shell's first log at
+    16:26:05, the window killed at 16:26:21 — "the shell never signalled ready", and a text console,
+    on an image that was starting perfectly.
+
+    A live launcher is the progress signal. While one exists the session is still starting; when it
+    is gone without a ready file the start has failed and there is nothing left to wait for — which
+    is also FASTER than the old timer on a real failure.
+    """
+    session = (ROOT / "os/bin/pc-compositor-session").read_text(encoding="utf-8")
+    loop = session.split("n=0\n\t\twhile kill -0", 1)[1].split("reason=", 1)[0]
+    # The bracket keeps pgrep from matching its own command line — a waiter must not match itself.
+    assert "[p]c-shell-start-wayfire" in loop, loop
+    assert "break" in loop
+    # The cap is a backstop for a launcher that HANGS, so it must be well beyond the launcher's own
+    # worst case rather than the old 60s.
+    cap = int(re.search(r'"\$n" -lt (\d+)', loop).group(1))
+    assert cap >= 1200, cap
+    # And it must not declare failure before the compositor has had a chance to run its autostart.
+    assert '"$n" -gt 100' in loop, loop
+
+
+def test_a_failed_start_still_says_which_it_was():
+    session = (ROOT / "os/bin/pc-compositor-session").read_text(encoding="utf-8")
+    assert "the shell never signalled ready" in session
+    assert "no ready signal and no launcher" in session

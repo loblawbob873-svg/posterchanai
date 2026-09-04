@@ -89,14 +89,33 @@ if true; then
 		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
 		wayfire -c "${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}" >"$state_dir/wayfire.log" 2>&1 &
 		wayfire_pid=$!
+		# WAIT ON THE LAUNCHER, NOT ON A CLOCK.
+		#
+		# This was a flat 60 seconds from WAYFIRE's start, and the launcher's own budget does not fit
+		# inside it on slow hardware: it waits up to 10s for the Xwayland socket and then up to 30s
+		# on the surface/GPU health gate, and all of that begins only once Electron has started --
+		# which under llvmpipe is itself tens of seconds. Measured booting the release ISO in a VM:
+		# Wayfire up at 16:25:21, the shell's first log at 16:26:05, the window killed at 16:26:21.
+		# Forty-four seconds of honest work, then sixteen seconds of grace, then "the shell never
+		# signalled ready" and a text console -- on an image that was starting perfectly.
+		#
+		# A LIVE LAUNCHER IS THE PROGRESS SIGNAL. While one exists the session is still starting, so
+		# wait; when it is gone without a ready file the start has FAILED and there is nothing to
+		# wait for, which is also faster than the old timer. The cap is the backstop for a launcher
+		# that hangs rather than exits.
 		n=0
-		while kill -0 "$wayfire_pid" 2>/dev/null && [ ! -e "$PC_WAYFIRE_READY_FILE" ] && [ "$n" -lt 600 ]; do
+		while kill -0 "$wayfire_pid" 2>/dev/null && [ ! -e "$PC_WAYFIRE_READY_FILE" ] && [ "$n" -lt 3000 ]; do
 			sleep 0.1; n=$((n + 1))
+			# Only after the compositor has had a moment to run its autostart: asking before that
+			# would call every session a failure before the launcher had been spawned at all.
+			if [ "$n" -gt 100 ] && ! pgrep -f '[p]c-shell-start-wayfire' >/dev/null 2>&1; then
+				break
+			fi
 		done
 		reason="Wayfire exiting on its own"
 		if [ ! -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
 			reason="the shell never signalled ready"
-			note "no ready signal within 60s; stopping Wayfire."
+			note "no ready signal and no launcher after ${n}00ms; stopping Wayfire."
 			kill "$wayfire_pid" 2>/dev/null || true
 		elif [ -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
 			# A shell restart deliberately creates a short gap between the old Electron process and

@@ -946,3 +946,31 @@ def test_the_installed_system_records_its_own_graphics_drivers():
     build = src.split("Rebuilding Mesa with the LiveCD's VirGL driver", 1)[1].split("\n\tfi", 1)[0]
     assert "/etc/portage/make.conf" in build
     assert "VIDEO_CARDS=\"$VIDEO_CARDS\" /usr/bin/emerge" not in src
+
+
+def test_the_release_gate_reads_the_overlay_portage_actually_installs_from():
+    """A GATE THAT CANNOT PASS IS NOT A GATE.
+
+    The build refuses to pack when the running host's Desktop package is not the one the release
+    inputs name — correct, and the thing that stops today's shell being packed with yesterday's
+    client. But it read `$PCOS_TREE/overlay`, a COPY laid down at install time and maintained by
+    nothing: on a machine installed months ago that copy still said 1.0.796 while the installed
+    desktop was 1.0.1443, so every build stopped with "emerge the exact overlay package" for a
+    package that was already the newest one in existence.
+
+    The overlay portage installs from is the ENABLED repository, which `emaint sync` keeps current.
+    Ask for it by name; fall back to the copy only where no such repo exists.
+    """
+    src = GENTOO.read_text(encoding="utf-8")
+    gate = src.split("local EXPECTED_DESKTOP", 1)[1].split("_lcd_fail", 1)[0]
+    assert "portageq get_repo_path / posterchan" in gate, gate
+    assert "$PCOS_TREE/overlay/app-misc/posterchan-desktop" in gate, (
+        "no fallback for a machine without the repo configured")
+    # The comparison itself is unchanged: installed must equal what the overlay offers.
+    assert "portageq best_version / app-misc/posterchan-desktop" in src
+    # And the helper check has the same fossil problem and the same answer: the canonical helper is
+    # the one the installed package was built from, which is the overlay's FILESDIR.
+    helpers = src.split("for HELPER in pc-compositor-session", 1)[1].split("done", 1)[0]
+    assert "$HELPER_DIR/$HELPER" in helpers, helpers
+    assert "app-misc/posterchanos-shell/files" in src
+    assert '"$PCOS_TREE/bin"' in src, "no fallback for a machine without the repo configured"

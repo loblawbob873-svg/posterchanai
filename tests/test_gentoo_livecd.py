@@ -69,7 +69,11 @@ class LiveCD(unittest.TestCase):
         """A clean ISO must not silently combine the current shell source with an older installed
         Desktop bundle or helper payload from the build host."""
         desktop_gate = self.body.index('portageq best_version / app-misc/posterchan-desktop')
-        helper_gate = self.body.index('cmp -s "$PCOS_TREE/bin/$HELPER" "/usr/local/bin/$HELPER"')
+        # The canonical copy is the ENABLED overlay, not `$PCOS_TREE` — that is a snapshot laid down
+        # at install time and maintained by nothing, so on any machine that has taken an update the
+        # gate refused every build for a package that was already the newest one there is.
+        helper_gate = self.body.index('cmp -s "$HELPER_DIR/$HELPER" "/usr/local/bin/$HELPER"')
+        self.assertIn('portageq get_repo_path / posterchan', self.body[:helper_gate])
         pack = self.body.index('mksquashfs / ')
         self.assertLess(desktop_gate, pack)
         self.assertLess(helper_gate, pack)

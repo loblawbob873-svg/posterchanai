@@ -3166,16 +3166,33 @@ DESKTOP
 	# in this checkout.  The pseudo tree replaces helpers in the image, but the Desktop bundle comes
 	# from /opt and its package database; without this gate a successful eight-minute pack can silently
 	# combine today's shell with yesterday's client.
-	local EXPECTED_DESKTOP INSTALLED_DESKTOP HELPER
-	EXPECTED_DESKTOP="$(find "$PCOS_TREE/overlay/app-misc/posterchan-desktop" -maxdepth 1 -name 'posterchan-desktop-*.ebuild' -printf '%f\n' 2>/dev/null | sed -n 's/^posterchan-desktop-\(.*\)\.ebuild$/\1/p' | sort -V | tail -1)"
+	# WHICH OVERLAY IS THE SOURCE OF TRUTH. `$PCOS_TREE/overlay` is a COPY laid down at install time
+	# and maintained by nothing — on a machine installed months ago it still named 1.0.796 while the
+	# desktop was 1.0.1443, so this gate refused every build with "emerge the exact overlay package"
+	# for a package that was already the newest one there is. The overlay portage actually installs
+	# from is the enabled repository, which `emaint sync` keeps current; ask for it by name and fall
+	# back to the copy only when this machine has no such repo.
+	local EXPECTED_DESKTOP INSTALLED_DESKTOP HELPER DESKTOP_DIR PCREPO
+	PCREPO="$(portageq get_repo_path / posterchan 2>/dev/null)"
+	DESKTOP_DIR="$PCOS_TREE/overlay/app-misc/posterchan-desktop"
+	[[ -n "$PCREPO" && -d "$PCREPO/app-misc/posterchan-desktop" ]] && DESKTOP_DIR="$PCREPO/app-misc/posterchan-desktop"
+	EXPECTED_DESKTOP="$(find "$DESKTOP_DIR" -maxdepth 1 -name 'posterchan-desktop-*.ebuild' -printf '%f\n' 2>/dev/null | sed -n 's/^posterchan-desktop-\(.*\)\.ebuild$/\1/p' | sort -V | tail -1)"
 	INSTALLED_DESKTOP="$(portageq best_version / app-misc/posterchan-desktop 2>/dev/null | sed 's|^app-misc/posterchan-desktop-||')"
 	if [[ -z "$EXPECTED_DESKTOP" || "$INSTALLED_DESKTOP" != "$EXPECTED_DESKTOP" ]]; then
 		_lcd_fail "build host Desktop is ${INSTALLED_DESKTOP:-missing}; source requires ${EXPECTED_DESKTOP:-unknown} — emerge the exact overlay package before packing."
 		return 1
 	fi
+	# THE CANONICAL HELPER IS THE PACKAGE'S, NOT A COPY LEFT BEHIND BY AN OLD INSTALL. Same fossil
+	# as the desktop version above: `$PCOS_TREE/bin` is written once at install time and never
+	# updated, so on a machine that has taken any update since, every helper "differs from the
+	# canonical source" and the build refuses — naming the fix (emerge the shell package) that had
+	# already been done. The overlay's FILESDIR is what the installed package was built from.
+	local HELPER_DIR="$PCOS_TREE/bin"
+	[[ -n "$PCREPO" && -d "$PCREPO/app-misc/posterchanos-shell/files" ]] \
+		&& HELPER_DIR="$PCREPO/app-misc/posterchanos-shell/files"
 	for HELPER in pc-compositor-session pc-shell-start-wayfire pc-wayfire-health; do
-		if [[ ! -f "$PCOS_TREE/bin/$HELPER" || ! -f "/usr/local/bin/$HELPER" ]] || ! cmp -s "$PCOS_TREE/bin/$HELPER" "/usr/local/bin/$HELPER"; then
-			_lcd_fail "installed $HELPER differs from the canonical source — emerge the current shell package before packing."
+		if [[ ! -f "$HELPER_DIR/$HELPER" || ! -f "/usr/local/bin/$HELPER" ]] || ! cmp -s "$HELPER_DIR/$HELPER" "/usr/local/bin/$HELPER"; then
+			_lcd_fail "installed $HELPER differs from $HELPER_DIR/$HELPER — emerge the current shell package before packing."
 			return 1
 		fi
 	done
