@@ -17,9 +17,11 @@ def test_instrumented_runner_bounds_each_test_not_only_the_whole_gradle_task():
         ROOT / ".github/workflows/android-emulator.yml").read_text(encoding="utf-8")
 
 
-def test_blocking_contact_monitor_always_returns_a_canned_activity_result():
-    """A blocking monitor with null result can strand the framework's start/teardown handshake."""
+def test_contact_monitor_cannot_intercept_the_activity_scenario_launch_it_depends_on():
+    """Install intent capture after the subject Activity is resumed, then block only Contacts."""
     src = (ROOT / "mobile/android/app/src/androidTest/java/place/poster/app/sms/"
            / "SmsContactDeviceTest.java").read_text(encoding="utf-8")
+    assert src.index("ActivityScenario.launch(launch)") < src.index("instrumentation.addMonitor(monitor)")
+    assert "onStartActivity(Intent intent)" in src
     assert "new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)" in src
-    assert "null, true);" not in src
+    assert "editor.getStringExtra(ContactsContract.Intents.Insert.PHONE)" in src
