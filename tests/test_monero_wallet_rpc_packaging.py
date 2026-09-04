@@ -112,7 +112,8 @@ def test_unit_exposes_only_authenticated_loopback_config_and_is_not_auto_enabled
     assert "AF_NETLINK" in unit, "Monero's resolver needs netlink even though RPC remains loopback"
     assert "WantedBy=default.target" in unit
     ebuild = EBUILD.read_text()
-    assert 'IUSE="monero"' in ebuild
+    iuse = re.search(r'^IUSE="([^"]*)"$', ebuild, re.M)
+    assert iuse and "monero" in iuse.group(1).split()
     assert "monero? ( net-p2p/monero-wallet-rpc-bin )" in ebuild
     assert 'doins "${FILESDIR}/posterchan-monero-wallet-rpc.service"' in ebuild
     assert "systemctl --global enable posterchan-monero" not in ebuild

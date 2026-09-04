@@ -23,7 +23,7 @@ def test_native_handoff_refuses_before_moving_any_surface_when_destination_is_no
     body = _handler("pc:wm:handoff", "pc:wm:handoff-frame")
     guard = body.index("_handoffReady.has")
     assert guard < body.index("finishMove(")
-    assert guard < body.index("move container to workspace")
+    assert guard < body.index("moveToAssignment(")
     assert "isLoadingMainFrame()" in body
 
 

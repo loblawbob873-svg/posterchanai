@@ -14,7 +14,7 @@ def test_native_monitor_handoff_prepares_and_acks_before_moving_surface():
         "ipcMain.handle('pc:wm:handoff-frame'", 1)[0]
     assert "pc:wm:native-handoff-prepare" in handler
     assert "runAtomicHandoff" in handler
-    assert handler.index("pc:wm:native-handoff-prepare") < handler.index("move container to workspace")
+    assert handler.index("pc:wm:native-handoff-prepare") < handler.index("moveToAssignment(")
     assert "nativeHandoffAck" in PRELOAD
     assert "pc:wm:native-handoff-abort" in handler
     assert "BrowserWindow.getAllWindows" not in handler
