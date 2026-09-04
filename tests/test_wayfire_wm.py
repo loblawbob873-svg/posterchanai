@@ -94,6 +94,17 @@ def test_shell_drag_guard_is_exact_id_not_shared_app_id():
     assert "row.app" not in guard
 
 
+def test_installed_window_shortcuts_use_wayfire_ipc_not_swaymsg():
+    helper = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap").read_text()
+    branch = helper[helper.index("def wayfire_main"):helper.index("def focused")]
+    assert 'window-rules/list-views' in branch
+    assert 'window-rules/configure-view' in branch
+    assert 'window-rules/close-view' in branch
+    assert 'wm-actions/set-minimized' in branch
+    assert 'pc:move-native:' in branch
+    assert 'if os.environ.get("WAYFIRE_SOCKET")' in helper
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_wayfire_010_event_negotiation_keeps_multi_window_focus_live(tmp_path):
     script = tmp_path / "events.js"

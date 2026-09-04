@@ -8,12 +8,95 @@ once, here, rather than copied into a second helper: this package has already sh
 one script that drifted apart.
 """
 import json
+import os
+import socket
+import struct
 import subprocess
 import sys
 
 
 def sway(*args):
     return subprocess.check_output(["swaymsg", *args], text=True)
+
+
+def wayfire(method, data=None):
+    body = json.dumps({"method": method, "data": data or {}}).encode()
+    with socket.socket(socket.AF_UNIX) as client:
+        client.connect(os.environ["WAYFIRE_SOCKET"])
+        client.sendall(struct.pack("<I", len(body)) + body)
+        head = client.recv(4)
+        if len(head) != 4:
+            raise RuntimeError("Wayfire IPC closed")
+        size = struct.unpack("<I", head)[0]; reply = b""
+        while len(reply) < size:
+            reply += client.recv(size - len(reply))
+    result = json.loads(reply)
+    if isinstance(result, dict) and result.get("error"):
+        raise RuntimeError(result["error"])
+    return result
+
+
+def shell_action(payload):
+    subprocess.check_call(["/usr/local/bin/pc-wayfire-action", payload],
+                          stdout=subprocess.DEVNULL)
+
+
+def wayfire_main(side):
+    views = wayfire("window-rules/list-views")
+    win = next((v for v in views if v.get("mapped", True) and v.get("activated")), None)
+    if not win:
+        return
+    app = str(win.get("app-id") or "").lower()
+    title = str(win.get("title") or "")
+    shell = app in ("posterchan", "posterchan-desktop", "place.poster.desktop") and not title.startswith("PosterChan Window")
+    if shell:
+        actions = {"close": "pc:close", "minimise": "pc:minimise", "left": "pc:snap:left",
+                   "right": "pc:snap:right", "max": "pc:snap:max"}
+        if side in actions:
+            shell_action(actions[side])
+        elif side.startswith("move-"):
+            shell_action("pc:move-output:" + side[5:])
+        return
+    view_id = int(win["id"])
+    if side == "close":
+        wayfire("window-rules/close-view", {"id": view_id}); return
+    if side == "minimise":
+        wayfire("wm-actions/set-minimized", {"view_id": view_id, "state": True}); return
+    if side.startswith("move-") and not title.startswith("PosterChan Window"):
+        shell_action(f"pc:move-native:{view_id}:{side[5:]}"); return
+    if side.startswith("move-"):
+        return
+    outputs = wayfire("window-rules/list-outputs")
+    out = next((o for o in outputs if int(o.get("id", -1)) == int(win.get("output-id", -2))), None)
+    if not out:
+        return
+    box = out.get("workarea") or out.get("geometry") or {}
+    width, height = int(box.get("width", 1)), max(1, int(box.get("height", 1)) - 72)
+    current = win.get("geometry") or {}
+    if side == "edge":
+        x, y = int(current.get("x", 0)), int(current.get("y", 0))
+        w, h = int(current.get("width", 0)), int(current.get("height", 0))
+        top, bottom, left, right = y <= 60, y + h >= height - 28, x <= 28, x + w >= width - 28
+        if top and left: side = "top-left"
+        elif top and right: side = "top-right"
+        elif bottom and left: side = "bottom-left"
+        elif bottom and right: side = "bottom-right"
+        elif top: side = "max"
+        elif left: side = "left"
+        elif right: side = "right"
+        else: return
+    x = y = 0
+    if side == "max": w, h = width, height
+    elif side in ("top-left", "top-right", "bottom-left", "bottom-right"):
+        w, h = width // 2, height // 2
+        if side.endswith("right"): x = width - w
+        if side.startswith("bottom"): y = height - h
+    elif side in ("left", "right"):
+        w, h = width // 2, height
+        if side == "right": x = width - w
+    else: return
+    wayfire("window-rules/configure-view", {"id": view_id, "output_id": int(out["id"]),
+        "geometry": {"x": x, "y": y, "width": w, "height": h}})
 
 
 def focused(node, output=None):
@@ -97,6 +180,9 @@ def main():
         raise SystemExit(
             "usage: pc-window-snap left|right|max|edge|close|minimise"
             "|move-left|move-right|move-up|move-down")
+    if os.environ.get("WAYFIRE_SOCKET"):
+        wayfire_main(side)
+        return
     hit = focused(json.loads(sway("-t", "get_tree", "-r")))
     if not hit:
         return
