@@ -145,9 +145,9 @@ def test_super_opens_start_only_when_not_used_for_snap_drag_or_resize():
     super_helper = (FILES / "pc-super").read_text(encoding="utf-8")
     assert "release_binding_start = KEY_LEFTMETA" in config
     assert "command_start = /usr/local/bin/pc-super tap" in config
-    for gesture in ("<super> KEY_LEFT", "<super> KEY_RIGHT", "<super> KEY_UP", "<super> KEY_DOWN",
-                    "<super> BTN_LEFT", "<super> BTN_RIGHT"):
+    for gesture in ("<super> KEY_LEFT", "<super> KEY_RIGHT", "<super> KEY_UP", "<super> KEY_DOWN"):
         assert gesture in config
-    assert config.count("/usr/local/bin/pc-super used") >= 6
+    assert config.count("<super> BTN_LEFT") == 1 and config.count("<super> BTN_RIGHT") == 1
+    assert config.count("/usr/local/bin/pc-super used") >= 4
     assert "WAYFIRE_SOCKET" in super_helper
     assert "pc-wayfire-action pc:start" in super_helper
