@@ -227,9 +227,21 @@ CHECKS = {
     # cross-output Alt+Tab simulators. Keep installed-artifact reads serial with the other installed
     # gates; the discoverable Python entry point delegates to check_installed_wm_package.sh.
     "check_installed_wm_release": dict(group="ui", secs=90, serial=True),
-    # Real Sway/Foot pixels under continuous output. It intentionally skips off PosterChanOS, and
+    # Real Wayfire/Foot pixels under continuous output. It intentionally skips off PosterChanOS, and
     # must run alone because it changes compositor focus/geometry for its disposable window.
     "check_installed_foot_flicker": dict(group="ui", secs=120, serial=True),
+    # THE INSTALLER, end to end, in a UEFI guest: blank disk in, PosterChanOS out, then that disk
+    # booted with no ISO attached. It SKIPS without PC_LIVECD_ISO, which is the ordinary case here
+    # -- an ISO is built per release, not per test run -- and takes most of an hour when it does
+    # run, so it is serial and generously bounded. `check_livecd_vm` proves an image BOOTS; this is
+    # the only thing that proves the installer on it works.
+    "check_livecd_install_vm":         dict(group="ui", secs=4200, serial=True,
+                                            why="a blank disk becomes a booting PosterChanOS"),
+    # Boots an ISO (or an installed disk) and proves the graphical session STAYS visible. Same
+    # shape: it skips without an image, and it owns a QEMU guest, so it does not share the box with
+    # the other heavy gates.
+    "check_livecd_vm":                 dict(group="ui", secs=900, serial=True,
+                                            why="the image reaches a desktop and keeps it"),
     "check_sharelink":                 dict(group="ui", secs=420),
     "check_contacts_mobile":           dict(group="ui", secs=600),
     "check_vault_mobile":              dict(group="ui", secs=600),

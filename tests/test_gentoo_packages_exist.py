@@ -74,7 +74,7 @@ def test_the_package_lists_are_still_readable():
     """A regex that silently matches nothing would make every check below pass vacuously."""
     pkgs = _packages()
     assert len(pkgs) > 50, f"only found {len(pkgs)} packages — the lists moved"
-    assert "gui-wm/sway" in pkgs, "sway is not in the list this check is reading"
+    assert "gui-wm/wayfire" in pkgs, "the compositor is not in the list this check is reading"
 
 
 def test_every_package_exists_in_a_repo_the_installer_enables():

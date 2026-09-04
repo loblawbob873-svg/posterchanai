@@ -28,17 +28,13 @@ function enqueueJob(job){queue=queue.then(job,job);return queue;}
 function enqueue(args){return enqueueJob(()=>run(args));}
 /* ABSOLUTE POINTER PLACEMENT, ON EITHER COMPOSITOR.
  *
- * `swaymsg seat0 cursor set` is a Sway command and Sway is no longer the only session: on Wayfire
- * the binary is present but has no socket, so every absolute packet failed and a remote viewer's
- * pointer simply never moved -- while relative motion, clicks and keys all worked, which reads as
- * "the mouse is stuck" rather than as a missing command. ydotool is already this module's input
- * path and its `mousemove --absolute` is compositor-neutral, so Wayfire uses that; Sway keeps
- * swaymsg, which needs no uinput daemon and is the proven path there. */
+ * This was `swaymsg seat0 cursor set`, which is a Sway command -- and Sway is gone. On the Wayfire
+ * session the binary was not even installed, so every absolute packet failed while relative motion,
+ * clicks and keys all worked: it read as "the mouse is stuck", not as a missing program. ydotool is
+ * already this module's input path for everything else and its `mousemove --absolute` speaks to the
+ * kernel rather than to a compositor, so there is one path now instead of two. */
 function setCursor(x,y){
-  if(!process.env.SWAYSOCK && process.env.WAYFIRE_SOCKET)
-    return run(['mousemove','--absolute','-x',String(x),'-y',String(y)]);
-  return new Promise(resolve=>execFile('/usr/bin/swaymsg',
-    ['seat','seat0','cursor','set',String(x),String(y)],{timeout:1500},err=>resolve(!err)));
+  return run(['mousemove','--absolute','-x',String(x),'-y',String(y)]);
 }
 function enqueueCursor(x,y){return enqueueJob(()=>setCursor(x,y));}
 function start(){

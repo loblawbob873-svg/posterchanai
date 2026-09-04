@@ -1,8 +1,23 @@
-# PosterChanOS Wayfire migration gate
+# PosterChanOS Wayfire migration — DONE
 
-Wayfire is a viable floating-first compositor for PosterChanOS, but it is not a
-drop-in replacement for Sway.  The production session must stay on Sway until a
-Wayfire backend satisfies every gate in this document.
+**Wayfire is the session. Sway is removed.** `gui-wm/sway`, `gui-apps/swaybg`,
+`/etc/sway/config`, the per-account `~/.config/sway/`, the Sway branches in every
+helper and the Sway fallback in `pc-compositor-session` are all gone; only
+`gui-apps/swayidle` remains, and it is kept for the idle PROTOCOL (it holds the
+seat's idle accounting and watches inhibitors) while Wayfire's own `idle` plugin
+performs the power action.
+
+This document is kept as the record of what the migration required. The gate
+below is history, not a pending checklist — with one exception worth restating,
+because it is what the fallback was hiding:
+
+> A fallback that fires on a false negative is worse than no fallback. Three
+> separate bugs — a health probe that guessed which monitor held the primary
+> shell marker, a restart that killed the shell but not its launcher, and a
+> 3-second replacement window against a 40-second launcher startup — made the
+> session drop to Sway on a desktop that was drawing perfectly. The recovery is
+> now a text console that says why, which cannot silently change what desktop
+> somebody is using.
 
 ## Gentoo packages
 
@@ -101,7 +116,7 @@ exact-one-launch suites against both backends.  Release testing then requires a
 real-GPU desktop session, a Gamescope/Proton game, a clean LiveCD boot, a clean
 install, and reboot with the installation medium removed.
 
-## Rollout
+## Rollout (history)
 
 Install Wayfire and its adapter alongside Sway first.  Select it only through an
 explicit diagnostic session flag.  Preserve a boot-menu or TTY recovery path

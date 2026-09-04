@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OSWIN = ROOT / "static/js/client/oswin.js"
 APP_JS = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
 MAIN_JS = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
-SWAY = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(encoding="utf-8")
+WAYFIRE = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini").read_text(encoding="utf-8")
 PAGE = (ROOT / "templates/client.html").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
 NODE = shutil.which("node") or shutil.which("nodejs")
@@ -196,23 +196,27 @@ def test_adopt_names_the_window_so_the_compositor_can_tell_it_apart():
     assert got["state"]["shared"] is True
 
 
-def test_the_sway_rule_matches_that_exact_title_and_comes_last():
-    """Ordering is load-bearing and the file says so: later rules win, and the un-float rules for
-    the desktop are above. A float rule placed before them does nothing at all."""
-    assert 'title="^PosterChan Window"' in SWAY
-    float_at = SWAY.index('title="^PosterChan Window"')
-    unfloat_at = SWAY.rindex('floating disable, border none')
-    assert float_at > unfloat_at, (
-        "the window float rule is above the desktop's un-float rules, so it loses and every "
-        "PosterChan window would tile over the desktop")
+def test_the_compositor_leaves_our_windows_undecorated():
+    """NO ORDERING PROBLEM ANY MORE, AND THAT IS THE POINT OF THE MOVE.
+
+    Under Sway this was a list of `for_window` rules where LATER ones win, so a float rule written
+    above the desktop's un-float rules silently did nothing -- the shape this test was written for.
+    Wayfire states it once, declaratively: the surfaces PosterChan draws its own chrome for are
+    excluded from server-side decoration, and everything else gets exactly one frame.
+    """
+    ignore = next((line for line in WAYFIRE.splitlines() if line.startswith("ignore_views")), None)
+    assert ignore, "wayfire.ini no longer excludes PosterChan surfaces from decoration"
+    assert 'title contains "PosterChan Window"' in ignore
+    assert "preferred_decoration_mode = server" in WAYFIRE, (
+        "native applications would draw no frame at all")
 
 
-def test_the_title_the_client_sets_is_the_title_sway_matches():
+def test_the_title_the_client_sets_is_the_title_the_compositor_matches():
     """One string, two files. They were separate constants for about a minute, which is how a rule
     that looks right matches nothing."""
     js_title = re.search(r"const TITLE = '([^']+)'", OSWIN.read_text(encoding="utf-8"))
     assert js_title, "oswin.js no longer declares its window title"
-    assert f'title="^{js_title.group(1)}"' in SWAY
+    assert f'title contains "{js_title.group(1)}"' in WAYFIRE
 
 
 # ------------------------------------------------------------------ the Electron side
@@ -445,25 +449,25 @@ def test_a_document_window_is_refused_rather_than_stripped():
 # first. The tests below still cover the parts that ARE shipped.
 
 
-def test_the_window_maps_with_the_title_sway_floats_on():
-    """THE MAP MOMENT, which is the only one sway's rule ever sees.
+def test_the_window_maps_with_the_title_the_compositor_matches_on():
+    """THE MAP MOMENT, which is the only one a window rule ever sees.
 
-    `for_window` is evaluated when a surface maps. The rule that floats these windows keys on the
-    TITLE — it has to, because the app_id is shared with the desktop, which must stay tiled. The
-    page sets that title in `adopt()`, and `adopt()` runs after the document loads, which is after
-    the map. So the title must also be on the BrowserWindow at creation, or the first app opened
-    maps under Electron's default title, matches nothing, and is tiled into the shell's layout —
-    splitting the desktop in half.
+    Window rules are evaluated when a surface maps. The rule that treats these as PosterChan chrome
+    keys on the TITLE — it has to, because the app_id is shared with the desktop itself. The page
+    sets that title in `adopt()`, and `adopt()` runs after the document loads, which is after the
+    map. So the title must also be on the BrowserWindow at creation, or the first app opened maps
+    under Electron's default title and matches nothing — which under Sway tiled it into the shell's
+    layout and splits the desktop in half, and under Wayfire wraps our own chrome in a second frame.
     """
     main_js = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
     handler = main_js[main_js.index("setWindowOpenHandler"):]
     handler = handler[:handler.index("return { action: 'deny' };")]
     assert "title: 'PosterChan Window'" in handler, (
-        "a real window maps without the title sway floats on — it would be tiled into the desktop")
+        "a real window maps without the title the compositor matches on — it would be decorated twice")
 
-    sway = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(encoding="utf-8")
-    rule = [l for l in sway.splitlines() if "PosterChan Window" in l and "floating enable" in l]
-    assert rule, "sway no longer floats these windows by title"
+    rule = [l for l in WAYFIRE.splitlines()
+            if "PosterChan Window" in l and l.startswith("ignore_views")]
+    assert rule, "wayfire.ini no longer recognises these windows by title"
 
     oswin = (ROOT / "static/js/client/oswin.js").read_text(encoding="utf-8")
     assert "const TITLE = 'PosterChan Window'" in oswin, (

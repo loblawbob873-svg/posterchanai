@@ -39,7 +39,7 @@ KEYWORDS="amd64"
 RESTRICT="mirror strip"
 
 RDEPEND="
-	gui-wm/sway
+	gui-wm/wayfire
 	x11-base/xwayland
 	media-video/pipewire
 	media-video/wireplumber

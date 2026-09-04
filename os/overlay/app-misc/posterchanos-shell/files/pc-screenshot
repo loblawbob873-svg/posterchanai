@@ -13,14 +13,13 @@ dir="${XDG_PICTURES_DIR:-${HOME}/Pictures}/Screenshots"
 mkdir -p "$dir" || exit 1
 file="$dir/PosterChan-$(date +%Y-%m-%d-%H%M%S-%N).png"
 
-# grim 1.5 waits for the next damaged frame.  Two static full-output shell surfaces can otherwise
-# leave it waiting forever.  Subscribe first, then damage the cursor plane without moving it.
+# grim 1.5 waits for the next damaged frame, and two static full-output shell surfaces could
+# otherwise leave it waiting for ever. On Sway this nudged the cursor plane to force one. Wayfire
+# animates and repaints on its own -- measured on the real desktop, a plain capture of a completely
+# idle screen returns in ~0.5s -- so there is nothing to nudge and no compositor command to do it
+# with. Kept as a function so the call sites and their timeout handling are unchanged.
 grim_capture() {
-	grim "$@" &
-	grim_pid=$!
-	sleep 0.08
-	command -v swaymsg >/dev/null 2>&1 && swaymsg -q 'seat seat0 cursor move 0 0' >/dev/null 2>&1 || true
-	wait "$grim_pid"
+	grim "$@"
 }
 
 if ! command -v grim >/dev/null 2>&1; then

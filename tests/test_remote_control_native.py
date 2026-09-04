@@ -41,8 +41,16 @@ def test_absolute_remote_pointer_maps_through_the_host_display():
     assert "screen.getCursorScreenPoint()" in MAIN
     assert "remoteAbsolutePoint(screen.getAllDisplays()" in MAIN
     assert "screen.getDisplayNearestPoint(cursor)" in MAIN
-    assert "execFile('/usr/bin/swaymsg'" in NATIVE
-    assert "['seat','seat0','cursor','set'" in NATIVE
+    # ABSOLUTE PLACEMENT IS ydotool NOW, and that is a fix rather than a rename. It was
+    # `swaymsg seat0 cursor set` -- a Sway command, on a session where the binary is not even
+    # installed -- so every absolute packet failed while relative motion, clicks and keys all
+    # worked: the remote pointer read as STUCK, not as a missing program.
+    # Asserted on the CODE, not on the file: the comment above `setCursor` names the command it
+    # replaced, which is the sentence a future reader most needs and the one a bare
+    # `"swaymsg" not in NATIVE` would forbid.
+    body = NATIVE.split("function setCursor(", 1)[1].split("\nfunction ", 1)[0]
+    assert "swaymsg" not in body, body
+    assert "'mousemove','--absolute'" in body
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -129,9 +137,11 @@ def test_position_and_button_are_atomic_ordered_and_duplicate_release_is_ignored
     result = json.loads(run.stdout)
     assert result["result"] == [True, True, True]
     input_calls = [call for call in result["calls"] if call[0] != "/usr/bin/systemctl"]
+    # ORDER IS THE POINT: the position lands before the button, every time, and the second release
+    # of a button already up is dropped rather than replayed.
     assert input_calls == [
-        ["/usr/bin/swaymsg", ["seat", "seat0", "cursor", "set", "100", "200"]],
+        ["/usr/bin/ydotool", ["mousemove", "--absolute", "-x", "100", "-y", "200"]],
         ["/usr/bin/ydotool", ["click", "0x40"]],
-        ["/usr/bin/swaymsg", ["seat", "seat0", "cursor", "set", "300", "400"]],
+        ["/usr/bin/ydotool", ["mousemove", "--absolute", "-x", "300", "-y", "400"]],
         ["/usr/bin/ydotool", ["click", "0x80"]],
     ]

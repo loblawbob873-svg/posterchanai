@@ -10,12 +10,9 @@
 # proves that the replacement surfaces mapped.
 set -u
 # The launcher's path, overridable so this script can be RUN by a test rather than read by one.
-# The default is absolute on purpose: this is driven from a key binding and from sway, neither of
-# which is guaranteed a useful PATH.
-if [ -z "${PC_SHELL_START:-}" ]; then
-	[ -z "${WAYFIRE_SOCKET:-}" ] && PC_SHELL_START=/usr/local/bin/pc-shell-start || \
-		PC_SHELL_START=/usr/local/bin/pc-shell-start-wayfire
-fi
+# The default is absolute on purpose: this is driven from a key binding, which is not guaranteed a
+# useful PATH.
+: "${PC_SHELL_START:=/usr/local/bin/pc-shell-start-wayfire}"
 # The update acknowledgement supplies the exact process that owns the canonical singleton.  The
 # keyboard shortcut has no caller PID, so it discovers candidates, then applies the same strict
 # identity check.  Never pattern-kill /opt/posterchan: installed diagnostic instances deliberately
@@ -28,7 +25,7 @@ for pid in $candidates; do
 	[ -r "/proc/$pid/cmdline" ] || continue
 	cmd=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null || :)
 	case "$cmd" in
-		*--pc-diagnostic-token=*|*--pc-diagnostic-profile=*|*--pc-diagnostic-swaysock=*) continue ;;
+		*--pc-diagnostic-token=*|*--pc-diagnostic-profile=*|*--pc-diagnostic-socket=*) continue ;;
 	esac
 	case "$cmd" in
 		/opt/posterchan/posterchan-desktop\ *--shell*) pids="$pids $pid" ;;
@@ -46,12 +43,13 @@ if [ -n "$pids" ]; then
 	# SAY THAT THIS IS A RESTART, BEFORE THE SHELL DIES.
 	#
 	# pc-compositor-session supervises Wayfire by watching for a replacement shell PID and gives it
-	# 3 seconds. That is right for a CRASH -- a shell that will never come back should fall the
-	# login over to Sway quickly -- and far too short for a restart, because the launcher's own
+	# 3 seconds. That is right for a CRASH -- a shell that will never come back should stop the
+	# compositor and leave a rescue console quickly -- and far too short for a restart, because the
+	# launcher's own
 	# bounded startup (up to 10s waiting for the Xwayland socket, then a health gate of up to 30s)
 	# happens inside that window. So Ctrl+Alt+Backspace, and the automatic restart after an update,
-	# killed Wayfire and dropped the whole session to Sway: the desktop came back, on the other
-	# compositor, with only a line in compositor-fallback.log to say so.
+	# killed Wayfire and dropped the whole login to a rescue console, with only a line in
+	# compositor-fallback.log to say so.
 	#
 	# The marker is a mtime and nothing else. A restart that dies before the launcher can clear it
 	# ages out on its own, so this can extend the supervisor's patience without ever removing the
@@ -66,7 +64,7 @@ if [ -n "$pids" ]; then
 	# and flock, burned both attempts inside a second (measured: two shells one second apart), then
 	# printed "failed the Wayfire surface/GPU health gate" and exited. With no launcher left,
 	# nothing ever published a replacement PID, so pc-compositor-session stopped Wayfire and the
-	# whole login came back on Sway. Ctrl+Alt+Backspace and the post-update restart both did this.
+	# login ended at a rescue console. Ctrl+Alt+Backspace and the post-update restart both did this.
 	#
 	# The launcher's own TERM trap stops its shell and exits without retrying, so terminating it
 	# first is both the stop and the shutdown. The shell is TERMed below anyway: an older launcher,

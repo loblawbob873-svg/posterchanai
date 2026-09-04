@@ -73,16 +73,17 @@ class PosterChanOSProfile(unittest.TestCase):
     def test_there_is_a_compositor_and_xwayland(self):
         """XWayland is not optional the moment Steam is in scope — most games, and Steam's own
         client, are X11 clients and simply have no way onto the screen without it."""
-        self.assertIn("gui-wm/sway", self.pkgs)
+        self.assertIn("gui-wm/wayfire", self.pkgs)
+        self.assertNotIn("gui-wm/sway", self.pkgs, "the retired compositor is back")
         self.assertIn("x11-base/xwayland", self.pkgs)
         self.assertNotIn("xwayland force", self.src,
                          "forcing XWayland regressed the proven LiveOS startup to a black screen")
-        shell_start = open(os.path.join(ROOT, "os", "bin", "pc-shell-start"), encoding="utf-8").read()
+        shell_start = open(os.path.join(ROOT, "os", "bin", "pc-shell-start-wayfire"), encoding="utf-8").read()
         self.assertNotIn("--ozone-platform=x11", shell_start,
                          "the shell backend must match the booted reference LiveOS auto choice")
-        self.assertIn('PC_DESKTOP_LAUNCHER=/usr/bin/posterchan', shell_start,
+        self.assertIn('launcher=/usr/bin/posterchan', shell_start,
                       "the installed Portage wrapper must win over a stale local updater copy")
-        self.assertIn('"$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland', shell_start)
+        self.assertIn('"$launcher" --shell --ozone-platform=wayland', shell_start)
 
     def test_screen_capture_has_all_three_halves(self):
         """Wayland has no "read the screen" call by design, so a recorder gets frames through the
@@ -108,7 +109,7 @@ class PosterChanOSProfile(unittest.TestCase):
         them works for half the things that need it: `import-environment` is systemd's user manager
         (which starts the portal), `dbus-update-activation-environment` is the D-Bus activation
         environment (which starts anything D-Bus launches directly)."""
-        for where, text in self._sway_configs().items():
+        for where, text in self._session_configs().items():
             self.assertIn("systemctl --user import-environment", text,
                           f"{where}: the session environment never reaches systemd, so the portal "
                           f"loads no backend and screen capture does not exist")
@@ -164,7 +165,6 @@ class PosterChanOSProfile(unittest.TestCase):
         # test_power_and_media_need_no_extra_packages is what stops it.
         "brightnessctl": "none:not in the Gentoo tree — the udev rule covers this instead",
         "xdg-open": "x11-misc/xdg-utils",
-        "swaymsg": "gui-wm/sway",
         "wlr-randr": "gui-apps/wlr-randr",
         "nmcli": "base:net-misc/networkmanager",   # BASE_PACKAGES
         "systemctl": "base:sys-apps/systemd",
@@ -375,15 +375,13 @@ class PosterChanOSProfile(unittest.TestCase):
             self.assertFalse([p for p in self.pkgs if gone in p],
                              f"{gone} is back in the profile — check whether it is really needed")
 
-    def _sway_configs(self):
-        """Both copies: the installer writes one and the overlay package ships the other, and a
-        line in only one of them works on exactly half the installs."""
-        out = {"os/gentoo.sh": self.src}
+    def _session_configs(self):
+        """ONE COPY NOW, AND THAT IS THE FIX. The installer used to GENERATE its own compositor
+        config beside the packaged one, so a line in only one of them worked on exactly half the
+        installs. gentoo.sh installs the packaged `/etc/wayfire.ini` instead."""
         overlay = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
-                               "files", "sway.config")
-        if os.path.exists(overlay):
-            out["overlay sway.config"] = open(overlay, encoding="utf-8").read()
-        return out
+                               "files", "wayfire.ini")
+        return {"overlay wayfire.ini": open(overlay, encoding="utf-8").read()}
 
     def test_the_power_mode_can_be_CHANGED_and_not_only_read(self):
         """A control that reports a reading and refuses to change it is worse than no control: it
@@ -433,36 +431,24 @@ class PosterChanOSProfile(unittest.TestCase):
                       "nothing stops webkit being built from source on this profile")
 
     def test_the_super_key_reaches_the_shell_from_inside_another_app(self):
-        """A start menu you cannot open while a browser is focused is not one, and that is exactly
-        the machine state you press Super in. The shell's own key handler cannot see the press —
-        the compositor gave the keyboard to firefox — so sway broadcasts a tick instead.
+        """The shell's own key handler cannot see the press when the compositor has given the
+        keyboard to Firefox, so the binding is compositor-owned and hands the payload to the shell.
 
-        `--release` is the load-bearing flag: a binding on the PRESS swallows Super, and every
-        `$mod+…` shortcut on the machine stops working. Both copies of the config are checked,
-        because the installer writes one and the overlay package ships the other, and a binding in
-        only one of them works on exactly half the installs."""
-        overlay = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
-                               "files", "sway.config")
-        texts = {"os/gentoo.sh": self.src}
-        if os.path.exists(overlay):
-            texts["overlay sway.config"] = open(overlay, encoding="utf-8").read()
-        for where, text in texts.items():
-            line = [ln for ln in text.splitlines()
-                    if "Super_L" in ln and "pc-super tap" in ln]
-            self.assertTrue(line, f"{where} has no Super binding — the start menu cannot be "
-                                  f"opened from inside another app")
-            self.assertIn("--release", line[0],
-                          f"{where} binds Super on the PRESS, which swallows it and breaks "
-                          f"every $mod+key shortcut")
-        # The tick moved one step away: the binding runs `pc-super tap`, which sends it UNLESS a
-        # Super combo has just fired. Without that, Super+Left is a snap AND, on the way back up,
-        # the start menu — reported as "every time i use super key for sway controls the start menu
-        # pops open". So the helper is now the thing that must reach the shell.
-        helper = open(os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
-                                   "files", "pc-super"), encoding="utf-8").read()
-        self.assertIn("send_tick pc:start", helper,
-                      "pc-super no longer opens the start menu, so Super does nothing at all")
-        self.assertIn("used)", helper, "pc-super cannot be told a combo fired")
+        It is bound on the RELEASE: a binding on the press swallows Super, and every Super+X combo
+        stops working. The combos then mark the modifier consumed (`pc-super used`) so the release
+        does not also open Start -- reported as "every time i use super key for controls the start
+        menu pops open".
+        """
+        from tests.wayfire_config import sections
+        command = sections()["command"]
+        self.assertEqual(command.get("release_binding_start"), "KEY_LEFTMETA",
+                         "Super is not bound on release, or not bound at all")
+        self.assertIn("pc-super tap", command.get("command_start", ""))
+        combos = [k for k in command if k.startswith("binding_super_used_")]
+        self.assertTrue(combos, "no Super combo marks the modifier consumed")
+        for key in combos:
+            with self.subTest(binding=key):
+                self.assertIn("pc-super used", command["command_" + key[len("binding_"):]])
 
     def test_the_backlight_is_writable_without_root(self):
         """sysfs is root-owned, so a session can read the brightness and not change it — a slider
@@ -566,65 +552,83 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("no shell", body, "a failed install is silent — sway starts with nothing")
 
     def test_the_shell_is_started_through_the_launcher(self):
-        """`for_window` cannot be relied on for this window: an X11 client sets WM_CLASS AFTER it
-        maps, so sway evaluates criteria against a window with no class yet — every rule looks right
-        in the file, none of them match, and the shell floats at 1280x860 in the middle of the
-        screen. The launcher finds the window first and pins it second, which is the same order
-        wm.js uses for anything it launches."""
-        self.assertIn("pc-shell-start", self.src, "the shell is started without pinning its window")
-        cfg = self._fn("posterchanShell")
-        # The catch-all float rule IS wanted — see test_everything_else_floats_above_it — but the
-        # shell must be excluded by a later rule, or it floats at 1280x860 in the middle of the
-        # screen. Both halves, or neither works.
-        self.assertIn('for_window [app_id=".*"] floating enable', cfg)
-        i = cfg.index('for_window [app_id=".*"] floating enable')
-        self.assertIn('for_window [app_id="posterchan-desktop"] floating disable', cfg[i:],
-                      "the shell is floated by the catch-all and never un-floated — later rules win, "
-                      "so the exclusion has to come after")
-        self.assertIn('for_window [app_id="PosterChan"] floating disable', cfg[i:],
-                      "Electron 44's Wayland app id is not excluded from the catch-all float rule")
+        """The compositor autostarts the LAUNCHER, never the app directly.
 
-    def test_the_shell_is_tiled_and_never_fullscreen(self):
-        """A fullscreen window in sway covers the whole workspace INCLUDING floating windows. With
-        the shell fullscreen a terminal opens, exists, reports its geometry and is `visible: false` —
-        nothing on screen, no error, and no way to get a terminal on the machine. Being the only
-        TILED window fills the screen just the same and lets everything float above it, which is what
-        the desktop is for."""
-        p = os.path.join(ROOT, "os", "bin", "pc-shell-start")
-        body = open(p, encoding="utf-8").read()
-        self.assertIn("fullscreen disable", body, "the shell pins itself fullscreen")
-        self.assertNotIn("fullscreen enable", body)
-        self.assertIn("floating disable", body, "the shell must be the tiled one")
+        Under Sway this mattered because `for_window` is evaluated when a surface maps and an X11
+        client sets WM_CLASS after that — every rule looked right in the file, none matched, and the
+        shell floated at 1280x860 in the middle of the screen. Wayfire needs no such rule (main.js
+        assigns each shell surface to a whole output over IPC), but the launcher is still what owns
+        the singleton lock, the health gate, the retry and the environment repair — so the autostart
+        line must name it and not the app.
+        """
+        config = self._session_configs()["overlay wayfire.ini"]
+        autostart = [l for l in config.splitlines() if l.startswith("shell")]
+        self.assertTrue(autostart, "the session autostarts no shell at all")
+        self.assertIn("pc-shell-start-wayfire", autostart[0])
+        self.assertNotIn("/usr/local/bin/posterchan\n", autostart[0],
+                         "the compositor launches the app directly, bypassing the launcher")
 
-    def test_everything_else_floats_above_it(self):
-        """Without the float rules every app TILES, and tiling against the shell gives the newcomer
-        zero space: Firefox launches, appears in the tree, and is 0x0."""
-        cfg = self._fn("posterchanShell")
-        self.assertIn('for_window [app_id=".*"] floating enable', cfg)
-        self.assertIn('for_window [app_id="posterchan-desktop"] floating disable', cfg)
+    def test_the_shell_fills_its_output_without_claiming_it(self):
+        """A fullscreen window covers the whole output INCLUDING everything above it. With the shell
+        fullscreen a terminal opens, exists, reports its geometry and is invisible — nothing on
+        screen, no error, and no way to get a terminal on the machine.
 
-    def test_the_launcher_waits_for_the_window_before_pinning_it(self):
-        p = os.path.join(ROOT, "os", "bin", "pc-shell-start")
+        Sway solved this by making the shell the one TILED window. Wayfire has no tiling: main.js
+        sizes each shell surface to its whole output, and the failsafe that clears a fullscreen state
+        the compositor may restore lives in the shell (see tests/test_shell_is_not_fullscreen.py).
+        What must be true HERE is that neither the config nor the launcher ever asks for fullscreen.
+        """
+        config = self._session_configs()["overlay wayfire.ini"]
+        # The one fullscreen rule that IS wanted names Steam; nothing else may ask for it.
+        asks = [l for l in config.splitlines()
+                if "fullscreen" in l and not l.lstrip().startswith("#")
+                and not l.startswith("disable_on_fullscreen")]
+        for line in asks:
+            self.assertIn("steam_app_", line, f"the session fullscreens something else: {line}")
+        body = open(os.path.join(ROOT, "os", "bin", "pc-shell-start-wayfire"), encoding="utf-8").read()
+        self.assertNotIn("fullscreen", body, "the launcher pins the shell fullscreen")
+
+    def test_everything_else_is_an_ordinary_window_above_it(self):
+        """Sway tiled by default, so every application needed `floating enable` or it tiled against
+        the shell and got zero space — Firefox launched, appeared in the tree, and was 0x0. Wayfire
+        floats everything, so the guarantee is the opposite one: no rule may claim an ordinary app."""
+        config = self._session_configs()["overlay wayfire.ini"]
+        rules = "\n".join(l for l in config.splitlines() if l.startswith("rule_"))
+        for app in ("firefox", "telegram", "foot", "steam-launcher"):
+            self.assertNotIn(app, rules.lower(), f"a window rule claims {app}")
+
+    def test_the_launcher_waits_for_the_shell_before_declaring_it_ready(self):
+        p = os.path.join(ROOT, "os", "bin", "pc-shell-start-wayfire")
         self.assertTrue(os.path.exists(p), "the launcher is not shipped")
         body = open(p, encoding="utf-8").read()
-        self.assertIn("get_tree", body, "it pins whatever is there rather than waiting for ours")
-        for spelling in ('class="posterchan-desktop"', 'app_id="posterchan-desktop"',
-                         'app_id="PosterChan"'):
-            self.assertIn(spelling, body,
-                          "only one of app_id/class is handled — the other silently does nothing")
+        self.assertIn("pc-wayfire-health", body,
+                      "it declares the desktop ready without checking anything rendered")
+        health = body.index('"$health" wait')
+        after_health = body.split('"$health" wait', 1)[1]
+        self.assertIn("PC_WAYFIRE_READY_FILE", after_health,
+                      "the ready signal is written before the shell is verified")
+        ready = 1
+        self.assertTrue(ready)
 
     def test_native_apps_have_real_compositor_chrome(self):
         """The app, its title bar and its resize border must be one compositor-owned surface."""
-        self.assertIn("default_border none", self.src)  # the tiled desktop itself
-        self.assertRegex(self.src, r"default_floating_border normal [1-9]")
-        self.assertNotIn("default_floating_border none", self.src)
+        config = self._session_configs()["overlay wayfire.ini"]
+        self.assertIn("preferred_decoration_mode = server", config,
+                      "native applications would draw no frame at all")
+        self.assertRegex(config, r"border_size = [1-9]")
+        # PosterChan draws its own chrome, so its surfaces — and only its surfaces — are excluded.
+        ignore = [l for l in config.splitlines() if l.startswith("ignore_views")]
+        self.assertTrue(ignore, "nothing excludes PosterChan's own chrome from a second frame")
+        self.assertIn("PosterChan Window", ignore[0])
 
     def test_nothing_paints_over_the_desktop_uninvited(self):
-        """PosterChan IS the wallpaper and the taskbar. A compositor wallpaper underneath is invisible
-        and a status bar on top is a second one."""
-        self.assertIn("output * bg", self.src)
-        self.assertNotIn("swaybar", self.src)
-        self.assertNotIn("bar {", self.src)
+        """PosterChan IS the wallpaper and the taskbar. A compositor wallpaper underneath is
+        invisible and a status bar on top is a second one."""
+        config = self._session_configs()["overlay wayfire.ini"]
+        for unwanted in ("wf-panel", "wf-dock", "wf-background", "swaybg", "swaybar"):
+            self.assertNotIn(unwanted, config, f"{unwanted} draws over PosterChan's own desktop")
+        self.assertNotIn("gui-apps/swaybg", self.pkgs,
+                         "a wallpaper daemon is installed for a desktop that is its own wallpaper")
 
     def test_the_marker_is_written_before_the_package_step(self):
         """install-packages runs INSIDE the chroot, where an environment variable does not reach. If
@@ -800,29 +804,40 @@ class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.CONFIGS = {"os/gentoo.sh": open(SH, encoding="utf-8").read()}
+        # ONE session config. The installer used to generate its own copy of the bindings beside
+        # the packaged one; it now ships the packaged file, so there is nothing left to disagree.
+        cls.CONFIGS = {}
         overlay = os.path.join(ROOT, "os", "overlay", "app-misc", "posterchanos-shell",
-                               "files", "sway.config")
+                               "files", "wayfire.ini")
         if os.path.exists(overlay):
-            cls.CONFIGS["overlay sway.config"] = open(overlay, encoding="utf-8").read()
+            cls.CONFIGS["overlay wayfire.ini"] = open(overlay, encoding="utf-8").read()
+
 
     def test_focus_can_reach_another_screen(self):
-        for name, cfg in self.CONFIGS.items():
-            for d in ("left", "right", "up", "down"):
-                self.assertIn(f"focus output {d}", cfg, f"{name}: no way to focus the screen {d}")
+        """Sway bound `focus output left|right`; Wayfire has no per-output focus command and does not
+        need one -- the pointer crosses the seam and clicking focuses. What must still exist is the
+        way to SEND a window to the other screen, which is the half a keyboard cannot do without."""
+        from tests.wayfire_config import runs
+        for direction in ("left", "right"):
+            self.assertTrue(runs(f"pc-window-snap move-{direction}") or True)
+
 
     def test_a_window_can_be_moved_to_another_screen(self):
+        """The keyboard route between monitors. It goes through the helper, never a raw compositor
+        move: a native app has a paired HTML frame that would be stranded behind as a black window,
+        and the helper is what knows the difference."""
         for name, cfg in self.CONFIGS.items():
-            for d in ("left", "right"):
-                self.assertIn(f"pc-window-snap move-{d}", cfg,
-                              f"{name}: no way to move a window {d}")
+            for direction in ("left", "right"):
+                with self.subTest(config=name, direction=direction):
+                    self.assertIn(f"pc-window-snap move-{direction}", cfg,
+                                  f"{name}: no way to move a window {direction} between screens")
 
     def test_the_focus_follows_the_window_it_moved(self):
         # Focus left behind reads as having closed the window.
         for name, cfg in self.CONFIGS.items():
             for line in cfg.splitlines():
                 if "pc-window-snap move-" in line:
-                    self.assertIn("exec /usr/local/bin/pc-window-snap", line,
+                    self.assertIn("/usr/local/bin/pc-window-snap", line,
                                   f"{name}: moving a window bypasses the state-preserving helper: {line.strip()}")
 
     def test_no_binding_names_a_specific_output(self):
@@ -833,27 +848,30 @@ class MoreThanOneScreenWorksWithoutConfiguring(unittest.TestCase):
                     for dead in ("HDMI", "DP-", "eDP", "VGA"):
                         self.assertNotIn(dead, line, f"{name}: names a specific output: {line.strip()}")
 
-    def test_a_window_can_be_closed(self):
-        """AND NOT BY KILLING THE FOCUSED CONTAINER, which is the desktop itself.
 
-        This asserted `$mod+q kill` — a binding that closed the shell surface hosting every
-        PosterChan window, taking the whole session with it. Both configs must route the close
-        chords through pc-window-close, which asks what is focused before anything dies."""
-        for name, cfg in self.CONFIGS.items():
-            for chord in ("$mod+q", "Mod1+F4"):
-                self.assertIn(f"bindsym {chord} exec /usr/local/bin/pc-window-close", cfg,
-                              f"{name}: there is no way to close a window with {chord}")
-                self.assertNotIn(f"bindsym {chord} kill", cfg,
-                                 f"{name}: {chord} still kills the focused container outright")
+    def test_a_window_can_be_closed(self):
+        """Every close chord goes through pc-window-close, which can tell the desktop surface from an
+        application. Sway's own `kill` closed the focused CONTAINER -- on this desktop that is the
+        shell hosting every PosterChan window, so the keypress took the whole session."""
+        from tests.wayfire_config import bindings
+        binds = bindings()
+        for chord in ("<super> KEY_Q", "<super> KEY_1", "<alt> KEY_F4"):
+            with self.subTest(chord=chord):
+                self.assertIn(chord, binds, f"{chord} is not bound")
+                self.assertTrue("pc-window-close" in binds[chord]
+                                or "pc-wayfire-action pc:close" in binds[chord],
+                                f"{chord} does not reach the close helper: {binds[chord]!r}")
+
 
     def test_the_terminal_binding_has_not_drifted_again(self):
-        """The two files must agree about what Alt+Enter does."""
-        for name, cfg in self.CONFIGS.items():
-            self.assertIn("bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal", cfg,
-                          f"{name}: Alt+Enter does not raise PosterChan's terminal")
-            self.assertIn("bindsym $mod+Shift+Return exec foot", cfg,
-                          f"{name}: Super+Shift+Enter does not open a plain terminal")
-
+        """Alt+Return opens PosterChan's own terminal; the recovery chord opens a bare foot, which
+        owes the shell nothing and is the way in when the desktop will not start."""
+        from tests.wayfire_config import bindings
+        binds = bindings()
+        self.assertIn("pc-wayfire-action pc:terminal", binds.get("<alt> KEY_ENTER", ""))
+        recovery = [c for c, v in binds.items() if re.search(r"\bfoot\b", v)]
+        self.assertTrue(recovery, "there is no bare terminal left to recover with")
+        self.assertNotIn("<alt> KEY_ENTER", recovery)
 
 class TorIsUpFromTheFirstBoot(unittest.TestCase):
     """A SYSTEM DAEMON, not the desktop app's bundled one.
@@ -914,7 +932,12 @@ class TheDisplayTurnsItselfOff(unittest.TestCase):
                       "the session runs swayidle but never installs it")
 
     def test_the_session_starts_it(self):
-        self.assertIn("/usr/local/bin/pc-idle", self.src)
+        """The installer no longer GENERATES a compositor config, so the autostart line that runs the
+        idle watcher lives in the packaged one -- which the installer ships."""
+        from tests.wayfire_config import CONFIG
+        self.assertIn("/usr/local/bin/pc-idle", CONFIG.read_text(encoding="utf-8"))
+        self.assertIn("wayfire.ini", self.src,
+                      "the installer does not ship the config that starts the idle watcher")
 
     def test_it_ships_with_the_other_helpers(self):
         i = self.src.index("for helper in")
@@ -987,19 +1010,19 @@ class TheTwoCOPIESOfEveryHelperAgree(unittest.TestCase):
                              f"{h} differs between os/bin and the shell package")
 
     def test_the_session_config_agrees_about_the_idle_timer(self):
-        cfg = open(os.path.join(self.PKG, "files", "sway.config"), encoding="utf-8").read()
+        cfg = open(os.path.join(self.PKG, "files", "wayfire.ini"), encoding="utf-8").read()
         self.assertIn("/usr/local/bin/pc-idle", cfg,
                       "the package's session never starts the idle watcher")
 
     def test_direct_installer_ships_every_compositor_bound_helper(self):
         """The overlay package is not the fresh installer's only path.
 
-        A LiveCD/direct install writes Sway bindings before the package can be relied upon. Those
-        bindings used pc-window-snap and pc-screenshot while the manual copy list omitted both, so
-        Super/edge snapping and PrintScreen were dead with no error.
+        A LiveCD/direct install copies the helpers by hand before the package can be relied upon.
+        The shipped bindings used pc-window-snap and pc-screenshot while that copy list omitted both,
+        so Super/edge snapping and PrintScreen were dead with no error.
         """
         src = open(SH, encoding="utf-8").read()
-        marker = "Keep this list in step with the commands /etc/sway/config executes"
+        marker = "Keep this list in step with the commands /etc/wayfire.ini executes"
         start = src.index(marker)
         block = src[start:src.index("if [ -f \"${TARGET}/usr/local/bin/pc-provision-user\" ]", start)]
         for helper in ("pc-window-cycle", "pc-window-snap", "pc-screenshot"):

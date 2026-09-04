@@ -13,7 +13,7 @@ browser→renderer focus handshake leaving the next thing you open unable to tak
 the wedge was observed, compositor focus was on firefox-bin, not on either shell.
 
 Confirming that needs the renderer's DOM at the moment it happens, and there was no way in:
-`pc-shell-start` hardcoded its arguments. Hand-rolling the launcher instead is not an option worth
+`pc-shell-start-wayfire` hardcoded its arguments. Hand-rolling the launcher instead is not an option worth
 having — doing that once produced a black screen, because an ssh session has no WAYLAND_DISPLAY and
 Electron then falls back to X11 and exits immediately.
 
@@ -34,8 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 #: This helper exists TWICE — os/bin is what a dev edits, the overlay copy is what the ebuild
 #: installs — and a fix applied to one of them ships to nobody.
 COPIES = {
-    "os/bin": ROOT / "os/bin/pc-shell-start",
-    "overlay": ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-shell-start",
+    "os/bin": ROOT / "os/bin/pc-shell-start-wayfire",
+    "overlay": ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-shell-start-wayfire",
 }
 
 
@@ -51,8 +51,10 @@ def test_every_launch_of_the_shell_takes_the_extra_args(which):
     """BOTH launches — there is a second one in the retry path, and a debugger that attaches only
     when the first attempt happens to work is not much use on a machine that is misbehaving."""
     text = COPIES[which].read_text(encoding="utf-8")
-    launches = re.findall(r'"\$PC_DESKTOP_LAUNCHER" --shell[^\n]*', text)
-    assert len(launches) == 2, f"expected two launch lines, found {len(launches)}: {launches}"
+    launches = re.findall(r'"\$launcher" --shell[^\n]*', text)
+    # ONE launch line, inside the retry loop -- the Sway launcher hand-wrote two (first attempt and
+    # recovery) and the second one is exactly where the extra args were forgotten before.
+    assert len(launches) == 1, f"expected one launch line, found {len(launches)}: {launches}"
     for line in launches:
         assert "${PC_SHELL_EXTRA_ARGS:-}" in line, (
             f"this launch cannot be given debug flags, so the fault is only diagnosable if it "
@@ -73,7 +75,7 @@ def test_the_debugger_is_not_on_by_default(which):
     """The whole reason this is an env var and not a flag in the file. The port is an
     unauthenticated debugger on loopback, and this session holds the user's keys."""
     text = COPIES[which].read_text(encoding="utf-8")
-    launches = re.findall(r'"\$PC_DESKTOP_LAUNCHER" --shell[^\n]*', text)
+    launches = re.findall(r'"\$launcher" --shell[^\n]*', text)
     for line in launches:
         assert "remote-debugging-port" not in line, (
             "the shell ships with a debugger attached — anything on loopback can then drive the "
@@ -84,7 +86,7 @@ def test_the_two_copies_have_not_drifted():
     """The trap this repo has paid for before: os/bin is what gets edited, the overlay copy is what
     the ebuild installs, and a change to one of them reaches nobody."""
     a, b = COPIES["os/bin"].read_text(encoding="utf-8"), COPIES["overlay"].read_text(encoding="utf-8")
-    assert a == b, "os/bin/pc-shell-start and the overlay copy have diverged"
+    assert a == b, "os/bin/pc-shell-start-wayfire and the overlay copy have diverged"
 
 
 @pytest.mark.skipif(not shutil.which("sh"), reason="no sh")

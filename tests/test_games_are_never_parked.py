@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
-SWAY = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(encoding="utf-8")
+WAYFIRE = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini").read_text(encoding="utf-8")
 MAIN_JS = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
 
 
@@ -71,21 +71,24 @@ def test_a_game_is_never_screen_captured():
 
 def test_the_compositor_still_fullscreens_steam_titles():
     """The rule the whole contract rests on, in a file the window rewrite also edits."""
-    assert re.search(r'for_window \[class="\^steam_app_\.\*"\] fullscreen enable', SWAY), (
-        "the Steam fullscreen rule is gone from sway.config")
-    assert "inhibit_idle fullscreen" in SWAY, "a game would let the screen blank mid-play"
+    assert re.search(r'rule_\w+\s*=\s*on created if app_id contains "steam_app_" then set fullscreen true',
+                     WAYFIRE), "the Steam fullscreen rule is gone from wayfire.ini"
+    # The idle half is no longer per-rule: Wayfire's idle plugin exempts ANY fullscreen window, which
+    # covers the game whether it matched the rule above or fullscreened itself.
+    assert "disable_on_fullscreen = true" in WAYFIRE, "a game would let the screen blank mid-play"
 
 
-def test_the_new_window_rule_cannot_match_a_game():
-    """The rewrite floats PosterChan windows by TITLE while sharing the desktop's app_id. That match
-    must be anchored to our own application, or a game whose title happened to start the same way
-    would be dragged out of fullscreen."""
-    for line in SWAY.splitlines():
-        if 'title="^PosterChan Window"' in line:
-            assert "app_id=" in line or "class=" in line, (
-                "the window float rule matches on title alone, so any client could match it: " + line)
-            assert "posterchan" in line.lower(), (
-                "the window float rule is not anchored to our own application: " + line)
+def test_the_undecorated_window_rule_cannot_match_a_game():
+    """PosterChan windows are excluded from server-side decoration by TITLE while sharing the
+    desktop's app_id. That match must ALSO name our own application, or a game whose title happened
+    to start the same way would come up with no frame and, worse, be treated as shell chrome."""
+    ignore = next((line for line in WAYFIRE.splitlines() if line.startswith("ignore_views")), None)
+    assert ignore, "wayfire.ini no longer excludes PosterChan surfaces from decoration"
+    assert 'title contains "PosterChan Window"' in ignore
+    assert "app_id is" in ignore, (
+        "the decoration exclusion matches on title alone, so any client could match it: " + ignore)
+    assert "posterchan" in ignore.lower(), (
+        "the decoration exclusion is not anchored to our own application: " + ignore)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -98,7 +101,7 @@ def test_a_game_is_recognised_before_it_is_fullscreen():
     screen then when you click, goes to desktop and loads cyberpunk in small window".
 
     `nativeFullscreen` is only true once the game HAS fullscreen. The surface maps first, this
-    desktop sizes it into a frame, and sway's `for_window [class="^steam_app_.*"] fullscreen enable`
+    desktop sizes it into a frame, and the compositor's own `steam_app_` fullscreen rule
     arrives after — so the game opens small, and placing it is what cancels its pointer lock.
 
     The class is available immediately and is the same string sway keys its own rule on."""

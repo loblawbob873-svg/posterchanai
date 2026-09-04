@@ -31,7 +31,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SNAP = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
-SWAY_CONF = ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config"
+WAYFIRE_CONF = ROOT / "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini"
 
 
 @pytest.fixture(scope="module")
@@ -44,7 +44,10 @@ def snap():
 
 
 def win(app_id="place.poster.desktop", name="PosterChan Window — terminal", pid=None):
-    return {"app_id": app_id, "name": name, "pid": pid}
+    """A Wayfire view. The keys are the compositor's own spelling: `app-id`, not sway's `app_id`,
+    and `title`, not sway's `name` -- reading the wrong ones classifies every window as "not ours"
+    and quietly protects nothing."""
+    return {"app-id": app_id, "title": name, "pid": pid, "id": 22}
 
 
 DESKTOP = win(name="PosterChan · Nostr")
@@ -82,24 +85,26 @@ def test_another_application_is_never_ours(snap, app_id):
     assert snap["is_posterchan_shell"](win(app_id=app_id, name="Mozilla Firefox")) is False
 
 
-def test_it_agrees_with_the_rule_sway_itself_uses(snap):
-    """`sway.config` floats a window by `title="^PosterChan Window"`. If these two ever disagree,
-    one of them is looking at a different set of windows than the other."""
-    conf = SWAY_CONF.read_text(encoding="utf-8")
-    assert 'title="^PosterChan Window"' in conf, "sway.config's float rule has moved"
+def test_it_agrees_with_the_rule_the_compositor_itself_uses(snap):
+    """`wayfire.ini` excludes our own chrome from server-side decoration by
+    `title contains "PosterChan Window"`. If these two ever disagree, one of them is looking at a
+    different set of windows than the other -- a window with two frames, or one with none."""
+    conf = WAYFIRE_CONF.read_text(encoding="utf-8")
+    assert 'title contains "PosterChan Window"' in conf, "the decoration exclusion has moved"
     src = SNAP.read_text(encoding="utf-8")
-    assert 'startswith("PosterChan Window")' in src, (
-        "pc-window-snap no longer keys on the same title prefix sway does")
+    assert 'WINDOW_TITLE = "PosterChan Window"' in src, (
+        "pc-window-snap no longer keys on the same title prefix the compositor does")
 
 
 def test_a_window_with_no_title_yet_is_treated_as_the_shell(snap):
-    """A surface mid-map has no title. Guessing 'popped-out' there would let Sway move the whole
-    desktop container, which is the expensive mistake; the conservative answer is the safe one."""
+    """A surface mid-map has no title. Guessing 'popped-out' there would act on the whole desktop
+    surface, which is the expensive mistake; the conservative answer is the safe one."""
     assert snap["is_popped_out_window"](win(name=None)) is False
 
 
 def test_the_helper_still_parses():
-    """It is a script sway runs on a keypress; a syntax error is a dead key with no error anywhere."""
+    """It is a script the compositor runs on a keypress; a syntax error is a dead key with no error
+    anywhere at all."""
     import py_compile, tempfile, shutil
     with tempfile.TemporaryDirectory() as td:
         target = Path(td) / "pc_window_snap.py"
@@ -110,7 +115,9 @@ def test_the_helper_still_parses():
 def test_this_check_can_fail(snap):
     """MUTATION: restore the app_id-only rule and the popped-out window is claimed again."""
     src = SNAP.read_text(encoding="utf-8")
-    broken = src.replace("    if is_popped_out_window(win):\n        return False\n", "", 1)
+    broken = src.replace(
+        'return is_ours(win) and not str(win.get("title") or "").startswith(WINDOW_TITLE)',
+        "return is_ours(win)", 1)
     assert broken != src, "could not rebuild the pre-fix helper — re-read this test"
     ns: dict = {}
     exec(compile(broken.split("def main()")[0], "broken", "exec"), ns)
@@ -127,21 +134,22 @@ def test_this_check_can_fail(snap):
 # fix: `x: 3516 -> 3516  DID NOT MOVE`.
 
 def _main_source() -> str:
-    return SNAP.read_text(encoding="utf-8").split("def main()", 1)[1]
+    """The branch logic, which lives in `wayfire_main` -- `main()` now only validates argv."""
+    return SNAP.read_text(encoding="utf-8").split("def wayfire_main(", 1)[1]
 
 
 def test_a_popped_out_window_is_not_sent_down_the_native_handoff():
     """THE SECOND CAUSE. That tick is addressed to a renderer that owns a paired frame; nothing
     owns this window, so it goes nowhere."""
     body = _main_source()
-    assert "if side in moves and not is_popped_out_window(win):" in body, (
+    assert 'if side.startswith("move-") and not popped:' in body, (
         "a popped-out window is being sent through pc:move-native again — the tick reaches no "
         "renderer and the window does not move")
 
 
 def test_it_gets_a_plain_compositor_move_instead():
     body = _main_source()
-    assert 'sway("[con_id=%d]" % int(win["id"]), "move", moves[side])' in body, (
+    assert "window-rules/configure-view" in body and '"output_id"' in body, (
         "nothing actually moves a popped-out window")
 
 
@@ -149,7 +157,7 @@ def test_the_native_handoff_is_still_there_for_real_native_apps():
     """Firefox and Telegram must keep it: a raw compositor move strands their HTML frame behind as
     a black window."""
     body = _main_source()
-    assert "pc:move-native:%d:%s" in body
+    assert "pc:move-native:{view_id}:" in body
 
 
 def test_the_three_cases_are_ordered_shell_then_native_then_plain():
@@ -158,5 +166,5 @@ def test_the_three_cases_are_ordered_shell_then_native_then_plain():
     body = _main_source()
     i_shell = body.index("if is_posterchan_shell(win):")
     i_native = body.index("pc:move-native")
-    i_plain = body.index('"move", moves[side]')
+    i_plain = body.index('"output_id"')
     assert i_shell < i_native < i_plain

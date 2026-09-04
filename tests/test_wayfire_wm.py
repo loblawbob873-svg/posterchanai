@@ -98,13 +98,17 @@ def test_shell_drag_guard_is_exact_id_not_shared_app_id():
 
 def test_installed_window_shortcuts_use_wayfire_ipc_not_swaymsg():
     helper = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap").read_text()
-    branch = helper[helper.index("def wayfire_main"):helper.index("def focused")]
+    branch = helper[helper.index("def wayfire_main"):helper.index("def is_ours")]
     assert 'window-rules/list-views' in branch
     assert 'window-rules/configure-view' in branch
     assert 'window-rules/close-view' in branch
     assert 'wm-actions/set-minimized' in branch
     assert 'pc:move-native:' in branch
-    assert 'if os.environ.get("WAYFIRE_SOCKET")' in helper
+    # There is no Sway branch left to choose between: the helper speaks Wayfire IPC only.
+    assert "def sway(" not in helper, "the Sway shell-out helper is back"
+    # `swaymsg` survives only in comments explaining what this replaced; no line may RUN it.
+    assert not [ln for ln in helper.splitlines()
+                if "swaymsg" in ln and not ln.lstrip().startswith("#")]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

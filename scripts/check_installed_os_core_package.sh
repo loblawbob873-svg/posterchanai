@@ -12,7 +12,7 @@ executables=(
   /opt/posterchan/resources/tor/tor/tor
   /usr/local/bin/posterchan
   /usr/local/bin/update-posterchan
-  /usr/local/bin/pc-shell-start
+  /usr/local/bin/pc-shell-start-wayfire
   /usr/local/bin/pc-shell-restart
   /usr/local/bin/pc-provision-user
   /usr/local/bin/pc-session-switch

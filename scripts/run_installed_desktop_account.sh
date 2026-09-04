@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run the account-dependent installed Desktop gate in an invisible, isolated Sway compositor.
+# Run the account-dependent installed Desktop gate in an invisible, isolated Wayfire compositor.
 # This must never launch a second surface in the person's live desktop session.
 set -eu
 
@@ -31,7 +31,7 @@ remote_cleanup() {
     root='$root'
     [ \"\$root\" = '/tmp/pc-installed-diagnostic.installedacct12' ] || exit 3
     if [ -r \"\$root/electron.pid\" ]; then kill \"\$(sed -n '1p' \"\$root/electron.pid\")\" 2>/dev/null || :; fi
-    if [ -r \"\$root/sway.pid\" ]; then kill \"\$(sed -n '1p' \"\$root/sway.pid\")\" 2>/dev/null || :; fi
+    if [ -r \"\$root/compositor.pid\" ]; then kill \"\$(sed -n '1p' \"\$root/compositor.pid\")\" 2>/dev/null || :; fi
     find \"\$root\" -depth -mindepth 1 -delete 2>/dev/null || :
     rmdir \"\$root\" 2>/dev/null || :
     code_root='$code_root'
@@ -81,9 +81,14 @@ ssh -o BatchMode=yes "$host" "
     cp -a \"\$source/.\" \"\$profile/\"
     find \"\$profile\" -maxdepth 1 -name 'Singleton*' -delete
   fi
+  # A HEADLESS COMPOSITOR OF THE ONE THIS OS ACTUALLY RUNS. This started `sway -c /dev/null`,
+  # and sway is not installed on PosterChanOS any more -- so the verifier account could not come up
+  # at all. Wayfire needs a config: without the `ipc` plugin there is no socket for the desktop to
+  # talk to, and `-c /dev/null` gives it none.
+  printf '%s\n' '[core]' 'plugins = ipc ipc-rules window-rules' >\"\$root/wayfire.ini\"
   XDG_RUNTIME_DIR=\"\$runtime\" WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 \
-    nohup sway -c /dev/null >\"\$root/sway.log\" 2>&1 &
-  echo \$! >\"\$root/sway.pid\"
+    nohup wayfire -c \"\$root/wayfire.ini\" >\"\$root/compositor.log\" 2>&1 &
+  echo \$! >\"\$root/compositor.pid\"
 "
 scp -q -r "$fixture" "$host:$root/"
 if [ "$mode" = code ]; then
@@ -105,20 +110,20 @@ socket=
 i=0
 while [ "$i" -lt 80 ]; do
   socket=$(ssh -o BatchMode=yes "$host" \
-    "find '$runtime' -maxdepth 1 -type s -name 'sway-ipc.*.sock' -print -quit")
+    "find '$runtime' -maxdepth 1 -type s -name 'wayfire-*.socket' -print -quit")
   [ -n "$socket" ] && break
   i=$((i + 1)); sleep .25
 done
-[ -n "$socket" ] || { echo "isolated Sway compositor did not start" >&2; exit 1; }
+[ -n "$socket" ] || { echo "isolated Wayfire compositor did not start" >&2; exit 1; }
 
 ssh -o BatchMode=yes "$host" "
   root='$root'; runtime='$runtime'; profile='$profile'
-  XDG_RUNTIME_DIR=\"\$runtime\" WAYLAND_DISPLAY=wayland-1 SWAYSOCK='$socket' \
+  XDG_RUNTIME_DIR=\"\$runtime\" WAYLAND_DISPLAY=wayland-1 WAYFIRE_SOCKET='$socket' \
     PC_DIAGNOSTIC_TOKEN='$token' \
     nohup /opt/posterchan/posterchan-desktop --shell --ozone-platform=wayland \
       --remote-debugging-address=127.0.0.1 --remote-debugging-port='$port' \
       --pc-diagnostic-token='$token' --pc-diagnostic-profile=\"\$profile\" \
-      --pc-diagnostic-swaysock='$socket' >\"\$root/electron.log\" 2>&1 &
+      --pc-diagnostic-socket='$socket' >\"\$root/electron.log\" 2>&1 &
   echo \$! >\"\$root/electron.pid\"
 "
 
@@ -130,7 +135,7 @@ while [ "$i" -lt 120 ]; do
   i=$((i + 1)); sleep .25
 done
 [ "$i" -lt 120 ] || {
-  ssh -o BatchMode=yes "$host" "tail -80 '$root/electron.log'; tail -40 '$root/sway.log'" >&2
+  ssh -o BatchMode=yes "$host" "tail -80 '$root/electron.log'; tail -40 '$root/compositor.log'" >&2
   exit 1
 }
 

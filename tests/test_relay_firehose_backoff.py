@@ -38,16 +38,27 @@ class _Flag:
 
 
 def _drive(waiter, connect, clock, url, stop):
-    """Run the REAL loop with a fake socket, a fake clock and no real waiting."""
+    """Run the REAL loop with a fake socket, a fake clock and no real waiting.
+
+    THE JITTER IS PINNED TO ITS MIDPOINT, and that is not cosmetic. The real delay is
+    `backoff + uniform(0, backoff)`, so the first gap can be as long as C+4 and the fifth as short
+    as C+32 -- a spread of 28 on a threshold of 30. It failed exactly there once
+    (`[58.57, 60.1, 69.22, 81.83, 87.84]`, spread 29.27) on code that was working perfectly, which
+    is the worst kind of red: it costs a bisect and teaches nothing. Pinning makes the measurement
+    exact; `test_the_backoff_is_jittered` below is what stops the pin from hiding the jitter's
+    removal."""
     orig_wait, orig_mono, orig_connect = fh.asyncio.wait_for, fh.time.monotonic, fh._connect
+    orig_uniform = fh.random.uniform
     fh.asyncio.wait_for = waiter
     fh.time.monotonic = lambda: clock["t"]
     fh._connect = connect
+    fh.random.uniform = lambda lo, hi: (lo + hi) / 2.0
     try:
         asyncio.run(fh._run_one(url, [1], lambda e: None, stop, True, extra=None,
                                      start_delay=0.0, label=""))
     finally:
         fh.asyncio.wait_for, fh.time.monotonic, fh._connect = orig_wait, orig_mono, orig_connect
+        fh.random.uniform = orig_uniform
 
 
 class _Sock:
@@ -142,6 +153,8 @@ def test_an_upstream_that_drops_us_on_sight_is_backed_off():
     # With the bug every gap is the same, because the delay is reset to 2s on every attempt.
     gaps = [round(b - a, 2) for a, b in zip(attempts, attempts[1:])]
     assert len(gaps) >= 4, "the loop did not retry enough to measure a backoff: %r" % (attempts,)
+    # 2, 4, 8, 16, 32 doubling with the jitter pinned at its midpoint gives waits of 3, 6, 12, 24,
+    # 48 -- a spread of 45. With the bug every wait is 3, so the spread is 0.
     assert gaps[-1] - gaps[0] >= 30, (
         "the delay barely moved — this is the 102-reconnects-in-ten-minutes bug, where a relay "
         "that accepts the REQ and then drops the stream resets the backoff every time: %r"
@@ -184,3 +197,12 @@ def test_a_stream_that_lasted_reconnects_immediately():
     assert gaps, "the loop never reconnected: %r" % (attempts,)
     assert max(gaps) <= 6.0, (
         "a healthy upstream that blipped was made to wait: %r" % (gaps,))
+
+
+def test_the_backoff_is_jittered():
+    """The drive above pins `random.uniform` to make its measurement exact. This is what keeps that
+    pin honest: without jitter a network blip drops every upstream at once and they all come back
+    together, for ever, in step -- a reconnect storm this node causes itself."""
+    src = open(fh.__file__, encoding="utf-8").read()
+    sleep = next(l for l in src.splitlines() if "stop.wait(), timeout=backoff" in l)
+    assert "random.uniform(0, backoff)" in sleep, sleep

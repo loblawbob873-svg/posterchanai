@@ -47,14 +47,19 @@ def test_installed_foot_flicker_gate_is_a_serial_release_check():
     assert '.ppm"' in gate
 
 
-def test_installed_foot_gate_reports_non_sway_host_as_a_skip():
+def test_installed_foot_gate_reports_a_host_with_no_session_as_a_skip():
+    """It said "SWAYSOCK is not available" -- for ever, on every machine, once the compositor
+    changed. A gate that can only skip is not a gate, so the SKIP must be about the session this OS
+    actually runs, and it must still be a SKIP (2) rather than a failure on a host that simply has
+    no desktop."""
     gate = ROOT / "scripts" / "check_installed_foot_flicker.py"
     env = os.environ.copy()
     env.pop("SWAYSOCK", None)
+    env["WAYFIRE_SOCKET"] = "/nonexistent/pc-test-no-session.sock"
     result = subprocess.run([sys.executable, str(gate)], cwd=ROOT, env=env,
                             capture_output=True, text=True)
     assert result.returncode == 2
-    assert "SKIP installed Foot flicker gate: SWAYSOCK is not available" in result.stdout
+    assert "SKIP installed Foot flicker gate: no installed Wayfire IPC session" in result.stdout
 
 
 def test_discoverable_gate_reports_missing_installed_artifact_as_a_skip(tmp_path):

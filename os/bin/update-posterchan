@@ -7,7 +7,7 @@
 # at by the start menu.
 #
 # WHAT IT UPDATES, and why it is two packages. `posterchan-desktop` is the app — an AppImage from the
-# release, extracted into /opt/posterchan. `posterchanos-shell` is the SESSION: sway's config, the
+# release, extracted into /opt/posterchan. `posterchanos-shell` is the SESSION: wayfire's config, the
 # pc-* helpers, the Plymouth theme. They ship separately and are versioned separately, and updating
 # one alone leaves the desktop and the app that draws it out of step — a key binding that sends a
 # tick nothing listens for, or a helper the app expects and does not find.
@@ -261,7 +261,7 @@ else
 	mkdir -p /opt
 	if [ -d /opt/posterchan ]; then mv /opt/posterchan "$OLD" || exit 1; fi
 	if ! mv "$NEW" /opt/posterchan; then
-		# Put it back. A machine with no /opt/posterchan boots sway with nothing in it.
+		# Put it back. A machine with no /opt/posterchan boots a compositor with nothing in it.
 		[ -d "$OLD" ] && mv "$OLD" /opt/posterchan
 		echo "${RED}Could not install it — the previous desktop was put back.${OFF}"
 		exit 1
@@ -291,7 +291,7 @@ fi
 echo
 echo "${YEL}The new desktop starts at your next login.${OFF}"
 echo "${YEL}To pick it up now (this closes your windows):${OFF}"
-echo "    swaymsg exec 'sh -c \"pkill -f posterchan[-]desktop; sleep 3; exec /usr/local/bin/pc-shell-start\"'"
+echo "    /usr/local/bin/pc-shell-restart"
 
 # /etc/sway/config IS PORTAGE'S. An etc-update replaces a hand-edited one with the shipped version —
 # intended for a shipped session, and exactly what silently reverted the key bindings during

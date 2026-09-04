@@ -1,7 +1,17 @@
 #!/bin/sh
-# PosterChanOS compositor selector. Sway remains the proven default because the desktop's native
-# window bridge currently speaks Sway IPC. Wayfire can be selected for staged testing without
-# removing the known-good session: write "wayfire" to ~/.config/posterchanos/compositor.
+# PosterChanOS session: Wayfire, and only Wayfire.
+#
+# This was a SELECTOR while the desktop's native-window bridge only spoke Sway IPC, and it fell back
+# to Sway whenever Wayfire looked unwell. Both halves are gone. The bridge speaks Wayfire, and the
+# fallback was doing far more harm than good: three separate bugs (a health probe that guessed which
+# monitor held the primary shell marker, a restart that killed the shell but not its launcher, and a
+# 3-second replacement window against a 40-second launcher startup) made it fire on a desktop that
+# was drawing perfectly, so the machine kept silently coming up on the OTHER compositor.
+#
+# THE RECOVERY IS A TEXT CONSOLE, NOT A SECOND COMPOSITOR. If Wayfire genuinely cannot run there is
+# nothing a second wlroots compositor would do differently, and a login that quietly changes what
+# desktop you are using is worse than one that says what went wrong. After a bounded retry this
+# leaves an interactive shell on the VT with the reason and the log path on screen.
 set -u
 
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/posterchanos"
@@ -9,13 +19,16 @@ config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/posterchanos"
 selection_file="$config_dir/compositor"
 mkdir -p "$state_dir"
 
+# The selector file is still READ so an existing machine that has one is not surprised, but the
+# only value that means anything now is `wayfire`; anything else (including a stale `sway`) is that
+# file being out of date rather than a request this session can honour.
 selected="${PC_COMPOSITOR:-}"
 if [ -z "$selected" ] && [ -r "$selection_file" ]; then
 	IFS= read -r selected <"$selection_file"
 fi
 case "$selected" in
-	wayfire|sway) ;;
-	*) selected=sway ;;
+	sway) note_stale=1 ;;
+	*) note_stale='' ;;
 esac
 
 # EVERY LINE IN THIS LOG SAID THE SAME THING AND NONE OF THEM SAID WHEN.
@@ -28,13 +41,25 @@ note() {
 	printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')" "$*" >>"$state_dir/compositor-fallback.log"
 }
 
-run_sway() {
-	export XDG_CURRENT_DESKTOP=sway
-	export XDG_SESSION_DESKTOP=sway
-	exec sway >"$state_dir/sway.log" 2>&1
+# NO DESKTOP IS A STATE THE MACHINE HAS TO BE USABLE IN. `exec`ing bash here rather than exiting is
+# deliberate: this script was itself exec'd from ~/.bash_profile, so exiting ends the login, agetty
+# respawns it, and a Wayfire that fails every time becomes a login loop nobody can type into. A
+# NON-login shell does not re-read .bash_profile, so it cannot recurse.
+rescue() {
+	printf '\n%s\n' "PosterChanOS: the Wayfire session could not start."
+	printf '%s\n' "  reason: $*"
+	printf '%s\n' "  log:    $state_dir/wayfire.log"
+	printf '%s\n' "  shell:  $HOME/.config/posterchan-desktop/shell.log"
+	printf '%s\n\n' "Fix it here, then run: exec /usr/local/bin/pc-compositor-session"
+	note "no desktop: $*"
+	# Absolute by default -- a rescue must not depend on PATH being sane -- but overridable so a
+	# test can run this path without handing itself an interactive shell.
+	exec "${PC_RESCUE_SHELL:-/bin/bash}" -i
 }
 
-if [ "$selected" = wayfire ]; then
+[ -z "${note_stale:-}" ] || note "compositor selector still says 'sway'; Wayfire is the only session now."
+
+if true; then
 	# QEMU's non-GL virtio-vga exposes a DRM card but no accelerated VirGL context. Chromium's
 	# compositor aborts (SIGTRAP) when it tries that unusable render node. Keep physical GPUs and
 	# VirGL-capable guests accelerated; only the virtio device with no render-node capability uses
@@ -46,13 +71,13 @@ if [ "$selected" = wayfire ]; then
 		export PC_SHELL_EXTRA_ARGS
 	fi
 	health=${PC_WAYFIRE_HEALTH:-/usr/local/bin/pc-wayfire-health}
-	# Refuse the compositor switch while the installed Electron package is still Sway-only.  This
-	# runs before DRM ownership changes, so an overlay/Desktop publication race cannot black-screen
-	# the session and rely on the later watchdog to put it back.
+	# Refuse to take the DRM device unless the installed Electron package actually carries a Wayfire
+	# backend.  This runs BEFORE DRM ownership changes, so an overlay/Desktop publication race ends
+	# at a console that says why rather than at a black screen nothing can recover from.
 	if ! command -v wayfire >/dev/null 2>&1 || ! wayfire --version >/dev/null 2>&1; then
-		note "Wayfire was selected but its executable/ABI is unavailable; falling back to Sway."
+		rescue "the wayfire executable is missing or will not run (wayfire --version failed)"
 	elif [ ! -x "$health" ] || ! "$health" bundle >>"$state_dir/compositor-fallback.log" 2>&1; then
-		note "Wayfire was selected but the installed desktop is not Wayfire-ready; falling back to Sway."
+		rescue "the installed PosterChan desktop package has no Wayfire backend"
 	else
 		export XDG_CURRENT_DESKTOP=wayfire
 		export XDG_SESSION_DESKTOP=wayfire
@@ -88,14 +113,15 @@ if [ "$selected" = wayfire ]; then
 				fi
 				# HOW LONG TO WAIT FOR A REPLACEMENT IS TWO DIFFERENT QUESTIONS.
 				#
-				# A crash should fall back fast; the desktop is gone and Sway is the way back. A
-				# DELIBERATE restart must not fall back at all -- and it cannot answer inside 3
+				# A crash should be answered fast; the desktop is gone and a console is the way
+				# back. A DELIBERATE restart must not be answered at all -- and it cannot answer
+				# inside 3
 				# seconds, because the launcher waits up to 10s for the Xwayland socket and then up
 				# to 30s on its surface/GPU health gate before the replacement is even judged. Those
 				# two numbers were set independently and never compared, so Ctrl+Alt+Backspace and
-				# the automatic post-update restart reliably killed Wayfire and demoted the login to
-				# Sway -- the desktop came back on the other compositor, with only a line in
-				# compositor-fallback.log to say so. pc-shell-restart leaves a marker; while it is
+				# the automatic post-update restart reliably killed Wayfire and ended the login at a
+				# rescue console, with only a line in compositor-fallback.log to say so.
+				# pc-shell-restart leaves a marker; while it is
 				# FRESH this waits for the launcher's own worst case, and a restart that dies
 				# without clearing it ages out into the ordinary crash behaviour.
 				old_pid=$shell_pid n=0 shell_pid=''
@@ -130,9 +156,10 @@ if [ "$selected" = wayfire ]; then
 			IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
 			case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
 		fi
-		# Wayfire may exit before Electron notices its display socket disappeared. Starting Sway while
-		# that recorded shell is still alive makes pc-shell-start reject itself as a duplicate; the
-		# stale process then exits and leaves Sway with no desktop. Reap this session's exact PID first.
+		# Wayfire may exit before Electron notices its display socket disappeared. A next login that
+		# starts while that recorded shell is still alive makes the launcher reject itself as a
+		# duplicate; the stale process then exits and leaves the new session with no desktop. Reap
+		# this session's exact PID first.
 		if [ -n "${shell_pid:-}" ] && kill -0 "$shell_pid" 2>/dev/null; then
 			kill -TERM "$shell_pid" 2>/dev/null || true
 			n=0
@@ -140,8 +167,8 @@ if [ "$selected" = wayfire ]; then
 			kill -0 "$shell_pid" 2>/dev/null && kill -KILL "$shell_pid" 2>/dev/null || true
 		fi
 		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
-		note "Wayfire exited with status $status after $reason; falling back to Sway for this login."
+		note "Wayfire exited with status $status after $reason."
 	fi
 fi
 
-run_sway
+rescue "Wayfire exited with status ${status:-unknown} after ${reason:-startup}"

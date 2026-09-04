@@ -19,7 +19,7 @@ Verified healthy on a working desktop: focusing each output in turn moved `hasFo
 and away from the other, every time.
 
     # on the desktop, arm it (it is off by default, and should stay off):
-    PC_SHELL_EXTRA_ARGS=--remote-debugging-port=9222 pc-shell-start
+    PC_SHELL_EXTRA_ARGS=--remote-debugging-port=9222 pc-shell-start-wayfire
     # from anywhere with a route to it:
     ssh -N -L 19222:127.0.0.1:9222 <desktop>
     python3 scripts/probe_shell.py --endpoint http://127.0.0.1:19222

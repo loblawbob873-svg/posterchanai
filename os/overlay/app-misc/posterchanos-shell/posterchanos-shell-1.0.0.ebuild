@@ -21,11 +21,12 @@ IUSE="monero gamescope"
 RDEPEND="
 	app-misc/posterchan-desktop
 	dev-vcs/ngit
-	gui-wm/sway
 	gui-wm/wayfire
 	gui-libs/wayfire-plugins-extra
 	gamescope? ( gui-wm/gamescope )
 	gui-apps/swayidle
+	gui-apps/mako
+	x11-libs/libnotify
 	gui-apps/foot
 	gui-apps/grim
 	gui-apps/wlr-randr
@@ -45,7 +46,7 @@ src_install() {
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
 	insinto /usr/lib/systemd/user
@@ -67,24 +68,27 @@ src_install() {
 	fperms 0440 /etc/sudoers.d/posterchan-provision
 	fperms 0440 /etc/sudoers.d/posterchan-session-switch
 
-	insinto /etc/sway
-	# Sway reads /etc/sway/config. `doins sway.config` preserves the source filename and silently
-	# creates /etc/sway/sway.config instead, leaving the compositor on the distro's old config.
-	newins "${FILESDIR}/sway.config" config
-	# Wayfire is staged beside, never over, the proven Sway session. The selector defaults and falls
-	# back to Sway, so installing this config cannot make an existing machine unbootable.
+	# The session config. Portage owns /etc/wayfire.ini, so an `etc-update --automode -5` replaces a
+	# hand-edited one with ours. That is the intended behaviour for a shipped session — and it is
+	# exactly what silently reverted the config during development, so it is worth stating rather
+	# than rediscovering.
 	insinto /etc
 	doins "${FILESDIR}/wayfire.ini"
-	# Portage owns /etc/sway/config, so an `etc-update --automode -5` replaces a hand-edited one
-	# with ours. That is the intended behaviour for a shipped session — and it is exactly what
-	# silently reverted the config during development, so it is worth stating rather than
-	# rediscovering.
+
+	# The notification popup's appearance. mako reads ~/.config/mako/config first, so an account can
+	# still override it; this is the desktop's default and it matches the compositor decoration.
+	insinto /etc/xdg/mako
+	newins "${FILESDIR}/mako.config" config
 
 	insinto /usr/share/plymouth/themes/posterchanos
 	doins "${FILESDIR}"/plymouth/*
 
+	# NAMED FOR NO DESKTOP, because it applies to the only one there is. xdg-desktop-portal matches
+	# `<XDG_CURRENT_DESKTOP>-portals.conf` first, so the old `sway-portals.conf` selected nothing on a
+	# session announcing `wayfire`: the ScreenCast backend went unset and OBS listed nothing to
+	# capture. `portals.conf` is the unqualified fallback the portal always reads.
 	insinto /etc/xdg/xdg-desktop-portal
-	doins "${FILESDIR}/sway-portals.conf"
+	newins "${FILESDIR}/portals.conf" portals.conf
 }
 
 pkg_postinst() {
@@ -113,157 +117,22 @@ pkg_postinst() {
 	BINREPO
 	sed -i '/^[[:space:]]*GENTOO_MIRRORS=/d' "${makeconf}"
 	echo 'GENTOO_MIRRORS="https://gentoo.poster.place"' >>"${makeconf}"
-	# Identity accounts receive a private Sway config when they are provisioned. Keep the recovery
-	# binding available to accounts created by an older image without replacing any personal Sway
-	# customizations they may have made since. The live IPC binding is installed by the updater;
-	# this copy is what makes it survive the next login.
+	# THE PER-ACCOUNT SWAY CONFIGS ARE RETIRED, NOT MIGRATED.
+	#
+	# ~150 lines here used to reach into every identity's private `~/.config/sway/config` and rewrite
+	# package-owned bindings inside it on each upgrade -- because provisioning gave each account its
+	# own copy of the compositor config rather than a reference to one. Wayfire is the only session
+	# now, its config is a single package-owned `/etc/wayfire.ini`, and pc-session-switch no longer
+	# writes a per-account compositor config at all, so there is nothing left to keep in step.
+	#
+	# What remains is cleanup: leaving `~/.config/sway/` behind means a directory that looks like
+	# live configuration, and an `outputs.conf` that looks like somebody's saved monitor layout while
+	# nothing reads it. Moved rather than deleted -- it is the user's file, and an upgrade should not
+	# be the thing that destroys one.
 	local cfg
-	for cfg in "${EROOT%/}/home/posterchan/.config/sway/config" "${EROOT%/}"/home/pc-*/.config/sway/config; do
-		[[ -f ${cfg} ]] || continue
-		local cfg_backup="${cfg}.posterchan-pre-update"
-		cp -p "${cfg}" "${cfg_backup}"
-		# These are package-owned bindings inside an otherwise user-owned file. Remove every older
-		# form first; merely checking for the keycode retained a stale command forever.
-		sed -i -E '/Ctrl\+Mod1\+(BackSpace|22).*pc-shell-(start|restart)/d' "${cfg}"
-		# Old migrations appended the two labels below on every upgrade even though their bindings
-		# were replaced. Besides growing the config without bound, that made a private config drift
-		# farther from the package-owned source on every release. They are package comments, not user
-		# settings, so remove all copies before writing the single current recovery block below.
-		sed -i -E \
-			'/^# Screenshots work even while the desktop renderer is restarting\.$/d; /^# Restart only the PosterChan desktop shell; native applications remain open\.$/d' \
-			"${cfg}"
-		# Super+Return also fires the bare-Super release binding on some Sway/XKB paths, opening
-		# Start over the terminal. Alt+Return is the shipped shortcut now; repair private configs
-		# created by an older image so an update changes the key people actually use.
-		sed -i -E 's#bindsym \$mod\+Return exec swaymsg -t send_tick pc:terminal#bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal#' "${cfg}"
-		sed -i 's#bindsym --release --no-repeat \$mod exec swaymsg -t send_tick pc:start#bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start#' "${cfg}"
-		# Older PosterChan frames supplied their own HTML title bars, so those images deliberately
-		# disabled Sway's floating decoration. Native applications are compositor-owned now; retaining
-		# that copied setting leaves Firefox, Telegram and terminals with no title bar or resize border.
-		# This is a package default migration, while any other per-user Sway changes remain untouched.
-		sed -i -E 's/^default_floating_border[[:space:]]+none([[:space:]]*)$/default_floating_border normal 3\1/' "${cfg}"
-		# Do not rely only on the catch-all rule for the two native applications users interact with
-		# most. Old private configs may predate it or override it later; these last matching rules
-		# guarantee a compositor frame and a floating container, which are the prerequisites for
-		# dragging and pc-window-snap.
-		for native_rule in \
-			'for_window [app_id="firefox"] floating enable, border normal 3' \
-			'for_window [class="(?i)^firefox$"] floating enable, border normal 3' \
-			'for_window [app_id="org.telegram.desktop"] floating enable, border normal 3' \
-			'for_window [class="(?i)^(TelegramDesktop|telegram-desktop)$"] floating enable, border normal 3'; do
-			grep -qF "${native_rule}" "${cfg}" || echo "${native_rule}" >>"${cfg}"
-		done
-		# Private identity configs are copied from the image and do not inherit later changes to the
-		# system config. Install the same compact PosterChan chrome here so native Firefox/Telegram
-		# do not fall back to Sway's blue title bar after an update.
-		for chrome_rule in \
-			'font pango:Sans 11' \
-			'titlebar_border_thickness 0' \
-			'titlebar_padding 8 6' \
-			'client.focused #241438 #241438 #f7f4ff #16d9e3 #16d9e3' \
-			'client.focused_inactive #171222 #171222 #bcb3cb #4b3a65 #4b3a65' \
-			'client.unfocused #100d18 #100d18 #8f879c #30263f #30263f' \
-			'client.urgent #7a2145 #7a2145 #ffffff #ff4f8b #ff4f8b'; do
-			grep -qF "${chrome_rule}" "${cfg}" || echo "${chrome_rule}" >>"${cfg}"
-		done
-		# Super+Arrow is the familiar snap gesture. Older configs used it only to move keyboard focus
-		# between outputs, leaving native Firefox/Telegram/Steam with no snapping at all.
-		sed -i -E '/^bindsym[[:space:]]+\$mod\+(Left|Right|Up|Down)[[:space:]]+focus output/d' "${cfg}"
-		# Canonicalise, do not merely append. Historical package configs used extra whitespace, so an
-		# exact grep missed Left/Up and appended the same key a second time. Sway accepts that but emits
-		# an "Overwriting binding" config error on every reload.
-		sed -i -E '/^bindsym[[:space:]]+\$mod\+(Left|Right|Up)[[:space:]]+exec[[:space:]]+\/usr\/local\/bin\/pc-window-snap[[:space:]]+(left|right|max)[[:space:]]*$/d' "${cfg}"
-		for snap in \
-			'bindsym $mod+Left exec /usr/local/bin/pc-window-snap left' \
-			'bindsym $mod+Right exec /usr/local/bin/pc-window-snap right' \
-			'bindsym $mod+Up exec /usr/local/bin/pc-window-snap max'; do
-			echo "${snap}" >>"${cfg}"
-		done
-		# Never move a per-output PosterChan shell container itself. Older direct bindings bypassed
-		# the renderer handoff and left the source display black. Native apps still move directly;
-		# a focused shell routes the selected in-app window through its state-preserving handoff.
-		sed -i -E '/^bindsym[[:space:]]+\$mod\+Shift\+(Left|Right|Up|Down)[[:space:]]+(move container|exec \/usr\/local\/bin\/pc-window-snap move-)/d' "${cfg}"
-		for move_binding in \
-			'bindsym $mod+Shift+Left exec /usr/local/bin/pc-window-snap move-left' \
-			'bindsym $mod+Shift+Right exec /usr/local/bin/pc-window-snap move-right' \
-			'bindsym $mod+Shift+Up exec /usr/local/bin/pc-window-snap move-up' \
-			'bindsym $mod+Shift+Down exec /usr/local/bin/pc-window-snap move-down'; do
-			echo "${move_binding}" >>"${cfg}"
-		done
-		# Options such as --no-repeat sit between `bindsym` and the key. The old expression did not
-		# allow that, so every package update appended another identical PrintScreen binding and Sway
-		# reported the private config as erroneous. Delete every historical form before adding one.
-		sed -i -E '/bindsym .*?(Print|Ctrl\+Shift\+s|Shift\+Print).*pc:(shot|screenshot)/d' "${cfg}"
-		sed -i -E '/bindsym .*?(Print|Ctrl\+Shift\+s|Shift\+Print).*pc-screenshot/d' "${cfg}"
-		if ! grep -q 'Super_L exec swaymsg -t send_tick pc:start' "${cfg}"; then
-			echo 'bindsym --release --no-repeat Super_L exec swaymsg -t send_tick pc:start' >>"${cfg}"
-		fi
-		# Identity configs are copies, not includes of /etc/sway/config. Accounts made before Display
-		# Settings therefore never read the file the UI successfully saved, and every reboot reverted
-		# the monitor layout. Add the two new compositor hooks once without replacing custom config.
-		grep -qF 'include ~/.config/sway/outputs.conf' "${cfg}" || \
-			echo 'include ~/.config/sway/outputs.conf' >>"${cfg}"
-		grep -qE '^floating_modifier[[:space:]]+\$mod[[:space:]]+normal' "${cfg}" || \
-			echo 'floating_modifier $mod normal' >>"${cfg}"
-		grep -qF 'Mod1+Tab exec /usr/local/bin/pc-window-cycle next' "${cfg}" || \
-			echo 'bindsym --no-repeat Mod1+Tab exec /usr/local/bin/pc-window-cycle next' >>"${cfg}"
-		grep -qF 'Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous' "${cfg}" || \
-			echo 'bindsym --no-repeat Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous' >>"${cfg}"
-		# CLOSE CHORDS: TAKE THE BARE `kill` BACK OUT. An existing config carries
-		# `bindsym $mod+q kill` / `bindsym Mod1+F4 kill`, and this block used to ADD the
-		# second one to any config that lacked it. sway's `kill` closes the focused
-		# CONTAINER, which is the single shell surface hosting every PosterChan window
-		# whenever the desktop has focus -- so Alt+F4 destroyed the whole desktop rather
-		# than the window it was aimed at, and an upgrade installed that on machines that
-		# had escaped it. Delete both spellings, then bind the helper that asks what is
-		# focused first. Matching only a trailing bare `kill` leaves a hand-written
-		# binding that runs anything else alone.
-		sed -i -E '/^bindsym[[:space:]]+(\$mod\+q|Mod1\+F4)[[:space:]]+kill[[:space:]]*$/d' "${cfg}"
-		sed -i -E '/^bindsym[[:space:]]+(\$mod\+(q|1)|Mod1\+F4)[[:space:]]+exec[[:space:]]+\/usr\/local\/bin\/pc-window-close([[:space:]]*,.*)?[[:space:]]*$/d' "${cfg}"
-		for line in \
-			'bindsym $mod+q exec /usr/local/bin/pc-window-close' \
-			'bindsym $mod+1 exec /usr/local/bin/pc-window-close' \
-			'bindsym Mod1+F4 exec /usr/local/bin/pc-window-close'; do
-			echo "${line}" >>"${cfg}"
-		done
-		# $mod+Down was never bound on any existing account: three arrows worked and the
-		# fourth was silent.
-		sed -i -E '/^bindsym[[:space:]]+\$mod\+Down[[:space:]]+exec[[:space:]]+\/usr\/local\/bin\/pc-window-snap[[:space:]]+minimise[[:space:]]*$/d' "${cfg}"
-		echo 'bindsym $mod+Down exec /usr/local/bin/pc-window-snap minimise' >>"${cfg}"
-		sed -i -E '/bindsym .*button1 exec \/usr\/local\/bin\/pc-window-snap edge/d' "${cfg}"
-		echo 'bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge' >>"${cfg}"
-		cat >>"${cfg}" <<-'SWAY_RECOVERY'
-
-		# Screenshots work even while the desktop renderer is restarting.
-		bindsym --no-repeat Print exec /usr/local/bin/pc-screenshot region
-		bindsym --no-repeat Ctrl+Shift+s exec /usr/local/bin/pc-screenshot region
-		bindsym --no-repeat Shift+Print exec /usr/local/bin/pc-screenshot screen
-
-		# Restart only the PosterChan desktop shell; native applications remain open.
-		bindcode --no-repeat Ctrl+Mod1+22 exec /usr/local/bin/pc-shell-restart
-		SWAY_RECOVERY
-		# `sway -C` alone exits zero for duplicate keys. Debug output is part of the gate because Sway
-		# reports those as "Overwriting binding" and shows a config-error banner at reload.
-		local sway_runtime sway_check
-		sway_runtime="$(mktemp -d)"
-		chmod 0700 "${sway_runtime}"
-		sway_check="${sway_runtime}/check.log"
-		if ! XDG_RUNTIME_DIR="${sway_runtime}" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
-			sway -C -d -c "${cfg}" >"${sway_check}" 2>&1 \
-			|| grep -q 'Overwriting binding' "${sway_check}"; then
-			cp -p "${cfg_backup}" "${cfg}"
-			rm -rf "${sway_runtime}" "${cfg_backup}"
-			ewarn "refused an invalid migrated Sway config; preserved ${cfg}"
-			continue
-		fi
-		rm -rf "${sway_runtime}" "${cfg_backup}"
-		# The system config includes this per-account file. It must exist before Sway parses the
-		# config; saving a display arrangement later fills it atomically.
-		local outputs="${cfg%/config}/outputs.conf"
-		if [[ ! -e ${outputs} ]]; then
-			install -m 0600 -o "$(stat -c %u "${cfg}")" -g "$(stat -c %g "${cfg}")" \
-				/dev/null "${outputs}"
-		fi
+	for cfg in "${EROOT%/}/home/posterchan/.config/sway" "${EROOT%/}"/home/pc-*/.config/sway; do
+		[[ -d ${cfg} ]] || continue
+		mv -T "${cfg}" "${cfg}.retired-sway" 2>/dev/null || true
 	done
 	# Older renderer-driven bindings could auto-repeat and leave several slurp selection overlays
 	# dimming native applications. The new helper is locked and non-repeating; clear only those stale

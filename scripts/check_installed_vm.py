@@ -12,8 +12,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wayfire_ipc as wf  # noqa: E402
 
 try:  # package import under pytest / repo tooling
     from scripts.check_livecd_vm import frame_is_graphical
@@ -31,7 +35,7 @@ def session_environment():
     for line in got.stdout.splitlines():
         if "=" in line:
             key, value = line.split("=", 1)
-            if key in {"DISPLAY", "WAYLAND_DISPLAY", "SWAYSOCK", "XDG_RUNTIME_DIR",
+            if key in {"DISPLAY", "WAYLAND_DISPLAY", "WAYFIRE_SOCKET", "XDG_RUNTIME_DIR",
                        "DBUS_SESSION_BUS_ADDRESS"}:
                 env[key] = value
     return env
@@ -61,13 +65,18 @@ def wait_state(binary, asar, name, wanted, env, seconds=120):
 
 
 def is_viewer_surface(node, name):
-    """Match virt-viewer on both native Wayland and its supported XWayland fallback."""
+    """Match virt-viewer on both native Wayland and its supported XWayland fallback.
+
+    Reads BOTH shapes on purpose: Wayfire answers `app-id`/`title`/`geometry`, Sway answered
+    `app_id`/`name`/`rect` inside `window_properties`. The gate's own fakes are written in the Sway
+    shape and the tests that drive them are the reason this stayed readable.
+    """
     props = node.get("window_properties") or {}
     identity = " ".join(str(value or "") for value in (
-        node.get("app_id"), props.get("class"), props.get("instance")
+        node.get("app-id"), node.get("app_id"), props.get("class"), props.get("instance")
     )).casefold()
-    title = str(node.get("name") or props.get("title") or "").casefold()
-    rect = node.get("rect") or {}
+    title = str(node.get("title") or node.get("name") or props.get("title") or "").casefold()
+    rect = node.get("geometry") or node.get("rect") or {}
     return ("virt-viewer" in identity and name.casefold() in title
             and rect.get("width", 0) >= 640 and rect.get("height", 0) >= 400)
 
@@ -80,7 +89,7 @@ def viewer_frame_is_graphical(node, env, runner=command):
     firmware/guest draws; treating mapping as a successful boot made both halves of this gate pass
     against a permanently black guest.
     """
-    rect = node.get("rect") or {}
+    rect = node.get("geometry") or node.get("rect") or {}
     x, y = int(rect.get("x", 0)) + 8, int(rect.get("y", 0)) + 40
     width, height = int(rect.get("width", 0)) - 16, int(rect.get("height", 0)) - 48
     if width < 600 or height < 340:
@@ -97,8 +106,22 @@ def viewer_frame_is_graphical(node, env, runner=command):
             return False
 
 
+def view_listing(args=None, env=None, timeout=10):
+    """The compositor's windows, in the CompletedProcess shape `tree_runner` is injected as.
+
+    This was `swaymsg -t get_tree -r`, which on the Wayfire session exits "Unable to retrieve socket
+    path" -- so the gate could see no virt-viewer surface, ever, and reported a VM that never became
+    visible on a desktop showing it perfectly.
+    """
+    try:
+        payload = json.dumps(wf.views(wf.socket_path(env)))
+    except Exception as exc:                     # no session, or the socket went away mid-run
+        return subprocess.CompletedProcess(args or [], 1, "", str(exc))
+    return subprocess.CompletedProcess(args or [], 0, payload, "")
+
+
 def visible_viewer(name, env, seconds=60, stable_samples=6, interval=1,
-                   tree_runner=command, frame_probe=viewer_frame_is_graphical):
+                   tree_runner=view_listing, frame_probe=viewer_frame_is_graphical):
     """Require a sustained graphical guest surface, not one lucky rendered frame."""
     if stable_samples < 2:
         raise ValueError("stable_samples must be at least 2")
@@ -106,16 +129,21 @@ def visible_viewer(name, env, seconds=60, stable_samples=6, interval=1,
     graphical_seen = False
     stable = 0
     while time.monotonic() < deadline:
-        tree = tree_runner(["swaymsg", "-t", "get_tree", "-r"], env=env)
+        # WAYFIRE ANSWERS A FLAT LIST. Sway answered a tree and this walked it; the walk is kept
+        # because `tree_runner` is what the unit tests inject, and a Sway-shaped fake is still a
+        # valid description of "these windows exist".
+        listing = tree_runner([], env=env)
         viewer = None
-        if tree.returncode == 0:
-            nodes = [json.loads(tree.stdout)]
+        if listing.returncode == 0:
+            payload = json.loads(listing.stdout)
+            nodes = payload if isinstance(payload, list) else [payload]
             while nodes:
                 node = nodes.pop()
-                nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
-                if is_viewer_surface(node, name):
-                    viewer = node
-                    break
+                if isinstance(node, dict):
+                    nodes.extend(node.get("nodes", []) + node.get("floating_nodes", []))
+                    if is_viewer_surface(node, name):
+                        viewer = node
+                        break
         if viewer is not None:
             graphical = frame_probe(viewer, env)
             if graphical_seen and not graphical:
@@ -124,13 +152,13 @@ def visible_viewer(name, env, seconds=60, stable_samples=6, interval=1,
                 graphical_seen = True
                 stable += 1
                 if stable >= stable_samples:
-                    return viewer.get("rect") or {}
+                    return viewer.get("geometry") or viewer.get("rect") or {}
             else:
                 stable = 0
-        elif graphical_seen and tree.returncode == 0:
+        elif graphical_seen and listing.returncode == 0:
             raise RuntimeError("virt-viewer disappeared after graphics appeared")
         time.sleep(interval)
-    raise RuntimeError("virt-viewer never sustained a usable graphical Sway surface")
+    raise RuntimeError("virt-viewer never sustained a usable graphical compositor surface")
 
 
 def start_and_view(binary, asar, name, env):

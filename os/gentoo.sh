@@ -90,7 +90,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # and it used to find them with `$(dirname "$0")`. That is right when it is run out of a checkout and
 # WRONG the moment it is installed: at /usr/bin/gentoo.sh, dirname is /usr/bin, so it looks for
 # /usr/bin/bin and /usr/bin/plymouth, finds neither, and carries on. Nothing fails — the helpers are
-# simply not copied, and the first sign is a desktop with no pc-shell-start on the machine it just
+# simply not copied, and the first sign is a desktop with no launcher on the machine it just
 # installed.
 #
 # So the directory is resolved once, from the places the tree actually lives: beside the script, then
@@ -155,7 +155,7 @@ VIDEO_CARDS="intel amdgpu radeon radeonsi virgl"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
-SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "gui-wm/sway X" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
 SPECIAL_PACKAGE_USE+=("gui-wm/wayfire X dbus gles3" "gui-libs/wlroots x11-backend vulkan" "gui-wm/gamescope libei pipewire wsi-layer" "media-libs/mesa vulkan wayland")
 #
 # External desktop monitors expose brightness over DDC/CI rather than /sys/class/backlight.
@@ -169,7 +169,7 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # compositor owns the screen, both are ordinary clients, and PosterChan decides where they go. They
 # are "inside PosterChan" because PosterChan IS the desktop.
 #
-# sway rather than a compositor of our own: wlroots-based, mature, and it ships XWayland, which is
+# Wayfire rather than a compositor of our own: wlroots-based, floating-first, and it ships XWayland, which is
 # how Steam and most games get on screen at all. PosterChan drives it over its JSON IPC (desktop/wm.js).
 #
 # What is deliberately NOT here: plasma-meta and every kde-app, virt-manager, obs, kdenlive, vscodium,
@@ -187,7 +187,7 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # NOTHING ELSE, so with it alone there is no FileChooser interface on the bus at all. Measured: the
 # desktop app's own log carries `No such interface "org.freedesktop.portal.FileChooser"` and a
 # failure to read the portal version, which is Folder Sync's "choose a folder" having nowhere to
-# ask. `xdg-desktop-portal-gtk` is the backend that answers it — GTK, which sway's own stack pulls
+# ask. `xdg-desktop-portal-gtk` is the backend that answers it — GTK, which the desktop stack pulls
 # in regardless, and emphatically not webkit.
 #
 # PRINTING is `net-print/cups`, and the SHELL needs it rather than only the base system: Settings →
@@ -220,8 +220,17 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # where `xdg-open` and `nmcli` were both present as somebody else's dependency, which is exactly how
 # a tool goes missing on the next fresh build with nothing to say why.
 # Audited against desktop/*.js: grim slurp wl-copy wpctl nmcli systemctl xdg-open script sudo
-# swaymsg (+ brightnessctl, see above). `tests/test_posterchanos_profile.py` re-runs that audit.
-POSTERCHANOS_PACKAGES="gui-wm/sway gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/swaybg gui-apps/wlr-randr x11-base/xwayland gui-apps/foot app-misc/ddcutil \
+# wlr-randr (+ brightnessctl, see above). `tests/test_posterchanos_profile.py` re-runs that audit.
+#
+# x11-libs/libnotify and gui-apps/mako are the two halves of ONE missing feature, not a preference.
+# `pc:host:notify` is Electron's Notification API, which on Linux is libnotify talking to
+# org.freedesktop.Notifications. Neither the library nor a server was ever installed here, so
+# `Notification.isSupported()` answered false and every DM, mention and call notification this
+# desktop raised was dropped in silence -- with the settings screen reporting "granted", because it
+# only ever checked that the bridge EXISTS. mako is a layer-shell client, so its popup is stacked
+# above fullscreen applications; the shell surface is the tiled window underneath them and cannot
+# be. PosterChanUI still owns the taskbar, tray, desktop and notification centre.
+POSTERCHANOS_PACKAGES="gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/wlr-randr x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
 net-print/cups \
@@ -232,6 +241,7 @@ games-util/steam-launcher games-util/game-device-udev-rules \
 media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
+x11-libs/libnotify gui-apps/mako \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
 net-vpn/tor gui-apps/swayidle"
 # net-misc/networkmanager (nmcli, the whole network tray), app-admin/sudo, sys-apps/systemd
@@ -542,6 +552,17 @@ configurePortage() {
 	chroot $TARGET /usr/bin/emerge --sync
 
 	echo "USE=\"$USE_FLAGS\"" >>$TARGET/etc/portage/make.conf
+	# THE GRAPHICS DRIVERS, WRITTEN DOWN. $VIDEO_CARDS was declared at the top of this script and
+	# then used in exactly ONE place -- a one-shot `VIDEO_CARDS=... emerge` inside the LiveCD build
+	# -- so no installed machine ever had it. Every install took the PROFILE's list instead, which
+	# does not include `virgl`, and the next `emerge -uDN @world` reverted even the LiveCD's rebuild.
+	#
+	# virgl is the accelerated virtio-gpu path, i.e. the ONLY way Mesa renders inside a VM. Without
+	# it the compositor starts and EGL cannot draw: `virtio_gpu: driver missing` and a black screen
+	# on a machine that is working. That is precisely the case an installed-in-a-VM release gate
+	# exercises, so a driver list that only exists during an ISO build is a list that is never
+	# tested where it matters.
+	echo "VIDEO_CARDS=\"$VIDEO_CARDS\"" >>$TARGET/etc/portage/make.conf
 	# Steam and Proton are 32-bit applications even on amd64. Keep both ABIs enabled and let
 	# Portage select the matching current graphics/audio dependency set.
 	echo 'ABI_X86="64 32"' >>$TARGET/etc/portage/make.conf
@@ -559,7 +580,7 @@ configurePortage() {
 	# package list is consulted. The desktop/plasma profile turns on the KDE USE flags system-wide
 	# and pulls Plasma into @world no matter what PACKAGES says, which is how a "minimal" build was
 	# caught emerging kde-frameworks/breeze-icons. PosterChanOS takes the plain desktop profile: the
-	# desktop USE defaults (which sway, pipewire and OBS all want) without a desktop environment.
+	# desktop USE defaults (which Wayfire, pipewire and OBS all want) without a desktop environment.
 	GENTOO_PROFILE=$(chroot $TARGET /usr/bin/eselect profile list | grep -i 'desktop' | grep -vi 'plasma\|gnome\|no-multilib' | grep systemd | grep -i stable | head -1 | cut -d '[' -f2 | cut -d ']' -f1)
 	if [ -z "$GENTOO_PROFILE" ]; then
 		echo -e "\033[1;31mNo stable multilib desktop/systemd Gentoo profile was found.\033[0m"
@@ -666,7 +687,7 @@ finalizeInstall() {
 	# THE DISPLAY MANAGER IS A KDE COMPONENT AND PosterChanOS DOES NOT HAVE ONE. Enabling a unit
 	# that was never installed fails the whole finalize step — and on the profile whose entire point
 	# is that the shell IS the desktop, there is nothing for a login screen to launch. The shell
-	# session (autologin into sway, which starts PosterChan) goes in instead.
+	# session (autologin into Wayfire, which starts PosterChan) goes in instead.
 	touch $TARGET/etc/posterchanos
 	# Resolve again inside finalization: this function also runs in the target chroot as a fresh shell,
 	# so the build-stage INSTALLER_SRC variable does not cross that process boundary.
@@ -704,20 +725,21 @@ finalizeInstall() {
 	# sessions, but an installed disk must not depend on which overlay/package branch that helper
 	# took, nor on USER/HOME inherited through chroot. Write the two tiny boot-critical files against
 	# the target explicitly after the account exists, then set ownership inside that target.
-	mkdir -p "$TARGET/home/posterchan/.config/sway" \
+	mkdir -p \
 		"$TARGET/etc/systemd/system/getty@tty1.service.d"
-	[ -e "$TARGET/home/posterchan/.config/sway/outputs.conf" ] || \
-		: >"$TARGET/home/posterchan/.config/sway/outputs.conf"
+	# The layout file the Wayfire session actually reads. The old `~/.config/sway/outputs.conf` was
+	# Sway's; creating it now would only leave a file that looks like the saved layout and is not.
+	mkdir -p "$TARGET/home/posterchan/.config/posterchanos"
 	cat >"$TARGET/home/posterchan/.bash_profile" <<-'POSTERCHAN_PROFILE'
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
-	# agetty immediately starts another autologin when Sway exits. Without a guard, one fatal
-	# compositor/GPU error becomes an endless Sway/VT restart loop which virt-viewer displays as
+	# agetty immediately starts another autologin when the session exits. Without a guard, one fatal
+	# compositor/GPU error becomes an endless VT restart loop which virt-viewer displays as
 	# alternating black frames. Allow one recovery attempt, then leave a usable diagnostic shell.
 	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
-	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
+	pc_guard="$HOME/.local/state/posterchanos/compositor-boot-attempt"
 	pc_old_id= pc_attempts=0
 	[ ! -r "$pc_guard" ] || read -r pc_old_id pc_attempts <"$pc_guard"
 	[ "$pc_old_id" = "$pc_boot_id" ] || pc_attempts=0
@@ -725,7 +747,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
 	if [ "$pc_attempts" -gt 2 ]; then
 		echo 'PosterChanOS stopped a graphical-session restart loop.'
-		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
+		echo "Diagnostics: $HOME/.local/state/posterchanos/wayfire.log"
 		return 0 2>/dev/null || exit 0
 	fi
 	exec /usr/local/bin/pc-compositor-session
@@ -741,9 +763,9 @@ POSTERCHAN_PROFILE
 	# A stale or host-specific default.target fails systemd's initial isolate before autologin, leaving
 	# a black/flickering boot even though every PosterChan file below is present and correct.
 	chroot "$TARGET" /bin/systemctl set-default multi-user.target || return 1
-	# This is a brand-new account tree, so its contents all belong to the account. Chowning only the
-	# `sway` child left ~/.config itself root:root 0755; Electron then could not create its userData
-	# directory and Chromium aborted with SIGTRAP before the first desktop window mapped.
+	# This is a brand-new account tree, so its contents all belong to the account. Chowning only one
+	# child of ~/.config left ~/.config itself root:root 0755; Electron then could not create its
+	# userData directory and Chromium aborted with SIGTRAP before the first desktop window mapped.
 	chroot "$TARGET" /bin/chown -R posterchan:posterchan /home/posterchan
 	# RELEASE GATE, NOT A BEST-EFFORT CHECK. These are the exact omissions that otherwise produce a
 	# technically booted machine at a tty and a stock splash, after the installer claimed success.
@@ -831,7 +853,7 @@ installPackages() {
 	#
 	# emerge refuses the entire set if a single name cannot be resolved, and nothing here checked:
 	# buildGentoo carried straight on to finalizeInstall, the install reported success, and the
-	# machine came up with a kernel, a shell session, a portal config — and no sway, no browser, no
+	# machine came up with a kernel, a shell session, a portal config — and no compositor, no browser, no
 	# OBS. The cause was one typo, `games-util/gamescope` for `gui-wm/gamescope`, and the only trace
 	# was a line in the middle of a very long log.
 	#
@@ -1520,7 +1542,7 @@ plymouthTheme() {
 }
 
 posterchanShell() {
-	# PosterChan as the SHELL: sway starts, and the only thing it launches is the PosterChan desktop
+	# PosterChan as the SHELL: Wayfire starts, and the only thing it launches is the PosterChan desktop
 	# app, fullscreen on the background layer. Everything else the person opens — a browser, a game,
 	# a terminal — is an ordinary client that PosterChan places over its own desktop through the IPC.
 	echo -e "\033[1;33m◆ POSTERCHAN SHELL ◆\033[0m"
@@ -1533,9 +1555,7 @@ posterchanShell() {
 	id -u "$SHELL_USER" >/dev/null 2>&1 || SHELL_USER="${USER:-posterchan}"
 	_configure_shell_session() {
 		local GETTY_DIR="${TARGET}/etc/systemd/system/getty@tty1.service.d"
-		mkdir -p "$GETTY_DIR" "${TARGET}/home/$SHELL_USER/.config/sway"
-		[ -e "${TARGET}/home/$SHELL_USER/.config/sway/outputs.conf" ] || \
-			: >"${TARGET}/home/$SHELL_USER/.config/sway/outputs.conf"
+		mkdir -p "$GETTY_DIR" "${TARGET}/home/$SHELL_USER/.config/posterchanos"
 		# The desktop asks NetworkManager on its first frame. multi-user services and getty otherwise
 		# start in parallel, so a fast SSD can launch the welcome screen before nmcli has a D-Bus
 		# service and falsely report that the computer has no network hardware.
@@ -1547,7 +1567,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
 	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
-	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
+	pc_guard="$HOME/.local/state/posterchanos/compositor-boot-attempt"
 	pc_old_id= pc_attempts=0
 	[ ! -r "$pc_guard" ] || read -r pc_old_id pc_attempts <"$pc_guard"
 	[ "$pc_old_id" = "$pc_boot_id" ] || pc_attempts=0
@@ -1555,7 +1575,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
 	if [ "$pc_attempts" -gt 2 ]; then
 		echo 'PosterChanOS stopped a graphical-session restart loop.'
-		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
+		echo "Diagnostics: $HOME/.local/state/posterchanos/wayfire.log"
 		return 0 2>/dev/null || exit 0
 	fi
 	exec /usr/local/bin/pc-compositor-session
@@ -1643,223 +1663,29 @@ PROFILE
 	# that do nothing and nothing to say why — the same trap as the un-triggered udev rule above.
 	systemd-tmpfiles --create /etc/tmpfiles.d/posterchan-power.conf >/dev/null 2>&1
 
-	mkdir -p /etc/sway
-	cat >/etc/sway/config <<-'SWAY'
-	# PosterChanOS — the shell owns the screen; PosterChan decides what goes where.
-	set $mod Mod4
-
-	# The desktop itself. Not a layer-shell surface: Electron cannot make one, and a fullscreen
-	# window at the bottom of the stack is the same thing from the person's side, with the whole
-	# client working unmodified in a browser and the APK as well.
-	# STARTED BY A LAUNCHER, NOT DIRECTLY, because `for_window` cannot be relied on for this window.
-	# An X11 client sets WM_CLASS AFTER it maps, so sway evaluates criteria against a window with no
-	# class yet: every rule looks right in the file and none of them match, and the shell ends up
-	# floating at 1280x860 in the middle of the screen. Electron picks X11 unless told otherwise, and
-	# whether it is told depends on a flag surviving a wrapper and an AppRun. pc-shell-start finds
-	# the window FIRST and pins it second — the same order wm.js uses for anything it launches, and
-	# for the same reason: an app that has not appeared cannot be placed.
-	# THE SESSION'S ENVIRONMENT HAS TO REACH SYSTEMD, OR SCREEN RECORDING DOES NOT EXIST.
+	# THE SWAY CONFIGURATION IS GONE, AND SO IS SWAY.
 	#
-	# xdg-desktop-portal is a SYSTEMD USER SERVICE, D-Bus-activated. It does not inherit this
-	# session's environment — it inherits `systemd --user`'s, which is empty of it — so it starts
-	# with no XDG_CURRENT_DESKTOP and no WAYLAND_DISPLAY. It then has no desktop name to match, so
-	# `sway-portals.conf` selects nothing and `UseIn=…;sway;…` in wlr.portal matches nothing, so the
-	# wlroots backend is never loaded and the portal exposes NO ScreenCast interface at all.
+	# ~200 lines of `/etc/sway/config` used to be written here: the window rules, the key bindings,
+	# the output include and the exec that started the shell. Wayfire is the only session now
+	# (pc-compositor-session no longer has a second compositor to fall back to), and all of that has
+	# a Wayfire equivalent that is PACKAGED rather than generated -- `/etc/wayfire.ini`, from the
+	# shell package's FILESDIR, with a copy-from-source fallback below for a direct installer run.
 	#
-	# Measured, exactly that way: `org.freedesktop.DBus.Error.InvalidArgs: No such interface
-	# "org.freedesktop.portal.ScreenCast"`, on a machine with xdg-desktop-portal-wlr installed,
-	# pipewire running, a correct portals.conf and OBS 32 ready to go. OBS shows a screen-capture
-	# source that can list nothing, which reads as an OBS problem and is not one. The desktop app's
-	# own file dialog fails the same way, for the same reason, in the same breath — "No such
-	# interface org.freedesktop.portal.FileChooser" is in the shell's log.
+	# Keeping it "just in case" was not free: it was a second source of truth for every binding, it
+	# named helpers by paths this installer also had to keep in step, and a machine that fell back to
+	# it silently changed which desktop the person was using.
+
+	# THE FILE NAME IS MATCHED AGAINST XDG_CURRENT_DESKTOP, and ours stopped being "sway".
 	#
-	# BOTH lines, and they are not the same line twice: `import-environment` fills in systemd's user
-	# manager (which is what starts the portal), `dbus-update-activation-environment` fills in the
-	# D-Bus activation environment (which is what starts anything D-Bus launches directly). A
-	# session with one and not the other works for half the things that need it.
-	#
-	# FIRST in this file, before anything that could activate a portal — the shell below opens a
-	# file dialog and asks about screen capture, and a portal started with the wrong environment
-	# keeps it for the life of the session.
-	exec_always --no-startup-id systemctl --user import-environment WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE SWAYSOCK
-	exec_always --no-startup-id dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE SWAYSOCK
-	# …and a portal that was already up holds the OLD environment, so it is restarted rather than
-	# left to answer "no such capture" for the rest of the session. Failure is ignored on purpose:
-	# on a machine where these units are not installed there is nothing to restart and nothing wrong.
-	exec_always --no-startup-id systemctl --user try-restart xdg-desktop-portal xdg-desktop-portal-wlr
-
-	# THE DISPLAY TURNS ITSELF OFF. Two minutes by default, and `pc-idle set <seconds>` changes it
-	# (0 = never) -- read from a file rather than compiled into this config, which portage owns and
-	# etc-update replaces on upgrade.
-	exec_always --no-startup-id /usr/local/bin/pc-idle
-	exec_always --no-startup-id /usr/local/bin/pc-shell-start
-
-	# Windows are PLACED by PosterChan over its IPC, so the compositor must not lay them out itself.
-	# A tiled window ignores position and size — the desktop would move things and nothing would
-	# happen, silently.
-	# EVERYTHING FLOATS ABOVE THE SHELL, AND THE SHELL DOES NOT.
-	#
-	# Without these rules every app TILES — and tiling against a window that is fullscreen gives the
-	# newcomer zero space: Firefox launches, appears in the tree, and is 0x0. Nothing on screen, no
-	# error, a browser that "does not run".
-	#
-	# The exclusion is done by floating everything and then un-floating the shell, rather than by a
-	# negative lookahead, which sway's pcre2 criteria will not compile. It is ordered: later rules
-	# win. This failed once before, when the shell arrived through XWayland and set WM_CLASS AFTER
-	# mapping — the rules were evaluated against a window with no class and none matched. It comes up
-	# as a native Wayland client now (ELECTRON_OZONE_PLATFORM_HINT in the wrapper), so `app_id` is
-	# there at map time; the class line stays as the belt to that braces, and pc-shell-start forcing
-	# fullscreen is the third.
-	for_window [app_id=".*"] floating enable
-	for_window [class=".*"] floating enable
-	for_window [app_id="posterchan-desktop"] floating disable, border none
-	for_window [app_id="PosterChan"] floating disable, border none
-	for_window [class="posterchan-desktop"] floating disable, border none
-
-	# A floating window with no geometry of its own gets something usable rather than whatever the
-	# client asked for, which for a browser is often a 200x200 stub until it finishes starting.
-	for_window [app_id="firefox"] floating enable, border normal 3, resize set 1400 900, move position center
-	for_window [class="(?i)^firefox$"] floating enable, border normal 3, resize set 1400 900, move position center
-	for_window [app_id="org.telegram.desktop"] floating enable, border normal 3
-	for_window [class="(?i)^(TelegramDesktop|telegram-desktop)$"] floating enable, border normal 3
-
-	# Real applications keep compositor title bars and borders. Their visible frame and input surface
-	# are therefore one object across resizing, maximising and monitor handoff.
-	default_border none
-	default_floating_border normal 3
-	font pango:Sans 11
-	titlebar_border_thickness 0
-	titlebar_padding 8 6
-	client.focused          #241438 #241438 #f7f4ff #16d9e3 #16d9e3
-	client.focused_inactive #171222 #171222 #bcb3cb #4b3a65 #4b3a65
-	client.unfocused        #100d18 #100d18 #8f879c #30263f #30263f
-	client.urgent           #7a2145 #7a2145 #ffffff #ff4f8b #ff4f8b
-	gaps inner 0
-	gaps outer 0
-
-	# Nothing draws over the desktop uninvited — no compositor wallpaper, no status bar. PosterChan
-	# is the wallpaper and the taskbar.
-	output * bg #000000 solid_color
-	# Per-machine monitor arrangement written atomically by System Settings → Displays.
-	include ~/.config/sway/outputs.conf
-	# Hold Super and drag anywhere in a native app, including across monitor boundaries.
-	floating_modifier $mod normal
-
-	# Application switching is compositor-owned, so it keeps working while a native app has focus or
-	# the desktop renderer is recovering.
-	bindsym --no-repeat Mod1+Tab exec /usr/local/bin/pc-window-cycle next
-	bindsym --no-repeat Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous
-
-	# The one binding that is not PosterChan's to take: a way out when the shell is not running.
-	# THE LAPTOP'S OWN KEYS. A desktop that ignores the volume and brightness keys on the keyboard
-	# in front of you is not one — and these have to obey the same limits as the on-screen controls,
-	# which is why they go through pc-key rather than calling wpctl with different numbers.
-	#
-	# --locked so they work with the screen locked (volume and brightness are not secrets), and
-	# --no-repeat is deliberately NOT set: holding a key should ramp.
-	bindsym --locked XF86AudioRaiseVolume  exec /usr/local/bin/pc-key volume-up
-	bindsym --locked XF86AudioLowerVolume  exec /usr/local/bin/pc-key volume-down
-	bindsym --locked XF86AudioMute         exec /usr/local/bin/pc-key mute
-	bindsym --locked XF86AudioMicMute      exec /usr/local/bin/pc-key mic-mute
-	bindsym --locked XF86MonBrightnessUp   exec /usr/local/bin/pc-key brightness-up
-	bindsym --locked XF86MonBrightnessDown exec /usr/local/bin/pc-key brightness-down
-
-	# Playback keys go to the PAGE, not to a system tool: what is playing is the client's music
-	# library, which no external player can see — the tracks are encrypted blobs only it can
-	# decrypt. pc-key reaches it over MPRIS with `busctl`, which systemd already ships, rather than
-	# pulling in playerctl to do the same thing.
-	bindsym --locked XF86AudioPlay exec /usr/local/bin/pc-key play-pause
-	bindsym --locked XF86AudioNext exec /usr/local/bin/pc-key next
-	bindsym --locked XF86AudioPrev exec /usr/local/bin/pc-key previous
-
-	bindsym $mod+Shift+e exec swaynag -t warning -m 'Exit PosterChanOS?' -B 'Yes' 'swaymsg exit', exec /usr/local/bin/pc-super used
-	# THE SAME TWO BINDINGS THE SHELL PACKAGE SHIPS. They drifted: this file still opened `foot` on
-	# Alt+Return long after the overlay's copy had been changed to raise PosterChan's own terminal,
-	# so a machine installed from the ISO got the old behaviour and one updated through the package
-	# got the new one -- reported as "win + enter not loading PosterChan terminal on PosterChanOS",
-	# on an install where the fix had been made and shipped to the other copy.
-	bindsym Mod1+Return exec swaymsg -t send_tick pc:terminal
-	bindsym Ctrl+Mod1+Delete exec swaymsg -t send_tick pc:tasks
-	bindsym $mod+Shift+Return exec foot, exec /usr/local/bin/pc-super used
-
-	# ── MORE THAN ONE SCREEN ───────────────────────────────────────────────────────────────────────
-	#
-	# sway already ARRANGES extra outputs (left to right, in the order it finds them) and `output *`
-	# already gives each one a background, so a second monitor lights up on its own. What was missing
-	# is any way to REACH it: this session ships no window-management bindings at all -- every app is
-	# a floating window opened from the desktop -- so a plugged-in monitor was a lit screen you could
-	# not focus, could not move anything onto, and could not launch anything from.
-	#
-	# Direction words, not output names. `focus output right` follows whatever the arrangement
-	# actually is, so it keeps working when a monitor is unplugged, moved, or was never there --
-	# where a binding naming HDMI-A-1 is dead on a laptop with nothing attached.
-	bindsym $mod+Left  exec /usr/local/bin/pc-window-snap left, exec /usr/local/bin/pc-super used
-	bindsym $mod+Right exec /usr/local/bin/pc-window-snap right, exec /usr/local/bin/pc-super used
-	bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max, exec /usr/local/bin/pc-super used
-	# Down was the only arrow bound to nothing. `minimise` is the taskbar's own function, so
-	# the window keeps its button and comes back the way it always has.
-	bindsym $mod+Down  exec /usr/local/bin/pc-window-snap minimise, exec /usr/local/bin/pc-super used
-	bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge
-	bindsym Ctrl+$mod+Left  focus output left, exec /usr/local/bin/pc-super used
-	bindsym Ctrl+$mod+Right focus output right, exec /usr/local/bin/pc-super used
-	bindsym Ctrl+$mod+Up    focus output up, exec /usr/local/bin/pc-super used
-	bindsym Ctrl+$mod+Down  focus output down, exec /usr/local/bin/pc-super used
-	# The window goes with you: moved to the next screen AND followed, because a window that leaves
-	# the screen you are looking at with the focus staying behind reads as having closed it.
-	bindsym $mod+Shift+Left  exec /usr/local/bin/pc-window-snap move-left, exec /usr/local/bin/pc-super used
-	bindsym $mod+Shift+Right exec /usr/local/bin/pc-window-snap move-right, exec /usr/local/bin/pc-super used
-	bindsym $mod+Shift+Up    exec /usr/local/bin/pc-window-snap move-up, exec /usr/local/bin/pc-super used
-	bindsym $mod+Shift+Down  exec /usr/local/bin/pc-window-snap move-down, exec /usr/local/bin/pc-super used
-	# Closing one, which nothing else here offered. The compositor draws no chrome -- PosterChan does
-	# -- so a floating app has no titlebar and can only be closed from inside itself, and not every
-	# app has a way.
-	#
-	# THROUGH THE HELPER, NEVER A BARE `kill`. sway's `kill` closes the focused CONTAINER, and every
-	# PosterChan window is drawn inside ONE shell surface -- which is the focused container whenever
-	# the desktop has focus. So Alt+F4, the most reflexive close chord on any keyboard, destroyed the
-	# whole desktop and every window in it. Nothing respawns the shell (`exec_always` runs on config
-	# reload, not on exit), so what was left was a black screen needing Ctrl+Alt+Backspace.
-	# pc-window-close asks who is focused first: the shell gets a tick and closes its own window,
-	# while a popped-out window and a native app are real toplevels the compositor still kills.
-	bindsym $mod+q exec /usr/local/bin/pc-window-close, exec /usr/local/bin/pc-super used
-	bindsym $mod+1 exec /usr/local/bin/pc-window-close, exec /usr/local/bin/pc-super used
-	bindsym Mod1+F4 exec /usr/local/bin/pc-window-close
-
-	# THE DESKTOP ITSELF STAYS PUT. It is maximized on the output it started on, and `focus output`
-	# above can move the FOCUS to a second screen while the shell stays where it is -- which is what
-	# makes the second screen a place to put windows rather than a second copy of the desktop. One
-	# shell serves both: its taskbar lists every window the compositor has, on either screen.
-
-	# THE SUPER KEY OPENS THE START MENU — from anywhere, including out of a full-screen browser.
-	#
-	# The shell has its own handler for this key, and it can only ever fire when the SHELL has the
-	# keyboard. That is the wrong half: you press Super to leave whatever you are in, so the
-	# keyboard almost always belongs to firefox or a game at that moment, and the desktop never sees
-	# the key at all. A binding can only run a command, never call into us — so it broadcasts a
-	# TICK, which sway delivers to every IPC subscriber, and the shell is one.
-	#
-	# --release, because a binding on the press swallows it: sway would then never deliver Super as
-	# the modifier of $mod+Return, and every other shortcut on this machine would stop working.
-	# --no-repeat so holding it does not open and close the menu at the key repeat rate.
-	# Super ALONE opens the start menu. `pc-super tap` declines when a Super COMBO has just
-	# fired: sway sends this release whether or not the key was used as a modifier, so without
-	# it Super+Left is a snap AND, on the way back up, the start menu.
-	bindsym --release --no-repeat Super_L exec /usr/local/bin/pc-super tap
-
-	# Recovery for the UI only. Sway and native applications remain running.
-	bindsym --no-repeat Ctrl+Mod1+BackSpace exec /usr/local/bin/pc-shell-restart
-
-	# A game gets the screen to itself and nothing above it.
-	for_window [class="^steam_app_.*"] fullscreen enable, inhibit_idle fullscreen
-	SWAY
-
-	# The ScreenCast portal picks its backend by the DESKTOP NAME, and answers "no such capture" for
-	# a name it has no backend for — which is what OBS shows as a screen capture source that lists
-	# nothing to capture. sway's own session sets this, but the portal is started by systemd --user
-	# and can come up before it, so it is stated here as well.
+	# xdg-desktop-portal reads `<desktop>-portals.conf` first and plain `portals.conf` as the
+	# fallback, so `sway-portals.conf` on a session announcing `wayfire` selected NOTHING: the
+	# ScreenCast portal answers "no such capture" for a name it has no backend for, which is what
+	# OBS shows as a screen-capture source that lists nothing to capture. Written unqualified now,
+	# because there is one session and it should not have to be named twice.
 	mkdir -p /etc/xdg/xdg-desktop-portal
+	rm -f /etc/xdg/xdg-desktop-portal/sway-portals.conf
 	printf '[preferred]\ndefault=wlr;gtk\norg.freedesktop.impl.portal.ScreenCast=wlr\norg.freedesktop.impl.portal.Screenshot=wlr\n' \
-		>/etc/xdg/xdg-desktop-portal/sway-portals.conf
+		>/etc/xdg/xdg-desktop-portal/portals.conf
 
 	# FROM THE OVERLAY IF IT IS REACHABLE, BY HAND IF IT IS NOT.
 	#
@@ -1889,7 +1715,7 @@ PROFILE
 		fi
 	fi
 
-	# THE SHELL ITSELF. sway's config execs `posterchan`, and nothing else here installs it — so
+	# THE SHELL ITSELF. wayfire.ini's autostart execs the launcher, and nothing else here installs it — so
 	# without this the machine boots into an empty compositor with no way to do anything, which is
 	# the most convincing possible imitation of a broken install.
 	#
@@ -1938,7 +1764,7 @@ PROFILE
 	if [ -s "$APPTAR" ]; then
 		[ "${TARGET:-/}" = "/" ] || cp -f "$APPTAR" ${TARGET}/tmp/PosterChan-linux-x64.tar.zst
 		# Unpacked into a NEW directory and moved into place, so a half-written tree is never what
-		# sway execs. `mkdir -p /opt` first: a stage3 does not guarantee it.
+		# wayfire.ini's autostart execs. `mkdir -p /opt` first: a stage3 does not guarantee it.
 		_in 'mkdir -p /opt && cd /opt && rm -rf posterchan posterchan.new \
 			&& mkdir -p posterchan.new \
 			&& tar -C posterchan.new -xaf /tmp/PosterChan-linux-x64.tar.zst \
@@ -2009,10 +1835,10 @@ PROFILE
 		if [ -e "${TARGET}/usr/local/bin/posterchan" ]; then
 			echo -e "\033[1;32m  ✓ /usr/local/bin/posterchan\033[0m"
 		else
-			echo -e "\033[1;31m  ✗ the desktop did not unpack — sway will start with no shell\033[0m"
+			echo -e "\033[1;31m  ✗ the desktop did not unpack — Wayfire will start with no shell\033[0m"
 		fi
 	else
-		echo -e "\033[1;31m  ✗ could not download the PosterChan desktop — sway will start with no shell\033[0m"
+		echo -e "\033[1;31m  ✗ could not download the PosterChan desktop — Wayfire will start with no shell\033[0m"
 	fi
 
 	# ANYONE MAY SIGN IN, so an account has to exist before they have anywhere to put anything.
@@ -2020,7 +1846,7 @@ PROFILE
 	# what joins the two. It is the ONLY privileged thing the shell asks for, and it is limited to
 	# exactly that one command — signing in with a key is not the same as being trusted with root,
 	# and a machine anyone may log into must not hand every visitor sudo.
-	# Keep this list in step with the commands /etc/sway/config executes. Snap and Screenshot lived
+	# Keep this list in step with the commands /etc/wayfire.ini executes. Snap and Screenshot lived
 	# only in the overlay package's FILESDIR; a direct/fresh installer run therefore wrote working
 	# key bindings to executables it never copied, and mouse/Super snapping simply did nothing.
 	for helper in foot pc-super pc-provision-user pc-session-switch pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
@@ -2033,8 +1859,28 @@ PROFILE
 		fi
 		[ -f "${TARGET}/usr/local/bin/$helper" ] && chmod 0755 ${TARGET}/usr/local/bin/$helper
 	done
-	[ -f "${TARGET}/usr/local/bin/pc-shell-start" ] || \
-		echo -e "\033[1;31m  ✗ pc-shell-start not shipped — the desktop will not be full screen\033[0m"
+	# /etc/wayfire.ini HAS NO INLINE COPY, and that is the same trap as the helpers above.
+	#
+	# It arrives from the overlay package's FILESDIR, through an `emerge ... || true`. So a direct or
+	# fresh run where that emerge is skipped or fails produces a machine with pc-compositor-session,
+	# pc-shell-start-wayfire and every helper -- and NO config for the compositor to start with.
+	# `wayfire -c /etc/wayfire.ini` then fails and, now that there is no second compositor to fall
+	# back to, the login lands on a rescue shell. Copy it from the source tree the same way the
+	# helpers are copied.
+	if [ ! -f "${TARGET}/etc/wayfire.ini" ]; then
+		for F in "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/wayfire.ini" \
+			"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/wayfire.ini"; do
+			if [ -f "$F" ]; then
+				install -m 0644 "$F" "${TARGET}/etc/wayfire.ini"
+				break
+			fi
+		done
+	fi
+	if [ ! -f "${TARGET}/etc/wayfire.ini" ]; then
+		echo -e "\033[1;31m  ✗ /etc/wayfire.ini not shipped — a Wayfire session cannot start and will fall back to Sway\033[0m"
+	fi
+	[ -f "${TARGET}/usr/local/bin/pc-shell-start-wayfire" ] || \
+		echo -e "\033[1;31m  ✗ pc-shell-start-wayfire not shipped — the session has nothing to start\033[0m"
 	for helper in pc-window-cycle pc-window-snap pc-window-close pc-screenshot; do
 		if [ ! -x "${TARGET}/usr/local/bin/$helper" ]; then
 			echo -e "\033[1;31m  ✗ $helper not shipped — refusing a desktop with dead window/keyboard controls\033[0m"
@@ -2635,7 +2481,15 @@ liveCD() {
 	# promise it in the installer configuration used after boot.
 	if ! portageq has_version / 'media-libs/mesa[video_cards_virgl]' 2>/dev/null; then
 		echo -e "${COLOR_YELLOW}Rebuilding Mesa with the LiveCD's VirGL driver.${COLOR_RESET}"
-		VIDEO_CARDS="$VIDEO_CARDS" /usr/bin/emerge -1 --newuse media-libs/mesa 2>&1 | tee -a "$LOG"
+		# PERSISTED, NOT PASSED. A one-shot `VIDEO_CARDS=... emerge` is reverted by the next
+		# `emerge -uDN @world`, so this rebuild used to be undone silently and paid for again on
+		# every ISO build -- and the machine it was built FROM went back to having no virgl.
+		if ! grep -q '^VIDEO_CARDS=' /etc/portage/make.conf 2>/dev/null; then
+			echo "VIDEO_CARDS=\"$VIDEO_CARDS\"" >>/etc/portage/make.conf
+		elif ! portageq envvar VIDEO_CARDS 2>/dev/null | grep -qw virgl; then
+			sed -i "s/^VIDEO_CARDS=\"\(.*\)\"$/VIDEO_CARDS=\"\1 virgl\"/" /etc/portage/make.conf
+		fi
+		/usr/bin/emerge -1 --newuse media-libs/mesa 2>&1 | tee -a "$LOG"
 		if [[ ${PIPESTATUS[0]} -ne 0 ]] || ! portageq has_version / 'media-libs/mesa[video_cards_virgl]' 2>/dev/null; then
 			_lcd_fail "Mesa still lacks video_cards_virgl — the LiveCD graphical VM would be blank."
 			return
@@ -2985,13 +2839,24 @@ FSTAB
 		mkdir -p "$WORK/gettyd"
 		printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
 			>"$WORK/gettyd/override.conf"
+		# AND THE SAME ON THE SERIAL CONSOLE, or this disc cannot be installed without a monitor.
+		#
+		# The kernel command line already carries `console=ttyS0,115200n8`, so systemd starts
+		# serial-getty@ttyS0 -- at a LOGIN PROMPT for an account that is deliberately password
+		# LOCKED. So a serial or VM console showed a prompt nothing could answer: no install over
+		# IPMI/BMC, no headless VM install, and no way for the release gate to prove the installer
+		# works end to end. It is not a new privilege: tty1 already autologins this account and it
+		# already holds NOPASSWD sudo, so anyone who can reach either console can already install.
+		mkdir -p "$WORK/serialgettyd"
+		printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --keep-baud 115200,57600,38400,9600 - $TERM\n' \
+			>"$WORK/serialgettyd/override.conf"
 	fi
 
 	# ---------------------------------------------------------------- who logs in, and their home
 	#
 	# WHOEVER AUTOLOGINS MUST HAVE A HOME IN THE IMAGE. Not "should" — the desktop does not start
-	# without one, twice over: `~/.bash_profile` is what execs sway, and Electron needs a writable
-	# HOME for its profile. Missing, the disc boots to a bash prompt, and typing `sway` by hand then
+	# without one, twice over: `~/.bash_profile` is what execs the session, and Electron needs a
+	# writable HOME for its profile. Missing, the disc boots to a bash prompt, and starting it by hand
 	# gives a black screen with no shell on it. Reported as both, three rebuilds apart, and they are
 	# one fault.
 	#
@@ -3081,7 +2946,7 @@ FSTAB
 	# Never inherit the desktop launcher from the machine doing the build. A package can leave the
 	# 186 MB Electron binary installed while its /usr/local/bin wrapper is absent; that image passes
 	# a binary-only check, starts Sway successfully, and then shows nothing but the black compositor
-	# background because pc-shell-start has no command it can execute. Ship this small, deterministic
+	# background because the launcher has no command it can execute. Ship this small, deterministic
 	# bridge as part of the live-image contract and read it back below.
 	cat >"$WORK/posterchan-launcher" <<-'LAUNCHER'
 	#!/bin/sh
@@ -3099,22 +2964,9 @@ FSTAB
 	#
 	#   Error on line 24 ... Unable to access ... Sway_Wallpaper_Blue_1920x1080.png
 	#
-	# More fundamentally, that config does not start pc-shell-start at all. Find the package-owned
+	# More fundamentally, a distro default config does not start our shell at all. Find the package-owned
 	# config from either a source checkout or the synced overlay and REQUIRE its shell marker; a
 	# missing session config is an image-build error, not something to discover after burning it.
-	local LIVE_SWAY=""
-	for F in \
-		"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/sway.config" \
-		"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/sway.config"; do
-		if [ -f "$F" ] && grep -q '/usr/local/bin/pc-shell-start' "$F"; then
-			LIVE_SWAY="$F"; break
-		fi
-	done
-	if [ -z "$LIVE_SWAY" ]; then
-		echo -e "${COLOR_RED}PosterChanOS Sway config was not found; refusing to build a broken desktop.${COLOR_RESET}"
-		echo "Looked beside gentoo.sh and in /var/db/repos/posterchan." >>"$LOG"
-		return 1
-	fi
 	local LIVE_WAYFIRE=""
 	for F in \
 		"$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/wayfire.ini" \
@@ -3124,28 +2976,30 @@ FSTAB
 		fi
 	done
 	if [ -z "$LIVE_WAYFIRE" ]; then
-		echo -e "${COLOR_RED}PosterChanOS Wayfire fallback config was not found; refusing to build an incomplete ISO.${COLOR_RESET}"
+		echo -e "${COLOR_RED}PosterChanOS Wayfire config was not found; refusing to build an image with no session.${COLOR_RESET}"
+		echo "Looked beside gentoo.sh and in /var/db/repos/posterchan." >>"$LOG"
 		return 1
 	fi
-	# Parse it before the multi-gigabyte squashfs is made. A headless backend lets validation run
-	# from an SSH/build session with no seat; without it sway tries DRM first and reports a backend
-	# failure before it ever reaches the config parser.
-	mkdir -p "$WORK/sway-runtime" && chmod 0700 "$WORK/sway-runtime"
-	local SWAY_CHECK_LOG="$WORK/sway-config-check.log"
-	if ! XDG_RUNTIME_DIR="$WORK/sway-runtime" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
-		sway -C -d -c "$LIVE_SWAY" >"$SWAY_CHECK_LOG" 2>&1 \
-		|| grep -q 'Overwriting binding' "$SWAY_CHECK_LOG"; then
-		cat "$SWAY_CHECK_LOG" >>"$LOG"
-		echo -e "${COLOR_RED}PosterChanOS Sway config is invalid; refusing to build the ISO.${COLOR_RESET}"
+	# CHECKED BEFORE THE MULTI-GIGABYTE SQUASHFS, because a session config that does not parse is an
+	# image-build error rather than something to discover after burning the disc. Wayfire has no
+	# `-C` check mode (Sway did, and this used it), so what is verified is what a static check can
+	# actually establish: the file names the launcher that starts the desktop, and every helper its
+	# bindings execute is one this image installs. A binding pointing at an absent executable is the
+	# exact failure the Sway check existed to catch, and it is the half that mattered.
+	local MISSING_BIND=""
+	for B in $(grep -oE '/usr/local/bin/[a-z0-9-]+' "$LIVE_WAYFIRE" | sort -u); do
+		[ -x "${TARGET:-}$B" ] || [ -x "$B" ] || MISSING_BIND="$MISSING_BIND $B"
+	done
+	if [ -n "$MISSING_BIND" ]; then
+		echo -e "${COLOR_RED}wayfire.ini runs helpers this image does not install:$MISSING_BIND${COLOR_RESET}"
+		echo "wayfire.ini references missing helpers:$MISSING_BIND" >>"$LOG"
 		return 1
 	fi
-	cat "$SWAY_CHECK_LOG" >>"$LOG"
 	{
 		pseudoput "etc/fstab" f 644 0 0 cat "$LIVEFSTAB"
 		pseudoput "usr/local/bin/posterchan" f 755 0 0 cat "$WORK/posterchan-launcher"
-		# Always replace /etc/sway/config. mksquashfs otherwise silently keeps the source host's file
+		# Always replace /etc/wayfire.ini. mksquashfs otherwise silently keeps the source host's file
 		# when a pseudo-file targets an existing path (PSEUDO_REPLACED excludes it below).
-		pseudoput "etc/sway/config" f 644 0 0 "cat \"$LIVE_SWAY\""
 		pseudoput "etc/wayfire.ini" f 644 0 0 "cat \"$LIVE_WAYFIRE\""
 		# The installed machine's dracut.conf is host boot state, not live-image configuration.
 		# bootloader() puts its encrypted-root UUID, unlock helper and LUKS key path here. /boot is
@@ -3173,7 +3027,7 @@ FSTAB
 			echo "home d 755 0 0"
 			# AN EMPTY HOME IS A TERMINAL, NOT A DESKTOP.
 			#
-			# What starts the GUI is `~/.bash_profile` — the login shell on tty1 execs sway, which
+			# What starts the GUI is `~/.bash_profile` — the login shell on tty1 execs the session, which
 			# is how accounts() sets a real user up. Excluding /home and creating an empty
 			# /home/live therefore produced a live image that autologged in correctly and dropped
 			# straight to a bash prompt: "posterchan live cd is totally shit ... booted to a
@@ -3185,6 +3039,10 @@ FSTAB
 
 			echo "etc/systemd/system/getty@tty1.service.d d 755 0 0"
 			pseudoput "etc/systemd/system/getty@tty1.service.d/override.conf" f 644 0 0 cat "$WORK/gettyd/override.conf"
+			# The serial console's copy. See serialgettyd above: without it a headless install is
+			# a login prompt for a locked account.
+			echo "etc/systemd/system/serial-getty@ttyS0.service.d d 755 0 0"
+			pseudoput "etc/systemd/system/serial-getty@ttyS0.service.d/override.conf" f 644 0 0 cat "$WORK/serialgettyd/override.conf"
 			# A hostname that is not yours. `posterchanos` is what an unconfigured install should
 			# call itself, and it is what the installer changes.
 			pseudoput "etc/hostname" f 644 0 0 echo posterchanos
@@ -3211,8 +3069,7 @@ FSTAB
 		# real machines remain at "Display output is not active".  Pin the clean live
 		# account explicitly instead of inheriting a builder account's selection.
 		pseudoput "home/$SESS_USER/.config/posterchanos/compositor" f 600 "$SESS_UID" "$SESS_GID" printf '%s\\n' wayfire
-		echo "home/$SESS_USER/.config/sway d 700 $SESS_UID $SESS_GID"
-		pseudoput "home/$SESS_USER/.config/sway/outputs.conf" f 600 "$SESS_UID" "$SESS_GID" echo -n
+		echo "home/$SESS_USER/.config/posterchanos d 700 $SESS_UID $SESS_GID"
 
 		# ---------------------------------------------------------------- the installer
 		#
@@ -3277,12 +3134,12 @@ if [ -z "$WAYLAND_DISPLAY" ] && { [ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/t
 		mkdir -p "$HOME/.config/posterchan-desktop"
 		pc_diag_pid=/run/user/$(id -u)/posterchan-live-session-log.pid
 		[ ! -r "$pc_diag_pid" ] || kill "$(cat "$pc_diag_pid" 2>/dev/null)" 2>/dev/null || true
-		touch "$HOME/.local/state/posterchanos/wayfire.log" "$HOME/.local/state/posterchanos/sway.log" "$HOME/.local/state/posterchanos/compositor-fallback.log" "$HOME/.config/posterchan-desktop/shell.log"
-		tail -n 0 -F "$HOME/.local/state/posterchanos/wayfire.log" "$HOME/.local/state/posterchanos/sway.log" "$HOME/.local/state/posterchanos/compositor-fallback.log" "$HOME/.config/posterchan-desktop/shell.log" >/dev/ttyS0 2>&1 &
+		touch "$HOME/.local/state/posterchanos/wayfire.log" "$HOME/.local/state/posterchanos/compositor-fallback.log" "$HOME/.config/posterchan-desktop/shell.log"
+		tail -n 0 -F "$HOME/.local/state/posterchanos/wayfire.log" "$HOME/.local/state/posterchanos/compositor-fallback.log" "$HOME/.config/posterchan-desktop/shell.log" >/dev/ttyS0 2>&1 &
 		echo $! >"$pc_diag_pid"
 	fi
 	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
-	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
+	pc_guard="$HOME/.local/state/posterchanos/compositor-boot-attempt"
 	pc_old_id= pc_attempts=0
 	[ ! -r "$pc_guard" ] || read -r pc_old_id pc_attempts <"$pc_guard"
 	[ "$pc_old_id" = "$pc_boot_id" ] || pc_attempts=0
@@ -3290,7 +3147,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && { [ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/t
 	printf '%s %s\n' "$pc_boot_id" "$pc_attempts" >"$pc_guard"
 	if [ "$pc_attempts" -gt 2 ]; then
 		echo 'PosterChanOS stopped a graphical-session restart loop.'
-		echo "Diagnostics: $HOME/.local/state/posterchanos/sway.log"
+		echo "Diagnostics: $HOME/.local/state/posterchanos/wayfire.log"
 		return 0 2>/dev/null || exit 0
 	fi
 	exec /usr/local/bin/pc-compositor-session
@@ -3346,8 +3203,8 @@ DESKTOP
 	# THE BUILD CHECKS ITS OWN OUTPUT, because three images in a row were written successfully and
 	# were unusable, and the build said "done" every time. Both failures were one missing file:
 	# without `~/.bash_profile` the autologin lands at a bash prompt ("booted to a terminal, no
-	# gui"), and sway started by hand then has nowhere for the Electron shell to write its profile
-	# ("sway loads a black screen"). An image that cannot start its desktop is not an image worth
+	# gui"), and a compositor started by hand then has nowhere for the Electron shell to write its
+	# profile ("it loads a black screen"). An image that cannot start its desktop is not an image worth
 	# spending twenty more minutes turning into an ISO.
 	#
 	# unsquashfs -l is a listing, not an extraction: it costs a second and touches nothing.
@@ -3358,7 +3215,7 @@ DESKTOP
 		echo "$LS" | grep -qx "squashfs-root/home/$SESS_USER" || MISSING="$MISSING /home/$SESS_USER"
 		echo "$LS" | grep -qx "squashfs-root/home/$SESS_USER/.bash_profile" \
 			|| MISSING="$MISSING /home/$SESS_USER/.bash_profile"
-		# The desktop itself. An image with a home and no app boots to an empty sway.
+		# The desktop itself. An image with a home and no app boots to an empty compositor.
 		# The BINARY, not AppRun: AppRun exists only in an AppImage extraction, and the desktop now
 		# installs from a plain tarball that has never had one. Either shape is accepted, so an
 		# image built from an older release still passes.
@@ -4136,7 +3993,7 @@ elif [ "$1" = "posterchan-shell" ]; then
 	posterchanShell
 elif [ "$1" = "shell" ]; then
 	# The same thing on a machine that is already running — after an etc-update has replaced the
-	# sway config with the package default, which is what `emerge` does to a file portage owns.
+	# session config with the package default, which is what `emerge` does to a file portage owns.
 	export TARGET=/
 	posterchanShell
 	plymouthTheme

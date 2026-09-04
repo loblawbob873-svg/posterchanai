@@ -61,9 +61,10 @@ class KeyLimits(unittest.TestCase):
         self.assertIn('[ "$new" -lt "$BRIGHT_MIN" ] && new=$BRIGHT_MIN', self.key)
 
     def test_every_key_the_config_binds_is_a_verb_the_script_knows(self):
-        """A bindsym naming an action pc-key does not handle is a key that silently does nothing —
+        """A binding naming an action pc-key does not handle is a key that silently does nothing —
         it exits 2 to a compositor that shows no output."""
-        cfg = open(SH, encoding="utf-8").read()
+        from tests.wayfire_config import CONFIG
+        cfg = CONFIG.read_text(encoding="utf-8")
         bound = set(re.findall(r"/usr/local/bin/pc-key ([a-z-]+)", cfg))
         self.assertTrue(bound, "no media keys are bound at all")
         known = set(re.findall(r"^\s{4}([a-z-]+)\)\s", self.key, re.M))
@@ -78,14 +79,26 @@ class KeyLimits(unittest.TestCase):
         self.assertIn('cp -f "$PCOS_TREE/bin/$helper"', cfg,
                       "the packaged support tree is not copied into the installed system")
 
-    def test_volume_and_brightness_work_with_the_screen_locked(self):
-        """They are not secrets, and a laptop whose volume keys stop at the lock screen is one
-        somebody will hold the power button on."""
-        cfg = open(SH, encoding="utf-8").read()
-        for k in ("XF86AudioRaiseVolume", "XF86MonBrightnessUp", "XF86AudioMute"):
-            m = re.search(r"bindsym ([^\n]*" + k + ")", cfg)
-            self.assertTrue(m, f"{k} is not bound")
-            self.assertIn("--locked", m.group(1), f"{k} does nothing while the screen is locked")
+    def test_the_whole_media_and_brightness_set_is_bound(self):
+        """NINE KEYS, AND THIS SESSION SHIPPED WITH NONE OF THEM.
+
+        Sway bound all of them; not one was carried over, so volume, mute, mic-mute, brightness and
+        the transport keys did nothing on every keyboard that has them. They are also deliberately
+        NOT gated on the session being unlocked — Sway spelled that `--locked`, Wayfire runs command
+        bindings regardless, and a laptop whose volume keys stop at the lock screen is one somebody
+        will hold the power button on.
+        """
+        from tests.wayfire_config import bindings
+        binds = bindings()
+        for chord, verb in (("KEY_VOLUMEUP", "volume-up"), ("KEY_VOLUMEDOWN", "volume-down"),
+                            ("KEY_MUTE", "mute"), ("KEY_MICMUTE", "mic-mute"),
+                            ("KEY_BRIGHTNESSUP", "brightness-up"),
+                            ("KEY_BRIGHTNESSDOWN", "brightness-down"),
+                            ("KEY_PLAYPAUSE", "play-pause"), ("KEY_NEXTSONG", "next"),
+                            ("KEY_PREVIOUSSONG", "previous")):
+            self.assertIn(chord, binds, f"{chord} is not bound")
+            self.assertIn(f"pc-key {verb}", binds[chord],
+                          f"{chord} runs {binds[chord]!r}, not pc-key {verb}")
 
     def test_mute_toggles_on_a_key_and_is_explicit_in_the_ui(self):
         """Opposite answers to the same question, both correct: a key press has no state of its own

@@ -6,11 +6,7 @@
 set -u
 direction="${1:-next}"
 [ "$direction" = next ] || [ "$direction" = previous ] || exit 2
-# The tick is the only compositor-neutral part of this; the TRANSPORT is not. `swaymsg` exits
-# "Unable to retrieve socket path" on a Wayfire session, so Alt-Tab was bound to a command that
-# could only fail -- silently, because the binding discards its output, and identically to a
-# keyboard that never sent the key. Same shape as pc-super, and the same fix.
-if [ -n "${WAYFIRE_SOCKET:-}" ]; then
-	exec /usr/local/bin/pc-wayfire-action "pc:cycle:$direction"
-fi
-exec swaymsg -t send_tick "pc:cycle:$direction" >/dev/null
+# This was `swaymsg -t send_tick`, which exits "Unable to retrieve socket path" on a Wayfire
+# session -- so Alt-Tab was bound to a command that could only fail, silently, because the binding
+# discards its output, and indistinguishably from a keyboard that never sent the key.
+exec /usr/local/bin/pc-wayfire-action "pc:cycle:$direction"

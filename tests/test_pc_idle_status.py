@@ -47,59 +47,34 @@ def _view(app, name, user="none", application="none"):
             "nodes": [], "floating_nodes": []}
 
 
-def tree(*views):
-    return {"type": "root", "nodes": [{"type": "output", "name": "DP-1", "nodes": list(views),
-                                       "floating_nodes": []}], "floating_nodes": []}
 
 
-def run(tmp_path, *, seconds="120", hold=False, swayidle=True, sway_tree=None, no_sway=False):
-    """Run the shipped `pc-idle status` against a stubbed session."""
+def run(tmp_path, *, seconds="120", hold=False, swayidle=True):
+    """Run the shipped `pc-idle status` against a stubbed session.
+
+    No compositor stub: with Sway gone there is no tree to walk, and the Wayfire half is exercised
+    against a real socket by the tests further down. This covers the three causes that are still
+    answerable from the outside -- the timeout, a keep-awake hold, and whether the watcher is up.
+    """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-
-    (bin_dir / "pgrep").write_text(textwrap.dedent(f"""\
-        #!/bin/sh
-        {'echo 4242; exit 0' if swayidle else 'exit 1'}
-        """))
-    if not no_sway:
-        payload = tmp_path / "tree.json"
-        payload.write_text(json.dumps(sway_tree if sway_tree is not None else tree()))
-        (bin_dir / "swaymsg").write_text(f"#!/bin/sh\ncat {payload}\n")
+    (bin_dir / "pgrep").write_text("#!/bin/sh\n%s\n" % ("echo 4242; exit 0" if swayidle else "exit 1"))
     for stub in bin_dir.iterdir():
         stub.chmod(0o755)
-
     conf = tmp_path / "idle"
     conf.write_text(seconds)
     runtime = tmp_path / "run"
     runtime.mkdir(exist_ok=True)
     if hold:
         (runtime / "posterchan-keep-awake").write_text("")
-
     env = dict(os.environ)
     env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", PC_IDLE_CONF=str(conf),
                XDG_RUNTIME_DIR=str(runtime))
+    env.pop("WAYFIRE_SOCKET", None)
     done = subprocess.run(["sh", str(SCRIPT), "status"], capture_output=True, text=True,
                           env=env, timeout=60)
     assert done.returncode == 0, done.stderr
     return done.stdout
-
-
-def test_the_inhibitor_is_found_and_named(tmp_path):
-    """THE CAUSE THAT HIDES. Everything else here is healthy — the timeout is set, the daemon is
-    running, no hold — and the screen still never blanks."""
-    out = run(tmp_path, sway_tree=tree(
-        _view("firefox", "some video — Mozilla Firefox", application="enabled"),
-        _view("org.telegram.desktop", "Telegram")))
-    assert "HOLDING THE SCREEN AWAKE" in out, out
-    assert "firefox" in out, "the inhibitor is reported but not attributed to an app"
-    assert "swayidle:   running" in out, "the daemon is running — that must not read as the fault"
-
-
-def test_a_healthy_session_says_nothing_is_holding_it(tmp_path):
-    """The check has to be able to come back clean, or it is just a scary message."""
-    out = run(tmp_path, sway_tree=tree(_view("firefox", "Firefox")))
-    assert "inhibitors: none" in out, out
-
 
 def test_a_missing_daemon_is_called_out(tmp_path):
     """With a real timeout and no swayidle there is nothing anywhere that will blank the display."""
@@ -120,28 +95,7 @@ def test_a_keep_awake_hold_is_reported(tmp_path):
     assert "pc-idle hold off" in out, "it says a hold is on without saying how to clear it"
 
 
-def test_it_says_when_it_could_not_ask_sway(tmp_path):
-    """'Could not ask' is never 'nothing is holding it' — the same rule the drive check follows."""
-    out = run(tmp_path, no_sway=True)
-    assert "cannot ask sway" in out, out
-    assert "inhibitors: none" not in out, (
-        "a session it could not reach is being reported as one with no inhibitors")
 
-
-def test_an_inhibitor_held_by_the_user_counts_too(tmp_path):
-    """sway reports `user` and `application` separately; either one stops the seat going idle."""
-    out = run(tmp_path, sway_tree=tree(_view("steam_app_1091500", "Cyberpunk 2077", user="enabled")))
-    assert "HOLDING THE SCREEN AWAKE" in out
-    assert "steam_app_1091500" in out
-
-
-def test_a_broken_tree_does_not_take_the_whole_report_down(tmp_path):
-    """status is a diagnostic; it has to survive an answer it did not expect and still print the
-    three facts it read before it got there."""
-    bad = tmp_path / "bad"
-    bad.mkdir()
-    out = run(bad, sway_tree={"nodes": "not a list"})
-    assert "timeout:" in out and "swayidle:" in out, out
 
 
 def test_both_copies_of_the_helper_are_the_same_file():
@@ -151,18 +105,19 @@ def test_both_copies_of_the_helper_are_the_same_file():
         "os/bin/pc-idle and the packaged copy have drifted; the machine runs the packaged one")
 
 
-def test_wayfire_keeps_swayidle_as_protocol_watcher_without_swaymsg():
-    """Anchored on the `run` case, not on the first WAYFIRE_SOCKET test in the file.
+def test_swayidle_survives_as_the_protocol_watcher_and_never_touches_the_screen():
+    """SWAYIDLE IS NOT SWAY, and it is the one piece of that stack the session still needs.
 
-    `status` grew its own Wayfire branch, which is earlier in the script, so a search for the first
-    one silently started reading a different decision -- the shape this whole file exists to catch.
+    It holds the seat's idle accounting and observes idle inhibitors; the POWER action belongs to
+    Wayfire's own idle plugin, which `wf_apply` configures. So both edges here are deliberately
+    no-ops: a second thing turning the screen off would race the compositor for it. `swaymsg` is
+    gone from this script entirely along with the compositor that answered it.
     """
     source = SCRIPT.read_text()
-    branch = source[source.index("  run|*)"):]
-    branch = branch[branch.index('if [ -n "${WAYFIRE_SOCKET:-}" ]'):]
-    branch = branch[:branch.index("fi\n")]
-    assert "exec swayidle -w" in branch
-    assert "swaymsg" not in branch
+    run = source[source.index("  run|*)"):]
+    assert "exec swayidle -w timeout" in run
+    assert "true resume true" in run, "swayidle must not perform the power action itself"
+    assert "swaymsg" not in source, "pc-idle still shells out to a compositor that is not installed"
 
 
 # --------------------------------------------------------------- Wayfire owns the power action
@@ -235,6 +190,12 @@ def _set_options(seen):
     return [m["data"] for m in seen if m.get("method") == "wayfire/set-config-options"]
 
 
+def _dpms(seen):
+    """The DPMS value of each write. A write also pins `screensaver_timeout`, which is asserted on
+    its own below -- matching whole dicts here would break every time another key is added."""
+    return [d.get("idle/dpms_timeout") for d in _set_options(seen)]
+
+
 def test_the_configured_timeout_reaches_the_compositor_that_performs_it(tmp_path):
     """UNDER WAYFIRE THIS SCRIPT IS NOT THE MECHANISM, AND THAT MADE EVERY CONTROL DECORATIVE.
 
@@ -247,7 +208,7 @@ def test_the_configured_timeout_reaches_the_compositor_that_performs_it(tmp_path
     try:
         done = _idle(tmp_path, "set", "300", socket_path=path)
         assert done.returncode == 0, done.stderr
-        assert {"idle/dpms_timeout": 300} in _set_options(seen), (
+        assert 300 in _dpms(seen), (
             "the number the person chose never reached the compositor that acts on it: %s" % seen)
     finally:
         server.close()
@@ -262,7 +223,7 @@ def test_never_disables_the_plugin_rather_than_asking_it_for_zero_seconds(tmp_pa
     path, seen, server = _wayfire_stub(tmp_path)
     try:
         assert _idle(tmp_path, "set", "0", socket_path=path).returncode == 0
-        assert {"idle/dpms_timeout": -1} in _set_options(seen), _set_options(seen)
+        assert -1 in _dpms(seen), _set_options(seen)
     finally:
         server.close()
 
@@ -272,10 +233,10 @@ def test_keep_awake_reaches_the_compositor_and_is_given_back_when_released(tmp_p
     path, seen, server = _wayfire_stub(tmp_path)
     try:
         assert _idle(tmp_path, "hold", "on", seconds="600", socket_path=path).returncode == 0
-        assert {"idle/dpms_timeout": -1} in _set_options(seen), "keep-awake never reached Wayfire"
+        assert -1 in _dpms(seen), "keep-awake never reached Wayfire"
         seen.clear()
         assert _idle(tmp_path, "hold", "off", seconds="600", socket_path=path).returncode == 0
-        assert {"idle/dpms_timeout": 600} in _set_options(seen), (
+        assert 600 in _dpms(seen), (
             "releasing the hold left the compositor never blanking the screen again")
     finally:
         server.close()
@@ -287,7 +248,7 @@ def test_the_login_path_reapplies_the_saved_number(tmp_path):
     path, seen, server = _wayfire_stub(tmp_path)
     try:
         _idle(tmp_path, "run", seconds="0", socket_path=path)
-        assert {"idle/dpms_timeout": -1} in _set_options(seen), (
+        assert -1 in _dpms(seen), (
             "a saved 'never' is lost at every login and the screen blanks again")
     finally:
         server.close()
@@ -301,3 +262,29 @@ def test_a_sway_session_never_talks_to_wayfire(tmp_path):
         assert not seen, "the Sway path reached for the Wayfire IPC: %s" % seen
     finally:
         server.close()
+
+
+def test_never_also_silences_the_compositors_own_screensaver(tmp_path):
+    """"NEVER" HAS TO MEAN NEVER, AND THERE ARE TWO TIMERS.
+
+    Wayfire's idle plugin carries `screensaver_timeout` (3600s by default) alongside
+    `dpms_timeout`. It fades the screen to BLACK without powering the outputs down, so a machine
+    told never to blank went black an hour later with its monitors awake, the compositor healthy and
+    the shell surfaces mapped -- nothing in any log, and indistinguishable from the desktop having
+    died. Reproduced on the real desktop: a 28,769-byte screenshot of a 3840x2560 output, restored
+    by a single mouse movement. Every write has to pin both.
+    """
+    path, seen, server = _wayfire_stub(tmp_path)
+    try:
+        assert _idle(tmp_path, "set", "0", socket_path=path).returncode == 0
+        for data in _set_options(seen):
+            assert data.get("idle/screensaver_timeout") == -1, (
+                "the compositor's own screensaver is still armed: %s" % data)
+    finally:
+        server.close()
+
+
+def test_the_shipped_config_does_not_arm_a_second_blanker():
+    from tests.wayfire_config import sections
+    assert int(sections()["idle"]["screensaver_timeout"]) < 0, (
+        "wayfire.ini leaves a 3600s screensaver armed under pc-idle's own policy")

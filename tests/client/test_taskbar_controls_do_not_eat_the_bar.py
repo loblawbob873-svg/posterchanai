@@ -23,9 +23,21 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _ini(text):
+    """wayfire.ini as a flat key->value map. Section names do not collide across the file."""
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("[") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip()
+    return out
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
-SWAY = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text(encoding="utf-8")
+WAYFIRE = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini").read_text(encoding="utf-8")
 
 
 def _ctx_menu() -> str:
@@ -72,8 +84,24 @@ def test_the_task_button_itself_survives():
 
 
 def test_the_keyboard_can_still_do_all_three():
-    """The menu is a convenience; the bindings are the guarantee, and they ship in sway.config."""
-    assert "bindsym $mod+q exec /usr/local/bin/pc-window-close" in SWAY
-    assert "bindsym Mod1+F4 exec /usr/local/bin/pc-window-close" in SWAY
-    assert "bindsym $mod+Up    exec /usr/local/bin/pc-window-snap max" in SWAY
-    assert "bindsym $mod+Down  exec /usr/local/bin/pc-window-snap minimise" in SWAY
+    """The menu is a convenience; the bindings are the guarantee, and they ship in wayfire.ini.
+
+    These carried NOTHING for a while. The four Super+arrow entries existed only to run `pc-super
+    used` (which suppresses the Start menu the Super release would open) and never performed the
+    window action, so keyboard snapping silently did nothing on this session while the taskbar menu
+    that offers the same thing kept working. Assert the ACTION, not just that a binding exists.
+    """
+    for chord, action in (("KEY_LEFT", "pc-window-snap left"),
+                          ("KEY_RIGHT", "pc-window-snap right"),
+                          ("KEY_UP", "pc-window-snap max"),
+                          ("KEY_DOWN", "pc-window-snap minimise"),
+                          ("KEY_Q", "pc-window-close")):
+        binding = next((k for k, v in _ini(WAYFIRE).items()
+                        if k.startswith("binding_") and v.endswith(chord)), None)
+        assert binding, f"no Super+{chord} binding in wayfire.ini"
+        command = _ini(WAYFIRE)["command_" + binding[len("binding_"):]]
+        assert action in command, f"Super+{chord} does not run {action}: {command!r}"
+        assert "pc-super used" in command, (
+            f"Super+{chord} does not mark the modifier consumed, so it also opens Start on release")
+    # Alt+F4 is the other close, and it goes through the shell tick rather than the helper.
+    assert "pc-wayfire-action pc:close" in WAYFIRE

@@ -21,11 +21,9 @@ function capture(rect, runner=execFile){
           b.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
         resolve(png?'data:image/png;base64,'+b.toString('base64'):'');
       });
-    // A static wlroots output may not damage another frame after grim subscribes.  Wake the cursor
-    // plane without changing its coordinates so the preview cannot time out as a black placeholder.
-    if(runner===execFile&&process.platform==='linux'&&process.env.SWAYSOCK){
-      setTimeout(()=>execFile('swaymsg',['-q','seat seat0 cursor move 0 0'],{timeout:1000},()=>{}),50).unref();
-    }
+    // A static wlroots output may not damage another frame after grim subscribes. On Sway this
+    // nudged the cursor plane to force one; that command is gone with the compositor, and Wayfire
+    // repaints on its own (measured: an idle full-output capture returns in ~0.5s).
   });
 }
 

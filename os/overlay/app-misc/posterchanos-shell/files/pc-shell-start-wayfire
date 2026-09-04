@@ -1,5 +1,5 @@
 #!/bin/sh
-# Wayfire-specific shell startup; the outer selector owns bounded rollback to Sway.
+# Starts and supervises the PosterChan shell inside the Wayfire session.
 set -u
 : "${HOME:=$(getent passwd "$(id -un)" | cut -d: -f6)}"
 : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
@@ -24,8 +24,90 @@ export DISPLAY
 export ELECTRON_ENABLE_LOGGING=1 ELECTRON_OZONE_PLATFORM_HINT=wayland
 export GDK_BACKEND="${GDK_BACKEND:-wayland}" GTK_THEME="${GTK_THEME:-Adwaita:dark}"
 export GTK_APPLICATION_PREFER_DARK_THEME=1
+# NO CORE DUMP FROM THE DESKTOP PROCESS, AND VMs THAT STILL START. Carried over from the retired
+# Sway launcher, where both halves were learned the hard way.
+#
+# Chromium reserves an enormous virtual address space, so a fatal startup assertion pipes that whole
+# mapping into systemd-coredump and leaves the desktop process stuck in CoreDumping -- the black
+# screen that never ends rather than the one the launcher retries. Only the SOFT limit is set:
+# `ulimit -c 0` lowers the inherited HARD limit too, and libvirt's per-user daemon then cannot raise
+# QEMU's core limit, so every VM aborts before exec with "cannot limit core file size". A machine
+# upgraded from a session that did lower it keeps that hard limit for the life of the login, which
+# is why max_core is also written into the user's libvirt config.
+mkdir -p "$HOME/.config/libvirt"
+if ! grep -qE '^[[:space:]]*max_core[[:space:]]*=' "$HOME/.config/libvirt/qemu.conf" 2>/dev/null; then
+	printf '\n# PosterChanOS: keep VM launch valid even when the session inherited a zero hard limit.\nmax_core = 0\n' \
+		>>"$HOME/.config/libvirt/qemu.conf"
+fi
+chmod 0700 "$HOME/.config/libvirt" 2>/dev/null || true
+chmod 0600 "$HOME/.config/libvirt/qemu.conf" 2>/dev/null || true
+ulimit -S -c 0
+# A WAYFIRE SOCKET IS NOT A WAYLAND DISPLAY, and Electron needs the second one.
+#
+# The guard at the top proves the IPC socket exists; WAYLAND_DISPLAY is a separate variable and can
+# be absent (a recovery launch, an ssh-driven restart, an autostart that lost it). Unset, everything
+# below still "succeeds" -- an empty value is imported into systemd and dbus quite happily -- and
+# then Chromium dies with `Failed to connect to Wayland display: No such file or directory` and the
+# launcher spends both of its attempts on it. Measured while debugging a restart: two Electron
+# processes one second apart, both dead before mapping anything, and the compositor stopped after
+# them. Recover it the way the retired Sway launcher did, by finding the socket rather than assuming
+# a name, and REFUSE rather than launch into that error.
+if [ -z "${WAYLAND_DISPLAY:-}" ] || [ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
+	wayland_socket=''
+	display_tries=0
+	while [ "$display_tries" -lt 100 ]; do
+		wayland_socket=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' 2>/dev/null | head -1)
+		[ -z "$wayland_socket" ] || break
+		display_tries=$((display_tries + 1))
+		sleep 0.1
+	done
+	if [ -z "$wayland_socket" ]; then
+		echo "PosterChan shell could not find Wayfire's Wayland display socket" >&2
+		exit 1
+	fi
+	WAYLAND_DISPLAY=${wayland_socket##*/}
+fi
+export WAYLAND_DISPLAY
+# THE SESSION BUS ADDRESS, WHICH ONLY THE LOGIN SHELL IS GUARANTEED TO HAVE.
+#
+# Everything below and inside the shell talks to the user bus: dbus-update-activation-environment
+# (which is what hands the portal its Wayland display), the tray's NetworkManager and PipeWire
+# calls, notifications, ydotool. libdbus does fall back to $XDG_RUNTIME_DIR/bus on its own, but only
+# some of these are libdbus -- and a restart driven from ssh or a key binding inherits neither the
+# variable nor a login session, so those calls fail one at a time and read as unrelated dead
+# controls. The Sway launcher set it explicitly and the Wayfire one was written without it.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+	DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+	export DBUS_SESSION_BUS_ADDRESS
+fi
+# THE PORTAL KEEPS THE ENVIRONMENT IT STARTED WITH. xdg-desktop-portal is a systemd --user service
+# and can come up before the session exports anything, at which point it holds no WAYLAND_DISPLAY
+# and its wlroots backend reports zero capture sources -- OBS shows a screen-capture source that
+# lists nothing. Restart it ONLY when what it is holding is actually stale, so restarting the shell
+# does not interrupt a recording that is working.
+portal_env=$(systemctl --user show-environment 2>/dev/null || true)
+portal_stale=0
+printf '%s\n' "$portal_env" | grep -qx "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" || portal_stale=1
+printf '%s\n' "$portal_env" | grep -qx 'XDG_CURRENT_DESKTOP=wayfire' || portal_stale=1
+printf '%s\n' "$portal_env" | grep -qx 'XDG_SESSION_TYPE=wayland' || portal_stale=1
 systemctl --user import-environment WAYLAND_DISPLAY WAYFIRE_SOCKET XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE >/dev/null 2>&1 || true
 command -v dbus-update-activation-environment >/dev/null 2>&1 && dbus-update-activation-environment --systemd WAYLAND_DISPLAY WAYFIRE_SOCKET XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE >/dev/null 2>&1 || true
+if [ "$portal_stale" -eq 1 ]; then
+	systemctl --user try-restart xdg-desktop-portal-wlr.service xdg-desktop-portal.service >/dev/null 2>&1 || true
+fi
+# THE SPICE GUEST AGENT, WITHOUT WHICH A VM DESKTOP IS SUBTLY WRONG RATHER THAN BROKEN.
+#
+# virt-viewer scales the picture locally while the emulated USB tablet still reports coordinates in
+# the guest's old geometry: the cursor is visibly over one button and clicks somewhere else. The
+# system daemon owns the virtio channel; this session half supplies resize, pointer and clipboard.
+# It was started by the Sway launcher and not carried over, so every VM install lost auto-resize and
+# clipboard sharing with nothing to say why. Physical machines have no channel and do no work here.
+if [ -e /dev/virtio-ports/com.redhat.spice.0 ] && command -v spice-vdagent >/dev/null 2>&1; then
+	if ! pgrep -u "$(id -u)" -x spice-vdagent >/dev/null 2>&1; then
+		spice-vdagent >/tmp/posterchan-spice-vdagent.log 2>&1 &
+	fi
+fi
+
 launcher=/usr/local/bin/posterchan
 [ -x "$launcher" ] || launcher=/usr/bin/posterchan
 [ -x "$launcher" ] || { echo "PosterChan desktop launcher is unavailable" >&2; exit 1; }
@@ -86,12 +168,30 @@ while [ "$attempt" -lt 2 ]; do
 			echo "Desktop package changed while the shell was starting" >&2
 			terminate; wait "$shell_pid" 2>/dev/null || true; exit 1
 		fi
+		# THE READY SIGNAL, WHICH NOTHING IN THE SESSION EVER WROTE.
+		#
+		# pc-compositor-session waits up to 60s for this file, and on not finding it kills Wayfire
+		# with "the shell never signalled ready" and drops the login to a rescue console. The Sway
+		# launcher wrote it; this one only ever REMOVED it, in cleanup -- so a desktop that came up
+		# perfectly, passed the GPU health gate and painted both monitors was torn down exactly one
+		# minute later, and the console blamed the shell. Written here, after the health probe and
+		# the bundle-identity check, because "ready" has to mean verified, not spawned.
+		: >"$PC_WAYFIRE_READY_FILE"
 		# THE RESTART IS OVER WHEN THE REPLACEMENT IS VERIFIED, NOT WHEN IT IS SPAWNED.
 		# Cleared here rather than beside the PID write: a first attempt that fails the health gate
 		# is still the same restart, and the retry needs the supervisor's extended patience just as
 		# much -- more, since a slow GPU is exactly why the first attempt failed.
 		rm -f "$XDG_RUNTIME_DIR/posterchan-shell-restarting" 2>/dev/null || true
-		: >"$PC_WAYFIRE_READY_FILE"
+		# A VERIFIED SHELL RE-ARMS THE BOOT-LOOP GUARD, or the guard is a one-way door.
+		#
+		# ~/.bash_profile counts login attempts per boot and, after two, hands out a diagnostic shell
+		# instead of a desktop -- correct, because a compositor that dies instantly would otherwise
+		# make agetty respawn a login nobody can type into. The Sway launcher cleared that counter
+		# once the shell had actually mapped; the Wayfire one never did, so nothing anywhere reset
+		# it. Two logins in one boot -- two Ctrl+Alt+Backspaces, or one failed start and one good
+		# one -- and the THIRD came up at a text prompt on a machine that was working perfectly.
+		echo "PosterChan shell window mapped"
+		rm -f "$HOME/.local/state/posterchanos/compositor-boot-attempt" 2>/dev/null || true
 		wait "$shell_pid"; exit $?
 	fi
 	status=1

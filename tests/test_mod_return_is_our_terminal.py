@@ -12,27 +12,32 @@ The second half matters as much. This is an operating system, and the tick reach
 desktop is not running — which is precisely the moment somebody needs a terminal to find out why.
 `foot` is a separate process that owes the shell nothing, so it keeps a key. MOVING it rather than
 deleting it is the difference between changing a default and removing an escape hatch.
+
+Ported to `wayfire.ini`, where a binding is a `binding_x`/`command_x` pair and a command may be a
+`;`-chain (Wayfire runs it through `sh -c`), which is how the recovery chord both suppresses the
+Start menu and opens the terminal.
 """
 import re
 import unittest
 from pathlib import Path
 
+from tests.wayfire_config import bindings
+
 ROOT = Path(__file__).resolve().parents[1]
-SWAY = ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config"
 OS_JS = ROOT / "static" / "js" / "client" / "os.js"
 
 
 class ModReturnOpensOurs(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.cfg = SWAY.read_text()
-        cls.binds = dict(re.findall(r"(?m)^bindsym\s+(\S+)\s+exec\s+(.+)$", cls.cfg))
+        cls.binds = bindings()
+        cls.cfg = "\n".join("%s = %s" % kv for kv in cls.binds.items())
 
     def test_it_is_bound(self):
-        self.assertIn("Mod1+Return", self.binds)
+        self.assertIn("<alt> KEY_ENTER", self.binds)
 
     def test_it_is_not_a_third_party_terminal(self):
-        cmd = self.binds["Mod1+Return"]
+        cmd = self.binds["<alt> KEY_ENTER"]
         self.assertNotIn("foot", cmd,
                          "Super+Return opens a different terminal emulator than the one this OS "
                          "ships, which is what was reported twice")
@@ -41,7 +46,9 @@ class ModReturnOpensOurs(unittest.TestCase):
                 self.assertNotIn(other, cmd)
 
     def test_it_reaches_the_shell(self):
-        self.assertIn("send_tick pc:terminal", self.binds["Mod1+Return"])
+        """Through the action socket, which is Wayfire's equivalent of Sway's send_tick: a binding
+        can only run a command, so the command hands the payload to the running shell."""
+        self.assertIn("pc-wayfire-action pc:terminal", self.binds["<alt> KEY_ENTER"])
 
     def test_the_shell_answers_it(self):
         """Through `openTerminalHere`, which ARMS THE LOCAL PTY and then opens the same window a
@@ -90,25 +97,25 @@ class TheWayBackSurvives(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.cfg = SWAY.read_text()
+        cls.binds = bindings()
 
     def test_foot_is_still_reachable(self):
-        self.assertRegex(self.cfg, r"(?m)^bindsym\s+\S+\s+exec\s+foot\b",
-                         "foot was deleted rather than moved — with the desktop down there is now "
-                         "no way to open a terminal at all")
+        self.assertTrue([c for c, v in self.binds.items() if re.search(r"\bfoot\b", v)],
+                        "foot was deleted rather than moved — with the desktop down there is now "
+                        "no way to open a terminal at all")
 
     def test_it_does_not_go_through_the_shell(self):
-        """Its whole value is owing the shell nothing."""
-        for key, cmd in re.findall(r"(?m)^bindsym\s+(\S+)\s+exec\s+(.+)$", self.cfg):
-            if cmd.strip().startswith("foot"):
-                with self.subTest(key=key):
+        """Its whole value is owing the shell nothing: no tick, no IPC, no running desktop."""
+        for chord, cmd in self.binds.items():
+            if re.search(r"\bfoot\b", cmd):
+                with self.subTest(chord=chord):
+                    self.assertNotIn("pc-wayfire-action", cmd)
                     self.assertNotIn("swaymsg", cmd)
 
     def test_the_two_are_different_keys(self):
-        binds = dict(re.findall(r"(?m)^bindsym\s+(\S+)\s+exec\s+(.+)$", self.cfg))
-        foot = [k for k, v in binds.items() if v.strip().startswith("foot")]
+        foot = [c for c, v in self.binds.items() if re.search(r"\bfoot\b", v)]
         self.assertTrue(foot)
-        self.assertNotIn("Mod1+Return", foot)
+        self.assertNotIn("<alt> KEY_ENTER", foot)
 
 
 if __name__ == "__main__":

@@ -40,7 +40,29 @@ function start(opts) {
   /* `stty` inside the pty is how the size is set: `script` gives a PTY but no way to resize it from
    * outside, and a shell that thinks it is 80x24 on a 1920px screen wraps every long line in the
    * wrong place. Set at start and again on every resize. */
-  const cmd = `stty cols ${cols} rows ${rows} 2>/dev/null; exec ${shell} -l`;
+  /* CLOSE EVERY INHERITED DESCRIPTOR BEFORE THE SHELL EXISTS.
+   *
+   * Chromium's file descriptors are not CLOEXEC, so a child of this process inherits all of them --
+   * and this child is a LOGIN SHELL somebody leaves open for days. Measured on the running desktop:
+   * a `script`/`bash` pair holding 95 descriptors of a shell that had already exited, among them
+   * the LISTENING socket of its remote-debugging port, so the replacement could not bind its own
+   * port and nothing anywhere said why. Same shape as the `wl-copy` leak: short-lived children are
+   * harmless, anything long-lived is not.
+   *
+   * Done here rather than in the spawn options because node offers no "close the rest": `script`
+   * runs this string through `sh -c`, so the prologue is the one place that is inside the child and
+   * before the shell. 0/1/2 are the pty and are kept.
+   *
+   * NO `2>/dev/null` ON THE LOOP, and that is not tidiness. A redirection on a compound command is
+   * undone afterwards, so the shell first SAVES the old descriptor to a high number -- which the
+   * glob has already listed, so the loop closes the shell's own saved copy of fd 2 and stderr comes
+   * back closed. Measured: `echo err >&2` printed nothing. The unmatched-glob case it was there to
+   * silence is handled by testing the name instead. */
+  const closeInherited =
+    'for __fd in /proc/$$/fd/[0-9]*; do __n=${__fd##*/}; ' +
+    'case "$__n" in \'\'|*[!0-9]*) continue;; esac; ' +
+    '[ "$__n" -le 2 ] || eval "exec $__n>&-"; done; unset __fd __n';
+  const cmd = `${closeInherited}; stty cols ${cols} rows ${rows} 2>/dev/null; exec ${shell} -l`;
   const proc = spawn('script', ['-qfc', cmd, '/dev/null'], {
     cwd: o.cwd || process.env.HOME || '/',
     /* COLORTERM, because the far end of this PTY is xterm.js and xterm.js does 24-bit colour. It is

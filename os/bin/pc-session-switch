@@ -46,26 +46,27 @@ echo "$USER_NAME" | grep -qE '^pc-[0-9a-f]{16}$' || die 'provisioner returned an
 [ "$HOME_DIR" = "/home/$USER_NAME" ] || die 'provisioner returned an unsafe home'
 [ ! -L "$HOME_DIR" ] && [ "$(stat -c %U "$HOME_DIR")" = "$USER_NAME" ] || die 'unsafe home ownership'
 
-# Every real identity gets the same shell entry point, but its own HOME and Chromium profile.
+# EVERY IDENTITY GETS THE SAME ENTRY POINT, AND IT IS THE SESSION SCRIPT -- NOT A COMPOSITOR.
+#
+# This used to write `exec sway` straight into each provisioned account, which meant that signing in
+# with a Nostr identity -- the ordinary way anybody uses this machine -- silently produced a SWAY
+# desktop no matter what the rest of the OS was doing. It also copied a per-user sway config and an
+# outputs.conf, so a person's saved monitor layout was written somewhere the Wayfire session never
+# reads. pc-compositor-session owns the compositor, its environment and its recovery; this only has
+# to hand the account to it.
 [ ! -L "$HOME_DIR/.bash_profile" ] || die 'unsafe profile link'
 cat >"$HOME_DIR/.bash_profile" <<'PROFILE'
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
-  export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway MOZ_ENABLE_WAYLAND=1
-  exec sway
+  export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
+  exec /usr/local/bin/pc-compositor-session
 fi
 PROFILE
-mkdir -p "$HOME_DIR/.config/sway"
-[ "$(realpath -m "$HOME_DIR/.config/sway")" = "$HOME_DIR/.config/sway" ] || die 'unsafe config path'
-[ ! -L "$HOME_DIR/.config/sway/config" ] || die 'unsafe sway config link'
-if [ -s /home/posterchan/.config/sway/config ]; then
-  cp -f /home/posterchan/.config/sway/config "$HOME_DIR/.config/sway/config"
-elif [ -s /etc/sway/config ]; then
-  cp -f /etc/sway/config "$HOME_DIR/.config/sway/config"
-else
-  die 'no PosterChanOS sway configuration installed'
-fi
-[ -e "$HOME_DIR/.config/sway/outputs.conf" ] || : >"$HOME_DIR/.config/sway/outputs.conf"
+# The display layout the Wayfire session actually reads. Created empty and owned by the identity so
+# System Settings -> Displays has somewhere to write on the first save.
+mkdir -p "$HOME_DIR/.config/posterchanos"
+[ "$(realpath -m "$HOME_DIR/.config/posterchanos")" = "$HOME_DIR/.config/posterchanos" ] || die 'unsafe config path'
+[ ! -L "$HOME_DIR/.config/posterchanos/displays.json" ] || die 'unsafe displays link'
 
 # Optional one-shot browser session for a newly-added identity. It is opaque data, never evaluated
 # by this root helper, bounded to keep stdin from becoming a disk-fill interface, and readable only
@@ -76,8 +77,8 @@ umask 077
 dd bs=65536 count=1 of="$BOOT" 2>/dev/null || die 'could not receive session handoff'
 [ "$(stat -c %s "$BOOT")" -le 65536 ] || { rm -f "$BOOT"; die 'session handoff too large'; }
 chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.bash_profile" "$HOME_DIR/.config" "$BOOT"
-chmod 0700 "$HOME_DIR" "$HOME_DIR/.config" "$HOME_DIR/.config/sway"
-chmod 0600 "$HOME_DIR/.bash_profile" "$HOME_DIR/.config/sway/config" "$HOME_DIR/.config/sway/outputs.conf" "$BOOT"
+chmod 0700 "$HOME_DIR" "$HOME_DIR/.config" "$HOME_DIR/.config/posterchanos"
+chmod 0600 "$HOME_DIR/.bash_profile" "$BOOT"
 
 write_getty "$USER_NAME"
 printf '%s\n' "$NPUB" >"$STATE_ROOT/current-npub"

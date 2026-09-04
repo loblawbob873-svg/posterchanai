@@ -45,3 +45,25 @@ def test_wrapper_is_owned_by_the_upgrade_package_and_live_installer():
         assert helpers, f"the {where} no longer installs a list of helpers"
         assert "foot" in helpers.group(1).split(), (
             f"the {where} stopped installing the foot wrapper")
+
+
+def test_the_flicker_gate_can_actually_run_on_this_desktop():
+    """A GATE THAT CAN ONLY SKIP IS NOT A GATE.
+
+    It demanded `SWAYSOCK` and drove `swaymsg`, so after the compositor changed it answered
+    `SKIP SWAYSOCK is not available` for ever -- which in a report is indistinguishable from a
+    machine nobody ran it on. The compositor half now goes through scripts/wayfire_ipc.py.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "scripts/check_installed_foot_flicker.py").read_text()
+    body = src.split('"""', 2)[2]          # past the module docstring, which names what it replaced
+    assert "swaymsg" not in body, "the gate shells out to Sway again"
+    assert "SWAYSOCK" not in body
+    assert "import wayfire_ipc as wf" in body
+    assert "wf.socket_path()" in body
+    assert "window-rules/configure-view" in body
+    # OUTPUT-LOCAL GEOMETRY. Wayfire's configure-view coordinates are relative to output_id, so
+    # passing global ones works on the left monitor and displaces every other one by its own
+    # offset -- the bug the shell already paid for once in wm-wayfire.js.
+    assert "output_id" in body
+    assert 'int(rect["x"]) - base["x"]' in body

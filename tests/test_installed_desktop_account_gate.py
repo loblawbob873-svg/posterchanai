@@ -20,7 +20,18 @@ def test_installed_account_runner_is_headless_isolated_and_bounded():
     assert "WLR_BACKENDS=headless" in RUNNER
     assert "WLR_HEADLESS_OUTPUTS=1" in RUNNER
     assert "PC_DIAGNOSTIC_TOKEN" in RUNNER
-    assert "--pc-diagnostic-swaysock" in RUNNER
+    # THE COMPOSITOR IS THE ONE THIS OS RUNS. It started `sway -c /dev/null`, and sway is not
+    # installed on PosterChanOS any more -- so the verifier account could not come up at all, and
+    # every gate behind it reported a SKIP about CDP rather than about a compositor that never
+    # started. Wayfire needs a real config too: no `ipc` plugin, no socket to drive it through.
+    assert "nohup wayfire -c" in RUNNER
+    assert "plugins = ipc" in RUNNER
+    assert "wayfire-*.socket" in RUNNER
+    assert "WAYFIRE_SOCKET=" in RUNNER
+    assert "--pc-diagnostic-socket" in RUNNER
+    # The CODE, not the prose: the comment above the launch names the command it replaced.
+    code = "\n".join(l for l in RUNNER.splitlines() if not l.lstrip().startswith("#"))
+    assert "sway" not in code, code
     assert "--remote-debugging-address=127.0.0.1" in RUNNER
     assert "/tmp/pc-installed-diagnostic.installedacct12" in RUNNER
     assert "refusing cleanup outside the fixed diagnostic domain" in RUNNER

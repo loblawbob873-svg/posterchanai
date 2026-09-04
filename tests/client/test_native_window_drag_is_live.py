@@ -271,8 +271,8 @@ def test_maximise_is_geometry_only_and_never_recreates_the_app():
 
 def test_native_apps_inherit_the_dark_gtk_chrome():
     for path in (
-        ROOT / "os/bin/pc-shell-start",
-        ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-shell-start",
+        ROOT / "os/bin/pc-shell-start-wayfire",
+        ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-shell-start-wayfire",
     ):
         start = path.read_text(encoding="utf-8")
         assert 'GTK_THEME="${GTK_THEME:-Adwaita:dark}"' in start

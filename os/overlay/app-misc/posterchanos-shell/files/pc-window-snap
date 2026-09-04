@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Act on the focused Sway window without wrapping it in an HTML frame.
+"""Act on the focused window without wrapping it in an HTML frame.
 
 Snapping, moving between outputs and CLOSING all need the same first question — is the focused
 container a native application, a popped-out PosterChan window, or the shell surface that draws the
@@ -13,10 +13,6 @@ import socket
 import struct
 import subprocess
 import sys
-
-
-def sway(*args):
-    return subprocess.check_output(["swaymsg", *args], text=True)
 
 
 def wayfire(method, data=None):
@@ -41,15 +37,37 @@ def shell_action(payload):
                           stdout=subprocess.DEVNULL)
 
 
+def _neighbour(outputs, here, direction):
+    """The output next to `here` in `direction`, by position rather than by index.
+
+    Output ids are compositor bookkeeping and can come back in any order across a boot, so "the next
+    one" has to be read off the geometry the person is actually looking at.
+    """
+    box = here.get("geometry") or {}
+    x, y = int(box.get("x", 0)), int(box.get("y", 0))
+    axis = "x" if direction in ("left", "right") else "y"
+    forward = direction in ("right", "down")
+    best = None
+    for other in outputs:
+        if int(other.get("id", -1)) == int(here.get("id", -2)):
+            continue
+        obox = other.get("geometry") or {}
+        ox, oy = int(obox.get("x", 0)), int(obox.get("y", 0))
+        delta = (ox - x) if axis == "x" else (oy - y)
+        if (delta > 0) != forward or delta == 0:
+            continue
+        if best is None or abs(delta) < best[0]:
+            best = (abs(delta), other)
+    return best[1] if best else None
+
+
 def wayfire_main(side):
     views = wayfire("window-rules/list-views")
     win = next((v for v in views if v.get("mapped", True) and v.get("activated")), None)
     if not win:
         return
-    app = str(win.get("app-id") or "").lower()
     title = str(win.get("title") or "")
-    shell = app in ("posterchan", "posterchan-desktop", "place.poster.desktop") and not title.startswith("PosterChan Window")
-    if shell:
+    if is_posterchan_shell(win):
         actions = {"close": "pc:close", "minimise": "pc:minimise", "left": "pc:snap:left",
                    "right": "pc:snap:right", "max": "pc:snap:max"}
         if side in actions:
@@ -58,13 +76,54 @@ def wayfire_main(side):
             shell_action("pc:move-output:" + side[5:])
         return
     view_id = int(win["id"])
+    popped = is_popped_out_window(win)
     if side == "close":
+        # A popped-out PosterChan window and a native application are both real toplevels, and
+        # closing one is the compositor's job. The desktop learns a native window is gone from the
+        # compositor's own unmap event -- the same path as quitting the app from its own menu -- so
+        # its paired HTML frame is reaped without being told separately.
         wayfire("window-rules/close-view", {"id": view_id}); return
     if side == "minimise":
-        wayfire("wm-actions/set-minimized", {"view_id": view_id, "state": True}); return
-    if side.startswith("move-") and not title.startswith("PosterChan Window"):
+        # MINIMISE IS NOT THE COMPOSITOR'S TO DO, and this branch used to hand it all three cases.
+        #
+        # `wm-actions/set-minimized` hides the surface while the shell still believes the window is
+        # open. For a NATIVE application that loses the taskbar button the window is recoverable
+        # from, so it is routed by id to the renderer that owns its frame (`minimise` keeps the
+        # button; every renderer sees the tick and only the owner acts). For a POPPED-OUT PosterChan
+        # window there is no frame and no taskbar entry at all, so hiding it is simply losing it --
+        # deliberately left alone, exactly as the Sway path did. Both rules were lost in the move
+        # because the helper that carried them was only ever called from the Sway branch.
+        if not popped:
+            shell_action(f"pc:minimise-native:{view_id}")
+        return
+    if side.startswith("move-") and not popped:
+        # Firefox and Telegram keep the native handoff: they have a paired HTML frame, and a raw
+        # compositor move strands it behind as a black window.
         shell_action(f"pc:move-native:{view_id}:{side[5:]}"); return
     if side.startswith("move-"):
+        # A POPPED-OUT WINDOW HAS NO PAIRED FRAME, so nothing has to be handed over -- but it still
+        # has to MOVE. This branch used to `return` here, so Super+Shift+Arrow on a PosterChan window
+        # did nothing at all on this compositor while the same key moved a native app. Place it on
+        # the neighbouring output itself, in that output's local coordinates.
+        outputs = wayfire("window-rules/list-outputs")
+        here = next((o for o in outputs if int(o.get("id", -1)) == int(win.get("output-id", -2))), None)
+        if not here:
+            return
+        target = _neighbour(outputs, here, side[5:])
+        if not target:
+            return
+        rect = win.get("geometry") or {}
+        box = target.get("geometry") or {}
+        width = max(1, int(box.get("width", 1)))
+        height = max(1, int(box.get("height", 1)))
+        # configure-view geometry is OUTPUT-LOCAL, so this is a size and an inset rather than a
+        # position on the desktop; clamp it so a window from a larger monitor still lands whole.
+        w = min(int(rect.get("width", width // 2) or width // 2), width)
+        h = min(int(rect.get("height", height // 2) or height // 2), height)
+        wayfire("window-rules/configure-view", {
+            "id": view_id, "output_id": int(target["id"]),
+            "geometry": {"x": max(0, (width - w) // 2), "y": max(0, (height - h) // 2),
+                         "width": w, "height": h}})
         return
     outputs = wayfire("window-rules/list-outputs")
     out = next((o for o in outputs if int(o.get("id", -1)) == int(win.get("output-id", -2))), None)
@@ -99,26 +158,29 @@ def wayfire_main(side):
         "geometry": {"x": x, "y": y, "width": w, "height": h}})
 
 
-def focused(node, output=None):
-    if node.get("type") == "output":
-        output = node
-    if node.get("focused") and node.get("type") in ("con", "floating_con"):
-        return node, output
-    for child in node.get("nodes", []) + node.get("floating_nodes", []):
-        hit = focused(child, output)
-        if hit:
-            return hit
-    return None
+# WHICH WINDOW IS THIS: asked once, here, and never inline.
+#
+# `focused()` and `process_chain()` are gone with the Sway path that needed them -- they walked
+# `swaymsg -t get_tree` for the focused container and then read /proc, because an XWayland window
+# could map with no app_id at all. Wayfire answers both directly: `activated` on the view, and an
+# `app-id` that is populated for XWayland surfaces too (it reports the X11 class).
+#
+# The CLASSIFICATION stays a pair of named predicates rather than a condition written into
+# wayfire_main, for the reason in this module's docstring: three actions ask the same question and
+# answering it differently in any one of them costs the same thing every time.
+APP_IDS = ("posterchan", "posterchan-desktop", "place.poster.desktop")
+#: The title main.js gives every popped-out PosterChan window at CREATION -- before its page can
+#: rename it, because a window rule is evaluated when the surface maps.
+WINDOW_TITLE = "PosterChan Window"
 
 
 def process_chain(pid):
-    """Yield command lines for a process and its parents without trusting Wayland app_id.
+    """Yield command lines for a process and its parents without trusting the surface's app-id.
 
-    Electron surfaces have not kept one stable app_id across Wayland/XWayland and package
-    upgrades.  The compositor must never resize PosterChan's per-output shell surface: doing so
-    makes a laptop viewport narrow enough that the web desktop correctly falls back to Classic.
-    The renderer's ancestry, unlike its optional surface metadata, always reaches the packaged
-    posterchan-desktop main process.
+    A Wayland surface can be mapped before it has set one, and the compositor must never resize
+    PosterChan's per-output shell: doing so makes the viewport narrow enough that the web desktop
+    correctly falls back to its Classic layout, which reads as the desktop breaking. The renderer's
+    ancestry, unlike its optional surface metadata, always reaches the packaged main process.
     """
     seen = set()
     while pid and pid not in seen:
@@ -128,7 +190,7 @@ def process_chain(pid):
             yield raw.decode("utf-8", "replace")
             with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as handle:
                 stat = handle.read()
-            # comm is parenthesised but may itself contain spaces and `)`.  Only the final closing
+            # comm is parenthesised but may itself contain spaces and `)`. Only the final closing
             # parenthesis is structural; after it the first field is state and the second is ppid.
             end = stat.rfind(")")
             if end < 0:
@@ -139,37 +201,34 @@ def process_chain(pid):
             return
 
 
+def is_ours(win):
+    """Ours by app-id, or -- when the surface has not set one yet -- by process ancestry.
+
+    The ancestry read is the FALLBACK and not the first question: it is a /proc walk per call, and a
+    stable app-id is both cheaper and exact. It exists because the one case it covers is the
+    expensive one -- an unidentified shell surface treated as an ordinary application and snapped to
+    half a monitor.
+    """
+    app = str(win.get("app-id") or win.get("app_id") or "").lower()
+    if app:
+        return app in APP_IDS
+    pid = win.get("pid")
+    if not pid:
+        return False
+    return any("posterchan-desktop" in line.lower() for line in process_chain(int(pid)))
+
+
 def is_popped_out_window(win):
-    """A PosterChan window that is its OWN Sway toplevel, not the per-output desktop surface.
-
-    Popped-out windows became real compositor toplevels, and they carry the SAME app_id as the
-    desktop that opened them — so `is_posterchan_shell` claimed them and this helper forwarded the
-    keypress back to the renderer, which then looked for an in-page window to snap and found none.
-    Reported as "posterchan windows are not moveable on sway now with keyboard": the window was a
-    perfectly ordinary floating container Sway could have moved all along.
-
-    The discriminator is the TITLE, and deliberately the same one sway.config's own float rule uses
-    (`title="^PosterChan Window"`) — two rules disagreeing about what a window is would be the same
-    bug again, one layer down."""
-    if not str(win.get("app_id") or "").lower() in (
-            "posterchan", "posterchan-desktop", "place.poster.desktop"):
-        if not any("posterchan-desktop" in cmd.lower() for cmd in process_chain(win.get("pid"))):
-            return False
-    return str(win.get("name") or "").startswith("PosterChan Window")
+    """A real toplevel the SHELL owns the chrome and taskbar button for."""
+    return is_ours(win) and str(win.get("title") or "").startswith(WINDOW_TITLE)
 
 
 def is_posterchan_shell(win):
-    # A popped-out window is Sway's to move, exactly like any other floating container.
-    if is_popped_out_window(win):
-        return False
-    app = str(win.get("app_id") or "").lower()
-    # Electron 44's registered Wayland identity is the reverse-DNS package name. During startup or
-    # compositor recovery pid metadata can still be absent, so ancestry is not a usable fallback.
-    # Treat every identity accepted by the renderer/main shell lookup as the same protected surface;
-    # resizing one here halves an entire monitor instead of the focused PosterChan window inside it.
-    if app in ("posterchan", "posterchan-desktop", "place.poster.desktop"):
-        return True
-    return any("posterchan-desktop" in cmd.lower() for cmd in process_chain(win.get("pid")))
+    """The desktop surface itself. A window of ours with no title yet is this, not a popped-out one:
+    the shell surface is the first thing to map and the discriminator is a title it does not set."""
+    return is_ours(win) and not str(win.get("title") or "").startswith(WINDOW_TITLE)
+
+
 
 
 def main():
@@ -180,120 +239,10 @@ def main():
         raise SystemExit(
             "usage: pc-window-snap left|right|max|edge|close|minimise"
             "|move-left|move-right|move-up|move-down")
-    if os.environ.get("WAYFIRE_SOCKET"):
-        wayfire_main(side)
-        return
-    hit = focused(json.loads(sway("-t", "get_tree", "-r")))
-    if not hit:
-        return
-    win, out = hit
-    if not out:
-        return
-    # Sway owns Super+Arrow before Chromium can see it.  Native applications can be resized here,
-    # but PosterChan windows live inside the one shell surface; resizing that surface both misses
-    # the focused in-app window and can force the whole UI into its narrow/classic layout.  Route
-    # the same physical key back to the shell so its ordinary snapTo() path handles the focused
-    # PosterChan window.
-    if is_posterchan_shell(win):
-        if side == "minimise":
-            sway("-t", "send_tick", "pc:minimise")
-            return
-        if side == "close":
-            # NEVER `kill` HERE. This container is the desktop: one surface hosting every PosterChan
-            # window, so killing it takes the lot. sway execs pc-shell-start once and does not
-            # respawn it, which leaves a black screen recoverable only by Ctrl+Alt+Backspace — from
-            # a keypress that meant "close this window". The renderer closes its own focused window
-            # and does nothing when it has none, which is the correct answer for Alt+F4 pressed on
-            # an empty desktop.
-            sway("-t", "send_tick", "pc:close")
-            return
-        if side in moves:
-            # Each output has its own shell surface. Moving that Sway container itself leaves the
-            # source output black and bypasses the selected app's identity/state handoff. Ask the
-            # renderer to transfer its focused PosterChan window through the ordinary two-phase
-            # monitor protocol instead.
-            sway("-t", "send_tick", "pc:move-output:" + moves[side])
-        elif side != "edge":
-            sway("-t", "send_tick", "pc:snap:" + side)
-        return
-    if side == "minimise":
-        # THE COMPOSITOR HAS NO MINIMISE. What it has is the scratchpad, and a window put there is
-        # only recoverable through the frame that remembers it — which is why this is routed by
-        # con_id to the renderer that OWNS the frame (`minimise` keeps the taskbar button), and why
-        # a popped-out window is deliberately left alone: it has no frame and no taskbar entry, so
-        # stashing it would be losing it. Every renderer sees the tick; only the owner acts.
-        if not is_popped_out_window(win):
-            sway("-t", "send_tick", "pc:minimise-native:%d" % int(win["id"]))
-        return
-    if side == "close":
-        # A popped-out PosterChan window and a native application are both real toplevels, and
-        # closing one is the compositor's job. The desktop learns a native window is gone from
-        # sway's own `window::close`, which is the same path as quitting the app from its own menu,
-        # so its paired HTML frame is reaped without being told separately.
-        sway("[con_id=%d]" % int(win["id"]), "kill")
-        return
-    if side in moves and not is_popped_out_window(win):
-        # Native Firefox/Telegram surfaces are paired with an HTML frame in exactly one output
-        # renderer. A raw compositor move strands that frame/owner behind as a black window. Every
-        # renderer sees the tick, so include con_id; only the renderer that owns it may hand it off.
-        #
-        # A POPPED-OUT POSTERCHAN WINDOW IS NOT THAT, and sending it here was the second half of
-        # "not moveable with keyboard". It has no paired HTML frame and no owning renderer, so the
-        # tick reached nobody and the window sat exactly where it was. Excluding it from the shell
-        # branch alone was not enough — it simply fell into the next wrong branch. It is a plain
-        # floating container; the geometry path below moves it the way it moves anything else.
-        sway("-t", "send_tick", "pc:move-native:%d:%s" % (int(win["id"]), moves[side]))
-        return
-    if side in moves:
-        # Straight compositor move for a window nothing else owns.
-        sway("[con_id=%d]" % int(win["id"]), "move", moves[side])
-        return
-    box = out.get("rect") or {}
-    x, y = int(box.get("x", 0)), int(box.get("y", 0))
-    width, height = int(box.get("width", 1)), max(1, int(box.get("height", 1)) - 72)
-    if side == "edge":
-        r = win.get("rect") or {}
-        # This mode runs on a title-bar button release. A release away from an edge is deliberately
-        # a no-op; it must never turn an ordinary click or small move into a resize.
-        near_top = int(r.get("y", y + 1000)) <= y + 60
-        near_bottom = int(r.get("y", y)) + int(r.get("height", 0)) >= y + height - 28
-        near_left = int(r.get("x", x + 1000)) <= x + 28
-        near_right = int(r.get("x", x)) + int(r.get("width", 0)) >= x + width - 28
-        # Corners are checked before the top edge. The previous top-first order maximised every
-        # top-corner drop, making the four quarter-screen layouts impossible for native apps.
-        if near_top and near_left:
-            side = "top-left"
-        elif near_top and near_right:
-            side = "top-right"
-        elif near_bottom and near_left:
-            side = "bottom-left"
-        elif near_bottom and near_right:
-            side = "bottom-right"
-        elif near_top:
-            side = "max"
-        elif near_left:
-            side = "left"
-        elif near_right:
-            side = "right"
-        else:
-            return
-    if side == "max":
-        nx, ny, nw, nh = x, y, width, height
-    elif side in ("top-left", "top-right", "bottom-left", "bottom-right"):
-        nw, nh = width // 2, height // 2
-        nx = x if side.endswith("left") else x + width - nw
-        ny = y if side.startswith("top") else y + height - nh
-    else:
-        nw, nh, ny = width // 2, height, y
-        nx = x if side == "left" else x + width - nw
-    criteria = "[con_id=%d]" % int(win["id"])
-    # One Sway transaction keeps Firefox/Telegram focused and never exposes a half-resized surface
-    # between commands.  It also makes mouse-edge and Super+Arrow use the identical final geometry.
-    subprocess.check_call([
-        "swaymsg", criteria, "floating", "enable", ",",
-        "resize", "set", "width", str(nw), "px", "height", str(nh), "px", ",",
-        "move", "absolute", "position", str(nx), str(ny),
-    ], stdout=subprocess.DEVNULL)
+    # ONE COMPOSITOR, so no branch. This used to fall through to a ~110-line Sway path that walked
+    # `swaymsg -t get_tree` for the focused container and drove `swaymsg` criteria; it followed the
+    # compositor out.
+    wayfire_main(side)
 
 
 if __name__ == "__main__":

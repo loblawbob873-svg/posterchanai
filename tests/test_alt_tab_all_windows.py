@@ -15,21 +15,28 @@ HELPERS = [ROOT / "os/bin/pc-window-cycle",
 def test_installer_and_package_helpers_are_identical_tick_senders():
     assert HELPERS[0].read_bytes() == HELPERS[1].read_bytes()
     source = HELPERS[0].read_text(encoding="utf-8")
-    assert 'send_tick "pc:cycle:$direction"' in source
+    assert 'pc-wayfire-action "pc:cycle:$direction"' in source
     assert "get_tree" not in source, "Sway leaves collapse every PosterChan app into one surface"
 
 
 def test_helper_emits_exact_direction_tick_and_rejects_unknown_actions(tmp_path):
     log = tmp_path / "calls"
-    stub = tmp_path / "swaymsg"
+    # The helper execs pc-wayfire-action by ABSOLUTE path -- it is run from a key binding, which is
+    # not guaranteed a useful PATH -- so the stub has to stand in at that path.
+    bindir = tmp_path / "usr" / "local" / "bin"
+    bindir.mkdir(parents=True)
+    stub = bindir / "pc-wayfire-action"
     stub.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >>"$PC_CYCLE_LOG"\n', encoding="utf-8")
     stub.chmod(0o755)
-    env = dict(os.environ, PATH=str(tmp_path) + os.pathsep + os.environ.get("PATH", ""),
-               PC_CYCLE_LOG=str(log))
-    ok = subprocess.run([str(HELPERS[0]), "previous"], env=env, check=False)
-    bad = subprocess.run([str(HELPERS[0]), "sideways"], env=env, check=False)
+    helper = tmp_path / "pc-window-cycle"
+    helper.write_text(HELPERS[0].read_text(encoding="utf-8").replace(
+        "/usr/local/bin/pc-wayfire-action", str(stub)), encoding="utf-8")
+    helper.chmod(0o755)
+    env = dict(os.environ, PC_CYCLE_LOG=str(log))
+    ok = subprocess.run([str(helper), "previous"], env=env, check=False)
+    bad = subprocess.run([str(helper), "sideways"], env=env, check=False)
     assert ok.returncode == 0 and bad.returncode == 2
-    assert log.read_text(encoding="utf-8").strip() == "-t send_tick pc:cycle:previous"
+    assert log.read_text(encoding="utf-8").strip() == "pc:cycle:previous"
 
 
 def test_renderer_cycles_stable_window_order_in_both_directions():

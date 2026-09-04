@@ -57,16 +57,33 @@ async def main():
         return 2
 
     try:
+        # THE RELAY SPEAKS FIRST, AND IT IS NOT ANSWERING YOU.
+        #
+        # NIP-42: the relay sends `["AUTH", <challenge>]` unprompted on connect, and it can arrive
+        # before or after anything this sends. Read as the reply to a publish it says `AUTH` where
+        # an `OK` was expected -- which this check then reported as "the relay REFUSED a signer
+        # frame", naming the challenge string as the reason, on a relay that had accepted the event
+        # perfectly. A red that cannot be reproduced by hand is worse than no check at all.
+        #
+        # So every read here waits for the frame it is actually waiting for, and skips the ones the
+        # relay volunteers. The subscription loop below already did this for EOSE; the publish did
+        # not, and that asymmetry is the whole bug.
+        async def frame(ws, *want, timeout=15):
+            while True:
+                m = json.loads(await asyncio.wait_for(ws.recv(), timeout))
+                if m and m[0] in want:
+                    return m
+                if m and m[0] in ("AUTH", "NOTICE"):
+                    continue
+                return m
+
         # The signer, waiting to be asked.
         await sub.send(json.dumps(["REQ", "sig", {"kinds": [24133], "#p": [pk_signer]}]))
-        while True:
-            m = json.loads(await asyncio.wait_for(sub.recv(), 15))
-            if m[0] == "EOSE":
-                break
+        await frame(sub, "EOSE")
 
         ev = E.build_event(sk_client, 24133, "signer-transport-probe", [["p", pk_signer]])
         await pub.send(json.dumps(["EVENT", ev]))
-        ok = json.loads(await asyncio.wait_for(pub.recv(), 15))
+        ok = await frame(pub, "OK")
         if ok[0] != "OK" or not ok[2]:
             why = ok[3] if len(ok) > 3 else ""
             print(f"FAIL  the relay REFUSED a signer frame: {why or ok}")
@@ -75,7 +92,7 @@ async def main():
             return 1
 
         try:
-            got = json.loads(await asyncio.wait_for(sub.recv(), 15))
+            got = await frame(sub, "EVENT")
         except asyncio.TimeoutError:
             print("FAIL  accepted and never delivered — the signer sees nothing and the client "
                   "waits until it times out, which is 'signing does nothing' with no error.")

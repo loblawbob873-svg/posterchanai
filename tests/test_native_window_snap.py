@@ -3,8 +3,10 @@ import re
 import runpy
 from pathlib import Path
 
+from tests.wayfire_config import CONFIG, bindings, sections
 
 ROOT = Path(__file__).resolve().parents[1]
+SNAP = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
 
 
 def test_native_snap_helper_is_shipped_and_bound_in_both_os_configs():
@@ -13,17 +15,39 @@ def test_native_snap_helper_is_shipped_and_bound_in_both_os_configs():
     code = helper.read_text()
     assert '"left", "right", "max", "edge"' in code
     assert '"move-left": "left"' in code
-    assert '"move", "absolute", "position"' in code
-    for cfg in (
-        ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config",
-        ROOT / "os/gentoo.sh",
-    ):
-        src = cfg.read_text()
-        assert "$mod+Left  exec /usr/local/bin/pc-window-snap left" in src
-        assert "$mod+Right exec /usr/local/bin/pc-window-snap right" in src
-        assert "$mod+Up    exec /usr/local/bin/pc-window-snap max" in src
-        assert "$mod+Shift+Left  exec /usr/local/bin/pc-window-snap move-left" in src
-        assert "$mod+Shift+Right exec /usr/local/bin/pc-window-snap move-right" in src
+    assert '"window-rules/configure-view"' in code, "nothing applies the snapped geometry"
+    binds = bindings()
+    for arrow, action in (("KEY_LEFT", "pc-window-snap left"), ("KEY_RIGHT", "pc-window-snap right"),
+                          ("KEY_UP", "pc-window-snap max")):
+        chord = "<super> " + arrow
+        assert chord in binds, f"{chord} is unbound"
+        assert action in binds[chord], f"{chord} runs {binds[chord]!r}, not {action}"
+
+
+def drive(win, side, outputs=None):
+    """Run the helper for one focused view; return `(ipc_calls, ticks)`.
+
+    Only the IPC round trip and the shell tick are stubbed, so the real classification, the real
+    branch ordering and the real geometry arithmetic all execute.
+    """
+    module = runpy.run_path(str(SNAP), run_name="pc_window_snap_drive")
+    ipc, ticks = [], []
+    boxes = outputs or [{"id": 1, "name": "DP-1",
+                         "geometry": {"x": 0, "y": 0, "width": 1920, "height": 1080},
+                         "workarea": {"x": 0, "y": 0, "width": 1920, "height": 1080}}]
+
+    def fake_wayfire(method, data=None):
+        if method == "window-rules/list-views":
+            return [dict(win, activated=True, mapped=True)]
+        if method == "window-rules/list-outputs":
+            return boxes
+        ipc.append((method, data))
+        return {}
+
+    module["wayfire_main"].__globals__["wayfire"] = fake_wayfire
+    module["wayfire_main"].__globals__["shell_action"] = ticks.append
+    module["wayfire_main"](side)
+    return ipc, ticks
 
 
 def test_native_snap_never_resizes_a_posterchan_shell_surface(monkeypatch):
@@ -76,62 +100,37 @@ def test_process_ancestry_survives_spaces_and_parentheses_in_proc_comm(monkeypat
     assert module["is_posterchan_shell"]({"app_id": "", "pid": 4242}) is True
 
 
-def test_repeated_super_arrows_route_to_the_internal_window_without_resizing_shell(monkeypatch):
-    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
-    module = runpy.run_path(str(helper), run_name="pc_window_snap_repeat_test")
-    sent = []
-    resized = []
-    monkeypatch.setitem(module["main"].__globals__, "sway",
-                        lambda *args: sent.append(args) or '{"nodes":[]}')
-    monkeypatch.setitem(module["main"].__globals__, "focused",
-                        lambda _tree: ({"id": 31, "app_id": "place.poster.desktop", "pid": 0},
-                                       {"rect": {"x": 1920, "y": 0,
-                                                 "width": 2560, "height": 1440}}))
-    monkeypatch.setattr(module["subprocess"], "check_call",
-                        lambda argv, **_kw: resized.append(argv))
+
+def test_repeated_super_arrows_route_to_the_internal_window_without_resizing_shell():
+    """Super+Arrow on the desktop surface must reach the RENDERER, never resize the surface itself:
+    halving it makes the viewport narrow enough that the web desktop falls back to Classic."""
+    shell = {"id": 31, "app-id": "place.poster.desktop", "title": "PosterChan · Nostr", "output-id": 1}
+    ticks = []
     for side in ("right", "right", "left", "right", "max", "left"):
-        monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", side])
-        module["main"]()
-    assert [call[-1] for call in sent if call[:2] == ("-t", "send_tick")] == [
-        "pc:snap:right", "pc:snap:right", "pc:snap:left",
-        "pc:snap:right", "pc:snap:max", "pc:snap:left"]
-    assert resized == [], "Super+Arrow resized the per-monitor shell instead of its internal window"
+        ipc, sent = drive(shell, side)
+        assert ipc == [], "Super+Arrow resized the per-monitor shell instead of its internal window"
+        ticks += sent
+    assert ticks == ["pc:snap:right", "pc:snap:right", "pc:snap:left",
+                     "pc:snap:right", "pc:snap:max", "pc:snap:left"]
 
 
-def test_cross_monitor_shortcut_moves_the_in_app_window_not_the_shell(monkeypatch):
-    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
-    module = runpy.run_path(str(helper), run_name="pc_window_move_shell_test")
-    sent = []
-    moved = []
-    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "move-right"])
-    monkeypatch.setitem(module["main"].__globals__, "sway",
-                        lambda *args: sent.append(args) or '{"nodes":[]}')
-    monkeypatch.setitem(module["main"].__globals__, "focused",
-                        lambda _tree: ({"id": 32, "app_id": "place.poster.desktop", "pid": 0},
-                                       {"rect": {"x": 0, "y": 0, "width": 1920, "height": 1080}}))
-    monkeypatch.setattr(module["subprocess"], "check_call",
-                        lambda argv, **_kw: moved.append(argv))
-    module["main"]()
-    assert sent[-1] == ("-t", "send_tick", "pc:move-output:right")
-    assert moved == [], "the entire per-output shell was moved and its source monitor went black"
 
 
-def test_cross_monitor_shortcut_still_moves_a_native_app(monkeypatch):
-    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
-    module = runpy.run_path(str(helper), run_name="pc_window_move_native_test")
-    calls = []
-    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "move-left"])
-    sent = []
-    monkeypatch.setitem(module["main"].__globals__, "sway",
-                        lambda *args: sent.append(args) or '{"nodes":[]}')
-    monkeypatch.setitem(module["main"].__globals__, "focused",
-                        lambda _tree: ({"id": 91, "app_id": "firefox", "pid": 7},
-                                       {"rect": {"x": 1920, "y": 0, "width": 1920, "height": 1080}}))
-    monkeypatch.setattr(module["subprocess"], "check_call",
-                        lambda argv, **_kw: calls.append(argv))
-    module["main"]()
-    assert sent[-1] == ("-t", "send_tick", "pc:move-native:91:left")
-    assert calls == [], "native shortcut bypassed the state-preserving renderer handoff"
+def test_cross_monitor_shortcut_moves_the_in_app_window_not_the_shell():
+    shell = {"id": 32, "app-id": "place.poster.desktop", "title": "PosterChan · Nostr", "output-id": 1}
+    ipc, ticks = drive(shell, "move-right")
+    assert ticks[-1] == "pc:move-output:right"
+    assert ipc == [], "the entire per-output shell was moved and its source monitor went black"
+
+
+
+
+def test_cross_monitor_shortcut_still_moves_a_native_app():
+    firefox = {"id": 91, "app-id": "firefox", "title": "Mozilla Firefox", "output-id": 1}
+    ipc, ticks = drive(firefox, "move-left")
+    assert ticks[-1] == "pc:move-native:91:left"
+    assert ipc == [], "native shortcut bypassed the state-preserving renderer handoff"
+
 
 
 def test_shell_move_tick_uses_state_preserving_monitor_handoff():
@@ -146,41 +145,23 @@ def test_shell_move_tick_uses_state_preserving_monitor_handoff():
     assert "nativeWins().find(x=>Number(x.native)===id)" in src
 
 
-def test_mouse_edge_release_cannot_snap_the_reverse_dns_shell_surface(monkeypatch):
-    """The HTML frame owns mouse snapping; the compositor helper must leave its output intact."""
-    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
-    module = runpy.run_path(str(helper), run_name="pc_window_snap_mouse_shell_test")
-    sent = []
-    resized = []
-    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "edge"])
-    monkeypatch.setitem(module["main"].__globals__, "sway",
-                        lambda *args: sent.append(args) or '{"nodes":[]}')
-    monkeypatch.setitem(module["main"].__globals__, "focused",
-                        lambda _tree: ({"id": 32, "app_id": "place.poster.desktop", "pid": 0,
-                                        "rect": {"x": 1920, "y": 0,
-                                                 "width": 2560, "height": 1440}},
-                                       {"rect": {"x": 1920, "y": 0,
-                                                 "width": 2560, "height": 1440}}))
-    monkeypatch.setattr(module["subprocess"], "check_call",
-                        lambda argv, **_kw: resized.append(argv))
-    for _ in range(6):
-        module["main"]()
-    assert not [call for call in sent if call[:2] == ("-t", "send_tick")]
-    assert resized == []
+
+def test_mouse_edge_release_cannot_snap_the_reverse_dns_shell_surface():
+    """`edge` is what a titlebar drag lands on. It must be refused for the desktop surface under
+    every app-id spelling Electron has used, or a drag near a screen edge halves the desktop."""
+    for app_id in ("place.poster.desktop", "PosterChan", "posterchan-desktop"):
+        shell = {"id": 5, "app-id": app_id, "title": "PosterChan · Nostr", "output-id": 1}
+        ipc, ticks = drive(shell, "edge")
+        assert ipc == [], f"{app_id}: a mouse-edge release resized the desktop surface"
 
 
-def test_super_arrow_routes_shell_focus_to_the_in_app_window(monkeypatch):
-    """The compositor consumes Super+Right, so Chromium cannot be the only handler."""
-    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
-    module = runpy.run_path(str(helper), run_name="pc_window_snap_test")
-    sent = []
-    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "right"])
-    monkeypatch.setitem(module["main"].__globals__, "sway",
-                        lambda *args: sent.append(args) or '{"nodes":[]}')
-    monkeypatch.setitem(module["main"].__globals__, "focused",
-                        lambda _tree: ({"id": 9, "app_id": "posterchan-desktop"}, {"rect": {}}))
-    module["main"]()
-    assert sent[-1] == ("-t", "send_tick", "pc:snap:right")
+
+def test_super_arrow_routes_shell_focus_to_the_in_app_window():
+    shell = {"id": 5, "app-id": "place.poster.desktop", "title": "PosterChan · Nostr", "output-id": 1}
+    ipc, ticks = drive(shell, "left")
+    assert ticks == ["pc:snap:left"]
+    assert ipc == []
+
 
 
 def test_shell_snap_tick_uses_the_focused_posterchan_window():
@@ -217,55 +198,57 @@ def test_native_snap_still_accepts_real_native_apps():
     assert module["is_posterchan_shell"]({"app_id": "firefox", "pid": 4243}) is False
 
 
-def test_existing_identity_configs_are_migrated_to_native_snap():
+
+def test_the_snap_helper_is_installed_by_the_package():
+    """It is bound by absolute path, so an unshipped helper is a chord that does nothing at all.
+
+    This replaces a check that the per-account Sway configs were migrated to gain these bindings.
+    There are no per-account compositor configs any more: one package-owned /etc/wayfire.ini carries
+    them, so an upgrade cannot leave an account behind.
+    """
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    # pc-window-close sits between them in the install loop; match each helper on its own so
-    # adding a third never reads as one going missing.
-    for helper in ("pc-window-snap", "pc-key"):
-        assert f" {helper} " in ebuild, f"{helper} is not in the ebuild install loop"
-    assert "focus output/d" in ebuild
+    assert " pc-window-snap " in ebuild
+    assert 'doins "${FILESDIR}/wayfire.ini"' in ebuild
+
 
 
 def test_native_titlebars_use_the_posterchan_palette():
-    for cfg in (
-        ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config",
-        ROOT / "os/gentoo.sh",
-    ):
-        src = cfg.read_text()
-        assert "client.focused          #241438" in src
-        assert "client.unfocused        #100d18" in src
+    """Sway had five colours per state; Wayfire's decoration plugin has two. The one that matters is
+    the focused titlebar, which is what somebody sees next to PosterChan's own chrome."""
+    decoration = sections()["decoration"]
+    assert decoration["active_color"].lower().lstrip("\\").startswith("#241438")
+    assert decoration["inactive_color"].lower().lstrip("\\").startswith("#171222")
 
 
 def test_firefox_and_telegram_cannot_lose_the_native_snap_container():
-    for cfg in (
-        ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config",
-        ROOT / "os/gentoo.sh",
-    ):
-        src = cfg.read_text()
-        assert '[app_id="firefox"] floating enable, border normal 3' in src
-        assert '[class="(?i)^firefox$"] floating enable, border normal 3' in src
-        assert '[app_id="org.telegram.desktop"] floating enable, border normal 3' in src
-        assert '[class="(?i)^(TelegramDesktop|telegram-desktop)$"] floating enable, border normal 3' in src
+    """SWAY NEEDED A RULE PER APPLICATION; WAYFIRE NEEDS AN ABSENCE.
 
-
-def test_existing_private_configs_gain_explicit_native_window_rules():
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert 'native_rule in' in ebuild
-    assert '[app_id="firefox"] floating enable, border normal 3' in ebuild
-    assert '[app_id="org.telegram.desktop"] floating enable, border normal 3' in ebuild
+    Sway tiled by default, so Firefox and Telegram each needed `floating enable, border normal 3` or
+    they were tiled into the shell's layout with no frame. Wayfire floats and decorates every
+    toplevel, so what has to be true is the opposite: they must NOT be named in the list of surfaces
+    excluded from server-side decoration, which exists for PosterChan's own chrome. A rule per app
+    would be the bug now -- an entry that matched Firefox would take its frame away.
+    """
+    ignore = sections()["decoration"]["ignore_views"].lower()
+    for app in ("firefox", "telegram", "org.telegram.desktop"):
+        assert app not in ignore, f"{app} is excluded from decoration and would come up frameless"
+    assert int(sections()["decoration"]["border_size"]) == 3
+    assert "preferred_decoration_mode = server" in CONFIG.read_text(encoding="utf-8")
 
 
 def test_dragging_a_titlebar_to_an_output_edge_snaps_without_stealing_app_clicks():
     helper = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap").read_text()
     assert '"edge"' in helper
     assert 'side = "left"' in helper and 'side = "right"' in helper
-    for cfg in (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config",
-                ROOT / "os/gentoo.sh"):
-        src = cfg.read_text()
-        assert "bindsym --border --release button1 exec /usr/local/bin/pc-window-snap edge" in src
-        binding = src[src.index("pc-window-snap edge") - 100:src.index("pc-window-snap edge")]
-        assert "--border" in binding
-        assert "--whole-window" not in binding
+    # Sway needed a `--border --release button1` binding to notice a titlebar drag reaching an
+    # edge, and `--border` rather than `--whole-window` so the press was not stolen from the app.
+    # Wayfire's move plugin does the edge detection itself, which is both fewer moving parts and the
+    # reason the binding is gone: `enable_snap` IS this feature.
+    move = sections()["move"]
+    assert move["enable_snap"] == "true", "dragging a window to an edge no longer snaps it"
+    assert int(move["snap_threshold"]) > 0
+    assert int(move["quarter_snap_threshold"]) > 0, "corner drags no longer make quarters"
+    assert "BTN_LEFT" in move["activate"], "there is no drag gesture to snap with"
     ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
     # pc-window-close sits between them in the install loop; match each helper on its own so
     # adding a third never reads as one going missing.
@@ -273,48 +256,34 @@ def test_dragging_a_titlebar_to_an_output_edge_snaps_without_stealing_app_clicks
         assert f" {helper} " in ebuild, f"{helper} is not in the ebuild install loop"
 
 
-def test_native_titlebar_corners_snap_to_output_quarters(monkeypatch):
-    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
-    module = runpy.run_path(str(helper), run_name="pc_window_snap_corner_test")
 
-    def run(rect):
-        calls = []
-        monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "edge"])
-        monkeypatch.setitem(module["main"].__globals__, "sway", lambda *_: '{"nodes":[]}')
-        monkeypatch.setitem(module["main"].__globals__, "focused", lambda _tree:
-                            ({"id": 7, "app_id": "firefox", "rect": rect},
-                             {"rect": {"x": 1000, "y": 100, "width": 1200, "height": 900}}))
-        monkeypatch.setattr(module["subprocess"], "check_call",
-                            lambda argv, **_kw: calls.append(argv))
-        module["main"]()
-        return calls
-
-    top_left = run({"x": 1000, "y": 100, "width": 500, "height": 400})
-    assert len(top_left) == 1
-    assert top_left[0][-11:] == ["600", "px", "height", "414", "px", ",", "move",
-                                  "absolute", "position", "1000", "100"]
-
-    bottom_right = run({"x": 1700, "y": 600, "width": 500, "height": 328})
-    assert len(bottom_right) == 1
-    assert bottom_right[0][-11:] == ["600", "px", "height", "414", "px", ",", "move",
-                                     "absolute", "position", "1600", "514"]
+def test_native_titlebar_corners_snap_to_output_quarters():
+    """A window already in a corner gets a quarter, not a half — the geometry, not just the branch."""
+    firefox = {"id": 91, "app-id": "firefox", "title": "Mozilla Firefox", "output-id": 1,
+               "geometry": {"x": 0, "y": 0, "width": 400, "height": 300}}
+    ipc, _ = drive(firefox, "edge")
+    assert ipc, "a corner drag snapped nothing"
+    method, data = ipc[-1]
+    assert method == "window-rules/configure-view"
+    box = data["geometry"]
+    assert box["width"] == 960, box
+    assert box["height"] == (1080 - 72) // 2, box
 
 
-def test_native_right_snap_atomically_fills_offset_outputs_usable_height(monkeypatch):
-    helper = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
-    module = runpy.run_path(str(helper), run_name="pc_window_snap_right_fill_test")
-    calls = []
-    monkeypatch.setattr(module["sys"], "argv", ["pc-window-snap", "right"])
-    monkeypatch.setitem(module["main"].__globals__, "sway", lambda *_: '{"nodes":[]}')
-    monkeypatch.setitem(module["main"].__globals__, "focused", lambda _tree:
-                        ({"id": 91, "app_id": "firefox", "pid": 7},
-                         {"rect": {"x": 1920, "y": 120, "width": 1280, "height": 720}}))
-    monkeypatch.setattr(module["subprocess"], "check_call",
-                        lambda argv, **_kw: calls.append(argv))
-    module["main"]()
-    assert calls == [["swaymsg", "[con_id=91]", "floating", "enable", ",", "resize", "set",
-                      "width", "640", "px", "height", "648", "px", ",", "move", "absolute",
-                      "position", "2560", "120"]]
+
+
+def test_native_right_snap_atomically_fills_offset_outputs_usable_height():
+    """On a second, offset monitor the right half must fill THAT output — and the geometry is
+    output-LOCAL, so an absolute x would put the window a whole monitor away."""
+    outputs = [{"id": 3, "name": "DP-2",
+                "geometry": {"x": 1920, "y": 0, "width": 2560, "height": 1440},
+                "workarea": {"x": 0, "y": 0, "width": 2560, "height": 1440}}]
+    firefox = {"id": 91, "app-id": "firefox", "title": "Mozilla Firefox", "output-id": 3}
+    ipc, _ = drive(firefox, "right", outputs=outputs)
+    method, data = ipc[-1]
+    assert method == "window-rules/configure-view"
+    assert data["geometry"] == {"x": 1280, "y": 0, "width": 1280, "height": 1440 - 72}, data
+
 
 
 def test_compositor_snap_api_supports_all_four_corner_zones():
@@ -324,11 +293,13 @@ def test_compositor_snap_api_supports_all_four_corner_zones():
     assert "parts[0]==='bottom'" in snap and "parts[1]==='right'" in snap
 
 
-def test_existing_identity_configs_receive_the_posterchan_native_chrome():
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    for rule in ("titlebar_border_thickness 0", "titlebar_padding 8 6",
-                 "client.focused #241438", "client.unfocused #100d18"):
-        assert rule in ebuild
+
+def test_the_native_chrome_is_package_owned_rather_than_migrated():
+    """Same reason as above: the palette lives in the shipped config, not in a copy per account."""
+    decoration = sections()["decoration"]
+    assert decoration["active_color"].lower().lstrip("\\").startswith("#241438")
+    assert int(decoration["border_size"]) == 3
+
 
 
 def test_the_native_palette_is_applied_at_RUNTIME_not_only_from_a_config_file():
@@ -378,21 +349,24 @@ def test_native_decoration_is_reasserted_before_focus_and_monitor_handoff_focus(
     assert handoff.index("await decorateNative(nativeId)") < handoff.index("await wm().focus(nativeId)")
 
 
-def test_the_runtime_palette_matches_the_shipped_config():
-    """Two hand-maintained copies is how one of them ends up wrong — the recurring shape in this
-    repo. Every client.* line the shell sends must be a line the config also has."""
-    wm = (ROOT / "desktop/wm.js").read_text()
-    block = wm[wm.index("static CHROME = ["):wm.index("];", wm.index("static CHROME = ["))]
-    sent = [re.sub(r"\s+", " ", m.group(1)).strip()
-            for m in re.finditer(r"'([^']+)'", block)]
-    assert sent, "the CHROME list is empty — re-point this test"
-    cfg = re.sub(r"\s+", " ", (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text())
-    for line in sent:
-        if not line.startswith("client."):
-            continue
-        assert line in cfg, (
-            f"the shell sends {line!r} at runtime and the shipped sway.config does not say it — "
-            "a fresh install and an upgraded one would look different")
+
+def test_there_is_only_one_copy_of_the_native_palette():
+    """TWO HAND-MAINTAINED COPIES IS HOW ONE OF THEM ENDS UP WRONG, and this had exactly two.
+
+    The Sway backend pushed a `client.*` palette over IPC at runtime (`WM.CHROME`) while the shipped
+    config declared the same colours, so a fresh install and an upgraded one could disagree about
+    what a native titlebar looked like. Wayfire's backend deliberately pushes NOTHING -- the config
+    is the only source -- so the check is no longer "the two agree", it is "there is still only one".
+    """
+    wayfire_backend = (ROOT / "desktop/wm-wayfire.js").read_text(encoding="utf-8")
+    body = wayfire_backend.split("applyChrome(", 1)[1].split("\n", 1)[0]
+    assert "Promise.resolve" in body, (
+        "the Wayfire backend has started pushing chrome at runtime; that is a second copy of the "
+        "palette in wayfire.ini and they will drift")
+    assert "client.focused" not in wayfire_backend
+    # And the one remaining copy is the shipped config.
+    assert sections()["decoration"]["active_color"].lower().lstrip("\\").startswith("#241438")
+
 
 
 def test_focusing_a_posterchan_window_parks_compositor_windows_above_it():

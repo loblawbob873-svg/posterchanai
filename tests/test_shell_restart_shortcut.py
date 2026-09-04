@@ -1,182 +1,217 @@
+"""The recovery shortcut, the launcher it drives, and the surfaces it has to bring back.
+
+PORTED FROM SWAY. Every assertion here used to read `sway.config`, `os/bin/pc-shell-start` and the
+~150 lines of per-account config migration in the ebuild -- all three are gone. What is NOT gone is
+what they were protecting, and each rule below cost a real desktop at least once:
+
+  * Ctrl+Alt+Backspace restarts the SHELL, never the session. Bound to `swaymsg exit` or a
+    `systemctl` unit it logs the user out, which is not what the key is for.
+  * It targets the canonical shell PROCESS and nothing else. `pkill -f /opt/posterchan` also
+    catches an installed diagnostic instance, so an update test could tear down the real desktop.
+  * The launcher is the only thing allowed to start a shell: it serializes, clears dead singleton
+    locks, waits for the display socket and PROVES a surface mapped.
+  * The restart's replacement surfaces are navigated and shown in a fixed order, and a navigation
+    that failed never claims a black window recovered.
+
+`shell-recovery.js` is compositor-neutral and its node tests are carried over verbatim.
+"""
 from pathlib import Path
 import json
+import re
 import subprocess
+
+from tests.wayfire_config import bindings, runs
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FILES = ROOT / "os/overlay/app-misc/posterchanos-shell/files"
+EBUILD = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
 
 
 def test_ctrl_alt_backspace_restarts_only_the_posterchan_shell():
-    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
-    line = next(x for x in cfg.splitlines() if "Ctrl+Mod1+BackSpace" in x)
-    assert "bindsym --no-repeat" in line
-    assert "/usr/local/bin/pc-shell-restart" in line
-    assert "swaymsg exit" not in line
-    assert "systemctl" not in line
+    chords = runs("pc-shell-restart")
+    assert chords == ["<ctrl> <alt> KEY_BACKSPACE"], chords
+    command = bindings()["<ctrl> <alt> KEY_BACKSPACE"]
+    assert command == "/usr/local/bin/pc-shell-restart"
+    # The two ways this shortcut has historically been mis-implemented: ending the compositor, and
+    # bouncing a unit. Both log the user out to restart one Electron process.
+    for wrong in ("exit", "systemctl", "wayfire"):
+        assert wrong not in command, command
 
 
-def test_installer_ships_the_same_recovery_binding():
+def test_the_session_config_is_the_only_place_the_binding_comes_from():
+    """gentoo.sh used to generate a SECOND copy of every binding, which then drifted.
+
+    The installer now installs the package that ships `wayfire.ini` and writes no compositor config
+    of its own, so there is exactly one file to keep correct.
+    """
     installer = (ROOT / "os/gentoo.sh").read_text()
-    assert "bindsym --no-repeat Ctrl+Mod1+BackSpace" in installer
-    assert "/usr/local/bin/pc-shell-restart" in installer
+    assert "bindsym" not in installer, "the installer generates compositor bindings again"
+    assert "wayfire.ini" in installer
 
 
-def test_shell_package_installs_the_config_name_sway_actually_reads():
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert 'newins "${FILESDIR}/sway.config" config' in ebuild
-    assert 'doins "${FILESDIR}/sway.config"' not in ebuild
+def test_shell_package_installs_the_config_name_the_compositor_actually_reads():
+    assert 'doins "${FILESDIR}/wayfire.ini"' in EBUILD
+    assert "insinto /etc\n" in EBUILD
+    # pc-compositor-session launches `wayfire -c /etc/wayfire.ini`; anything else is a file the
+    # compositor never opens.
+    session = (ROOT / "os/bin/pc-compositor-session").read_text()
+    assert 'PC_WAYFIRE_CONFIG:-/etc/wayfire.ini' in session
 
 
-def test_shell_package_migrates_existing_identity_configs_without_replacing_them():
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert '"${EROOT%/}"/home/pc-*/.config/sway/config' in ebuild
-    assert "Ctrl\\+Mod1\\+(BackSpace|22)" in ebuild
-    assert "Super_L exec swaymsg -t send_tick pc:start" in ebuild
-    assert 'cat >>"${cfg}"' in ebuild
+def test_no_per_account_compositor_config_is_written_or_migrated():
+    """Provisioning gave every identity a private copy of the compositor config, so each upgrade had
+    to reach in and rewrite package-owned bindings inside it. One package-owned file replaces all of
+    that; the only thing left is retiring the old directory rather than deleting somebody's file."""
+    switch = (ROOT / "os/bin/pc-session-switch").read_text()
+    assert ".config/sway" not in switch
+    assert "exec /usr/local/bin/pc-compositor-session" in switch
+    assert 'mv -T "${cfg}" "${cfg}.retired-sway"' in EBUILD
+    assert "cat >>\"${cfg}\"" not in EBUILD, "an upgrade edits a private compositor config again"
 
 
-def test_shell_restart_is_serialized_and_targets_only_the_shell_process():
-    start = (ROOT / "os/bin/pc-shell-start").read_text()
-    restart = (ROOT / "os/bin/pc-shell-restart").read_text()
+def test_shell_restart_targets_only_the_shell_process_and_stops_its_launcher():
+    restart = (FILES / "pc-shell-restart").read_text()
     main = (ROOT / "desktop/main.js").read_text()
-    assert "flock -n 9" in start
-    assert "posterchan-shell-start.lock" in start
-    # BOTH launches must close fd 9 — the launcher mutex is not part of the desktop environment,
-    # and anything Electron spawns would inherit the lock. Matched as a pattern rather than as a
-    # fixed string: the line now also carries ${PC_SHELL_EXTRA_ARGS:-} (see
-    # tests/test_shell_launcher_debug_args.py), and pinning the exact text made adding a flag look
-    # like removing the fd guard.
-    import re as _re
-    launches = _re.findall(r'"\$PC_DESKTOP_LAUNCHER" --shell --ozone-platform=wayland[^\n]*', start)
-    assert len(launches) == 2, launches
-    assert all("9>&-" in line for line in launches), launches
-    assert start.count('>>"$SHELL_LOG" 2>&1 &') == 2
-    local = start.index("if [ -x /usr/local/bin/posterchan ]")
-    canonical = start.index("PC_DESKTOP_LAUNCHER=/usr/local/bin/posterchan", local)
-    legacy = start.index("PC_DESKTOP_LAUNCHER=/usr/bin/posterchan", canonical)
-    assert local < canonical < legacy, (
-        "a legacy /usr/bin wrapper must not shadow the package/updater-owned /usr/local wrapper"
-    )
-    # Restart only the canonical shell.  A broad /opt/posterchan match also catches installed
-    # diagnostic/verifier instances and lets an update test tear down the user's real desktop.
     assert "candidates=$requested" in restart
     assert "pgrep -f '[/]opt/posterchan/posterchan-desktop'" in restart
     assert "/opt/posterchan/posterchan-desktop\\ *--shell*" in restart
+    # An installed diagnostic instance runs the same executable in its own singleton domain.
     assert "--pc-diagnostic-token=" in restart
     assert "--pc-diagnostic-profile=" in restart
-    assert "--pc-diagnostic-swaysock=" in restart
     assert "exit 64" in restart
-    assert "send_tick pc:restart" not in restart
     assert "kill $pids" in restart
-    assert "resources/app.asar changed" in restart
     assert "pkill" not in restart
-    assert "recoverSurfaces(_shellSurfaces.values(), loadApp).catch" in main
-    assert "ev.payload !== 'pc:restart'" in main
-    assert 'PC_SHELL_START=/usr/local/bin/pc-shell-start' in restart
-    assert 'PC_SHELL_START=/usr/local/bin/pc-shell-start-wayfire' in restart
+    assert "send_tick" not in restart, "the Sway-only IPC restart path came back"
+    # THE LAUNCHER IS KILLED FIRST. It supervises the shell and answers an exiting one by retrying,
+    # so killing only the shell made the old launcher race this script's replacement for the same
+    # singleton and flock; both attempts burned inside a second and the login ended at a console.
+    assert "pc-shell-start-wayfire*" in restart
+    assert "kill $launchers" in restart
+    assert 'PC_SHELL_START:=/usr/local/bin/pc-shell-start-wayfire' in restart
     assert 'exec "$PC_SHELL_START"' in restart
-    assert "retries" in start and "exit 1" in start
-    assert "$USER_HOME/SingletonLock" in start
-    assert "clear_dead_locks" in start
-    assert "SingletonSocket" in start and "SingletonCookie" in start
-    assert "if ! pgrep" in start
-    assert "nothing live can own any of these files" in start
-    assert "ELECTRON_OZONE_PLATFORM_HINT=wayland" in start
-    assert 'while [ "$display_tries" -lt 100 ]' in start
-    assert '[ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]' in start
-    assert '[ -S "$XDG_RUNTIME_DIR/bus" ]' in start
+    assert "/usr/local/bin/pc-shell-start\n" not in restart, "the retired Sway launcher is back"
+    # The supervisor is told this is a restart BEFORE the shell dies, or its 3-second crash window
+    # fires against a launcher whose own startup is bounded at 40.
+    assert "posterchan-shell-restarting" in restart
+    assert "recoverSurfaces(_shellSurfaces.values(), loadApp).catch" in main
+
+
+def test_the_launcher_is_the_only_thing_that_starts_a_shell():
+    start = (FILES / "pc-shell-start-wayfire").read_text()
+    assert not (ROOT / "os/bin/pc-shell-start").exists(), "the Sway launcher is shipped again"
+    # ONE shell per session, and a live one is never displaced.
+    assert "A PosterChan shell already belongs to another session" in start
+    launches = re.findall(r'"\$launcher" --shell --ozone-platform=wayland[^\n]*', start)
+    assert len(launches) == 1, launches
+    # The launcher mutex is not part of the desktop environment: anything Electron spawns would
+    # inherit fd 9 and hold it.
+    assert all("9>&-" in line for line in launches), launches
+    assert 'PC_SHELL_EXTRA_ARGS:-' in launches[0]
+    # Dead singleton state is cleared; a live one is not, because it belongs to a running shell.
+    for lock in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        assert lock in start
+    # The display socket is FOUND, not assumed: an ssh-launched or early start has no
+    # WAYLAND_DISPLAY, and Electron then silently falls back to X11 and exits.
+    assert 'find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name' in start
     assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"' in start
-    assert "could not find Sway's Wayland display socket" in start
+    # Only the SOFT core limit: `ulimit -c 0` lowers the inherited hard limit too and every VM
+    # then fails before exec, which is why the libvirt repair rides beside it.
     assert "ulimit -S -c 0" in start
     assert "ulimit -c 0\n" not in start
-    assert 'max_core = 0' in start
-    assert '$HOME/.config/libvirt/qemu.conf' in start
-    # A dead socket from an older compositor can sort before the live one. The launcher must probe,
-    # not use `ls | head`, or every Electron WM request attaches to the dead compositor.
-    assert 'for candidate in /run/user/$(id -u)/sway-ipc.*.sock' in start
-    assert 'swaymsg -s "$candidate" -t get_version' in start
-    assert 'sway-ipc.*.sock 2>/dev/null | head -1' not in start
+    assert "max_core = 0" in start
+
+
+def test_the_launcher_proves_a_surface_mapped_before_signalling_ready():
+    """A compositor that is alive with no shell on it is a failure, not a slow start.
+
+    And the signal has to be WRITTEN: pc-compositor-session waits 60s for this file and then kills
+    Wayfire with "the shell never signalled ready". Nothing wrote it for the whole life of the
+    Wayfire launcher -- it only ever removed it in cleanup -- so a desktop that came up perfectly
+    was torn down one minute later and the console blamed the shell.
+    """
+    start = (FILES / "pc-shell-start-wayfire").read_text()
+    after_health = start.split('"$health" wait', 1)[1]
+    assert ': >"$PC_WAYFIRE_READY_FILE"' in after_health
+    assert "PosterChan shell window mapped" in after_health
+    # Ready means VERIFIED, so the bundle-identity re-check comes first: an update that landed while
+    # the shell was starting is a different desktop from the one that was measured.
+    assert after_health.index("bundle_identity") < after_health.index('>"$PC_WAYFIRE_READY_FILE"')
+    session = (ROOT / "os/bin/pc-compositor-session").read_text()
+    assert 'rm -f "$PC_WAYFIRE_READY_FILE"' in session
+    assert "the shell never signalled ready" in session
+
+
+def test_a_verified_shell_rearms_the_boot_loop_guard():
+    """~/.bash_profile hands out a diagnostic shell after two login attempts per boot. The Sway
+    launcher cleared that counter once the shell mapped; the Wayfire one never did, so two logins in
+    one boot -- two Ctrl+Alt+Backspaces -- left the THIRD at a text prompt on a healthy machine."""
+    start = (FILES / "pc-shell-start-wayfire").read_text()
+    after_health = start.split('"$health" wait', 1)[1]
+    assert "compositor-boot-attempt" in after_health
+    assert 'rm -f "$HOME/.local/state/posterchanos/compositor-boot-attempt"' in after_health
 
 
 def test_desktop_wrapper_preserves_the_shells_wayland_backend():
     wrapper = (ROOT / "os/bin/posterchan-wrapper").read_text()
     ebuilds = sorted((ROOT / "os/overlay/app-misc/posterchan-desktop").glob("posterchan-desktop-*.ebuild"))
     assert len(ebuilds) == 1, "the overlay should expose one immutable desktop version"
-    ebuild = ebuilds[0].read_text()
     updater = (ROOT / "os/bin/update-posterchan").read_text()
-    for source in (wrapper, ebuild, updater):
+    for source in (wrapper, ebuilds[0].read_text(), updater):
         assert '${ELECTRON_OZONE_PLATFORM_HINT:=auto}' in source
         assert 'export ELECTRON_OZONE_PLATFORM_HINT=auto' not in source
 
 
-def test_upgrade_removes_optioned_printscreen_bindings_before_adding_one_copy():
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert "bindsym .*?(Print|Ctrl\\+Shift\\+s|Shift\\+Print)" in ebuild
-    assert "outputs.conf" in ebuild
-    assert "include ~/.config/sway/outputs.conf" in ebuild
-    assert "floating_modifier $mod normal" in ebuild
+def test_super_is_a_physical_key_release_not_a_bare_modifier_binding():
+    """Super opens Start on RELEASE, and only when it was not used as a modifier.
 
-
-def test_upgrade_cleans_generated_recovery_labels_before_readding_them():
-    """Repeated shell upgrades must not grow or eventually corrupt a private Sway config."""
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    cleanup = ebuild.index("Old migrations appended the two labels")
-    append = ebuild.index('cat >>"${cfg}"', cleanup)
-    block = ebuild[cleanup:append]
-    assert "Screenshots work even while the desktop renderer is restarting" in block
-    assert "Restart only the PosterChan desktop shell; native applications remain open" in block
-    assert "sed -i -E" in block
-
-
-def test_reloadable_sway_config_has_no_startup_only_xwayland_force():
-    """`xwayland force` is accepted at startup but raises a Sway config error on every reload."""
-    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
-    assert "xwayland force" not in cfg
-
-
-def test_super_is_a_global_physical_key_binding_not_a_bare_modifier_binding():
-    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
-    assert "bindsym --release --no-repeat Super_L exec /usr/local/bin/pc-super tap" in cfg, (
-        "Super no longer opens the start menu. It is bound through `pc-super tap` rather than "
-        "sending the tick directly, because sway fires this release whether or not the key was "
-        "used as a modifier — so a direct binding made Super+Left a snap AND, on the way back up, "
-        "the start menu")
-    assert "bindsym --release --no-repeat $mod exec" not in cfg, (
-        "bound to the bare modifier again, which is not a physical key")
-
-
-def test_alt_tab_is_compositor_owned_and_migrated_to_existing_accounts():
-    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    helper = ROOT / "os/bin/pc-window-cycle"
-    assert "Mod1+Tab exec /usr/local/bin/pc-window-cycle next" in cfg
-    assert "Mod1+Shift+Tab exec /usr/local/bin/pc-window-cycle previous" in cfg
-    assert "pc-window-cycle" in ebuild
-    assert helper.exists()
-
-
-def test_native_windows_have_standard_close_shortcut_on_new_and_existing_accounts():
-    """AND IT DOES NOT KILL THE DESKTOP TO CLOSE A WINDOW.
-
-    This asserted a bare `bindsym Mod1+F4 kill` in all three places, and the ebuild line it pinned
-    APPENDED that binding to any existing config that lacked it. sway's `kill` closes the focused
-    container, which is the one shell surface hosting every PosterChan window whenever the desktop
-    has focus — so Alt+F4 destroyed the session, and an upgrade installed that on machines which had
-    escaped it. The shortcut still has to exist on new and existing accounts; it now routes through
-    pc-window-close, which asks what is focused before anything dies.
+    Wayfire's `release_binding_start` fires whether or not the key modified something, exactly as
+    Sway's `--release` did -- which is why every Super+chord marks it consumed through `pc-super
+    used` before doing its own work, and why those chords are chained commands rather than pairs of
+    bindings on one chord (only one binding on a chord can win).
     """
-    cfg = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/sway.config").read_text()
-    installer = (ROOT / "os/gentoo.sh").read_text()
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    binding = "bindsym Mod1+F4 exec /usr/local/bin/pc-window-close"
-    assert binding in cfg
-    assert binding in installer
-    # An EXISTING account is migrated: the bare kill is deleted and the helper appended.
-    assert "'bindsym Mod1+F4 exec /usr/local/bin/pc-window-close'" in ebuild
-    assert "echo 'bindsym Mod1+F4 kill'" not in ebuild, (
-        "an upgrade still installs the binding that destroys the desktop")
-    for name, src in (("sway.config", cfg), ("os/gentoo.sh", installer)):
-        assert "bindsym Mod1+F4 kill" not in src, f"{name} still kills the focused container"
+    from tests.wayfire_config import sections
+    command = sections()["command"]
+    assert command["release_binding_start"] == "KEY_LEFTMETA"
+    assert command["command_start"] == "/usr/local/bin/pc-super tap"
+    for chord, run in bindings().items():
+        if chord.startswith("<super>") and chord != "KEY_LEFTMETA":
+            assert "pc-super used" in run, (chord, run)
+            assert run != "/usr/local/bin/pc-super used", (chord, "marks the modifier and does nothing")
+
+
+def test_alt_tab_reaches_posterchan_windows_and_not_only_the_compositors_toplevels():
+    """Every PosterChan window on a monitor lives inside ONE compositor toplevel.
+
+    So Wayfire's own `switcher` -- which claims <alt>Tab by default -- can only ever offer "the
+    desktop" and the native applications beside it, never Messages, Terminal, Code or Files. The
+    helper and the renderer's `pc:cycle:*` handler were both ported and then nothing bound the key.
+    """
+    from tests.wayfire_config import sections
+    assert bindings()["<alt> KEY_TAB"] == "/usr/local/bin/pc-window-cycle next"
+    assert bindings()["<alt> <shift> KEY_TAB"] == "/usr/local/bin/pc-window-cycle previous"
+    plugins = sections()["core"]["plugins"].split()
+    assert "switcher" not in plugins, "the compositor's switcher takes <alt>Tab back"
+    assert (FILES / "pc-window-cycle").exists()
+    assert "pc-window-cycle" in EBUILD
+    assert "pc:cycle:" in (ROOT / "static/js/client/os.js").read_text()
+
+
+def test_native_windows_have_a_close_shortcut_that_does_not_kill_the_desktop():
+    """AND BOTH CLOSE CHORDS ANSWER THE SAME WAY.
+
+    Sway's bare `kill` closed the focused container, which is the single shell surface hosting every
+    PosterChan window -- Alt+F4 destroyed the session. The replacement asks what is focused first.
+    `pc-wayfire-action pc:close` is NOT that: it reaches only the renderer's own focused frame, so
+    with a popped-out window (a toplevel in another renderer) or a bare native surface focused it
+    closed nothing, and the key read as broken.
+    """
+    b = bindings()
+    assert b["<alt> KEY_F4"] == "/usr/local/bin/pc-window-close"
+    assert b["<super> KEY_Q"].endswith("/usr/local/bin/pc-window-close")
+    assert "pc:close" not in " ".join(b.values()), "a close chord bypasses the focus question"
+    close = (FILES / "pc-window-close").read_text()
+    assert "exec /usr/local/bin/pc-window-snap close" in close, "a second copy of the same helper"
 
 
 def test_restart_navigates_a_secondary_surface_that_is_still_about_blank():
@@ -248,24 +283,3 @@ def test_a_failed_canonical_navigation_never_claims_the_black_surface_recovered(
 def test_the_canonical_shell_navigation_is_awaited():
     main = (ROOT / "desktop/main.js").read_text()
     assert "await target.loadURL(APP_URL);" in main
-
-
-def test_upgrade_restores_native_window_decorations_in_old_identity_configs():
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert "default_floating_border[[:space:]]+none" in ebuild
-    assert "default_floating_border normal 3" in ebuild
-
-
-def test_every_private_config_migration_is_parsed_and_rejects_duplicate_bindings():
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert 'sway -C -d -c "${cfg}"' in ebuild
-    assert "WLR_BACKENDS=headless" in ebuild
-    assert "grep -q 'Overwriting binding'" in ebuild
-    assert 'cp -p "${cfg_backup}" "${cfg}"' in ebuild
-
-
-def test_snap_bindings_are_canonicalised_instead_of_appended_over_whitespace_variants():
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-    assert r"\$mod\+(Left|Right|Up)" in ebuild
-    for key in ("Left", "Right", "Up"):
-        assert f"bindsym $mod+{key} exec /usr/local/bin/pc-window-snap" in ebuild

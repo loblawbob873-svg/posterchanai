@@ -35,9 +35,10 @@ read_secs() {
 
 # WHO ACTUALLY TURNS THE SCREEN OFF, AND WHY THIS FUNCTION HAS TO EXIST.
 #
-# Under Sway this script IS the mechanism: swayidle counts and runs `swaymsg output * power off`.
-# Under Wayfire the power action belongs to the compositor's own `idle` plugin, so the swayidle
-# below runs `true` on both edges -- it is only the protocol watcher.  That left the plugin's
+# This script used to BE the mechanism, when the session was Sway: the watcher counted and then
+# ran the compositor's power command itself. Under Wayfire the power action belongs to the
+# compositor's own `idle` plugin, so the watcher below runs `true` on both edges -- it is only the
+# protocol watcher, and the number has to reach the plugin instead.  That left the plugin's
 # `dpms_timeout` as the ONLY number that mattered, and it comes from /etc/wayfire.ini, which no
 # user setting writes.  So on Wayfire every control here was decoration: Settings -> Power ->
 # "Turn display off when idle" wrote a file nothing read, "Never" left a compositor still blanking
@@ -67,8 +68,13 @@ if not path:
 s = socket.socket(socket.AF_UNIX)
 s.settimeout(2.0)
 s.connect(path)
+# BOTH TIMERS, or "never" is not never. Wayfire's idle plugin also carries a
+# `screensaver_timeout` (3600s by default) that blanks the screen to black without powering the
+# outputs down -- so setting only the DPMS timeout left Keep Awake and "Never" still going black
+# after an hour, with the monitors on and nothing in any log to say why.
 body = json.dumps({"method": "wayfire/set-config-options",
-                   "data": {"idle/dpms_timeout": secs}}).encode()
+                   "data": {"idle/dpms_timeout": secs,
+                            "idle/screensaver_timeout": -1}}).encode()
 s.sendall(struct.pack("<I", len(body)) + body)
 s.recv(4096)
 PY
@@ -165,11 +171,10 @@ case "${1:-run}" in
       else
           echo "swayidle:   NOT RUNNING -- nothing is watching, so the display never turns off"
       fi
-      # THE CAUSE THAT HIDES FROM EVERY CHECK ABOVE. Sway implements idle-inhibit by never
-      # reporting the seat idle at all, so swayidle's timer does not fire late -- it never fires,
-      # while the daemon sits there looking healthy and the configured timeout looks right.
-      # Chromium takes an inhibitor for any page holding a screen wake lock or playing video (the
-      # shell IS Chromium), and sway.config takes one for a fullscreen Steam game on purpose.
+      # THE CAUSE THAT HIDES FROM EVERY CHECK ABOVE. An idle inhibitor stops the seat being reported
+      # idle at all, so the timer does not fire LATE -- it never fires, while everything above reads
+      # healthy and the configured timeout looks right. Chromium takes one for any page holding a
+      # screen wake lock or playing video, and the shell IS Chromium.
       if [ -n "$live" ]; then
           # The compositor's own number, so a setting that never reached it is visible here rather
           # than only on the screen. -1/0 is the plugin's "disabled".
@@ -181,46 +186,10 @@ case "${1:-run}" in
               echo "            MISMATCH -- the compositor is not counting to the configured ${secs}s"
           fi
       fi
-      # WHICH COMPOSITOR THIS IS gets answered the same way twice, or the report contradicts
-      # itself: run from a terminal with no WAYFIRE_SOCKET exported, the line above found the live
-      # Wayfire value by discovering its socket while this line looked at the variable, decided
-      # "Sway", and told the reader to go set SWAYSOCK.
-      tree=""
-      [ -n "$live" ] || tree="$(swaymsg -t get_tree 2>/dev/null || true)"
-      if [ -n "$live" ]; then
-          # Wayfire 0.10 exposes no idle-inhibitor listing, so this cannot be answered here rather
-          # than answered wrongly. Saying "is SWAYSOCK set?" on Wayfire sent people looking for a
-          # variable that is correctly absent.
-          echo "inhibitors: not enumerable on Wayfire (its IPC does not expose idle inhibitors)"
-      elif [ -z "$tree" ]; then
-          echo "inhibitors: cannot ask sway (is SWAYSOCK set? run this inside the session)"
-      elif ! command -v python3 >/dev/null 2>&1; then
-          echo "inhibitors: cannot read the tree without python3"
-      else
-          printf '%s' "$tree" | python3 -c '
-import json, sys
-held = []
-def walk(n):
-    inh = n.get("idle_inhibitors") or {}
-    who = [k for k, v in inh.items() if v and v != "none"]
-    if who:
-        held.append((n.get("app_id") or n.get("window_properties", {}).get("class") or "?",
-                     (n.get("name") or "")[:60], ",".join(sorted(who))))
-    for k in ("nodes", "floating_nodes"):
-        for c in n.get(k) or []:
-            walk(c)
-try:
-    walk(json.load(sys.stdin))
-except Exception as exc:
-    print("inhibitors: could not parse sway tree (%s)" % exc); raise SystemExit(0)
-if not held:
-    print("inhibitors: none -- nothing is holding the screen awake")
-else:
-    print("inhibitors: %d HOLDING THE SCREEN AWAKE" % len(held))
-    for app, title, who in held:
-        print("              %-24s %s  [%s]" % (app, title, who))
-'
-      fi
+      # Wayfire 0.10 exposes no idle-inhibitor listing, so this cannot be answered here rather than
+      # answered wrongly. (Sway could be asked, and this walked its tree for the app holding one;
+      # there is no Sway now, and no equivalent to walk.)
+      echo "inhibitors: not enumerable on Wayfire (its IPC does not expose idle inhibitors)"
       ;;
   run|*)
       # Applied BEFORE the keep-awake and never checks below, because both of those exit: a
@@ -230,17 +199,13 @@ else:
       [ ! -e "$HOLD" ] || exit 0
       SECS="$(read_secs)"
       [ "$SECS" -gt 0 ] || exit 0        # never: nothing to run, and no daemon left behind
-      # One instance. `exec_always` re-runs this on every sway reload, and two swayidles fight over
-      # the same screen -- one turning it off while the other turns it on.
+      # One instance. This is re-run whenever the session restarts, and two swayidles fight over the
+      # same screen -- one turning it off while the other turns it on.
       pkill -x swayidle 2>/dev/null || true
-      if [ -n "${WAYFIRE_SOCKET:-}" ]; then
-          # Wayfire's idle plugin owns DPMS (and fullscreen inhibit) because 0.10 has no stable
-          # compositor-neutral DPMS IPC. Keep swayidle as the protocol watcher requested by the OS:
-          # it observes idle inhibitors while the compositor performs the matching power action.
-          exec swayidle -w timeout "$SECS" true resume true
-      fi
-      exec swayidle -w \
-          timeout "$SECS" 'swaymsg "output * power off"' \
-          resume          'swaymsg "output * power on"'
+      # Wayfire's idle plugin owns DPMS (and fullscreen inhibit); wf_apply above has already given it
+      # the number. swayidle stays as the PROTOCOL watcher -- it is what holds the seat's idle
+      # accounting and observes inhibitors -- so both edges are deliberately no-ops rather than a
+      # second thing racing the compositor to turn the screen off.
+      exec swayidle -w timeout "$SECS" true resume true
       ;;
 esac

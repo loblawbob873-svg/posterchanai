@@ -29,15 +29,14 @@ const path = require('path');
 const GRIM = process.env.PC_GRIM || 'grim';
 const SLURP = process.env.PC_SLURP || 'slurp';
 
-/* grim 1.5's ext-image-copy path waits for the next damaged compositor frame.  A completely
- * static Sway output (common with two full-output shell surfaces) may not produce one, leaving
- * grim blocked forever.  A zero-distance cursor motion damages the cursor plane without moving
- * the pointer or changing focus.  Do it after grim has subscribed, not before. */
+/* grim 1.5's ext-image-copy path waits for the next damaged compositor frame, and a completely
+ * static Sway output (two full-output shell surfaces) could fail to produce one -- so this nudged
+ * the cursor plane with `swaymsg` to force a frame. That command does not exist any more, and
+ * measured on the real Wayfire desktop it is not needed: a capture of a completely idle two-monitor
+ * session returns in ~0.5s. Kept as a no-op function so the call sites and their ordering comments
+ * still read correctly, and so re-adding a wake is one place rather than three. */
 function wakeCompositor() {
-  if (process.platform !== 'linux' || !process.env.SWAYSOCK) return;
-  setTimeout(() => {
-    execFile('swaymsg', ['-q', 'seat seat0 cursor move 0 0'], { timeout: 2000 }, () => {});
-  }, 75).unref();
+  return;
 }
 
 function run(bin, args, opts) {

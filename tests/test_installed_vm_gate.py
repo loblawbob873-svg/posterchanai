@@ -126,3 +126,39 @@ def test_visible_viewer_rejects_graphical_then_black_frame():
             tree_runner=lambda args, env=None: tree,
             frame_probe=lambda node, env: next(frames),
         )
+
+
+def test_the_gate_asks_the_compositor_that_is_actually_running():
+    """It ran `swaymsg -t get_tree`, which on this session exits "Unable to retrieve socket path" --
+    so the gate saw no virt-viewer surface, ever, and reported a VM that never became visible on a
+    desktop that was showing it perfectly."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "scripts/check_installed_vm.py").read_text()
+    # The CODE, not the prose: `view_listing`'s docstring names the command it replaced, which is
+    # the sentence a future reader most needs.
+    body = "\n".join(l for l in src.splitlines()
+                     if l.strip() and not l.lstrip().startswith(("#", "*"))
+                     and "This was" not in l)
+    assert "swaymsg" not in body
+    assert "SWAYSOCK" not in body
+    assert "WAYFIRE_SOCKET" in body, "the session environment no longer carries the IPC socket"
+    assert "import wayfire_ipc as wf" in body
+    assert "wf.views(" in body
+
+
+def test_a_wayfire_shaped_surface_is_recognised():
+    """Wayfire spells them `app-id`/`title`/`geometry`; Sway spelled them `app_id`/`name`/`rect`.
+    Both are accepted, because the gate's own fakes are written in the older shape."""
+    assert is_viewer_surface({"app-id": "virt-viewer", "title": "Installer — demo-vm",
+                              "geometry": {"width": 1024, "height": 768}}, "demo-vm")
+    assert not is_viewer_surface({"app-id": "virt-viewer", "title": "Installer — other-vm",
+                                  "geometry": {"width": 1024, "height": 768}}, "demo-vm")
+
+
+def test_no_session_is_a_failed_listing_not_a_crash():
+    """`view_listing` is called in a loop; a socket that goes away mid-run must read as "no windows
+    right now", the same shape a nonzero swaymsg used to have."""
+    from scripts.check_installed_vm import view_listing
+    got = view_listing([], env={"WAYFIRE_SOCKET": "/nonexistent/pc-test.sock"})
+    assert got.returncode != 0
+    assert got.stdout == ""

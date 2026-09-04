@@ -84,7 +84,12 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         body = self.fn
         check = "media-libs/mesa[video_cards_virgl]"
         self.assertGreaterEqual(body.count(check), 2)
-        self.assertIn('VIDEO_CARDS="$VIDEO_CARDS" /usr/bin/emerge -1 --newuse media-libs/mesa', body)
+        # PERSISTED, NOT PASSED. This asserted a one-shot `VIDEO_CARDS=... emerge`, which the next
+        # `emerge -uDN @world` reverts -- so the rebuild was paid for on every ISO build and the
+        # machine it was built from went back to having no virgl.
+        self.assertIn("/etc/portage/make.conf", body)
+        self.assertIn("/usr/bin/emerge -1 --newuse media-libs/mesa", body)
+        self.assertNotIn('VIDEO_CARDS="$VIDEO_CARDS" /usr/bin/emerge', body)
         self.assertLess(body.index(check), body.index('mksquashfs / "$WORK/iso/LiveOS/squashfs.img"'))
 
     def test_chroot_bootloader_uses_the_chroot_as_target(self):
@@ -284,12 +289,18 @@ class TheImageDoesNotCarryTheOperator(unittest.TestCase):
         self.assertIn('pseudoput "etc/sudoers" f 440', self.fn)
         self.assertIn("visudo -cf", self.fn)
 
-    def test_the_live_image_forces_the_posterchan_sway_config(self):
+    def test_the_live_image_forces_the_posterchan_session_config(self):
         """A host's stock config may name an excluded wallpaper and does not start our shell."""
-        self.assertIn('pseudoput "etc/sway/config" f 644', self.fn)
-        self.assertIn("pc-shell-start", self.fn)
-        self.assertIn("sway -C -d -c", self.fn)
-        self.assertIn("grep -q 'Overwriting binding'", self.fn)
+        self.assertIn('pseudoput "etc/wayfire.ini" f 644', self.fn)
+        self.assertIn("pc-shell-start-wayfire", self.fn)
+        # Wayfire has no validate mode; the image gate is that every helper its bindings run is
+        # one the image installs.
+        self.assertIn("MISSING_BIND", self.fn)
+        # Sway's validator reported duplicate chords as 'Overwriting binding'; Wayfire has no
+        # validator, so that check moved into tests/test_wayfire_config_is_valid.py, which reads the
+        # shipped config directly. What the IMAGE gate can still establish is the helper existence
+        # asserted above.
+        self.assertIn("refusing to build", self.fn)
 
     def test_it_grants_only_the_live_account(self):
         # The RULE, not the first mention of the word — "NOPASSWD" appears in the comment above it
@@ -535,9 +546,11 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         self.assertIn("XDG_VTNR", self.fn[i:i + 900])
 
     def test_it_matches_what_a_real_install_gets(self):
-        """The live session and an installed one must not drift — both exec sway from tty1 with the
+        """The live session and an installed one must not drift — both exec the session script from
+        tty1 with the
         same environment."""
-        for line in ("exec sway", "XDG_SESSION_TYPE=wayland", "MOZ_ENABLE_WAYLAND=1"):
+        for line in ("exec /usr/local/bin/pc-compositor-session", "XDG_SESSION_TYPE=wayland",
+                     "MOZ_ENABLE_WAYLAND=1"):
             with self.subTest(line=line):
                 self.assertGreaterEqual(self.src.count(line), 2,
                                         "%r appears in only one of the two profiles" % line)
@@ -908,3 +921,28 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
             self.assertIn(proof, final)
         self.assertLess(final.index("systemd-cryptsetup"), final.index("passwd -l root"))
         self.assertLess(final.index("systemd-cryptsetup"), final.index("Gentoo Installation Complete"))
+
+
+def test_the_installed_system_records_its_own_graphics_drivers():
+    """VIDEO_CARDS EXISTED AND WAS NEVER WRITTEN DOWN.
+
+    It was declared at the top of the installer and used in exactly ONE place — a one-shot
+    `VIDEO_CARDS=... emerge` inside the LiveCD build — so no installed machine ever had it. Every
+    install took the PROFILE's list, which does not include `virgl`, and the next
+    `emerge -uDN @world` reverted even the LiveCD's rebuild.
+
+    virgl is the accelerated virtio-gpu path, i.e. the only way Mesa renders inside a VM: without it
+    the compositor starts and EGL cannot draw (`virtio_gpu: driver missing`, a black screen on a
+    machine that is working). That is exactly what an installed-in-a-VM release gate boots.
+    """
+    src = GENTOO.read_text(encoding="utf-8")
+    declared = re.search(r'^VIDEO_CARDS="([^"]+)"', src, re.M)
+    assert declared, "the installer no longer declares a driver list"
+    assert "virgl" in declared.group(1)
+    assert 'echo "VIDEO_CARDS=\\"$VIDEO_CARDS\\"" >>$TARGET/etc/portage/make.conf' in src, (
+        "the installed make.conf does not record the driver list")
+    # And the LiveCD's repair persists rather than passing: a one-shot emerge is undone by the next
+    # world update, so the machine the ISO was built from loses virgl again.
+    build = src.split("Rebuilding Mesa with the LiveCD's VirGL driver", 1)[1].split("\n\tfi", 1)[0]
+    assert "/etc/portage/make.conf" in build
+    assert "VIDEO_CARDS=\"$VIDEO_CARDS\" /usr/bin/emerge" not in src

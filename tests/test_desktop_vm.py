@@ -116,7 +116,7 @@ console.log(JSON.stringify({success,asyncFailure,syncFailure,invocation,unrefs})
 
     def test_guest_agent_is_started_for_spice_virtual_machines(self):
         installer = (ROOT / "os" / "gentoo.sh").read_text()
-        launcher = (ROOT / "os" / "bin" / "pc-shell-start").read_text()
+        launcher = (ROOT / "os" / "bin" / "pc-shell-start-wayfire").read_text()
         self.assertIn("/dev/virtio-ports/com.redhat.spice.0", launcher)
         self.assertIn("spice-vdagent", launcher)
 
@@ -244,9 +244,16 @@ const fs=require('fs'),os=require('os'),path=require('path'),v=require('./deskto
         self.assertIn(".vmui.vmui-editing>.vmui-list{display:none}", css)
 
     def test_viewer_cannot_pin_itself_over_the_desktop(self):
-        sway = (ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell" / "files" / "sway.config").read_text()
-        self.assertIn('[app_id="virt-viewer"] fullscreen disable, sticky disable', sway)
-        self.assertIn('[class="Virt-viewer"] fullscreen disable, sticky disable', sway)
+        # SWAY NEEDED A RULE; WAYFIRE NEEDS AN ABSENCE. The old config had to un-fullscreen and
+        # un-stick the SPICE viewer explicitly. Wayfire fullscreens nothing and sticks nothing by
+        # default, so the equivalent guarantee is that no window rule claims the viewer -- a rule
+        # matching it would be the bug now.
+        config = (ROOT / "os" / "overlay" / "app-misc" / "posterchanos-shell" / "files" / "wayfire.ini").read_text()
+        rules = "\n".join(l for l in config.splitlines() if l.startswith("rule_"))
+        for name in ("virt-viewer", "remote-viewer", "Virt-viewer"):
+            self.assertNotIn(name.lower(), rules.lower(),
+                             f"a window rule claims {name}; it must be left alone")
+        self.assertNotIn("sticky", config.lower())
 
     def test_new_vm_uses_the_shared_plus_icon(self):
         src = (ROOT / "static/js/client/os.js").read_text()

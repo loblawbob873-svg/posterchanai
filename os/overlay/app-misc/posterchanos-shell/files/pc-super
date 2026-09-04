@@ -1,7 +1,7 @@
 #!/bin/sh
 # SUPER ALONE OPENS THE START MENU; SUPER AS A MODIFIER MUST NOT.
 #
-# Reported as "it's really annoying every time i use super key for sway controls the start menu pops
+# Reported as "it's really annoying every time i use super key for window controls the start menu pops
 # open". Sway fires a `--release Super_L` binding whether or not the key was used as a modifier, so
 # Super+Left (snap) is Super+Left AND, on the way back up, Start.
 #
@@ -26,10 +26,7 @@ case "$1" in
     # A missing marker is "no combo has ever fired", not an error: 0 is older than any window.
     was=$(stat -c %Y "$F" 2>/dev/null || echo 0)
     [ "$((now - was))" -lt "$COMBO_WINDOW_SECONDS" ] && exit 0
-    if [ -n "${WAYFIRE_SOCKET:-}" ]; then
-      exec /usr/local/bin/pc-wayfire-action pc:start
-    fi
-    exec swaymsg -t send_tick pc:start
+    exec /usr/local/bin/pc-wayfire-action pc:start
     ;;
   *)
     echo "usage: pc-super used|tap" >&2

@@ -298,6 +298,11 @@ def _fake(path, body):
     path.chmod(0o755)
 
 
+#: Bound sockets are closed when garbage collected, which would delete the path out from under the
+#: launcher mid-run; hold a reference for the life of the test session.
+_KEEP_ALIVE: list = []
+
+
 def _launcher_env(tmp_path):
     runtime = tmp_path / "run"
     home = tmp_path / "home"
@@ -314,8 +319,14 @@ def _launcher_env(tmp_path):
     script.write_text(LAUNCHER.read_text().replace("launcher=/usr/local/bin/posterchan",
                                                     f"launcher={launch}"), encoding="utf-8")
     script.chmod(0o755)
+    # A WAYFIRE SOCKET IS NOT A WAYLAND DISPLAY. The launcher checks for both, and refuses rather
+    # than launching Electron into "Failed to connect to Wayland display" -- so the harness has to
+    # provide a real one, exactly as the compositor does.
+    display = socket.socket(socket.AF_UNIX)
+    display.bind(str(runtime / "wayland-9"))
+    _KEEP_ALIVE.append(display)
     env = os.environ | {"HOME": str(home), "XDG_RUNTIME_DIR": str(runtime),
-                        "DISPLAY": ":99",
+                        "DISPLAY": ":99", "WAYLAND_DISPLAY": "wayland-9",
                         "WAYFIRE_SOCKET": str(runtime / "wf.socket"),
                         "PC_WAYFIRE_HEALTH": str(health), "PC_DESKTOP_ASAR": str(asar),
                         "PC_TEST_HEALTHY": str(tmp_path / "healthy"),

@@ -27,7 +27,7 @@ from tests.client.test_native_window_follows_its_frame import body, strip_commen
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "desktop" / "main.js"
 OS_JS = ROOT / "static" / "js" / "client" / "os.js"
-START = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-shell-start"
+START = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-shell-start-wayfire"
 
 
 class TheShellWindowIsNotCreatedFullscreen(unittest.TestCase):
@@ -79,10 +79,15 @@ class TheSyncDropsItIfItComesBack(unittest.TestCase):
 
 
 class TheStartScriptStillDisablesIt(unittest.TestCase):
-    """Belt and braces, and the place the reasoning was first written down."""
+    """Belt and braces, and the place the reasoning was first written down.
 
-    def test_pc_shell_start_disables_fullscreen(self):
-        self.assertIn("fullscreen disable", START.read_text())
+    The Sway launcher enforced the shell's stacking itself, with `fullscreen disable` and
+    `floating disable` sent over its own IPC. Wayfire has no tiling to arrange: main.js assigns each
+    shell surface to a whole output through `assignShell`, and the failsafe below is what clears a
+    fullscreen state the compositor may restore. Those two assertions went with the compositor; what
+    the launcher is still uniquely responsible for -- the session environment the shell and the
+    portal both need -- is checked here.
+    """
 
     def test_main_process_clears_fullscreen_if_renderer_timer_is_throttled(self):
         src = MAIN.read_text()
@@ -94,37 +99,37 @@ class TheStartScriptStillDisablesIt(unittest.TestCase):
         self.assertIn("shellWindow", handler)
         self.assertIn("row.title", handler)
 
-    def test_and_tiles_the_window(self):
-        """`floating disable` is what makes it fill the workspace without being fullscreen."""
-        src = START.read_text()
-        self.assertIn("floating disable", src)
-        # Electron's Wayland app id changed case in 44. Matching only the historical spelling
-        # leaves the process healthy but floating/hidden, which is a black OS desktop.
-        self.assertIn('[app_id="PosterChan"]', src)
-
     def test_shell_mode_can_never_start_hidden(self):
         """A hidden normal desktop app is fine; a hidden OS shell is an empty compositor."""
         src = MAIN.read_text()
         self.assertIn('startHidden = !SHELL_MODE && background.launchedHidden()', src)
 
     def test_recovery_launch_recovers_the_wayland_display(self):
-        """An SSH/recovery shell lacks Sway's environment; `auto` must not fall through to X11."""
+        """A WAYFIRE SOCKET IS NOT A WAYLAND DISPLAY, and only the second one starts Electron.
+
+        The launcher refuses without WAYFIRE_SOCKET, which made it look as though the environment
+        had been checked. WAYLAND_DISPLAY is separate and can be absent on a recovery or ssh-driven
+        restart -- and unset, everything still reports success (an empty value imports into systemd
+        quite happily) until Chromium dies with "Failed to connect to Wayland display" and both
+        launch attempts are spent on it. Find the socket rather than assume a name, and refuse
+        rather than launch into that error.
+        """
         src = START.read_text()
-        self.assertIn('XDG_RUNTIME_DIR=/run/user/$(id -u)', src)
         self.assertIn("-name 'wayland-*'", src)
         self.assertIn('WAYLAND_DISPLAY=${wayland_socket##*/}', src)
+        self.assertIn('export WAYLAND_DISPLAY', src)
+        self.assertIn('could not find', src, "an unfindable display must refuse, not launch")
         self.assertIn('XDG_SESSION_TYPE=wayland', src)
-        self.assertIn('XDG_CURRENT_DESKTOP=sway', src)
-        self.assertNotIn(': "${XDG_SESSION_TYPE:=wayland}"', src)
-        self.assertIn('[app_id="place.poster.desktop"]', src)
+        self.assertIn('XDG_CURRENT_DESKTOP=wayfire', src)
 
     def test_recovery_launch_repairs_the_portal_service_environment(self):
-        """`grim` uses Sway directly and can work while Electron lists zero screens. The latter
-        means the already-running systemd portal never received the recovered Wayland variables."""
+        """`grim` talks to the compositor directly and can work while OBS lists zero screens. The
+        latter means the already-running systemd portal never received the session's Wayland
+        variables -- it is a --user service and can start before anything exports them."""
         src = START.read_text()
-        export_at = src.index('export XDG_SESSION_TYPE XDG_CURRENT_DESKTOP')
+        export_at = src.index('export XDG_SESSION_TYPE=wayland')
         import_at = src.index('systemctl --user import-environment')
-        launch_at = src.index('"$PC_DESKTOP_LAUNCHER" --shell')
+        launch_at = src.index('"$launcher" --shell')
         self.assertLess(export_at, import_at)
         self.assertLess(import_at, launch_at)
         self.assertIn('dbus-update-activation-environment --systemd', src)
