@@ -2662,7 +2662,14 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .prof .pbody{padding:14px 22px}
 .prof .phead .btn{font-size:15px;padding:10px 18px;border-radius:12px}
 .prof .prof-actions{margin-inline-start:auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
-.prof .prof-actions .btn{white-space:nowrap}
+/* ONE ROW, ONE HEIGHT. Measured against this stylesheet: Edit 22px, "⚙ Settings" 25, "ɱ Tip" 24,
+   the ⋯ button 23 — four different sizes side by side, because each one's height was whatever its
+   CONTENT made it. A button holding an inline SVG builds a different line box from one holding
+   text, and one holding two spans a third. Reported as "the Edit, Settings, tip, hamburger menu
+   are all different sizes!". `inline-flex` + `min-height` makes the box the row's decision rather
+   than the label's; 34px is the same floor the calendar toolbar uses for the same reason. */
+.prof .prof-actions .btn{white-space:nowrap;display:inline-flex;align-items:center;
+  justify-content:center;gap:6px;min-height:34px;line-height:1}
 /* :not(.prof-menu-btn) — this hides the icon so the LABELLED profile buttons show their full word on
    desktop, but the ☰ overflow button has no label: hiding its icon left an empty oval with nothing in
    it. An icon-only button must keep its icon whatever the row's label policy is. */
@@ -8668,8 +8675,15 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .folder-chip.active .fx-n{background:rgba(0,0,0,.18);color:inherit}
 
 /* ---- The toolbar: breadcrumbs on the left, the view switch on the right ----------------------- */
+/* THE TOOLBAR STAYS PUT, AND IT IS OPAQUE. It shares the scroller with the grid, and it had
+   neither a background nor a stacking position — so scrolling drew file tiles straight THROUGH the
+   breadcrumbs, the search box and the view switch: "File Manger bug: ALL -> as you scroll, files
+   scrolling above buttons". Sticky rather than fixed, so it belongs to whichever pane it is in
+   (the drive, the Explorer's right half, a window) instead of to the viewport; opaque, because a
+   transparent sticky bar is the same bug with the tiles merely dimmer. */
 .fx-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
-  padding-bottom:8px;border-bottom:1px solid var(--line)}
+  padding-bottom:8px;border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:3;background:var(--bg)}
 .fx-crumbs{display:flex;align-items:center;gap:2px;min-width:0;flex-wrap:wrap}
 .fx-crumb{background:none;border:0;font:inherit;font-size:14px;font-weight:600;color:var(--muted);
   cursor:pointer;padding:4px 7px;border-radius:8px;max-width:240px;
