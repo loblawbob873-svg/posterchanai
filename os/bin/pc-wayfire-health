@@ -146,9 +146,22 @@ def rendered(outputs):
             if not name:
                 raise RuntimeError("Wayfire output has no capture name")
             target = os.path.join(directory, str(output.get("id")) + ".png")
-            done = subprocess.run([grim, "-o", name, target], stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.PIPE, timeout=capture_timeout, check=False)
-            if done.returncode or not os.path.isfile(target) or not has_marker(target):
+            capture = subprocess.Popen([grim, "-o", name, target], stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.PIPE)
+            # grim's ext-image-copy waits for output damage. A correctly rendered static shell can
+            # otherwise time out precisely because it is stable. Wake the cursor plane without
+            # changing its position or focus, as pc-screenshot does for the same wlroots behavior.
+            time.sleep(0.05)
+            try:
+                subprocess.run([os.environ.get("PC_YDOTOOL", "ydotool"), "mousemove", "-x", "0", "-y", "0"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            try:
+                _, error = capture.communicate(timeout=capture_timeout)
+            except subprocess.TimeoutExpired:
+                capture.kill(); capture.communicate(); return False
+            if capture.returncode or not os.path.isfile(target) or not has_marker(target):
                 return False
     return True
 
