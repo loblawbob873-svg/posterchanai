@@ -144,18 +144,9 @@ def rendered(outputs, shells):
     grim = os.environ.get("PC_GRIM", "grim")
     capture_timeout = float(os.environ.get("PC_GRIM_TIMEOUT", "10"))
     with tempfile.TemporaryDirectory(prefix="pc-wayfire-health-") as directory:
-        captures = []
-        for output in outputs:
-            name = str(output.get("name") or "")
-            if not name:
-                raise RuntimeError("Wayfire output has no capture name")
-            target = os.path.join(directory, str(output.get("id")) + ".png")
-            capture = subprocess.Popen([grim, "-o", name, target], stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.PIPE)
-            captures.append((name, target, capture))
-        # Subscribe every output before one damage event. Sequential captures could each consume
-        # the wlroots frame timeout and exhaust the outer startup budget on a dual-monitor desktop.
-        time.sleep(0.08)
+        # Damage BEFORE asking grim for a frame. Starting grim first raced the compositor: it could
+        # complete from its cached pre-hydration buffer before the focus/cursor damage below, making
+        # DP-2 fail even though an immediate ordinary screenshot contained its exact marker.
         for shell in shells:
             try:
                 request("window-rules/focus-view", {"id": int(shell["id"])})
@@ -171,6 +162,18 @@ def rendered(outputs, shells):
                                stderr=subprocess.DEVNULL, timeout=1, env=input_env)
         except (OSError, subprocess.TimeoutExpired):
             pass
+        time.sleep(0.08)
+        captures = []
+        # Capture outputs concurrently so one stalled wlroots frame cannot consume the full startup
+        # allowance once per monitor.
+        for output in outputs:
+            name = str(output.get("name") or "")
+            if not name:
+                raise RuntimeError("Wayfire output has no capture name")
+            target = os.path.join(directory, str(output.get("id")) + ".png")
+            capture = subprocess.Popen([grim, "-o", name, target], stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.PIPE)
+            captures.append((name, target, capture))
         by_output = {int(shell.get("output-id") if shell.get("output-id") is not None
                          else shell.get("output_id", -1)): shell for shell in shells}
         # Match shell-displays' deterministic fallback: focused output, then top-left output.
