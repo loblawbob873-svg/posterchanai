@@ -18,6 +18,7 @@ def test_wayfire_backend_contract_and_wire_protocol(tmp_path):
       const calls=[];
       const views=[{{id:7,pid:700,'app-id':'firefox',title:'Web',mapped:true,activated:true,
         fullscreen:false,minimized:false,'tiled-edges':0,'output-id':2,
+        'last-focus-timestamp':123456,
         geometry:{{x:1920,y:0,width:900,height:700}}}}];
       const outputs=[{{id:1,name:'LEFT',focused:false,scale:1,geometry:{{x:0,y:0,width:1920,height:1080}}}},
                      {{id:2,name:'RIGHT',focused:true,scale:2,geometry:{{x:1920,y:0,width:2560,height:1440}}}}];
@@ -36,6 +37,7 @@ def test_wayfire_backend_contract_and_wire_protocol(tmp_path):
     assert result["backend"] == "wayfire"
     assert result["list"][0]["app"] == "firefox"
     assert result["list"][0]["floating"] is True
+    assert result["list"][0]["focusTime"] == 123456
     assert result["outs"][1]["rect"] == {"x": 1920, "y": 0, "width": 2560, "height": 1440}
     methods = [x["method"] for x in result["calls"]]
     assert methods == [
