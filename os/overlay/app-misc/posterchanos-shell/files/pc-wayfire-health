@@ -164,15 +164,19 @@ def rendered(outputs, shells):
             pass
         time.sleep(0.08)
         captures = []
-        # Capture outputs concurrently so one stalled wlroots frame cannot consume the full startup
-        # allowance once per monitor.
+        # This wlroots/Wayfire build can return DP-2's cached pre-hydration buffer when two grim
+        # screencopy clients race. Capture one physical output at a time; each call remains bounded.
         for output in outputs:
             name = str(output.get("name") or "")
             if not name:
                 raise RuntimeError("Wayfire output has no capture name")
             target = os.path.join(directory, str(output.get("id")) + ".png")
-            capture = subprocess.Popen([grim, "-o", name, target], stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.PIPE)
+            try:
+                capture = subprocess.run([grim, "-o", name, target], stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.PIPE, timeout=capture_timeout)
+            except subprocess.TimeoutExpired:
+                print(f"pc-wayfire-health: {name} capture timed out", file=sys.stderr)
+                return False
             captures.append((name, target, capture))
         by_output = {int(shell.get("output-id") if shell.get("output-id") is not None
                          else shell.get("output_id", -1)): shell for shell in shells}
@@ -184,12 +188,6 @@ def rendered(outputs, shells):
                 int((row.get("geometry") or {}).get("x", 0)),
                 int((row.get("geometry") or {}).get("y", 0)), str(row.get("name", ""))))
         for name, target, capture in captures:
-            try:
-                _, error = capture.communicate(timeout=capture_timeout)
-            except subprocess.TimeoutExpired:
-                capture.kill(); capture.communicate()
-                print(f"pc-wayfire-health: {name} capture timed out", file=sys.stderr)
-                return False
             output = next(row for row in outputs if str(row.get("name")) == name)
             shell = by_output.get(int(output.get("id")))
             colours = PRIMARY_MARKER if output is primary_output else SECONDARY_MARKER
