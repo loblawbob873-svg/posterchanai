@@ -139,7 +139,7 @@ def has_marker(path):
 
 def rendered(outputs):
     grim = os.environ.get("PC_GRIM", "grim")
-    capture_timeout = float(os.environ.get("PC_GRIM_TIMEOUT", "4"))
+    capture_timeout = float(os.environ.get("PC_GRIM_TIMEOUT", "10"))
     with tempfile.TemporaryDirectory(prefix="pc-wayfire-health-") as directory:
         for output in outputs:
             name = str(output.get("name") or "")
