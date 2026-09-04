@@ -147,6 +147,7 @@ def test_wayfire_and_fallback_are_shipped_together():
 def test_non_gl_virtio_uses_mesa_software_without_disabling_physical_gpu():
     session = LAUNCHER.read_text(encoding="utf-8")
     assert "0x1af4" in session and "LIBGL_ALWAYS_SOFTWARE=1" in session
+    assert 'PC_WAYFIRE_HEALTH_TIMEOUT:=120' in session
     assert "PC_SHELL_EXTRA_ARGS=--disable-gpu" not in session
 
 

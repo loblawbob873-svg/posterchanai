@@ -32,6 +32,8 @@ if [ "$selected" = wayfire ]; then
 	if grep -qs '^0x1af4$' /sys/class/drm/card*/device/vendor 2>/dev/null \
 		&& ! find /dev/dri -maxdepth 1 -name 'renderD*' -print -quit 2>/dev/null | grep -q .; then
 		export LIBGL_ALWAYS_SOFTWARE=1
+		: "${PC_WAYFIRE_HEALTH_TIMEOUT:=120}"
+		export PC_WAYFIRE_HEALTH_TIMEOUT
 	fi
 	health=${PC_WAYFIRE_HEALTH:-/usr/local/bin/pc-wayfire-health}
 	# Refuse the compositor switch while the installed Electron package is still Sway-only.  This
