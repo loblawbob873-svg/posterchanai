@@ -7688,7 +7688,55 @@
     }, 250);
   }
 
+  /* THE COMPOSITOR-LEVEL PANEL. Extracted from toggleNet so the flag cannot be consulted before
+     the process that owns the window is asked — see the note there. */
+  function _netPopup(){
+    const w = Math.min(520, Math.max(320, Math.round(vwL() - 16)));
+    const h = Math.min(900, Math.max(360, Math.round(vhL() - 96)));
+    let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
+    try{
+      const b = $('#os-net', bar), r = b && b.getBoundingClientRect();
+      if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
+    }catch(_){ }
+    const state = netState();
+    /* Only plain connection facts cross the renderer boundary. Do not pass WebSockets or relay
+       objects; apart from not being serializable, they belong to the authoritative shell. */
+    const snapshot = JSON.stringify({ net: {
+      level: state.level, up: state.up, total: state.total, online: state.online,
+      conns: state.conns.slice(0,20).map(c => ({ url:String(c.url || '').slice(0,256), status:String(c.status || '').slice(0,32),
+        open:!!c.open, idle:c.idle == null ? null : Number(c.idle), trusted:!!c.trusted }))
+    }});
+    Promise.resolve(pcPopup.toggle('net', { x, y, width:w, height:h }, snapshot))
+      .then(open => { netOpen=!!open; drawBar(); })
+      .catch(() => { netOpen=false; drawBar(); });
+    drawBar();
+  }
   function toggleNet(force){
+    /* WHO KNOWS WHETHER IT IS OPEN. On PosterChanOS this panel is a real popup WINDOW, and that
+     * window closes on blur, on Escape and on every choice — none of which this renderer is told
+     * about. `netOpen` is therefore a paint flag that drifts, and deciding open-or-close from it
+     * made the tray's connectivity button work on some presses and do nothing on others: the flag
+     * said "open", the click "closed" a window that was not there, and the next click opened it
+     * again. Reported as the button not being functional at all.
+     *
+     * This is the same fault the Start menu had — its own comment records "Super six times gave
+     * menu, nothing, menu, menu, nothing, menu" — and the same fix: ASK THE PROCESS THAT HOLDS THE
+     * WINDOW. So the popup branch is taken before the flag is consulted, and the flag is only ever
+     * written from the answer. The in-page fallback below (a browser, the Windows/macOS builds)
+     * keeps the old behaviour, because there the panel is a div this renderer really does own. */
+    const wantPopup = (force === undefined || !!force) || netOpen;
+    if(window.pcPopup && pcPopup.toggle && wantPopup){
+      clearInterval(_netT); _netT = null;
+      const old = $('#os-net-panel', root);
+      if(old) old.remove();
+      if(force === false){
+        try{ pcPopup.close && pcPopup.close(); }catch(_){ }
+        netOpen = false; drawBar(); return;
+      }
+      toggleStart(false); toggleNoti(false);
+      _netPopup();
+      return;
+    }
     netOpen = (force === undefined) ? !netOpen : !!force;
     const old = $('#os-net-panel', root);
     if(old) old.remove();
@@ -7698,28 +7746,6 @@
     /* Like Start and Notifications, this cannot out-z-index a native application from inside the
        tiled shell. Give it a compositor-level popup on PosterChanOS; the browser fallback below
        stays useful for the web desktop. */
-    if(window.pcPopup && pcPopup.open){
-      const w = Math.min(520, Math.max(320, Math.round(vwL() - 16)));
-      const h = Math.min(900, Math.max(360, Math.round(vhL() - 96)));
-      let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
-      try{
-        const b = $('#os-net', bar), r = b && b.getBoundingClientRect();
-        if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
-      }catch(_){ }
-      const state = netState();
-      /* Only plain connection facts cross the renderer boundary. Do not pass WebSockets or relay
-         objects; apart from not being serializable, they belong to the authoritative shell. */
-      const snapshot = JSON.stringify({ net: {
-        level: state.level, up: state.up, total: state.total, online: state.online,
-        conns: state.conns.slice(0,20).map(c => ({ url:String(c.url || '').slice(0,256), status:String(c.status || '').slice(0,32),
-          open:!!c.open, idle:c.idle == null ? null : Number(c.idle), trusted:!!c.trusted }))
-      }});
-      Promise.resolve(pcPopup.toggle('net', { x, y, width:w, height:h }, snapshot))
-        .then(open => { netOpen=!!open; drawBar(); })
-        .catch(() => { netOpen=false; drawBar(); });
-      drawBar();
-      return;
-    }
     const panel = document.createElement('div');
     panel.id = 'os-net-panel';
     panel.className = 'os-noti os-net-panel';

@@ -222,14 +222,12 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # Audited against desktop/*.js: grim slurp wl-copy wpctl nmcli systemctl xdg-open script sudo
 # wlr-randr (+ brightnessctl, see above). `tests/test_posterchanos_profile.py` re-runs that audit.
 #
-# x11-libs/libnotify and gui-apps/mako are the two halves of ONE missing feature, not a preference.
-# `pc:host:notify` is Electron's Notification API, which on Linux is libnotify talking to
-# org.freedesktop.Notifications. Neither the library nor a server was ever installed here, so
-# `Notification.isSupported()` answered false and every DM, mention and call notification this
-# desktop raised was dropped in silence -- with the settings screen reporting "granted", because it
-# only ever checked that the bridge EXISTS. mako is a layer-shell client, so its popup is stacked
-# above fullscreen applications; the shell surface is the tiled window underneath them and cannot
-# be. PosterChanUI still owns the taskbar, tray, desktop and notification centre.
+# NO NOTIFICATION DAEMON, DELIBERATELY. `pc:host:notify` is Electron's Notification API, which on
+# Linux is libnotify talking to org.freedesktop.Notifications, so with no server on the bus those
+# calls reach nothing. Installing libnotify + mako to "fix" that put transient popups over the
+# desktop and they were reported as annoying within the hour: PosterChan already has a notification
+# surface, the taskbar's own centre, and a second one drawn by a daemon is the duplicate the
+# migration notes forbid. The toolbar centre is the surface.
 POSTERCHANOS_PACKAGES="gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/wlr-randr x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
@@ -241,7 +239,6 @@ games-util/steam-launcher games-util/game-device-udev-rules \
 media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
-x11-libs/libnotify gui-apps/mako \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
 net-vpn/tor gui-apps/swayidle"
 # net-misc/networkmanager (nmcli, the whole network tray), app-admin/sudo, sys-apps/systemd

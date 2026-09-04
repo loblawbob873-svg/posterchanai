@@ -25,8 +25,6 @@ RDEPEND="
 	gui-libs/wayfire-plugins-extra
 	gamescope? ( gui-wm/gamescope )
 	gui-apps/swayidle
-	gui-apps/mako
-	x11-libs/libnotify
 	gui-apps/foot
 	gui-apps/grim
 	gui-apps/wlr-randr
@@ -74,11 +72,6 @@ src_install() {
 	# than rediscovering.
 	insinto /etc
 	doins "${FILESDIR}/wayfire.ini"
-
-	# The notification popup's appearance. mako reads ~/.config/mako/config first, so an account can
-	# still override it; this is the desktop's default and it matches the compositor decoration.
-	insinto /etc/xdg/mako
-	newins "${FILESDIR}/mako.config" config
 
 	insinto /usr/share/plymouth/themes/posterchanos
 	doins "${FILESDIR}"/plymouth/*

@@ -5,7 +5,7 @@
 // What it owes the user offline is an ANSWER instead of the browser's network-error page — hence
 // OFFLINE_URL below. (The Nostr client at /client is the offline-capable half; it has its own worker at
 // /client/sw.js, whose narrower scope wins for every page under /client.)
-const CACHE_NAME = 'posterchanai-v63';
+const CACHE_NAME = 'posterchanai-v64';
 const OFFLINE_URL = '/static/offline.html';
 const STATIC_ASSETS = [
   OFFLINE_URL,

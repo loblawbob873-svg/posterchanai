@@ -69,8 +69,34 @@ def _listing(result, key):
     return result if isinstance(result, list) else []
 
 
-def views(path=None):
-    return _listing(call("window-rules/list-views", path), "views")
+def views(path=None, globalise=True):
+    """Every mapped view, with geometry in GLOBAL coordinates.
+
+    Wayfire reports view geometry OUTPUT-LOCAL. Measured on a two-monitor desk (DP-1 at x=0, DP-2 at
+    x=3840): both full-screen shell surfaces report `geometry.x = 0`. Compared against global output
+    rectangles that reads as two desktops on the left monitor and none on the right -- which is
+    exactly what the installed-surface gate reported the first time it could run at all.
+
+    `globalise=False` returns what the compositor said, for a caller that wants to see it raw.
+    """
+    rows = _listing(call("window-rules/list-views", path), "views")
+    if not globalise:
+        return rows
+    at = {}
+    for output in outputs(path):
+        r = rect_of(output)
+        if output.get("id") is not None:
+            at["id:%s" % output["id"]] = r
+        if output.get("name"):
+            at["name:%s" % output["name"]] = r
+    for row in rows:
+        base = at.get("id:%s" % row.get("output-id")) or at.get("name:%s" % row.get("output-name"))
+        if not base:
+            continue                        # an unknown output translates by zero, never by a guess
+        g = rect_of(row)
+        row["geometry"] = {"x": g["x"] + base["x"], "y": g["y"] + base["y"],
+                           "width": g["width"], "height": g["height"]}
+    return rows
 
 
 def outputs(path=None):

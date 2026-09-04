@@ -1,25 +1,21 @@
-"""A DM NOTIFICATION HAD NOWHERE TO GO, AND NOTHING SAID SO.
+"""THE TOOLBAR'S NOTIFICATION CENTRE IS THE SURFACE. NOTHING ELSE DRAWS ONE.
 
-Measured on the running desktop, in its own log:
+`osNotify` (app.js) prefers the desktop bridge, the bridge is Electron's Notification API, and on
+Linux that is libnotify talking to `org.freedesktop.Notifications`. PosterChanOS ships no server on
+that bus, so those calls reach nothing.
 
-    WARNING:electron/shell/browser/notifications/linux/libnotify_notification.cc:87]
-    Unable to find libnotify; notifications disabled
+That was briefly "fixed" by installing libnotify and autostarting mako, and the popups were reported
+as annoying the same hour: *"desktop had annying notification boxes? why? we have a better
+notification fetaure on toolbar"*. It is the right call and it is the one the migration notes
+already made — PosterChanUI owns the taskbar, tray, desktop AND the notification centre, and a
+layer-shell daemon painting a second one over the desktop is precisely the duplicate they forbid
+("it must not add a second panel, dock, launcher, notification area, or background").
 
-`osNotify` (app.js) prefers the desktop bridge over every other path, the bridge is Electron's
-Notification API, and on Linux that is libnotify talking to `org.freedesktop.Notifications`.
-PosterChanOS shipped neither the library nor a server, so `Notification.isSupported()` answered
-false, `pc:host:notify` returned false, and every DM, mention and call notification this desktop has
-ever raised was dropped -- while Settings reported "granted", because `osNotifyState` only ever
-checked that the bridge EXISTS.
-
-The popup is a DAEMON rather than something the shell draws, for the reason the start menu had to
-stop being a div: a transient notification must appear over whatever is on screen, including a
-fullscreen game, and the shell surface is the tiled window underneath every one of those. mako is a
-layer-shell client, so the compositor stacks it. It is not a second panel/dock/launcher -- it draws
-nothing at all until something notifies.
+So this file guards the ABSENCE, which is the thing an "obviously missing dependency" audit would
+otherwise add back: the tray centre is where a DM lands, and nothing on this image starts a popup
+daemon.
 """
 from pathlib import Path
-import re
 
 from tests.wayfire_config import sections
 
@@ -28,56 +24,39 @@ ROOT = Path(__file__).resolve().parents[1]
 SHELL = ROOT / "os/overlay/app-misc/posterchanos-shell"
 GENTOO = (ROOT / "os/gentoo.sh").read_text()
 EBUILD = (SHELL / "posterchanos-shell-1.0.0.ebuild").read_text()
+PACKAGES = GENTOO.split("POSTERCHANOS_PACKAGES=", 1)[1].split('"', 2)[1]
 
 
-def test_the_desktop_really_does_call_the_native_notification_api():
-    """The premise. If this stops being true the rest of the file is guarding nothing."""
-    main = (ROOT / "desktop/main.js").read_text()
-    handler = main.split("ipcMain.handle('pc:host:notify'", 1)[1].split("ipcMain.handle(", 1)[0]
-    assert "electron.Notification" in handler
-    assert "isSupported()" in handler
-    app = (ROOT / "static/js/client/app.js").read_text()
-    body = app.split("function osNotify(", 1)[1].split("\n  }\n", 1)[0]
-    assert "pcHost.notify" in body
-
-
-def test_both_halves_of_the_notification_path_are_installed():
-    """The library AND a server. Either one alone still shows nothing."""
-    packages = GENTOO.split("POSTERCHANOS_PACKAGES=", 1)[1].split('"', 2)[1]
-    assert "x11-libs/libnotify" in packages, "Electron cannot raise a notification at all"
-    assert "gui-apps/mako" in packages, "nothing owns org.freedesktop.Notifications on this session"
-    # The shell package depends on them too: an installed machine gains them through an update,
-    # not only a fresh build.
-    assert "gui-apps/mako" in EBUILD
-    assert "x11-libs/libnotify" in EBUILD
-
-
-def test_the_server_starts_with_the_session():
+def test_no_notification_daemon_is_installed_or_started():
+    for unwanted in ("gui-apps/mako", "x11-libs/libnotify", "dunst", "swaync"):
+        assert unwanted not in PACKAGES, f"{unwanted} draws popups over PosterChan's own desktop"
+        assert unwanted not in EBUILD
     autostart = sections()["autostart"]
-    assert any(v.strip().split()[0].endswith("mako") for v in autostart.values()), autostart
+    for value in autostart.values():
+        assert "mako" not in value and "dunst" not in value, autostart
+    assert not (SHELL / "files/mako.config").exists()
 
 
-def test_the_popup_is_stacked_above_applications_and_styled_like_this_desktop():
-    """`layer=overlay` is the whole reason a daemon was chosen over drawing it in the shell."""
-    cfg = (SHELL / "files/mako.config").read_text()
-    # Only the GLOBAL section: mako's `[urgency=critical]` block below re-states some of these, and
-    # reading the file as one flat map silently takes the override as the default.
-    values = dict(re.findall(r"^([a-z-]+)=(.+)$", cfg.split("\n[", 1)[0], re.M))
-    assert values.get("layer") == "overlay", "a notification can be covered by a fullscreen game"
-    assert values.get("anchor") == "top-right"
-    # A notification the user never dismisses must not stay on screen for ever, and a CALL must not
-    # time out before it is answered -- the two cases mako's urgency section separates.
-    assert int(values["default-timeout"]) > 0
-    assert "[urgency=critical]" in cfg
-    assert "default-timeout=0" in cfg.split("[urgency=critical]", 1)[1]
-    assert 'newins "${FILESDIR}/mako.config" config' in EBUILD
-    assert "insinto /etc/xdg/mako" in EBUILD
-
-
-def test_nothing_else_draws_a_desktop_surface():
-    """mako answers notifications and nothing else. A panel, dock, launcher or wallpaper daemon
-    would be a second copy of something PosterChanUI already is."""
-    cfg = (SHELL / "files/mako.config").read_text()
+def test_nothing_else_draws_a_desktop_surface_either():
+    """The same rule, for the surfaces PosterChanUI already is."""
     for unwanted in ("wf-panel", "wf-dock", "wf-background", "waybar", "swaybg"):
-        assert unwanted not in GENTOO.split("POSTERCHANOS_PACKAGES=", 1)[1].split('"', 2)[1]
-        assert unwanted not in cfg
+        assert unwanted not in PACKAGES
+    config = (SHELL / "files/wayfire.ini").read_text()
+    for unwanted in ("wf-panel", "wf-dock", "wf-background", "swaybg", "swaybar"):
+        assert unwanted not in config
+
+
+def test_the_reason_is_written_down_where_the_next_audit_will_look():
+    """An absent dependency looks like an oversight. Both places that would "fix" it say why not."""
+    config = (SHELL / "files/wayfire.ini").read_text()
+    assert "NO NOTIFICATION DAEMON" in config.upper()
+    assert "NO NOTIFICATION DAEMON" in GENTOO.upper()
+
+
+def test_the_notification_centre_is_still_the_shell_s_own_window():
+    """The surface that replaces it is a real floating window, for the reason the start menu is:
+    the shell is the tiled window underneath every application, so a panel drawn inside the page
+    cannot rise above one."""
+    assert (ROOT / "tests/client/test_notifications_go_over_windows.py").exists()
+    os_js = (ROOT / "static/js/client/os.js").read_text()
+    assert "pc:notifications" in os_js or "notification" in os_js.lower()

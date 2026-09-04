@@ -29,6 +29,9 @@ function normalizeView(v){
   const g=geometryOf(v);return {id:Number(v&&v.id),pid:Number(v&&v.pid)>0?Number(v.pid):0,
     app:String(v&&((v['app-id']||v.app_id||v.app)||'')),title:String(v&&v.title||''),
     workspace:String(v&&((v['wset-index']??v['output-id']??v.output_id)??'')),
+    /* Kept alongside `workspace` because that field is a STRING the shell treats as opaque, while
+     * the coordinate translation needs the output itself. */
+    outputId:Number(v&&(v['output-id']??v.output_id)),outputName:String(v&&(v['output-name']||v.output_name||'')),
     focusTime:Number(v&&(v['last-focus-timestamp']??v.last_focus_timestamp))||0,
     focused:!!(v&&(v.activated||v.focused)),fullscreen:!!(v&&v.fullscreen),floating:!(Number(v&&v['tiled-edges'])>0),
     xwayland:!!(v&&(v.type==='xwayland'||v['app-id']==null&&v.app_id==null)),stashed:!!(v&&v.minimized),rect:g};
@@ -63,15 +66,46 @@ function randrHead(h){
 function procParents(){const out=[];if(process.platform!=='linux')return out;try{for(const n of fs.readdirSync('/proc'))if(/^\d+$/.test(n))try{const s=fs.readFileSync('/proc/'+n+'/stat','utf8'),i=s.lastIndexOf(')'),f=s.slice(i+1).trim().split(/\s+/);out.push({pid:Number(n),ppid:Number(f[1])});}catch(_){}}catch(_){}return out;}
 
 class WayfireWM{
-  constructor(sockPath,opts){this.backend='wayfire';this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this.actionServer=null;this.spawn=opts&&opts.spawn||spawn;this._randrRows=null;this._randrAt=0;this._randrPending=null;}
+  constructor(sockPath,opts){this.backend='wayfire';this._origins=null;this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this.actionServer=null;this.spawn=opts&&opts.spawn||spawn;this._randrRows=null;this._randrAt=0;this._randrPending=null;}
   available(){return this.paths.length>0;}
   _connect(){if(this.sock)return Promise.resolve(this.sock);if(this.connecting)return this.connecting;if(!this.paths.length)return Promise.reject(new Error('no compositor socket — WAYFIRE_SOCKET is not set'));this.connecting=(async()=>{let last;for(const p of this.paths)try{return await this._connectPath(p);}catch(e){last=e;}throw last||new Error('no live Wayfire socket');})().finally(()=>{this.connecting=null;});return this.connecting;}
   _connectPath(p){return new Promise((resolve,reject)=>{const s=net.createConnection(p);let settled=false;const feed=wfDecoder(msg=>{if(msg&&msg.event){this._event(msg);return;}const q=this.pending.shift();if(q){if(msg&&msg.error)q.reject(new Error(msg.error));else q.resolve(msg);}});s.on('data',c=>{try{feed(c);}catch(e){s.destroy(e);}});s.on('error',e=>{if(!settled){settled=true;reject(e);}this._fail(e);});s.on('close',()=>{if(this.sock===s)this.sock=null;this._fail(new Error('Wayfire IPC closed'));});s.on('connect',()=>{if(settled)return;settled=true;this.sock=s;this.path=p;resolve(s);});});}
   _fail(e){for(const q of this.pending.splice(0))q.reject(e);}
   _send(method,data){return this._connect().then(s=>new Promise((resolve,reject)=>{this.pending.push({resolve,reject});s.write(wfFrame({method,data:data||{}}));}));}
-  _event(msg){const event=String(msg.event||'');let name=event.startsWith('view-')?'window':event.startsWith('output-')?'output':event.includes('workspace')?'workspace':event==='posterchan-tick'?'tick':'';if(!name)return;if(name==='output')this._forgetOutputs();const raw=msg.view||msg.data&&msg.data.view;const ev={change:event,payload:msg.payload||msg.data&&msg.data.payload};if(raw)ev.wayfireView=normalizeView(raw);for(const fn of(this.listeners.get(name)||[]))try{fn(ev);}catch(_){}}
+  _event(msg){const event=String(msg.event||'');let name=event.startsWith('view-')?'window':event.startsWith('output-')?'output':event.includes('workspace')?'workspace':event==='posterchan-tick'?'tick':'';if(!name)return;if(name==='output')this._forgetOutputs();const raw=msg.view||msg.data&&msg.data.view;const ev={change:event,payload:msg.payload||msg.data&&msg.data.payload};if(raw)ev.wayfireView=this._toGlobal(normalizeView(raw),this._origins);for(const fn of(this.listeners.get(name)||[]))try{fn(ev);}catch(_){}}
   version(){return this._send('list-methods').then(r=>({human_readable:'Wayfire IPC',methods:r&&r.methods||[]}));}
-  async outputs(){const r=await this._send('window-rules/list-outputs');return (Array.isArray(r)?r:r&&r.outputs||[]).map(normalizeOutput);}
+  /* VIEW GEOMETRY IS OUTPUT-LOCAL AND EVERYTHING ABOVE READS IT AS GLOBAL.
+   *
+   * Measured on a two-monitor desk: DP-1 at x=0 and DP-2 at x=3840, and BOTH full-screen shell
+   * surfaces report `geometry.x = 0`. `configure-view` already had this noted for WRITES (see
+   * `assignShell`) and nothing translated on the way back IN -- so every rule that asks "which
+   * monitor is this window on" answered DP-1 for a window on DP-2: `snap` picked the wrong output
+   * and threw the window across the desk, `placeOnOutput` clamped against the wrong bounds, and the
+   * installed release gate saw two desktops on one screen and none on the other.
+   *
+   * Translated here, once, so the rest of this class and everything above it keeps working in the
+   * one coordinate space Electron and the renderer already use. The origins are cached because
+   * `windows()` is on the drag path; `_forgetOutputs` (already wired to every output event) clears
+   * them, and an unknown output translates by zero rather than guessing. */
+  _rememberOrigins(rows){
+    const at=new Map();
+    for(const o of rows||[]){const r=o&&o.rect||{};const v={x:Number(r.x)||0,y:Number(r.y)||0};
+      if(o&&o.id!=null)at.set('id:'+Number(o.id),v);
+      if(o&&o.name)at.set('name:'+String(o.name),v);}
+    this._origins=at;return at;
+  }
+  async _outputOrigins(){
+    if(this._origins&&this._origins.size)return this._origins;
+    return this._rememberOrigins(await this.outputs());
+  }
+  _toGlobal(row,at){
+    if(!row||!at)return row;
+    const o=at.get('id:'+Number(row.outputId))||at.get('name:'+String(row.outputName));
+    if(!o)return row;
+    row.rect={x:row.rect.x+o.x,y:row.rect.y+o.y,width:row.rect.width,height:row.rect.height};
+    return row;
+  }
+  async outputs(){const r=await this._send('window-rules/list-outputs');const rows=(Array.isArray(r)?r:r&&r.outputs||[]).map(normalizeOutput);this._rememberOrigins(rows);return rows;}
   /* THE HOT PATH STAYS PURE IPC. `outputs()` runs inside place/snap/move — once per pointer frame
    * while a window is dragged — so it must never spawn a process. Only the display SETTINGS read
    * pays for wlr-randr, through this second method; desktop/displays.js asks for it by name and
@@ -132,7 +166,9 @@ class WayfireWM{
     });
     return this._randrPending;
   }
-  _forgetOutputs(){this._randrRows=null;this._randrAt=0;}
+  /* Every output event clears BOTH caches. The wlr-randr rows are the display SETTINGS view; the
+   * origins are what puts a window on the right monitor, and a hotplug moves them. */
+  _forgetOutputs(){this._randrRows=null;this._randrAt=0;this._origins=null;}
   /* Output configuration is a Wayland protocol operation, not a Wayfire window IPC command.
    * wlr-randr submits every repeated --output block as one zwlr_output_manager_v1
    * configuration, so a two-monitor rearrangement cannot expose a half-applied intermediate
@@ -164,7 +200,9 @@ class WayfireWM{
     return this._viewConfig(id,{x:b.x-o.rect.x,y:b.y-o.rect.y,w:b.width,h:b.height},{output_id:o.id});}
   async moveToAssignment(id,assignment){const outs=await this.outputs(),o=outs.find(x=>x.name===String(assignment&&assignment.output));if(!o)throw new Error('Wayfire output not found');return this._viewConfig(id,null,{output_id:o.id});}
   decorate(){return Promise.resolve(true);} // UI chrome is theme-owned; Wayfire rules exclude it.
-  async windows(){const r=await this._send('window-rules/list-views');return (Array.isArray(r)?r:r&&r.views||[]).filter(v=>v&&v.mapped!==false&&v.role!=='desktop-environment').map(normalizeView);}
+  async windows(){const [r,at]=await Promise.all([this._send('window-rules/list-views'),this._outputOrigins()]);
+    return (Array.isArray(r)?r:r&&r.views||[]).filter(v=>v&&v.mapped!==false&&v.role!=='desktop-environment')
+      .map(normalizeView).map(row=>this._toGlobal(row,at));}
   tree(){return this.windows().then(rows=>({type:'root',nodes:rows}));}
   focus(id){return this._send('window-rules/focus-view',{id:Number(id)});}
   close(id){return this._send('window-rules/close-view',{id:Number(id)}).catch(e=>/not found|unknown view/i.test(String(e&&e.message||''))?{}:Promise.reject(e));}

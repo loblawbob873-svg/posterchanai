@@ -209,3 +209,61 @@ class ItBehavesLikeACommandSomebodyTypes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_the_updater_applies_the_config_files_it_owns_and_leaves_the_rest():
+    """AN UPDATE THAT ONLY MENTIONS THE NEW CONFIG HAS NOT APPLIED IT.
+
+    Measured on a real update: the new /etc/wayfire.ini landed as `._cfg0000_wayfire.ini` and the
+    running session kept the old one — so a release that added Alt+Tab, changed what Alt+F4 closes
+    and started a notification daemon installed cleanly, said "the new desktop starts at your next
+    login", and changed nothing at the next login either. The only way to notice was to go looking
+    for a file nobody had mentioned.
+
+    RUN, not read: the block is extracted and driven against a fixture tree, because the failure
+    modes here are a `basename`/`sed` that strips the wrong prefix and a `case` that matches too
+    much — neither of which a grep over the source can see.
+    """
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "os/bin/update-posterchan").read_text(encoding="utf-8")
+    block = src.split("pc_own_config()", 1)[1]
+    block = "pc_own_config()" + block[:block.index("\nfi\n") + 4]
+
+    with tempfile.TemporaryDirectory() as td:
+        fixture = Path(td)
+        for rel, old, new in (
+            ("etc/wayfire.ini", "old wayfire", "new wayfire"),
+            ("etc/xdg/mako/config", "old mako", "new mako"),
+            ("etc/xdg/xdg-desktop-portal/portals.conf", "old portals", "new portals"),
+            # Another package's update is somebody else's decision and must be left alone.
+            ("etc/otherpkg/thing.conf", "old other", "new other"),
+        ):
+            path = fixture / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(old)
+            (path.parent / ("._cfg0000_" + path.name)).write_text(new)
+
+        script = "GRN='' YEL='' OFF=''\n" + block.replace("/etc", str(fixture / "etc"))
+        got = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+        assert got.returncode == 0, got.stderr
+
+        assert (fixture / "etc/wayfire.ini").read_text() == "new wayfire"
+        assert (fixture / "etc/xdg/mako/config").read_text() == "new mako"
+        assert (fixture / "etc/xdg/xdg-desktop-portal/portals.conf").read_text() == "new portals"
+        # THE OLD ONE IS KEPT. These are package-owned files an `etc-update --automode -5` would
+        # have discarded outright; a hand edit somebody wants back is worth one backup.
+        assert (fixture / "etc/wayfire.ini.pre-update").read_text() == "old wayfire"
+        # And nothing else was touched, nor its pending update consumed.
+        assert (fixture / "etc/otherpkg/thing.conf").read_text() == "old other"
+        assert (fixture / "etc/otherpkg/._cfg0000_thing.conf").is_file()
+        assert "1 other config update" in got.stdout
+
+
+def test_the_updater_no_longer_talks_about_sway():
+    src = (ROOT / "os/bin/update-posterchan").read_text(encoding="utf-8")
+    code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+    assert "sway" not in code, code

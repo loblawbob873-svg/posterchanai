@@ -19,7 +19,7 @@ def test_wayfire_backend_contract_and_wire_protocol(tmp_path):
       const views=[{{id:7,pid:700,'app-id':'firefox',title:'Web',mapped:true,activated:true,
         fullscreen:false,minimized:false,'tiled-edges':0,'output-id':2,
         'last-focus-timestamp':123456,
-        geometry:{{x:1920,y:0,width:900,height:700}}}}];
+        geometry:{{x:0,y:0,width:900,height:700}}}}];
       const outputs=[{{id:1,name:'LEFT',focused:false,scale:1,geometry:{{x:0,y:0,width:1920,height:1080}}}},
                      {{id:2,name:'RIGHT',focused:true,scale:2,geometry:{{x:1920,y:0,width:2560,height:1440}}}}];
       const frame=o=>{{const b=Buffer.from(JSON.stringify(o)),h=Buffer.alloc(4);h.writeUInt32LE(b.length);return Buffer.concat([h,b]);}};
@@ -36,12 +36,23 @@ def test_wayfire_backend_contract_and_wire_protocol(tmp_path):
     result = json.loads(run.stdout)
     assert result["backend"] == "wayfire"
     assert result["list"][0]["app"] == "firefox"
+    # VIEW GEOMETRY IS OUTPUT-LOCAL AND IS READ BACK AS GLOBAL. Measured on a real two-monitor
+    # desk: DP-1 at x=0, DP-2 at x=3840, and BOTH full-screen shell surfaces report geometry.x=0.
+    # `configure-view` already had this noted for WRITES and nothing translated on the way back in,
+    # so every rule that asks "which monitor is this window on" answered the left one -- `snap`
+    # threw the window across the desk and the installed release gate saw two desktops on one
+    # screen and none on the other. Here: a view at local x=0 on RIGHT (x=1920) is global x=1920.
+    assert result["list"][0]["rect"] == {"x": 1920, "y": 0, "width": 900, "height": 700}
     assert result["list"][0]["floating"] is True
     assert result["list"][0]["focusTime"] == 123456
     assert result["outs"][1]["rect"] == {"x": 1920, "y": 0, "width": 2560, "height": 1440}
     methods = [x["method"] for x in result["calls"]]
     assert methods == [
+        # `windows()` asks for the outputs it needs to translate view geometry into global
+        # coordinates. It is one extra IPC round trip on the drag path and no process spawn; the
+        # origins are cached and cleared by every output event.
         "window-rules/list-views", "window-rules/list-outputs",
+        "window-rules/list-outputs",
         "window-rules/focus-view", "wm-actions/set-minimized",
         "wm-actions/set-minimized", "wm-actions/set-fullscreen",
         "window-rules/list-outputs", "window-rules/configure-view",
@@ -193,3 +204,45 @@ def test_wayfire_key_action_reaches_shell_once_without_sway_tick(tmp_path):
     run = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == {"count": 1, "payload": "pc:start", "mode": 0o600}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_snapping_on_the_second_monitor_stays_on_the_second_monitor(tmp_path):
+    """THE BUG THE COORDINATE TRANSLATION EXISTS FOR, driven end to end.
+
+    `snap` finds a window's output by asking which output rectangle contains the window's centre.
+    Wayfire reports view geometry OUTPUT-LOCAL, so a window filling the right half of DP-2 reported
+    a centre inside DP-1 — and Super+Right on the second monitor threw the window onto the first.
+    A single-monitor desk could never see it, which is why it survived the migration.
+    """
+    script = tmp_path / "wayfire-snap.js"
+    script.write_text(textwrap.dedent(f"""
+      const net=require('net');
+      const sock={json.dumps(str(tmp_path / 'wayfire-wayland-1.socket'))};
+      const views=[{{id:9,pid:900,'app-id':'firefox',title:'Web',mapped:true,activated:true,
+        'output-id':2,'output-name':'RIGHT','tiled-edges':0,
+        geometry:{{x:100,y:100,width:800,height:600}}}}];
+      const outputs=[{{id:1,name:'LEFT',focused:false,geometry:{{x:0,y:0,width:1920,height:1080}}}},
+                     {{id:2,name:'RIGHT',focused:true,geometry:{{x:1920,y:0,width:1920,height:1080}}}}];
+      const frame=o=>{{const b=Buffer.from(JSON.stringify(o)),h=Buffer.alloc(4);h.writeUInt32LE(b.length);return Buffer.concat([h,b]);}};
+      const calls=[];
+      const server=net.createServer(c=>{{let b=Buffer.alloc(0);c.on('data',x=>{{b=Buffer.concat([b,x]);
+        while(b.length>=4){{const n=b.readUInt32LE();if(b.length<4+n)return;
+          const q=JSON.parse(b.subarray(4,4+n));b=b.subarray(4+n);calls.push(q);
+          let r={{ok:true}};if(q.method==='window-rules/list-views')r=views;
+          if(q.method==='window-rules/list-outputs')r=outputs;c.write(frame(r));}}}});}});
+      server.listen(sock,async()=>{{
+        process.env.WAYFIRE_SOCKET=sock;
+        const {{WM}}=require({json.dumps(str(ROOT / 'desktop/wm.js'))});const w=new WM();
+        await w.snap(9,'right');
+        const cfg=calls.filter(x=>x.method==='window-rules/configure-view').pop();
+        console.log(JSON.stringify(cfg.data));w.sock.destroy();server.close();
+      }});
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(script)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    data = json.loads(run.stdout)
+    # It stays on RIGHT, and the geometry it is given is that output's LOCAL right half.
+    assert data["output_id"] == 2, data
+    assert data["geometry"]["x"] == 960, data
+    assert data["geometry"]["width"] == 960, data

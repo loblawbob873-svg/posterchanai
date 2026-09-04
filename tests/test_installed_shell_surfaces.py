@@ -66,11 +66,13 @@ def test_a_layer_shell_popup_is_not_a_shell_surface():
 
 
 def test_headless_host_is_an_explicit_missing_prerequisite(monkeypatch):
+    """The socket question lives in scripts/wayfire_ipc.py now — one client for three gates, after
+    this package already shipped two copies of one helper that drifted apart."""
     monkeypatch.setattr(GATE.subprocess, "run", lambda *args, **kwargs:
                         type("Result", (), {"stdout": "XDG_RUNTIME_DIR=/run/user/1\n"})())
     monkeypatch.delenv("WAYFIRE_SOCKET", raising=False)
     with pytest.raises(GATE.PrerequisiteMissing, match="no installed Wayfire IPC session"):
-        GATE.socket_path()
+        GATE.wf.socket_path()
 
 
 def test_a_socket_path_that_no_longer_exists_is_missing_not_present(monkeypatch, tmp_path):
@@ -78,4 +80,4 @@ def test_a_socket_path_that_no_longer_exists_is_missing_not_present(monkeypatch,
     connect and report a FAILURE about a desktop that is simply not running."""
     monkeypatch.setenv("WAYFIRE_SOCKET", str(tmp_path / "gone.sock"))
     with pytest.raises(GATE.PrerequisiteMissing):
-        GATE.socket_path()
+        GATE.wf.socket_path()

@@ -16,27 +16,21 @@ from __future__ import annotations
 
 import json
 import os
-import socket
-import struct
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wayfire_ipc as wf  # noqa: E402
 
 
 APP_IDS = {"place.poster.desktop", "posterchan-desktop", "PosterChan"}
 
 
-class PrerequisiteMissing(RuntimeError):
-    """The installed package may exist, but there is no live Wayfire session to inspect."""
+PrerequisiteMissing = wf.PrerequisiteMissing
 
 
-def rect_of(node):
-    """Wayfire calls it `geometry`; keep Sway's key names so `validate` reads the same."""
-    g = node.get("geometry") or node.get("rect") or {}
-    return {k: int(g.get(k, 0) or 0) for k in ("x", "y", "width", "height")}
-
-
-def app_of(node):
-    return str(node.get("app-id") or node.get("app_id") or "")
+rect_of = wf.rect_of
+app_of = wf.app_of
 
 
 def validate(outputs, views):
@@ -68,56 +62,15 @@ def validate(outputs, views):
             "geometry": [f"{rect_of(o)['width']}x{rect_of(o)['height']}" for o in active]}
 
 
-def socket_path():
-    """The session's own IPC socket, from this environment or from the session manager's."""
-    path = os.environ.get("WAYFIRE_SOCKET") or ""
-    if not path:
-        got = subprocess.run(["systemctl", "--user", "show-environment"], text=True,
-                             capture_output=True)
-        for line in got.stdout.splitlines():
-            if line.startswith("WAYFIRE_SOCKET="):
-                path = line.split("=", 1)[1]
-                break
-    if not path or not os.path.exists(path):
-        raise PrerequisiteMissing(
-            "no installed Wayfire IPC session; run this gate on the active PosterChanOS desktop")
-    return path
-
-
-def wayfire(method, path, data=None):
-    body = json.dumps({"method": method, "data": data or {}}).encode()
-    with socket.socket(socket.AF_UNIX) as client:
-        client.settimeout(10)
-        client.connect(path)
-        client.sendall(struct.pack("<I", len(body)) + body)
-        head = client.recv(4)
-        if len(head) != 4:
-            raise RuntimeError("Wayfire IPC closed")
-        size = struct.unpack("<I", head)[0]
-        reply = b""
-        while len(reply) < size:
-            chunk = client.recv(size - len(reply))
-            if not chunk:
-                raise RuntimeError("Wayfire IPC closed mid-reply")
-            reply += chunk
-    result = json.loads(reply)
-    if isinstance(result, dict) and result.get("error"):
-        raise RuntimeError(result["error"])
-    if isinstance(result, dict):
-        for key in ("outputs", "views"):
-            if isinstance(result.get(key), list):
-                return result[key]
-    return result
-
-
 def main():
     owned = subprocess.run(["qfile", "-q", "/opt/posterchan/resources/app.asar"],
                            stdout=subprocess.DEVNULL)
     if owned.returncode:
         raise RuntimeError("installed app.asar is not package-owned")
-    path = socket_path()
-    result = validate(wayfire("window-rules/list-outputs", path),
-                      wayfire("window-rules/list-views", path))
+    path = wf.socket_path()
+    # GLOBAL coordinates: Wayfire reports view geometry output-local, so comparing it to the output
+    # rectangles raw counted two desktops on the left monitor and none on the right.
+    result = validate(wf.outputs(path), wf.views(path))
     print("Installed shell output gate passed: " + json.dumps(result, sort_keys=True))
 
 

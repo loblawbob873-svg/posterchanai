@@ -9898,6 +9898,17 @@ audio.sms-att-img{min-width:220px}
 html.pc-oswin, html.pc-oswin body{height:100%;margin:0;background:var(--bg)}
 html.pc-oswin body{overflow:auto}
 html.pc-oswin body{padding-top:38px}
+/* AND `.app` IS `height:100vh`, WHICH DOES NOT KNOW ABOUT THAT PADDING.
+   The line above reserves 38px at the top for the fixed title bar; `.app` is sized from the
+   VIEWPORT, so the column is a full screen tall starting 38px down and the bottom 38 are below the
+   fold. Every popped-out window, measured on the real desktop in four at once: feed bottom 1447
+   against an innerHeight of 1409, 1968 against 1930, 1793 against 1755 — and in CONCORD 1564
+   against 1535, which is the message composer pinned to the bottom of the view with half of it off
+   the screen ("concord chat is cut off on the bottom, you conly see half the message input box").
+   100% resolves against body's CONTENT box, which is the viewport minus the bar — the one height
+   that is actually available. `min-height:0` because `.main` is a grid child and `auto` there is
+   its content, which puts the overflow straight back. */
+html.pc-oswin #app,html.pc-oswin .main{height:100%!important;min-height:0!important}
 #pc-oswin-chrome{position:fixed;z-index:2147483640;inset:0 0 auto;height:38px;box-sizing:border-box;
   display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 13px;color:var(--text);
   background:linear-gradient(180deg,rgba(38,32,56,.98),rgba(20,17,31,.98));border:1px solid var(--line);

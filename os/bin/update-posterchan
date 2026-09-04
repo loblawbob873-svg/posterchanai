@@ -293,13 +293,47 @@ echo "${YEL}The new desktop starts at your next login.${OFF}"
 echo "${YEL}To pick it up now (this closes your windows):${OFF}"
 echo "    /usr/local/bin/pc-shell-restart"
 
-# /etc/sway/config IS PORTAGE'S. An etc-update replaces a hand-edited one with the shipped version —
-# intended for a shipped session, and exactly what silently reverted the key bindings during
-# development, so it is worth a sentence at the moment it becomes true rather than a surprise later.
-if command -v dispatch-conf >/dev/null 2>&1 || command -v etc-update >/dev/null 2>&1; then
-	if find /etc -name '._cfg????_*' -print -quit 2>/dev/null | grep -q .; then
+# THE SESSION CONFIG IS PORTAGE'S, AND AN UPDATE THAT ONLY MENTIONS IT HAS NOT APPLIED IT.
+#
+# This used to print a sentence about /etc/sway/config and stop. Measured on a real update: the new
+# /etc/wayfire.ini was installed as `._cfg0000_wayfire.ini` and the RUNNING session kept the old
+# one -- so a release that added Alt+Tab, changed what Alt+F4 closes and started a notification
+# daemon installed cleanly, said "the new desktop starts at your next login", and changed nothing
+# at the next login either. The only way to notice was to go looking for a file nobody mentioned.
+#
+# So the files THIS package owns are applied here. Only those: another package's config update is
+# somebody else's decision and is still left for etc-update. The old copy is kept beside the new one
+# as `.pre-update` -- these are package-owned files that an `etc-update --automode -5` would have
+# discarded outright, and a hand edit somebody wants back is worth one backup.
+pc_own_config() {
+	case "$1" in
+		/etc/wayfire.ini|/etc/xdg/mako/config|/etc/xdg/xdg-desktop-portal/portals.conf) return 0 ;;
+		/etc/sudoers.d/posterchan-*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+if find /etc -name '._cfg????_*' -print -quit 2>/dev/null | grep -q .; then
+	pc_applied=0 pc_left=0
+	while IFS= read -r pending; do
+		target="${pending%/*}/$(basename "$pending" | sed 's/^\._cfg[0-9]\{4\}_//')"
+		if pc_own_config "$target"; then
+			[ ! -e "$target" ] || cp -a "$target" "$target.pre-update" 2>/dev/null || true
+			if mv -f "$pending" "$target" 2>/dev/null; then
+				pc_applied=$((pc_applied + 1))
+				echo "${GRN}applied ${target}${OFF}"
+			fi
+		else
+			pc_left=$((pc_left + 1))
+		fi
+	done <<-PENDING
+	$(find /etc -name '._cfg????_*' 2>/dev/null)
+	PENDING
+	if [ "$pc_applied" -gt 0 ]; then
+		echo "${YEL}The session config was replaced with this release's copy${OFF}"
+		echo "${YEL}(the previous one is beside it as *.pre-update).${OFF}"
+	fi
+	if [ "$pc_left" -gt 0 ]; then
 		echo
-		echo "${YEL}Portage left config updates to review (etc-update).${OFF}"
-		echo "${YEL}NOTE: /etc/sway/config is one of ours — accepting the new one discards local edits.${OFF}"
+		echo "${YEL}Portage left $pc_left other config update(s) to review (etc-update).${OFF}"
 	fi
 fi
