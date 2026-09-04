@@ -80,6 +80,13 @@ class TheBuilderShipsTheInstaller(unittest.TestCase):
         end = self.src.index("\n}\n", done)
         self.assertIn('return 0', self.src[done:end])
 
+    def test_live_image_repairs_missing_virtio_gpu_driver_before_packing(self):
+        body = self.fn
+        check = "media-libs/mesa[video_cards_virgl]"
+        self.assertGreaterEqual(body.count(check), 2)
+        self.assertIn('VIDEO_CARDS="$VIDEO_CARDS" /usr/bin/emerge -1 --newuse media-libs/mesa', body)
+        self.assertLess(body.index(check), body.index('mksquashfs / "$WORK/iso/LiveOS/squashfs.img"'))
+
     def test_chroot_bootloader_uses_the_chroot_as_target(self):
         branch = self.src[self.src.index('elif [ "$1" = "bootloader" ]'):]
         self.assertLess(branch.index("export TARGET=/"), branch.index("bootloader\n"))

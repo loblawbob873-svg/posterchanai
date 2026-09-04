@@ -2628,6 +2628,20 @@ liveCD() {
 		fi
 	fi
 
+	# The VM boot gate uses virtio-gpu, but a running physical install can legitimately have Mesa
+	# built only for its Intel/AMD card. Copying that package produces a LiveCD whose compositor
+	# takes the VT and immediately loses EGL (`virtio_gpu: driver missing`), leaving QEMU at
+	# "Display output is not active".  The image must carry the portable VirGL driver, not merely
+	# promise it in the installer configuration used after boot.
+	if ! portageq has_version / 'media-libs/mesa[video_cards_virgl]' 2>/dev/null; then
+		echo -e "${COLOR_YELLOW}Rebuilding Mesa with the LiveCD's VirGL driver.${COLOR_RESET}"
+		VIDEO_CARDS="$VIDEO_CARDS" /usr/bin/emerge -1 --newuse media-libs/mesa 2>&1 | tee -a "$LOG"
+		if [[ ${PIPESTATUS[0]} -ne 0 ]] || ! portageq has_version / 'media-libs/mesa[video_cards_virgl]' 2>/dev/null; then
+			_lcd_fail "Mesa still lacks video_cards_virgl — the LiveCD graphical VM would be blank."
+			return
+		fi
+	fi
+
 	# ---------------------------------------------------------------- can it compress?
 	# "make live cd fails with zstd is not supported", after every slow step had already run.
 	#
