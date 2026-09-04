@@ -503,11 +503,19 @@ function quitApp() {
 function armHealthMarkerRetirement(target){
   const ready = process.env.PC_WAYFIRE_READY_FILE || '';
   let done = false;
+  /* SENT, AND SENT AGAIN AFTER EVERY LOAD. The ready file can appear before the renderer has run
+   * its preload, and an ipc message with no listener yet is simply dropped — measured: the log said
+   * "health marker retired" four times and the square was still on screen. The renderer cannot ask
+   * (the preload has no handle on this decision), so the sender repeats: once now, and on each
+   * `did-finish-load`, which is exactly when a fresh document has a fresh listener and a freshly
+   * re-installed marker. */
+  const tell = () => { try{ if(!target.isDestroyed()) target.webContents.send('pc:host:health-marker-off'); }catch(_){ } };
   const retire = (why) => {
     if(done) return;
     done = true;
     clearInterval(poll); clearTimeout(cap);
-    try{ if(!target.isDestroyed()) target.webContents.send('pc:host:health-marker-off'); }catch(_){ }
+    tell();
+    try{ target.webContents.on('did-finish-load', tell); }catch(_){ }
     try{ console.log('health marker retired (' + why + ')'); }catch(_){ }
   };
   const poll = setInterval(() => {
@@ -517,6 +525,12 @@ function armHealthMarkerRetirement(target){
   }, 500);
   const cap = setTimeout(() => retire(ready ? 'no ready signal within the gate\'s worst case'
                                             : 'no launcher ready file on this session'), 90000);
+  /* And if a renderer announces itself after we already retired, tell that one too. */
+  try{
+    ipcMain.on('pc:host:health-marker-listening', (e) => {
+      if(done && !target.isDestroyed() && e.sender === target.webContents) tell();
+    });
+  }catch(_){ }
   if(poll.unref) poll.unref();
   if(cap.unref) cap.unref();
 }

@@ -75,6 +75,11 @@ if(process.argv.includes('--pc-shell-health-marker') && _pcShellSurface()){
    * ever READ once: `pc-wayfire-health wait` screenshots the outputs before the launcher declares
    * the shell ready. main.js watches for that verdict and says so here. */
   ipcRenderer.on('pc:host:health-marker-off', dropHealthMarker);
+  /* The message may have been sent BEFORE this listener existed — the ready file can appear while
+   * the renderer is still loading, and an ipc send with no listener is dropped. main.js repeats it
+   * on every `did-finish-load` for that reason; this covers the same race from the other side by
+   * telling it we are here. */
+  try{ ipcRenderer.send('pc:host:health-marker-listening'); }catch(_){ }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',keepHealthMarker,{once:true});
   else keepHealthMarker();
 }

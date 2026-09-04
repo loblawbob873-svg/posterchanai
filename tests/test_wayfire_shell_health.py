@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 import zlib
+import re
 from pathlib import Path
 
 
@@ -481,11 +482,19 @@ def test_the_marker_is_retired_once_the_shell_is_declared_ready():
     # A session with no launcher (started by hand, another compositor) still loses the square, and
     # the cap is longer than the launcher's own worst case so it cannot retire one the probe needs:
     # 10s for the Xwayland socket plus a 30s health gate.
-    cap = int(fn.split("const cap = setTimeout(", 1)[1].rsplit(", ", 1)[1].split(")", 1)[0])
+    cap = int(re.search(r"const cap = setTimeout\(.*?,\s*(\d+)\)", fn, re.S).group(1))
     assert cap >= 60000, cap
 
+    # THE MESSAGE CAN ARRIVE BEFORE THE LISTENER EXISTS. The ready file appears while the renderer
+    # is still loading, and an ipc send with no listener is dropped — measured on the machine: the
+    # log said "health marker retired" four times and the square was still on screen. Both sides
+    # cover the race: the sender repeats on every `did-finish-load`, and the renderer announces
+    # itself so a late listener is told about a retirement that already happened.
+    assert "target.webContents.on('did-finish-load', tell)" in fn, fn
+    assert "pc:host:health-marker-listening" in main
     preload = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
     assert "ipcRenderer.on('pc:host:health-marker-off', dropHealthMarker)" in preload
+    assert "ipcRenderer.send('pc:host:health-marker-listening')" in preload
     drop = preload.split("const dropHealthMarker", 1)[1].split("\n  };", 1)[0]
     # The MutationObserver re-installs the marker whenever the client replaces the document, so
     # retiring it means stopping that too — otherwise it is put straight back.
