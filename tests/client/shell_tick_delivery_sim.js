@@ -45,7 +45,7 @@ const subSrc=main.slice(subStart,subEnd);
 
 const scope={workspace:'ws-left',output:'DP-1'};
 const _shellScopes=new Map([[1,scope]]);
-const _shellSurfaces=new Map();
+const _shellSurfaces=new Map([['DP-1',{browser:browserWindow,conId:5}]]);
 const SHELL_MODE=true;
 const wm=()=>wmObj;
 const BrowserWindow={getAllWindows:()=>[browserWindow]};
@@ -93,6 +93,9 @@ fn(...Object.values(ctx));
   const left={webContents:{id:1,send:(ch,ev)=>{if(ch==='pc:wm:event')routed.push([1,ev.payload]);}},isDestroyed:()=>false};
   const right={webContents:{id:2,send:(ch,ev)=>{if(ch==='pc:wm:event')routed.push([2,ev.payload]);}},isDestroyed:()=>false};
   BrowserWindow.getAllWindows=()=>[left,right];
+  _shellSurfaces.clear();
+  _shellSurfaces.set('DP-1',{browser:left,conId:5});
+  _shellSurfaces.set('DP-2',{browser:right,conId:7});
   _shellScopes.set(1,{workspace:'shared',output:'DP-1'});
   _shellScopes.set(2,{workspace:'shared',output:'DP-2'});
   wmObj.workspaces=async()=>[{name:'shared',focused:true}];

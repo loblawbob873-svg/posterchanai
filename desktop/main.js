@@ -1329,7 +1329,12 @@ ipcMain.handle('pc:shell:update-idle',(e,token)=>{
   return true;
 });
 async function forwardShellTick(ev){
-  let targets=BrowserWindow.getAllWindows();
+  /* Actions belong to desktop renderers, never whichever popout/popup happens to own Electron
+   * focus. Starting with getAllWindows made the fallback deliver Notifications/Super to a Social
+   * popout while Firefox or that popout was active; it accepted the IPC and had no desktop handler,
+   * so the action vanished. Exact shell ownership is already recorded here. */
+  let targets=Array.from(_shellSurfaces.values()).map(record=>record&&record.browser)
+    .filter(target=>target&&!target.isDestroyed());
   /* One desktop renderer exists per output, but a gesture has exactly ONE owner. Filtering only by
    * workspace was insufficient: two outputs may legitimately show the same named workspace, so a
    * single Start/popup choice opened Drafts (and every other app route) twice. Resolve the focused
