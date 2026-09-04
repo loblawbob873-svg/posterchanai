@@ -95,6 +95,23 @@ def test_shell_death_after_ready_terminates_wayfire_and_falls_back(tmp_path):
     assert calls == ["wayfire:wayfire:-c /etc/wayfire.ini", "sway:sway"]
 
 
+def test_shell_pid_replacement_does_not_terminate_wayfire(tmp_path):
+    """A deliberate Electron replacement is a new supervised generation, not compositor death."""
+    body = """sleep 0.2 & first=$!
+echo $first >"$PC_WAYFIRE_SHELL_PID_FILE"
+touch "$PC_WAYFIRE_READY_FILE"
+( sleep 0.35; sleep 0.8 & second=$!; echo $second >"$PC_WAYFIRE_SHELL_PID_FILE"; wait $second ) &
+trap 'exit 0' TERM
+while :; do sleep 0.1; done
+"""
+    started = time.monotonic()
+    done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
+    elapsed = time.monotonic() - started
+    assert done.returncode == 0
+    assert calls == ["wayfire:wayfire:-c /etc/wayfire.ini", "sway:sway"]
+    assert elapsed >= 1.0, "Wayfire was killed when the first shell generation exited"
+
+
 def test_wayfire_and_fallback_are_shipped_together():
     ebuild = EBUILD.read_text(encoding="utf-8")
     gentoo = GENTOO.read_text(encoding="utf-8")

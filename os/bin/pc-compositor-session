@@ -53,10 +53,27 @@ if [ "$selected" = wayfire ]; then
 		if [ ! -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
 			kill "$wayfire_pid" 2>/dev/null || true
 		elif [ -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
+			# A shell restart deliberately creates a short gap between the old Electron process and
+			# its replacement.  Treating that gap as a compositor failure killed Wayfire, raced the
+			# replacement onto the dying socket, then fell the whole login back to Sway.  Supervise
+			# the PID file as a replaceable generation: allow the launcher a bounded interval to
+			# publish a different live PID while Wayfire itself remains healthy.
 			shell_pid=''
-			[ ! -r "$PC_WAYFIRE_SHELL_PID_FILE" ] || IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
-			case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
-			while [ -n "$shell_pid" ] && kill -0 "$wayfire_pid" 2>/dev/null && kill -0 "$shell_pid" 2>/dev/null; do sleep 1; done
+			while kill -0 "$wayfire_pid" 2>/dev/null; do
+				[ ! -r "$PC_WAYFIRE_SHELL_PID_FILE" ] || IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
+				case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
+				if [ -n "$shell_pid" ] && kill -0 "$shell_pid" 2>/dev/null; then
+					while kill -0 "$wayfire_pid" 2>/dev/null && kill -0 "$shell_pid" 2>/dev/null; do sleep 1; done
+				fi
+				old_pid=$shell_pid n=0 shell_pid=''
+				while kill -0 "$wayfire_pid" 2>/dev/null && [ "$n" -lt 30 ]; do
+					[ ! -r "$PC_WAYFIRE_SHELL_PID_FILE" ] || IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
+					case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
+					[ -n "$shell_pid" ] && [ "$shell_pid" != "$old_pid" ] && kill -0 "$shell_pid" 2>/dev/null && break
+					shell_pid=''; sleep 0.1; n=$((n + 1))
+				done
+				[ -n "$shell_pid" ] || break
+			done
 			kill -0 "$wayfire_pid" 2>/dev/null && kill "$wayfire_pid" 2>/dev/null || true
 		fi
 		wait "$wayfire_pid"
