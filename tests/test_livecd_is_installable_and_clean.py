@@ -512,6 +512,13 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
         profile = self.fn[i:self.fn.index("\nPROFILE", i)]
         self.assertIn("exec /usr/local/bin/pc-compositor-session", profile)
 
+    def test_live_only_mirrors_compositor_diagnostics_to_serial(self):
+        i = self.fn.index('cat >"$WORK/live.bash_profile"')
+        profile = self.fn[i:self.fn.index("\nPROFILE", i)]
+        assert '[ "$(id -un)" = live ] && [ -w /dev/ttyS0 ]' in profile
+        assert "posterchan-desktop/shell.log" in profile
+        assert "tail -n 0 -F" in profile
+
     def test_clean_live_session_explicitly_selects_wayfire(self):
         """An absent selector falls back to the retired Sway session and can own the VT with
         no active virtio output.  The clean account must not inherit either the build host's

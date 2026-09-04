@@ -3273,6 +3273,14 @@ if [ -z "$WAYLAND_DISPLAY" ] && { [ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/t
 	fi
 	export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
+	if [ "$(id -un)" = live ] && [ -w /dev/ttyS0 ]; then
+		mkdir -p "$HOME/.config/posterchan-desktop"
+		pc_diag_pid=/run/user/$(id -u)/posterchan-live-session-log.pid
+		[ ! -r "$pc_diag_pid" ] || kill "$(cat "$pc_diag_pid" 2>/dev/null)" 2>/dev/null || true
+		touch "$HOME/.local/state/posterchanos/wayfire.log" "$HOME/.local/state/posterchanos/sway.log" "$HOME/.local/state/posterchanos/compositor-fallback.log" "$HOME/.config/posterchan-desktop/shell.log"
+		tail -n 0 -F "$HOME/.local/state/posterchanos/wayfire.log" "$HOME/.local/state/posterchanos/sway.log" "$HOME/.local/state/posterchanos/compositor-fallback.log" "$HOME/.config/posterchan-desktop/shell.log" >/dev/ttyS0 2>&1 &
+		echo $! >"$pc_diag_pid"
+	fi
 	pc_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
 	pc_guard="$HOME/.local/state/posterchanos/sway-boot-attempt"
 	pc_old_id= pc_attempts=0
