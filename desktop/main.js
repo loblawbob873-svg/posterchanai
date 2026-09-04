@@ -716,7 +716,7 @@ function createWindow(assignment) {
         return Number.isFinite(v) && v > 0 ? v : fallback;
       };
       return { action: 'allow', overrideBrowserWindowOptions: {
-        frame: true,
+        frame: false,
         /* THE TITLE HAS TO BE RIGHT THE INSTANT THE WINDOW MAPS.
          *
          * sway evaluates `for_window` when a surface maps, and the rule that floats these keys on
@@ -1599,6 +1599,13 @@ function displays(){
 
 ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
 ipcMain.handle('pc:wm:windows', async (e) => { fsGuard(e); return scopedWindows(e, await wm().windows()); });
+ipcMain.handle('pc:wm:self', async (e) => {
+  fsGuard(e);
+  const owner=BrowserWindow.fromWebContents(e.sender), title=owner&&!owner.isDestroyed()?owner.getTitle():'';
+  const rows=await wm().windows();
+  const matches=rows.filter(row=>String(row.title||'')===String(title||''));
+  return matches.length===1?matches[0]:null;
+});
 ipcMain.handle('pc:wm:cycle-output', async (e, direction) => {
   fsGuard(e);
   const dir=String(direction||''); if(dir!=='next'&&dir!=='previous')return false;

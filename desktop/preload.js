@@ -182,6 +182,7 @@ if (isOurPage) {
   contextBridge.exposeInMainWorld('pcWM', {
     available: () => ipcRenderer.invoke('pc:wm:available'),
     windows: () => ipcRenderer.invoke('pc:wm:windows'),
+    self: () => ipcRenderer.invoke('pc:wm:self'),
     /* `windows` is this shell surface's ownership view; `allIds` distinguishes an app that moved
      * to another output from one that actually exited. */
     snapshot: () => ipcRenderer.invoke('pc:wm:snapshot'),

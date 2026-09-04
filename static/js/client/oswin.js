@@ -186,7 +186,27 @@
     state.view = view || state.view; state.shared = !!host;
     try{ state.label = String(root.__PC_WINDOW_LABEL__ || ''); }catch(_){ }
     root.__PC_WIN_STATE__ = state;
+    installChrome(state);
     return state;
+  }
+
+  function installChrome(state){
+    try{
+      if(root.document.getElementById('pc-oswin-chrome'))return;
+      const bar=root.document.createElement('header');bar.id='pc-oswin-chrome';
+      bar.className=root.localStorage.getItem('osDesktopStyle')==='mac'?'mac':'';
+      bar.innerHTML='<span class="pc-oswin-title"></span><span class="pc-oswin-buttons">'
+        +'<button data-action="min" title="Minimise" aria-label="Minimise">−</button>'
+        +'<button data-action="max" title="Maximise" aria-label="Maximise">□</button>'
+        +'<button data-action="close" title="Close" aria-label="Close">×</button></span>';
+      bar.querySelector('.pc-oswin-title').textContent=String(state.label||state.view||'PosterChan');
+      (root.document.body||root.document.documentElement).prepend(bar);
+      let maximised=false;
+      bar.querySelector('[data-action="close"]').onclick=()=>root.close();
+      bar.querySelector('[data-action="min"]').onclick=async()=>{const row=await root.pcWM.self();if(row)await root.pcWM.hide(row.id);};
+      bar.querySelector('[data-action="max"]').onclick=async()=>{const row=await root.pcWM.self();if(!row)return;
+        maximised=!maximised;await root.pcWM.fullscreen(row.id,maximised);};
+    }catch(_){ }
   }
 
   const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt, PARAM, TITLE };

@@ -9897,6 +9897,22 @@ audio.sms-att-img{min-width:220px}
    inherits the desktop's layout. Stage 1 draws only the probe below; stage 2 renders the view. */
 html.pc-oswin, html.pc-oswin body{height:100%;margin:0;background:var(--bg)}
 html.pc-oswin body{overflow:auto}
+html.pc-oswin body{padding-top:38px}
+#pc-oswin-chrome{position:fixed;z-index:2147483640;inset:0 0 auto;height:38px;box-sizing:border-box;
+  display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 13px;color:var(--text);
+  background:linear-gradient(180deg,rgba(38,32,56,.98),rgba(20,17,31,.98));border:1px solid var(--line);
+  border-radius:9px 9px 0 0;box-shadow:0 4px 16px #0007;-webkit-app-region:drag;user-select:none}
+.pc-oswin-title{font-size:12px;font-weight:700;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc-oswin-buttons{display:flex;align-self:stretch;-webkit-app-region:no-drag}
+.pc-oswin-buttons button{width:44px;border:0;border-radius:0;background:transparent;color:var(--text);font-size:17px;cursor:pointer}
+.pc-oswin-buttons button:hover{background:rgba(255,255,255,.12)}
+.pc-oswin-buttons [data-action="close"]:hover{background:#c42b1c;color:#fff}
+#pc-oswin-chrome.mac{flex-direction:row-reverse;justify-content:flex-end;gap:12px}
+#pc-oswin-chrome.mac .pc-oswin-buttons{gap:8px;align-self:auto}
+#pc-oswin-chrome.mac .pc-oswin-buttons button{width:14px;height:14px;border-radius:50%;font-size:0}
+#pc-oswin-chrome.mac [data-action="close"]{order:-3;background:#ff5f57}
+#pc-oswin-chrome.mac [data-action="min"]{order:-2;background:#febc2e}
+#pc-oswin-chrome.mac [data-action="max"]{order:-1;background:#28c840}
 /* A window is ONE view: no sidebar to navigate with, no mobile nav bar, no desktop behind it. The
    window manager is how you get to the others now — that is the entire point of it being a real
    window. The view itself is byte-identical to the web, which is the promise this rewrite made. */
