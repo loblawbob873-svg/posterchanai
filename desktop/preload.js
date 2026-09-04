@@ -38,8 +38,16 @@ if(process.argv.includes('--pc-shell-health-marker')){
     });
     (document.documentElement||document.body).appendChild(marker);
   };
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',installHealthMarker,{once:true});
-  else installHealthMarker();
+  const keepHealthMarker=()=>{
+    installHealthMarker();
+    /* The client can replace documentElement/body while adopting its hydrated shell. The marker
+     * is a session watchdog contract, not a one-frame startup splash, so keep it present after
+     * hydration and later in-app navigation as well. */
+    new MutationObserver(()=>{if(!document.getElementById('pc-shell-health-marker'))installHealthMarker();})
+      .observe(document.documentElement,{childList:true,subtree:true});
+  };
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',keepHealthMarker,{once:true});
+  else keepHealthMarker();
 }
 
 /* A WAYLAND MENU MUST NOT PAINT BEFORE THE COMPOSITOR HAS POSITIONED IT. Sway's title rule is still

@@ -190,6 +190,8 @@ def test_shell_surfaces_always_receive_visual_health_marker_argument():
     assert "process.argv.includes('--pc-shell-health-marker')" in preload
     assert all("#%02x%02x%02x" % colour in preload for colour in MARKER)
     assert all("#%02x%02x%02x" % colour in preload for colour in SECONDARY_MARKER)
+    assert "MutationObserver" in preload
+    assert "if(!document.getElementById('pc-shell-health-marker'))installHealthMarker()" in preload
 
 
 def test_secondary_output_cannot_be_satisfied_by_primary_marker(tmp_path):
