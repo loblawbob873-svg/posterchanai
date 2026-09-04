@@ -97,6 +97,10 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --console=plain
+          # Do not leave Gradle's 1.5 GB daemon resident beside the emulator. Run 33847584540 ended
+          # with the emulator silently disappearing while Android itself was healthy, after the
+          # action had auto-expanded the AVD to 2560 MB and the cached build daemon stayed alive.
+          ./gradlew --stop
 
       - name: Verify APK web-asset provenance
         run: |
@@ -121,6 +125,7 @@ jobs:
           api-level: ${{ github.event.inputs.api_level || '34' }}
           target: google_apis
           arch: x86_64
+          ram-size: 1536M
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: false
@@ -132,6 +137,7 @@ jobs:
           api-level: ${{ github.event.inputs.api_level || '34' }}
           target: google_apis
           arch: x86_64
+          ram-size: 1536M
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true

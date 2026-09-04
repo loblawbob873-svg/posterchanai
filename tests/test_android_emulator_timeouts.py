@@ -30,6 +30,20 @@ def test_first_activity_launch_cannot_hang_the_entire_device_gate():
     assert "launch failed after ADB restart" in DEVICE
 
 
+def test_emulator_memory_is_bounded_and_build_daemon_is_gone_before_boot():
+    """The AVD and a 1.5 GB Gradle daemon must not compete until the host silently kills QEMU."""
+    assert WORKFLOW.count("ram-size: 1536M") == 2
+    build = WORKFLOW.split("- name: Build debug APK", 1)[1].split("- name:", 1)[0]
+    assert "./gradlew --stop" in build
+
+
+def test_a_disappeared_emulator_ends_lifecycle_diagnostics_promptly():
+    assert "require_device()" in DEVICE
+    crash_scan = DEVICE.split("crash_scan()", 1)[1].split("}", 1)[0]
+    assert "require_device" in crash_scan
+    assert "timeout --kill-after=2s 5s adb get-state" in DEVICE
+
+
 def test_diagnostic_logcat_cannot_hang_after_the_emulator_disconnects():
     assert "timeout --kill-after=5s 20s adb logcat -d" in INSTRUMENTED
 

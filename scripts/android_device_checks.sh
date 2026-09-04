@@ -24,6 +24,16 @@ say()  { printf '\n=== %s\n' "$*"; }
 fail() { printf '\nFAIL: %s\n' "$*"; FAILED=1; }
 ok()   { printf 'ok: %s\n' "$*"; }
 
+# A dead emulator is infrastructure evidence, not a reason to spend the rest of this script waiting
+# on disconnected adb sockets. Exit promptly so the workflow can preserve the last logcat and report
+# that instrumentation did not run; the combined gate still fails because lifecycle did not pass.
+require_device() {
+  if ! timeout --kill-after=2s 5s adb get-state 2>/dev/null | grep -qx device; then
+    echo "emulator disappeared during lifecycle checks"
+    exit 1
+  fi
+}
+
 APK=$(find mobile/android -path '*debug*' -name '*.apk' | head -1)
 [ -n "$APK" ] || { echo "no debug APK built"; exit 1; }
 
@@ -69,6 +79,7 @@ fi
 sleep 20
 
 crash_scan() {   # $1 = label
+  require_device
   adb logcat -d > "$OUT/pc-logcat-$1.txt" 2>/dev/null
   # A FATAL EXCEPTION FROM *OUR* PACKAGE IS A FAILURE — and this has to be the SAME crash, not two
   # facts about the same file.
