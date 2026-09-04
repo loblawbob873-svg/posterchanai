@@ -30,7 +30,8 @@ public class SmsContactDeviceTest {
                 ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, number);
         Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         Instrumentation.ActivityMonitor monitor = new Instrumentation.ActivityMonitor(
-                new IntentFilter(Intent.ACTION_INSERT), null, true);
+                new IntentFilter(Intent.ACTION_INSERT),
+                new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null), true);
         instrumentation.addMonitor(monitor);
         try (ActivityScenario<ThreadActivity> scenario = ActivityScenario.launch(launch)) {
             scenario.onActivity(activity -> {

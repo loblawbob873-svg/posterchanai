@@ -10,6 +10,9 @@ android {
         versionCode project.hasProperty('versionCode') ? project.getProperty('versionCode').toInteger() : 1
         versionName project.hasProperty('versionName') ? project.getProperty('versionName') : "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // A single wedged Activity/OS handoff must be reported as that test's failure instead of
+        // hiding the remaining device results behind CI's 25-minute process timeout.
+        testInstrumentationRunnerArguments timeout_msec: "90000"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61

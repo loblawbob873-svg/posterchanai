@@ -399,6 +399,7 @@ class SmsSources(unittest.TestCase):
         self.assertIn("add.performClick()", device)
         self.assertIn("Intent.ACTION_INSERT", device)
         self.assertIn("monitor.getHits()", device)
+        self.assertIn("new Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)", device)
 
     def test_each_step_of_delivery_is_guarded_separately(self):
         """One try around all three would mean a failing notification costs the message."""
