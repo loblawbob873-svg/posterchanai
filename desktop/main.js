@@ -1442,6 +1442,15 @@ async function wireShellRecovery(){
   try{
     await wm().subscribe(['window','workspace','output','tick']);
     wm().on('window', enforceNativeGameFullscreen);
+    wm().on('window', (ev) => {
+      const row=ev&&ev.wayfireView;
+      if(!row)return;
+      /* Wayfire's move plugin cannot exclude a view by matcher. If Super+drag begins over bare
+       * desktop, it can therefore grab the full-output Electron surface. Repair only a known shell
+       * con_id; popouts share its app-id and must remain movable. */
+      if(Array.from(_shellSurfaces.values()).some(record=>record&&Number(record.conId)===Number(row.id)))
+        scheduleDisplayReconcile();
+    });
     wm().on('tick', (ev) => {
       if(!ev || ev.first) return;
       if(ev.payload !== 'pc:restart'){
@@ -1510,6 +1519,9 @@ async function placeShellSurface(record, assignment){
   record.assignment = assignment;
   _shellScopes.set(record.browser.webContents.id, assignment);
   await wm().assignShell(record.conId,assignment);
+  /* Reassert maximized/tiled state after a forbidden compositor drag. Geometry alone fills the
+   * output but leaves the surface floating, which permits a second accidental move. */
+  if(record.browser&&!record.browser.isDestroyed()&&!record.browser.isMaximized())record.browser.maximize();
 }
 async function reconcileShellDisplays(){
   if(!SHELL_MODE || !wm().available()) return;

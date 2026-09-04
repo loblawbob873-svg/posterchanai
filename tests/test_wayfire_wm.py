@@ -63,6 +63,16 @@ def test_wayfire_backend_is_theme_neutral_and_sway_is_rollback_default():
     assert "return new SwayWM(sockPath)" in factory
 
 
+def test_shell_drag_guard_is_exact_id_not_shared_app_id():
+    main = (ROOT / "desktop/main.js").read_text()
+    assert "Number(record.conId)===Number(row.id)" in main
+    assert "scheduleDisplayReconcile()" in main
+    assert "record.browser.maximize()" in main
+    guard = main[main.index("Wayfire's move plugin cannot exclude"):]
+    guard = guard[:guard.index("wm().on('tick'")]
+    assert "row.app" not in guard
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_wayfire_010_event_negotiation_keeps_multi_window_focus_live(tmp_path):
     script = tmp_path / "events.js"
