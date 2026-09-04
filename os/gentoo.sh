@@ -3314,7 +3314,7 @@ DESKTOP
 	# combine today's shell with yesterday's client.
 	local EXPECTED_DESKTOP INSTALLED_DESKTOP HELPER
 	EXPECTED_DESKTOP="$(find "$PCOS_TREE/overlay/app-misc/posterchan-desktop" -maxdepth 1 -name 'posterchan-desktop-*.ebuild' -printf '%f\n' 2>/dev/null | sed -n 's/^posterchan-desktop-\(.*\)\.ebuild$/\1/p' | sort -V | tail -1)"
-	INSTALLED_DESKTOP="$(best_version app-misc/posterchan-desktop 2>/dev/null | sed 's|^app-misc/posterchan-desktop-||')"
+	INSTALLED_DESKTOP="$(portageq best_version / app-misc/posterchan-desktop 2>/dev/null | sed 's|^app-misc/posterchan-desktop-||')"
 	if [[ -z "$EXPECTED_DESKTOP" || "$INSTALLED_DESKTOP" != "$EXPECTED_DESKTOP" ]]; then
 		_lcd_fail "build host Desktop is ${INSTALLED_DESKTOP:-missing}; source requires ${EXPECTED_DESKTOP:-unknown} — emerge the exact overlay package before packing."
 		return 1

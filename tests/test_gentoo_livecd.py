@@ -68,7 +68,7 @@ class LiveCD(unittest.TestCase):
     def test_release_inputs_are_verified_before_the_expensive_pack(self):
         """A clean ISO must not silently combine the current shell source with an older installed
         Desktop bundle or helper payload from the build host."""
-        desktop_gate = self.body.index('best_version app-misc/posterchan-desktop')
+        desktop_gate = self.body.index('portageq best_version / app-misc/posterchan-desktop')
         helper_gate = self.body.index('cmp -s "$PCOS_TREE/bin/$HELPER" "/usr/local/bin/$HELPER"')
         pack = self.body.index('mksquashfs / ')
         self.assertLess(desktop_gate, pack)
