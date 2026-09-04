@@ -122,7 +122,7 @@ AUDIT = r"""(() => {
   // Concord deliberately has no separate sidebar row: Communities and Direct Messages are the two
   // tabs inside Messages. Requiring data-view="concord" here regressed the merged navigation model.
   out.keptHidden = ['global','notifications','messages','bookmarks','calls','notes','vault','drafts',
-                    'budget','articles','communities','streams','chess','settings']
+                    'budget','articles','streams','chess','settings']
     .filter(v => hidden(nav(v)));
   out.appsHidden = hidden(q('.rb-apps'));
   out.musicHidden = hidden(q('#nav-music'));

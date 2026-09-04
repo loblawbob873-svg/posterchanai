@@ -382,10 +382,18 @@ class TheLauncherShowsWhatIsInstalled(unittest.TestCase):
         # worse than none: it answers confidently.
         with open(os.path.join(ROOT, "static", "js", "client", "sprite.js"), encoding="utf-8") as fh:
             page = fh.read()
+        # TWO NAMESPACES MEET IN THIS FILE, and the assertion has to know which side it is on.
+        # `ICO(n)` writes `#i-${n}`, so an icon named for ICO is SHORT. The `icon:` field on the
+        # rows osshell PUBLISHES is read by os.js, whose `iconSvg` only prepends the `#` — so those
+        # must be FULL ids. Measured live before this was understood: the OBS taskbar button
+        # rendered `<use href="#grid">`, a symbol that does not exist, and every native window and
+        # machine app therefore had an invisible icon. Accept either spelling and check the symbol
+        # the sprite would actually be asked for.
         for m in re.findall(r"icon:\s*'([a-z0-9-]+)'", src):
             with self.subTest(icon=m):
+                symbol = m if m.startswith("i-") else "i-" + m
                 # The sprite DEFINES `id="i-grid"`; `#i-grid` is how a use site REFERS to it. Look
                 # for the definition, or this passes on any file that happens to reference the icon.
-                self.assertIn('id="i-%s"' % m, page,
+                self.assertIn('id="%s"' % symbol, page,
                               "osshell names icon '%s', which is not defined in the sprite — it "
                               "renders as blank space with nothing to say so" % m)

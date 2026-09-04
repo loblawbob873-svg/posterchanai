@@ -68,7 +68,6 @@ check('a content warning survives', () => {
  * had already chosen, which is worse than a modal that is behind a window. */
 for (const [what, opts] of [
   ['picked files', { files: [{ name: 'a.png' }] }],
-  ['a community', { community: { tags: [] } }],
   ['an article comment', { articleComment: {} }],
   ['an article parent', { articleParent: {} }],
   ['an explicit open target', { open: {} }],

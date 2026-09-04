@@ -15,9 +15,9 @@ before it was written rather than after:
 
 The second is why `_composeInWindow` is a gate with two real answers, and why compose_host_sim.js
 runs it. Saying yes to something unserialisable is worse than the bug: a composer opened with
-`files` would come up EMPTY, having silently dropped the picture somebody just chose. So files, a
-community object, the article parents and an explicit open target all keep the in-page modal — which
-works perfectly and is merely behind a window.
+`files` would come up EMPTY, having silently dropped the picture somebody just chose. So files, the
+article parents and an explicit open target all keep the in-page modal — which works perfectly and
+is merely behind a window.
 """
 from __future__ import annotations
 

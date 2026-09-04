@@ -34,11 +34,16 @@ FEATURES = {
     "bookmarks + repo star lists": [10003, 30003],
     "articles": [30023],
     "live streams": [30311],
-    "listings": [30402],
+    # The client no longer HAS a Shopping / Communities / Shorts screen (removed 2026-09-04), and
+    # these three rows are deliberately unchanged. The relay is not this client: it stores and
+    # serves for every reader on it, and a member restored here must still get back the listings,
+    # communities and short videos they published from any other Nostr client. Dropping the kinds
+    # would silently hole a restore for events this node is still asked to serve.
+    "listings (relay-only — no client screen)": [30402],
     "git repos": [30617],
-    "communities": [34550],
+    "communities (relay-only — no client screen)": [34550],
     "torrents": [2003, 2004],
-    "short videos — Divine writes 34236 (measured), NIP-71 current is 21/22": [21, 22, 34235, 34236],
+    "short videos, relay-only — Divine writes 34236 (measured), NIP-71 current is 21/22": [21, 22, 34235, 34236],
     "calendar events + RSVPs": [31922, 31923, 31924, 31925],
 }
 

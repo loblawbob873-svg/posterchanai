@@ -91,12 +91,30 @@ if(process.argv.includes('--pc-shell-health-marker') && _pcShellSurface()){
  * backing rectangle can flash in the centre of the monitor. */
 if(process.argv.includes('--pc-popup-surface')){
   let placed=false,shield='';
-  Promise.resolve(webFrame.insertCSS('html,body{opacity:0!important;background:transparent!important}'))
-    .then(key=>{shield=key||'';if(placed&&shield)webFrame.removeInsertedCSS(shield);}).catch(()=>{});
-  ipcRenderer.once('pc:host:popup-placed',()=>{
+  const reveal=(why)=>{
+    if(placed) return;
     placed=true;
     if(shield)Promise.resolve(webFrame.removeInsertedCSS(shield)).catch(()=>{});
-  });
+    if(why!=='placed'){ try{ console.log('popup revealed without a placement ('+why+')'); }catch(_){ } }
+  };
+  Promise.resolve(webFrame.insertCSS('html,body{opacity:0!important;background:transparent!important}'))
+    .then(key=>{shield=key||'';if(placed&&shield)webFrame.removeInsertedCSS(shield);}).catch(()=>{});
+  ipcRenderer.once('pc:host:popup-placed',()=>reveal('placed'));
+  /* A FLOOR, BECAUSE THIS LATCH IS SET BEFORE THE ATTEMPT IT WAITS ON.
+   *
+   * The sheet is lifted only by `pc:host:popup-placed`, and `placePopupWindow` has three ways of
+   * never sending it: the window was destroyed, `_popupWin !== win` (a second popup replaced this
+   * one mid-flight), or the send itself throws. Any of those leaves a LIVE, fully painted menu at
+   * `opacity: 0` for as long as it exists — observed on the real desktop as a mapped
+   * `PosterChan Popup` view of the right size, in the right place, with `.os-pop` drawn inside it
+   * and nothing whatsoever on screen. A menu nobody can see is indistinguishable from a dead
+   * button, which is how it was reported.
+   *
+   * Placement's own worst case is bounded (12 attempts, 60ms apart, then it sends regardless), so
+   * anything past a second means the message is not coming. Revealing an unplaced menu shows it
+   * briefly at the compositor's chosen position, which is the flash this shield exists to prevent
+   * -- but a flash is a menu you can use and this is the case where the alternative is none. */
+  setTimeout(()=>reveal('no placement within 1500ms'),1500);
 }
 
 /* Sandboxed Electron preloads may require Electron and a small built-in allowlist only. A relative

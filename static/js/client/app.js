@@ -316,7 +316,7 @@
   /* Views that CANNOT work without an instance, because the server does the work: AI, media
    * rendering, RSS/scraping proxies, the torrent client, the node's own stats. Everything absent from
    * this list is relay-and-key only and stays exactly as it is — Social, Notifications, Messages,
-   * Bookmarks, Calls, Notes, Passwords, Drafts, Budget, Articles, Communities, Chat, Streams, the
+   * Bookmarks, Calls, Notes, Passwords, Drafts, Budget, Articles, Chat, Streams, the
    * games, profiles and Settings itself.
    *
    * Hidden, not disabled. A greyed row still invites a click and still has to explain itself; a
@@ -3627,7 +3627,7 @@
       return true;
     }
     if(event && /^[0-9a-f]{64}$/i.test(event)){ _clean(); openThread(event); return true; }
-    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','market','markets','streams','communities','calls','settings','signer','translate','news','websearch','terminal','code','office','mail','calendar','contacts','texts','notes','music']);
+    const VALID = new Set(['home','global','notifications','messages','drafts','bookmarks','articles','markets','streams','calls','settings','signer','translate','news','websearch','terminal','code','office','mail','calendar','contacts','texts','notes','music']);
     if(view && VALID.has(view)){ _clean(); switchView(view); return true; }
     return false;
   }
@@ -4689,7 +4689,7 @@
     applyNavGroups();
     applyNavOrder();
     applyMobileNav();
-    // Collapsible "Discover" group (Articles / Streams / Communities) in the sidebar.
+    // Collapsible "Discover" group (Articles / Streams / …) in the sidebar.
     { const dt=$('#disc-toggle'); if(dt){ const sub=$('#disc-sub'), chev=$('#disc-chev');
         const apply=o=>{ if(sub) sub.classList.toggle('collapsed', !o); if(chev) chev.textContent=o?'▾':'▸'; try{ bumpChat(); }catch(_){} };   // the chat count moves between the header and the Chat item as this opens/closes
         apply(ClientSettings.get('discOpen', false));   // collapsed on first load — Discover is too cluttery open
@@ -5023,11 +5023,6 @@
           // and the results (which are the thing you were working through) gone.
           if(window.PCWebSearch && PCWebSearch.readerOpen && PCWebSearch.readerOpen()){ try{ PCWebSearch.closeReader(); }catch(_){} return; }
           if(window.PCVault && PCVault.drawerOpen && PCVault.drawerOpen()){ try{ PCVault.closeDrawer(); }catch(_){} return; }
-          // Shorts' full-screen player is a sub-screen of the grid, same as the reader above: Back
-          // returns to browsing, not out of Shorts with the grid (the thing being browsed) gone.
-          if(VIEW==='shorts' && _shortsAt>=0 && document.getElementById('shorts-wrap')){
-            try{ const b=document.querySelector('#shorts-wrap .short-back'); if(b){ b.click(); return; } }catch(_){}
-          }
           const mini=document.getElementById('mini-player'); if(mini && mini.classList.contains('on')){ try{ closeMini(); }catch(_){} return; }
           /* Walk the app's own history first — every screen is an entry now, so this is what makes
            * Back mean "the last place I was" instead of "the timeline".
@@ -5168,13 +5163,6 @@
       _navPushed=Math.max(0,_navPushed-1);
       if(!ME && !GUEST) return;
       const st = (e && e.state) || history.state;
-      /* A community is an entity view on the root URL. Keep its event id in history so Forward can
-       * rebuild it, while Back restores the stamped Social/Nostrverse entry underneath. */
-      if(!_entityFromPath() && st && st.pcv==='community' && st.community){
-        const c=Store.get(st.community);
-        if(c){ _routing=true; try{ openCommunity(c, true); } finally{ _routing=false; }
-          _restoreNavScroll(st); return; }
-      }
       if(!_inWin() && !_entityFromPath() && st && st.pcv && st.pcv!=='thread' && st.pcv!=='profile'){
         _routing = true;
         try{ switchView(st.pcv); }catch(_){ }
@@ -6558,16 +6546,14 @@
   // ---------- view routing ----------
   // The 340px right rail is a companion to a TIMELINE — it only makes sense beside a vertical list of
   // notes. Almost nothing else in the app is that: AI chat, News, Markets, Stats, Torrents,
-  // Repos, chat rooms, Shopping, Streams, Pics, Calls, Files, Settings, Admin, Live Translate and the
+  // Repos, chat rooms, Streams, Pics, Calls, Files, Settings, Admin, Live Translate and the
   // games are all forms, boards, grids, players or their own split panes, and every one of them would
   // rather have the width. The rail is stale there too — refreshRightbar() only updates on home/global.
   //
   // So this is an ALLOWLIST, not a blocklist: "not a feed" is the majority case, and a view added
   // later should default to the full width rather than silently inherit a rail that doesn't suit it.
-  // Includes the entity views that render note cards (thread/profile/hashtag/search/community) —
-  // those set VIEW directly, without going through switchView.
-  // 'community' is deliberately NOT here: reading a community's posts is reading, and it wants the
-  // width the same way an article or the News/Markets dashboards do.
+  // Includes the entity views that render note cards (thread/profile/hashtag/search) — those set
+  // VIEW directly, without going through switchView.
   const RB_SHOW_VIEWS = new Set(['home','global','trending','notifications','bookmarks','drafts',
                                  'profile','thread','hashtag','search']);
   let _rbLoaded=false;   // has the rail ever actually been built? (loadRightbar no-ops while it's hidden)
@@ -6843,10 +6829,6 @@
      * Saved on the way OUT, while the old view's nodes are still on screen and its scrollTop is
      * still real — after `VIEW = v` there is nothing left to measure. */
     if(VIEW !== v){ _rememberTlScroll(); try{Relay.abortQueries&&Relay.abortQueries();}catch(_){} if(VIEW==='streams')_stopStreamsReads(); }
-    // Shorts is an APP entry, not a bookmark into its transient player. Tapping its launcher/nav
-    // icon again must always reopen the browse grid; renderShorts() itself never calls switchView,
-    // so scrolling/repainting inside the player still keeps the current short.
-    if(v==='shorts') _shortsAt=-1;
     const concordReentry=VIEW!=='concord'&&v==='concord';
     _navView(v);    // top-level views have no address of their own — the entry names them in its state
     VIEW = v;
@@ -6867,7 +6849,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v || (v==='concord'&&b.dataset.view==='messages')));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', market:'Shopping 🛍️', markets:'Markets 📈', streams:'Streams', shorts:'Shorts 🎬', communities:'Communities', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='blossom') $('#view-title').textContent='File Manager';
     if(v==='office') $('#view-title').textContent='PosterChan Office';
     if(v==='concord') $('#view-title').textContent='Messages';
@@ -7023,12 +7005,9 @@
     if (VIEW==='drafts'){ Drafts.pull(); return renderDrafts(); }   // re-sync from the relay on each entry
     if (VIEW==='bookmarks') return renderBookmarks();
     if (VIEW==='articles') return renderArticles();
-    if (VIEW==='market') return renderMarket();
     if (VIEW==='streams') return renderStreams();
     if (VIEW==='calls') return renderCalls();
-    if (VIEW==='communities') return renderCommunities();
     if (VIEW==='pics') return renderPics();
-    if (VIEW==='shorts') return renderShorts();
     if (VIEW==='torrents') return renderTorrents();
     if (VIEW==='repos') return renderRepos();
     if(renderModuleView('news','news.js','PCNews','render')) return;
@@ -7105,9 +7084,8 @@
     // are self-contained cards (articleCard) that open in the reader. NIP-22 comments (1111) and
     // channel chat (40/42) are intentionally excluded — they're reply fragments / high-volume and
     // render as orphaned posts in a flat feed (they belong in the thread / a Channels view).
-    // Community DEFINITIONS (34550) belong in Communities, not Social. One prolific creator can
-    // otherwise turn Nostrverse into a wall of directory-cover images. Channel messages (42) stay
-    // out too; channel definitions are compact enough to remain discoverable here.
+    // Channel messages (42) stay out too; channel definitions are compact enough to remain
+    // discoverable here.
     if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023], authors:[...FOLLOWS], limit:_flim(80) }];
     return [{ kinds:[1,6,1068,5,30023], limit:_flim(120) }];
   }
@@ -7118,7 +7096,7 @@
     const _rm = id => {
       Store.removeEvent(id); removed = true;
       document.querySelectorAll(`[data-id="${id}"],[data-open="${id}"]`).forEach(n=>{
-        const card = n.closest('.note,.notif,.stream-card,.pic-card,.article-card,.mkt-card,.community-card,.channel-card') || n;
+        const card = n.closest('.note,.notif,.stream-card,.pic-card,.article-card,.channel-card') || n;
         card.remove();
       });
     };
@@ -7542,7 +7520,7 @@
    * "is this TIMELINE on screen?" — and nothing was asking it. renderTimeline closes and re-opens the
    * subscription for the view being ENTERED; nothing ever closed the one being LEFT. So one visit to
    * the timeline left the firehose REQ open for the rest of the session, streaming every
-   * kind-1/6/1068/30023/34550/40 on the relay into a Store nothing was painting, while the user sat in
+   * kind-1/6/1068/30023/40 on the relay into a Store nothing was painting, while the user sat in
    * Notes, the Vault, Files, Calendar or the Meme Builder. In classic mode BOTH could be open at once
    * — Home → Nostrverse never closed Home — so the app ran two firehoses to paint neither, and every
    * event off the parked one still cost a Store write, a count invalidation and a profile fetch.
@@ -8317,8 +8295,7 @@
     // user choosing to share it, which is not the firehose this filter exists to keep out.
     const hideFedi = ClientSettings.get('hideFediBridge', true);
     const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    return ev => ev.kind!==34550
-              && (!follows || follows(ev))
+    return ev => (!follows || follows(ev))
               && !(hideR && isReply(ev))
               && !(hideFedi && isFediBridged(ev));
   }
@@ -8472,7 +8449,7 @@
     // it has no bottom-nav row of its own, so swiping on from Nostrverse is the gesture that matches
     // what the .tl-tabs bar shows above the feed.
     const SWIPE_VIEWS = ['home','global','trending','notifications','messages'];
-    const REFRESHABLE = new Set(['home','global','trending','notifications','messages','bookmarks','drafts','articles','market','markets','streams','communities']);
+    const REFRESHABLE = new Set(['home','global','trending','notifications','messages','bookmarks','drafts','articles','markets','streams']);
     const PTR_TRIGGER = 70, PTR_MAX = 110, SWIPE_MIN = 60;
     let sx=0, sy=0, axis='', pulling=false, swiping=false, active=false, startTop=0, canPull=true, ind=null;
     // The feed is not always the thing that scrolls. In Messages (and community/stream chat) the feed is
@@ -8806,7 +8783,7 @@
     for(const e of evs){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; const k=e.pubkey+':'+d; const cur=m.get(k); if(!cur||cur.created_at<e.created_at) m.set(k,e); }
     return [...m.values()];
   }
-  // Substring match for addressable Discover kinds (articles/streams/communities) — the relay's NIP-50
+  // Substring match for addressable Discover kinds (articles/streams/torrents/repos) — the relay's NIP-50
   // FTS only covers kind-1, so search those by their title/name/summary/about/content client-side.
   function _matchAddr(e, ql){
     const g=k=>(e.tags.find(t=>t[0]===k)||[])[1]||'';
@@ -9086,208 +9063,6 @@
     $('#ae-status') && ($('#ae-status').textContent='publishing…');
     try{ const r=await publish(30023, body, tags); if(r && r.ok===false){ toast('relay: '+(r.msg||'rejected')); if($('#ae-status'))$('#ae-status').textContent=''; } else { _deletePublishedDrafts(slug, title); toast('article published'); switchView('articles'); } }
     catch(e){ toast('publish failed: '+e.message); }
-  }
-
-  // ---------- Market / classified listings (NIP-99, kind 30402; drafts 30403) ----------
-  // Listings are parameterized-replaceable like articles: newest event per (pubkey, d-tag) wins,
-  // so an edit/sold update replaces the old card instead of duplicating it.
-  const MKT_CATS=['Electronics','Computers','Phones','Home','Furniture','Clothing','Vehicles','Bikes',
-                  'Collectibles','Art','Books','Games','Music','Tools','Garden','Sports','Services','Digital','Free','Other'];
-  const MKT_CURRENCIES=['USD','EUR','GBP','CAD','AUD','JPY','SATS','BTC'];
-  function mktPriceTag(e){ return e.tags.find(t=>t[0]==='price')||null; }
-  function mktStatus(e){ return ((e.tags.find(t=>t[0]==='status')||[])[1]||'active').toLowerCase(); }
-  function mktImages(e){ return e.tags.filter(t=>t[0]==='image'&&t[1]).map(t=>t[1]); }
-  function mktCats(e){ return e.tags.filter(t=>t[0]==='t'&&t[1]).map(t=>t[1]); }
-  function fmtPrice(e){
-    const p=mktPriceTag(e); if(!p) return '';
-    const amt=p[1]||'', cur=(p[2]||'').toUpperCase(), freq=p[3]||'';
-    if(!amt) return '';
-    const n=Number(amt); const a=Number.isFinite(n)? n.toLocaleString() : amt;
-    let s = (cur==='SATS') ? `${a} sats` : (cur==='BTC') ? `₿${a}` :
-            (cur==='USD') ? `$${a}` : (cur==='EUR') ? `€${a}` : (cur==='GBP') ? `£${a}` : `${a} ${cur}`;
-    if(freq) s+=` / ${freq}`;
-    return s;
-  }
-  async function renderMarket(){
-    const feed=$('#feed');
-    feed.innerHTML=`<div class="art-top"><button class="btn btn-neon small" id="mkt-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-tag"></use></svg>Sell something</button></div>
-      <div class="mkt-filter"><input class="input" id="mkt-q" placeholder="🔎 Search listings…"><div class="mkt-cats" id="mkt-cats"></div></div>
-      <div id="mkt-drafts"></div><div id="mkt-grid"><div class="spinner"></div></div>`;
-    $('#mkt-new').onclick=()=>renderListingEditor();
-    let evs=[], drafts=[];
-    try{ evs=await Relay.query([{ kinds:[30402], limit:120 }]); }catch(_){}
-    try{ drafts=await Relay.query([{ kinds:[30403], authors:[ME.pubkey], limit:50 }]); }catch(_){}
-    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
-    drafts.forEach(e=>Store.saveEvent(e));
-    if(VIEW!=='market') return;
-    // my drafts (kind 30403) — resume or delete
-    const db=$('#mkt-drafts');
-    if(db){
-      const dd=_dedupAddr(drafts).sort((a,b)=>(b.created_at||0)-(a.created_at||0));
-      db.innerHTML = dd.length ? '<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-draft"></use></svg>Draft listings</div>'+dd.map(d=>{
-        const t=(d.tags.find(x=>x[0]==='title')||[])[1]||'(untitled)';
-        return `<div class="draft-art" data-id="${d.id}" data-slug="${enc((d.tags.find(x=>x[0]==='d')||[])[1]||'')}"><span class="da-title">📝 ${enc(t)}</span><span class="spacer"></span><button class="btn btn-ghost small da-edit">Resume</button><button class="btn btn-ghost small da-del" style="color:var(--danger)" aria-label="Delete"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`;
-      }).join('') : '';
-      $$('.draft-art',db).forEach(c=>{
-        c.querySelector('.da-edit').onclick=()=>{ const e=Store.get(c.dataset.id); if(e) renderListingEditor(e); };
-        c.querySelector('.da-del').onclick=async()=>{ if(!await uiConfirm('Delete this draft listing?'))return; try{ await publish(5,'draft deleted',[['a',`30403:${ME.pubkey}:${c.dataset.slug}`]]); }catch(_){} c.remove(); toast('draft deleted'); };
-      });
-    }
-    const all=_dedupAddr(evs);
-    // category chips (active first)
-    const present=new Set(); all.forEach(e=>mktCats(e).forEach(c=>present.add(c)));
-    const chips=$('#mkt-cats');
-    let _activeCat='', _q='';
-    const drawChips=()=>{ if(!chips) return; chips.innerHTML=[''].concat(MKT_CATS.filter(c=>present.has(c))).map(c=>`<button class="mkt-chip ${c===_activeCat?'on':''}" data-c="${enc(c)}">${c?enc(c):'All'}</button>`).join(''); $$('.mkt-chip',chips).forEach(b=> b.onclick=()=>{ _activeCat=b.dataset.c; drawChips(); paint(); }); };
-    const grid=$('#mkt-grid');
-    const paint=()=>{
-      if(!grid) return;
-      let list=all.slice();
-      if(_activeCat) list=list.filter(e=>mktCats(e).includes(_activeCat));
-      if(_q){ const ql=_q.toLowerCase(); list=list.filter(e=>_matchAddr(e,ql) || mktCats(e).some(c=>c.toLowerCase().includes(ql)) || ((e.tags.find(t=>t[0]==='location')||[])[1]||'').toLowerCase().includes(ql)); }
-      // active listings first, then sold; newest within each
-      list.sort((a,b)=> (mktStatus(a)==='sold')-(mktStatus(b)==='sold') || artTime(b)-artTime(a));
-      grid.innerHTML = list.length ? `<div class="mkt-grid">${list.map(marketCard).join('')}</div>` : '<div class="empty">No listings yet. Tap “Sell something” to post the first one.</div>';
-      decorateProfiles();
-      $$('.mkt-card',grid).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openListing(a); });
-    };
-    drawChips(); paint();
-    { const q=$('#mkt-q'); if(q) q.addEventListener('input', ()=>{ _q=q.value.trim(); paint(); }); }
-  }
-  function marketCard(e){
-    const p=profOf(e.pubkey); needProfile(e.pubkey);
-    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
-    const img=mktImages(e)[0]||'';
-    const price=fmtPrice(e);
-    const loc=(e.tags.find(t=>t[0]==='location')||[])[1]||'';
-    const sold=mktStatus(e)==='sold';
-    return `<article class="mkt-card ${sold?'sold':''}" data-id="${e.id}" data-pk="${e.pubkey}">
-      <div class="mkt-thumb">${img?_hold(`<img src="${enc(img)}" loading="lazy" onerror="this.parentNode.classList.add('noimg');this.remove()">`, img):'<span class="mkt-noimg">🛍️</span>'}${sold?'<span class="mkt-sold-badge">SOLD</span>':''}</div>
-      <div class="mkt-info">
-        ${price?`<div class="mkt-price">${enc(price)}</div>`:''}
-        <h3 class="mkt-title">${enc(title)}</h3>
-        ${loc?`<div class="mkt-loc">📍 ${enc(loc)}</div>`:''}
-        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
-      </div></article>`;
-  }
-  function openListing(e){
-    VIEW='listing'; _clearNav(); $('#view-title').textContent='Listing';
-    const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
-    const title=(e.tags.find(t=>t[0]==='title')||[])[1]||'(untitled)';
-    const imgs=mktImages(e); const price=fmtPrice(e);
-    const loc=(e.tags.find(t=>t[0]==='location')||[])[1]||'';
-    const cats=mktCats(e); const sold=mktStatus(e)==='sold';
-    const mine=e.pubkey===ME.pubkey;
-    feed.innerHTML=`<div class="listing-view">
-      <button class="btn btn-ghost small" id="li-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Shopping</button>
-      ${imgs.length?`<div class="li-gallery"><img class="li-main" id="li-main" src="${enc(imgs[0])}" onerror="this.style.display='none'">
-        ${imgs.length>1?`<div class="li-thumbs">${imgs.map((u,i)=>`<img class="li-th ${i===0?'on':''}" data-u="${enc(u)}" src="${enc(u)}" onerror="this.remove()">`).join('')}</div>`:''}</div>`:''}
-      <div class="li-head">
-        ${price?`<div class="li-price">${enc(price)}${sold?' <span class="mkt-sold-badge">SOLD</span>':''}</div>`:(sold?'<div class="li-price"><span class="mkt-sold-badge">SOLD</span></div>':'')}
-        <h1 class="li-title">${enc(title)}</h1>
-        ${loc?`<div class="mkt-loc">📍 ${enc(loc)}</div>`:''}
-        ${cats.length?`<div class="li-cats">${cats.map(c=>`<span class="mkt-chip on">${enc(c)}</span>`).join('')}</div>`:''}
-      </div>
-      <div class="li-by" data-prof="${e.pubkey}"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name">${enc(p.name||p.display_name||'anon')}</span><span class="muted small">· ${timeAgo(artTime(e))}</span></div>
-      <div class="li-actions">
-        ${!mine?`<button class="btn btn-neon" id="li-msg"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mail"></use></svg>Contact seller</button>`:''}
-        ${!mine?`<button class="btn btn-ghost" id="li-zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Pay / Zap</button>`:''}
-        ${mine?`<button class="btn btn-ghost" id="li-sold">${sold?'↩ Mark available':'✅ Mark sold'}</button>`:''}
-        ${mine?`<button class="btn btn-ghost" id="li-edit"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Edit</button>`:''}
-        ${mine?`<button class="btn btn-ghost" id="li-del" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete</button>`:''}
-        <button class="btn btn-ghost" id="li-copy"><svg class="ic b-ic" aria-hidden="true"><use href="#i-share"></use></svg>Share</button>
-      </div>
-      <div class="markdown li-body">${mdToHtml(e.content)}</div>
-    </div>`;
-    $('#li-back').onclick=()=>switchView('market');
-    $$('.li-th',feed).forEach(th=> th.onclick=()=>{ const m=$('#li-main'); if(m){ m.src=th.dataset.u; m.style.display=''; } $$('.li-th',feed).forEach(x=>x.classList.toggle('on',x===th)); });
-    { const m=$('#li-main'); if(m) m.onclick=()=>openLightbox(m.currentSrc||m.src); }
-    { const b=$('#li-msg'); if(b) b.onclick=()=>{ if(!dmPeers.has(e.pubkey)) dmPeers.set(e.pubkey,[]); dmActive=e.pubkey; switchView('messages'); setTimeout(()=>{ const i=$('#dm-in'); if(i){ i.value=`Hi! Is "${title}" still available?`; i.focus(); } },350); }; }
-    { const b=$('#li-zap'); if(b) b.onclick=()=>doZap(e.id, e.pubkey); }
-    { const b=$('#li-sold'); if(b) b.onclick=()=>toggleListingSold(e); }
-    { const b=$('#li-edit'); if(b) b.onclick=()=>renderListingEditor(e); }
-    { const b=$('#li-del'); if(b) b.onclick=()=>deleteListing(e); }
-    $('#li-copy').onclick=()=>{ let _lk=e.id, _m='id copied';
-      try{ _lk=_webLink(NT().nip19.naddrEncode({ identifier:(e.tags.find(t=>t[0]==='d')||[])[1]||'', pubkey:e.pubkey, kind:30402 })); _m='listing link copied'; }catch(_){}
-      copyValue(_lk, _m, 'Link to this listing:'); };
-    feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
-    feed.querySelectorAll('.markdown img').forEach(im=> im.onclick=()=>openLightbox(im.currentSrc||im.src));
-    decorateProfiles();
-  }
-  async function toggleListingSold(e){
-    const now=mktStatus(e)==='sold';
-    // republish the SAME addressable event with status flipped (keeps everything else intact)
-    const tags=e.tags.filter(t=>t[0]!=='status'); tags.push(['status', now?'active':'sold']);
-    try{ const r=await publish(30402, e.content, tags); if(r&&r.ok===false){ toast('relay: '+(r.msg||'rejected')); return; } toast(now?'marked available':'marked sold'); const ne=Store.get(r.ev.id)||r.ev; openListing(ne); }
-    catch(err){ toast('failed: '+(err.message||'')); }
-  }
-  async function deleteListing(e){
-    if(!await uiConfirm('Delete this listing? This asks every relay (NIP-09) to remove it.')) return;
-    const slug=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
-    const tags=[['e',e.id]]; if(slug) tags.push(['a',`30402:${e.pubkey}:${slug}`]);
-    try{ const r=await publish(5,'deleted',tags);   // failure toast by publish()
-      if(r && r.ok){ toast('deletion requested'); switchView('market'); } }
-    catch(err){ toast('delete failed: '+(err.message||'')); }
-  }
-  function renderListingEditor(existing){
-    VIEW='listing'; _clearNav(); $('#view-title').textContent=existing?'Edit listing':'New listing';
-    const feed=$('#feed'); const g=(k)=>existing?((existing.tags.find(t=>t[0]===k)||[])[1]||''):'';
-    const pTag=existing?mktPriceTag(existing):null;
-    let images = existing?mktImages(existing):[];
-    let cats = existing?mktCats(existing):[];
-    let _slug = g('d') || null;
-    feed.innerHTML=`<div class="article-editor">
-      <button class="btn btn-ghost small" id="le-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Cancel</button>
-      <label class="fld">Title<input class="input" id="le-title" placeholder="What are you selling?" value="${enc(g('title'))}"></label>
-      <label class="fld">Summary<input class="input" id="le-sum" placeholder="One-line summary (optional)" value="${enc(g('summary'))}"></label>
-      <div class="le-pricerow">
-        <label class="fld">Price<input class="input" id="le-price" type="number" min="0" step="any" placeholder="0" value="${enc(pTag?(pTag[1]||''):'')}"></label>
-        <label class="fld">Currency<select class="input" id="le-cur">${MKT_CURRENCIES.map(c=>`<option ${((pTag&&(pTag[2]||'').toUpperCase())===c)?'selected':''}>${c}</option>`).join('')}</select></label>
-        <label class="fld">Per (optional)<input class="input" id="le-freq" placeholder="day / month…" value="${enc(pTag?(pTag[3]||''):'')}"></label>
-      </div>
-      <label class="fld">Location<input class="input" id="le-loc" placeholder="City / region (optional)" value="${enc(g('location'))}"></label>
-      <div class="fld">Category<div class="mkt-cats" id="le-cats">${MKT_CATS.map(c=>`<button type="button" class="mkt-chip ${cats.includes(c)?'on':''}" data-c="${enc(c)}">${enc(c)}</button>`).join('')}</div></div>
-      <div class="fld">Photos<div class="le-imgs" id="le-imgs"></div>
-        <div class="row" style="margin-top:6px"><button type="button" class="btn btn-ghost small" id="le-img-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Add photos</button><input type="file" id="le-img-file" accept="image/*" multiple hidden><span class="spacer"></span></div></div>
-      <label class="fld">Description<textarea id="le-body" class="article-body" placeholder="Describe the item — condition, details… (markdown)">${enc(existing?existing.content:'')}</textarea></label>
-      <label class="fld"><input type="checkbox" id="le-sold" ${existing&&mktStatus(existing)==='sold'?'checked':''}> Mark as sold</label>
-      <div class="row"><span class="muted small" id="le-status"></span><span class="spacer"></span><button type="button" class="btn btn-ghost small" id="le-draft"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg>Save draft</button><button class="btn btn-neon" id="le-pub">Publish ▶</button></div>
-    </div>`;
-    $('#le-back').onclick=()=>switchView('market');
-    $$('#le-cats .mkt-chip').forEach(b=> b.onclick=()=>{ const c=b.dataset.c; if(cats.includes(c)) cats=cats.filter(x=>x!==c); else cats.push(c); b.classList.toggle('on'); });
-    const drawImgs=()=>{ const box=$('#le-imgs'); if(!box) return; box.innerHTML=images.map((u,i)=>`<div class="le-img"><img src="${enc(u)}" onerror="this.src='${LOGO}'"><button type="button" class="le-img-x" data-i="${i}" aria-label="Remove image"><svg class="ic x-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div>`).join(''); $$('.le-img-x',box).forEach(x=> x.onclick=()=>{ images.splice(+x.dataset.i,1); drawImgs(); }); };
-    drawImgs();
-    $('#le-img-up').onclick=()=>$('#le-img-file').click();
-    $('#le-img-file').onchange=async ev=>{ const files=[...ev.target.files]; for(let i=0;i<files.length;i++){ $('#le-status').textContent=`uploading ${i+1}/${files.length}…`; try{ images.push(await uploadBlob(files[i],{folder:'Posts'})); drawImgs(); }catch(err){ $('#le-status').textContent='upload failed: '+err.message; ev.target.value=''; return; } } $('#le-status').textContent=''; ev.target.value=''; };
-    const _grab=()=>({ title:$('#le-title').value.trim(), summary:$('#le-sum').value.trim(), price:$('#le-price').value.trim(), cur:$('#le-cur').value, freq:$('#le-freq').value.trim(), loc:$('#le-loc').value.trim(), body:$('#le-body').value, sold:$('#le-sold').checked, images, cats });
-    $('#le-draft').onclick=async()=>{
-      const a=_grab(); if(!(a.title||a.body||a.images.length)){ toast('nothing to save yet'); return; }
-      if(!_slug) _slug=_slugFor(a.title);
-      $('#le-status').textContent='saving draft…';
-      try{ await publishListing(a, _slug, 30403); $('#le-status').textContent='✓ draft saved'; toast('draft saved (in Shopping)'); }
-      catch(err){ $('#le-status').textContent='draft save failed'; }
-    };
-    $('#le-pub').onclick=async()=>{
-      const a=_grab(); if(!a.title){ toast('add a title'); return; }
-      if(!_slug) _slug=_slugFor(a.title);
-      $('#le-status').textContent='publishing…';
-      try{
-        const r=await publishListing(a, _slug, 30402);
-        if(r&&r.ok===false){ toast('relay: '+(r.msg||'rejected')); $('#le-status').textContent=''; return; }
-        if(existing && existing.kind===30403){ try{ await publish(5,'draft published',[['a',`30403:${ME.pubkey}:${_slug}`]]); }catch(_){} }
-        toast('listing published'); switchView('market');
-      }catch(err){ toast('publish failed: '+(err.message||'')); $('#le-status').textContent=''; }
-    };
-  }
-  async function publishListing(a, slug, kind){
-    const tags=[['d',slug],['title',a.title||''],['published_at',String(Math.floor(Date.now()/1000))]];
-    if(a.summary) tags.push(['summary',a.summary]);
-    if(a.price) tags.push(['price', String(a.price), (a.cur||'USD'), ...(a.freq?[a.freq]:[])]);
-    if(a.loc) tags.push(['location',a.loc]);
-    tags.push(['status', a.sold?'sold':'active']);
-    (a.cats||[]).forEach(c=>tags.push(['t',c]));
-    (a.images||[]).forEach(u=>tags.push(['image',u]));
-    return await publish(kind, a.body||'', tags);
   }
 
   // ---------- torrents (NIP-35, kind 2003) ----------
@@ -11453,70 +11228,6 @@
       : 'stream ended');
     if(VIEW==='streams') renderStreams();
   }
-  // ---------- communities (NIP-72 moderated communities, kind 34550) ----------
-  async function renderCommunities(){
-    const feed=$('#feed'); feed.innerHTML='<div class="spinner"></div>';
-    let evs=[]; try{ evs=await Relay.query([{ kinds:[34550], limit:100 }]); }catch(_){}
-    evs.forEach(e=>{ Store.saveEvent(e); needProfile(e.pubkey); });
-    if(VIEW!=='communities') return;
-    const comms=_dedupAddr(evs).sort((a,b)=>b.created_at-a.created_at);
-    feed.innerHTML = comms.length
-      ? `<div class="stream-grid">${comms.map(communityCard).join('')}</div>`
-      : '<div class="empty">No communities yet. They show up here as people in your network create or post in NIP-72 communities.</div>';
-    decorateProfiles();
-    $$('.community-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) openCommunity(x); });
-  }
-  function communityCard(e){
-    const p=profOf(e.pubkey); needProfile(e.pubkey);
-    const name=(e.tags.find(t=>t[0]==='name')||[])[1]||(e.tags.find(t=>t[0]==='d')||[])[1]||'(unnamed)';
-    const desc=(e.tags.find(t=>t[0]==='description')||[])[1]||'';
-    const img=(e.tags.find(t=>t[0]==='image')||[])[1]||'';
-    return `<article class="stream-card community-card" data-id="${e.id}" data-pk="${e.pubkey}">
-      <div class="stream-thumb">${img?_hold(`<img src="${enc(img)}" loading="lazy" onerror="this.parentElement.classList.add('noimg')">`, img):'<span class="stream-play">☷</span>'}</div>
-      <div class="stream-meta"><div class="stream-title">${enc(name)}</div>
-        ${desc?`<div class="muted small">${enc(desc.slice(0,120))}</div>`:''}
-        <div class="art-by"><img class="art-av" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><span class="name" data-prof="${e.pubkey}">${enc(p.name||p.display_name||'anon')}</span></div>
-      </div></article>`;
-  }
-  async function openCommunity(e, routed){
-    /* Opening an inline discovery card is navigation. Previously it only assigned VIEW, so Android
-     * Back had no app entry to pop and skipped Social (or exited). Stamp the timeline and push one
-     * reconstructable community entry; repainting after a post must not push another. */
-    if(!routed && VIEW!=='community'){
-      _navView('community');
-      try{ history.replaceState(Object.assign({}, history.state||{}, {pcv:'community', community:e.id}), ''); }catch(_){}
-    }
-    VIEW='community'; _clearNav(); $('#view-title').textContent='Community';
-    const feed=$('#feed'); const p=profOf(e.pubkey); needProfile(e.pubkey);
-    const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
-    const name=(e.tags.find(t=>t[0]==='name')||[])[1]||d||'(unnamed)';
-    const desc=(e.tags.find(t=>t[0]==='description')||[])[1]||'';
-    const addr='34550:'+e.pubkey+':'+d;
-    feed.innerHTML=`<div class="article-view">
-      <button class="btn btn-ghost small" id="comm-back"><svg class="ic b-ic" aria-hidden="true"><use href="#i-arrow-left"></use></svg>Communities</button>
-      <h1 class="av-title">${enc(name)}</h1>
-      ${desc?`<div class="about">${linkify(desc)}</div>`:''}
-      <div class="row"><button class="btn btn-neon small" id="comm-post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>Post to this community</button></div>
-      <div class="search-section-title">Recent posts</div>
-      <div id="comm-posts"><div class="spinner"></div></div>
-    </div>`;
-    $('#comm-back').onclick=()=>{
-      if(_navPushed>0){ try{ history.back(); return; }catch(_){} }
-      switchView(_startTimeline());
-    };
-    { const cp=$('#comm-post'); if(cp) cp.onclick=()=>compose({community:e}); }
-    feed.querySelectorAll('[data-prof]').forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
-    // Posts reference the community via an `a` tag (34550:pubkey:d). Modern NIP-72 clients post as
-    // NIP-22 comments (kind 1111); older ones use kind 1 — query both. Note actions work via the
-    // #feed delegated click handler.
-    let posts=[]; try{ posts=await Relay.query([{ kinds:[1,1111], '#a':[addr], limit:80 }]); }catch(_){}
-    posts.forEach(x=>{ Store.saveEvent(x); needProfile(x.pubkey); });
-    if(VIEW!=='community') return;
-    const box=$('#comm-posts'); if(!box) return;
-    posts=posts.filter(x=>!isMutedView(x)).sort((a,b)=>b.created_at-a.created_at);
-    box.innerHTML = posts.length ? posts.map(x=>noteCard(x)).join('') : '<div class="empty">No posts in this community yet.</div>';
-    decorateProfiles();
-  }
   // ---------- floating mini-player: keep a stream playing while you browse other views ----------
   // Moving the live <video> node (with its attached hls.js) OUT of #feed and into a fixed,
   // persistent container means a feed re-render can't kill it — playback simply continues.
@@ -11927,7 +11638,6 @@
     if (ev.kind===1063 && webxdcCardHtml(ev)) return webxdcFileCard(ev);
     if (ev.kind===1068) return pollCard(ev);   // NIP-88 poll
     if (ev.kind===30023) return articleCard(ev);   // NIP-23 long-form article → reader card
-    if (ev.kind===34550) return communityCard(ev);  // NIP-72 community → discovery card in the feed
     return noteCard(ev);
   }
   // Timeline renderer: the Home/Global feeds show replies (like Nostr/fediverse), NOT just top-level
@@ -12719,7 +12429,7 @@
     Store.saveEvent(ev); needProfile(ev.pubkey);
     // A stream link must open the PLAYER. Without this a shared stream naddr fell through to renderThread and
     // rendered a live broadcast as an ordinary post — the link "didn't point to the stream".
-    if(kind===30023) openArticle(ev); else if(kind===30402) openListing(ev);
+    if(kind===30023) openArticle(ev);
     else if(kind===30311) openStream(ev);
     else if(kind===30617) openRepo(ev, { restore:_routing });   // a shared git repo (NIP-34) opens the repo view, not a thread — and a BACK press re-opens the tab it was left on
     else renderThread(ev.id);
@@ -13135,8 +12845,6 @@
       // profile when the name is tapped). Mirrors the Articles-list handler; the .note path below
       // doesn't match them.
       const artc=e.target.closest('.article-card'); if(artc){ if(e.target.closest('[data-prof]')){ renderProfileView(artc.dataset.pk); return; } const a=Store.get(artc.dataset.id); if(a) openArticle(a); return; }
-      // Community / channel discovery cards surfaced in the feed → open the community / channel.
-      const cc=e.target.closest('.community-card'); if(cc){ if(e.target.closest('[data-prof]')){ renderProfileView(cc.dataset.pk); return; } const x=Store.get(cc.dataset.id); if(x) openCommunity(x); return; }
       // Git repo cards (kind-30617) surfaced in Discover/search → open the REPO DETAIL (README/issues/
       // patches), NOT the generic .note thread. A repo-card is also class="note" for styling, so without
       // this it fell through to renderThread below and opened the announcement as a thread. Let the author
@@ -13146,7 +12854,7 @@
       // queued post, never a relay event, so they carry no `data-id`. The generic body-click below
       // therefore called renderThread(undefined), which looked your own unsent post up on the relay and
       // answered "Post not found on the relay." Tapping a draft opens it for editing, which is the only
-      // thing the card is for; a scheduled post keeps its own buttons. Same trap the article, community,
+      // thing the card is for; a scheduled post keeps its own buttons. Same trap the article,
       // channel and repo cards above each had to be dug out of individually.
       const dc=e.target.closest('.draft-card');
       if(dc){
@@ -15054,7 +14762,7 @@
   }
   function discoverMenu(){   // mobile Discover sub-sheet — mirrors the desktop sidebar's Discover group (incl. Market)
     const _off=navHiddenSet();
-    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['market','bag','Shopping'],['streams','tv','Streams'],['shorts','tv','Shorts'],['communities','users','Communities'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
+    const items=[['news','news','News'],['markets','chart','Markets'],['budget','bars','Budget'],['calls','phone','Calls'],['articles','article','Articles'],['streams','tv','Streams'],['torrents','magnet','Torrents'],['repos','git','Git'],['stats','bars','Server Stats']]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='markets')     // Markets needs the AI backend (Budget is client-only, so it stays)
                    && !_off.has(v));                              // …and the user's own Settings → Sidebar choices
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-compass"></use></svg> Discover</h3><div class="more-grid">${items.map(([v,ic,lbl])=>`<button class="more-item" data-v="${v}"><span class="more-ic">${ICO(ic)}</span><span>${enc(lbl)}</span>${v==='news'?'<span class="news-badge" style="display:none"></span>':''}</button>`).join('')}</div>`, root=>{
@@ -15172,13 +14880,6 @@
       if(VIEW==='drafts') renderDrafts();
     }
     catch(e){ toast('post failed: '+((e&&e.message)||e)); }   // signing failed → nothing was created; keep the draft
-  }
-  // Tags for a top-level community post (NIP-72 + NIP-22 comment, kind 1111). Uppercase A/K/P =
-  // root scope (the community); lowercase a/k/p = parent (== root for a top-level post). Including
-  // the lowercase `a` also makes it match our own `#a` community-posts query.
-  function communityPostTags(c){
-    const d=(c.tags.find(t=>t[0]==='d')||[])[1]||''; const addr='34550:'+c.pubkey+':'+d; const r=CFG.relay_url||'';
-    return [['A',addr,r],['K','34550'],['P',c.pubkey,r],['a',addr,r],['k','34550'],['p',c.pubkey,r]];
   }
   // NIP-22 comment on a NIP-23 article. Root scope (uppercase A/K/P) is ALWAYS the article. The parent
   // (lowercase) is the article for a top-level comment, or another comment (e/k/p) for a threaded reply.
@@ -15442,7 +15143,7 @@
     if(view==='thread') return 'thread';
     return null;
   }
-  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', community=null, articleComment=null, articleParent=null, cw=false, cwReason='', files=null, open=null}={}){
+  function compose({reply=null, replyPk=null, quote=null, draftId=null, text='', articleComment=null, articleParent=null, cw=false, cwReason='', files=null, open=null}={}){
     /* A COMPOSER THAT OPENS UNDER ANOTHER WINDOW IS NOT A COMPOSER — "the new post, reply, modal
      * gets stuck behind windows". On PosterChanOS the desktop shell is a TILED sway window and
      * floating applications paint above it unconditionally, so this modal cannot be raised from
@@ -15450,15 +15151,15 @@
      * window instead; everywhere else there is no host and nothing changes.
      *
      * The host takes only what survives a URL — an id, a pubkey, some text. A composer carrying
-     * FILES or a community OBJECT is not serialisable, so the host declines it and it opens right
+     * FILES or an article-parent OBJECT is not serialisable, so the host declines it and it opens right
      * here, exactly as it always has. */
     if(window.__PC_COMPOSE_HOST){
       try{
-        if(window.__PC_COMPOSE_HOST({reply, replyPk, quote, draftId, text, community,
+        if(window.__PC_COMPOSE_HOST({reply, replyPk, quote, draftId, text,
                                      articleComment, articleParent, cw, cwReason, files, open})) return;
       }catch(_){ }
     }
-    const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):community?('Post to '+((community.tags.find(t=>t[0]==='name')||[])[1]||(community.tags.find(t=>t[0]==='d')||[])[1]||'community')):reply?'Reply':quote?'Quote post':'New post';
+    const title = articleComment?(articleParent?'Reply to comment':'Comment on article'):reply?'Reply':quote?'Quote post':'New post';
     // Show the post being replied to / quoted, ditto-style — replying used to give you an empty box with
     // no reminder of what you were answering.
     const _cmpCtx=(id,label)=>{
@@ -15483,12 +15184,12 @@
       <textarea id="cmp" placeholder="what's happening on the net?"></textarea>
       <div class="muted small mention-hint hidden" id="cmp-mentions"></div>
       <div id="cmp-preview" class="note-preview hidden"></div>
-      <div class="cmp-tools"><button class="cmp-ico needs-net" id="cmp-attach" title="Attach an image or file" aria-label="Attach an image or file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><button class="cmp-ico" id="cmp-react" title="Emoji or GIF" aria-label="Emoji or GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>${(reply||quote||community||articleComment)?'':'<button class="cmp-ico" id="cmp-poll" title="Poll" aria-label="Poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg></button>'}<button class="cmp-ico needs-net" id="cmp-ai" title="AI tools" aria-label="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="cmp-ico" id="cmp-more" title="More — attach from Files, background, sensitive" aria-label="More — attach from Files, background, sensitive">⋯</button><span class="cmp-of"><button class="cmp-ico" id="cmp-clean" title="Clean links — remove tracking from every link" aria-label="Clean links — remove tracking from every link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg></button><button class="cmp-ico" id="cmp-cw-btn" title="Mark sensitive / NSFW" aria-label="Mark sensitive / NSFW"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg></button>${(quote||community||articleComment)?'':`<button class="cmp-ico needs-net" id="cmp-bg-btn" title="Background — post short text as an image" aria-label="Background — post short text as an image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg></button>`}<button class="cmp-ico" id="cmp-draft" title="Save to drafts" aria-label="Save to drafts"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button></span><input type="file" id="cmp-file" multiple hidden></div>
-      ${(quote||community||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
+      <div class="cmp-tools"><button class="cmp-ico needs-net" id="cmp-attach" title="Attach an image or file" aria-label="Attach an image or file"><svg class="ic b-ic" aria-hidden="true"><use href="#i-paperclip"></use></svg></button><button class="cmp-ico" id="cmp-react" title="Emoji or GIF" aria-label="Emoji or GIF"><svg class="ic b-ic" aria-hidden="true"><use href="#i-smile"></use></svg></button>${(reply||quote||articleComment)?'':'<button class="cmp-ico" id="cmp-poll" title="Poll" aria-label="Poll"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chart"></use></svg></button>'}<button class="cmp-ico needs-net" id="cmp-ai" title="AI tools" aria-label="AI tools"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="cmp-ico" id="cmp-more" title="More — attach from Files, background, sensitive" aria-label="More — attach from Files, background, sensitive">⋯</button><span class="cmp-of"><button class="cmp-ico" id="cmp-clean" title="Clean links — remove tracking from every link" aria-label="Clean links — remove tracking from every link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-broom"></use></svg></button><button class="cmp-ico" id="cmp-cw-btn" title="Mark sensitive / NSFW" aria-label="Mark sensitive / NSFW"><svg class="ic b-ic" aria-hidden="true"><use href="#i-nsfw"></use></svg></button>${(quote||articleComment)?'':`<button class="cmp-ico needs-net" id="cmp-bg-btn" title="Background — post short text as an image" aria-label="Background — post short text as an image"><svg class="ic b-ic" aria-hidden="true"><use href="#i-palette"></use></svg></button>`}<button class="cmp-ico" id="cmp-draft" title="Save to drafts" aria-label="Save to drafts"><svg class="ic b-ic" aria-hidden="true"><use href="#i-cloud"></use></svg></button></span><input type="file" id="cmp-file" multiple hidden></div>
+      ${(quote||articleComment)?'':`<div id="cmp-bg-strip" class="cmp-bg-strip hidden" aria-label="post background"></div>
       <div id="cmp-cardprev" class="cmp-cardprev hidden" aria-label="card preview"></div>`}
       <div id="cmp-cw-row" class="cmp-cw-row hidden"><input class="input" id="cmp-cw-reason" maxlength="120" placeholder="🔞 sensitive — reason (optional, e.g. nudity)"></div>
-      <div class="cmp-actions">${(reply||quote||community||articleComment)?'':'<button class="btn btn-ghost small needs-net" id="cmp-sched-btn"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule</button>'}<button class="btn btn-neon small" id="cmp-send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg><span id="cmp-send-label">Post</span></button></div>
-      ${(reply||quote||community||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="cmp-sched-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule</button><div id="cmp-sched-when" class="muted small sched-when"></div></div>`}
+      <div class="cmp-actions">${(reply||quote||articleComment)?'':'<button class="btn btn-ghost small needs-net" id="cmp-sched-btn"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule</button>'}<button class="btn btn-neon small" id="cmp-send"><svg class="ic b-ic" aria-hidden="true"><use href="#i-send"></use></svg><span id="cmp-send-label">Post</span></button></div>
+      ${(reply||quote||articleComment)?'':`<div id="cmp-sched-row" class="cmp-sched-row hidden"><span class="muted small">Publish at</span><input type="datetime-local" id="cmp-sched-at" class="input"><span class="sched-chips"><button type="button" class="sched-chip" data-min="10">+10m</button><button type="button" class="sched-chip" data-min="60">+1h</button><button type="button" class="sched-chip" data-min="1440">+1d</button></span><button class="btn btn-neon small" id="cmp-sched-go"><svg class="ic b-ic" aria-hidden="true"><use href="#i-clock"></use></svg>Schedule</button><div id="cmp-sched-when" class="muted small sched-when"></div></div>`}
       <div id="cmp-pollbox" class="poll-build hidden">
         <div class="muted small">Poll options</div>
         <div id="cmp-poll-opts"><input class="input poll-opt-in" placeholder="Option 1"><input class="input poll-opt-in" placeholder="Option 2"></div>
@@ -15770,7 +15471,7 @@
       _syncSendLabel(root);
       $('#cmp-send',root).onclick=async()=>{
         // Auto-clean (Settings → 🧹 Remove link trackers) runs here, ahead of every branch below —
-        // a reply, a poll, a community post and an article comment all read ta.value from this one
+        // a reply, a poll and an article comment all read ta.value from this one
         // spot, and all of them derive imeta/mention tags from the URLs in it.
         { const n=_autoCleanOnPost(ta); if(n) toast(`🧹 cleaned ${n} link${n===1?'':'s'}`); }
         const text=ta.value.trim();
@@ -15797,22 +15498,21 @@
               if(r&&r.ok){ closeModal(); toast('poll posted'); if(VIEW==='home'||VIEW==='global') renderView(true); } }
             catch(e){ toast('poll failed: '+((e&&e.message)||e)); } return;
           } }
-        // Community post / article comment → NIP-22 comment (kind 1111) scoped to that root.
-        if(community || articleComment){
-          let tags = articleComment ? articleCommentTags(articleComment, articleParent) : communityPostTags(community);
+        // Article comment → NIP-22 comment (kind 1111) scoped to that root.
+        if(articleComment){
+          let tags = articleCommentTags(articleComment, articleParent);
           mentionTags(text).forEach(t=>{ if(!tags.some(x=>x[0]==='p'&&x[1]===t[1])) tags.push(t); });
           imetaTagsFor(text).forEach(t=>tags.push(t));
           _applyCw(tags);
-          // A community/article-comment carries scope tags a plain draft can't preserve, so keep the modal
+          // An article comment carries scope tags a plain draft can't preserve, so keep the modal
           // open until the relay accepts it — a blip leaves the text in place to retry rather than orphaning
           // a scopeless draft that would post to the home feed.
           try{ const r=await publish(1111, text, tags);
-            if(r && r.ok && articleComment){ closeModal(); toast('comment posted'); if(VIEW==='article') openArticle(articleComment); }
-            else if(r && r.ok){ closeModal(); toast('posted to community'); if(VIEW==='community') openCommunity(community); }
+            if(r && r.ok){ closeModal(); toast('comment posted'); if(VIEW==='article') openArticle(articleComment); }
           }catch(e){ toast('post failed: '+((e&&e.message)||e)); } return;
         }
         // 🎨 Background post → render the text onto the chosen background + upload; post the IMAGE (the
-        // styled text IS the post). Top-level posts and REPLIES; quotes/community/article-comments still
+        // styled text IS the post). Top-level posts and REPLIES; quotes/article-comments still
         // hide the 🎨 button — a quote has to carry its nevent in the content and an article comment is a
         // different kind (1111), so neither is a plain kind-1 image note.
         if(_bgChoice && !quote){
@@ -17230,214 +16930,6 @@
     const grid=$('#pics-grid'); if(!grid) return;
     grid.innerHTML = pics.length ? pics.map(x=>`<div class="pic-card" data-id="${x.e.id}">${_hold(`<img src="${enc(x.img)}" loading="lazy" onerror="this.closest('.pic-card')&&this.closest('.pic-card').remove()">`, x.img)}</div>`).join('') : '<div class="empty">No pics found yet.</div>';
     $$('.pic-card',grid).forEach(c=> c.onclick=()=> openThread(c.dataset.id));
-  }
-
-  // ---------- Shorts — NIP-71 short videos (Discover → Shorts) --------------------------------
-  // MEASURED, not assumed (2026-08-18, wss://relay.divine.video): Divine publishes kind 34236 (the
-  // addressable vertical-video draft) with an imeta carrying `url`, `m video/mp4`, `image` (poster),
-  // `dim 1080x1920`, plus `title`/`duration`/`t` tags. The current NIP-71 spec kind 22 (short
-  // portrait) is read too, so any client's shorts land here. Kind 21 (long-form) is deliberately
-  // out — this surface is a shorts feed, not a cinema.
-  function _shortOf(e){
-    let url='', poster='';
-    for(const t of (e.tags||[])){
-      if(t[0]!=='imeta') continue;
-      for(let i=1;i<t.length;i++){
-        const str=String(t[i]||''); const sp=str.indexOf(' ');
-        const k=sp<0?str:str.slice(0,sp), v=sp<0?'':str.slice(sp+1).trim();
-        if(k==='url'&&!url) url=v;
-        else if(k==='image'&&!poster) poster=v;
-      }
-      if(url) break;
-    }
-    if(!url){ const m=String(e.content||'').match(/https?:\/\/\S+\.(mp4|webm|mov)\b\S*/i); if(m) url=m[0]; }
-    if(!url || !/^https?:\/\//i.test(url)) return null;
-    if(poster && !/^https?:\/\//i.test(poster)) poster='';
-    const tag=n=>String((((e.tags||[]).find(t=>t[0]===n))||[])[1]||'');
-    return { e, url, poster,
-             title: tag('title') || String(e.content||'').split('\n')[0].slice(0,120),
-             dur: Math.max(0, +tag('duration')||0) };
-  }
-  let _shortsMuted = true;   // mobile autoplay only works muted; one 🔊 tap unmutes the whole feed
-  let _shortsIO = null;
-  let _shortsAt = -1;        // -1 = the browse grid; an index = the full-screen player on that short
-  let _shortsList = [];
-  async function renderShorts(){
-    const feed=$('#feed');
-    feed.innerHTML='<div class="shorts-host" id="shorts-host"><div class="spinner"></div></div>';
-    const filt=[{kinds:[34236,22], limit:120}];
-    let fresh=[]; try{ fresh=await Relay.query(filt); }catch(_){}
-    fresh.forEach(e=>Store.saveEvent(e));
-    /* Relay.query is a refresh, not the source of truth for this paint. Offline use, a throttled
-     * relay and a just-received event all live in Store; painting only `fresh` made Shorts open on
-     * an empty screen even though its events were already on the device. Query after saving also
-     * collapses edited addressable 34236 events consistently. */
-    let evs=[]; try{ evs=Store.query(filt)||[]; }catch(_){ evs=fresh; }
-    evs.forEach(e=>needProfile(e.pubkey));
-    if(VIEW!=='shorts') return;
-    const seen=new Set(); const vids=[];
-    for(const e of evs.sort((a,b)=>b.created_at-a.created_at)){
-      if(isMutedView(e)) continue;
-      const s=_shortOf(e); if(!s) continue;
-      // 34236 is addressable: dedup on the coordinate so an edited short doesn't appear twice.
-      const key=e.kind+':'+e.pubkey+':'+String((((e.tags||[]).find(t=>t[0]==='d'))||[])[1]||e.id);
-      if(seen.has(key)) continue; seen.add(key);
-      vids.push(s); if(vids.length>=100) break;
-    }
-    _shortsList=vids;
-    if(_shortsAt>=vids.length) _shortsAt=-1;
-    const host=$('#shorts-host'); if(!host) return;
-    if(!vids.length){
-      host.innerHTML='<div class="empty">No shorts have reached this relay yet. They arrive as your network posts them — from Divine and any NIP-71 client.</div>';
-      return;
-    }
-    if(_shortsAt<0) _shortsGrid(host); else _shortsPlayer(host, _shortsAt);
-  }
-  /* Build the 34236 tag set in DIVINE'S MEASURED SHAPE (d = the video's sha, imeta with url/m/
-   * image/dim/size/x, title, published_at, duration, alt) — so a short posted here renders in
-   * Divine and every NIP-71 reader, not only in our own view. Pure, so tests can lift and run it. */
-  function _shortTagsFor(up, meta){
-    const im=['imeta','url '+up.url,'m '+(meta.mime||'video/mp4')];
-    if(meta.poster) im.push('image '+meta.poster);
-    if(meta.dim) im.push('dim '+meta.dim);
-    if(meta.size) im.push('size '+String(meta.size));
-    if(up.sha) im.push('x '+up.sha);
-    const tags=[['d', up.sha || ('pc'+Math.random().toString(36).slice(2,10))], im,
-                ['title', String(meta.title||'').slice(0,140)],
-                ['published_at', String(Math.floor(Date.now()/1000))],
-                ['alt', String(meta.title||'a short video').slice(0,140)]];
-    if(meta.dur) tags.push(['duration', String(Math.max(1, Math.round(meta.dur)))]);
-    return tags;
-  }
-  async function _postShort(file, host){
-    if(!file || !/^video\//.test(file.type||'')){ toast('pick a video'); return; }
-    const title=await uiPrompt('Give your short a title', { value: '' }); if(title===null) return;
-    const st=document.createElement('div'); st.className='empty'; st.textContent='Uploading your short…';
-    host.prepend(st);
-    try{
-      /* Poster + duration + dimensions read from the file itself, client-side: a <video> over an
-       * object URL seeks to the first frame and a canvas captures it — the same first frame every
-       * other client will show. */
-      const meta={ mime:file.type, size:file.size, title:String(title||'').trim(), poster:'', dim:'', dur:0 };
-      try{
-        const ou=URL.createObjectURL(file);
-        const v=document.createElement('video'); v.muted=true; v.playsInline=true; v.src=ou;
-        await new Promise((res,rej)=>{ v.onloadeddata=res; v.onerror=()=>rej(new Error('unreadable video')); setTimeout(res, 8000); });
-        try{ v.currentTime=Math.min(0.1, (v.duration||1)/10); await new Promise(r=>{ v.onseeked=r; setTimeout(r,1500); }); }catch(_){}
-        meta.dur=v.duration||0;
-        if(v.videoWidth) meta.dim=v.videoWidth+'x'+v.videoHeight;
-        const c=document.createElement('canvas'); c.width=v.videoWidth||720; c.height=v.videoHeight||1280;
-        c.getContext('2d').drawImage(v,0,0,c.width,c.height);
-        const pb=await new Promise(r=>c.toBlob(r,'image/jpeg',0.82));
-        URL.revokeObjectURL(ou);
-        if(pb){ try{ meta.poster=await uploadBlob(new File([pb],'poster.jpg',{type:'image/jpeg'}), {folder:'Posts'}); }catch(_){} }
-      }catch(_){}
-      // Filed under the drive's Posts folder, exactly like a composer attachment — an upload with
-      // no folder is a bare sha in Files, which reads as clutter rather than as your own post.
-      const url=await uploadBlob(file, {folder:'Posts'});
-      const sha=(String(url).match(/([0-9a-f]{64})/)||[])[1]||'';
-      st.textContent='Publishing…';
-      const r=await publish(34236, meta.title, _shortTagsFor({url, sha}, meta));
-      if(r && r.ok===false) throw new Error(r.msg||'the relay refused it');
-      toast('short posted 🎬');
-      _shortsAt=-1; renderShorts();
-    }catch(e){
-      st.remove();
-      const m=String((e&&e.message)||e);
-      if(_blossomDenied(e)) { toast('no upload access here yet — ask the admin'); try{ requestBlossomAccess(); }catch(_){} }
-      else toast('couldn’t post: '+m);
-    }
-  }
-  /* THE BROWSE GRID IS THE FRONT DOOR — "only one video at a time" is a player, not a feed. Poster
-   * tiles with duration badges, so a page shows a dozen choices; tapping one opens the full-screen
-   * player AT that short, and scrolling continues from there. */
-  function _shortsGrid(host){
-    const vids=_shortsList;
-    host.innerHTML=`<div class="row" style="padding:6px 4px;gap:8px;align-items:center">
-        <button class="btn btn-neon small" id="short-post"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Post a short</button>
-        <input type="file" id="short-file" accept="video/*" style="display:none">
-        <span class="muted small">Short vertical videos — yours goes out in the format Divine and every NIP-71 app reads.</span>
-      </div><div class="shorts-grid">${vids.map((s,i)=>{ const p=profOf(s.e.pubkey)||{}; const nm=p.name||p.display_name||'anon';
-      return `<div class="short-tile" data-i="${i}">
-        ${s.poster?`<img src="${enc(s.poster)}" loading="lazy" onerror="this.remove()">`:`<div class="short-tile-blank">🎬</div>`}
-        ${s.dur?`<span class="short-dur">${s.dur>=60?Math.floor(s.dur/60)+':'+String(s.dur%60).padStart(2,'0'):'0:'+String(s.dur).padStart(2,'0')}</span>`:''}
-        <span class="short-tile-t">${enc(s.title)}</span>
-        <span class="short-tile-a"><img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">${enc(nm)}</span>
-      </div>`; }).join('')}</div>`;
-    $$('.short-tile',host).forEach(t=> t.onclick=()=>{ _shortsAt=+t.dataset.i; _shortsPlayer(host, _shortsAt); });
-    { const pb=$('#short-post',host), fi=$('#short-file',host);
-      if(pb&&fi){ pb.onclick=()=>fi.click(); fi.onchange=()=>{ const f=fi.files&&fi.files[0]; if(f) _postShort(f, host); fi.value=''; }; } }
-  }
-  function _shortsPlayer(host, start){
-    const vids=_shortsList;
-    host.innerHTML = `<div class="shorts-wrap" id="shorts-wrap">`+vids.map((s,i)=>{ const p=profOf(s.e.pubkey)||{}; const nm=p.name||p.display_name||'anon';
-      return `<div class="short-card" data-i="${i}" data-id="${s.e.id}">
-        <div class="short-media">${s.poster?`<img src="${enc(s.poster)}" loading="lazy" onerror="this.remove()">`:''}</div>
-        <div class="short-top">
-          <button class="mini short-back" title="Back to Shorts" aria-label="Back to Shorts">‹ Back to Shorts</button>
-          <button class="mini short-mute" title="Sound">${_shortsMuted?'🔇':'🔊'}</button>
-        </div>
-        <div class="short-overlay">
-          <div class="short-auth" data-pk="${s.e.pubkey}">
-            <img src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'"><b class="name" data-prof="${s.e.pubkey}">${enc(nm)}</b>
-          </div>
-          <div class="short-title">${enc(s.title)}</div>
-        </div>
-        <div class="short-rail">
-          <button class="short-act short-open" title="Comments"><svg class="ic"><use href="#i-chat"></use></svg></button>
-          <button class="short-act short-share" title="Copy link"><svg class="ic"><use href="#i-bookmark"></use></svg></button>
-        </div>
-      </div>`; }).join('')+`</div>`;
-    decorateProfiles();
-    const wrap=$('#shorts-wrap', host);
-    /* ONE DECODER AT A TIME. A <video src> IS a decoder (that lesson is paid for): only the card
-     * filling the viewport holds a mounted <video>; a card scrolled fully away has its src removed
-     * and the element released, so a 100-short session never holds 100 decoders. */
-    try{ if(_shortsIO) _shortsIO.disconnect(); }catch(_){}
-    const io=_shortsIO=new IntersectionObserver(entries=>{
-      for(const x of entries){
-        const card=x.target, s=vids[+card.dataset.i], media=card.querySelector('.short-media');
-        if(!s||!media) continue;
-        let v=media.querySelector('video');
-        if(x.isIntersecting && x.intersectionRatio>0.6){
-          _shortsAt=+card.dataset.i;   // remember where we are, so grid⇄player round-trips
-          if(!v){
-            v=document.createElement('video');
-            v.playsInline=true; v.setAttribute('playsinline',''); v.loop=true; v.muted=_shortsMuted;
-            v.preload='auto'; if(s.poster) v.poster=s.poster;
-            v.src=s.url;
-            v.onclick=()=>{ if(v.paused) v.play().catch(()=>{}); else v.pause(); };
-            media.appendChild(v);
-          }
-          v.muted=_shortsMuted;
-          v.play().catch(()=>{});
-        }else if(v){
-          v.pause();
-          if(x.intersectionRatio===0){ try{ v.removeAttribute('src'); v.load(); }catch(_){} v.remove(); }
-        }
-      }
-    }, { root: wrap, threshold: [0, 0.6] });
-    $$('.short-card',wrap).forEach(c=>{
-      io.observe(c);
-      const id=c.dataset.id;
-      const oc=c.querySelector('.short-open'); if(oc) oc.onclick=(ev)=>{ ev.stopPropagation(); openThread(id); };
-      const bk=c.querySelector('.short-back'); if(bk) bk.onclick=(ev)=>{ ev.stopPropagation();
-        try{ io.disconnect(); }catch(_){}
-        _shortsAt=-1; _shortsGrid(host); };
-      const sh=c.querySelector('.short-share'); if(sh) sh.onclick=(ev)=>{ ev.stopPropagation();
-        const e2=vids[+c.dataset.i].e;
-        let lk='';
-        try{ lk=_webLink(NT().nip19.naddrEncode({ identifier:String((((e2.tags||[]).find(t=>t[0]==='d'))||[])[1]||''), pubkey:e2.pubkey, kind:e2.kind })); }
-        catch(_){ try{ lk=_webLink(NT().nip19.noteEncode(e2.id)); }catch(_){} }
-        if(lk) copyValue(lk, 'link copied', 'Link:'); };
-      const au=c.querySelector('.short-auth'); if(au) au.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(au.dataset.pk); };
-      const mu=c.querySelector('.short-mute'); if(mu) mu.onclick=(ev)=>{ ev.stopPropagation();
-        _shortsMuted=!_shortsMuted;
-        $$('.short-mute',wrap).forEach(b=>b.textContent=_shortsMuted?'🔇':'🔊');
-        $$('video',wrap).forEach(vv=>vv.muted=_shortsMuted); };
-    });
-    const target=$$('.short-card',wrap)[start];
-    if(target) target.scrollIntoView({ block:'start' });
   }
 
   // Files view = two tabs: Public (your built-in Blossom blobs, shareable URLs) and AI Chat
@@ -27754,7 +27246,7 @@
         return `<div class="media-grid">${items}</div>`; }
       if(tab==='articles'){ const a=_dedupAddr(Store.feed(e=>e.pubkey===pk && e.kind===30023)).slice(0,lim);
         return a.length ? a.map(articleCard).join('') : `<div class="empty">${_prof.artLoaded?'No articles yet.':'Loading…'}</div>`; }
-      if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> (e.pubkey===pk || streamHost(e)===pk) && !_isDeletedStream(e))).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/34550/40, so it silently drops every 30311
+      if(tab==='streams'){ const s=_dedupAddr(Store.byKind(30311).filter(e=> (e.pubkey===pk || streamHost(e)===pk) && !_isDeletedStream(e))).slice(0,lim);   // NOT Store.feed() — that allowlists kinds 1/6/1068/30023/40, so it silently drops every 30311
         return s.length ? `<div class="stream-grid prof-streams">${s.map(streamCard).join('')}</div>` : `<div class="empty">${_prof.streamsLoaded?'No streams yet.':'Loading…'}</div>`; }
       const n=Store.feed(e=>e.pubkey===pk && !isReply(e) && !pinnedIds.has(e.id)).slice(0,lim);
       if(n.length) return pinnedHtml + n.map(e=>noteHtml(e)).join('');
@@ -33157,7 +32649,7 @@
     }
     // 3. posts via NIP-50 full-text (relay indexes note content); profiles by name/nip05 over the
     //    locally-cached profile set (the relay's FTS doesn't cover kind-0, so we match what we know).
-    // Posts via NIP-50 FTS, and the Discover kinds (articles/streams/communities) fetched + filtered
+    // Posts via NIP-50 FTS, and the Discover kinds (articles/streams/torrents/repos) fetched + filtered
     // client-side (FTS doesn't index them) — run in parallel.
     const ql=q.toLowerCase();
     /* WAIT FOR A SOCKET THAT CAN ANSWER FIRST. A REQ written to a socket that is not OPEN is dropped
@@ -33171,7 +32663,7 @@
     if(VIEW!=='search') return;
     let [postEvs, addrEvs, profEvs] = await Promise.all([
       Relay.query([{ kinds:[1], search:q, limit:40 }]).catch(()=>[]),
-      Relay.query([{ kinds:[30023,30311,34550,2003,30617], limit:240 }]).catch(()=>[]),
+      Relay.query([{ kinds:[30023,30311,2003,30617], limit:240 }]).catch(()=>[]),
       // Also ask the relay for matching PROFILES (NIP-50 kind-0 search) — otherwise "Profiles" only ever
       // shows what THIS device has already cached, so a profile you haven't seen (or lost on a cache
       // clear) never appears. Cached below so the local name/nip05 filter picks them up too.
@@ -33214,7 +32706,6 @@
     if(VIEW!=='search') return;
     const arts =_dedupAddr(addrEvs.filter(e=>e.kind===30023 && _matchAddr(e,ql))).sort((a,b)=>artTime(b)-artTime(a)).slice(0,12);
     const strms=_dedupAddr(addrEvs.filter(e=>e.kind===30311 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
-    const comms=_dedupAddr(addrEvs.filter(e=>e.kind===34550 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
     const tors =addrEvs.filter(e=>e.kind===2003 && _matchAddr(e,ql)).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
     const repos=_dedupAddr(addrEvs.filter(e=>e.kind===30617 && _matchAddr(e,ql))).sort((a,b)=>b.created_at-a.created_at).slice(0,12);
     const profs=Store.profileList().filter(p=>(((p.meta.name||'')+(p.meta.display_name||'')+(p.meta.nip05||'')).toLowerCase().includes(ql))).slice(0,12);
@@ -33222,7 +32713,6 @@
     if(profs.length){ html+='<div class="search-section-title">Profiles</div>'; for(const p of profs){ const m=p.meta; html+=`<div class="psearch" data-prof="${p.pubkey}"><img src="${enc(m.picture||LOGO)}" onerror="this.src='${LOGO}'"><div><b>${emojiName(p.pubkey,m.name||m.display_name||'anon')}</b><div class="muted small">${enc(niceNip05(m.nip05)||(m.about||'').slice(0,60))}</div></div></div>`; } }
     if(arts.length){  html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-article"></use></svg>Articles</div>'+arts.map(articleCard).join(''); }
     if(strms.length){ html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-stream"></use></svg>Streams</div><div class="stream-grid">'+strms.map(streamCard).join('')+'</div>'; }
-    if(comms.length){ html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-users"></use></svg>Communities</div><div class="stream-grid">'+comms.map(communityCard).join('')+'</div>'; }
     if(tors.length){  html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-magnet"></use></svg>Torrents</div>'+tors.map(torrentCard).join(''); }
     if(repos.length){ html+='<div class="search-section-title"><svg class="ic b-ic" aria-hidden="true"><use href="#i-git"></use></svg>Git Repos</div><div class="repo-grid">'+repos.map(repoCard).join('')+'</div>'; }
     const posts=postEvs.sort((a,b)=>b.created_at-a.created_at);
@@ -33239,9 +32729,9 @@
     feed.innerHTML=html; hydrate(feed);
     { const rb=$('#search-retry',feed); if(rb) rb.onclick=()=>runSearch(q); }
     $$('[data-prof]',feed).forEach(el=> el.onclick=()=>renderProfileView(el.dataset.prof));
-    // Discover result cards → open the right view (community vs stream share .stream-card → split by kind).
+    // Discover result cards → open the stream player.
     $$('.article-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const a=Store.get(c.dataset.id); if(a) openArticle(a); });
-    $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) (x.kind===34550?openCommunity:openStream)(x); });
+    $$('.stream-card',feed).forEach(c=> c.onclick=ev=>{ if(ev.target.closest('[data-prof]')){ renderProfileView(c.dataset.pk); return; } const x=Store.get(c.dataset.id); if(x) openStream(x); });
     $$('.tor-copy',feed).forEach(b=> b.onclick=()=> copyValue(b.dataset.magnet, 'magnet copied', 'Magnet link:'));
     $$('.repo-clone',feed).forEach(b=> b.onclick=ev=>{ ev.stopPropagation(); copyValue(b.dataset.clone, 'clone URL copied', 'Clone URL:'); });
     $$('.repo-card a[href]',feed).forEach(a=> a.onclick=ev=>ev.stopPropagation());
@@ -34107,7 +33597,7 @@
     '#feed .thread-node[data-tid]',
     '#feed article.note[data-id]',       // timeline
     '#feed .notif[data-open]',           // notifications (the updater row has no data-open — not selectable)
-    // Every other card view — Streams, Articles, Shopping, Communities, Pics. Deliberately the SAME
+    // Every other card view — Streams, Articles, Pics. Deliberately the SAME
     // list the app already uses to mean "a card" (see the long-press handler), so a new card type is picked
     // up here without a second place to remember.
     '#feed .draft-card[data-draft], #feed .draft-art[data-id]',   // Drafts (post + article)
@@ -34117,7 +33607,7 @@
     // and without it the cursor stopped dead on the last tile — Tab could not save you either, because
     // while a row is selected Tab is scoped to THAT row's own controls.
     '#feed .file-card, #feed .bl-more',
-    '#feed .stream-card, #feed .article-card, #feed .mkt-card, #feed .community-card, #feed .channel-card, #feed .fc-card, #feed .pic-card, #feed .repo-card',
+    '#feed .stream-card, #feed .article-card, #feed .channel-card, #feed .fc-card, #feed .pic-card, #feed .repo-card',
     // Budget: a bill row and a plan CARD are both rows. `[data-bill]` deliberately excludes the plan's
     // own header (it carries .bg-row for styling but no data-bill), so the cursor doesn't stop twice on
     // the same plan. Their letters live in _CARD_KEYS; Tab still reaches the ✅/☰ inside a selected row.
@@ -34136,7 +33626,7 @@
     '#dm-list .dm-peer[data-peer]',      // messages
     // The DETAIL views you open INTO. The list that got you here was navigable, but what it opened was
     // not: Markets' tickers, a chat room's messages. Same rows, same keys.
-    '#feed .mkts-card',                  // Markets (NOT .mkt-card above — that is Shopping)
+    '#feed .mkts-card',                  // Markets
     '#ch-msgs .chat-msg[data-mid]',      // an open chat room
     // An open git repo: the file list and the commit list. Both are plain vertical lists, so they get
     // the arrows, j/k and gg/G with no stride. A .fb-row already knows how to open itself (a directory
@@ -34489,7 +33979,7 @@
   })();
 
   // Alt+← goes BACK out of whatever you opened. Every detail view — an article, a chat
-  // room, a community, a stream, a listing, a DM — puts a "←" button in its header, and every one of them
+  // room, a stream, a DM — puts a "←" button in its header, and every one of them
   // was mouse-only: you could open the thing from the keyboard and then had no way out of it.
   // An explicit list rather than [id$="-back"], because that would also match #follow-all-back, which
   // FOLLOWS EVERYONE BACK. le-back / ae-back are left out too: those read "← Cancel" and abandon an edit
@@ -36552,7 +36042,7 @@
      *
      * The two monitors are separate Electron renderers, so no module state crosses the seam and the
      * destination can only rebuild from a NAME. For a screen that is not an entity that name is the
-     * view, and `switchView` is enough. For a repo, an article, a stream, a listing or a thread it
+     * view, and `switchView` is enough. For a repo, an article, a stream or a thread it
      * is not: those set a sub-view (git.js sets VIEW='repo') that nothing routes, so the window
      * arrived and span for ever.
      *

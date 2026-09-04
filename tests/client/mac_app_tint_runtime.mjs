@@ -9,8 +9,8 @@ const end = os.indexOf('  const tint = (key) =>', start);
 if (start < 0 || end < 0) throw new Error('appHue moved');
 const appHue = new Function(os.slice(start, end) + '\n;return appHue;')();
 
-const VIEWS = ['home','global','notifications','messages','drafts','bookmarks','articles','market',
-               'streams','communities','calls','settings','translate','news','websearch','terminal',
+const VIEWS = ['home','global','notifications','messages','drafts','bookmarks','articles',
+               'streams','calls','settings','translate','news','websearch','terminal',
                'code','calendar','contacts','texts','notes','music','concord','git','files'];
 const hues = {};
 for (const v of VIEWS) hues[v] = appHue(v);

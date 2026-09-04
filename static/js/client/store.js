@@ -411,11 +411,11 @@
     feed(filterFn){
       const out = [];
       for (const ev of mem.events.values()){
-        if ((ev.kind===1 || ev.kind===6 || ev.kind===1068 || ev.kind===30023 || ev.kind===34550 || ev.kind===40) && (!filterFn || filterFn(ev))) out.push(ev);
+        if ((ev.kind===1 || ev.kind===6 || ev.kind===1068 || ev.kind===30023 || ev.kind===40) && (!filterFn || filterFn(ev))) out.push(ev);
       }
       // Collapse EDITED addressable/replaceable events to their LATEST version before returning —
-      // the cache keeps every version by id, so an edited kind-30023 article / 34550 community
-      // otherwise renders as one duplicate Home/Global card per revision. _latestReplaceable keys
+      // the cache keeps every version by id, so an edited kind-30023 article otherwise renders as
+      // one duplicate Home/Global card per revision. _latestReplaceable keys
       // 30000-39999 by pubkey+kind+d-tag (regular kinds 1/6/1068/40 get no key and pass through
       // untouched, so distinct notes/channels are never merged). Sort with the NIP-01 tiebreak
       // (_newestFirst) so the surviving version is deterministic, matching the query() path.

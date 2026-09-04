@@ -8,6 +8,7 @@ domain that "already contains an installed system".
 These run the gate's own logic; the end-to-end install is the gate, run against a real ISO.
 """
 from pathlib import Path
+import ast
 import importlib.util
 import subprocess
 import sys
@@ -19,6 +20,18 @@ SRC = GATE.read_text(encoding="utf-8")
 SPEC = importlib.util.spec_from_file_location("livecd_install_vm", GATE)
 MOD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MOD)
+
+
+def test_failed_installer_cannot_pass_because_printf_succeeded(tmp_path):
+    commands = [node.args[0].value for node in ast.walk(ast.parse(SRC))
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "send" and node.args
+                and isinstance(node.args[0], ast.Constant)]
+    command = next(value for value in commands if "sudo gentoo.sh install-live" in value)
+    command = command.replace("sudo gentoo.sh install-live", "bash -c 'cat >/dev/null; exit 17'")
+    command = command.replace("/tmp/pc-install-test.log", str(tmp_path / "install.log"))
+    got = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
+    assert "INSTALL-EXIT-17" in got.stdout
 
 
 def test_no_iso_is_a_skip_that_says_nothing_was_verified():

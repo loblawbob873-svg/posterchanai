@@ -18,11 +18,16 @@ opened. That is the `internal` argument, and it is the only reason this file is 
 """
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SHELL = (ROOT / "static/js/client/osshell.js").read_text(encoding="utf-8")
+RUNTIME = Path(__file__).resolve().parent / "tray_toggle_runtime.js"
+NODE = shutil.which("node") or shutil.which("nodejs")
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
 
@@ -44,7 +49,7 @@ def test_the_flyout_is_handed_to_the_compositor():
     """THE BUG. Without this the panel is appended to the shell's own body — the tiled surface."""
     assert "openTrayWindow(b);" in SHELL, (
         "the tray flyout is still drawn inside the shell, so it opens underneath every application")
-    assert "pcPopup.open('tray'" in SHELL
+    assert "pcPopup.toggle('tray'" in SHELL
 
 
 def test_one_interception_covers_every_sub_panel():
@@ -58,7 +63,7 @@ def test_one_interception_covers_every_sub_panel():
 def test_the_in_page_flyout_survives_where_there_is_no_bridge():
     body = SHELL[SHELL.index("if(kind === 'quick' && !IN_POPUP"):]
     body = body[:body.index("setTimeout(() => done(_pop), 0);")]
-    assert "root.pcPopup && root.pcPopup.open" in body
+    assert "root.pcPopup && root.pcPopup.toggle" in body
     assert "quickPop(b)" in body, "the in-page flyout is gone — this is PosterChanOS-only UI now"
 
 
@@ -100,8 +105,15 @@ def test_every_dismissal_inside_the_flyout_still_means_dismiss():
     """The mirror of the rule above: only openPop may pass `internal`. A stray `closePop(true)` in
     a handler is a flyout that will not close."""
     for m in re.finditer(r"closePop\(true\)", SHELL):
-        window = SHELL[max(0, m.start() - 600):m.start()]
-        assert ("function openPop(" in window or "if(kind === 'quick' && !IN_POPUP" in window), (
+        before = SHELL[max(0, m.start() - 600):m.start()]
+        after = SHELL[m.end():m.end() + 200]
+        allowed = ("function openPop(" in before
+                   or "if(kind === 'quick' && !IN_POPUP" in before
+                   # The desktop's own popover path clears the way for the popover it is about to
+                   # open, exactly as openPop does — and `true` is what stops the same handler
+                   # closing the tray WINDOW when it runs in the popup renderer.
+                   or "const done = (d) =>" in after)
+        assert allowed, (
             "closePop(true) outside openPop — that flyout can no longer be dismissed:\n"
             + SHELL[max(0, m.start() - 200):m.start() + 60])
 
@@ -162,3 +174,50 @@ def test_the_tray_flyout_sits_on_the_edge_it_rises_from():
     body_rule = CSS.split(".os-popup-body.os-tray-popup{", 1)[1].split("}", 1)[0]
     assert "background:transparent" in body_rule, (
         "the window is opened transparent; a painted body puts the dead space back")
+
+
+# ── a press is a TOGGLE, and the process that owns the window answers it ──────────────────────────
+
+def test_the_chip_asks_the_owner_before_any_flag_it_cannot_keep():
+    """"the volume widget on the taskbar is not even functional".
+
+    THE SAME ALTERNATE-PRESS FAILURE AS START, NOTIFICATIONS AND CONNECTIVITY, arriving through the
+    one taskbar panel that lives in osshell.js instead of os.js — which is exactly why
+    `test_no_taskbar_toggle_decides_from_a_flag_it_cannot_keep` did not cover it.
+
+    `_pop` is this renderer's in-page popover. On PosterChanOS the flyout is a popup WINDOW that
+    closes on blur, on Escape and on every choice, none of which this renderer is told about, so
+    nothing may be decided from `_pop` before the owner of that window is asked.
+    """
+    body = _fn("  function bindPanel(into){", SHELL)
+    assert body.index("if(kind === 'quick' && !IN_POPUP") < body.index("if(_pop && _pop.dataset.kind"), (
+        "bindPanel decides from _pop — a flag this renderer cannot keep — before asking the process "
+        "that owns the flyout window")
+
+
+def test_pressing_the_chip_never_asks_for_a_second_flyout_while_one_is_up():
+    """THE BUG, MEASURED AT THE ONE BOUNDARY THE CLIENT CONTROLS.
+
+    `pcPopup.open` is not a toggle: main.js destroys the live surface and builds a replacement, and
+    the replacement does not become a usable flyout — measured in an isolated Wayfire session by
+    pressing the chip N times and asking the compositor what is mapped (1 → the flyout at 360x446
+    with a live volume slider, 2 → two windows created and nothing mapped, 3 → the flyout, 4 →
+    nothing), and measured on the real desk as a popup left painted at `opacity: 0` because the
+    reveal lost the same race.
+
+    The visible sequence is the same either way in the model below, and that is the point: what
+    separates a working chip from a broken one is not whether a flyout appeared, it is whether the
+    client asked for a window it could not have. So that is what is asserted.
+    """
+    assert NODE, "no node on this node"
+    out = json.loads(subprocess.run([NODE, str(RUNTIME), "4"], capture_output=True, text=True,
+                                    timeout=60, check=True).stdout)
+    assert "error" not in out, out
+    assert out["calls"] == ["toggle:tray"] * 4, (
+        "the tray chip does not toggle — every press builds another flyout window: %r" % (out["calls"],))
+    assert out["openWhileLive"] == 0, (
+        "the chip asked for a flyout window while one was already up %d time(s)" % out["openWhileLive"])
+    assert out["created"] == 2, (
+        "four presses built %d popup windows; a toggle builds one per OPENING" % out["created"])
+    assert out["mapped"] == [True, False, True, False], (
+        "a press must put the flyout up and the next must put it away: %r" % (out["mapped"],))

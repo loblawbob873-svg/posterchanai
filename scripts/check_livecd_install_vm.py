@@ -155,9 +155,10 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus):
         if con.expect(r"SUDO-OK", 30) is None:
             print("FAIL  the live account cannot become root — the NOPASSWD drop-in is missing")
             return 1
-        # `install-live` asks to erase; every other answer it needs comes from /tmp/disk.
-        con.send("printf 'y\\n\\n\\n\\n\\n\\n\\n\\n' | sudo gentoo.sh install-live "
-                 "2>&1 | tail -40; echo INSTALL-EXIT-${PIPESTATUS[0]}")
+        # Exercise the interactive password confirmation with a disposable VM-only credential.
+        # PIPESTATUS[1] is the installer; [0] only reports whether printf wrote the answers.
+        con.send("printf 'y\\npc-vm-test-only\\npc-vm-test-only\\n\\n\\n\\n\\n\\n' | sudo gentoo.sh install-live "
+                 "2>&1 | tee /tmp/pc-install-test.log; echo INSTALL-EXIT-${PIPESTATUS[1]}")
         done = con.expect(r"INSTALL-EXIT-(\d+)", timeout)
         if done is None:
             print(f"FAIL  the installer did not finish within {timeout}s — console transcript in "

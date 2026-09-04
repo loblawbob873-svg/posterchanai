@@ -170,10 +170,10 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         fn = self.os[start:end]
         simple_views = [
             "ai", "articles", "blackjack", "blossom", "bookmarks", "budget", "calendar",
-            "calls", "chess", "code", "communities", "concord", "connect4", "contacts",
-            "details", "drafts", "global", "hangman", "holdem", "home", "mail", "market",
+            "calls", "chess", "code", "concord", "connect4", "contacts",
+            "details", "drafts", "global", "hangman", "holdem", "home", "mail",
             "markets", "meme", "messages", "news", "notes", "notifications", "repos",
-            "shorts", "signer", "stats", "streams", "sync", "texts", "tiles", "torrents",
+            "signer", "stats", "streams", "sync", "texts", "tiles", "torrents",
             "translate", "ttt", "vault", "websearch", "xdc",
         ]
         cases = [

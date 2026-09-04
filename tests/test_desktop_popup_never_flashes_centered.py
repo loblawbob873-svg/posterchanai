@@ -59,3 +59,29 @@ def test_popup_renderer_stays_transparent_until_placement_acknowledgement():
     assert "ipcRenderer.once('pc:host:popup-placed'" in PRELOAD
     assert "webFrame.removeInsertedCSS" in PRELOAD
     assert placement.count("pc:host:popup-placed") == 2  # positioned success plus the no-compositor fallback
+
+
+def test_the_shield_has_a_floor_because_the_latch_is_set_before_the_attempt():
+    """A LIVE, FULLY PAINTED MENU AT opacity:0 IS INDISTINGUISHABLE FROM A DEAD BUTTON.
+
+    The sheet is lifted only by `pc:host:popup-placed`, and `placePopupWindow` has three ways of
+    never sending it: the window was destroyed, `_popupWin !== win` (a second popup replaced this
+    one mid-flight), or the send itself throws. Observed on the real desktop while chasing the tray
+    flyout: a mapped `PosterChan Popup` view of the right size, in the right place, with `.os-pop`
+    drawn inside it — and nothing on screen.
+
+    Placement's own worst case is bounded (12 attempts 60ms apart, then it sends regardless), so
+    anything past a second means the message is not coming. Revealing an unplaced menu shows it
+    briefly where the compositor put it — the flash this shield exists to prevent — but a flash is a
+    menu you can use, and this is the case where the alternative is none.
+    """
+    body = PRELOAD.split("--pc-popup-surface", 1)[1].split("\n}\n", 1)[0]
+    assert "setTimeout(" in body, body
+    floor = int(body.split("setTimeout(()=>reveal(", 1)[1].split("),", 1)[1].split(")", 1)[0])
+    # Longer than placement's worst case (12 * 60ms) so it can never pre-empt a real placement…
+    assert floor > 720, floor
+    # …and short enough that nobody experiences it as a dead control.
+    assert floor <= 3000, floor
+    # One reveal path, so a placement that arrives after the floor cannot re-insert or double-remove.
+    assert body.count("removeInsertedCSS") == 2, body
+    assert "if(placed) return;" in body

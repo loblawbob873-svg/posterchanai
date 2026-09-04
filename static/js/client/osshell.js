@@ -118,12 +118,18 @@
            * .desktop scan appeared in the start menu with no icon at all: "browser terminal have
            * no desktop icons or start menu icons". */
           /* `iconUri` is the app's REAL picture, resolved by the main process (see pc:apps:list);
-           * `icon: 'grid'` stays as the fallback for anything whose theme icon could not be found,
+           * TWO CONVENTIONS MEET HERE, AND THE ROWS BELONG TO THE OTHER ONE. This file's own `ICO(n)`
+           * writes `#i-${n}`, so inside osshell the short name is right; but these rows are consumed
+           * by os.js, whose `iconSvg`/`appIcon` take a FULL symbol id and only prepend the `#`. So
+           * `icon:'grid'` became `<use href="#grid">` — a symbol that does not exist, which draws
+           * nothing and logs nothing: every native window's taskbar button and every machine app in
+           * the start menu had an INVISIBLE icon ("obs has no taskbar icon", measured as
+           * `<use href="#grid">` on the OBS button). The fallback is the symbol's real id.
            * and it has to be a symbol that EXISTS. This was `window`, which is not in the sprite —
            * and `iconSvg` emits a <use href="#i-window"> that draws empty space with no error, no
            * fallback and nothing in the console. */
           iconUri: String(a.iconUri || ''),
-          id: 'app:' + a.id, name: a.name, match: a.match, icon: 'grid',
+          id: 'app:' + a.id, name: a.name, match: a.match, icon: 'i-grid',
           comment: a.comment || '', group: a.group || 'Other', argv: a.argv, machine: true,
         }));
         _appsAt = Date.now();
@@ -201,7 +207,7 @@
         if(!own) continue;
         const view = String(own[1] || '').trim();
         rows.push({ id: w.id, app, title: view || 'Window', focused: !!w.focused,
-                    stashed: !!w.stashed, iconUri: '', icon: 'grid', own: true, view,
+                    stashed: !!w.stashed, iconUri: '', icon: 'i-grid', own: true, view,
                     workspace: String(w.workspace || ''), xwayland: !!w.xwayland,
                     label: view || 'Window' });
         continue;
@@ -242,7 +248,7 @@
       };
       const meta=(_apps||[]).find(a=>same(String(a.match||'').toLowerCase(),low));
       rows.push({ id: w.id, app, title, focused: !!w.focused, stashed: !!w.stashed,
-                  iconUri:meta ? String(meta.iconUri||'') : '', icon:'grid',
+                  iconUri:meta ? String(meta.iconUri||'') : '', icon:'i-grid',
                   workspace: String(w.workspace || ''), xwayland: !!w.xwayland,
                   /* The label a person recognises: the window's own title, which is the page or the
                    * document — the app name is what the ICON says. */
@@ -985,7 +991,10 @@
       x = Math.max(0, Math.round(r.right - w));
       y = Math.max(0, Math.round(r.top - h - 8));
     }catch(_){}
-    try{ root.pcPopup.open('tray', { x, y, width: w, height: h }); }catch(_){}
+    /* TOGGLE, NEVER OPEN — see the branch in bindPanel that calls this. `open` is not a toggle: a
+     * press made while the flyout is already up DESTROYS that window and asks for a replacement,
+     * and the replacement loses the focus race and dies before it is ever placed. */
+    try{ root.pcPopup.toggle('tray', { x, y, width: w, height: h }); }catch(_){}
   }
 
   /* Drawn INSIDE that window. The anchor is synthetic because there is no tray chip on this
@@ -1277,6 +1286,33 @@
     into.querySelectorAll('[data-os]').forEach(b => b.onclick = (e) => {
       e.stopPropagation();
       const kind = b.dataset.os;
+      /* THE PROCESS THAT HOLDS THE WINDOW DECIDES, AND IT IS ASKED FIRST.
+       *
+       * On PosterChanOS the whole tray is one button and its flyout is a popup WINDOW (see
+       * openTrayWindow). A window closes on blur, on Escape and on every choice, and this renderer
+       * is told about none of it — so `_pop` below is a paint flag it cannot keep, and asking
+       * `pcPopup.open` for a second surface while the first is up is not a toggle at all: the main
+       * process destroys the live window and creates a replacement, which loses the focus race and
+       * dies before it is ever placed or revealed. Measured in an isolated compositor, pressing the
+       * chip N times and then asking Wayfire what is mapped: 1 press → the flyout; 2 → two windows
+       * created and NOTHING on screen; 3 → the flyout; 4 → nothing. That is "the volume widget is
+       * not even functional", and it is the same alternate-press failure that Start, Notifications
+       * and connectivity were fixed for in os.js — arriving through the one taskbar panel that
+       * lives in this file instead, which is why the structural test there did not cover it.
+       *
+       * `toggle` is answered by the process that owns the window ("it was open; it is closed now"),
+       * so no press ever re-enters the create path. It is FIRST for the same reason it toggles: a
+       * flag this renderer cannot keep must not get to decide before the owner is asked.
+       *
+       * THE WHOLE TRAY IS ONE BUTTON, so this is the only interception the flyout needs: every
+       * other panel — network, Tor, power, the output switcher and the volume mixer — is a
+       * SUB-PANEL that replaces this one's body, and they all draw inside whichever surface this
+       * opened on. One branch, five panels. */
+      if(kind === 'quick' && !IN_POPUP && root.pcPopup && root.pcPopup.toggle){
+        closePop(true);
+        openTrayWindow(b);
+        return;
+      }
       /* A second press on the SAME chip closes it. Without this the popover is dismissed by the
        * outside-press handler and reopened by the click, so the button appears not to work. */
       if(_pop && _pop.dataset.kind === kind){ closePop(); return; }
@@ -1315,15 +1351,6 @@
         const a = AUDIO();
         const muted = !!(_sum && _sum.volume && _sum.volume.muted);
         if(a) a.setMuted(!muted, 'sink').then(repaintQuick, (err) => toast(String((err && err.message) || err)));
-        return;
-      }
-      /* THE WHOLE TRAY IS ONE BUTTON, so this is the only interception the flyout needs: every
-         other panel — network, Tor, power, the output switcher and the volume mixer — is a
-         SUB-PANEL that replaces this one's body, and they all draw inside whichever surface this
-         opened on. One branch, five panels. */
-      if(kind === 'quick' && !IN_POPUP && root.pcPopup && root.pcPopup.open){
-        closePop(true);
-        openTrayWindow(b);
         return;
       }
       closePop(true);

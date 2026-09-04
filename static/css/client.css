@@ -984,7 +984,7 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
   body.rb-collapsed .rightbar{display:none}
   body.rb-collapsed .rb-toggle{inset-inline-end:32px}   /* tab slides to the app's edge (= its outer padding) */
   /* Per-VIEW hide. app.js allowlists the timeline-shaped views (RB_SHOW_VIEWS) and sets .rb-off on
-     everything else — AI chat, News, Markets, Stats, Torrents, Shopping, Streams, chat rooms, Files,
+     everything else — AI chat, News, Markets, Stats, Torrents, Streams, chat rooms, Files,
      Settings, the games… all of which would rather have the width than a rail of unrelated posts.
      Same column drop as the manual collapse but a SEPARATE class — rb-collapsed is the user's
      persisted preference and must not be written by navigation. The ▸ tab goes too: leaving it
@@ -3432,11 +3432,6 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 .stream-thumb{position:relative;aspect-ratio:16/9;background:radial-gradient(circle at 50% 40%,#1a0f33,var(--bg2));display:flex;align-items:center;justify-content:center;overflow:hidden}
 .stream-thumb img{width:100%;height:100%;object-fit:cover;display:block;transition:.3s}
 .stream-card:hover .stream-thumb img{transform:scale(1.05)}
-.tl-notes>.community-card{display:grid;grid-template-columns:min(180px,28%) minmax(0,1fr);
-  width:100%;border-radius:0;border-width:0 0 1px;animation:none}
-.tl-notes>.community-card:hover{transform:none}
-.tl-notes>.community-card .stream-thumb{aspect-ratio:auto;min-height:112px;max-height:156px}
-.tl-notes>.community-card .stream-meta{min-width:0;align-self:center}
 .stream-thumb.noimg img{display:none}
 .stream-play{font-size:36px;color:var(--neon2);filter:drop-shadow(0 0 10px rgba(var(--accent2-rgb),.6))}
 .stream-meta{padding:12px 14px}
@@ -3450,46 +3445,6 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
 .stream-view{padding:20px 22px 60px;max-width:900px;margin:0 auto;animation:fade .25s}
 .stream-player{width:100%;max-height:62vh;background:#000;border-radius:14px;border:1px solid var(--neon2);margin:14px 0;display:block;box-shadow:0 0 28px rgba(var(--accent2-rgb),.25)}
 
-/* ===== Market / classified listings (NIP-99) ===== */
-.mkt-filter{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
-.mkt-cats{display:flex;flex-wrap:wrap;gap:8px}
-.mkt-chip{background:var(--panel2);border:1px solid var(--line);color:var(--muted);font-size:12px;font-weight:600;
-  padding:6px 12px;border-radius:20px;cursor:pointer;transition:.14s;white-space:nowrap}
-.mkt-chip:hover{border-color:var(--neon);color:#fff}
-.mkt-chip.on{background:linear-gradient(135deg,var(--neon),var(--neon2));color:#06010f;border-color:transparent;box-shadow:0 0 12px rgba(var(--accent2-rgb),.35)}
-.mkt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(218px,1fr));gap:16px;padding:18px}
-.mkt-card{background:var(--panel2);border:1px solid var(--line);border-radius:16px;overflow:hidden;cursor:pointer;transition:.16s;animation:fade .25s;display:flex;flex-direction:column}
-.mkt-card:hover{border-color:var(--neon);box-shadow:var(--glow),0 0 24px rgba(var(--accent2-rgb),.2);transform:translateY(-3px)}
-.mkt-card.sold{opacity:.62}
-.mkt-thumb{position:relative;aspect-ratio:4/3;background:radial-gradient(circle at 50% 40%,#1a0f33,var(--bg2));display:flex;align-items:center;justify-content:center;overflow:hidden}
-.mkt-thumb img{width:100%;height:100%;object-fit:cover;display:block;transition:.3s}
-.mkt-card:hover .mkt-thumb img{transform:scale(1.05)}
-.mkt-noimg{font-size:40px;opacity:.5}
-.mkt-sold-badge{background:linear-gradient(135deg,#ff2b4d,var(--neon));color:#fff;font-size:11px;font-weight:800;padding:4px 10px;border-radius:7px;letter-spacing:.6px;box-shadow:0 0 14px rgba(255,43,77,.6)}
-.mkt-thumb .mkt-sold-badge{position:absolute;top:9px;inset-inline-start:9px}
-.mkt-info{padding:12px 14px;display:flex;flex-direction:column;gap:6px;flex:1}
-.mkt-price{font-size:20px;font-weight:800;color:var(--neon);text-shadow:0 0 10px rgba(var(--accent-rgb),.4)}
-.mkt-title{font-weight:650;font-size:15px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.mkt-loc{font-size:12px;color:var(--muted)}
-.mkt-info .art-by{margin-top:auto}
-.listing-view{padding:18px 22px 60px;max-width:860px;margin:0 auto;animation:fade .25s}
-.li-gallery{margin:14px 0}
-.li-main{width:100%;max-height:460px;object-fit:contain;background:#06010f;border-radius:16px;border:1px solid var(--line);box-shadow:0 0 28px rgba(var(--accent2-rgb),.18);cursor:zoom-in;display:block}
-.li-thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.li-th{width:72px;height:54px;object-fit:cover;border-radius:9px;border:2px solid var(--line);cursor:pointer;transition:.14s}
-.li-th.on,.li-th:hover{border-color:var(--neon2);box-shadow:0 0 12px rgba(var(--accent2-rgb),.4)}
-.li-head{margin:6px 0}
-.li-price{font-size:30px;font-weight:800;color:var(--neon);text-shadow:0 0 14px rgba(var(--accent-rgb),.4);display:flex;align-items:center;gap:10px}
-.li-title{font-size:24px;margin:6px 0;line-height:1.2}
-.li-cats{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.li-by{display:flex;align-items:center;gap:10px;margin:12px 0;cursor:pointer}
-.li-actions{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0;padding-bottom:6px;border-bottom:1px solid var(--line)}
-.li-body{margin-top:14px}
-.le-pricerow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-.le-imgs{display:flex;flex-wrap:wrap;gap:10px}
-.le-img{position:relative;width:90px;height:90px}
-.le-img img{width:100%;height:100%;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
-.le-img-x{position:absolute;top:-7px;inset-inline-end:-7px;width:22px;height:22px;border-radius:50%;border:none;background:#ff2b4d;color:#fff;cursor:pointer;font-size:12px;line-height:1;box-shadow:0 0 8px rgba(255,43,77,.6)}
 
 @media(max-width:820px){
   .article-card{padding:14px}
@@ -3497,19 +3452,7 @@ h3 svg.ic.h-ic{width:19px;height:19px;vertical-align:-3px;margin-inline-end:4px;
   .av-title{font-size:24px}
   .article-view,.article-editor,.stream-view{padding:16px 14px 60px}
   .stream-grid{grid-template-columns:1fr 1fr;gap:10px;padding:12px}
-  .tl-notes>.community-card{grid-template-columns:108px minmax(0,1fr)}
-  .tl-notes>.community-card .stream-thumb{min-height:96px;max-height:124px}
   .av-body{font-size:17px}
-  .mkt-grid{grid-template-columns:1fr 1fr;gap:12px;padding:12px}
-  .mkt-filter{padding:10px 12px}
-  .mkt-price{font-size:17px}
-  .mkt-title{font-size:15px}
-  .listing-view{padding:14px 14px 60px}
-  .li-title{font-size:24px}
-  .li-price{font-size:24px}
-  .le-pricerow{grid-template-columns:1fr 1fr}
-  .le-pricerow .fld:first-child{grid-column:1/-1}
-  .li-actions .btn{flex:1 1 auto}
 }
 
 /* ===== floating mini stream player (desktop only) ===== */
@@ -6264,9 +6207,9 @@ img.mb-resvid{width:auto;height:auto;max-width:100%;margin:0 auto;display:block;
 /* Same cursor for the Blossom picker's grid, which is now arrow/vim navigable. */
 .file-card.kb{outline:2px solid var(--neon);outline-offset:2px}
 
-/* Cursor on the other card views (Streams, Articles, Shopping, Communities, Pics). They are
+/* Cursor on the other card views (Streams, Articles, Pics). They are
    bordered cards rather than full-bleed rows, so a ring reads better here than the inset rule. */
-.stream-card.sel,.article-card.sel,.mkt-card.sel,.community-card.sel,.channel-card.sel,.fc-card.sel,.pic-card.sel{
+.stream-card.sel,.article-card.sel,.channel-card.sel,.fc-card.sel,.pic-card.sel{
   outline:2px solid var(--neon);outline-offset:2px}
 .news-card.sel{outline:2px solid var(--neon);outline-offset:2px}
 /* Web Search results. Without this the cursor IS on the card and nothing shows it, which is
@@ -9060,51 +9003,6 @@ body.popout-chat .scm-input{ flex:0 0 auto !important; }
 
 /* rows a permission gate removed — its own class so hidden's and nav-off's owners never fight it */
 .gated-off{display:none !important}
-
-/* ---------- Shorts (Discover → Shorts): a vertical snap feed, one video on screen at a time ----- */
-.shorts-wrap{height:calc(100dvh - 130px);overflow-y:auto;scroll-snap-type:y mandatory;
-  border-radius:14px;background:var(--panel,#101014);-webkit-overflow-scrolling:touch}
-.short-card{position:relative;height:100%;scroll-snap-align:start;scroll-snap-stop:always;
-  background:#000;overflow:hidden;border-radius:14px;margin-bottom:10px}
-.short-media,.short-media video,.short-media img{position:absolute;inset:0;width:100%;height:100%;
-  object-fit:cover;background:#000}
-.short-top{position:absolute;top:10px;right:10px;z-index:3}
-.short-top .short-mute{background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;
-  width:38px;height:38px;font-size:16px}
-.short-overlay{position:absolute;left:12px;right:64px;bottom:14px;z-index:3;color:#fff;
-  text-shadow:0 1px 3px rgba(0,0,0,.8)}
-.short-auth{display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px}
-.short-auth img{width:32px;height:32px;border-radius:50%;border:1.5px solid rgba(255,255,255,.85);flex:none}
-.short-auth b{color:#fff;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.short-title{font-size:14px;line-height:1.35;max-height:3.9em;overflow:hidden}
-.short-rail{position:absolute;right:10px;bottom:18px;z-index:3;display:flex;flex-direction:column;gap:12px}
-.short-act{background:rgba(0,0,0,.55);border:none;border-radius:50%;width:44px;height:44px;
-  display:flex;align-items:center;justify-content:center;color:#fff;cursor:pointer}
-.short-act .ic{width:20px;height:20px;fill:currentColor}
-/* Desktop: a centered portrait column, like every phone-shaped surface here */
-@media (min-width:1024px){ .shorts-wrap{max-width:440px;margin:0 auto;height:calc(100vh - 150px)} }
-/* Phones: full-bleed under the topbar, above the bottom bar */
-@media (max-width:700px){ .shorts-wrap{height:calc(100dvh - 118px);border-radius:10px} }
-
-/* Shorts browse grid — the front door; the full-screen player is where a tap lands */
-.shorts-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:4px}
-@media (min-width:700px){ .shorts-grid{grid-template-columns:repeat(3,1fr)} }
-@media (min-width:1100px){ .shorts-grid{grid-template-columns:repeat(4,1fr)} }
-.short-tile{position:relative;aspect-ratio:9/16;border-radius:12px;overflow:hidden;cursor:pointer;
-  background:#000;border:1px solid var(--line)}
-.short-tile img{width:100%;height:100%;object-fit:cover;display:block}
-.short-tile-blank{display:flex;align-items:center;justify-content:center;height:100%;font-size:34px}
-.short-dur{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.65);color:#fff;
-  font-size:11px;padding:1px 6px;border-radius:8px}
-.short-tile-t{position:absolute;left:8px;right:8px;bottom:26px;color:#fff;font-size:12px;line-height:1.3;
-  max-height:2.6em;overflow:hidden;text-shadow:0 1px 3px rgba(0,0,0,.85)}
-.short-tile-a{position:absolute;left:8px;right:8px;bottom:6px;display:flex;align-items:center;gap:5px;
-  color:#ddd;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
-  text-shadow:0 1px 3px rgba(0,0,0,.85)}
-.short-tile-a img{width:16px;height:16px;border-radius:50%;flex:none}
-.short-top{display:flex;justify-content:space-between;left:10px;right:10px;position:absolute;top:10px;z-index:3}
-.short-back{background:rgba(18,10,35,.92);color:#fff;border:1px solid var(--neon);border-radius:10px;
-  min-height:42px;padding:8px 14px;font-weight:800;box-shadow:0 0 16px rgba(var(--accent-rgb),.42)}
 
 /* Files → the per-device trash block: subordinate to the folder chips, never dressed like them */
 /* The .fx-trash block is gone: the trash is browsed as a folder in the ordinary listing now,
