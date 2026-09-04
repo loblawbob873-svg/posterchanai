@@ -217,14 +217,15 @@ def test_the_title_the_client_sets_is_the_title_sway_matches():
 
 # ------------------------------------------------------------------ the Electron side
 
-def test_the_shell_makes_a_window_frameless_and_keeps_the_bridges():
+def test_the_shell_gives_real_windows_native_controls_and_keeps_the_bridges():
     """Frameless because the client draws the SAME title bar it draws on the web — that is the
     promise that the UI is identical. The preload has to be the same one, or `pcWM`, the signer and
     the clipboard are missing from every window."""
     handler = MAIN_JS[MAIN_JS.index("setWindowOpenHandler"):]
     handler = handler[:handler.index("will-redirect")]
     assert "pcwin=" in handler, "the shell no longer recognises a window URL"
-    assert "frame: false" in handler
+    assert "frame: true" in handler
+    assert "no close/minimise/maximise" in handler
     assert "preload.js" in handler
 
 

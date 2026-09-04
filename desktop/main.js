@@ -701,9 +701,10 @@ function createWindow(assignment) {
      * compositor toplevel so sway stacks it with Telegram and Firefox natively, instead of the
      * desktop faking "bring to front" by taking the native surface off the screen.
      *
-     * Frameless on purpose: the client draws the same title bar it draws on the web, so the UI is
-     * identical in a browser tab and in a real window. sway is told to float these by TITLE (the
-     * app_id is shared with the desktop, which must stay tiled) — see sway.config. */
+     * A real toplevel must also have real controls. The child page is one app view and does not
+     * render the desktop's `.osw` titlebar, so `frame:false` left it with no close/minimise/maximise
+     * affordance at all under Wayfire. Electron's client frame supplies those controls while the
+     * shell surfaces and transient popups remain explicitly frameless. */
     if (isOurs(url) && /[?&]pcwin=/.test(url)) {
       /* `typeof` keeps the small shipped-handler simulation self-contained while production always
        * takes this process-wide path. Return the shared frozen result so the title-at-map regression
@@ -715,7 +716,7 @@ function createWindow(assignment) {
         return Number.isFinite(v) && v > 0 ? v : fallback;
       };
       return { action: 'allow', overrideBrowserWindowOptions: {
-        frame: false,
+        frame: true,
         /* THE TITLE HAS TO BE RIGHT THE INSTANT THE WINDOW MAPS.
          *
          * sway evaluates `for_window` when a surface maps, and the rule that floats these keys on
