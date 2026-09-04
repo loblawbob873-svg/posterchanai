@@ -24,7 +24,18 @@ health=${PC_WAYFIRE_HEALTH:-/usr/local/bin/pc-wayfire-health}
 # A launcher lock prevents simultaneous helpers.  This second guard prevents a shell started by an
 # old compositor autostart or a manual recovery command from being adopted into this session: its
 # environment/backend cannot be repaired after exec, and launching beside it creates two desktops.
-if pgrep -u "$(id -u)" -f '(^|/)posterchan-desktop .*--shell' >/dev/null 2>&1; then
+live_shell_pid=''
+for proc in /proc/[0-9]*; do
+	[ "$(stat -c %u "$proc" 2>/dev/null || echo x)" = "$(id -u)" ] || continue
+	argv0=$(tr '\0' '\n' <"$proc/cmdline" 2>/dev/null | sed -n '1p')
+	case "$argv0" in */posterchan-desktop) ;; *) continue ;; esac
+	# Renderer children carry --pc-shell-health-marker. A substring pgrep for `--shell` therefore
+	# rejected a clean compositor cutover until those unrelated children happened to exit.
+	if tr '\0' '\n' <"$proc/cmdline" 2>/dev/null | grep -Fx -- '--shell' >/dev/null; then
+		live_shell_pid=${proc##*/}; break
+	fi
+done
+if [ -n "$live_shell_pid" ]; then
 	echo "A PosterChan shell already belongs to another session" >&2
 	exit 1
 fi

@@ -277,6 +277,13 @@ def test_simultaneous_wayfire_launchers_create_one_shell(tmp_path):
         first.terminate(); first.wait(timeout=3)
 
 
+def test_wayfire_launcher_does_not_mistake_health_marker_renderer_for_shell():
+    source = LAUNCHER.read_text()
+    assert "grep -Fx -- '--shell'" in source
+    assert "posterchan-desktop .*--shell" not in source
+    assert "--pc-shell-health-marker" in source
+
+
 def test_package_replacement_after_mapping_fails_closed(tmp_path):
     script, env = _launcher_env(tmp_path)
     health = Path(env["PC_WAYFIRE_HEALTH"])
