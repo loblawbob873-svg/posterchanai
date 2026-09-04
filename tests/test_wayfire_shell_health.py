@@ -425,3 +425,36 @@ def test_gpu_early_death_gets_one_clean_cache_retry(tmp_path):
                    for name in ("GPUCache", "DawnCache", "GrShaderCache"))
     finally:
         proc.terminate(); proc.wait(timeout=3)
+
+
+def test_the_marker_is_only_painted_on_a_shell_surface():
+    """A POPPED-OUT WINDOW IS THE SAME PROCESS, AND process.argv IS THE PROCESS'S.
+
+    Every PosterChan window and every popup is a same-origin child in the shell's renderer, so all
+    of them saw `--pc-shell-health-marker` and painted the 8x8 diagnostic square in their own
+    top-left corner — permanently, 1px from the corner of the TITLE BAR rather than of the screen.
+    Reported as "why do all the posterchan windows have a colored square on the left? that is ugly".
+
+    The watchdog contract is unchanged: the probe screenshots the two SHELL surfaces, and those
+    still paint it.
+    """
+    src = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
+    gate = src.split("if(process.argv.includes('--pc-shell-health-marker')", 1)[1].split("\n", 1)[0]
+    assert "_pcShellSurface()" in gate, gate
+    fn = src.split("const _pcShellSurface", 1)[1].split("\n};", 1)[0]
+    # A popped-out window is opened through window.open and keeps a live opener; a shell surface is
+    # created by main.js and has none.
+    assert "window.opener" in fn
+    # And the menus, which main.js loads WITHOUT an opener but with a ?pcpopup= query.
+    assert "pcpopup" in fn
+    # It must fail CLOSED on a throw: a cross-origin opener read raises, and a window that cannot
+    # answer the question is not a shell surface.
+    assert "catch(_){ return false; }" in fn
+
+
+def test_the_probe_still_looks_for_both_shell_markers():
+    """The two shell surfaces are told apart by colour, and the gate reads either."""
+    probe = (ROOT / "os/bin/pc-wayfire-health").read_text(encoding="utf-8")
+    assert "PRIMARY_MARKER" in probe and "SECONDARY_MARKER" in probe
+    preload = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
+    assert "--pc-secondary-surface" in preload

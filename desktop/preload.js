@@ -20,7 +20,21 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
  * installed by the preload (not page JavaScript), so a stalled client bootstrap still fails the
  * visual gate.  Four solid quadrants survive fractional output scaling and colour rounding while
  * remaining smaller than a title-bar icon. */
-if(process.argv.includes('--pc-shell-health-marker')){
+/* ...AND ONLY ON A SHELL SURFACE. `process.argv` belongs to the PROCESS, and a popped-out window is
+ * a same-origin child in the SHELL'S renderer process — so every window and every popup inherited
+ * the flag and painted this 8x8 marker in its own top-left corner, permanently. Reported exactly
+ * that way: "why do all the posterchan windows have a colored square on the left? that is ugly."
+ * It is a watchdog contract for the two shell surfaces the health probe screenshots, and on those
+ * it sits 1px from the corner of the screen; in a window it is 1px from the corner of the TITLE
+ * BAR, which is where somebody is looking. `window.opener` is the honest test — a popped-out window
+ * is opened through window.open and keeps a live opener, a shell surface is created by main.js and
+ * has none — and `?pcpopup=` covers the menus, which main.js loads without an opener. */
+const _pcShellSurface = () => {
+  try{ if(window.opener) return false; }catch(_){ return false; }
+  try{ if(new URLSearchParams(location.search).get('pcpopup')) return false; }catch(_){ }
+  return true;
+};
+if(process.argv.includes('--pc-shell-health-marker') && _pcShellSurface()){
   const installHealthMarker=()=>{
     if(document.getElementById('pc-shell-health-marker'))return;
     const marker=document.createElement('div');
