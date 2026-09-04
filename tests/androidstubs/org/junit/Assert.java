@@ -11,6 +11,7 @@ public class Assert {
   public static void assertFalse(boolean c) { }
   public static void assertNotNull(String m, Object o) { }
   public static void assertNotNull(Object o) { }
+  public static void assertArrayEquals(byte[] expected, byte[] actual) { }
   public static void assertEquals(String m, Object a, Object b) { }
   public static void assertEquals(Object a, Object b) { }
   public static void assertEquals(String m, long a, long b) { }
