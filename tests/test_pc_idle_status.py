@@ -149,3 +149,11 @@ def test_both_copies_of_the_helper_are_the_same_file():
     one is the only one any machine ever runs. A fix in one is not a fix."""
     assert SCRIPT.read_bytes() == INSTALLED.read_bytes(), (
         "os/bin/pc-idle and the packaged copy have drifted; the machine runs the packaged one")
+
+
+def test_wayfire_keeps_swayidle_as_protocol_watcher_without_swaymsg():
+    source = SCRIPT.read_text()
+    branch = source[source.index('if [ -n "${WAYFIRE_SOCKET:-}" ]'):]
+    branch = branch[:branch.index("fi\n")]
+    assert "exec swayidle -w" in branch
+    assert "swaymsg" not in branch

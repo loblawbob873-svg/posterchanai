@@ -91,7 +91,21 @@ class WayfireWM{
     server.on('error',()=>{if(this.actionServer===server)this.actionServer=null;});
     server.listen(socketPath,()=>{try{fs.chmodSync(socketPath,0o600);}catch(_){}});this.actionServer=server;
   }
-  async subscribe(){if(this.subscribed)return;await this._send('window-rules/events/watch',{events:['view-mapped','view-unmapped','view-focused','view-title-changed','view-app-id-changed','view-set-output','view-geometry-changed','view-minimized','view-fullscreen','output-layout-changed','workspace-activated']});this._openActionSocket();this.subscribed=true;}
+  async subscribe(){
+    if(this.subscribed)return;
+    /* 0.10 rejects the entire watch request when ONE event belongs to a newer release. Negotiate
+     * down one named event at a time; losing an output notification only means the existing display
+     * poll performs reconciliation, while losing every event made focus/minimise look single-window. */
+    const events=['view-mapped','view-unmapped','view-focused','view-title-changed','view-app-id-changed',
+      'view-set-output','view-geometry-changed','view-minimized','view-fullscreen','output-layout-changed','workspace-activated'];
+    while(events.length){
+      try{await this._send('window-rules/events/watch',{events});break;}
+      catch(e){const match=/Event not found:\s*["']([^"']+)["']/i.exec(String(e&&e.message||e));
+        if(!match)throw e;const at=events.indexOf(match[1]);if(at<0)throw e;events.splice(at,1);}
+    }
+    if(!events.length)throw new Error('Wayfire exposes no usable window events');
+    this._openActionSocket();this.subscribed=true;
+  }
   on(name,fn){if(!this.listeners.has(name))this.listeners.set(name,new Set());this.listeners.get(name).add(fn);return()=>this.listeners.get(name).delete(fn);}
   launch(argv,opts){const o=opts||{},child=spawn(argv[0],argv.slice(1),{detached:true,stdio:'ignore',cwd:o.cwd||undefined,env:Object.assign({},process.env,o.env||{})});let fail;const failed=new Promise(r=>{fail=r;});child.on('error',e=>fail(e&&e.code==='ENOENT'?argv[0]+' is not installed':String(e&&e.message||e)));child.unref();return{pid:child.pid,failed};}
   async waitForWindow(pid,ms,kin){const end=Date.now()+(ms||15000),roots=[Number(pid),...(kin||[]).map(Number)];let family=pidFamily(roots,[]);for(;;){family=pidFamily([...family],procParents());const hit=(await this.windows().catch(()=>[])).find(w=>family.has(w.pid));if(hit)return hit;if(Date.now()>end)return null;await new Promise(r=>setTimeout(r,250));}}

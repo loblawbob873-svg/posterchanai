@@ -123,6 +123,12 @@ else:
       # One instance. `exec_always` re-runs this on every sway reload, and two swayidles fight over
       # the same screen -- one turning it off while the other turns it on.
       pkill -x swayidle 2>/dev/null || true
+      if [ -n "${WAYFIRE_SOCKET:-}" ]; then
+          # Wayfire's idle plugin owns DPMS (and fullscreen inhibit) because 0.10 has no stable
+          # compositor-neutral DPMS IPC. Keep swayidle as the protocol watcher requested by the OS:
+          # it observes idle inhibitors while the compositor performs the matching power action.
+          exec swayidle -w timeout "$SECS" true resume true
+      fi
       exec swayidle -w \
           timeout "$SECS" 'swaymsg "output * power off"' \
           resume          'swaymsg "output * power on"'

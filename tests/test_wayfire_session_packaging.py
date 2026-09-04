@@ -94,9 +94,12 @@ def test_wayfire_and_fallback_are_shipped_together():
     assert '"media-libs/mesa vulkan wayland"' in gentoo
     assert "/usr/local/bin/pc-compositor-session" in gentoo
     assert "xwayland = true" in config
+    assert "preferred_decoration_mode = server" in config
     assert "pc-shell-start-wayfire" in config
+    assert "idle_watch = /usr/local/bin/pc-idle" in config
     assert "ipc ipc-rules" in config
     assert "fullscreen then maximize" not in config
+    assert "then maximize" not in config
     assert "ignore_views" in config and "PosterChan Window" in config
     assert 'title contains "PosterChan Window"' in config
     assert "startswith" not in config

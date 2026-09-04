@@ -64,6 +64,37 @@ def test_wayfire_backend_is_theme_neutral_and_sway_is_rollback_default():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_wayfire_010_event_negotiation_keeps_multi_window_focus_live(tmp_path):
+    script = tmp_path / "events.js"
+    script.write_text(textwrap.dedent(f"""
+      const net=require('net');const sock={json.dumps(str(tmp_path / 'wf.socket'))},calls=[];
+      const views=[
+        {{id:1,pid:10,'app-id':'place.poster.desktop',title:'PosterChan',mapped:true,'output-id':1}},
+        {{id:2,pid:20,'app-id':'firefox',title:'Firefox',mapped:true,'output-id':1}},
+        {{id:3,pid:30,'app-id':'foot',title:'Terminal',mapped:true,'output-id':1}},
+        {{id:4,pid:40,'app-id':'telegramdesktop',title:'Telegram',mapped:true,'output-id':1}}];
+      const frame=o=>{{const b=Buffer.from(JSON.stringify(o)),h=Buffer.alloc(4);h.writeUInt32LE(b.length);return Buffer.concat([h,b]);}};
+      const server=net.createServer(c=>{{let b=Buffer.alloc(0);c.on('data',x=>{{b=Buffer.concat([b,x]);while(b.length>=4){{const n=b.readUInt32LE();if(b.length<4+n)return;const q=JSON.parse(b.subarray(4,4+n));b=b.subarray(4+n);calls.push(q);let r={{ok:true}};
+        if(q.method==='window-rules/list-views')r=views;
+        if(q.method==='window-rules/events/watch'&&q.data.events.includes('output-layout-changed'))r={{error:'Event not found: "output-layout-changed"'}};
+        c.write(frame(r));}}}});}});
+      server.listen(sock,async()=>{{const {{WayfireWM}}=require({json.dumps(str(ROOT / 'desktop/wm-wayfire.js'))});const w=new WayfireWM(sock);
+        await w.subscribe();const before=await w.windows();await w.focus(2);await w.hide(2);await w.show(2);await w.focus(3);
+        console.log(JSON.stringify({{before,calls,subscribed:w.subscribed}}));w.sock.destroy();w.actionServer.close();server.close();}});
+    """), encoding="utf-8")
+    run = subprocess.run(["node", str(script)], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert len(result["before"]) == 4 and result["subscribed"] is True
+    watches = [c for c in result["calls"] if c["method"] == "window-rules/events/watch"]
+    assert len(watches) == 2
+    assert "output-layout-changed" not in watches[-1]["data"]["events"]
+    methods = [c["method"] for c in result["calls"]]
+    assert methods[-4:] == ["window-rules/focus-view", "wm-actions/set-minimized",
+                            "wm-actions/set-minimized", "window-rules/focus-view"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_wayfire_frames_decode_fragmented_and_coalesced_messages():
     js = f"""
       const {{wfFrame,wfDecoder}}=require({json.dumps(str(ROOT / 'desktop/wm-wayfire.js'))});
