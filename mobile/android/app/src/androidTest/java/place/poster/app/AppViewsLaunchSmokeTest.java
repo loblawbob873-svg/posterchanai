@@ -46,6 +46,18 @@ public final class AppViewsLaunchSmokeTest {
             assertTrue("bundled client never became ready: " + ready,
                     ready.contains("complete|true|true"));
 
+            // NIP-42 challenges arrive during ordinary logged-out hydration. Exercise the exact
+            // synchronous-refusal shape without depending on (or prompting) whichever account the
+            // emulator retained: the transport must return a contained promise, never throw.
+            String authCallback = eval(web, "(()=>{const old=Relay._authSigner;try{"
+                    + "Relay.setAuthSigner(()=>{throw new Error('locked');});"
+                    + "const p=Relay._authenticate({challenge:'smoke',url:'wss://smoke.invalid',"
+                    + "authPubkeys:new Set(),_send:()=>false});p.finally(()=>Relay.setAuthSigner(old));"
+                    + "return p&&typeof p.then==='function'?'contained':'not-a-promise';}"
+                    + "catch(e){Relay.setAuthSigner(old);return 'throw:'+String(e&&e.message||e);}})()");
+            assertTrue("relay AUTH refusal escaped transport containment: " + authCallback,
+                    authCallback.contains("contained"));
+
             // Install the probes before the first route. Resource-load failures are intentionally
             // excluded: window.onerror only receives them in capture mode and they are not uncaught
             // JavaScript. Runtime exceptions and rejected promises are the renderer-crash precursors

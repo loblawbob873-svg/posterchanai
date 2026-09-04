@@ -21,6 +21,8 @@ def test_app_gives_relay_transport_the_active_signer():
     src = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8", errors="ignore")
     assert "Relay.setAuthSigner" in src
     assert "signer.signEvent(Object.assign({}, tpl, {pubkey:ME.pubkey}))" in src
+    assert "if(GUEST || !signer) return null" in src
+    assert "login required for relay AUTH" not in src
 
 
 def test_extension_authenticates_before_replaying_private_vault_read():

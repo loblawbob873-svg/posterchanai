@@ -1383,7 +1383,10 @@
   // serves or accepts kind 78/30078. Relay owns sockets/challenges; the app owns the active signer.
   // A closure (rather than the signer object) also follows account/signer changes without stale keys.
   Relay.setAuthSigner(tpl => {
-    if(GUEST || !signer) throw new Error('login required for relay AUTH');
+    // A relay challenge is transport negotiation, not a user action. Logged-out screens routinely
+    // encounter owner-protected documents while hydrating; declining AUTH must not look like an app
+    // exception or trigger a login/prompt storm. The relay completes that subscription as denied.
+    if(GUEST || !signer) return null;
     return signer.signEvent(Object.assign({}, tpl, {pubkey:ME.pubkey}));
   });
   // ONE cached kind-27235 ownership proof (base64) reused by ALL /client self-auth endpoints (drafts,

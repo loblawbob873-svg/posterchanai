@@ -63,5 +63,21 @@ if(!rejectedAuth)fail('rejected relay received no AUTH');
 reject.reply(['OK',rejectedAuth[1].id,false,'invalid: challenge expired']);
 await sleep(30);
 if(rejectEnded!==1)fail('rejected AUTH left subscription loading');
+
+// Logged-out/locked signers may decline synchronously. The transport must turn that into a normal
+// unauthenticated result, finish the subscription, and never leak it as an unhandled rejection.
+let unhandled=[];
+process.on('unhandledRejection',reason=>unhandled.push(String(reason)));
+R.setAuthSigner(()=>{throw new Error('login required for relay AUTH');});
+R.configure({urls:['wss://guest.example/relay'],verify:false});
+await sleep(20);
+const guest=WS.all.at(-1); guest.reply(['AUTH','challenge-guest']);
+let guestEnded=0;
+const gid=R.subscribe([{kinds:[30078],authors:['b'.repeat(64)]}],{onEvent(){},onEose(){guestEnded++;},live:true});
+guest.reply(['CLOSED',gid,'auth-required: authenticate']);
+await sleep(30);
+if(guest.sent.some(m=>m[0]==='AUTH'))fail('logged-out signer sent an AUTH event');
+if(guestEnded!==1)fail('logged-out AUTH challenge left subscription loading');
+if(unhandled.length)fail(`logged-out AUTH escaped as unhandled rejection: ${unhandled}`);
 console.log('nip78 auth challenge and private subscription retry ok');
 process.exit(0);

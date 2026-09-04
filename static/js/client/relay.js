@@ -179,7 +179,12 @@
       if(wantPubkey && conn.authPubkeys.has(wantPubkey))return Promise.resolve(true);
       if(conn._authPromise)return conn._authPromise;
       if(!conn.challenge || !this._authSigner)return Promise.resolve(false);
-      conn._authPromise=Promise.resolve(this._authSigner({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
+      // Start the signer inside the promise chain. Local/locked signers can reject by throwing
+      // synchronously, while extension and remote signers reject asynchronously; both mean "this
+      // connection remains unauthenticated" and must take the same contained path. Evaluating the
+      // callback as Promise.resolve(callback()) let a guest callback throw before .catch existed,
+      // producing an unhandled rejection in every logged-out view that queried private app data.
+      conn._authPromise=Promise.resolve().then(()=>this._authSigner({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
         tags:[['relay',conn.url],['challenge',String(conn.challenge)]]})).then(ev=>new Promise(resolve=>{
           if(!ev||!ev.id)return resolve(false);
           const tm=setTimeout(()=>{this._okWaiters.delete(ev.id);resolve(false);},8000);
