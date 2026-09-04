@@ -122,11 +122,43 @@ def test_the_renderer_knows_which_surface_it_is():
 
 # ── it fills its window ──────────────────────────────────────────────────────────────────────────
 
-def test_the_panel_fills_the_window_it_is_hosted_in():
+def test_the_panel_is_taken_out_of_its_chip_anchored_positioning():
     """`.os-pop` is absolutely positioned beside its chip and positionPop writes left/top into it.
-    Under `position:static` those writes are inert and the panel fills the surface — which is what a
-    flyout that IS a window should do."""
+    Under `position:static` those writes are inert, which is what lets the window own the placement."""
     assert ".os-popup-body .os-pop{" in CSS
     rule = CSS.split(".os-popup-body .os-pop{", 1)[1].split("}", 1)[0]
     assert "position:static" in rule
-    assert "height:100vh" in rule
+
+
+def test_the_tray_flyout_hugs_its_content_instead_of_padding_it_out():
+    """A 640px WINDOW HELD A 369px PANEL, AND THE OTHER 271px WERE PAINTED PANEL.
+
+    The window is sized once, tall enough for the network list a sub-panel swaps in, so Quick
+    Settings at rest -- four tiles and a slider -- hung a wide band of empty panel under the Volume
+    mixer button. Measured on the real desktop: window 640, content 369. The notification centre
+    still fills its window (it is one long list); only the tray flyout hugs.
+    """
+    assert ".os-popup-body.os-tray-popup .os-pop{" in CSS
+    rule = CSS.split(".os-popup-body.os-tray-popup .os-pop{", 1)[1].split("}", 1)[0]
+    assert "height:auto" in rule, "the flyout still stretches to the whole window"
+    assert "max-height:100vh" in rule, "a tall sub-panel must still be allowed the whole window"
+    # Its own edge comes back: against a transparent window a square-cornered panel that simply
+    # stops looks like a clipped surface rather than a flyout.
+    assert "border-radius" in rule
+
+
+def test_the_tray_flyout_sits_on_the_edge_it_rises_from():
+    """AND IT HAS TO BE SAID ON THE HOST, NOT THE BODY.
+
+    `#os-popup-host` is `position:fixed`, so it is out of the body's flow: a flex rule on the body
+    moves nothing and the shortened panel stayed pinned to the TOP of its window -- floating ~271px
+    above the taskbar, which is a different wrong from the one being fixed. Measured after: panel
+    top 271, bottom 640, flush with the window's bottom edge.
+    """
+    assert ".os-popup-body.os-tray-popup #os-popup-host{" in CSS
+    rule = CSS.split(".os-popup-body.os-tray-popup #os-popup-host{", 1)[1].split("}", 1)[0]
+    assert "flex-direction:column" in rule
+    assert "justify-content:flex-end" in rule
+    body_rule = CSS.split(".os-popup-body.os-tray-popup{", 1)[1].split("}", 1)[0]
+    assert "background:transparent" in body_rule, (
+        "the window is opened transparent; a painted body puts the dead space back")

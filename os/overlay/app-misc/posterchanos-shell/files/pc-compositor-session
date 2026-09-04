@@ -18,6 +18,16 @@ case "$selected" in
 	*) selected=sway ;;
 esac
 
+# EVERY LINE IN THIS LOG SAID THE SAME THING AND NONE OF THEM SAID WHEN.
+#
+# "Wayfire exited with status 0; falling back to Sway for this login." twenty-six times over, with
+# no timestamp and no reason -- so it cannot answer the only two questions ever asked of it: is this
+# happening now, and what happened. A fallback is the loudest event on this machine (the whole
+# desktop changes compositor) and it was the quietest line in the logs.
+note() {
+	printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')" "$*" >>"$state_dir/compositor-fallback.log"
+}
+
 run_sway() {
 	export XDG_CURRENT_DESKTOP=sway
 	export XDG_SESSION_DESKTOP=sway
@@ -40,11 +50,9 @@ if [ "$selected" = wayfire ]; then
 	# runs before DRM ownership changes, so an overlay/Desktop publication race cannot black-screen
 	# the session and rely on the later watchdog to put it back.
 	if ! command -v wayfire >/dev/null 2>&1 || ! wayfire --version >/dev/null 2>&1; then
-		printf '%s\n' "Wayfire was selected but its executable/ABI is unavailable; falling back to Sway." \
-			>>"$state_dir/compositor-fallback.log"
+		note "Wayfire was selected but its executable/ABI is unavailable; falling back to Sway."
 	elif [ ! -x "$health" ] || ! "$health" bundle >>"$state_dir/compositor-fallback.log" 2>&1; then
-		printf '%s\n' "Wayfire was selected but the installed desktop is not Wayfire-ready; falling back to Sway." \
-			>>"$state_dir/compositor-fallback.log"
+		note "Wayfire was selected but the installed desktop is not Wayfire-ready; falling back to Sway."
 	else
 		export XDG_CURRENT_DESKTOP=wayfire
 		export XDG_SESSION_DESKTOP=wayfire
@@ -60,7 +68,10 @@ if [ "$selected" = wayfire ]; then
 		while kill -0 "$wayfire_pid" 2>/dev/null && [ ! -e "$PC_WAYFIRE_READY_FILE" ] && [ "$n" -lt 600 ]; do
 			sleep 0.1; n=$((n + 1))
 		done
+		reason="Wayfire exiting on its own"
 		if [ ! -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
+			reason="the shell never signalled ready"
+			note "no ready signal within 60s; stopping Wayfire."
 			kill "$wayfire_pid" 2>/dev/null || true
 		elif [ -e "$PC_WAYFIRE_READY_FILE" ] && kill -0 "$wayfire_pid" 2>/dev/null; then
 			# A shell restart deliberately creates a short gap between the old Electron process and
@@ -75,14 +86,39 @@ if [ "$selected" = wayfire ]; then
 				if [ -n "$shell_pid" ] && kill -0 "$shell_pid" 2>/dev/null; then
 					while kill -0 "$wayfire_pid" 2>/dev/null && kill -0 "$shell_pid" 2>/dev/null; do sleep 1; done
 				fi
+				# HOW LONG TO WAIT FOR A REPLACEMENT IS TWO DIFFERENT QUESTIONS.
+				#
+				# A crash should fall back fast; the desktop is gone and Sway is the way back. A
+				# DELIBERATE restart must not fall back at all -- and it cannot answer inside 3
+				# seconds, because the launcher waits up to 10s for the Xwayland socket and then up
+				# to 30s on its surface/GPU health gate before the replacement is even judged. Those
+				# two numbers were set independently and never compared, so Ctrl+Alt+Backspace and
+				# the automatic post-update restart reliably killed Wayfire and demoted the login to
+				# Sway -- the desktop came back on the other compositor, with only a line in
+				# compositor-fallback.log to say so. pc-shell-restart leaves a marker; while it is
+				# FRESH this waits for the launcher's own worst case, and a restart that dies
+				# without clearing it ages out into the ordinary crash behaviour.
 				old_pid=$shell_pid n=0 shell_pid=''
-				while kill -0 "$wayfire_pid" 2>/dev/null && [ "$n" -lt 30 ]; do
+				restart_mark="$XDG_RUNTIME_DIR/posterchan-shell-restarting"
+				limit=30
+				if [ -f "$restart_mark" ]; then
+					mark_age=$(( $(date +%s 2>/dev/null || echo 0) - $(stat -c %Y "$restart_mark" 2>/dev/null || echo 0) ))
+					if [ "$mark_age" -ge 0 ] 2>/dev/null && [ "$mark_age" -lt 120 ] 2>/dev/null; then
+						limit=600
+					fi
+				fi
+				while kill -0 "$wayfire_pid" 2>/dev/null && [ "$n" -lt "$limit" ]; do
 					[ ! -r "$PC_WAYFIRE_SHELL_PID_FILE" ] || IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
 					case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
 					[ -n "$shell_pid" ] && [ "$shell_pid" != "$old_pid" ] && kill -0 "$shell_pid" 2>/dev/null && break
 					shell_pid=''; sleep 0.1; n=$((n + 1))
 				done
-				[ -n "$shell_pid" ] || break
+				if [ -z "$shell_pid" ]; then
+					reason="no replacement shell within ${limit}00ms of the last one exiting (restart marker $([ "$limit" -gt 30 ] && echo seen || echo absent))"
+					note "$reason; stopping Wayfire."
+					break
+				fi
+				note "shell replaced by pid $shell_pid; Wayfire kept."
 			done
 			kill -0 "$wayfire_pid" 2>/dev/null && kill "$wayfire_pid" 2>/dev/null || true
 		fi
@@ -104,8 +140,7 @@ if [ "$selected" = wayfire ]; then
 			kill -0 "$shell_pid" 2>/dev/null && kill -KILL "$shell_pid" 2>/dev/null || true
 		fi
 		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
-		printf '%s\n' "Wayfire exited with status $status; falling back to Sway for this login." \
-			>>"$state_dir/compositor-fallback.log"
+		note "Wayfire exited with status $status after $reason; falling back to Sway for this login."
 	fi
 fi
 

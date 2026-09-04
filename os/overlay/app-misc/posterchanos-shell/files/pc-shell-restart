@@ -43,6 +43,46 @@ if [ -n "$requested" ] && [ -z "$pids" ]; then
 fi
 
 if [ -n "$pids" ]; then
+	# SAY THAT THIS IS A RESTART, BEFORE THE SHELL DIES.
+	#
+	# pc-compositor-session supervises Wayfire by watching for a replacement shell PID and gives it
+	# 3 seconds. That is right for a CRASH -- a shell that will never come back should fall the
+	# login over to Sway quickly -- and far too short for a restart, because the launcher's own
+	# bounded startup (up to 10s waiting for the Xwayland socket, then a health gate of up to 30s)
+	# happens inside that window. So Ctrl+Alt+Backspace, and the automatic restart after an update,
+	# killed Wayfire and dropped the whole session to Sway: the desktop came back, on the other
+	# compositor, with only a line in compositor-fallback.log to say so.
+	#
+	# The marker is a mtime and nothing else. A restart that dies before the launcher can clear it
+	# ages out on its own, so this can extend the supervisor's patience without ever removing the
+	# crash fallback it exists for.
+	: >"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/posterchan-shell-restarting" 2>/dev/null || true
+	# STOP THE LAUNCHER, NOT ONLY THE SHELL -- OR THE OLD LAUNCHER FIGHTS THIS ONE AND BOTH LOSE.
+	#
+	# pc-shell-start-wayfire does not merely start the shell; it SUPERVISES it, and a shell that
+	# exits is a failure it answers by retrying -- twice, and then by giving up for good. Killing
+	# only the shell therefore looked, from the launcher still sitting in `wait`, exactly like a
+	# crash: it spawned its own replacement, raced this script's replacement for the same singleton
+	# and flock, burned both attempts inside a second (measured: two shells one second apart), then
+	# printed "failed the Wayfire surface/GPU health gate" and exited. With no launcher left,
+	# nothing ever published a replacement PID, so pc-compositor-session stopped Wayfire and the
+	# whole login came back on Sway. Ctrl+Alt+Backspace and the post-update restart both did this.
+	#
+	# The launcher's own TERM trap stops its shell and exits without retrying, so terminating it
+	# first is both the stop and the shutdown. The shell is TERMed below anyway: an older launcher,
+	# or a shell started by hand, may own no launcher at all.
+	launchers=''
+	for proc in /proc/[0-9]*; do
+		lpid=${proc##*/}
+		[ "$lpid" = "$$" ] && continue
+		[ -r "$proc/cmdline" ] || continue
+		lcmd=$(tr '\000' ' ' < "$proc/cmdline" 2>/dev/null || :)
+		case "$lcmd" in
+			*pc-shell-start-wayfire*|*pc-shell-start\ *|*pc-shell-start) launchers="$launchers $lpid" ;;
+			*) continue ;;
+		esac
+	done
+	[ -z "$launchers" ] || kill $launchers 2>/dev/null || true
 	# Stop it and fall through to the full launcher, which owns stale-lock
 	# cleanup, environment recovery, retries and the proof that a replacement surface mapped.
 	# TERM first and a bounded wait: Electron writes its singleton lock on the way out, and killing

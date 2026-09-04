@@ -79,12 +79,18 @@ while [ "$attempt" -lt 2 ]; do
 	"$launcher" --shell --ozone-platform=wayland ${PC_SHELL_EXTRA_ARGS:-} 9>&- >>"$log" 2>&1 &
 	shell_pid=$!
 	printf '%s\n' "$shell_pid" >"$pid_tmp" && mv -f "$pid_tmp" "$PC_WAYFIRE_SHELL_PID_FILE"
+
 	if "$health" wait "$shell_pid" "${PC_WAYFIRE_HEALTH_TIMEOUT:-30}"; then
 		current_identity=$(stat -Lc '%d:%i:%s:%Y' "$asar" 2>/dev/null || true)
 		if [ "$current_identity" != "$bundle_identity" ]; then
 			echo "Desktop package changed while the shell was starting" >&2
 			terminate; wait "$shell_pid" 2>/dev/null || true; exit 1
 		fi
+		# THE RESTART IS OVER WHEN THE REPLACEMENT IS VERIFIED, NOT WHEN IT IS SPAWNED.
+		# Cleared here rather than beside the PID write: a first attempt that fails the health gate
+		# is still the same restart, and the retry needs the supervisor's extended patience just as
+		# much -- more, since a slow GPU is exactly why the first attempt failed.
+		rm -f "$XDG_RUNTIME_DIR/posterchan-shell-restarting" 2>/dev/null || true
 		: >"$PC_WAYFIRE_READY_FILE"
 		wait "$shell_pid"; exit $?
 	fi

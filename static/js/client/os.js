@@ -2086,7 +2086,7 @@
         x:(o.rect&&o.rect.x)||0,y:(o.rect&&o.rect.y)||0,w:(o.rect&&o.rect.width)||1920,
         h:(o.rect&&o.rect.height)||1080,scale:+o.scale||1,transform:o.transform||'normal',
         mode:cur?(cur.width+'x'+cur.height+(hz(cur)?'@'+hz(cur)+'Hz':'')):'',
-        modes:o.modes||[],primary:!!o.focused}; });
+        modes:o.modes||[],primary:!!(o.primary||o.focused)}; });
     let selected=rows.findIndex(x=>x.primary); if(selected<0) selected=0;
     const modeText=m=>m.width+'x'+m.height+(m.refresh?'@'+(Math.round(m.refresh/1000*1000)/1000)+'Hz':'');
     const draw=()=>{

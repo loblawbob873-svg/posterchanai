@@ -152,8 +152,152 @@ def test_both_copies_of_the_helper_are_the_same_file():
 
 
 def test_wayfire_keeps_swayidle_as_protocol_watcher_without_swaymsg():
+    """Anchored on the `run` case, not on the first WAYFIRE_SOCKET test in the file.
+
+    `status` grew its own Wayfire branch, which is earlier in the script, so a search for the first
+    one silently started reading a different decision -- the shape this whole file exists to catch.
+    """
     source = SCRIPT.read_text()
-    branch = source[source.index('if [ -n "${WAYFIRE_SOCKET:-}" ]'):]
+    branch = source[source.index("  run|*)"):]
+    branch = branch[branch.index('if [ -n "${WAYFIRE_SOCKET:-}" ]'):]
     branch = branch[:branch.index("fi\n")]
     assert "exec swayidle -w" in branch
     assert "swaymsg" not in branch
+
+
+# --------------------------------------------------------------- Wayfire owns the power action
+
+
+def _wayfire_stub(tmp_path):
+    """A socket that speaks Wayfire's uint32-le JSON IPC and records what it was asked to set."""
+    import socket
+    import struct
+    import threading
+
+    path = tmp_path / "wayfire-wayland-9-.socket"
+    seen: list[dict] = []
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(str(path))
+    server.listen(8)
+
+    def serve():
+        while True:
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                return
+            with conn:
+                head = conn.recv(4)
+                if len(head) != 4:
+                    continue
+                size = struct.unpack("<I", head)[0]
+                body = b""
+                while len(body) < size:
+                    body += conn.recv(size - len(body))
+                message = json.loads(body)
+                seen.append(message)
+                if message.get("method") == "wayfire/get-config-option":
+                    reply = json.dumps({"result": "ok", "value": "120"}).encode()
+                else:
+                    reply = json.dumps({"result": "ok"}).encode()
+                conn.sendall(struct.pack("<I", len(reply)) + reply)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    return path, seen, server
+
+
+def _idle(tmp_path, *args, seconds="120", hold=False, socket_path=None):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name in ("pgrep", "pkill", "swayidle", "setsid"):
+        (bin_dir / name).write_text("#!/bin/sh\nexit 0\n")
+        (bin_dir / name).chmod(0o755)
+    conf = tmp_path / "idle"
+    conf.write_text(seconds)
+    runtime = tmp_path / "run"
+    runtime.mkdir(exist_ok=True)
+    if hold:
+        (runtime / "posterchan-keep-awake").write_text("")
+    env = dict(os.environ)
+    env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", PC_IDLE_CONF=str(conf),
+               XDG_RUNTIME_DIR=str(runtime))
+    if socket_path:
+        env["WAYFIRE_SOCKET"] = str(socket_path)
+    else:
+        env.pop("WAYFIRE_SOCKET", None)
+    done = subprocess.run(["sh", str(SCRIPT), *args], capture_output=True, text=True,
+                          env=env, timeout=60)
+    return done
+
+
+def _set_options(seen):
+    return [m["data"] for m in seen if m.get("method") == "wayfire/set-config-options"]
+
+
+def test_the_configured_timeout_reaches_the_compositor_that_performs_it(tmp_path):
+    """UNDER WAYFIRE THIS SCRIPT IS NOT THE MECHANISM, AND THAT MADE EVERY CONTROL DECORATIVE.
+
+    swayidle here runs `true` on both edges -- the power action belongs to Wayfire's `idle` plugin,
+    whose `dpms_timeout` comes from /etc/wayfire.ini and which no user setting wrote. So Settings ->
+    Power -> "Turn display off when idle" wrote a file nothing read, and the screen went on blanking
+    at the packaged two minutes. Nothing logged; `pc-idle status` agreed with the setting.
+    """
+    path, seen, server = _wayfire_stub(tmp_path)
+    try:
+        done = _idle(tmp_path, "set", "300", socket_path=path)
+        assert done.returncode == 0, done.stderr
+        assert {"idle/dpms_timeout": 300} in _set_options(seen), (
+            "the number the person chose never reached the compositor that acts on it: %s" % seen)
+    finally:
+        server.close()
+
+
+def test_never_disables_the_plugin_rather_than_asking_it_for_zero_seconds(tmp_path):
+    """-1 IS "DISABLED"; 0 IS A TIMEOUT OF ZERO SECONDS.
+
+    They are one character apart and opposite: the plugin's own default is -1, and passing the 0 a
+    person means by "Never" would ask it to blank the screen immediately.
+    """
+    path, seen, server = _wayfire_stub(tmp_path)
+    try:
+        assert _idle(tmp_path, "set", "0", socket_path=path).returncode == 0
+        assert {"idle/dpms_timeout": -1} in _set_options(seen), _set_options(seen)
+    finally:
+        server.close()
+
+
+def test_keep_awake_reaches_the_compositor_and_is_given_back_when_released(tmp_path):
+    """A film going black with the switch showing On. Killing swayidle held nothing here."""
+    path, seen, server = _wayfire_stub(tmp_path)
+    try:
+        assert _idle(tmp_path, "hold", "on", seconds="600", socket_path=path).returncode == 0
+        assert {"idle/dpms_timeout": -1} in _set_options(seen), "keep-awake never reached Wayfire"
+        seen.clear()
+        assert _idle(tmp_path, "hold", "off", seconds="600", socket_path=path).returncode == 0
+        assert {"idle/dpms_timeout": 600} in _set_options(seen), (
+            "releasing the hold left the compositor never blanking the screen again")
+    finally:
+        server.close()
+
+
+def test_the_login_path_reapplies_the_saved_number(tmp_path):
+    """The compositor starts from /etc/wayfire.ini, so a saved setting is forgotten every boot
+    unless `run` re-applies it -- including when the value is "never", which returns early."""
+    path, seen, server = _wayfire_stub(tmp_path)
+    try:
+        _idle(tmp_path, "run", seconds="0", socket_path=path)
+        assert {"idle/dpms_timeout": -1} in _set_options(seen), (
+            "a saved 'never' is lost at every login and the screen blanks again")
+    finally:
+        server.close()
+
+
+def test_a_sway_session_never_talks_to_wayfire(tmp_path):
+    """Rollback safety: the proven path must not gain a dependency on a socket that is not there."""
+    path, seen, server = _wayfire_stub(tmp_path)
+    try:
+        assert _idle(tmp_path, "set", "300", socket_path=None).returncode == 0
+        assert not seen, "the Sway path reached for the Wayfire IPC: %s" % seen
+    finally:
+        server.close()

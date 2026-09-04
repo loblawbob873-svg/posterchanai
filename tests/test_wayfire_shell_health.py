@@ -194,7 +194,14 @@ def test_shell_surfaces_always_receive_visual_health_marker_argument():
     assert "if(!document.getElementById('pc-shell-health-marker'))installHealthMarker()" in preload
 
 
-def test_secondary_output_cannot_be_satisfied_by_primary_marker(tmp_path):
+def test_two_outputs_showing_the_same_shell_surface_is_still_a_failure(tmp_path):
+    """THE DUPLICATE-SURFACE FAILURE, WHICH IS WHAT THE PER-OUTPUT COLOURS WERE REALLY FOR.
+
+    This used to be spelled "the secondary output must carry the SECONDARY marker", which asked the
+    probe to know which monitor the shell had chosen as primary -- and it guessed, because Wayfire's
+    list-outputs has no `focused` field to read. See the companion test below for what that cost.
+    One renderer painting both screens is the real fault and it is still caught here, by name.
+    """
     asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
     primary = tmp_path / "primary.png"; _png(primary)
     outputs = [{"id": 1, "name": "DP-1", "focused": True, "geometry": {"x": 0, "y": 0}},
@@ -211,7 +218,59 @@ def test_secondary_output_cannot_be_satisfied_by_primary_marker(tmp_path):
         done = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".15"], env=env,
                               text=True, capture_output=True)
         assert done.returncode == 1
-        assert "DP-2 view=2 marker=secondary absent" in done.stderr
+        assert "both show the primary shell surface" in done.stderr
+    finally:
+        stub.close()
+
+
+def test_the_primary_surface_may_live_on_either_monitor(tmp_path):
+    """AND THIS IS WHY THAT RULE HAD TO GO. Measured on the real two-monitor desktop: the shell put
+    its PRIMARY surface on the RIGHT-hand output, while the probe demanded it on the top-left one
+    (its fallback, since Wayfire reports no focused output). So `healthy()` was false on a desktop
+    drawing perfectly on both screens -- every shell start after the first failed the gate, the
+    launcher gave up, pc-compositor-session stopped Wayfire, and the login came back on Sway. That
+    is the whole "the desktop keeps ending up on Sway" report, and nothing was wrong with it.
+    """
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    primary = tmp_path / "primary.png"; _png(primary, colours=MARKER)
+    secondary = tmp_path / "secondary.png"; _png(secondary, colours=SECONDARY_MARKER)
+    outputs = [{"id": 1, "name": "DP-1", "geometry": {"x": 0, "y": 0}},
+               {"id": 2, "name": "DP-2", "geometry": {"x": 3840, "y": 0}}]
+    views = [{"id": 50, "pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
+             {"id": 2, "pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 2}]
+    stub = WayfireStub(tmp_path / "wf.socket", outputs, views)
+    # The PRIMARY marker on the RIGHT output — the arrangement the real machine came up in.
+    grim = _grim(tmp_path, {"DP-1": secondary, "DP-2": primary})
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar),
+                        "PC_GRIM": str(grim), "XDG_RUNTIME_DIR": str(runtime)}
+    try:
+        done = subprocess.run([str(HEALTH), "wait", str(os.getpid()), "2"], env=env,
+                              text=True, capture_output=True)
+        assert done.returncode == 0, done.stderr
+    finally:
+        stub.close()
+
+
+def test_an_output_showing_no_shell_surface_at_all_is_a_failure(tmp_path):
+    """The other half of the invariant: a monitor the desktop never painted."""
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    primary = tmp_path / "primary.png"; _png(primary, colours=MARKER)
+    blank = tmp_path / "blank.png"; _png(blank, marker=False)
+    outputs = [{"id": 1, "name": "DP-1", "geometry": {"x": 0, "y": 0}},
+               {"id": 2, "name": "DP-2", "geometry": {"x": 3840, "y": 0}}]
+    views = [{"id": 50, "pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
+             {"id": 2, "pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 2}]
+    stub = WayfireStub(tmp_path / "wf.socket", outputs, views)
+    grim = _grim(tmp_path, {"DP-1": primary, "DP-2": blank})
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar),
+                        "PC_GRIM": str(grim), "XDG_RUNTIME_DIR": str(runtime)}
+    try:
+        done = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".15"], env=env,
+                              text=True, capture_output=True)
+        assert done.returncode == 1
+        assert "DP-2 view=2 no shell marker" in done.stderr
         assert (runtime / "posterchan-health-DP-2.png").exists()
     finally:
         stub.close()

@@ -17,7 +17,7 @@ def _fake(path: Path, name: str, body: str):
     target.chmod(0o755)
 
 
-def _run(tmp_path, selected=None, wayfire_status=0, wayfire_body=None):
+def _run(tmp_path, selected=None, wayfire_status=0, wayfire_body=None, restarting=False):
     bindir = tmp_path / "bin"
     home = tmp_path / "home"
     bindir.mkdir()
@@ -27,12 +27,23 @@ def _run(tmp_path, selected=None, wayfire_status=0, wayfire_body=None):
     body = wayfire_body or f"exit {wayfire_status}\n"
     _fake(bindir, "wayfire", f'[ "$1" = --version ] && exit 0\necho "wayfire:$XDG_CURRENT_DESKTOP:$*" >>"{calls}"\n{body}')
     _fake(bindir, "pc-wayfire-health", 'exit "${PC_HEALTH_STATUS:-0}"\n')
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(exist_ok=True)
+    if restarting:
+        # What pc-shell-restart leaves behind: a marker whose mtime is the whole signal.
+        (runtime / "posterchan-shell-restarting").write_text("")
     env = os.environ | {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(home),
+                        "XDG_RUNTIME_DIR": str(runtime),
                         "PC_WAYFIRE_HEALTH": str(bindir / "pc-wayfire-health")}
     if selected:
         env["PC_COMPOSITOR"] = selected
+    # THE SUPERVISION LOOP POLLS AT ONE-SECOND GRANULARITY, so these runs are inherently seconds
+    # long (measured: 5.4s for the replacement case) and the old 10s ceiling left under 2x headroom.
+    # They passed alone and timed out inside the full suite, which reads as a broken supervisor
+    # rather than a loaded machine. The assertions below, not this number, are what bound the
+    # behaviour; this only has to be longer than a slow run.
     done = subprocess.run(["/bin/sh", str(LAUNCHER)], env=env, text=True,
-                          capture_output=True, timeout=10)
+                          capture_output=True, timeout=60)
     return done, calls.read_text(encoding="utf-8").splitlines()
 
 
@@ -199,3 +210,59 @@ def test_super_opens_start_only_when_not_used_for_snap_drag_or_resize():
     assert config.count("/usr/local/bin/pc-super used") >= 4
     assert "WAYFIRE_SOCKET" in super_helper
     assert "pc-wayfire-action pc:start" in super_helper
+
+
+def test_a_restart_marker_buys_the_launcher_time_a_crash_does_not(tmp_path):
+    """THE TWO NUMBERS THAT NEVER COMPARED THEMSELVES.
+
+    A shell that exits gets its replacement 3 seconds to appear. That is right for a crash and
+    impossible for a deliberate restart: pc-shell-start-wayfire waits up to 10s for the Xwayland
+    socket and then up to 30s on its own surface/GPU health gate BEFORE the replacement is judged,
+    so Ctrl+Alt+Backspace and the automatic post-update restart both blew through the window,
+    Wayfire was stopped, and the whole login came back on Sway with one line in a log that carried
+    no timestamp. pc-shell-restart now leaves a marker; this proves it is what makes the difference.
+    """
+    # The shell exits and NOTHING replaces it for 6 seconds -- twice the crash window. The fake
+    # compositor then ends itself once the replacement has run, so the patient case is still bounded.
+    body = """me=$$
+sleep 0.2 & first=$!
+echo $first >"$PC_WAYFIRE_SHELL_PID_FILE"
+touch "$PC_WAYFIRE_READY_FILE"
+( sleep 6; sleep 1 & second=$!; echo $second >"$PC_WAYFIRE_SHELL_PID_FILE"; wait $second; kill $me ) &
+trap 'exit 0' TERM
+while :; do sleep 0.1; done
+"""
+    crashed = time.monotonic()
+    done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
+    crashed = time.monotonic() - crashed
+    assert done.returncode == 0
+    assert crashed < 6, "a crash must fall back promptly rather than waiting out a restart window"
+
+    restarted = time.monotonic()
+    again = tmp_path / "again"
+    again.mkdir()
+    done, calls = _run(again, "wayfire", wayfire_body=body, restarting=True)
+    restarted = time.monotonic() - restarted
+    assert done.returncode == 0
+    assert restarted > crashed + 2, (
+        "the restart marker bought no extra time: the replacement shell that arrives after 6s is "
+        f"still being given up on (crash {crashed:.1f}s vs restart {restarted:.1f}s)")
+
+
+def test_a_stale_restart_marker_does_not_disable_the_crash_fallback(tmp_path):
+    """A restart that died before clearing its marker must not make every later crash patient."""
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    marker = runtime / "posterchan-shell-restarting"
+    marker.write_text("")
+    os.utime(marker, (time.time() - 3600, time.time() - 3600))
+    body = """sleep 0.2 & first=$!
+echo $first >"$PC_WAYFIRE_SHELL_PID_FILE"
+touch "$PC_WAYFIRE_READY_FILE"
+trap 'exit 0' TERM
+while :; do sleep 0.1; done
+"""
+    started = time.monotonic()
+    done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
+    assert done.returncode == 0
+    assert time.monotonic() - started < 8, "an hour-old marker still bought the full restart window"

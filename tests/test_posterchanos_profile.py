@@ -165,6 +165,7 @@ class PosterChanOSProfile(unittest.TestCase):
         "brightnessctl": "none:not in the Gentoo tree — the udev rule covers this instead",
         "xdg-open": "x11-misc/xdg-utils",
         "swaymsg": "gui-wm/sway",
+        "wlr-randr": "gui-apps/wlr-randr",
         "nmcli": "base:net-misc/networkmanager",   # BASE_PACKAGES
         "systemctl": "base:sys-apps/systemd",
         "script": "base:sys-apps/util-linux",      # the local terminal's PTY

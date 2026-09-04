@@ -167,25 +167,44 @@ def rendered(outputs, shells):
             captures.append((name, target, capture))
         by_output = {int(shell.get("output-id") if shell.get("output-id") is not None
                          else shell.get("output_id", -1)): shell for shell in shells}
-        # Match shell-displays' deterministic fallback: focused output, then top-left output.
-        # View ids are compositor timing artifacts and can reverse across boots.
-        primary_output = next((row for row in outputs if row.get("focused")), None)
-        if primary_output is None:
-            primary_output = min(outputs, key=lambda row: (
-                int((row.get("geometry") or {}).get("x", 0)),
-                int((row.get("geometry") or {}).get("y", 0)), str(row.get("name", ""))))
+        # WHICH MARKER LANDS ON WHICH MONITOR IS NOT THIS PROBE'S TO PREDICT, AND PREDICTING IT
+        # BROKE EVERY RESTART ON A TWO-MONITOR WAYFIRE DESKTOP.
+        #
+        # This used to demand the PRIMARY marker on "the focused output, else the top-left one".
+        # Wayfire's `window-rules/list-outputs` carries no `focused` field at all (measured on
+        # 0.10.1), so that was always the top-left output -- while the SHELL decides which renderer
+        # is primary by its own rule, and on a real machine it put the primary surface on the RIGHT
+        # monitor. The two fallbacks disagreed, the gate failed with "marker=primary absent" over a
+        # desktop that was drawing perfectly on both screens, the launcher gave up, and
+        # pc-compositor-session then fell the whole login back to Sway. Nothing about the desktop
+        # was wrong; the check was asking the wrong question, and it asked it on every start.
+        #
+        # The invariant that actually matters does not name an output: every output shows a shell
+        # surface, and no two show the SAME one. That still catches the failures this exists for --
+        # an output that never rendered, and one renderer painting both screens -- and it cannot
+        # fail because a pair came up in the other order.
+        seen = {}
         for name, target, capture in captures:
             output = next(row for row in outputs if str(row.get("name")) == name)
             shell = by_output.get(int(output.get("id")))
-            colours = PRIMARY_MARKER if output is primary_output else SECONDARY_MARKER
-            if capture.returncode or not os.path.isfile(target) or not has_marker(target, colours):
+            which = None
+            if not capture.returncode and os.path.isfile(target):
+                if has_marker(target, PRIMARY_MARKER): which = "primary"
+                elif has_marker(target, SECONDARY_MARKER): which = "secondary"
+            if which is None:
                 preserved = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"),
                                          "posterchan-health-" + name + ".png")
                 if os.path.isfile(target): shutil.copyfile(target, preserved)
-                print(f"pc-wayfire-health: {name} view={shell and shell.get('id')} marker="
-                      f"{'primary' if colours is PRIMARY_MARKER else 'secondary'} absent; capture={preserved}",
-                      file=sys.stderr)
+                print(f"pc-wayfire-health: {name} view={shell and shell.get('id')} "
+                      f"no shell marker; capture={preserved}", file=sys.stderr)
                 return False
+            if which in seen:
+                # Two screens painting the same renderer is the real duplicate-surface failure,
+                # and it is the one the per-output colour was there to detect.
+                print(f"pc-wayfire-health: {name} and {seen[which]} both show the {which} shell "
+                      f"surface", file=sys.stderr)
+                return False
+            seen[which] = name
     return True
 
 

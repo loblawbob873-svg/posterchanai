@@ -28,6 +28,7 @@ RDEPEND="
 	gui-apps/swayidle
 	gui-apps/foot
 	gui-apps/grim
+	gui-apps/wlr-randr
 	gui-apps/slurp
 	gui-apps/wl-clipboard
 	x11-misc/ydotool

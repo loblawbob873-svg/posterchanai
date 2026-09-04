@@ -9997,6 +9997,26 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
 .os-popup-body .os-pop{position:static;width:100%;max-width:none;height:100vh;max-height:none;
   border-radius:0;border:0;box-shadow:none;margin:0}
 .os-tray-popup{overflow:hidden}
+/* THE TRAY FLYOUT HUGS ITS CONTENT; THE NOTIFICATION CENTRE STILL FILLS ITS WINDOW.
+   "The window IS the panel" is right for a centre that is one long list, and wrong for Quick
+   Settings, which is four tiles and a slider. The window is sized ONCE, tall enough for the network
+   list a sub-panel swaps in, so at rest a 640px window held about 240px of empty panel hanging
+   below the Volume mixer button -- a flyout that looks broken every time it is opened, which is
+   most of the times it is seen. Nothing about the window has to change to fix it: main.js opens
+   this surface `transparent:true`, so the panel is simply allowed to be shorter than its window and
+   to sit at the BOTTOM of it, which is the edge it rises from. A sub-panel that needs the height
+   still gets all of it, and no window is resized while somebody is looking at it. */
+.os-popup-body.os-tray-popup{background:transparent}
+/* The bottom edge, because that is the edge it rises from -- and it has to be said on the HOST:
+   #os-popup-host is `position:fixed`, so it is out of the body's flow entirely and a flex rule on
+   the body moves nothing. Left top-anchored the panel floats a couple of hundred pixels above the
+   taskbar, which is a different kind of wrong from the one being fixed. */
+.os-popup-body.os-tray-popup #os-popup-host{display:flex;flex-direction:column;
+  justify-content:flex-end}
+.os-popup-body.os-tray-popup .os-pop{height:auto;max-height:100vh;
+  /* Its own corners and edge come back: against a transparent window it is a panel again, not a
+     surface that happens to end. */
+  border-radius:12px;border:1px solid var(--line);box-shadow:0 18px 44px rgba(0,0,0,.55)}
 /* The client's own DOM stays in the document (its bindings need it) and is simply not painted. */
 .os-popup-body:not(.os-popup-compose) > *:not(#os-popup-host){display:none!important}
 #os-popup-host{display:block;position:fixed;inset:0;overflow:hidden}

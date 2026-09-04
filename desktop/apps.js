@@ -21,9 +21,13 @@
 const fs = require('fs');
 const path = require('path');
 
-/* This desktop's names, for OnlyShowIn/NotShowIn. `wlroots` and `sway` because that is what the
- * compositor is; `PosterChan` because that is what this is, and an entry may one day say so. */
-const DESKTOP_NAMES = ['PosterChan', 'sway', 'wlroots'];
+/* This desktop's names, for OnlyShowIn/NotShowIn. `wlroots`, `sway` and `wayfire` because that is
+ * what the compositor is -- BOTH of them, since the session can be either and the installed
+ * package is the same. `XDG_CURRENT_DESKTOP` is literally `wayfire` on that session
+ * (pc-shell-start-wayfire sets it), so an entry saying `NotShowIn=wayfire` was being shown and one
+ * saying `OnlyShowIn=wayfire` was being hidden -- a wrong menu either way, with nothing to say so.
+ * `PosterChan` because that is what this is, and an entry may one day say so. */
+const DESKTOP_NAMES = ['PosterChan', 'sway', 'wayfire', 'wlroots'];
 
 /* FIELD CODES ARE NOT ARGUMENTS. `Exec=firefox %u` means "firefox, and put a URL here if you have
  * one" — passed through verbatim, firefox opens a tab for a file literally named `%u`. They are

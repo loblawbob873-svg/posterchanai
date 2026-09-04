@@ -33,11 +33,87 @@ read_secs() {
     echo "$s"
 }
 
+# WHO ACTUALLY TURNS THE SCREEN OFF, AND WHY THIS FUNCTION HAS TO EXIST.
+#
+# Under Sway this script IS the mechanism: swayidle counts and runs `swaymsg output * power off`.
+# Under Wayfire the power action belongs to the compositor's own `idle` plugin, so the swayidle
+# below runs `true` on both edges -- it is only the protocol watcher.  That left the plugin's
+# `dpms_timeout` as the ONLY number that mattered, and it comes from /etc/wayfire.ini, which no
+# user setting writes.  So on Wayfire every control here was decoration: Settings -> Power ->
+# "Turn display off when idle" wrote a file nothing read, "Never" left a compositor still blanking
+# at two minutes, and Keep awake killed a watcher that was not doing anything anyway -- so a film
+# went black mid-scene with the switch showing On.  Each failure is silent, and `pc-idle status`
+# agreed with the setting rather than with the screen.
+#
+# `wayfire/set-config-options` changes it live, so the number lands where the decision is made.
+# NEVER is -1, not 0: -1 is the plugin's own documented "disabled" default, and 0 is a timeout of
+# zero seconds -- the opposite of what the person asked for, and it would blank the screen instantly.
+wf_dpms() {
+    command -v python3 >/dev/null 2>&1 || return 0
+    python3 - "${1:--1}" <<'PY' >/dev/null 2>&1 || true
+import glob, json, os, socket, struct, sys
+
+secs = int(sys.argv[1])
+path = os.environ.get("WAYFIRE_SOCKET") or ""
+if not path:
+    # A control pressed in the shell inherits the session environment, but a helper re-run by hand
+    # or from a cron-like context does not. Discover it the way the desktop's own backend does.
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    found = sorted(glob.glob(os.path.join(runtime, "wayfire-wayland-*.socket")),
+                   key=lambda p: os.stat(p).st_mtime, reverse=True)
+    path = found[0] if found else ""
+if not path:
+    raise SystemExit(0)
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(2.0)
+s.connect(path)
+body = json.dumps({"method": "wayfire/set-config-options",
+                   "data": {"idle/dpms_timeout": secs}}).encode()
+s.sendall(struct.pack("<I", len(body)) + body)
+s.recv(4096)
+PY
+}
+
+# The number the compositor is really counting to, which is the only one worth reporting on Wayfire.
+wf_dpms_get() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 - <<'PY' 2>/dev/null
+import glob, json, os, socket, struct
+
+path = os.environ.get("WAYFIRE_SOCKET") or ""
+if not path:
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    found = sorted(glob.glob(os.path.join(runtime, "wayfire-wayland-*.socket")),
+                   key=lambda p: os.stat(p).st_mtime, reverse=True)
+    path = found[0] if found else ""
+if not path:
+    raise SystemExit(1)
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(2.0)
+s.connect(path)
+body = json.dumps({"method": "wayfire/get-config-option",
+                   "data": {"option": "idle/dpms_timeout"}}).encode()
+s.sendall(struct.pack("<I", len(body)) + body)
+head = s.recv(4)
+n = struct.unpack("<I", head)[0]
+buf = b""
+while len(buf) < n:
+    buf += s.recv(n - len(buf))
+print(json.loads(buf).get("value", ""))
+PY
+}
+
+# Seconds as the compositor wants them: 0 ("never", as a person says it) is -1 to the idle plugin.
+wf_apply() {
+    [ -n "${WAYFIRE_SOCKET:-}" ] || [ -n "$(ls "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/wayfire-wayland-*.socket 2>/dev/null)" ] || return 0
+    if [ -e "$HOLD" ] || [ "${1:-0}" -le 0 ] 2>/dev/null; then wf_dpms -1; else wf_dpms "$1"; fi
+}
+
 case "${1:-run}" in
   hold)
       case "${2:-status}" in
-        on)  : >"$HOLD"; pkill -x swayidle 2>/dev/null || true; echo on ;;
-        off) rm -f "$HOLD"; pkill -x swayidle 2>/dev/null || true
+        on)  : >"$HOLD"; wf_dpms -1; pkill -x swayidle 2>/dev/null || true; echo on ;;
+        off) rm -f "$HOLD"; wf_apply "$(read_secs)"; pkill -x swayidle 2>/dev/null || true
              setsid "$0" run >/dev/null 2>&1 & echo off ;;
         status) [ -e "$HOLD" ] && echo on || echo off ;;
         *) echo "usage: pc-idle hold on|off|status" >&2; exit 2 ;;
@@ -50,6 +126,7 @@ case "${1:-run}" in
       mkdir -p "$(dirname "$CONF")"
       echo "$n" >"$CONF"
       # Restart the watcher so the new number takes effect now rather than at the next login.
+      wf_apply "$n"
       pkill -x swayidle 2>/dev/null || true
       [ "$n" -gt 0 ] && setsid "$0" run >/dev/null 2>&1 &
       echo "display turns off after ${n}s"
@@ -63,6 +140,9 @@ case "${1:-run}" in
       # work -- reported as "my desktop monitor has been on a long time" with a timeout that was
       # set correctly the whole time.
       secs="$(read_secs)"
+      # Asked ONCE, up front: two branches below read it, and under `set -u` a value computed
+      # after the first of them is an unbound variable that takes the whole report down.
+      live="$(wf_dpms_get 2>/dev/null || true)"
       if [ "$secs" -eq 0 ] 2>/dev/null; then
           echo "timeout:    never (0) -- pc-idle set 120 to turn the display off again"
       else
@@ -77,6 +157,11 @@ case "${1:-run}" in
           echo "swayidle:   running (pid $(pgrep -x swayidle | tr '\n' ' ' | sed 's/ $//'))"
       elif [ "$secs" -eq 0 ] 2>/dev/null; then
           echo "swayidle:   not running, which is correct while the timeout is never"
+      elif [ -n "$live" ] && [ "$live" != "-1" ] && [ "$live" != "0" ]; then
+          # On Wayfire swayidle is only the protocol watcher; the compositor's own idle plugin
+          # performs the blanking. Saying "the display never turns off" here would contradict the
+          # compositor line directly below, which is measured.
+          echo "swayidle:   not running -- on Wayfire the compositor performs the blanking itself"
       else
           echo "swayidle:   NOT RUNNING -- nothing is watching, so the display never turns off"
       fi
@@ -85,8 +170,29 @@ case "${1:-run}" in
       # while the daemon sits there looking healthy and the configured timeout looks right.
       # Chromium takes an inhibitor for any page holding a screen wake lock or playing video (the
       # shell IS Chromium), and sway.config takes one for a fullscreen Steam game on purpose.
-      tree="$(swaymsg -t get_tree 2>/dev/null || true)"
-      if [ -z "$tree" ]; then
+      if [ -n "$live" ]; then
+          # The compositor's own number, so a setting that never reached it is visible here rather
+          # than only on the screen. -1/0 is the plugin's "disabled".
+          case "$live" in
+            -1|0) echo "compositor: Wayfire idle DPMS disabled" ;;
+            *)    echo "compositor: Wayfire blanks after ${live}s" ;;
+          esac
+          if [ "$secs" -gt 0 ] 2>/dev/null && [ ! -e "$HOLD" ] && [ "$live" != "$secs" ]; then
+              echo "            MISMATCH -- the compositor is not counting to the configured ${secs}s"
+          fi
+      fi
+      # WHICH COMPOSITOR THIS IS gets answered the same way twice, or the report contradicts
+      # itself: run from a terminal with no WAYFIRE_SOCKET exported, the line above found the live
+      # Wayfire value by discovering its socket while this line looked at the variable, decided
+      # "Sway", and told the reader to go set SWAYSOCK.
+      tree=""
+      [ -n "$live" ] || tree="$(swaymsg -t get_tree 2>/dev/null || true)"
+      if [ -n "$live" ]; then
+          # Wayfire 0.10 exposes no idle-inhibitor listing, so this cannot be answered here rather
+          # than answered wrongly. Saying "is SWAYSOCK set?" on Wayfire sent people looking for a
+          # variable that is correctly absent.
+          echo "inhibitors: not enumerable on Wayfire (its IPC does not expose idle inhibitors)"
+      elif [ -z "$tree" ]; then
           echo "inhibitors: cannot ask sway (is SWAYSOCK set? run this inside the session)"
       elif ! command -v python3 >/dev/null 2>&1; then
           echo "inhibitors: cannot read the tree without python3"
@@ -117,6 +223,10 @@ else:
       fi
       ;;
   run|*)
+      # Applied BEFORE the keep-awake and never checks below, because both of those exit: a
+      # compositor that starts from /etc/wayfire.ini would otherwise keep blanking at the packaged
+      # default while the saved setting said never.
+      wf_apply "$(read_secs)"
       [ ! -e "$HOLD" ] || exit 0
       SECS="$(read_secs)"
       [ "$SECS" -gt 0 ] || exit 0        # never: nothing to run, and no daemon left behind

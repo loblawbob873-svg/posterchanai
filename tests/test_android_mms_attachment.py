@@ -19,7 +19,7 @@ public final class MmsAttachmentHarness {
         "ordinary image changed while staging");
 
     try {
-      MmsAttachment.rejectKnownVideoSize(4097, 4096);
+      MmsAttachment.rejectKnownSize(4097, 4096);
       throw new AssertionError("known oversized video accepted");
     } catch (MmsAttachment.TooLarge expected) {
       yes(expected.size == 4097 && expected.limit == 4096, "known size/limit lost");
@@ -69,7 +69,7 @@ def test_picker_honors_document_grant_and_nullable_metadata():
     assert "FLAG_GRANT_PERSISTABLE_URI_PERMISSION" in thread
     assert "OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE" in thread
     assert "if (!c.isNull(1))" in thread
-    assert "MmsAttachment.rejectKnownVideoSize" in thread
+    assert "MmsAttachment.rejectKnownSize" in thread
     assert "catch (SecurityException denied)" in thread
     assert "sms_attachment_permission" in thread
 

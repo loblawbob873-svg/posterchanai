@@ -52,8 +52,11 @@ public final class MmsSender {
                 throw new IllegalArgumentException("MMS supports photos and videos");
             /* Unlike photos, mmslib cannot resize/transcode a video. Refuse it synchronously above
              * the SIM's own ceiling instead of accepting a transaction the MMSC will silently drop.
-             * The Web composer checks the same limit first and turns the file into an encrypted
-             * Files link; this guard protects native/retry/background entry points too. */
+             * BOTH COMPOSERS CHECK THE SAME LIMIT FIRST and turn the file into an encrypted link
+             * instead — the Web one in sms.js:sendAsLink, the launcher's Texts app in
+             * ThreadActivity.sendAsLink (MmsLink) — so this is the backstop for the retry and
+             * background entry points, and reaching it means somebody sees the refusal above with
+             * nothing to press. Do not make it the only answer again. */
             Settings settings = new Settings();
             settings.setUseSystemSending(true);
             /* MMS must leave through the subscription selected for messages. Relying on the

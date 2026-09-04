@@ -37,7 +37,14 @@ final class MmsAttachment {
         return out.toByteArray();
     }
 
-    static void rejectKnownVideoSize(long size, int limit) throws TooLarge {
+    /**
+     * Refuse a file the provider has already told us the size of, before reading a byte of it.
+     *
+     * It was `rejectKnownVideoSize` while the only ceiling in the picker was the carrier's and only
+     * a video could hit it. The carrier ceiling now decides a ROUTE rather than a refusal (MmsLink),
+     * so the limit this guards is the phone's own copy ceiling, which a photo can reach too.
+     */
+    static void rejectKnownSize(long size, int limit) throws TooLarge {
         if (size >= 0 && size > limit) throw new TooLarge(size, limit);
     }
 
@@ -46,6 +53,20 @@ final class MmsAttachment {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return String.format(Locale.US, "%.0f KB", bytes / 1024.0);
         return String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0));
+    }
+
+    /**
+     * ABOVE WHAT THIS PHONE WILL COPY IN ONE PIECE — deliberately NOT the carrier's sentence.
+     *
+     * Naming the carrier for a limit the carrier did not set is what sent people looking for a
+     * smaller video when the real answer is that the handset will not hold the file in memory. The
+     * encrypted-link route (MmsLink) starts BELOW this line, so anything refused here is refused
+     * because of this device, and the message says so.
+     */
+    static String tooBigToCopyMessage(long size, int limit) {
+        String actual = size < 0 ? "That file" : "That " + size(size) + " file";
+        return actual + " is more than this phone will copy in one piece (" + size(limit)
+                + "). Trim or compress it, then attach the smaller copy.";
     }
 
     static String tooLargeMessage(long size, int limit) {

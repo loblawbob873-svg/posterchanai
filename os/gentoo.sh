@@ -221,7 +221,7 @@ BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
 # a tool goes missing on the next fresh build with nothing to say why.
 # Audited against desktop/*.js: grim slurp wl-copy wpctl nmcli systemctl xdg-open script sudo
 # swaymsg (+ brightnessctl, see above). `tests/test_posterchanos_profile.py` re-runs that audit.
-POSTERCHANOS_PACKAGES="gui-wm/sway gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/swaybg x11-base/xwayland gui-apps/foot app-misc/ddcutil \
+POSTERCHANOS_PACKAGES="gui-wm/sway gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/gamescope gui-apps/swaybg gui-apps/wlr-randr x11-base/xwayland gui-apps/foot app-misc/ddcutil \
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
 net-print/cups \

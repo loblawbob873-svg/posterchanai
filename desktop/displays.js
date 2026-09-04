@@ -20,13 +20,25 @@ function modeText(m){
   return `${+m.width}x${+m.height}${hz ? '@'+hz+'Hz' : ''}`;
 }
 
-function validate(layout, actual){
+/* `prune` IS FOR REPLAYING A SAVED LAYOUT, NEVER FOR A REQUEST SOMEBODY JUST MADE.
+ *
+ * Strict is right for preview(): the layout came from the Displays page, so a monitor it does not
+ * know about or a mode it cannot run is a bug worth refusing loudly. It is exactly wrong at
+ * startup, where the same function replays a file written weeks ago. Unplug one of two monitors —
+ * or let a docking station renegotiate a mode away — and a saved layout naming it threw, so the
+ * restore aborted ENTIRELY and the remaining monitor came up in whatever arrangement the
+ * compositor guessed, with nothing on screen or in any log to say a saved layout existed.
+ * Pruning drops the outputs that are gone and falls back to the display's preferred mode when the
+ * saved one is: the rest of the arrangement is still the arrangement the user confirmed. */
+function validate(layout, actual, opts){
+  const prune=!!(opts&&opts.prune);
   if(!Array.isArray(layout) || !layout.length) throw new Error('no displays were supplied');
   const byName = new Map(actual.map(o => [String(o.name), o]));
   const seen = new Set(), out=[];
   for(const raw of layout){
     const name=String(raw && raw.name || '');
     const live=byName.get(name);
+    if((!live || seen.has(name)) && prune) continue;
     if(!live || seen.has(name)) throw new Error('unknown or duplicate display: '+name);
     seen.add(name);
     const enabled=raw.enabled !== false;
@@ -39,11 +51,12 @@ function validate(layout, actual){
     if(enabled && raw.mode){
       const want=String(raw.mode).replace(/Hz$/,'');
       const found=(live.modes||[]).find(m => modeText(m).replace(/Hz$/,'')===want);
-      if(!found) throw new Error('unsupported mode '+raw.mode+' for '+name);
-      mode=modeText(found);
+      if(!found && !prune) throw new Error('unsupported mode '+raw.mode+' for '+name);
+      if(found) mode=modeText(found);
     }
     out.push({name,enabled,x,y,scale,transform,mode,primary:!!raw.primary});
   }
+  if(prune && !out.length) throw new Error('none of the saved displays are connected');
   if(!out.some(o=>o.enabled)) throw new Error('at least one display must remain enabled');
   if(out.filter(o=>o.primary && o.enabled).length>1) throw new Error('choose only one primary display');
   /* Keep the compositor's global coordinate space non-negative. XWayland translates a client's
@@ -135,11 +148,34 @@ function snapshot(actual){
 }
 
 class Displays {
-  constructor(wm, opts){ this.wm=wm; this.file=(opts&&opts.file)||path.join(process.env.HOME||'', '.config/sway/outputs.conf');
+  constructor(wm, opts){ this.wm=wm; this.file=(opts&&opts.file)||path.join(process.env.HOME||'',
+      wm&&wm.backend==='wayfire'?'.config/posterchanos/displays.json':'.config/sway/outputs.conf');
     this.ms=(opts&&opts.revertMs)||15000; this.pending=null; }
-  async status(){ return (await this.wm.outputs()).map(publicOutput); }
+  /* Sway's own IPC already answers modes/scale/transform, so it needs no second method and does
+   * not have one. Wayfire's does not, and the settings page is unusable without them. */
+  _outputs(){return typeof this.wm.outputsDetailed==='function'?this.wm.outputsDetailed():this.wm.outputs();}
+  _saved(){
+    if(!(this.wm&&this.wm.backend==='wayfire'))return null;
+    try{const value=JSON.parse(fs.readFileSync(this.file,'utf8'));return Array.isArray(value&&value.outputs)?value.outputs:null;}
+    catch(_){return null;}
+  }
+  async status(){
+    const rows=(await this._outputs()).map(publicOutput),saved=this._saved();
+    const primary=saved&&saved.find(x=>x&&x.primary&&x.enabled!==false);
+    if(primary)for(const row of rows)row.primary=row.name===primary.name;
+    else if(rows.length&&!rows.some(row=>row.primary)){
+      const first=rows.filter(row=>row.active).sort((a,b)=>(a.rect.x-b.rect.x)||(a.rect.y-b.rect.y))[0];
+      if(first)first.primary=true;
+    }
+    return rows;
+  }
   async repairPointerGaps(){
-    const actual=await this.wm.outputs();
+    const actual=await this._outputs();
+    /* On Wayfire this is also the early-session persistence hook. Do not replace the saved layout
+     * with the compositor's automatic arrangement before applying it: that made every reboot undo
+     * precisely the monitor layout System Settings had confirmed. */
+    const persisted=this._saved();
+    if(persisted){const rows=validate(persisted,actual,{prune:true});await this._run(rows);return {ok:true,changed:true,persisted:true};}
     const before=snapshot(actual), rows=validate(before,actual);
     const changed=rows.some((o,i)=>o.x!==before[i].x || o.y!==before[i].y);
     const body='# PosterChanOS System Settings — generated; edit through Displays.\n'+commands(rows).join('\n')+'\n';
@@ -153,10 +189,13 @@ class Displays {
     fs.renameSync(tmp,this.file);
     return {ok:true,changed:true};
   }
-  async _run(rows){ for(const cmd of commands(rows)) await this.wm.command(cmd); }
+  async _run(rows){
+    if(this.wm&&typeof this.wm.configureOutputs==='function')return this.wm.configureOutputs(rows);
+    for(const cmd of commands(rows)) await this.wm.command(cmd);
+  }
   async preview(layout){
     if(this.pending) await this.revert(this.pending.token);
-    const actual=await this.wm.outputs();
+    const actual=await this._outputs();
     const rows=validate(layout,actual), before=snapshot(actual);
     await this._run(rows);
     const token=crypto.randomBytes(12).toString('hex');
@@ -169,7 +208,10 @@ class Displays {
     clearTimeout(p.timer); this.pending=null;
     fs.mkdirSync(path.dirname(this.file),{recursive:true});
     const tmp=this.file+'.new';
-    fs.writeFileSync(tmp,'# PosterChanOS System Settings — generated; edit through Displays.\n'+commands(p.rows).join('\n')+'\n',{mode:0o600});
+    const body=this.wm&&this.wm.backend==='wayfire'
+      ?JSON.stringify({version:1,outputs:p.rows},null,2)+'\n'
+      :'# PosterChanOS System Settings — generated; edit through Displays.\n'+commands(p.rows).join('\n')+'\n';
+    fs.writeFileSync(tmp,body,{mode:0o600});
     fs.renameSync(tmp,this.file);
     return {ok:true};
   }

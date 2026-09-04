@@ -39,7 +39,10 @@ import android.util.LruCache;
 
 import androidx.core.content.FileProvider;
 
+import place.poster.app.signer.SignerKey;
 import place.poster.app.signer.SignerRelayService;
+import place.poster.app.sync.SyncNet;
+import place.poster.app.sync.SyncStore;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -535,17 +538,23 @@ public class ThreadActivity extends PcActivity {
         if (!attachmentMime.startsWith("image/") && !attachmentMime.startsWith("video/")) {
             attachment = null; say(getString(R.string.sms_attachment_bad)); return;
         }
-        int readLimit = attachmentMime.startsWith("video/")
-                ? MmsSender.videoLimit() : MmsAttachment.MAX_STAGED_BYTES;
+        /* THE CARRIER CEILING IS NOT THE PICKER'S BUSINESS ANY MORE, and that was the bug: a video
+         * over it was refused HERE, so the only thing this app could say about a file it is
+         * perfectly able to send was that the carrier would not take it. The ceiling decides which
+         * ROUTE the send takes (sendMms → MmsLink), which is a decision that belongs at send time
+         * next to the thing that can act on it. What is left is the one limit the picker really
+         * owns: what this phone will copy in one piece — SmsSweep's ceiling, because there is one
+         * answer on this handset to "how much will it hold in memory at once" and the archive
+         * already stated it. */
+        int readLimit = SmsSweep.WHOLE_BYTES;
         try {
-            if (attachmentMime.startsWith("video/"))
-                MmsAttachment.rejectKnownVideoSize(attachmentSize, readLimit);
+            MmsAttachment.rejectKnownSize(attachmentSize, readLimit);
             try (InputStream in = getContentResolver().openInputStream(picked)) {
                 stageAttachment(MmsAttachment.read(in, readLimit), attachmentMime, attachmentName);
             }
         } catch (MmsAttachment.TooLarge large) {
             attachment = null;
-            say(MmsAttachment.tooLargeMessage(attachmentSize >= 0 ? attachmentSize : large.size,
+            say(MmsAttachment.tooBigToCopyMessage(attachmentSize >= 0 ? attachmentSize : large.size,
                     large.limit));
             return;
         } catch (SecurityException denied) {
@@ -556,8 +565,77 @@ public class ThreadActivity extends PcActivity {
         say(getString(R.string.sms_attachment_ready));
     }
 
+    /* SmsSweep's ceiling, not the MMS staging one: a draft may legitimately be bigger than any
+     * picture message now that an oversized one leaves as an encrypted link, and reading it back
+     * with the smaller limit would refuse — at SEND time, with the file already staged — exactly the
+     * attachments the link route exists for. */
     private byte[] readAttachment(InputStream in) throws Exception {
-        return MmsAttachment.read(in, MmsAttachment.MAX_STAGED_BYTES);
+        return MmsAttachment.read(in, SmsSweep.WHOLE_BYTES);
+    }
+
+    /**
+     * TOO BIG FOR THE CARRIER, SO IT LEAVES AS AN ENCRYPTED LINK.
+     *
+     * The file is encrypted under a fresh random key, the ciphertext goes to the account's Blossom,
+     * and what the recipient gets is an ordinary text carrying `/f/<sha>#pcenc1=<key>` — a page that
+     * decrypts in their own browser, with no account and no app. MmsLink holds the format; this is
+     * the phone half: the signing key, the account's servers, and the radio.
+     *
+     * OFF THE MAIN THREAD, because it uploads. The draft is moved to SENDING first for the reason
+     * the carrier path does it — send() refuses to resend anything that is not READY or FAILED, so
+     * a second tap during the upload cannot post the same file twice — and a failure puts it back to
+     * FAILED with the reason on the card, where it can be retried.
+     */
+    private void sendAsLink(final String body, final byte[] raw, final String mime, final String name) {
+        final String draftKey = attachmentDraft == null ? null : attachmentDraft.key;
+        if (draftKey != null) {
+            MmsDraft.state(this, draftKey, MmsDraft.SENDING, "");
+            restoreAttachmentDraft();
+        }
+        say("Too big for a picture message — sending it as a private link…");
+        final String who = address;
+        new Thread(() -> {
+            /* THE SIGNER IS NEVER TOUCHED ON THE MAIN LOOPER. SignerKey.load opens the AndroidKeyStore
+             * and does a hardware-backed AES-GCM decrypt — tens to hundreds of milliseconds on a TEE
+             * device — and this thread has to exist for the upload anyway. */
+            final byte[] sec = SignerKey.load(ThreadActivity.this);
+            final SyncStore store = new SyncStore(ThreadActivity.this);
+            final MmsLink.Result r;
+            if (sec == null) {
+                /* No key means no Blossom upload can be signed, and this is the one case where the
+                 * old dead end is still the truth: this phone cannot send this file at all. */
+                r = MmsLink.refused("This is too big for a picture message. Open PosterChan and sign "
+                        + "in once, so this phone can send big files as a private link instead.");
+            } else {
+                final SyncNet net = new SyncNet(store.apiBase(), store.mediaBase(), sec);
+                r = MmsLink.send(new MmsLink.Io() {
+                    public String apiBase() { return store.apiBase(); }
+                    public String mediaBase() { return store.mediaBase(); }
+                    public String upload(byte[] blob) throws Exception { return net.putBlob(blob); }
+                    public String sendText(String text) {
+                        SmsSender.Result sent = SmsSender.send(ThreadActivity.this, who, text, threadId);
+                        return sent.ok ? "" : (sent.error == null || sent.error.isEmpty()
+                                ? getString(R.string.sms_failed) : sent.error);
+                    }
+                }, body, raw, mime, name);
+            }
+            main.post(() -> {
+                // The screen may have moved to another conversation while the upload ran. The text
+                // went to `who` either way; only the draft bookkeeping belongs to this screen.
+                if (!who.equals(address)) return;
+                if (!r.ok) {
+                    if (draftKey != null) MmsDraft.state(ThreadActivity.this, draftKey, MmsDraft.FAILED, r.error);
+                    restoreAttachmentDraft();
+                    say(r.error);
+                    return;
+                }
+                clearAttachmentDraft();
+                input.setText("");
+                updateCount();
+                say("Sent as a private link.");
+                reload();
+            });
+        }, "pc-mms-link").start();
     }
 
     /** Build a carrier MMS PDU and hand it to Android's public system MMS transport. */
@@ -574,7 +652,10 @@ public class ThreadActivity extends PcActivity {
                 byte[] buf = new byte[64 * 1024]; int n, total = 0;
                 while ((n = in.read(buf)) >= 0) {
                     total += n;
-                    if (total > 8 * 1024 * 1024) throw new Exception("media message is too large");
+                    // The picker's ceiling, not the carrier's: over the carrier's this is sent as an
+                    // encrypted link below, so the only thing that can stop it here is this phone.
+                    if (total > SmsSweep.WHOLE_BYTES) throw new Exception(
+                            MmsAttachment.tooBigToCopyMessage(total, SmsSweep.WHOLE_BYTES));
                     out.write(buf, 0, n);
                 }
                 raw = out.toByteArray();
@@ -585,14 +666,21 @@ public class ThreadActivity extends PcActivity {
             return;
         }
         if (raw == null || raw.length == 0) { say(getString(R.string.sms_attachment_bad)); return; }
+        String mime = attachmentDraft != null ? attachmentDraft.mime
+                : capturedAttachment != null ? "image/jpeg" : attachmentMime;
+        String fileName = attachmentDraft != null ? attachmentDraft.name
+                : capturedAttachment != null ? "camera.jpg" : attachmentName;
+        /* OVER THE CARRIER'S CEILING THIS IS A LINK, NOT A REFUSAL — see MmsLink. The ceiling comes
+         * from MmsSender.videoLimit(), i.e. this SIM's own carrier config, which is the same number
+         * the transport below would apply; nothing here is a constant about "MMS". */
+        if (MmsLink.required(mime, raw.length, MmsSender.videoLimit(), MmsAttachment.MAX_STAGED_BYTES)) {
+            sendAsLink(body, raw, mime, fileName);
+            return;
+        }
         try {
             /* One transport for native and WebUI sends. MmsSender selects the active SMS/data
              * subscription; this screen's old duplicate omitted it, producing a provider row that
              * remained at Sending on dual-SIM and stale-default devices. */
-            String mime = attachmentDraft != null ? attachmentDraft.mime
-                    : capturedAttachment != null ? "image/jpeg" : attachmentMime;
-            String fileName = attachmentDraft != null ? attachmentDraft.name
-                    : capturedAttachment != null ? "camera.jpg" : attachmentName;
             String draftKey = attachmentDraft == null ? null : attachmentDraft.key;
             SmsSender.Result result = MmsSender.send(this, address, body, raw, mime, fileName, draftKey);
             if (!result.ok) { say(result.error == null || result.error.isEmpty()

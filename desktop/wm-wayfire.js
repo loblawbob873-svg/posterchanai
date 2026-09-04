@@ -36,19 +36,126 @@ function normalizeView(v){
 function normalizeOutput(o){const g=o&&((o.geometry||o.workarea)||{});return {name:String(o&&o.name||o&&o.id||''),active:o&&o.active!==false,
   primary:!!(o&&o.focused),focused:!!(o&&o.focused),current_workspace:String(o&&((o['wset-index']??o.id)??'')),scale:Number(o&&o.scale)||1,
   transform:String(o&&o.transform||'normal'),make:String(o&&o.make||''),model:String(o&&o.model||''),serial:String(o&&o.serial||''),
-  rect:{x:Number(g.x)||0,y:Number(g.y)||0,width:Number(g.width)||0,height:Number(g.height)||0},id:Number(o&&o.id)};}
+  rect:{x:Number(g.x)||0,y:Number(g.y)||0,width:Number(g.width)||0,height:Number(g.height)||0},id:Number(o&&o.id),
+  modes:(Array.isArray(o&&o.modes)?o.modes:[]).map(m=>({width:Number(m&&m.width)||0,
+    height:Number(m&&m.height)||0,refresh:Number(m&&(m.refresh??m.refresh_rate))||0,
+    current:!!(m&&(m.current||m.is_current)),preferred:!!(m&&(m.preferred||m.is_preferred))}))};}
+/* WHAT WAYFIRE'S WINDOW IPC DOES NOT CARRY, AND WHY A SECOND SOURCE IS NEEDED AT ALL.
+ * `window-rules/list-outputs` answers name/id/geometry and nothing else: no mode list, no scale,
+ * no transform, no make/model, and no row at all for a head that is switched OFF. Measured against
+ * Wayfire 0.10.1, System Settings therefore drew an EMPTY "Resolution & refresh" menu, reported
+ * every monitor as 100% and "normal" whatever it was really running, labelled each one by its
+ * connector, and could never re-enable a display it could not list. wlr-randr talks the
+ * zwlr_output_manager_v1 this compositor advertises (v4) and answers all of it.
+ * REFRESH IS THE TRAP: wlr-randr prints Hz as a float32 (`59.999001`), while Sway's IPC — and so
+ * every mode string, menu entry and saved layout here — speaks MILLIHERTZ. Convert at this
+ * boundary and nothing downstream changes; skip it and a 60Hz monitor offers "@0.06Hz". */
+function randrHead(h){
+  const pos=(h&&h.position)||{};
+  return {name:String((h&&h.name)||''),enabled:!!h&&h.enabled!==false,
+    make:String((h&&h.make)||''),model:String((h&&h.model)||''),serial:String((h&&h.serial)||''),
+    scale:Number(h&&h.scale)||1,transform:String((h&&h.transform)||'normal'),
+    x:Math.round(Number(pos.x)||0),y:Math.round(Number(pos.y)||0),
+    modes:(Array.isArray(h&&h.modes)?h.modes:[]).map(m=>({width:Number(m&&m.width)||0,
+      height:Number(m&&m.height)||0,refresh:Math.round((Number(m&&m.refresh)||0)*1000),
+      current:!!(m&&m.current),preferred:!!(m&&m.preferred)}))};
+}
 function procParents(){const out=[];if(process.platform!=='linux')return out;try{for(const n of fs.readdirSync('/proc'))if(/^\d+$/.test(n))try{const s=fs.readFileSync('/proc/'+n+'/stat','utf8'),i=s.lastIndexOf(')'),f=s.slice(i+1).trim().split(/\s+/);out.push({pid:Number(n),ppid:Number(f[1])});}catch(_){}}catch(_){}return out;}
 
 class WayfireWM{
-  constructor(sockPath){this.backend='wayfire';this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this.actionServer=null;}
+  constructor(sockPath,opts){this.backend='wayfire';this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this.actionServer=null;this.spawn=opts&&opts.spawn||spawn;this._randrRows=null;this._randrAt=0;this._randrPending=null;}
   available(){return this.paths.length>0;}
   _connect(){if(this.sock)return Promise.resolve(this.sock);if(this.connecting)return this.connecting;if(!this.paths.length)return Promise.reject(new Error('no compositor socket — WAYFIRE_SOCKET is not set'));this.connecting=(async()=>{let last;for(const p of this.paths)try{return await this._connectPath(p);}catch(e){last=e;}throw last||new Error('no live Wayfire socket');})().finally(()=>{this.connecting=null;});return this.connecting;}
   _connectPath(p){return new Promise((resolve,reject)=>{const s=net.createConnection(p);let settled=false;const feed=wfDecoder(msg=>{if(msg&&msg.event){this._event(msg);return;}const q=this.pending.shift();if(q){if(msg&&msg.error)q.reject(new Error(msg.error));else q.resolve(msg);}});s.on('data',c=>{try{feed(c);}catch(e){s.destroy(e);}});s.on('error',e=>{if(!settled){settled=true;reject(e);}this._fail(e);});s.on('close',()=>{if(this.sock===s)this.sock=null;this._fail(new Error('Wayfire IPC closed'));});s.on('connect',()=>{if(settled)return;settled=true;this.sock=s;this.path=p;resolve(s);});});}
   _fail(e){for(const q of this.pending.splice(0))q.reject(e);}
   _send(method,data){return this._connect().then(s=>new Promise((resolve,reject)=>{this.pending.push({resolve,reject});s.write(wfFrame({method,data:data||{}}));}));}
-  _event(msg){const event=String(msg.event||'');let name=event.startsWith('view-')?'window':event.startsWith('output-')?'output':event.includes('workspace')?'workspace':event==='posterchan-tick'?'tick':'';if(!name)return;const raw=msg.view||msg.data&&msg.data.view;const ev={change:event,payload:msg.payload||msg.data&&msg.data.payload};if(raw)ev.wayfireView=normalizeView(raw);for(const fn of(this.listeners.get(name)||[]))try{fn(ev);}catch(_){}}
+  _event(msg){const event=String(msg.event||'');let name=event.startsWith('view-')?'window':event.startsWith('output-')?'output':event.includes('workspace')?'workspace':event==='posterchan-tick'?'tick':'';if(!name)return;if(name==='output')this._forgetOutputs();const raw=msg.view||msg.data&&msg.data.view;const ev={change:event,payload:msg.payload||msg.data&&msg.data.payload};if(raw)ev.wayfireView=normalizeView(raw);for(const fn of(this.listeners.get(name)||[]))try{fn(ev);}catch(_){}}
   version(){return this._send('list-methods').then(r=>({human_readable:'Wayfire IPC',methods:r&&r.methods||[]}));}
   async outputs(){const r=await this._send('window-rules/list-outputs');return (Array.isArray(r)?r:r&&r.outputs||[]).map(normalizeOutput);}
+  /* THE HOT PATH STAYS PURE IPC. `outputs()` runs inside place/snap/move — once per pointer frame
+   * while a window is dragged — so it must never spawn a process. Only the display SETTINGS read
+   * pays for wlr-randr, through this second method; desktop/displays.js asks for it by name and
+   * Sway's backend simply does not need one, because its own IPC already answers everything. */
+  async outputsDetailed(){
+    const rows=await this.outputs();
+    /* A REAL focused output, instead of the `false` that normalizeOutput can only infer. Without it
+     * nothing on the Displays page is ever marked primary and the radio button reads as unset. */
+    try{const f=await this._send('window-rules/get-focused-output');const info=(f&&(f.info||f))||{};
+      const name=String(info.name||'');
+      if(name)for(const row of rows){row.focused=row.name===name;row.primary=row.focused;}
+    }catch(_){}
+    const heads=await this._randr();
+    if(!heads)return rows;                       // degraded settings; a working desktop regardless
+    const byName=new Map(rows.map(r=>[r.name,r]));
+    for(const head of heads){
+      if(!head.name)continue;
+      const row=byName.get(head.name);
+      if(row){
+        /* Wayfire owns the LOGICAL rectangle — it is the coordinate space every view is placed in,
+         * so it is never overwritten here. Everything below it has no Wayfire answer at all. */
+        row.modes=head.modes;row.scale=head.scale;row.transform=head.transform;
+        row.make=head.make;row.model=head.model;row.serial=head.serial;
+        continue;
+      }
+      /* A DISABLED head has no Wayfire row, and a display that cannot be listed can never be
+       * switched back on. Carry it as inactive so "Use this display" has something to tick. */
+      rows.push({name:head.name,active:false,primary:false,focused:false,current_workspace:'',
+        scale:head.scale,transform:head.transform,make:head.make,model:head.model,serial:head.serial,
+        rect:{x:head.x,y:head.y,width:0,height:0},id:NaN,modes:head.modes});
+    }
+    return rows;
+  }
+  /* Cached because a settings repaint asks several times in a row and each call is a Wayland round
+   * trip through a spawned process. Invalidated by an output event and by our own reconfigure, so
+   * the panel cannot show the layout it replaced. A failure resolves NULL rather than throwing:
+   * "no wlr-randr" must cost the mode menu, never the desktop. */
+  _randr(){
+    const now=Date.now();
+    if(this._randrRows&&now-this._randrAt<1500)return Promise.resolve(this._randrRows);
+    if(this._randrPending)return this._randrPending;
+    this._randrPending=new Promise(resolve=>{
+      let out='',done=false;
+      const settle=v=>{if(done)return;done=true;this._randrAt=Date.now();this._randrRows=v;
+        this._randrPending=null;resolve(v);};
+      let child;
+      try{child=this.spawn(process.env.PC_WLR_RANDR||'wlr-randr',['--json'],
+        {stdio:['ignore','pipe','pipe'],env:process.env});}catch(_){return settle(null);}
+      if(!child||!child.stdout)return settle(null);
+      child.stdout.on('data',b=>{if(out.length<4*1024*1024)out+=b;});
+      if(child.stderr)child.stderr.on('data',()=>{});
+      child.on('error',()=>settle(null));
+      child.on('close',code=>{
+        if(code!==0)return settle(null);
+        try{const value=JSON.parse(out);settle(Array.isArray(value)?value.map(randrHead):null);}
+        catch(_){settle(null);}
+      });
+    });
+    return this._randrPending;
+  }
+  _forgetOutputs(){this._randrRows=null;this._randrAt=0;}
+  /* Output configuration is a Wayland protocol operation, not a Wayfire window IPC command.
+   * wlr-randr submits every repeated --output block as one zwlr_output_manager_v1
+   * configuration, so a two-monitor rearrangement cannot expose a half-applied intermediate
+   * layout. Never invoke a shell: connector names and every value remain individual argv items. */
+  configureOutputs(rows){
+    const argv=[];
+    for(const row of rows||[]){
+      argv.push('--output',String(row.name));
+      if(row.enabled===false){argv.push('--off');continue;}
+      argv.push('--on');
+      if(row.mode)argv.push('--mode',String(row.mode).replace(/Hz$/,''));
+      argv.push('--pos',Math.round(Number(row.x)||0)+','+Math.round(Number(row.y)||0),
+        '--scale',String(Number(row.scale)||1),'--transform',String(row.transform||'normal'));
+    }
+    return new Promise((resolve,reject)=>{
+      const child=this.spawn(process.env.PC_WLR_RANDR||'wlr-randr',argv,{stdio:['ignore','pipe','pipe'],env:process.env});
+      let err='';child.stderr.on('data',b=>{if(err.length<16384)err+=b});
+      child.on('error',e=>reject(new Error(e&&e.code==='ENOENT'
+        ?'Display configuration tool is not installed (wlr-randr)':String(e&&e.message||e))));
+      child.on('close',code=>{this._forgetOutputs();
+        return code===0?resolve({ok:true}):reject(new Error((err.trim()||'wlr-randr failed')+' (exit '+code+')'));});
+    });
+  }
   workspaces(){return this.outputs().then(xs=>xs.map(x=>({name:x.current_workspace,focused:x.primary,output:x.name})));}
   async assignShell(id,assignment){const outs=await this.outputs(),o=outs.find(x=>x.name===String(assignment&&assignment.output));if(!o)throw new Error('Wayfire output not found');const b=assignment.rect||o.rect;await this.fullscreen(id,false);
     /* configure-view geometry is local to output_id. shell-displays deliberately carries global
@@ -116,4 +223,4 @@ class WayfireWM{
   async waitForWindow(pid,ms,kin){const end=Date.now()+(ms||15000),roots=[Number(pid),...(kin||[]).map(Number)];let family=pidFamily(roots,[]);for(;;){family=pidFamily([...family],procParents());const hit=(await this.windows().catch(()=>[])).find(w=>family.has(w.pid));if(hit)return hit;if(Date.now()>end)return null;await new Promise(r=>setTimeout(r,250));}}
   async waitForNewWindow(before,ms,accept){const old=new Set((before||[]).map(Number)),end=Date.now()+(ms||15000);for(;;){const hit=(await this.windows().catch(()=>[])).find(w=>!old.has(w.id)&&(!accept||accept(w)));if(hit)return hit;if(Date.now()>end)return null;await new Promise(r=>setTimeout(r,250));}}
 }
-module.exports={WayfireWM,wfFrame,wfDecoder,wayfireSockets,normalizeView,normalizeOutput};
+module.exports={WayfireWM,wfFrame,wfDecoder,wayfireSockets,normalizeView,normalizeOutput,randrHead};

@@ -35,10 +35,26 @@ SH = ROOT / "os/gentoo.sh"
 # steam-overlay (enabled with `eselect repository enable steam-overlay`).
 TARGET_REPOS = ("gentoo", "posterchan", "steam-overlay")
 
+# THE POSTERCHAN OVERLAY IS READ FROM THIS REPO, NOT FROM /var/db/repos/posterchan.
+#
+# That directory is a CLONE of what scripts/publish_overlay.sh last pushed, so it is downstream of
+# `os/overlay/` by definition: every newly added overlay package failed this check until somebody
+# published, which reads as "this atom does not exist" for a package sitting right there in the
+# tree.  Checking the source instead keeps the two real failures this file exists for — an atom in
+# no Gentoo category, and an atom we forgot to write an ebuild for — and drops a false one that
+# only measured publish timing.  The other two repos stay live: we do not author them.
+OVERLAY = ROOT / "os/overlay"
+
 
 def _repos() -> list[Path]:
     base = Path("/var/db/repos")
-    return [base / name for name in TARGET_REPOS if (base / name).is_dir()]
+    out = []
+    for name in TARGET_REPOS:
+        if name == "posterchan" and OVERLAY.is_dir():
+            out.append(OVERLAY)
+        elif (base / name).is_dir():
+            out.append(base / name)
+    return out
 
 
 def _packages() -> set[str]:
@@ -98,3 +114,44 @@ def test_brightnessctl_is_not_back_in_the_package_list():
     """It broke `emerge` for the whole profile. The backlight is handed to the `video` group by a
     udev rule instead — see tests/test_posterchanos_profile.py."""
     assert "brightnessctl" not in SH.read_text(encoding="utf-8").split("POSTERCHANOS_PACKAGES=")[1][:2000]
+
+
+def test_every_overlay_package_is_in_a_category_portage_reads():
+    """AN EBUILD IN AN UNLISTED CATEGORY IS INVISIBLE, AND NOTHING ANYWHERE SAYS SO.
+
+    `profiles/categories` is the whole list of categories a repository has; portage does not scan
+    for directories.  So adding `gui-apps/wlr-randr/` to the overlay and shipping it published a
+    package that `emerge` then reported as nonexistent -- identical, from the installer's side, to
+    never having written the ebuild.  The directory is there, the Manifest is right, and the atom
+    does not resolve.
+    """
+    if not OVERLAY.is_dir():
+        pytest.skip("no os/overlay in this checkout")
+    listed = set((OVERLAY / "profiles/categories").read_text(encoding="utf-8").split())
+    present = {
+        child.name
+        for child in OVERLAY.iterdir()
+        if child.is_dir() and child.name not in {"profiles", "metadata", "licenses", "eclass"}
+    }
+    assert present <= listed, (
+        "these overlay categories are not in profiles/categories, so portage cannot see any ebuild "
+        "in them: %s" % sorted(present - listed))
+
+
+def test_every_overlay_ebuild_has_a_manifest():
+    """A package with no Manifest fails verification on the machine, not here.
+
+    "VERIFY FAILED! Reason: Insufficient data for checksum verification" is what an operator sees;
+    it names no package and reads like a corrupt download.  Anything with a SRC_URI needs one.
+    """
+    if not OVERLAY.is_dir():
+        pytest.skip("no os/overlay in this checkout")
+    missing = []
+    for ebuild in OVERLAY.glob("*/*/*.ebuild"):
+        if "SRC_URI" not in ebuild.read_text(encoding="utf-8"):
+            continue                      # nothing is downloaded, so there is nothing to check
+        if not (ebuild.parent / "Manifest").is_file():
+            missing.append(str(ebuild.relative_to(OVERLAY)))
+    # posterchan-desktop's Manifest is generated at publish time from the release it pins.
+    missing = [m for m in missing if "posterchan-desktop" not in m]
+    assert not missing, "overlay ebuilds that download sources but carry no Manifest: %s" % missing
