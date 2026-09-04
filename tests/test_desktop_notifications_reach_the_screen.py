@@ -60,3 +60,25 @@ def test_the_notification_centre_is_still_the_shell_s_own_window():
     assert (ROOT / "tests/client/test_notifications_go_over_windows.py").exists()
     os_js = (ROOT / "static/js/client/os.js").read_text()
     assert "pc:notifications" in os_js or "notification" in os_js.lower()
+
+
+def test_the_daemon_is_gone_from_the_upgrade_path_too_not_only_the_autostart():
+    """REMOVING THE AUTOSTART LINE IS NOT REMOVING THE DAEMON.
+
+    mako ships a D-Bus service and takes `org.freedesktop.Notifications` on demand, so with the
+    package still installed it came straight back the first time anything raised a notification —
+    measured on the machine after the autostart line was deleted and the process killed:
+
+        org.freedesktop.Notifications  2086979  mako  ...  user@1001.service
+
+    and the email popups returned. The package must not be in the install list OR in the shell
+    package's dependencies, which is what makes `emerge --depclean` take it off an existing machine.
+    """
+    assert "mako" not in PACKAGES
+    assert "mako" not in EBUILD.split("src_install", 1)[0], "still a dependency, so it stays installed"
+    # And the app still raises its OWN in-app toast for the same event, which is the surface that
+    # replaces it — email raises both, so losing the OS one is not losing the notification.
+    app = (ROOT / "static/js/client/app.js").read_text()
+    mail = app.split("async sync(manual){", 1)[1].split("\n    },", 1)[0]
+    assert "notifToast(" in mail, "email would have no notification at all without a daemon"
+    assert "osNotify(" in mail
