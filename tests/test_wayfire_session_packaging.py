@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -63,6 +64,22 @@ def test_wayfire_failure_falls_back_to_sway(tmp_path):
     assert calls == ["wayfire:wayfire:-c /etc/wayfire.ini", "sway:sway"]
     log = tmp_path / "home/.local/state/posterchanos/compositor-fallback.log"
     assert "status 23" in log.read_text(encoding="utf-8")
+
+
+def test_fallback_reaps_recorded_wayfire_shell_before_sway(tmp_path):
+    child_pid = tmp_path / "child.pid"
+    body = (f"sleep 30 & child=$!\necho $child >\"$PC_WAYFIRE_SHELL_PID_FILE\"\n"
+            f"echo $child >\"{child_pid}\"\nexit 23\n")
+    done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
+    assert done.returncode == 0 and calls[-1] == "sway:sway"
+    pid = int(child_pid.read_text())
+    for _ in range(30):
+        stat = Path(f"/proc/{pid}/stat")
+        if not stat.exists() or stat.read_text().split(") ", 1)[1].startswith("Z"):
+            break
+        time.sleep(.02)
+    else:
+        raise AssertionError("recorded Wayfire shell survived into Sway fallback")
 
 
 def test_unknown_selection_cannot_disable_the_desktop(tmp_path):

@@ -61,6 +61,19 @@ if [ "$selected" = wayfire ]; then
 		fi
 		wait "$wayfire_pid"
 		status=$?
+		if [ -z "${shell_pid:-}" ] && [ -r "$PC_WAYFIRE_SHELL_PID_FILE" ]; then
+			IFS= read -r shell_pid <"$PC_WAYFIRE_SHELL_PID_FILE"
+			case "$shell_pid" in ''|*[!0-9]*) shell_pid='' ;; esac
+		fi
+		# Wayfire may exit before Electron notices its display socket disappeared. Starting Sway while
+		# that recorded shell is still alive makes pc-shell-start reject itself as a duplicate; the
+		# stale process then exits and leaves Sway with no desktop. Reap this session's exact PID first.
+		if [ -n "${shell_pid:-}" ] && kill -0 "$shell_pid" 2>/dev/null; then
+			kill -TERM "$shell_pid" 2>/dev/null || true
+			n=0
+			while kill -0 "$shell_pid" 2>/dev/null && [ "$n" -lt 30 ]; do sleep 0.1; n=$((n + 1)); done
+			kill -0 "$shell_pid" 2>/dev/null && kill -KILL "$shell_pid" 2>/dev/null || true
+		fi
 		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
 		printf '%s\n' "Wayfire exited with status $status; falling back to Sway for this login." \
 			>>"$state_dir/compositor-fallback.log"
