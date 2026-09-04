@@ -29,8 +29,7 @@ if [ "$selected" = wayfire ]; then
 	# compositor aborts (SIGTRAP) when it tries that unusable render node. Keep physical GPUs and
 	# VirGL-capable guests accelerated; only the virtio device with no render-node capability uses
 	# Mesa's supported llvmpipe path. This is deliberately not Electron --disable-gpu.
-	if grep -qs '^0x1af4$' /sys/class/drm/card*/device/vendor 2>/dev/null \
-		&& ! find /dev/dri -maxdepth 1 -name 'renderD*' -print -quit 2>/dev/null | grep -q .; then
+	if grep -qs '^0x1af4$' /sys/class/drm/card*/device/vendor 2>/dev/null; then
 		export LIBGL_ALWAYS_SOFTWARE=1
 		PC_SHELL_EXTRA_ARGS="${PC_SHELL_EXTRA_ARGS:+$PC_SHELL_EXTRA_ARGS }--use-angle=swiftshader --enable-unsafe-swiftshader"
 		export PC_SHELL_EXTRA_ARGS

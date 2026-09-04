@@ -148,6 +148,7 @@ def test_non_gl_virtio_uses_mesa_software_without_disabling_physical_gpu():
     session = LAUNCHER.read_text(encoding="utf-8")
     assert "0x1af4" in session and "LIBGL_ALWAYS_SOFTWARE=1" in session
     assert "--use-angle=swiftshader --enable-unsafe-swiftshader" in session
+    assert "renderD*" not in session
     assert "PC_WAYFIRE_HEALTH_TIMEOUT:=120" not in session
     assert "PC_SHELL_EXTRA_ARGS=--disable-gpu" not in session
 
