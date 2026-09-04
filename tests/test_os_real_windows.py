@@ -226,6 +226,10 @@ def test_the_shell_gives_real_windows_theme_owned_controls_and_keeps_the_bridges
     assert "pcwin=" in handler, "the shell no longer recognises a window URL"
     assert "frame: false" in handler
     assert "no close/minimise/maximise" in handler
+    oswin = (ROOT / "static/js/client/oswin.js").read_text()
+    chrome = oswin[oswin.index("function installChrome"):]
+    assert "pcWM.snap(row.id,'max')" in chrome
+    assert "pcWM.fullscreen(row.id" not in chrome
     assert "preload.js" in handler
 
 

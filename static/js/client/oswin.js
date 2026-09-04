@@ -201,11 +201,12 @@
         +'<button data-action="close" title="Close" aria-label="Close">×</button></span>';
       bar.querySelector('.pc-oswin-title').textContent=String(state.label||state.view||'PosterChan');
       (root.document.body||root.document.documentElement).prepend(bar);
-      let maximised=false;
       bar.querySelector('[data-action="close"]').onclick=()=>root.close();
       bar.querySelector('[data-action="min"]').onclick=async()=>{const row=await root.pcWM.self();if(row)await root.pcWM.hide(row.id);};
-      bar.querySelector('[data-action="max"]').onclick=async()=>{const row=await root.pcWM.self();if(!row)return;
-        maximised=!maximised;await root.pcWM.fullscreen(row.id,maximised);};
+      /* An application maximise is the output WORKAREA, not compositor fullscreen. Fullscreen is
+       * reserved for games/video and deliberately obscures every sibling on that output — using it
+       * here made Wayfire look like it only supported one application at a time. */
+      bar.querySelector('[data-action="max"]').onclick=async()=>{const row=await root.pcWM.self();if(row)await root.pcWM.snap(row.id,'max');};
     }catch(_){ }
   }
 
