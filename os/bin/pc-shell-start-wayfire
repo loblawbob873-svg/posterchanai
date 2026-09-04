@@ -6,7 +6,26 @@ set -u
 : "${PC_WAYFIRE_READY_FILE:=$XDG_RUNTIME_DIR/posterchan-wayfire-ready}"
 : "${PC_WAYFIRE_SHELL_PID_FILE:=$XDG_RUNTIME_DIR/posterchan-wayfire-shell.pid}"
 export HOME XDG_RUNTIME_DIR
-[ -n "${WAYFIRE_SOCKET:-}" ] || { echo "Wayfire IPC socket is unavailable" >&2; exit 1; }
+# THE IPC SOCKET IS FOUND, NOT DEMANDED — AND REFUSING HERE TOOK THE WHOLE DESKTOP DOWN.
+#
+# This exited when WAYFIRE_SOCKET was unset, which is every launch that does not inherit the
+# session environment: an ssh-driven `pc-shell-restart`, a recovery start, anything run from a
+# service or a cron. And pc-shell-restart EXECS this — so the refusal is not "the restart failed",
+# it is "there is now no shell": the supervisor watched for a replacement PID, none arrived, and it
+# stopped Wayfire and dropped the login to a text console. Measured, on the machine, from one
+# remote restart: `no replacement shell within 60000ms ... stopping Wayfire`.
+#
+# There is exactly one Wayfire session per user runtime directory, and its socket is named for it,
+# so this is a search rather than a guess -- the same recovery the WAYLAND_DISPLAY block below
+# already does for the same reason. Refuse only when there is genuinely no compositor.
+# An INHERITED value is taken as given, whatever the filesystem calls it -- proving it is a live
+# socket is _connect's job and a harness may hand this something else on purpose. Only an empty
+# value is searched for.
+if [ -z "${WAYFIRE_SOCKET:-}" ]; then
+	WAYFIRE_SOCKET=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayfire-*.socket' 2>/dev/null | head -1)
+	[ -n "$WAYFIRE_SOCKET" ] || { echo "Wayfire IPC socket is unavailable" >&2; exit 1; }
+fi
+export WAYFIRE_SOCKET
 exec 9>"$XDG_RUNTIME_DIR/posterchan-shell-start.lock"
 flock -n 9 || exit 0
 export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=wayfire XDG_SESSION_DESKTOP=wayfire

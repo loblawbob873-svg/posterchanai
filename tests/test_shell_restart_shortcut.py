@@ -283,3 +283,32 @@ def test_a_failed_canonical_navigation_never_claims_the_black_surface_recovered(
 def test_the_canonical_shell_navigation_is_awaited():
     main = (ROOT / "desktop/main.js").read_text()
     assert "await target.loadURL(APP_URL);" in main
+
+
+def test_a_restart_that_did_not_inherit_the_session_still_finds_the_compositor():
+    """REFUSING HERE DOES NOT FAIL THE RESTART — IT ENDS THE DESKTOP.
+
+    The launcher used to exit when `WAYFIRE_SOCKET` was unset, which is every launch that does not
+    inherit the session environment: an ssh-driven `pc-shell-restart`, a recovery start, anything
+    run from a service. And pc-shell-restart EXECS the launcher, so that refusal means there is now
+    no shell at all — the supervisor waits for a replacement PID, none arrives, and it stops Wayfire
+    and drops the login to a text console. Measured from exactly one remote restart on the real
+    machine: `no replacement shell within 60000ms of the last one exiting; stopping Wayfire`.
+
+    There is one Wayfire session per user runtime directory and its socket is named for it, so this
+    is a search, not a guess — the same recovery the WAYLAND_DISPLAY block already does.
+    """
+    start = (FILES / "pc-shell-start-wayfire").read_text()
+    head = start.split("exec 9>", 1)[0]
+    assert "find \"$XDG_RUNTIME_DIR\" -maxdepth 1 -type s -name 'wayfire-*.socket'" in head, head
+    assert "export WAYFIRE_SOCKET" in head
+    # It still refuses when there is genuinely no compositor — a shell started against nothing is a
+    # black screen, not a desktop.
+    assert "Wayfire IPC socket is unavailable" in head
+
+
+def test_the_recovery_runs_before_the_launcher_mutex():
+    """The flock is taken for the duration of a start. Discovering the socket after it would hold
+    the lock across a failure that has already decided to exit."""
+    start = (FILES / "pc-shell-start-wayfire").read_text()
+    assert start.index("wayfire-*.socket") < start.index('exec 9>"$XDG_RUNTIME_DIR/posterchan-shell-start.lock"')
