@@ -66,7 +66,7 @@ def _fn(decl: str, src: str = "") -> str:
 def test_the_centre_opens_as_a_window_when_there_is_a_compositor_to_give_it_to():
     """THE BUG, named. Without this branch the panel is appended to the shell's own DOM, which is
     the tiled surface every application floats above."""
-    body = _fn("  function toggleNoti(force){")
+    body = _fn("  function toggleNoti(force){") + _fn("  function _notiPopup(){")
     assert "pcPopup.toggle('noti'" in body, (
         "the notification centre is still drawn inside the shell, so it opens underneath every "
         "floating application. `toggle`, not `open`: whether it is showing is answered by the "
@@ -75,15 +75,16 @@ def test_the_centre_opens_as_a_window_when_there_is_a_compositor_to_give_it_to()
 
 
 def test_it_is_anchored_to_the_bell_rather_than_dropped_in_a_corner():
-    body = _fn("  function toggleNoti(force){")
+    body = _fn("  function toggleNoti(force){") + _fn("  function _notiPopup(){")
     assert "#os-bell" in body, "the popup no longer opens where the bell is"
 
 
 def test_the_in_page_panel_survives_for_every_shell_without_a_bridge():
     """A browser, the Windows build, the macOS build. The branch must be on the BRIDGE existing,
     never on a platform string, or the centre disappears everywhere else."""
-    body = _fn("  function toggleNoti(force){")
-    assert "window.pcPopup && pcPopup.open" in body
+    body = _fn("  function toggleNoti(force){") + _fn("  function _notiPopup(){")
+    # `toggle`, not `open` — see the note below. The branch is still on the BRIDGE existing.
+    assert "window.pcPopup && pcPopup.toggle" in body
     assert "buildNotiPanel(false)" in body, "the in-page panel is gone — this is browser-only UI now"
     code = _decomment(body)
     for token in ("PosterChanOS", "process.platform", "navigator.userAgent"):
@@ -93,9 +94,9 @@ def test_the_in_page_panel_survives_for_every_shell_without_a_bridge():
 def test_opening_the_popup_still_counts_as_reading_them_in_the_shell():
     """The popup is a different renderer, and the bell, the clock badge and the sidebar are painted
     from THIS process. Marking read only in the popup leaves the bell lit over an empty centre."""
-    body = _fn("  function toggleNoti(force){")
-    # The branch itself: from the bridge test to the call that hands the window over.
-    popup = body[body.index("if(window.pcPopup && pcPopup.open){"):body.index("pcPopup.toggle('noti'")]
+    body = _fn("  function toggleNoti(force){") + _fn("  function _notiPopup(){")
+    # The helper itself: everything up to the call that hands the window over.
+    popup = body[body.index("function _notiPopup(){"):body.index("pcPopup.toggle('noti'")]
     assert "notifsRead" in popup, "the shell never marks them read, so the bell stays lit"
     assert "mailAck" in popup, "the mail count on the clock is never acknowledged"
 

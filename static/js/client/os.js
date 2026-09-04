@@ -7252,7 +7252,38 @@
     if(p) p.remove();
   }
 
+  /* The compositor-level notification centre. Extracted so the flag cannot be consulted before the
+     process that owns the window is asked — see _netPopup and toggleNet. */
+  function _notiPopup(){
+    let mailNow = 0;
+    try{ mailNow = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ }
+    mailAck = mailNow;
+    try{ PC().notifsRead && PC().notifsRead(); }catch(_){ }
+    /* Give notifications nearly the full work area. The native popup owns its height, while the
+       CSS popup body stretches the panel to fill it. */
+    const w = Math.min(430, Math.max(300, Math.round(vwL() - 16)));
+    const h = Math.min(1200, Math.max(420, Math.round(vhL() - 56)));
+    let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
+    try{
+      const b = $('#os-bell', bar), r = b && b.getBoundingClientRect();
+      if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
+    }catch(_){ }
+    Promise.resolve(pcPopup.toggle('noti', { x, y, width: w, height: h }))
+      .then(open => { notiOpen = !!open; drawBar(); })
+      .catch(() => { notiOpen = false; drawBar(); });
+    drawBar();
+  }
   function toggleNoti(force){
+    /* THE PROCESS THAT HOLDS THE WINDOW DECIDES — see toggleNet. `notiOpen` is a paint flag and the
+     * popup closes on blur, on Escape and on every choice, none of which this renderer is told
+     * about, so consulting it first makes the bell work on alternate presses. */
+    if(window.pcPopup && pcPopup.toggle && force !== false){
+      const old = $('#os-noti', root);
+      if(old) old.remove();
+      toggleStart(false); toggleNet(false);
+      _notiPopup();
+      return;
+    }
     notiOpen = (force === undefined) ? !notiOpen : !!force;
     const old = $('#os-noti', root);
     if(old) old.remove();
@@ -7270,26 +7301,6 @@
      *
      * Reading it still counts as reading it HERE, because the popup is a separate renderer and the
      * bell, the clock badge and the sidebar all read this process's numbers. */
-    if(window.pcPopup && pcPopup.open){
-      let mailNow = 0;
-      try{ mailNow = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ }
-      mailAck = mailNow;
-      try{ PC().notifsRead && PC().notifsRead(); }catch(_){ }
-      /* Give notifications nearly the full work area. The native popup owns its height, while the
-         CSS popup body stretches the panel to fill it. */
-      const w = Math.min(430, Math.max(300, Math.round(vwL() - 16)));
-      const h = Math.min(1200, Math.max(420, Math.round(vhL() - 56)));
-      let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
-      try{
-        const b = $('#os-bell', bar), r = b && b.getBoundingClientRect();
-        if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
-      }catch(_){ }
-      Promise.resolve(pcPopup.toggle('noti', { x, y, width: w, height: h }))
-        .then(open => { notiOpen = !!open; drawBar(); })
-        .catch(() => { notiOpen = false; drawBar(); });
-      drawBar();
-      return;
-    }
     root.appendChild(buildNotiPanel(false));
     try{ PC().notifsRead && PC().notifsRead(); }catch(_){}
     drawBar();
@@ -7858,10 +7869,47 @@
     }catch(_){ return false; }
   }
 
+  /* The compositor-level Start menu. Extracted so the flag cannot be consulted before the
+     process that owns the window is asked — see toggleStart. */
+  function _startPopup(){
+    let rect = null;
+    try{ const b = $('#os-start', root); rect = b ? b.getBoundingClientRect() : null; }catch(_){ }
+    /* THE SAME BOX THE IN-PAGE MENU GETS. `.os-startmenu` is min(780px, 100vw-20px) wide and
+       min(920px, 100vh-78px) tall; the window was 420x560, which is less than a third of the
+       area and cut the app list off at ten — reported as "small as fuck". Measured in LAYOUT
+       pixels (vwL/vhL), because that is what the stylesheet's 100vw/100vh mean under body zoom. */
+    const w = Math.min(780, Math.max(360, Math.round(vwL() - 20)));
+    const h = Math.min(920, Math.max(320, Math.round(vhL() - 78)));
+    const x = Math.max(0, Math.round((rect ? rect.left : 10)));
+    const y = Math.max(0, Math.round((rect ? rect.top : vhL()) - h - 8));
+    /* TOGGLE, decided by the main process. `startOpen` is a paint flag here, not the decision:
+       the window closes on blur, on Escape and on every choice, none of which this renderer sees
+       in time. Asking it to remember made Super work every other press, unpredictably. */
+    Promise.resolve(pcPopup.toggle('start', { x, y, width: w, height: h }))
+      .then(open => { startOpen = !!open; drawBar(); })
+      .catch(() => { startOpen = false; drawBar(); });
+    drawBar();
+  }
   function toggleStart(force){
     /* Every handler in the menu below ends with `toggleStart(false)`. In the window that means the
        window — stated once here rather than at ~15 call sites. */
     if(_menuInPopup && force === false){ try{ window.close(); }catch(_){ } return; }
+    /* THE PROCESS THAT HOLDS THE WINDOW DECIDES, AND THE FLAG IS NEVER ASKED FIRST.
+     *
+     * The comment on the popup call below already says why — the window closes on blur, on Escape
+     * and on every choice, none of which this renderer sees — but the decision was still being made
+     * from `startOpen` up here, so a drifted flag made the FIRST press "close" a menu that was not
+     * there. That is the same "Super six times gave menu, nothing, menu, menu, nothing, menu" this
+     * was supposed to have fixed, and it came back as "start menu not even functional now too".
+     * `force === false` is the defensive close scattered through this file and stays local. */
+    if(!_menuInPopup && window.pcPopup && pcPopup.toggle && force !== false){
+      const stale = $('#os-startmenu', root);
+      if(stale) stale.remove();
+      _nativeMenuLayer(false);
+      toggleNoti(false); toggleNet(false);
+      _startPopup();
+      return;
+    }
     const wasStart = startOpen;
     startOpen = (force === undefined) ? !startOpen : !!force;
     let menu = $('#os-startmenu', root);
@@ -7883,26 +7931,6 @@
      *
      * The in-page path stays for everywhere else — a browser, the Windows/macOS builds, any shell
      * with no popup bridge — and is what runs when `pcPopup` is absent. */
-    if(!_menuInPopup && window.pcPopup && pcPopup.open){
-      let rect = null;
-      try{ const b = $('#os-start', root); rect = b ? b.getBoundingClientRect() : null; }catch(_){ }
-      /* THE SAME BOX THE IN-PAGE MENU GETS. `.os-startmenu` is min(780px, 100vw-20px) wide and
-         min(920px, 100vh-78px) tall; the window was 420x560, which is less than a third of the
-         area and cut the app list off at ten — reported as "small as fuck". Measured in LAYOUT
-         pixels (vwL/vhL), because that is what the stylesheet's 100vw/100vh mean under body zoom. */
-      const w = Math.min(780, Math.max(360, Math.round(vwL() - 20)));
-      const h = Math.min(920, Math.max(320, Math.round(vhL() - 78)));
-      const x = Math.max(0, Math.round((rect ? rect.left : 10)));
-      const y = Math.max(0, Math.round((rect ? rect.top : vhL()) - h - 8));
-      /* TOGGLE, decided by the main process. `startOpen` is a paint flag here, not the decision:
-         the window closes on blur, on Escape and on every choice, none of which this renderer sees
-         in time. Asking it to remember made Super work every other press, unpredictably. */
-      Promise.resolve(pcPopup.toggle('start', { x, y, width: w, height: h }))
-        .then(open => { startOpen = !!open; drawBar(); })
-        .catch(() => { startOpen = false; drawBar(); });
-      drawBar();
-      return;
-    }
     if(!_menuInPopup) _nativeMenuLayer(true);   // a compositor layer belongs to the desktop
     /* NO SHELL RAISE HERE, AND THAT IS A CORRECTION.
      *

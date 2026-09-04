@@ -8,7 +8,10 @@ MAIN = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
 
 
 def test_nostr_connectivity_uses_a_native_popup_above_app_windows():
-    body = OS.split("  function toggleNet(force){", 1)[1].split("  // Arrival toasts", 1)[0]
+    # The popup call lives in `_netPopup` now — extracted so the paint flag cannot be consulted
+    # before the process that owns the window is asked (see test_start_menu_is_its_own_window).
+    body = (OS.split("  function _netPopup(){", 1)[1].split("\n  function toggleNet", 1)[0]
+            + OS.split("  function toggleNet(force){", 1)[1].split("  // Arrival toasts", 1)[0])
     assert "pcPopup.toggle('net'" in body
     assert body.index("pcPopup.toggle('net'") < body.index("root.appendChild(panel)")
     assert "renderNetPopup" in OS
@@ -17,7 +20,8 @@ def test_nostr_connectivity_uses_a_native_popup_above_app_windows():
 
 
 def test_notification_popup_uses_nearly_the_whole_work_area():
-    body = OS.split("  function toggleNoti(force){", 1)[1].split("  /* THE NOTIFICATION CENTRE", 1)[0]
+    body = (OS.split("  function _notiPopup(){", 1)[1].split("\n  function toggleNoti", 1)[0]
+            + OS.split("  function toggleNoti(force){", 1)[1].split("  /* THE NOTIFICATION CENTRE", 1)[0])
     assert "vhL() - 56" in body
     assert "Math.max(420" in body
     assert "pcPopup.toggle('noti'" in body
@@ -34,7 +38,8 @@ def test_connectivity_settings_action_routes_back_to_the_shell():
 
 
 def test_connectivity_popup_uses_shell_snapshot_not_its_cold_relay_pool():
-    toggle = OS.split("  function toggleNet(force){", 1)[1].split("  // Arrival toasts", 1)[0]
+    toggle = (OS.split("  function _netPopup(){", 1)[1].split("\n  function toggleNet", 1)[0]
+              + OS.split("  function toggleNet(force){", 1)[1].split("  // Arrival toasts", 1)[0])
     render = OS.split("  function renderNetPopup(){", 1)[1].split("  function restore(){", 1)[0]
     paint = OS.split("  function paintNet(){", 1)[1].split("/* ONE click-away handler", 1)[0]
     assert "const state = netState();" in toggle

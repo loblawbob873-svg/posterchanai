@@ -253,7 +253,10 @@ const fs=require('fs'),os=require('os'),path=require('path'),v=require('./deskto
         for name in ("virt-viewer", "remote-viewer", "Virt-viewer"):
             self.assertNotIn(name.lower(), rules.lower(),
                              f"a window rule claims {name}; it must be left alone")
-        self.assertNotIn("sticky", config.lower())
+        # The RULES, not the prose. The [window-rules] comment names the five identifiers Wayfire's
+        # `set` actually implements — including `sticky` — which is exactly the sentence that stops
+        # somebody re-adding a rule this test exists to forbid.
+        self.assertNotIn("sticky", rules.lower())
 
     def test_new_vm_uses_the_shared_plus_icon(self):
         src = (ROOT / "static/js/client/os.js").read_text()

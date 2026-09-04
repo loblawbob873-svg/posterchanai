@@ -2231,17 +2231,39 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
   }
   if (!list.length) throw new Error('nothing to launch');
   let launchOpts = opts || {};
-  /* Wayfire is floating-first; games get their own nested compositor so resolution changes,
-   * pointer constraints and Proton helper surfaces cannot destabilize the desktop compositor.
-   * The active Wayfire output owns the new fullscreen surface, so this naturally follows the
-   * monitor whose Start menu launched it. Sway remains an untouched rollback backend. */
-  if(opts&&opts.game&&process.env.WAYFIRE_SOCKET){
+  /* GAMES LAUNCH DIRECTLY. GAMESCOPE IS OPT-IN, AND IT USED TO BE MANDATORY AND 720p.
+   *
+   * Every Games-category launch was wrapped in `gamescope -f -b --force-windows-fullscreen` (plus
+   * `-e` for Steam), gated on WAYFIRE_SOCKET — so it did nothing while Sway was the session and
+   * switched itself on the day Wayfire became it. Two things then went wrong at once:
+   *
+   *  - No `-W/-H` was passed, and gamescope's Wayland backend defaults its nested display to
+   *    1280x720. Measured with exactly those flags on this hardware: `NESTED_DISPLAY SIZE
+   *    1280 x 720`, upscaled to a 3840x2560 panel — 2.4x, and 16:9 into a 3:2 output.
+   *  - `Categories=Network;FileTransfer;Game;` makes the STEAM CLIENT itself a game, so the store,
+   *    the library and every settings window went through it too, with `-e` putting Steam into its
+   *    Deck-session contract. "why is steam and all the steam games running in steam full screen
+   *    mode? games look like shit now."
+   *
+   * The Sway session launched games directly and that worked, so that is the default again. The
+   * nested compositor is a real tool for the case it was reached for — a game whose resolution
+   * changes upsetting the desktop — so it stays available, per launch, and when it IS used it is
+   * given the output's real mode instead of gamescope's default. A missing gamescope is no longer
+   * a refusal to launch: the migration notes require Gamescope AND a direct fallback to work.
+   */
+  if(opts&&opts.gamescope&&process.env.WAYFIRE_SOCKET){
     const gamescope='/usr/bin/gamescope';
     try{
       fs.accessSync(gamescope,fs.constants.X_OK);
       const steam=/^steam(?:-native)?$/i.test(path.basename(list[0]));
-      list=[gamescope,'-f','-b','--force-windows-fullscreen',...(steam?['-e']:[]),'--',...list];
-    }catch(_){ return {pid:null,window:null,why:'gamescope is required to launch games on PosterChanOS'}; }
+      const size=[];
+      try{
+        const outs=opts&&opts.output;
+        const w=Math.round(Number(outs&&outs.width)||0), h=Math.round(Number(outs&&outs.height)||0);
+        if(w>0&&h>0) size.push('-W',String(w),'-H',String(h));
+      }catch(_){ }
+      list=[gamescope,'-f','-b',...size,...(steam?['-e']:[]),'--',...list];
+    }catch(_){ /* not installed — launch directly, which is what every other desktop does */ }
   }
   /* TELEGRAM 7 + QT 6.9 ON SWAY: its native Wayland QRhi window probes AMD OpenGL correctly,
    * then Qt fails `EGL_WL_bind_wayland_display`. The window paints its spinner and turns black as

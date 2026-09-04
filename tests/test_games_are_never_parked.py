@@ -69,12 +69,25 @@ def test_a_game_is_never_screen_captured():
         "the preview no longer refuses a window that is not parked and visible")
 
 
-def test_the_compositor_still_fullscreens_steam_titles():
-    """The rule the whole contract rests on, in a file the window rewrite also edits."""
-    assert re.search(r'rule_\w+\s*=\s*on created if app_id contains "steam_app_" then set fullscreen true',
-                     WAYFIRE), "the Steam fullscreen rule is gone from wayfire.ini"
-    # The idle half is no longer per-rule: Wayfire's idle plugin exempts ANY fullscreen window, which
-    # covers the game whether it matched the rule above or fullscreened itself.
+def test_the_shell_still_fullscreens_steam_titles():
+    """AND IT IS THE SHELL THAT DOES IT, NOT A COMPOSITOR RULE.
+
+    This asserted `rule_steam_fullscreen = ... then set fullscreen true` in wayfire.ini — a line
+    that could never work: Wayfire 0.10's window-rules `set` understands five identifiers (sticky,
+    always_on_top, alpha, geometry, geometry_ppt) and `fullscreen` is not one of them, so it logged
+    "Unsupported set operation to identifier" and did nothing. The test kept it looking correct.
+
+    The promotion is `enforceNativeGameFullscreen` over IPC, which is strictly better: it also
+    catches Proton's LATE WM_CLASS, which a map-time rule cannot see.
+    """
+    assert "then set fullscreen" not in WAYFIRE.split("[window-rules]", 1)[-1] or True
+    assert not [l for l in WAYFIRE.splitlines()
+                if l.startswith("rule_") and "set fullscreen" in l], (
+        "wayfire.ini claims a fullscreen rule the compositor does not implement")
+    assert "enforceNativeGameFullscreen" in MAIN_JS
+    assert "steam_app_" in MAIN_JS, "nothing in the shell recognises a Proton game any more"
+    # The idle half is not per-rule: Wayfire's idle plugin exempts ANY fullscreen window, which
+    # covers the game whether the shell promoted it or it fullscreened itself.
     assert "disable_on_fullscreen = true" in WAYFIRE, "a game would let the screen blank mid-play"
 
 

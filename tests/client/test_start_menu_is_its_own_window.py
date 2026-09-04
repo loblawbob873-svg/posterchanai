@@ -153,7 +153,7 @@ def test_every_action_that_opens_something_reaches_the_desktop():
 
 def test_machine_program_is_routed_before_the_popup_closes():
     """Closing the popup destroys its renderer, so it cannot launch a process after close."""
-    body = _fn(OS_JS, "  function toggleStart(force){")
+    body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
     machine = body[body.index("if(b.dataset.app){"):body.index("toggleStart(false); openLauncherApp", body.index("if(b.dataset.app){"))]
     assert "_menuAct('app', b.dataset.app)" in machine
     assert machine.index("_menuAct('app', b.dataset.app)") < machine.index("toggleStart(false)")
@@ -171,7 +171,7 @@ def test_scanned_program_launch_matrix_runs_end_to_end():
 
 def test_closing_the_menu_in_a_window_closes_the_window():
     """Every handler in the menu ends with `toggleStart(false)`. Stated once, at the top."""
-    body = _fn(OS_JS, "  function toggleStart(force){")
+    body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
     assert "_menuInPopup && force === false" in body
     assert "window.close()" in body
 
@@ -185,7 +185,7 @@ def test_it_is_searchable_because_it_is_the_real_menu():
     """The search box is the menu's own (`os-q` / `.os-search`), and it searches Nostr, the app
     list, this computer's programs, your drive and local files — none of which the window's first
     implementation had."""
-    body = _fn(OS_JS, "  function toggleStart(force){")
+    body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
     assert 'id="os-q"' in body
     for what in ("This computer", "Your files", "Files on this computer"):
         assert what in body, f"the start menu no longer offers {what!r}"
@@ -196,15 +196,16 @@ def test_it_is_searchable_because_it_is_the_real_menu():
 def test_the_in_page_menu_survives_where_there_is_no_bridge():
     """A browser and the Windows/macOS builds have no compositor and no popup bridge. The branch is
     on the BRIDGE existing, never on a platform string."""
-    body = _fn(OS_JS, "  function toggleStart(force){")
-    assert "window.pcPopup && pcPopup.open" in body
+    body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
+    # `toggle`, not `open`: the process holding the window answers whether it is showing.
+    assert "window.pcPopup && pcPopup.toggle" in body
     assert "_nativeMenuLayer(true)" in body, "the in-page path was removed"
     assert "!_menuInPopup && window.pcPopup" in body, (
         "the menu running INSIDE the window would open a second window from itself")
 
 
 def test_a_refused_window_does_not_leave_start_stuck_open():
-    body = _fn(OS_JS, "  function toggleStart(force){")
+    body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
     assert "startOpen = false; drawBar();" in body
 
 
@@ -237,7 +238,7 @@ def test_open_or_close_is_decided_by_the_process_that_owns_the_window():
 
 def test_the_shell_only_paints_what_it_is_told():
     """`startOpen` may not be the decision any more — it is the taskbar highlight."""
-    body = _fn(OS_JS, "  function toggleStart(force){")
+    body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
     assert "pcPopup.toggle('start'" in body
     assert "startOpen = !!open" in body, (
         "the shell still decides from its own flag, which is the every-other-press dead key")
@@ -266,7 +267,7 @@ def test_the_window_is_placed_on_the_output_that_asked_for_it():
 def test_a_defensive_close_does_not_shut_a_menu_somebody_just_opened():
     """`toggleStart(false)` is called from several places that mean "make sure it is not showing".
     Forwarding every one of those to the popup closed the window the toggle had just opened."""
-    body = _fn(OS_JS, "  function toggleStart(force){")
+    body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
     at = body.index("pcPopup.close()")
     assert "wasStart" in body[max(0, at - 300):at]
 
@@ -274,5 +275,35 @@ def test_a_defensive_close_does_not_shut_a_menu_somebody_just_opened():
 def test_the_menu_gets_the_size_the_menu_needs():
     """420x560 is less than a third of the in-page menu's area and cut the app list off at ten —
     "small as fuck"."""
-    body = _fn(OS_JS, "  function toggleStart(force){")
+    body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
     assert "Math.min(780" in body and "Math.min(920" in body
+
+
+def test_no_taskbar_toggle_decides_from_a_flag_it_cannot_keep():
+    """THE RECURRING ONE, STATED ONCE FOR ALL THREE.
+
+    Start, Notifications and the connectivity panel are all popup WINDOWS on PosterChanOS, and a
+    window closes on blur, on Escape and on every choice — none of which the shell renderer is told
+    about. So `startOpen` / `notiOpen` / `netOpen` are PAINT flags that drift, and any toggle that
+    decides open-or-close from one of them works on alternate presses: "Super six times gave menu,
+    nothing, menu, menu, nothing, menu", then "start menu not even functional now too", then the
+    tray's connectivity button.
+
+    The rule is that the popup branch is reached BEFORE the flag is read, and the flag is only ever
+    written from the answer. Asserted structurally so a fourth panel cannot reintroduce it.
+    """
+    for name, flag in (("toggleStart(force){", "startOpen"),
+                       ("toggleNoti(force){", "notiOpen"),
+                       ("toggleNet(force){", "netOpen")):
+        body = _fn(OS_JS, "  function " + name)
+        helper = ("_startPopup()" if flag == "startOpen"
+                  else "_notiPopup()" if flag == "notiOpen" else "_netPopup()")
+        assert helper in body, (name, "the popup branch is not reached at all")
+        # Everything up to the bridge test. A defensive `force === false` close INSIDE that branch
+        # is fine — it is a caller saying "put it away" — but nothing before it may read or write
+        # the flag to decide.
+        head = body[:body.index("window.pcPopup")]
+        assert (flag + " =") not in head, (
+            name + " decides from " + flag + " before asking the process that owns the window")
+        assert ("!" + flag) not in head, (
+            name + " branches on " + flag + " before asking the process that owns the window")
