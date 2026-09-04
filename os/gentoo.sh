@@ -3273,7 +3273,7 @@ if [ -z "$WAYLAND_DISPLAY" ] && { [ "${XDG_VTNR:-}" = 1 ] || [ "$(tty)" = /dev/t
 	fi
 	export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
 	mkdir -p "$HOME/.local/state/posterchanos"
-	if [ "$(id -un)" = live ] && [ -w /dev/ttyS0 ]; then
+	if [ "$(id -un)" = live ] && [ -e /dev/ttyS0 ] && sudo -n chmod o+w /dev/ttyS0; then
 		mkdir -p "$HOME/.config/posterchan-desktop"
 		pc_diag_pid=/run/user/$(id -u)/posterchan-live-session-log.pid
 		[ ! -r "$pc_diag_pid" ] || kill "$(cat "$pc_diag_pid" 2>/dev/null)" 2>/dev/null || true

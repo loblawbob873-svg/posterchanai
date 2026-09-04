@@ -515,7 +515,7 @@ class TheLiveSessionActuallyStarts(unittest.TestCase):
     def test_live_only_mirrors_compositor_diagnostics_to_serial(self):
         i = self.fn.index('cat >"$WORK/live.bash_profile"')
         profile = self.fn[i:self.fn.index("\nPROFILE", i)]
-        assert '[ "$(id -un)" = live ] && [ -w /dev/ttyS0 ]' in profile
+        assert '[ "$(id -un)" = live ] && [ -e /dev/ttyS0 ] && sudo -n chmod o+w /dev/ttyS0' in profile
         assert "posterchan-desktop/shell.log" in profile
         assert "tail -n 0 -F" in profile
 
