@@ -6,7 +6,7 @@ const net=require('net');
 const fs=require('fs');
 const path=require('path');
 const {spawn}=require('child_process');
-const {clampRectToOutputs,pidFamily}=require('./wm.js');
+const {clampRectToOutputs,pidFamily,rememberWorkArea,workAreaFor}=require('./wm.js');
 
 function wayfireSockets(explicit){
   if(explicit)return [String(explicit)];
@@ -25,8 +25,34 @@ function wayfireSockets(explicit){
 function wfFrame(value){const body=Buffer.from(JSON.stringify(value),'utf8'),head=Buffer.alloc(4);head.writeUInt32LE(body.length);return Buffer.concat([head,body]);}
 function wfDecoder(onMessage){let buf=Buffer.alloc(0);return chunk=>{buf=buf.length?Buffer.concat([buf,chunk]):chunk;for(;;){if(buf.length<4)return;const n=buf.readUInt32LE(0);if(n>16*1024*1024)throw new Error('invalid Wayfire IPC frame');if(buf.length<4+n)return;let value=null;try{value=JSON.parse(buf.subarray(4,4+n).toString('utf8'));}catch(_){}buf=buf.subarray(4+n);onMessage(value);}};}
 function geometryOf(v){const g=v&&v.geometry||{};return {x:Number(g.x)||0,y:Number(g.y)||0,width:Number(g.width)||0,height:Number(g.height)||0};}
+/* HOW FAR THE SERVER-SIDE DECORATION REACHES PAST THE CONTENT, above and below.
+ *
+ * The taskbar guard asks whether a window is on the bar, and what a person sees on the bar is the
+ * DECORATED frame, not `geometry`. Measured on Wayfire 0.10.1 with `border_size = 3` and
+ * `preferred_decoration_mode = server`: a Firefox whose geometry ran y 47..2127 had a base geometry
+ * of 24..2156 — 23 above and 29 below. Without `below` a correction is 29 units short and a strip
+ * of bar stays covered, which reads as the guard having done nothing; without `above` a window
+ * lifted to the top of the work area loses its TITLE BAR, and its close button, off the screen.
+ *
+ * Carried as two OFFSETS rather than as the decorated rectangle, because `geometry` and
+ * `base-geometry` are not reported in the same coordinate space: measured on the second output, a
+ * view answered geometry.x 3205 (global) and base-geometry.x 107 (output-local). A difference of
+ * two edges on one axis survives that; an absolute base rectangle does not. The y difference is
+ * exact wherever the outputs share a top edge and is bounded nonsense otherwise, so an answer
+ * outside plausible decoration falls back to the total vertical decoration, which over-reserves —
+ * the safe direction, since over-reserving shortens a window and under-reserving hides the bar. */
+function decorInsets(v){
+  const g=v&&v.geometry||{},b=v&&(v['base-geometry']||v.base_geometry);
+  if(!b)return {above:0,below:0};
+  const plausible=n=>Number.isFinite(n)&&n>=0&&n<=256;
+  const above=Math.round((Number(g.y)||0)-(Number(b.y)||0));
+  const below=Math.round(((Number(b.y)||0)+(Number(b.height)||0))-((Number(g.y)||0)+(Number(g.height)||0)));
+  if(plausible(above)&&plausible(below))return {above,below};
+  const total=Math.round((Number(b.height)||0)-(Number(g.height)||0));
+  return {above:0,below:plausible(total)?total:0};
+}
 function normalizeView(v){
-  const g=geometryOf(v);return {id:Number(v&&v.id),pid:Number(v&&v.pid)>0?Number(v.pid):0,
+  const g=geometryOf(v),d=decorInsets(v);return {id:Number(v&&v.id),pid:Number(v&&v.pid)>0?Number(v.pid):0,
     app:String(v&&((v['app-id']||v.app_id||v.app)||'')),title:String(v&&v.title||''),
     workspace:String(v&&((v['wset-index']??v['output-id']??v.output_id)??'')),
     /* Kept alongside `workspace` because that field is a STRING the shell treats as opaque, while
@@ -34,7 +60,8 @@ function normalizeView(v){
     outputId:Number(v&&(v['output-id']??v.output_id)),outputName:String(v&&(v['output-name']||v.output_name||'')),
     focusTime:Number(v&&(v['last-focus-timestamp']??v.last_focus_timestamp))||0,
     focused:!!(v&&(v.activated||v.focused)),fullscreen:!!(v&&v.fullscreen),floating:!(Number(v&&v['tiled-edges'])>0),
-    xwayland:!!(v&&(v.type==='xwayland'||v['app-id']==null&&v.app_id==null)),stashed:!!(v&&v.minimized),rect:g};
+    xwayland:!!(v&&(v.type==='xwayland'||v['app-id']==null&&v.app_id==null)),stashed:!!(v&&v.minimized),
+    below:d.below,above:d.above,rect:g};
 }
 function normalizeOutput(o){const g=o&&((o.geometry||o.workarea)||{});return {name:String(o&&o.name||o&&o.id||''),active:o&&o.active!==false,
   primary:!!(o&&o.focused),focused:!!(o&&o.focused),current_workspace:String(o&&((o['wset-index']??o.id)??'')),scale:Number(o&&o.scale)||1,
@@ -66,7 +93,7 @@ function randrHead(h){
 function procParents(){const out=[];if(process.platform!=='linux')return out;try{for(const n of fs.readdirSync('/proc'))if(/^\d+$/.test(n))try{const s=fs.readFileSync('/proc/'+n+'/stat','utf8'),i=s.lastIndexOf(')'),f=s.slice(i+1).trim().split(/\s+/);out.push({pid:Number(n),ppid:Number(f[1])});}catch(_){}}catch(_){}return out;}
 
 class WayfireWM{
-  constructor(sockPath,opts){this.backend='wayfire';this._origins=null;this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this.actionServer=null;this.spawn=opts&&opts.spawn||spawn;this._randrRows=null;this._randrAt=0;this._randrPending=null;}
+  constructor(sockPath,opts){this.backend='wayfire';this._origins=null;this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this.actionServer=null;this.spawn=opts&&opts.spawn||spawn;this._randrRows=null;this._randrAt=0;this._randrPending=null;this._work=[];}
   available(){return this.paths.length>0;}
   _connect(){if(this.sock)return Promise.resolve(this.sock);if(this.connecting)return this.connecting;if(!this.paths.length)return Promise.reject(new Error('no compositor socket — WAYFIRE_SOCKET is not set'));this.connecting=(async()=>{let last;for(const p of this.paths)try{return await this._connectPath(p);}catch(e){last=e;}throw last||new Error('no live Wayfire socket');})().finally(()=>{this.connecting=null;});return this.connecting;}
   _connectPath(p){return new Promise((resolve,reject)=>{const s=net.createConnection(p);let settled=false;const feed=wfDecoder(msg=>{if(msg&&msg.event){this._event(msg);return;}const q=this.pending.shift();if(q){if(msg&&msg.error)q.reject(new Error(msg.error));else q.resolve(msg);}});s.on('data',c=>{try{feed(c);}catch(e){s.destroy(e);}});s.on('error',e=>{if(!settled){settled=true;reject(e);}this._fail(e);});s.on('close',()=>{if(this.sock===s)this.sock=null;this._fail(new Error('Wayfire IPC closed'));});s.on('connect',()=>{if(settled)return;settled=true;this.sock=s;this.path=p;resolve(s);});});}
@@ -105,7 +132,15 @@ class WayfireWM{
     row.rect={x:row.rect.x+o.x,y:row.rect.y+o.y,width:row.rect.width,height:row.rect.height};
     return row;
   }
-  async outputs(){const r=await this._send('window-rules/list-outputs');const rows=(Array.isArray(r)?r:r&&r.outputs||[]).map(normalizeOutput);this._rememberOrigins(rows);return rows;}
+  /* THE WORK AREA IS PUBLISHED BY THE RENDERER, BECAUSE ONLY THE RENDERER CAN MEASURE IT.
+   * Wayfire's own `workarea` is the whole output — nothing here declares a layer-shell exclusive
+   * zone — so the only place that knows how tall the taskbar actually is, at this zoom, on this
+   * display, is the page drawing it. It hands the answer here and every rectangle this class
+   * decides is clamped into it. */
+  setWorkArea(area){this._work=rememberWorkArea(this._work,area);return Promise.resolve(true);}
+  async outputs(){const r=await this._send('window-rules/list-outputs');const rows=(Array.isArray(r)?r:r&&r.outputs||[]).map(normalizeOutput);
+    for(const row of rows)row.work=workAreaFor(this._work,row.rect);
+    this._rememberOrigins(rows);return rows;}
   /* THE HOT PATH STAYS PURE IPC. `outputs()` runs inside place/snap/move — once per pointer frame
    * while a window is dragged — so it must never spawn a process. Only the display SETTINGS read
    * pays for wlr-randr, through this second method; desktop/displays.js asks for it by name and
@@ -228,7 +263,13 @@ class WayfireWM{
   async placeAndReveal(id,x,y,w,h){return this.place(id,x,y,w,h);}
   async restore(id,x,y,w,h){await this.show(id);return this.place(id,x,y,w,h);}
   async placeOnOutput(id,b,direction){const l=Number(b&&b.x)||0,t=Number(b&&b.y)||0,ow=Math.max(1,Number(b&&b.width)||1),oh=Math.max(1,Number(b&&b.height)||1),gap=12;const row=(await this.windows()).find(x=>x.id===Number(id)),r=row&&row.rect||{};const w=Math.min(Math.max(320,Number(r.width)||ow*.72),Math.max(1,ow-gap*2)),h=Math.min(Math.max(220,Number(r.height)||oh*.72),Math.max(1,oh-gap*2));let x=Math.min(Math.max(Number(r.x)||l+gap,l+gap),l+ow-w-gap),y=Math.min(Math.max(Number(r.y)||t+gap,t+gap),t+oh-h-gap);if(direction==='right')x=l+gap;else if(direction==='left')x=l+ow-w-gap;else if(direction==='down')y=t+gap;else if(direction==='up')y=t+oh-h-gap;await this.place(id,x,y,w,h);return{x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};}
-  async snap(id,zone){const row=(await this.windows()).find(x=>x.id===Number(id));if(!row)return false;const outs=await this.outputs(),cx=row.rect.x+row.rect.width/2,cy=row.rect.y+row.rect.height/2,o=outs.find(o=>cx>=o.rect.x&&cx<o.rect.x+o.rect.width&&cy>=o.rect.y&&cy<o.rect.y+o.rect.height)||outs[0];if(!o)return false;const b=o.rect,h=Math.max(1,b.height-72),half=Math.floor(b.width/2);let x=b.x,y=b.y,w=b.width,hh=h;if(zone==='left')w=half;else if(zone==='right'){x+=half;w=b.width-half;}else if(/^(top|bottom)-(left|right)$/.test(zone)){const p=zone.split('-'),halfH=Math.floor(h/2);w=p[1]==='left'?half:b.width-half;if(p[1]==='right')x+=half;hh=p[0]==='top'?halfH:h-halfH;if(p[0]==='bottom')y+=halfH;}else if(zone!=='max')return false;return this.place(id,x,y,w,hh);}
+  /* `b.height-72` WAS THE TASKBAR, GUESSED. 72 is 48 page pixels at one particular zoom and this
+   * desk runs at another: the bar is 38 compositor units here, so a "maximised" window stopped 34
+   * units short of it — and on a display scaled the other way the same constant would have left
+   * the bar covered. The published work area is the measurement; the constant survives only as the
+   * fallback for a renderer that has not reported one yet. */
+  async snap(id,zone){const row=(await this.windows()).find(x=>x.id===Number(id));if(!row)return false;const outs=await this.outputs(),cx=row.rect.x+row.rect.width/2,cy=row.rect.y+row.rect.height/2,o=outs.find(o=>cx>=o.rect.x&&cx<o.rect.x+o.rect.width&&cy>=o.rect.y&&cy<o.rect.y+o.rect.height)||outs[0];if(!o)return false;
+    const wa=o.work,b=wa?{x:wa.x,y:wa.y,width:wa.w,height:wa.h}:o.rect,h=wa?b.height:Math.max(1,b.height-72),half=Math.floor(b.width/2);let x=b.x,y=b.y,w=b.width,hh=h;if(zone==='left')w=half;else if(zone==='right'){x+=half;w=b.width-half;}else if(/^(top|bottom)-(left|right)$/.test(zone)){const p=zone.split('-'),halfH=Math.floor(h/2);w=p[1]==='left'?half:b.width-half;if(p[1]==='right')x+=half;hh=p[0]==='top'?halfH:h-halfH;if(p[0]==='bottom')y+=halfH;}else if(zone!=='max')return false;return this.place(id,x,y,w,hh);}
   move(id,x,y){const key=Number(id);let state=this.moves.get(key);const at={x:Math.round(x),y:Math.round(y)};if(state){state.next=at;return state.promise;}state={next:at,promise:null};state.promise=(async()=>{while(state.next){const p=state.next;state.next=null;const row=(await this.windows()).find(v=>v.id===key);if(row)await this.place(key,p.x,p.y,row.rect.width,row.rect.height);}})().finally(()=>{if(this.moves.get(key)===state)this.moves.delete(key);});this.moves.set(key,state);return state.promise;}
   finishMove(id){const s=this.moves.get(Number(id));if(!s)return Promise.resolve();s.next=null;return s.promise||Promise.resolve();}
   applyChrome(){return Promise.resolve(true);} // PosterChanUI owns both macOS and Windows chrome.

@@ -226,6 +226,12 @@ if (isOurPage) {
     close: (id) => ipcRenderer.invoke('pc:wm:close', Number(id)),
     place: (id, x, y, w, h) => ipcRenderer.invoke('pc:wm:place', Number(id), Number(x), Number(y),
                                                   Number(w), Number(h)),
+    /* The taskbar band, measured by the only process that can measure it. Sent as plain numbers:
+     * the compositor side must not have to trust a shape from the page. */
+    workArea: (area) => ipcRenderer.invoke('pc:wm:workarea', {
+      x: Number((area||{}).x)||0, y: Number((area||{}).y)||0,
+      w: Number((area||{}).w)||0, h: Number((area||{}).h)||0,
+      reserve: Number((area||{}).reserve)||0 }),
     move: (id, x, y) => ipcRenderer.invoke('pc:wm:move', Number(id), Number(x), Number(y)),
     handoff: (id, direction, drop) => ipcRenderer.invoke('pc:wm:handoff', Number(id),
                                                           String(direction||''), drop||{}),

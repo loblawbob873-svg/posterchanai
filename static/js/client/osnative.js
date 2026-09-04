@@ -69,6 +69,129 @@
     return {x:Math.round(x),y:Math.round(y),w:Math.round(w),h:Math.round(h)};
   }
 
+  /* ── THE WORK AREA: AN OUTPUT MINUS THE TASKBAR, IN COMPOSITOR UNITS ────────────────────────
+   *
+   * THE TASKBAR IS THE ONE PART OF THIS DESKTOP THAT NOTHING OUTSIDE IT KNOWS ABOUT. It is painted
+   * at the bottom of the shell's own surface, and the shell is the TILED window every native app
+   * floats above — so a native window over that band does not merely overlap the bar, it HIDES it,
+   * and there is no stacking order anywhere that puts it back. Every other desktop states the band
+   * to the compositor as a layer-shell exclusive zone and lets the compositor keep windows out of
+   * it; an Electron toplevel cannot make one, so Wayfire's `workarea` is reported as the WHOLE
+   * output — and its `place` plugin, its grid/maximise, and every application's own remembered
+   * geometry are then all free to land on the bar, none of them wrong by their own lights.
+   *
+   * MEASURED, on the two-monitor 3072x2048 desk at output scale 1.25, with the shell renderer
+   * alive from before the launch until after the reading: `firefox-bin` started from the start
+   * menu opened on DP-2 at geometry {3205,47,2913,2080} — 2080 tall on a 2048-tall output, i.e.
+   * past the bottom edge of the screen — and stayed exactly there for the twenty-five seconds it
+   * was watched. The taskbar is the bottom 38 of those units. Nothing moved it because nothing in
+   * this desktop places a window it does not host, and hosting is off by default.
+   *
+   * DERIVED FROM THE MEASURED DESK, NEVER FROM THE 48px CONSTANT. os.js's place() already carries
+   * the note explaining why that constant is wrong at some zooms (at 1280x800 the real desk is 16
+   * layout px shorter than the constant claims, which opened windows 3px under the bar). This is
+   * that same measurement, converted once into the compositor's units. */
+
+  //: A reserve wider than this share of the output is a mis-measurement, not a taskbar — a desk
+  //: measured while the shell was hidden reads zero high, and obeying that pins every window on
+  //: the machine into a strip. Refuse it and keep the whole output, which is today's behaviour.
+  const MAX_RESERVE = 0.5;
+
+  //: Below this a window is not shortened, it is destroyed — so one dragged bodily onto the bar is
+  //: moved up instead of being squeezed into a sliver of its former self.
+  const MIN_TALL = 240;
+
+  /** The rectangle a native window may occupy on this shell's output, in compositor units.
+   *  `deskRect` is `#os-desk`'s getBoundingClientRect() and `cssH` the visual viewport height,
+   *  both in page pixels; `scale` is scaleFrom()'s answer. Null when the shell itself could not be
+   *  measured — a guessed work area places windows worse than no rule at all. */
+  function workAreaFrom(shellRect, deskRect, cssH, scale){
+    if(!shellRect || !scale) return null;
+    const w = Math.round(Number(shellRect.width) || 0), h = Math.round(Number(shellRect.height) || 0);
+    if(!(w > 0) || !(h > 0)) return null;
+    const area = { x: Math.round(Number(shellRect.x) || 0), y: Math.round(Number(shellRect.y) || 0),
+                   w, h, reserve: 0 };
+    const bottom = deskRect && Number(deskRect.bottom);
+    if(!(Number(cssH) > 0) || !Number.isFinite(bottom) || !(bottom > 0)) return area;
+    const reserve = Math.round(Math.max(0, Number(cssH) - bottom) * (Number(scale.y) || 0));
+    if(!(reserve > 0) || reserve > h * MAX_RESERVE) return area;
+    return { x: area.x, y: area.y, w, h: h - reserve, reserve };
+  }
+
+  /** Is this window on the output the work area was measured from? Horizontally by its centre —
+   *  the usual "which screen is it on" — and vertically by mere OVERLAP, because the window this
+   *  rule exists for is one hanging off the bottom edge, whose centre can be past it entirely. The
+   *  reserved band is part of the output even though it is not part of the area, so it is added
+   *  back here. */
+  function inWorkOutput(area, rect){
+    if(!area || !rect) return false;
+    const cx = rect.x + rect.w / 2, bottom = area.y + area.h + (area.reserve || 0);
+    return cx >= area.x && cx < area.x + area.w
+        && rect.y < bottom && rect.y + rect.h > area.y;
+  }
+
+  /* WHICH NATIVE WINDOWS ARE SITTING ON THE TASKBAR, AND WHERE THEY BELONG.
+   *
+   * VERTICAL ONLY, deliberately. The taskbar is a band across the bottom, so whether a window is
+   * on it is a question about y and height and nothing else; sliding somebody's window sideways to
+   * keep a bar visible is a correction nobody asked for, and it would additionally have to trust
+   * the x coordinate a row arrives with, which is the one axis this codebase has moved twice.
+   *
+   * SETTLED, NOT SNAPSHOT. A window is opened, dragged and resized through dozens of intermediate
+   * rectangles — Firefox alone published three in its first 1.2 seconds — and correcting one of
+   * those fights the gesture that is producing them: the window jumps back under the pointer, and
+   * every toggle is a compositor round trip. So a rectangle is acted on only once it has been seen
+   * TWICE unchanged, which `prev`/`seen` carry between passes. That also means a deliberate drag
+   * downwards is answered once, when the hand stops, instead of continuously.
+   *
+   * `below`/`above` are how far the server-side decoration reaches past the content — 29 and 23
+   * units on the measured desk. Judged without `below` the correction is 29 units short and a
+   * strip of bar stays covered, which reads as "it did nothing"; ignoring `above` loses the TITLE
+   * BAR off the top of the screen, i.e. the close button, on a window that was merely too tall.
+   *
+   * IT SHRINKS BEFORE IT MOVES, and that ordering is the difference between a window that is still
+   * where its owner put it and one that jumped. Taking the overhang off the bottom keeps the top
+   * edge exactly where it was; moving is the answer only for a window that cannot be made to fit
+   * that way and still be worth having — one dragged bodily onto the bar, not one that is tall.
+   *
+   * A FULLSCREEN WINDOW IS LEFT ALONE, because a fullscreen application owns the screen by
+   * definition and the taskbar is not visible under it in any desktop. So is a minimised one (it
+   * is nowhere), one with no area (it is still mapping), and one of OUR OWN surfaces — the shell
+   * itself fills the output including the band, and "correcting" it would shrink the desktop out
+   * from under its own taskbar, once per pass, for ever. */
+  function taskbarPlan(rows, area, prev){
+    const seen = new Map(), place = [];
+    if(!area || !(area.reserve > 0)) return { place, seen };
+    const floor = area.y + area.h;
+    for(const row of (rows || [])){
+      const id = Number(row && row.id);
+      if(!Number.isFinite(id)) continue;
+      const r = (row && row.rect) || {};
+      const rect = { x: Math.round(Number(r.x) || 0), y: Math.round(Number(r.y) || 0),
+                     w: Math.round(Number(r.width) || 0), h: Math.round(Number(r.height) || 0) };
+      if(!(rect.w > 0) || !(rect.h > 0)) continue;
+      const key = rect.x + ',' + rect.y + ',' + rect.w + ',' + rect.h;
+      seen.set(id, key);
+      if(row.own || row.fullscreen || row.stashed) continue;
+      if(!inWorkOutput(area, rect)) continue;
+      if(!prev || prev.get(id) !== key) continue;          // still moving: this is not its answer
+      const decor = n => Math.min(256, Math.max(0, Math.round(Number(n) || 0)));
+      const below = decor(row.below), above = decor(row.above);
+      if(rect.y + rect.h + below <= floor) continue;       // already clear of the band
+      const top = area.y + above;                          // where the title bar has to start
+      const shrunk = floor - below - rect.y;
+      let y = rect.y, h;
+      if(shrunk >= MIN_TALL && rect.y >= top){ h = shrunk; }
+      else {
+        h = Math.min(rect.h, Math.max(1, floor - below - top));
+        y = Math.min(Math.max(rect.y, top), floor - below - h);
+      }
+      if(y === rect.y && h === rect.h) continue;
+      place.push({ id, rect: { x: rect.x, y, w: rect.w, h } });
+    }
+    return { place, seen };
+  }
+
   const overlaps = (a, b) => !!(a && b)
     && a.left < b.left + b.width && b.left < a.left + a.width
     && a.top < b.top + b.height && b.top < a.top + a.height;
@@ -251,6 +374,7 @@
   }
 
   const API = { scaleFrom, mapRect, clampLocalRect, overlaps, coversMoreThanASliver,
+                workAreaFrom, inWorkOutput, taskbarPlan,
                 stashPlan, domStackPlan, changed, driftPlan,
                 previewIsBlank };
   root.PCOSNative = API;

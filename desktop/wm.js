@@ -125,6 +125,38 @@ function flatten(node, out, ws){
   return out;
 }
 
+/* ── THE SHELL'S WORK AREA, PUBLISHED BY THE RENDERER ───────────────────────────────────────────
+ *
+ * The taskbar is drawn at the bottom of the shell's own surface and the shell is the tiled window
+ * every native app floats above, so a window over that band hides it outright. No compositor here
+ * knows the band exists: reserving one means a layer-shell exclusive zone, and an Electron toplevel
+ * cannot make one — Wayfire duly answers its whole output as the work area. The only process that
+ * can measure the bar is the page drawing it, at this zoom on this display, so it sends the answer
+ * down and these two functions are how the compositor side remembers it.
+ *
+ * Shared between both backends on purpose: a rule one compositor obeys and the other does not is a
+ * rule that silently stops existing the moment the machine changes compositor. */
+function rememberWorkArea(store, area){
+  const a=area||{};
+  const rect={x:Math.round(Number(a.x)||0), y:Math.round(Number(a.y)||0),
+              w:Math.round(Number(a.w)||0), h:Math.round(Number(a.h)||0),
+              reserve:Math.max(0,Math.round(Number(a.reserve)||0))};
+  if(!(rect.w>0)||!(rect.h>0)) return Array.isArray(store)?store:[];
+  /* One area per output, keyed by its origin: a second shell renderer publishes the other screen's,
+   * and a display change republishes rather than accumulating. */
+  return (Array.isArray(store)?store:[]).filter(x=>!(x.x===rect.x&&x.y===rect.y)).concat([rect]);
+}
+/** The published area for one output rectangle, or null when nothing has published one — and null
+ *  is deliberately not "the output": a caller that has no measurement must keep behaving as it did
+ *  before this existed, not act on a work area somebody else's monitor reported. */
+function workAreaFor(store, outputRect){
+  const b=outputRect||{}, l=Number(b.x)||0, t=Number(b.y)||0;
+  const r=l+(Number(b.width)||0), d=t+(Number(b.height)||0);
+  for(const a of (Array.isArray(store)?store:[]))
+    if(a.x>=l && a.y>=t && a.x+a.w<=r && a.y+a.h<=d) return a;
+  return null;
+}
+
 /* A compositor is the final authority on whether a native surface is on-screen. The HTML frame can
  * briefly report a stale/oversized rectangle during monitor handoff; accepting that rectangle put
  * Telegram hundreds of pixels below the panel and made its title bar unreachable. Choose the
@@ -139,7 +171,11 @@ function clampRectToOutputs(rect, outputs){
   const cy=Number(rect.y)+Math.max(0,Number(rect.h))/2;
   let best=null;
   for(const o of rows){
-    const b=o.rect, l=Number(b.x)||0, t=Number(b.y)||0, r=l+Number(b.width), d=t+Number(b.height);
+    /* The taskbar band is not somewhere a window may be placed, so it is not part of the rectangle
+     * a placement is clamped into. `o.work` is the renderer's measurement; without one this is the
+     * output, exactly as before. */
+    const b=o.work?{x:o.work.x,y:o.work.y,width:o.work.w,height:o.work.h}:o.rect;
+    const l=Number(b.x)||0, t=Number(b.y)||0, r=l+Number(b.width), d=t+Number(b.height);
     const dx=cx<l?l-cx:cx>r?cx-r:0, dy=cy<t?t-cy:cy>d?cy-d:0, dist=dx*dx+dy*dy;
     if(!best || dist<best.dist) best={dist,l,t,r,d};
   }
@@ -193,6 +229,7 @@ class WM {
     this.subNames = [];
     this.subRetry = null;
     this.pending = [];           // FIFO of {type, resolve, reject} — sway answers in order
+    this._work = [];             // work areas published by the shell renderers (see rememberWorkArea)
     this.listeners = new Map();  // event name -> Set(fn)
     this.moves = new Map();      // con_id -> latest-wins drag queue (never replay stale positions)
   }
@@ -288,7 +325,14 @@ class WM {
 
   tree(){ return this._send(MSG.GET_TREE, ''); }
   version(){ return this._send(MSG.GET_VERSION, ''); }
-  outputs(){ return this._send(MSG.GET_OUTPUTS, ''); }
+  /* See rememberWorkArea: only the renderer can measure the taskbar, so it publishes the area and
+   * every rectangle decided here is clamped into it. */
+  setWorkArea(area){ this._work = rememberWorkArea(this._work, area); return Promise.resolve(true); }
+  async outputs(){
+    const rows = await this._send(MSG.GET_OUTPUTS, '');
+    for(const row of (Array.isArray(rows) ? rows : [])) row.work = workAreaFor(this._work, row && row.rect);
+    return rows;
+  }
   workspaces(){ return this._send(MSG.GET_WORKSPACES, ''); }
 
   async assignShell(id, assignment){
@@ -413,7 +457,13 @@ class WM {
     let out=outputs.find(o=>cx>=o.rect.x&&cx<o.rect.x+o.rect.width&&cy>=o.rect.y&&cy<o.rect.y+o.rect.height);
     if(!out) out=outputs[0];
     if(!out) return false;
-    const b=out.rect, h=Math.max(1,Number(b.height)-72), half=Math.floor(Number(b.width)/2);
+    /* `height-72` was the taskbar, guessed: 72 is the 48px bar at one particular zoom, and a desk
+     * running at another gets a maximised window that stops short of the bar — or, scaled the other
+     * way, one that covers it. The published area is the measurement; the constant is the fallback
+     * for a renderer that has not reported one. */
+    const wa=out.work;
+    const b=wa?{x:wa.x,y:wa.y,width:wa.w,height:wa.h}:out.rect;
+    const h=wa?Number(b.height):Math.max(1,Number(b.height)-72), half=Math.floor(Number(b.width)/2);
     let x=Number(b.x), y=Number(b.y), w=Number(b.width), height=h;
     if(zone==='left') w=half;
     else if(zone==='right'){ w=Number(b.width)-half; x+=half; }
@@ -597,4 +647,5 @@ function DesktopWM(sockPath){
   return new SwayWM(sockPath);
 }
 DesktopWM.CHROME=SwayWM.CHROME;
-module.exports = { WM:DesktopWM, SwayWM, frame, decoder, flatten, clampRectToOutputs, pidFamily, MSG, EVENT, EVENT_BIT };
+module.exports = { WM:DesktopWM, SwayWM, frame, decoder, flatten, clampRectToOutputs, pidFamily,
+                   rememberWorkArea, workAreaFor, MSG, EVENT, EVENT_BIT };

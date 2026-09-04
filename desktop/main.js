@@ -1962,6 +1962,18 @@ ipcMain.handle('pc:wm:close', (e, id) => { fsGuard(e); return wm().close(Number(
 ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
   fsGuard(e); return wm().place(Number(id), Number(x), Number(y), Number(w), Number(h));
 });
+/* THE TASKBAR BAND, MEASURED IN THE ONE PROCESS THAT CAN MEASURE IT.
+ *
+ * Reserving space is normally a layer-shell exclusive zone, which an Electron toplevel cannot make
+ * — so the compositor believes its whole output is usable and places, maximises and restores
+ * windows straight over the bar. The renderer knows how tall the bar really is at this zoom on this
+ * display; this is where that answer crosses back, so every rectangle the compositor side decides
+ * is clamped into it. Backends without one keep behaving exactly as they did. */
+ipcMain.handle('pc:wm:workarea', (e, area) => {
+  fsGuard(e);
+  const w = wm();
+  return w && typeof w.setWorkArea === 'function' ? w.setWorkArea(area) : false;
+});
 ipcMain.handle('pc:wm:move', (e, id, x, y) => {
   fsGuard(e); return wm().move(Number(id), Number(x), Number(y));
 });

@@ -3348,19 +3348,81 @@
     return w;
   }
 
+  /* NOTHING OUTSIDE THIS SHELL KNOWS THE TASKBAR EXISTS, SO THIS IS WHERE IT IS DEFENDED.
+   *
+   * Reported as "firefox is covering the taskbar now", and it is not a placement that went wrong —
+   * it is the absence of any placement at all. Hosting a native app in a PosterChan frame is OFF by
+   * default (`pc_os_host_native`), which is the state every machine is in, and an unhosted window
+   * is never placed by anything here: it lands wherever the compositor's `place` plugin, its
+   * maximise, or the application's own remembered geometry puts it, on an output whose reported
+   * work area is the WHOLE screen because an Electron toplevel cannot declare an exclusive zone.
+   *
+   * MEASURED on the real desk (3072x2048 per output, scale 1.25, shell renderer alive throughout):
+   * firefox-bin from the start menu opened on DP-2 at {3205,47,2913,2080} — 2080 tall on a
+   * 2048-tall screen — and was still there twenty-five seconds later. The taskbar is the bottom 38
+   * units of that output, so the bar was covered across its whole width.
+   *
+   * THIS CANNOT LIVE IN `nsync`: that returns immediately unless a native window is HOSTED, which
+   * is exactly the case this bug does not occur in. `adoptAll` is the pass that runs on every
+   * compositor event whether anything is hosted or not, which is the only cadence that sees a
+   * window nobody here owns.
+   *
+   * Each shell renderer answers for its OWN output: it measures its own desk, and the plan ignores
+   * any window whose centre is on another screen. */
+  let _barSeen = new Map();
+  async function _guardTaskbar(list, shellId){
+    if(!NAT() || !NAT().taskbarPlan || !window.pcWM || !pcWM.place) return;
+    /* WHICH SURFACE THIS RENDERER IS, ANSWERED BY MAIN OR NOT AT ALL — no "the first PosterChan
+     * window" fallback here. Every popped-out window shares the shell's app id, so a guess can pick
+     * a 1509x1094 frame as "the output", and the whole of this arithmetic is then measured against
+     * it: the scale is wrong, the band is wrong, and a window that happens to sit inside that box
+     * is resized to fit a rectangle that is not a screen. nsync tolerates a guess because a hosted
+     * window's drift check corrects it; there is nothing to correct somebody else's window with, so
+     * "I do not know which surface I am" means do nothing this pass. */
+    const shell = Number.isFinite(shellId) ? list.find(x => Number(x.id) === shellId) : null;
+    const visual = window.visualViewport;
+    const cssH = visual && visual.height > 0 ? visual.height : window.innerHeight;
+    const scale = NAT().scaleFrom(shell && shell.rect,
+                                  visual && visual.width > 0 ? visual.width : window.innerWidth, cssH);
+    const area = NAT().workAreaFrom(shell && shell.rect,
+                                    desk && desk.getBoundingClientRect ? desk.getBoundingClientRect() : null,
+                                    cssH, scale);
+    /* "I could not measure it" is not "there is no taskbar": forget what was settled rather than
+     * acting on a stale reading, and try again on the next event. */
+    if(!area || !(area.reserve > 0)){ _barSeen = new Map(); return; }
+    /* The compositor half needs it too — a snap or maximise asked for from the taskbar or from
+     * Super+Up is arithmetic that lives in main, and it had a hardcoded reserve in it. */
+    try{ if(pcWM.workArea) await pcWM.workArea(area); }catch(_){}
+    /* A hosted window already has an owner: nsync holds it over its frame, and that frame is
+     * measured against `desk`, so it is above the bar by construction. Two authorities for one
+     * rectangle is the argument this file has already lost twice. */
+    const hosted = new Set(nativeWins().map(w => Number(w.native)));
+    const foreign = list.filter(r => r && !hosted.has(Number(r.id))
+      && !/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(r.app || '')));
+    const plan = NAT().taskbarPlan(foreign, area, _barSeen);
+    _barSeen = plan.seen;
+    for(const it of plan.place){
+      try{ await pcWM.place(it.id, it.rect.x, it.rect.y, it.rect.w, it.rect.h); }catch(_){}
+    }
+  }
+
   /* Whatever the compositor has that we have not framed yet. */
   async function adoptAll(){
     if(!window.pcWM || !window.PCOSShell || !PCOSShell.available()) return false;
     const pass = ++_nativeAdoptPass;
     let list = [];
-    let allIds = null;
+    let allIds = null, shellId = null;
     try{
       if(pcWM.snapshot){
         const snap = await pcWM.snapshot();
         list = Array.isArray(snap && snap.windows) ? snap.windows : [];
         allIds = new Set(Array.isArray(snap && snap.allIds) ? snap.allIds.map(Number) : []);
+        shellId = Number(snap && snap.shellId);
       }else list = await pcWM.windows();
     }catch(_){ return false; }
+    /* Before anything else reads this list: a window on the bar is on it now, and adoption below
+     * can decide to do nothing at all. Failure here must never cost the adoption pass. */
+    try{ await _guardTaskbar(list, shellId); }catch(_){}
     let rows = [];
     /* Native task icons come from the installed application's .desktop entry. Populate that cache
      * before mapping compositor rows: previously it was filled only after somebody opened Start,
@@ -9091,7 +9153,7 @@
    *
    * WHAT IT REFUSES IS THE INTERESTING HALF. A popup is addressed by a query string, so it can only
    * carry values that survive one: ids, pubkeys, text. `files` is a FileList somebody just picked,
-   * `community` and the article parents are live event objects — none of them can cross, and
+   * the article parents are live event objects — none of them can cross, and
    * pretending otherwise would open an empty composer that silently lost the attachment. Those keep
    * the in-page modal, which works and is merely behind a window; losing a draft would be worse.
    *
@@ -9101,7 +9163,7 @@
     if(!on || popupKind()) return false;                 // not the desktop, or already a popup
     if(!(window.pcPopup && pcPopup.open)) return false;  // no compositor to hand a window to
     const o = opts || {};
-    if(o.files || o.community || o.articleComment || o.articleParent || o.open) return false;
+    if(o.files || o.articleComment || o.articleParent || o.open) return false;
     const arg = {};
     for(const k of ['reply', 'replyPk', 'quote', 'draftId', 'text', 'cwReason']){
       if(o[k]) arg[k] = String(o[k]);
