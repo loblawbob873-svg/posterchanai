@@ -1731,7 +1731,13 @@ const POPUP_TITLE = 'PosterChan Popup';
 function closePopupWindow(){
   const p = _popupWin, kind = _popupKind;
   _popupWin = null; _popupKind = '';
-  if(p && !p.isDestroyed()) { try{ p.close(); }catch(_){ } }
+  if(p && !p.isDestroyed()) { try{
+    /* Menu/flyout pages load the full client, whose unload protection may veto BrowserWindow.close.
+     * That left an inactive Start/notification surface mapped indefinitely underneath the next
+     * app. Those surfaces hold no user data and must disappear synchronously; sticky composers keep
+     * the graceful close path because they can contain a draft. */
+    if(STICKY_POPUPS.has(kind)) p.close(); else p.destroy();
+  }catch(_){ } }
   if(kind) { try{ forwardShellTick({ change: 'run', payload: 'pc:popup-closed:' + kind }); }catch(_){ } }
 }
 /* A COMPOSER IS NOT A MENU. Every other popup is a menu and closes when you click away, which is
