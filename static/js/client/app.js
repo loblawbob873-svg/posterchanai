@@ -11784,6 +11784,29 @@
 
   // ---------- note rendering ----------
   function profOf(pk){ return Store.profile(pk)||{}; }
+  // NIP-A3 payment destinations live in a replaceable kind-10133 event, not kind-0. Discover them
+  // only when somebody opens a tip flow, so a timeline does not add one relay query per author.
+  const _paymentTargetCache=new Map(), _paymentTargetPending=new Map();
+  function _lightningTarget(ev){
+    if(!ev || ev.kind!==10133) return '';
+    const t=(ev.tags||[]).find(t=>Array.isArray(t)&&t[0]==='payto'&&String(t[1]||'').toLowerCase()==='lightning');
+    return t && typeof t[2]==='string' ? t[2].trim() : '';
+  }
+  async function _loadPaymentTargets(pk){
+    if(_paymentTargetCache.has(pk)) return _lightningTarget(_paymentTargetCache.get(pk));
+    if(_paymentTargetPending.has(pk)) return _paymentTargetPending.get(pk);
+    const load=(async()=>{
+      let evs=[];
+      try{ evs=await Relay.query([{authors:[pk],kinds:[10133],limit:1}]); }catch(_){}
+      if(!evs.length){ try{ evs=await Relay.queryFrom(DISCOVERY_RELAYS,[{authors:[pk],kinds:[10133],limit:1}],{purpose:'payment target discovery'}); }catch(_){} }
+      const ev=evs.filter(e=>e&&e.kind===10133&&e.pubkey===pk).sort((a,b)=>b.created_at-a.created_at)[0]||null;
+      _paymentTargetCache.set(pk,ev); // null is meaningful: do not repeat a failed discovery per tap
+      return _lightningTarget(ev);
+    })();
+    _paymentTargetPending.set(pk,load);
+    try{ return await load; }finally{ _paymentTargetPending.delete(pk); }
+  }
+  async function _lightningAddress(pk,p){ return (await _loadPaymentTargets(pk)) || (p&&p.lud16) || (p&&p.lud06) || ''; }
   // base58 (no 0 O I l), exactly 95 (std/sub) or 106 (integrated). String() FIRST: a kind-0 is
   // arbitrary JSON off the network, so `monero_address` can be a number, an object or null, and
   // `(a||'').trim()` throws on all three — inside xmrOf, which noteCard calls for every card.
@@ -13289,7 +13312,7 @@
   }
   async function doTip(noteId, pk, cardXmr){
     const p=profOf(pk)||{};
-    const hasLn=!!(p.lud16||p.lud06);
+    const hasLn=!!(await _lightningAddress(pk,p));
     const ev=noteId?Store.get(noteId):null;
     // Prefer the address resolved at render (passed from the card) — the note may since have been evicted
     // from Store, which would otherwise drop its per-note monero_address tag and misroute the tip.
@@ -13329,7 +13352,7 @@
   function xmrPresets(){ return _parsePresets(ClientSettings.get('xmrPresets',''), _XMR_DEFAULTS); }
   function bchPresets(){ return _parsePresets(ClientSettings.get('bchPresets',''), _BCH_DEFAULTS); }
   async function doZap(noteId, pk){
-    const p=profOf(pk); const addr=p.lud16||p.lud06;
+    const p=profOf(pk); const addr=await _lightningAddress(pk,p);
     if(!addr){ toast('no lightning address on this profile'); return; }
     _lightningAmountSheet(p,amt=>_runZap(noteId,pk,amt));
   }
@@ -13345,7 +13368,7 @@
       });
   }
   async function _runZap(noteId, pk, amt){
-    const p=profOf(pk); const addr=p.lud16||p.lud06;
+    const p=profOf(pk); const addr=await _lightningAddress(pk,p);
     if(!addr || !amt || amt<1) return;
     toast('preparing zap…');
     try{
@@ -13371,7 +13394,7 @@
    * invoice and its preimage inside the sealed channel. External invoice handoff cannot provide
    * that proof, so this is intentionally limited to WebLN/NWC wallets that return it. */
   async function payPrivateConcordZap(pk, amountSats){
-    const profile=profOf(pk)||{},addr=profile.lud16||profile.lud06,amount=Number(amountSats);
+    const profile=profOf(pk)||{},addr=await _lightningAddress(pk,profile),amount=Number(amountSats);
     if(!addr)throw new Error('this member has no Lightning address');
     if(!Number.isSafeInteger(amount)||amount<1)throw new Error('enter a whole-sat amount');
     const lnurl=await lnurlResolve(addr);if(!lnurl||!lnurl.callback)throw new Error('could not resolve '+addr);
@@ -13392,9 +13415,9 @@
    * would make the two choosers disagree as soon as either format changes. Lightning can publish a
    * cryptographically verified sealed tally; Monero remains a private on-chain payment whose
    * existing flow posts the sender's acknowledgement after payment. */
-  function startConcordTip(pk,onLightningAmount){
+  async function startConcordTip(pk,onLightningAmount){
     const profile=profOf(pk)||{},methods=[];
-    if(profile.lud16||profile.lud06)methods.push(['ln','⚡ Lightning','instant zap','btn-neon']);
+    if(await _lightningAddress(pk,profile))methods.push(['ln','⚡ Lightning','instant zap','btn-neon']);
     if(isXmrAddr(xmrOf(profile)))methods.push(['xmr','ɱ Monero','private, from your wallet','btn-cyan']);
     _tipMethodSheet(profile,methods,method=>{
       if(method==='xmr')return doXmrTip(null,pk);
@@ -27513,7 +27536,7 @@
   /* Add (and bind) the tip controls once a profile turns out to carry payment addresses. Only ever
      ADDS — an address that has gone away leaves a stale button, which is a far smaller harm than
      tearing controls out from under a tap, and the next full render drops it anyway. */
-  function _patchProfileTips(feed, pk, p){
+  function _patchProfileTips(feed, pk, p, lightning){
     try{
       const pbody = feed.querySelector('.prof .pbody'); if(!pbody) return;
       const acts  = feed.querySelector('.prof .pactions') || feed.querySelector('#prof-menu') && feed.querySelector('#prof-menu').parentElement;
@@ -27540,9 +27563,10 @@
           + enc(bch.slice(0,14)) + '…' + enc(bch.slice(-6)));
         b.onclick = () => doBchTip(pk); put(b);
       }
-      if(p.lud16 && !feed.querySelector('#prof-ln')){
+      const ln=lightning || p.lud16 || p.lud06;
+      if(ln && !feed.querySelector('#prof-ln')){
         const b = mk('button','ln-addr','prof-ln','send a zap',
-          '<svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>' + enc(p.lud16));
+          '<svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>' + enc(ln));
         b.onclick = () => doZap(null, pk); put(b);
       }
     }catch(_){ /* a tip button must never cost the header refresh */ }
@@ -27863,6 +27887,10 @@
         if(top()){ if(_prof.tab === 'notes'){ fillList('notes'); hydrate(feed); } return; }
       }
     })();
+    _loadPaymentTargets(pk).then(lightning=>{
+      if(lightning && VIEW==='profile' && _prof.pk===pk && myGen===_profGen)
+        _patchProfileTips(feed,pk,Store.profile(pk)||{},lightning);
+    }).catch(()=>{});
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
     { const xb=$('#prof-xmr'); if(xb) xb.onclick=()=>doXmrTip(null, pk); }
     { const xt=$('#xmrtip-prof'); if(xt) xt.onclick=()=>doXmrTip(null, pk); }
