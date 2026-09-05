@@ -20900,12 +20900,24 @@
              * harmless here — it mints a second blob and re-points the drive index at it — and a
              * "document saved" toast over bytes that never changed is precisely how the missing
              * save handshake stayed invisible. Identical bytes now report themselves. */
+            /* SAVE SAVES. IT DOES NOT CLOSE.
+             *
+             * This ended in `drop()` + `shut()`, so every Save deleted the server-side session and
+             * shut the window -- reported as "saving an office document should not close it too".
+             * Nothing about writing the bytes back requires ending the edit, and a person who saves
+             * mid-document is saying the opposite: they intend to carry on. Closing IS still
+             * available, on the Close button beside this one, and that path still drops the session.
+             *
+             * `origBytes` moves to what was just written, so a second Save on an untouched document
+             * correctly reports "no changes" rather than minting another blob -- the check exists
+             * because an unchanged upload is not harmless here: it re-points the drive index at a
+             * new hash. */
             if(_sameBytes(bytes, origBytes)){
-              await drop(); toast('no changes to save'); shut(); return;
+              toast('no changes to save'); b.disabled=false; b.textContent='Save'; return;
             }
             await saveBack(fileFromBytes(bytes,file.name,file.type));
-            await drop();
-            toast('document saved'); shut();
+            origBytes = bytes;
+            toast('document saved'); b.disabled=false; b.textContent='Save';
           }catch(err){ toast('save failed: '+(err.message||err)); b.disabled=false; b.textContent='Save'; }
         };
       };

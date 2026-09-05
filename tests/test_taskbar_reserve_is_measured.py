@@ -108,9 +108,14 @@ class TestMainPublishesIt(unittest.TestCase):
         self.assertIn("renameSync", fn)
 
     def test_it_refuses_to_publish_a_rectangle_it_does_not_have(self):
+        """A guard, found by what it TESTS rather than by how near the top it sits: this looked in
+        the first 400 characters and started failing when a line was added above it, about code
+        that had not changed."""
         fn = MAIN[MAIN.index("function publishWorkAreaFile"):]
         fn = fn[: fn.index("\nipcMain.handle")]
-        self.assertIn("return", fn.split("{", 1)[1][:400])
+        guard = [l for l in fn.splitlines() if "return" in l and "area" in l]
+        self.assertTrue(guard, "nothing refuses an absent or zero-sized rectangle:\n" + fn)
+        self.assertRegex(guard[0], r"!area|area\.w|area\.h")
 
 
 if __name__ == "__main__":

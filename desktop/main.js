@@ -2123,6 +2123,46 @@ async function openPopupWindow(e, kind, rect, arg){
  * the window is not in the tree until it maps, which is why this polls rather than firing once.
  * Failure is silent and harmless — a centred popup is worse than an anchored one and better than
  * no popup, so nothing here is allowed to throw into the open path. */
+/* A FLYOUT MAY NOT CROSS THE TASKBAR, AND THIS IS THE ONLY PROCESS THAT CAN BE SURE.
+ *
+ * Every flyout is positioned by the renderer, from its own measurements. MEASURED on the real desk,
+ * twice, after two separate fixes: the start menu asked for y=1072 with a height of 1150, putting
+ * its bottom at 2222 while the taskbar's top edge is at 2500 -- a 278px gap, reported as "the start
+ * menu and widgets not attached to the taskbar". The arithmetic only works if that renderer
+ * believes its viewport is 2290 CSS px tall while its compositor surface is 2560 physical, and no
+ * amount of correcting the renderer's sums fixes a renderer whose idea of its own height is wrong.
+ *
+ * So the number is applied HERE. This process placed the window, it knows the compositor rectangle
+ * it is placing into, and it holds the work area the shell MEASURED and published (`reserve` is the
+ * taskbar, measured by the only half that can see it). A flyout is snapped to sit on that edge --
+ * moved, never resized, because the renderer sized it to its own content and shortening it would
+ * cut the menu off instead of moving it.
+ *
+ * Only DOWNWARD-anchored flyouts are touched: one already sitting above the bar is left exactly
+ * where it was asked to be, so a future popup that is not a taskbar flyout is unaffected. */
+/* The flyouts that hang off the taskbar. The composer is deliberately not one of them: it is
+ * centred on the output and moving it to the bar would be a correction nobody asked for. */
+const _BAR_FLYOUTS = new Set(['start', 'noti', 'net', 'tray']);
+function snapPopupToWorkArea(want, row, kind){
+  try{
+    if(!_BAR_FLYOUTS.has(String(kind || ''))) return want;
+    const rect = row && row.rect;
+    if(!rect || !(Number(rect.height) > 0)) return want;
+    /* The area measured for the output this window actually landed on. Keyed by the output's
+     * origin, with a width match as the fallback for a single-output machine whose surface has
+     * moved. */
+    const area = _workAreas.get(String(rect.x) + ',' + String(rect.y))
+              || [..._workAreas.values()].find(a => Number(a.w) === Number(rect.width));
+    if(!area || !(area.reserve > 0)) return want;
+    const h = Number(want.h) || 0;
+    if(!(h > 0) || h > area.h) return want;       // taller than the area: nothing sensible to do
+    /* Sit ON the bar: eight pixels of breathing room, never across it, never off the top. Moved and
+     * not resized -- the renderer sized this to its own content, and shortening it would cut the
+     * menu off rather than move it. */
+    const y = Math.max(area.y, (area.y + area.h) - h - 8);
+    return Object.assign({}, want, { y: y });
+  }catch(_){ return want; }
+}
 async function placePopupWindow(win, want){
   for(let attempt = 0; attempt < 12; attempt++){
     if(win.isDestroyed() || _popupWin !== win) return;
@@ -2132,8 +2172,9 @@ async function placePopupWindow(win, want){
       if(row){
         /* sway.config maps this title transparent. Reveal only in the SAME transaction as its final
          * geometry, otherwise Wayland's unavoidable initial centre placement visibly flashes. */
-        await wm().placeAndReveal(Number(row.id), Math.round(want.x), Math.round(want.y),
-                                  Math.round(want.w), Math.round(want.h));
+        const put = snapPopupToWorkArea(want, row, _popupKind);
+        await wm().placeAndReveal(Number(row.id), Math.round(put.x), Math.round(put.y),
+                                  Math.round(put.w), Math.round(put.h));
         try{ win.webContents.send('pc:host:popup-placed'); }catch(_){ }
         return;
       }
@@ -2199,7 +2240,16 @@ ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
  * because the binding is fired by the compositor with no way to pass one, and in $XDG_RUNTIME_DIR
  * because it describes this login session and must not outlive it. Written on every publish; the
  * renderer already only publishes what it actually measured. */
+const _workAreas = new Map();          // output rect key -> the measured area, in compositor px
 function publishWorkAreaFile(area){
+  /* Kept in this process too, not only on disk: `placePopupWindow` needs it and it is the only
+   * place that knows the compositor rectangle a popup is actually being placed into. */
+  try{
+    if(area && Number(area.w) > 0 && Number(area.h) > 0)
+      _workAreas.set(String(area.x) + ',' + String(area.y), {
+        x: Number(area.x) || 0, y: Number(area.y) || 0,
+        w: Number(area.w), h: Number(area.h), reserve: Number(area.reserve) || 0 });
+  }catch(_){ }
   const dir = process.env.XDG_RUNTIME_DIR;
   if(!dir || !area || !(Number(area.w) > 0) || !(Number(area.h) > 0)) return;
   const file = path.join(dir, 'posterchan-workarea.json');

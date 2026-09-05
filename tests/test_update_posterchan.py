@@ -247,8 +247,20 @@ def test_the_updater_applies_the_config_files_it_owns_and_leaves_the_rest():
             path.write_text(old)
             (path.parent / ("._cfg0000_" + path.name)).write_text(new)
 
+        # NO COMPOSITOR RUNNING, and the test has to SAY so rather than inherit it from whatever
+        # machine is running the suite. The updater defers /etc/wayfire.ini while a session is up
+        # (writing it under a live Wayfire is what killed one), and it answers that question with
+        # `pgrep` -- so on a developer's own desktop, or a build box that happens to have a session,
+        # this test measured the machine instead of the script. Stub it both ways below.
+        stub = fixture / "bin"
+        stub.mkdir(parents=True, exist_ok=True)
+        (stub / "pgrep").write_text("#!/bin/sh\nexit 1\n")     # nothing is running
+        (stub / "pgrep").chmod(0o755)
+        env = dict(os.environ, PATH=f"{stub}:{os.environ['PATH']}")
+
         script = "GRN='' YEL='' OFF=''\n" + block.replace("/etc", str(fixture / "etc"))
-        got = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+        got = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                             env=env)
         assert got.returncode == 0, got.stderr
 
         assert (fixture / "etc/wayfire.ini").read_text() == "new wayfire"
@@ -261,6 +273,26 @@ def test_the_updater_applies_the_config_files_it_owns_and_leaves_the_rest():
         assert (fixture / "etc/otherpkg/thing.conf").read_text() == "old other"
         assert (fixture / "etc/otherpkg/._cfg0000_thing.conf").is_file()
         assert "1 other config update" in got.stdout
+
+        # WITH A SESSION UP, the compositor's own config is left for the next login and said so by
+        # name -- writing it under a live Wayfire is what ended a login at a text console. The other
+        # package-owned files are not the compositor's and are still applied.
+        (fixture / "etc/wayfire.ini").write_text("old wayfire")
+        (fixture / "etc/._cfg0000_wayfire.ini").write_text("new wayfire")
+        (fixture / "etc/xdg/mako/config").write_text("old mako")
+        (fixture / "etc/xdg/mako/._cfg0000_config").write_text("new mako")
+        (stub / "pgrep").write_text("#!/bin/sh\nexit 0\n")     # a compositor IS running
+        (stub / "pgrep").chmod(0o755)
+        live = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60,
+                              env=env)
+        assert live.returncode == 0, live.stderr
+        assert (fixture / "etc/wayfire.ini").read_text() == "old wayfire", (
+            "the updater rewrote the config of a compositor that was running")
+        assert (fixture / "etc/._cfg0000_wayfire.ini").is_file(), (
+            "the pending config was consumed, so the next login cannot apply it")
+        assert "next login" in live.stdout, "a deferred config change that says nothing is the bug"
+        assert (fixture / "etc/xdg/mako/config").read_text() == "new mako", (
+            "an unrelated package-owned file was deferred along with the compositor's")
 
 
 def test_the_updater_no_longer_talks_about_sway():
