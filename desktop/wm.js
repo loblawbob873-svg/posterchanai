@@ -239,7 +239,15 @@ class WM {
   _connect(){
     if(this.sock) return Promise.resolve(this.sock);
     if(this.connecting) return this.connecting;
-    if(!this.paths.length) return Promise.reject(new Error('no compositor socket — SWAYSOCK is not set'));
+    /* SAY WHAT IS TRUE ON THE MACHINE READING IT. This named SWAYSOCK, and Sway has been gone
+     * since the Wayfire migration -- so the Windows build's System Settings answered "Could not
+     * read displays: no compositor socket -- SWAYSOCK is not set", naming an environment variable
+     * from a compositor this app no longer ships, on an operating system that has never had one.
+     * Reported as "since we are not using sway anymore, we need to make sure anything we had for
+     * sway is changed ... that message concerns me". The honest sentence names no variable: there
+     * is no window manager here to ask, which is equally true of Windows, macOS, a plain browser
+     * and a Linux desktop that is not PosterChanOS. */
+    if(!this.paths.length) return Promise.reject(new Error('this machine has no window manager to ask'));
     this.connecting=(async()=>{
       let last=null;
       for(const candidate of this.paths){

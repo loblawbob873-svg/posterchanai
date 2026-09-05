@@ -1340,7 +1340,8 @@ const fsGuard = (e) => { if (!fromOurPage(e)) throw new Error('denied'); };
  * Same guard as the filesystem, for the same reason and more of it: `launch` starts a PROCESS and
  * `connect` hands a wifi password to NetworkManager. Neither may be reachable from any page but our
  * own. And both are ABSENT rather than broken off a compositor — `available()` answers no when
- * SWAYSOCK is unset, so a desktop install that is not PosterChanOS simply has no window manager
+ * there is no compositor socket to reach, so a desktop install that is not PosterChanOS simply
+ * has no window manager
  * rather than a set of calls that throw. */
 let _wm = null;
 function wm() {
@@ -1732,7 +1733,7 @@ async function wireShellRecovery(){
          * Sway ran the physical Super binding but a slow renderer startup had never armed the
          * forwarding handler, so the tick died here in the main process. This subscription is
          * always installed for shell recovery; it is therefore the authoritative keyboard path. */
-        if(ev.payload==='pc:update-installed') requestSafeShellRestart('sway-tick');
+        if(ev.payload==='pc:update-installed') requestSafeShellRestart('compositor-tick');
         else forwardShellTick(ev).catch(()=>{});
         return;
       }
@@ -2618,7 +2619,21 @@ ipcMain.handle('pc:wm:decorate', async (e, id, hosted) => {
    * games and videos deliberately own that state and the renderer tracks it separately. */
   return decorateNative(id, !!hosted);
 });
-ipcMain.handle('pc:display:status', (e) => { fsGuard(e); return displays().status(); });
+/* A MACHINE WITH NO WINDOW MANAGER HAS NO DISPLAYS TO ARRANGE, AND THAT IS NOT AN ERROR.
+ *
+ * Every one of these went straight to the displays service, which asks the compositor, which
+ * rejects when there is no socket -- so the Windows build's System Settings showed the raw
+ * rejection ("Could not read displays: no compositor socket - SWAYSOCK is not set"), naming a
+ * compositor this app stopped shipping. The client already has the right sentence for this, behind
+ * `if(!window.pcDisplays)`: "Display controls are unavailable on this device." Answering null lets
+ * that sentence be the one people see, on every platform, without the renderer having to know what
+ * a compositor is. */
+const _canArrangeDisplays = () => { try{ return !!(wm() && wm().available()); }catch(_){ return false; } };
+ipcMain.handle('pc:display:status', (e) => {
+  fsGuard(e);
+  if(!_canArrangeDisplays()) return null;
+  return displays().status();
+});
 ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });
 ipcMain.handle('pc:display:confirm', (e, token) => { fsGuard(e); return displays().confirm(token); });
 ipcMain.handle('pc:display:revert', (e, token) => { fsGuard(e); return displays().revert(token); });

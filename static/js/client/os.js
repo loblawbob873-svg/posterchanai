@@ -2205,9 +2205,15 @@
        failure mode: a hung display daemon left the whole Settings app on a spinner. Read only what
        the selected page needs; changing categories below reruns this renderer for the new owner. */
     if(_osSettingsPage==='displays'){
+      /* `pcDisplays` is injected on EVERY platform -- preload does not know what the machine is --
+       * so its presence is not the question. A host with no window manager answers `null`, which is
+       * "there is nothing here to arrange", not a failure: without this the Windows build printed
+       * the compositor bridge's raw rejection into System Settings. */
       if(!window.pcDisplays){ displayError='Display controls are unavailable on this device.'; outs=[]; }
       else{ const r=await _settingsRead(pcDisplays.status(), 'displays');
-            if(r.ok) outs=r.value||[];
+            if(r.ok && r.value === null){ outs=[];
+              displayError='Display controls are unavailable on this device.'; }
+            else if(r.ok) outs=r.value||[];
             else{ outs=[]; displayError = r.timedOut
               ? 'The display service did not answer. It may be busy or stopped — this page will not load until it does.'
               : 'Could not read displays: '+r.error; } }

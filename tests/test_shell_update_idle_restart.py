@@ -19,7 +19,7 @@ def test_packaged_shell_detects_replaced_asar_without_waiting_for_login():
 
 def test_restart_source_is_logged_and_synthetic_subscription_tick_is_ignored():
     assert "if(!ev || ev.first) return" in MAIN
-    assert "requestSafeShellRestart('sway-tick')" in MAIN
+    assert "requestSafeShellRestart('compositor-tick')" in MAIN
     assert "spawning source=${pending.source}" in MAIN
     assert "rememberBundleRestart(pending.bundleIdentity,pending.source)" in MAIN
 

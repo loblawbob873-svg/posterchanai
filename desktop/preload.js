@@ -229,7 +229,8 @@ if (isOurPage) {
    *
    * PosterChanOS runs this app as the SHELL of a Wayland compositor: sway owns the screen, a
    * browser and a Steam game are ordinary clients, and the page decides where they go. Absent
-   * rather than broken off a compositor — `available()` answers no when SWAYSOCK is unset, so a
+   * rather than broken off a compositor — `available()` answers no when there is no compositor
+   * socket to reach (WAYFIRE_SOCKET on PosterChanOS today), so a
    * desktop install that is not PosterChanOS has no window manager rather than calls that throw. */
   contextBridge.exposeInMainWorld('pcWM', {
     available: () => ipcRenderer.invoke('pc:wm:available'),

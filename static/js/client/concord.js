@@ -931,7 +931,32 @@
     const matches=String(text||'').match(/https?:\/\/[^\s<>]+\/invite\/naddr1[023456789acdefghjklmnpqrstuvwxyz]+#[A-Za-z0-9_-]+/gi)||[];
     return matches.map(url=>url.replace(/[),.;!?]+$/,'' )).map(url=>{ const parsed=inviteParts(url); if(!parsed)return null; const blurb=String(text).replace(url,'').replace(/#[\w-]+/g,'').replace(/\s+/g,' ').trim(); return {...parsed,name:blurb.slice(0,80)||'Public Concord community',description:blurb,source}; }).filter(Boolean);
   }
-  const LEFT_COMMUNITIES_KEY='pc.concord.left.v1';
+  /* v2 BECAUSE v1 HOLDS RECORDS NOTHING CAN CLEAR, AND THAT IS A COMMUNITY HIDDEN FOR EVER.
+   *
+   * A build of this file seeded the ledger from EVERY winning tombstone, and a tombstone with no
+   * membership entry beside it always wins (`added_at` defaults to 0). So a community that had
+   * merely been tombstoned once -- with nothing to compare the tombstone against -- was written
+   * into this device's permanent local blacklist, and `wasLocallyLeft` refused it on every pass
+   * afterwards. Reported as "my concord community for posterchan is no longer appearing in
+   * Concord", and still true after the seeding rule was corrected: the correction stops NEW bad
+   * records being written and cannot remove the ones already on disk. Measured on the laptop after
+   * that fix shipped -- one row, for the community the person was asking about, removedAt the
+   * afternoon the bad build ran.
+   *
+   * The heal beside it cannot reach these either: it requires a live entry AND a visible tombstone,
+   * and the whole point of a stranded record is that there is no entry to find.
+   *
+   * So this build starts with an empty ledger, and that is SAFE rather than merely expedient:
+   *   * a genuine leave is re-seeded on the very next membership pass, by the corrected rule -- a
+   *     tombstone that beat a real entry, which is the shape a real leave has;
+   *   * a community left with a tombstone and no entry is still removed every pass by `dead`, which
+   *     does not consult this ledger at all;
+   *   * only a room rebuilt from the OWNER'S OWN invite announcement, carrying no community_id, is
+   *     unprotected until it is left once more -- and a community that comes back once, which one
+   *     press puts away again, is not the same kind of loss as a community that can never come back.
+   * v1 is deliberately left on disk rather than deleted: another device may still be running the
+   * older build, and this key is that build's memory. */
+  const LEFT_COMMUNITIES_KEY='pc.concord.left.v2';
   function leftCommunities(pubkey){
     if(!pubkey)return [];
     try{const all=JSON.parse(localStorage.getItem(LEFT_COMMUNITIES_KEY)||'{}'),rows=all&&all[pubkey];return Array.isArray(rows)?rows:[];}catch(_){return [];}
