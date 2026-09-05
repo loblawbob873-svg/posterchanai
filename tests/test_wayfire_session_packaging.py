@@ -95,7 +95,7 @@ def test_wayfire_failure_leaves_a_console_that_says_why(tmp_path):
     NON-login shell (which cannot re-read ~/.bash_profile) rather than exiting."""
     done, calls = _run(tmp_path, "wayfire", wayfire_status=23)
     assert done.returncode == 0
-    assert calls == ["wayfire:wayfire:-c /etc/wayfire.ini", "rescue"]
+    assert calls == [f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini", "rescue"]
     log = tmp_path / "home/.local/state/posterchanos/compositor-fallback.log"
     assert "status 23" in log.read_text(encoding="utf-8")
     src = LAUNCHER.read_text(encoding="utf-8")
@@ -115,7 +115,7 @@ exit 7
 """
     done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
     assert done.returncode == 0
-    assert calls == ["wayfire:wayfire:-c /etc/wayfire.ini", "rescue"]
+    assert calls == [f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini", "rescue"]
     runtime = tmp_path / "runtime"
     assert not (runtime / "posterchan-wayfire-ready").exists()
     assert not (runtime / "posterchan-wayfire-shell.pid").exists()
@@ -145,7 +145,7 @@ while :; do sleep 0.1; done
 """
     done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
     assert done.returncode == 0
-    assert calls == ["wayfire:wayfire:-c /etc/wayfire.ini", "rescue"]
+    assert calls == [f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini", "rescue"]
 
 
 
@@ -163,7 +163,7 @@ while :; do sleep 0.1; done
     done, calls = _run(tmp_path, "wayfire", wayfire_body=body)
     elapsed = time.monotonic() - started
     assert done.returncode == 0
-    assert calls == ["wayfire:wayfire:-c /etc/wayfire.ini", "rescue"]
+    assert calls == [f"wayfire:wayfire:-c {tmp_path}/runtime/posterchan-wayfire.ini", "rescue"]
     assert elapsed >= 1.0, "Wayfire was killed when the first shell generation exited"
 
 

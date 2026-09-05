@@ -92,7 +92,7 @@ class TestTheSessionAppliesItAtStartup(unittest.TestCase):
 
     def test_the_pending_config_is_applied_before_wayfire_is_started(self):
         body = SESSION.read_text(encoding="utf-8")
-        launch = body.index('wayfire -c "${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}"')
+        launch = body.index('wayfire -c "$session_cfg"')
         apply_at = body.index("._cfg[0-9][0-9][0-9][0-9]_wayfire.ini")
         self.assertLess(apply_at, launch,
                         "the pending config is applied after wayfire has already read the old one")
@@ -116,6 +116,54 @@ class TestTheSessionAppliesItAtStartup(unittest.TestCase):
         self.assertFalse((etc / "._cfg0000_wayfire.ini").exists())
         self.assertEqual((etc / "wayfire.ini.pre-update").read_text(), "old\n",
                          "the previous config was not kept beside it")
+
+
+class TestTheCompositorReadsACopy(unittest.TestCase):
+    """AND THE STAGED-CONFIG PATH IS ONLY HALF OF IT.
+
+    Portage stages a protected file as `._cfg0000_` only when the copy on disk was MODIFIED since it
+    was installed. Nobody hand-edits /etc/wayfire.ini, so an ordinary upgrade writes straight over
+    it, under a running compositor, with no staging involved -- which is what actually happened at
+    19:24, and again an hour later with no `._cfg` anywhere on the machine. Deferring the staged
+    copy would have prevented neither.
+
+    So the running compositor reads a copy in the session's own runtime directory. The installed
+    file stays the source of truth and is re-read at every start, which is what keeps an upgrade
+    taking effect at the next login.
+    """
+
+    def test_wayfire_is_not_pointed_at_the_package_owned_path(self):
+        body = SESSION.read_text(encoding="utf-8")
+        launch = [ln for ln in body.splitlines() if ln.strip().startswith("wayfire -c ")]
+        self.assertEqual(len(launch), 1, launch)
+        self.assertNotIn("/etc/wayfire.ini", launch[0],
+                         "the compositor still reads the file the package manager overwrites")
+
+    def test_the_copy_lives_in_the_session_runtime_dir(self):
+        body = SESSION.read_text(encoding="utf-8")
+        self.assertIn('session_cfg="$XDG_RUNTIME_DIR/posterchan-wayfire.ini"', body,
+                      "the copy would outlive the login, or be shared between sessions")
+
+    def test_the_copy_is_taken_from_the_installed_file_every_start(self):
+        """Otherwise an upgrade would never take effect and the update message would be a lie."""
+        body = SESSION.read_text(encoding="utf-8")
+        block = body[body.index("session_cfg="):body.index("wayfire -c ")]
+        self.assertIn("/etc/wayfire.ini", block)
+        self.assertIn("cp -f", block)
+
+    def test_a_failed_copy_still_starts_a_desktop(self):
+        """A full or read-only runtime dir must not be the reason somebody has no session."""
+        body = SESSION.read_text(encoding="utf-8")
+        block = body[body.index("session_cfg="):body.index("wayfire -c ")]
+        self.assertIn("if ! cp", block)
+        self.assertIn('session_cfg="${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}"', block)
+
+    def test_the_pending_apply_still_runs_first(self):
+        """Both halves, in the only order that works: apply what portage staged, then copy."""
+        body = SESSION.read_text(encoding="utf-8")
+        self.assertLess(body.index("._cfg[0-9][0-9][0-9][0-9]_wayfire.ini"),
+                        body.index("session_cfg="),
+                        "the copy is taken before the staged config is applied to the source")
 
 
 class TestThePackagedCopiesAgree(unittest.TestCase):

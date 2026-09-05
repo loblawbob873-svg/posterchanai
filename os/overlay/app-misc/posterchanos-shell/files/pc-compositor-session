@@ -250,7 +250,26 @@ if true; then
 			[ ! -e /etc/wayfire.ini ] || cp -a /etc/wayfire.ini /etc/wayfire.ini.pre-update 2>/dev/null || true
 			mv -f "$pending" /etc/wayfire.ini 2>/dev/null || true
 		done
-		wayfire -c "${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}" >"$state_dir/wayfire.log" 2>&1 &
+		# AND THE COMPOSITOR READS A COPY, BECAUSE PORTAGE CAN REWRITE THE ORIGINAL AT ANY MOMENT.
+		#
+		# The block above handles the config-protected case, where a CHANGED /etc/wayfire.ini is
+		# staged as `._cfg0000_`. That is only half of it: portage stages a protected file only when
+		# the copy on disk was MODIFIED since it was installed, and nobody hand-edits this one -- so
+		# an ordinary upgrade writes straight over it, under a running compositor, with no staging
+		# involved. MEASURED: the release adding two plugins was installed at 19:24 and wayfire died
+		# at 19:24:28, and an upgrade an hour later rewrote the file in place again with no `._cfg`
+		# anywhere. Deferring the staged copy would have prevented neither.
+		#
+		# So the running compositor is pointed at a copy in the session's own runtime directory,
+		# which the package manager has no reason to touch and which cannot outlive the login. The
+		# installed file stays the source of truth and is read afresh here at every start, so an
+		# upgrade still takes effect at the next login exactly as its message promises.
+		session_cfg="$XDG_RUNTIME_DIR/posterchan-wayfire.ini"
+		if ! cp -f "${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}" "$session_cfg" 2>/dev/null; then
+			# A copy that could not be made is not a reason to refuse to start a desktop.
+			session_cfg="${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}"
+		fi
+		wayfire -c "$session_cfg" >"$state_dir/wayfire.log" 2>&1 &
 		wayfire_pid=$!
 		# WAIT ON THE LAUNCHER, NOT ON A CLOCK.
 		#
