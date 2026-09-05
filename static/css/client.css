@@ -10008,7 +10008,19 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
    its own rule rather than an exception to the one above, because `:not(#id)` carries an ID's
    specificity and no class-only rule can override it. */
 .os-popup-body.os-popup-compose > *:not(#modal-root){display:none!important}
-.os-popup-body.os-popup-compose #modal-root .modal-bg{position:fixed;inset:0}
+/* THE BACKDROP IS THE WINDOW HERE, AND A BACKDROP DRAWN IN ITS OWN WINDOW IS JUST A BLACK BOX.
+   `.modal-bg` is `rgba(4,2,12,.72)` + a blur + `padding:24px 16px`, and on the web that is right:
+   it dims the PAGE the composer is covering. A reply opened from the desktop is its own compositor
+   window (`_composeInWindow`), sized to the composer -- there is no page behind it to dim, so the
+   72%-opaque frame paints against the desktop as a hard dark border around the card. Reported as
+   "Reply modal on desktop has a black box around it". The window is already created `transparent`
+   with a `#00000000` background, so the fix is to let that transparency through and hand the whole
+   window to the card. `.modal` is `width:min(720px,96vw);max-height:92vh`, i.e. deliberately smaller
+   than its viewport, which is what left the border visible even once the paint was gone. */
+.os-popup-body.os-popup-compose #modal-root .modal-bg{position:fixed;inset:0;background:none;
+  backdrop-filter:none;-webkit-backdrop-filter:none;padding:0;display:block;overflow:hidden}
+.os-popup-body.os-popup-compose #modal-root .modal{width:100%;max-width:none;height:100%;
+  max-height:none;border-radius:0;overflow:auto}
 
 /* A GAME OWNS THIS MONITOR — the desktop behind it must cost nothing.
    Set from os.js `_setDesktopIdle`, which is told by main.js which output a fullscreen native
