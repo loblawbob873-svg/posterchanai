@@ -271,7 +271,10 @@ class TestSyncedFolderThumbnails(unittest.TestCase):
     def test_chunked_photos_and_details_rows_get_thumbnail_targets(self):
         src = open(APP, encoding="utf-8").read()
         thumbs = src[src.index("async function _thumbFor"):src.index("/* An edit to the shared manifest")]
-        self.assertIn("_syncFileBlob('', chunks)", thumbs,
+        # Chunked pictures still go through _syncFileBlob; it now also takes the NAME, because a
+        # blob with no type has a blob: URL that `background-image` will not load -- which is what
+        # "0 thumbnails loaded in File Manager" was.
+        self.assertIn("_syncFileBlob(chunks && chunks.length ? '' : sha,", thumbs,
                       "chunked pictures are excluded from synced-folder previews")
         self.assertIn("data-thumb-chunks", src)
         details = src[src.index("function _fxDetailsRow"):src.index("function _fxBindCols")]

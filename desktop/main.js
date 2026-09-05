@@ -251,11 +251,81 @@ const _MIME = {
   '.webm': 'video/webm', '.wasm': 'application/wasm',
 };
 
+/* A VIDEO NEEDS A URL IT CAN SEEK, NOT A FILE SOMEBODY READ INTO MEMORY FOR IT.
+ *
+ * Opening a local file went through `pc:host:read`, which does a SYNCHRONOUS readFileSync of the
+ * whole thing in this process and ships the bytes through IPC to be made into a Blob. For a
+ * document that is fine. For media it is wrong three times over: the main process is blocked for
+ * the length of the read, so the whole desktop stops; a Blob URL has no ranges, so the player
+ * cannot seek and shows a black frame with controls that control nothing; and anything past the
+ * cap is refused outright with "that file is too big to open here". Reported as "playing video in
+ * blossom, which should be called files, is black, buttons hidden" and "can't play .webm in file
+ * manager", both on This Computer.
+ *
+ * So a local file gets an ADDRESS. `app://posterchan/__hostfile/<encoded absolute path>` streams it
+ * with `Accept-Ranges`, which is what makes <video> seek, start instantly on a large file, and stop
+ * caring how big it is.
+ *
+ * IT GRANTS NOTHING NEW. The path goes through the SAME `hostfs().clean()` gate the read bridge
+ * uses, so exactly the files a renderer could already read are the files it can now address -- the
+ * capability is identical and only the transport changed. A path that gate refuses is a 403, not a
+ * quiet empty response, because a player given an empty body reports a corrupt file and sends
+ * somebody looking at their video instead of at their permissions. */
+function serveHostFile(request, rel) {
+  /* `rel` was decoded ONCE by the caller, from the URL's pathname. Decoding again here would turn a
+   * filename that legitimately contains a percent sign into a different path, and is the shape that
+   * lets an encoded traversal through a check that ran before it. */
+  const target = rel.slice('/__hostfile/'.length);
+  let full = '';
+  try { full = hostfs().clean(target); } catch (_) { full = ''; }
+  if (!full) return new Response('forbidden', { status: 403 });
+  let st;
+  try { st = fs.statSync(full); } catch (_) { return new Response('not found', { status: 404 }); }
+  if (!st.isFile()) return new Response('not found', { status: 404 });
+
+  const type = _MIME[path.extname(full).toLowerCase()] || 'application/octet-stream';
+  const head = {
+    'Content-Type': type,
+    'Accept-Ranges': 'bytes',
+    /* The file on disk is the only copy and it can change under a long playback; nothing here is
+     * worth a stale hit. */
+    'Cache-Control': 'no-store',
+  };
+  const range = String(request.headers.get('range') || '');
+  const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+  if (m && (m[1] !== '' || m[2] !== '')) {
+    let start, end;
+    if (m[1] === '') {                     // a suffix range: the LAST n bytes
+      const n = Math.min(Number(m[2]) || 0, st.size);
+      start = st.size - n; end = st.size - 1;
+    } else {
+      start = Number(m[1]) || 0;
+      end = m[2] === '' ? st.size - 1 : Math.min(Number(m[2]), st.size - 1);
+    }
+    if (!(start >= 0) || start >= st.size || end < start) {
+      return new Response('', { status: 416, headers: { 'Content-Range': 'bytes */' + st.size } });
+    }
+    const stream = fs.createReadStream(full, { start, end });
+    return new Response(stream, { status: 206, headers: Object.assign({}, head, {
+      'Content-Range': 'bytes ' + start + '-' + end + '/' + st.size,
+      'Content-Length': String(end - start + 1),
+    }) });
+  }
+  return new Response(fs.createReadStream(full), { status: 200, headers: Object.assign({}, head, {
+    'Content-Length': String(st.size),
+  }) });
+}
+
 function serveBundle() {
   protocol.handle('app', async (request) => {
     let rel;
     try { rel = decodeURIComponent(new URL(request.url).pathname); } catch (_) { rel = '/'; }
     if (rel === '/' || rel === '') rel = '/index.html';
+    /* Decoded ABOVE, so the prefix test sees the same string the handler below would resolve. */
+    if (rel.startsWith('/__hostfile/')) {
+      try { return serveHostFile(request, rel); }
+      catch (_) { return new Response('not found', { status: 404 }); }
+    }
     // Contain every request inside www/. path.normalize collapses ../ BEFORE the prefix test, so a
     // crafted app://posterchan/../../etc/passwd resolves and is then rejected — testing the raw
     // pathname for '..' would miss encoded and mixed-separator forms.
@@ -2287,10 +2357,31 @@ ipcMain.handle('pc:wm:preview-frame', (e, payload, direction) => {
  * above an application — see sinkShellOnFocus. Asked for by the renderer, because only the renderer
  * knows whether the thing you just clicked was a Settings frame drawn inside the desktop or the
  * desktop itself. Released the moment it stops being true, and on the surface going away. */
+/* ASKING TO BE IN FRONT HAS TO PUT YOU IN FRONT, NOT MERELY STOP YOU BEING PUSHED BACK.
+ *
+ * This used to add the renderer to `_shellWantsFront` and nothing else, which exempts it from the
+ * NEXT sink and does nothing about the one that already happened. And one always has: the only way
+ * to click a PosterChan window drawn INSIDE this surface is to click the surface, that click is a
+ * focus, and `sinkShellOnFocus` sinks on every focus. So the sequence was -- click, sunk, and only
+ * then the renderer says it wanted to be forward, to a process that records the wish and leaves the
+ * surface at the back. Reported as "social is stuck behind terminal and can't move", and it is the
+ * same shape as the earlier "a bunch of apps are stuck and won't close": the window is alive,
+ * focused and receiving the clicks, underneath an application.
+ *
+ * `keepBelow(id, false)` is `wm-actions/send-to-back` with `state:false`, the inverse of the call
+ * that sank it, and it does not touch keyboard focus -- which the shell already has, having just
+ * been clicked. */
+function raiseShellSurfaces(){
+  for(const [id, record] of shellSurfaceIds()){
+    const wc = record.browser && !record.browser.isDestroyed() ? record.browser.webContents : null;
+    if(!wc || !_shellWantsFront.has(Number(wc.id))) continue;
+    try{ Promise.resolve(wm().keepBelow(id, false)).catch(()=>{}); }catch(_){ }
+  }
+}
 ipcMain.handle('pc:wm:shell-front', (e, want) => {
   fsGuard(e);
   const id = Number(e.sender.id);
-  if(want) _shellWantsFront.add(id);
+  if(want){ _shellWantsFront.add(id); raiseShellSurfaces(); }
   else { _shellWantsFront.delete(id); sinkShellSurfaces(); }
   return true;
 });

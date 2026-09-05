@@ -9901,7 +9901,17 @@ html.pc-oswin body{padding-top:38px}
 html.pc-oswin #app,html.pc-oswin .main{height:100%!important;min-height:0!important}
 #pc-oswin-chrome{position:fixed;z-index:2147483640;inset:0 0 auto;height:38px;box-sizing:border-box;
   display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 13px;color:var(--text);
-  background:linear-gradient(180deg,rgba(38,32,56,.98),rgba(20,17,31,.98));border:1px solid var(--line);
+  /* THE TITLE BAR OF A POPPED-OUT WINDOW IS THE ONE PEOPLE ACTUALLY LOOK AT, and it was a purple
+     nobody chose: `rgba(38,32,56)` is #262038, hardcoded rather than taken from the palette, so it
+     stayed purple through every theme and matched nothing else on the screen. Reported as "why are
+     the windows purple? they don't fit in at all" -- and it survived a first fix that corrected the
+     COMPOSITOR's frame (measured after that change: the frame samples (11,11,16), the client's bar
+     beside it still #262038).
+
+     `--panel2` is what `.osw-bar` uses for exactly this surface on an in-page window, so a
+     popped-out window and a docked one now wear the same title bar in every theme -- which is also
+     half of "global has better zoom and wider window decoration compared to Notifications". */
+  background:var(--panel2);border:1px solid var(--line);
   border-radius:9px 9px 0 0;box-shadow:0 4px 16px #0007;-webkit-app-region:drag;user-select:none}
 .pc-oswin-title{font-size:12px;font-weight:700;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pc-oswin-buttons{display:flex;align-self:stretch;-webkit-app-region:no-drag}

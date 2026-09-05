@@ -501,7 +501,13 @@ if (isOurPage) {
     trash: (target) => ipcRenderer.invoke('pc:host:trash', String(target || '')),
     transfer: (items, destination, move) => ipcRenderer.invoke('pc:host:transfer',
       Array.isArray(items) ? items.map(String) : [], String(destination || ''), !!move),
-    read: (target, max) => ipcRenderer.invoke('pc:host:read', String(target || ''), Number(max) || 0)
+    read: (target, max) => ipcRenderer.invoke('pc:host:read', String(target || ''), Number(max) || 0),
+    /* AN ADDRESS FOR A LOCAL FILE, so media can be STREAMED rather than read into the renderer's
+     * heap -- see serveHostFile in main.js. Built here rather than in the client so the origin is
+     * stated once, and so a build without the handler simply has no `fileUrl` and the caller falls
+     * back to reading bytes. It grants nothing `read` above does not: the same path gate applies. */
+    fileUrl: (target) => 'app://posterchan/__hostfile/'
+      + String(target || '').split('/').map(encodeURIComponent).join('/')
       .then((b) => new Uint8Array(b)),
     open: (target) => ipcRenderer.invoke('pc:host:open', String(target || '')),
   });

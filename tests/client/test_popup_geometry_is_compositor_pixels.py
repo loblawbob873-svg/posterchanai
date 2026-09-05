@@ -54,12 +54,14 @@ class TestEveryOpenerConverts(unittest.TestCase):
             self.assertNotRegex(block, r"r\.right\s*-\s*w\b",
                                 f"the popup anchored to {anchor} still mixes the two spaces")
 
-    def test_the_start_menu_falls_back_in_the_same_space_it_measures_in(self):
-        """Its fallback was `vhL()` — layout — subtracted from by a value in the other space."""
+    def test_the_start_menu_no_longer_positions_itself_from_the_button(self):
+        """This asserted the fallback was `window.innerHeight` rather than the layout-space
+        `vhL()`. Both were wrong for the same reason and the menu now asks the TASKBAR instead --
+        see tests/client/test_flyouts_sit_on_the_taskbar.py, which owns that rule."""
         body = OS_JS[OS_JS.index("function _startPopup()"):]
         body = body[: body.index("function toggleStart")]
         self.assertNotIn("rect.top : vhL()", body)
-        self.assertIn("window.innerHeight", body)
+        self.assertIn("taskbarTopPx()", body)
 
     def test_the_composer_places_itself_in_compositor_pixels(self):
         body = OS_JS[OS_JS.index("function _composeInWindow"):]

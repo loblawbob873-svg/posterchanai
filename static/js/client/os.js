@@ -4110,6 +4110,32 @@
    * So sizes are still WRITTEN in layout pixels, next to the stylesheet numbers they must match,
    * and converted here, once, at the boundary. */
   const popupPx = (v) => Math.round(v * zf());
+  /* WHERE THE TOP OF THE TASKBAR IS, IN THE SPACE A POPUP'S GEOMETRY IS EXPRESSED IN.
+   *
+   * Every flyout hangs off the bar, so every one of them needs this number and they were each
+   * deriving it from their own anchor button's `getBoundingClientRect()`. MEASURED on the real desk
+   * with a display scale in force: the start menu was asked for at y=1076 with a height of 1150,
+   * so its bottom edge landed at 2226 while the taskbar's top edge -- confirmed twice, from the
+   * shell's own published work area (`reserve: 60`) and by finding the edge in a screenshot -- is
+   * at 2500. A 274px gap: "the start menu and widgets not attached to the taskbar".
+   *
+   * Rather than settle which coordinate space that rect was in, this asks a question with only one
+   * right answer: THE TASKBAR'S BOTTOM IS THE VIEWPORT'S BOTTOM. If the measured rect agrees, it is
+   * in the same space as the geometry and its top is used directly. If it does not, the rect is in
+   * some other space and is ignored in favour of the bar's own height, which this file already
+   * owns. Both routes give the same answer on this machine, and the second cannot be wrong about
+   * WHICH space it is in because it never leaves this one.
+   *
+   * The fallback is the last resort and not the first: `TASKBAR` is the nominal height, and the bar
+   * is a flex row whose real height moves with the UI scale and the font -- which is exactly why
+   * the work area is MEASURED and published rather than derived (see osnative.js `workAreaFrom`). */
+  function taskbarTopPx(){
+    try{
+      const r = bar && bar.getBoundingClientRect ? bar.getBoundingClientRect() : null;
+      if(r && r.height > 0 && Math.abs(window.innerHeight - r.bottom) <= 2) return Math.round(r.top);
+    }catch(_){ }
+    return Math.round(window.innerHeight - popupPx(TASKBAR));
+  }
   let ghost = null, layoutFor = null, layoutT = 0;
 
   /* Snap against the area windows actually live in.  Deriving this from innerHeight and the
@@ -7581,10 +7607,11 @@
     const w = Math.min(430, Math.max(300, Math.round(vwL() - 16)));
     const h = Math.min(1200, Math.max(420, Math.round(vhL() - 56)));
     const wD = popupPx(w), hD = popupPx(h);
-    let x = Math.max(0, window.innerWidth - wD - 8), y = 8;
+    let x = Math.max(0, window.innerWidth - wD - 8);
+    let y = Math.max(0, taskbarTopPx() - hD - 8);
     try{
       const b = $('#os-bell', bar), r = b && b.getBoundingClientRect();
-      if(r){ x = Math.max(0, Math.round(r.right - wD)); y = Math.max(0, Math.round(r.top - hD - 8)); }
+      if(r) x = Math.max(0, Math.round(r.right - wD));
     }catch(_){ }
     Promise.resolve(pcPopup.toggle('noti', { x, y, width: wD, height: hD }))
       .then(open => { notiOpen = !!open; drawBar(); })
@@ -8023,10 +8050,11 @@
     const w = Math.min(520, Math.max(320, Math.round(vwL() - 16)));
     const h = Math.min(900, Math.max(360, Math.round(vhL() - 96)));
     const wD = popupPx(w), hD = popupPx(h);
-    let x = Math.max(0, window.innerWidth - wD - 8), y = 8;
+    let x = Math.max(0, window.innerWidth - wD - 8);
+    let y = Math.max(0, taskbarTopPx() - hD - 8);
     try{
       const b = $('#os-net', bar), r = b && b.getBoundingClientRect();
-      if(r){ x = Math.max(0, Math.round(r.right - wD)); y = Math.max(0, Math.round(r.top - hD - 8)); }
+      if(r) x = Math.max(0, Math.round(r.right - wD));
     }catch(_){ }
     const state = netState();
     /* Only plain connection facts cross the renderer boundary. Do not pass WebSockets or relay
@@ -8200,8 +8228,10 @@
     const w = Math.min(780, Math.max(360, Math.round(vwL() - 20)));
     const h = Math.min(920, Math.max(320, Math.round(vhL() - 78)));
     const wD = popupPx(w), hD = popupPx(h);
+    /* x still comes from the button -- the horizontal axis was never wrong, and the menu is meant
+     * to line up with Start. y comes from the bar; see taskbarTopPx. */
     const x = Math.max(0, Math.round((rect ? rect.left : 10)));
-    const y = Math.max(0, Math.round((rect ? rect.top : window.innerHeight) - hD - 8));
+    const y = Math.max(0, taskbarTopPx() - hD - 8);
     /* TOGGLE, decided by the main process. `startOpen` is a paint flag here, not the decision:
        the window closes on blur, on Escape and on every choice, none of which this renderer sees
        in time. Asking it to remember made Super work every other press, unpredictably. */

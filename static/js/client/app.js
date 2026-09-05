@@ -19108,13 +19108,29 @@
    * the first place (that is why it was chunked), and a Blob built from its parts is backed by the
    * browser's own storage instead of the JS heap. Concatenating into one array here would reintroduce
    * exactly the ceiling chunking exists to remove. */
-  async function _syncFileBlob(sha, chunks){
+  /* A BLOB URL CARRIES THE BLOB'S TYPE, AND AN UNTYPED BLOB IS A FILE NOTHING CAN OPEN.
+   *
+   * Every blob on the drive is stored `application/octet-stream` -- it is encrypted, so that is the
+   * only honest thing to store -- and these Blobs were built with no type at all. A `blob:` URL then
+   * names bytes of unknown kind: `background-image` never loads it (reported as "0 thumbnails loaded
+   * in File Manager"), and a <video> handed one shows a black box whose controls have nothing to
+   * control ("playing video in blossom ... is black, buttons hidden", "can't play .webm in file
+   * manager"). Three reports, one missing argument. preview.js already learned this and says so at
+   * `mimeFor`; `fileFromBytes` above states the rule for this file -- "everything that reconstructs
+   * a file from a decrypted buffer should go through this" -- and this function was the exception.
+   *
+   * The NAME is the only evidence available: the stored mime is octet-stream by design, and sniffing
+   * the bytes would be a decoder this client does not need. An unknown extension yields no type,
+   * which is exactly what happened before, so a caller with no name is no worse off than it was. */
+  async function _syncFileBlob(sha, chunks, name){
+    const type = mimeForName(name || '');
+    const opts = type ? { type } : undefined;
     if(chunks && chunks.length){
       const parts = [];
       for(const c of chunks) parts.push(await _syncBlobBytes(c));
-      return new Blob(parts);
+      return new Blob(parts, opts);
     }
-    return new Blob([await _syncBlobBytes(sha)]);
+    return new Blob([await _syncBlobBytes(sha)], opts);
   }
   /* OPEN A FILE FROM A SYNCED FOLDER IN POSTERCHAN CODE.
    *
@@ -19441,14 +19457,14 @@
       _thumbs.delete(oldest);
     }
   }
-  async function _thumbFor(sha, chunks){
+  async function _thumbFor(sha, chunks, name){
     const key = sha || ('chunks:' + (chunks || []).join(','));
     if(_thumbs.has(key)) return _thumbs.get(key);
     while(_thumbBusy >= _THUMB_PAR) await new Promise(r=>setTimeout(r, 120));
     _thumbBusy++;
     try{
-      const blob = chunks && chunks.length ? await _syncFileBlob('', chunks)
-                                          : new Blob([await _syncBlobBytes(sha)]);
+      const blob = await _syncFileBlob(chunks && chunks.length ? '' : sha,
+                                       chunks && chunks.length ? chunks : null, name);
       const url = URL.createObjectURL(blob);
       _thumbRemember(key, url);
       return url;
@@ -19465,7 +19481,7 @@
         const chunks = (el.dataset.thumbChunks || '').split(',').filter(Boolean);
         _thumbObs.unobserve(el);
         if(!sha && !chunks.length) continue;
-        _thumbFor(sha, chunks).then(url=>{
+        _thumbFor(sha, chunks, el.dataset.thumbName || '').then(url=>{
           // The grid is rebuilt on every navigation, so a decrypt that lands after the user has
           // moved on must not paint into a card that is no longer on the page.
           if(!el.isConnected) return;
@@ -19670,7 +19686,7 @@
       const canThumb = !it.dir && (it.sha || (it.chunks && it.chunks.length))
                     && _THUMB_EXT.test(ext) && (it.size||0) <= _THUMB_MAX;
       const thumbAttrs = canThumb
-        ? ` data-thumb="${enc(it.sha||'')}"${it.chunks?` data-thumb-chunks="${enc(it.chunks.join(','))}"`:''}` : '';
+        ? ` data-thumb="${enc(it.sha||'')}" data-thumb-name="${enc(it.name||'')}"${it.chunks?` data-thumb-chunks="${enc(it.chunks.join(','))}"`:''}` : '';
       // The FULL path is what an edit needs — a manifest has no folders, only paths — and a directory
       // row has none of its own, so it is rebuilt from where we are standing.
       const full = it.dir ? ((_syncPath ? _syncPath + '/' : '') + it.name) : it.path;
@@ -20106,11 +20122,32 @@
       openFile: async (path, name, openHere, mime) => {
         if(_previewable(name || path, mime)){
           try{
+            const nm = name || path, type = mime || mimeForName(nm) || '';
+            /* MEDIA IS STREAMED, EVERYTHING ELSE IS READ.
+             *
+             * `pcHost.read` pulls the WHOLE file through the bridge -- a synchronous read in the
+             * desktop's main process, then the bytes into this heap. For a picture or a PDF that is
+             * fine and it is what has always happened. For a video it is why one was a black box
+             * with dead controls ("playing video ... is black, buttons hidden") and why a big one
+             * would not open at all ("can't play .webm in file manager"): a Blob URL cannot be
+             * range-requested, so the player can neither seek nor start before the last byte, and
+             * past the bridge's ceiling the read is refused outright.
+             *
+             * `pcHost.fileUrl` is an address main.js serves with Accept-Ranges. Absent on a build
+             * without the handler, and on the web, where this whole branch is unreachable -- so the
+             * fallback is the path that was here before, not a failure. */
+            const streamable = /^(video|audio)\//i.test(type)
+                            || /\.(mp4|m4v|mov|webm|mkv|ogv|avi|3gp|mp3|m4a|aac|ogg|oga|opus|wav|flac)$/i.test(nm);
+            const P = await _withModule('preview.js', 'PCPreview');
+            if(streamable && window.pcHost && pcHost.fileUrl){
+              if(!P || !P.open({ name:nm, mime:type, url:pcHost.fileUrl(path) }))
+                toast('nothing here can show that file');
+              return;
+            }
             toast('opening…');
             const bytes = await window.pcHost.read(path, 256 * 1024 * 1024);
-            const blob = new Blob([bytes], { type:mime || mimeForName(name || path) || '' });
-            const P = await _withModule('preview.js', 'PCPreview');
-            if(!P || !P.open({ name:name || path, mime:mime || blob.type || '', blob }))
+            const blob = new Blob([bytes], { type });
+            if(!P || !P.open({ name:nm, mime:type || blob.type || '', blob }))
               toast('nothing here can show that file');
           }catch(e){ toast('could not open that: ' + ((e && e.message) || e)); }
           return;

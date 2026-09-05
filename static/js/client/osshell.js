@@ -244,7 +244,20 @@
         const a=toks(x), b=toks(y);
         if(!a.length || !b.length) return false;
         const [small,big]=a.length<=b.length?[a,b]:[b,a];
-        return small.every(t=>big.includes(t));
+        /* A TOKEN MAY BE THE START OF THE OTHER'S TOKEN, which is how a vendor writes a reverse-DNS
+         * id that swallows the program name. MEASURED on the real desk: OBS reports
+         * `com.obsproject.Studio` and its desktop entry matches on `obs` -- tokens ['obsproject',
+         * 'studio'] against ['obs'] -- so an exact-token comparison found nothing, the row fell
+         * back to the generic square, and the taskbar showed a nameless box. Reported as "obs has
+         * no taskbar icon"; the BUTTON was always there.
+         *
+         * Bounded at three characters and anchored at the start, so `obs` matches `obsproject`
+         * while `cal` cannot reach `calculator` from a two-token id -- every token of the shorter
+         * side must still find a home, which is what stops one incidental prefix carrying a match
+         * on its own. */
+        const fits=(t)=>big.includes(t)
+          || (t.length>=3 && big.some(u=>u.startsWith(t) || t.startsWith(u)));
+        return small.every(fits);
       };
       const meta=(_apps||[]).find(a=>same(String(a.match||'').toLowerCase(),low));
       rows.push({ id: w.id, app, title, focused: !!w.focused, stashed: !!w.stashed,
@@ -995,11 +1008,21 @@
     const px = (v) => Math.round(v * k);
     const w = px(360);
     const h = px(Math.min(640, Math.max(360, Math.round(((root.innerHeight || 900) / k) * 0.62))));
-    let x = Math.max(0, (root.innerWidth || 1280) - w - 8), y = 8;
+    /* THE FLYOUT SITS ON THE TASKBAR, so its y comes from the BAR and not from the tray chip's own
+     * rect -- see `taskbarTopPx` in os.js for the measurement that made this necessary. The rule is
+     * the same and needs no shared code: the taskbar's bottom IS the viewport's bottom, so a rect
+     * that agrees is in the space this geometry is expressed in and a rect that does not is
+     * ignored. */
+    const vh = root.innerHeight || 900;
+    let barTop = vh - Math.round(48 * k);
+    try{
+      const b = root.document.getElementById('os-bar'), br = b && b.getBoundingClientRect();
+      if(br && br.height > 0 && Math.abs(vh - br.bottom) <= 2) barTop = Math.round(br.top);
+    }catch(_){ }
+    let x = Math.max(0, (root.innerWidth || 1280) - w - 8), y = Math.max(0, barTop - h - 8);
     try{
       const r = anchor.getBoundingClientRect();
       x = Math.max(0, Math.round(r.right - w));
-      y = Math.max(0, Math.round(r.top - h - 8));
     }catch(_){}
     /* TOGGLE, NEVER OPEN — see the branch in bindPanel that calls this. `open` is not a toggle: a
      * press made while the flyout is already up DESTROYS that window and asks for a replacement,

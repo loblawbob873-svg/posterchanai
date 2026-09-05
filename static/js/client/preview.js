@@ -318,22 +318,34 @@
     file = file || {};
     var name = file.name || 'file';
     var mime = file.mime || (file.blob && file.blob.type) || '';
-    var blob = bytesOf(file.blob || file.bytes || file.src);
-    if (!blob) { toast('there are no bytes to show'); return false; }
+    /* A STREAMED SOURCE HAS NO BYTES HERE, AND THAT IS THE POINT.
+     *
+     * `file.url` is an address the player can RANGE-request -- on the desktop, a local file served
+     * by main.js's `__hostfile` handler. Media opened that way seeks, starts on the first frames
+     * instead of the last byte, and has no size ceiling; read into a Blob it did none of those, so
+     * a video on This Computer was a black box with controls that controlled nothing. Only media
+     * takes this path: a PDF or an image is small, already works, and an <iframe> at a custom
+     * scheme is a different set of problems. */
+    var streamed = String(file.url || '');
+    if (streamed && !(isVideo(name, mime) || isAudio(name, mime))) streamed = '';
+    var blob = streamed ? null : bytesOf(file.blob || file.bytes || file.src);
+    if (!blob && !streamed) { toast('there are no bytes to show'); return false; }
     if (!handles(name, mime)) return false;
 
     var kind = kindOf(name, mime);
     /* A PDF must be handed to the viewer as a PDF. A blob rebuilt from an ArrayBuffer has an EMPTY
      * type, and an <iframe> at a blob: url with no type is downloaded or ignored rather than
      * rendered - the picture works either way, which is exactly how this would ship half-broken. */
-    var generic = !blob.type || /^application\/(octet-stream|binary)$/i.test(blob.type);
+    var generic = blob && (!blob.type || /^application\/(octet-stream|binary)$/i.test(blob.type));
     if (generic) {
       var t = (!/^application\/(octet-stream|binary)$/i.test(mime) && mime) || inferredType(name, kind);
       if (t) { try { blob = new Blob([blob], { type: t }); } catch (_) {} }
     }
 
     close();                                  // one at a time; the previous URL is revoked by its own close
-    var url = URL.createObjectURL(blob);
+    /* Nothing to revoke for a streamed source -- `revokeObjectURL` on a non-blob URL is a no-op, so
+     * the close path below needs no branch of its own. */
+    var url = streamed || URL.createObjectURL(blob);
     var key = 'pv:' + Math.random().toString(36).slice(2, 9);
     var shut = function () {}, transferring = false, mountCleanup = function () {};
     var done = function () {

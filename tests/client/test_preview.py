@@ -132,7 +132,8 @@ class PreviewIsReachable(unittest.TestCase):
         host = self.app[start:self.app.index("toast, prompt: uiPrompt", start)]
         self.assertIn("if(_previewable(name || path, mime))", host)
         self.assertIn("window.pcHost.read(path, 256 * 1024 * 1024)", host)
-        self.assertIn("P.open({ name:name || path", host)
+        # The name is resolved into `nm` first, because the streamed branch needs it too.
+        self.assertIn("P.open({ name:nm", host)
 
     def test_blossom_list_without_url_gets_a_canonical_blob_address(self):
         self.assertIn("url:b.url || (server.replace(/\\/$/,'') + '/' + b.sha256)", self.app)
