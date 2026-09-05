@@ -28,7 +28,12 @@ export function oswin({ nav = ['home', 'global', 'settings'], toplevels = true, 
   ctx.document = stubDoc(nav);
   ctx.location = { pathname: '/client', search: '' };
   ctx.localStorage = { getItem: k => (k === 'pc_os_toplevels' && toplevels ? '1' : null) };
-  if (wm) ctx.pcWM = { focus() {} };
+  /* A COMPOSITOR THAT ANSWERED, not merely a bridge. The preload injects pcWM on every platform,
+     so enabled() requires PCOSShell.available() === true -- without it the plain desktop app on
+     Windows and macOS offered real toplevels nothing could place or close. `wm` here means "this is
+     PosterChanOS", so it supplies both halves; a case passing wm:false is a browser and gets
+     neither. */
+  if (wm) { ctx.pcWM = { focus() {} }; ctx.PCOSShell = { available: () => true }; }
   ctx.open = (url, target, features) => { opened.push({ url, features }); return { __stub: true }; };
   runInNewContext(readFileSync(OSWIN, 'utf8'), ctx, { filename: 'oswin.js' });
   return { api: ctx.PCOSWin, opened };

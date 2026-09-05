@@ -198,9 +198,13 @@ def test_the_in_page_menu_survives_where_there_is_no_bridge():
     on the BRIDGE existing, never on a platform string."""
     body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
     # `toggle`, not `open`: the process holding the window answers whether it is showing.
-    assert "window.pcPopup && pcPopup.toggle" in body
+    # THE GATE, NOT ITS SPELLING. It used to test the `pcPopup` OBJECT, which the preload injects on
+    # every platform -- so the plain desktop app on Windows took the compositor-window path with no
+    # compositor to place the window, and the in-page panel this test is about was skipped. It asks
+    # `_popupWindows()` now: the bridge AND a compositor that answered.
+    assert "_popupWindows() && pcPopup.toggle" in body
     assert "_nativeMenuLayer(true)" in body, "the in-page path was removed"
-    assert "!_menuInPopup && window.pcPopup" in body, (
+    assert "!_menuInPopup && _popupWindows()" in body, (
         "the menu running INSIDE the window would open a second window from itself")
 
 
@@ -302,7 +306,9 @@ def test_no_taskbar_toggle_decides_from_a_flag_it_cannot_keep():
         # Everything up to the bridge test. A defensive `force === false` close INSIDE that branch
         # is fine — it is a caller saying "put it away" — but nothing before it may read or write
         # the flag to decide.
-        head = body[:body.index("window.pcPopup")]
+        # Up to the GATE, wherever it is spelled: the branch is now reached through
+        # `_popupWindows()`, and slicing on the old literal cut at the wrong place -- or not at all.
+        head = body[:body.index("_popupWindows()")]
         assert (flag + " =") not in head, (
             name + " decides from " + flag + " before asking the process that owns the window")
         assert ("!" + flag) not in head, (

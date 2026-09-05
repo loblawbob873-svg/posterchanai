@@ -1864,12 +1864,40 @@ function displays(){
 
 ipcMain.handle('pc:wm:available', (e) => { fsGuard(e); return wm().available(); });
 ipcMain.handle('pc:wm:windows', async (e) => { fsGuard(e); return scopedWindows(e, await wm().windows()); });
+/* "WHICH COMPOSITOR WINDOW AM I" HAS NO ANSWER ON A MACHINE WITH NO COMPOSITOR, AND THAT IS NOT AN
+ * ERROR. On Windows and macOS `wm()` has no socket, so this REJECTED -- and `pc:wm:self` is what a
+ * popped-out window's own title bar calls before minimising or maximising itself. Every PosterChan
+ * app opened as its own window therefore had dead controls and an error in the console: reported as
+ * "you can't maximize the Files Manager! pc:wm:self error ... all the fucking posterchan apps are
+ * broken with that err on windows app".
+ *
+ * `null` already means "I could not identify this window" -- the match below returns it whenever the
+ * answer is ambiguous -- so the callers already handle it, and `pc:win:control` below is what those
+ * buttons use when there is no compositor to ask. */
 ipcMain.handle('pc:wm:self', async (e) => {
   fsGuard(e);
+  if(!wm().available()) return null;
   const owner=BrowserWindow.fromWebContents(e.sender), title=owner&&!owner.isDestroyed()?owner.getTitle():'';
-  const rows=await wm().windows();
+  let rows=[];
+  try{ rows=await wm().windows(); }catch(_){ return null; }
   const matches=rows.filter(row=>String(row.title||'')===String(title||''));
   return matches.length===1?matches[0]:null;
+});
+/* THE WINDOW CONTROLS THAT WORK EVERYWHERE. A popped-out window is a real BrowserWindow on every
+ * platform; only PosterChanOS additionally has a compositor that can be asked about it. These act
+ * on the SENDER's own window and on nothing else, so a renderer cannot use them to reach another. */
+ipcMain.handle('pc:win:control', (e, action) => {
+  fsGuard(e);
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if(!w || w.isDestroyed()) return false;
+  const a = String(action || '');
+  try{
+    if(a === 'min') w.minimize();
+    else if(a === 'max'){ if(w.isMaximized()) w.unmaximize(); else w.maximize(); }
+    else if(a === 'close') w.close();
+    else return false;
+  }catch(_){ return false; }
+  return true;
 });
 ipcMain.handle('pc:wm:cycle-output', async (e, direction) => {
   fsGuard(e);

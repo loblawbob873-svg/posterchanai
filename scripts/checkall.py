@@ -200,6 +200,10 @@ CHECKS = {
     # desktop half lives in one and the thread half in the other and this bug is what they do to
     # each other. The os.js unit harness stubs PC() and cannot see it.
     "check_notification_opens_a_post": dict(group="live", secs=420),
+    # The desktop app OFF PosterChanOS -- Windows and macOS, where the preload injects `pcWM` but no
+    # compositor answers. check_desktop_standalone's bridge stub has no `pcWM` at all, so that whole
+    # branch never ran there and every app opening as an unmanageable toplevel went unnoticed.
+    "check_desktop_app_without_a_compositor": dict(group="live", secs=420),
     "check_meme_mobile":               dict(group="ui", secs=600),
     # Opens a 100-video player after its grid. Running beside five other Chromium instances can
     # delay the player repaint past the probe and report its already-rendered Back button missing.

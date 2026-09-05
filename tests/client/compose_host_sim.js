@@ -35,6 +35,12 @@ function run(opts, env) {
      * conversion is exercised by tests/client/test_popup_geometry_is_compositor_pixels.py. The
      * stubs still have to exist, or every case dies before reaching the decision. */
     const popupPx = (v) => Math.round(v * (ctx.zoom || 1));
+    /* CAN THIS MACHINE GIVE A MENU ITS OWN WINDOW? The popup bridge is injected on every platform,
+     * so os.js asks _popupWindows() -- the bridge AND a compositor that answered. The gate itself is
+     * the subject of tests/client/test_toplevels_need_a_real_compositor.py; here it answers whatever
+     * the case says, so both branches of the composer's own decision can be driven.
+     * NO BACKTICKS IN THIS COMMENT: it lives inside a template literal, and one ends it. */
+    const _popupWindows = () => ctx.bridge !== false && ctx.compositor !== false;
     const window = { innerWidth: 2560, innerHeight: 1706,
                      pcPopup: ctx.bridge ? { open: (k, r, a) => ctx.opened.push([k, r, a]) } : undefined };
     const pcPopup = window.pcPopup;

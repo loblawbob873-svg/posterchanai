@@ -19,6 +19,15 @@ globalThis.Store={query:()=>[],saveEvent:()=>{},removeEvent:()=>{}};
 globalThis.InstEmoji={loaded:true,SC_RE:/$a/}; globalThis._enrichTags=(k,t)=>t;
 globalThis.invalidateCounts=()=>{}; globalThis.applySobLive=()=>{};
 globalThis.window={}; globalThis.toast=()=>{};
+/* `publish` is lifted on its own, so anything it CLOSES OVER has to be supplied here. Fedi-only
+   mode added a `_FEDI_SOCIAL_KINDS` read inside it, and without this the harness dies with a bare
+   ReferenceError -- which reads as "the follows guard is broken" and is nothing of the sort. Lifted
+   from app.js rather than retyped, so the set cannot drift from the one the code uses. */
+globalThis._FEDI_SOCIAL_KINDS = (() => {
+  const m = /_FEDI_SOCIAL_KINDS\s*=\s*new Set\(\[([^\]]*)\]\)/.exec(src);
+  return new Set(m ? m[1].split(',').map(x => Number(x.trim())).filter(n => !Number.isNaN(n)) : []);
+})();
+globalThis._fediOnly = () => false;
 let signed=0,published=0,answer=true,decision=false,questions=[];
 globalThis.sign=async(kind,content,tags)=>{signed++;return {id:'new',kind,content,tags,pubkey:ME.pubkey,created_at:200};};
 globalThis.Relay={publish:async()=>{published++;return {ok:answer};}};

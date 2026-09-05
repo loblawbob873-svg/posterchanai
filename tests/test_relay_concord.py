@@ -19,8 +19,17 @@ def test_concord_wraps_do_not_use_dm_recipient_wot_gate():
 
 
 def test_concord_stream_wrap_cannot_be_deleted_by_shared_author():
-    """Every member knows the stream key; it must not confer relay-side delete power."""
-    assert 'pubkey=? AND kind<>1059 RETURNING id' in STORE
+    """Every member knows the stream key; it must not confer relay-side delete power.
+
+    THE PROPERTY, NOT THE SPELLING. This asserted `kind<>1059` verbatim and started failing when
+    the same statement grew to exclude kind 5 as well -- i.e. it reported a missing guard about a
+    guard that had become STRICTER. The rule is that an author-scoped delete cannot reach a gift
+    wrap; how the SQL says so is not the test's business.
+    """
+    stmt = re.search(r"DELETE FROM events WHERE id=\? AND pubkey=\?[^\"']*", STORE)
+    assert stmt, "the author-scoped delete statement is gone entirely"
+    assert "1059" in stmt.group(0), (
+        "an author-scoped delete can now reach a Concord gift wrap: " + stmt.group(0))
 
 
 def test_concord_cleanup_lifecycle_matches_cord01_and_cord08():

@@ -91,6 +91,23 @@
        * the honest capability test: a real toplevel is only meaningful where a window manager is
        * placing our windows. */
       if(!root.pcWM) return false;
+      /* THE BRIDGE EXISTS EVERYWHERE; THE COMPOSITOR DOES NOT.
+       *
+       * `pcWM` is injected by the preload on every platform -- the comment beside it promises
+       * "absent rather than broken off a compositor", but what is absent is the ANSWER, not the
+       * object. So this test passed in the plain desktop app on Windows and macOS, every PosterChan
+       * app opened as a real toplevel nothing was managing, and every compositor call from its title
+       * bar failed: "you can't maximize the Files Manager! pc:wm:self error ... all the posterchan
+       * apps are broken with that err on windows app", and a click that both popped a window out
+       * AND left the view behind it.
+       *
+       * `PCOSShell.available()` is the cached answer to "did a compositor reply" -- null until
+       * asked, false where there is none. Requiring a literal true means a machine that has not
+       * answered yet uses in-page frames, which is what web and Android always use and what this
+       * app did everywhere before toplevels existed. Nothing is lost by waiting; a window opened on
+       * a machine that cannot manage it cannot be closed. */
+      if(!(root.PCOSShell && typeof root.PCOSShell.available === 'function'
+           && root.PCOSShell.available() === true)) return false;
       if(isWindow()) return false;        // a window does not open windows; the desktop does
       /* ON BY DEFAULT ON POSTERCHANOS, WITH ONE KEY TO TURN IT OFF.
        *
@@ -229,11 +246,28 @@
       bar.querySelector('.pc-oswin-title').textContent=String(state.label||state.view||'PosterChan');
       (root.document.body||root.document.documentElement).prepend(bar);
       bar.querySelector('[data-action="close"]').onclick=()=>root.close();
-      bar.querySelector('[data-action="min"]').onclick=async()=>{const row=await root.pcWM.self();if(row)await root.pcWM.hide(row.id);};
-      /* An application maximise is the output WORKAREA, not compositor fullscreen. Fullscreen is
-       * reserved for games/video and deliberately obscures every sibling on that output — using it
-       * here made Wayfire look like it only supported one application at a time. */
-      bar.querySelector('[data-action="max"]').onclick=async()=>{const row=await root.pcWM.self();if(row)await root.pcWM.snap(row.id,'max');};
+      /* THE COMPOSITOR IS THE BETTER ANSWER AND NOT THE ONLY ONE.
+       *
+       * `pcWM.self()` asks a compositor which of its windows this page is, and on Windows and macOS
+       * there is no compositor at all -- so the call REJECTED and both buttons did nothing but log.
+       * Every PosterChan app opened as its own window was therefore stuck at the size it opened at,
+       * reported as "you can't maximize the Files Manager! pc:wm:self error ... all the posterchan
+       * apps are broken with that err on windows app".
+       *
+       * A popped-out window is an ordinary BrowserWindow everywhere, so `pcWM.control` performs the
+       * same action through the window itself. The compositor path is kept and tried first: on
+       * PosterChanOS a maximise is the output WORKAREA (fullscreen is reserved for games and video,
+       * and using it here made Wayfire look like it supported one application at a time), which the
+       * platform call cannot express. */
+      const _act=async(compositor, fallback)=>{
+        try{
+          const row=root.pcWM && root.pcWM.self ? await root.pcWM.self() : null;
+          if(row){ await compositor(row); return; }
+        }catch(_){ }
+        try{ if(root.pcWM && root.pcWM.control) await root.pcWM.control(fallback); }catch(_){ }
+      };
+      bar.querySelector('[data-action="min"]').onclick=()=>_act(row=>root.pcWM.hide(row.id),'min');
+      bar.querySelector('[data-action="max"]').onclick=()=>_act(row=>root.pcWM.snap(row.id,'max'),'max');
     }catch(_){ }
   }
 

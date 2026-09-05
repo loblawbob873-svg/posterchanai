@@ -52,6 +52,13 @@ def run_js(body: str):
       const make = (over) => {{
         const w = Object.assign({{
           location: {{ search: '', pathname: '/client' }},
+          /* A COMPOSITOR THAT ANSWERED. `pcWM` alone is not evidence of one: the preload injects it
+             on every platform, so testing for the object offered real toplevels in the plain desktop
+             app on Windows and macOS, where nothing can place or close them. `enabled()` requires
+             `PCOSShell.available() === true` now -- the cached answer to "did a compositor reply" --
+             so a stub standing in for PosterChanOS has to say yes. Cases below that mean "a browser"
+             pass no `pcWM` at all and are unaffected. */
+          PCOSShell: {{ available: () => true }},
           localStorage: {{ _v: {{}}, getItem(k){{ return this._v[k] ?? null; }},
                            setItem(k,v){{ this._v[k]=String(v); }} }},
           /* `open()` refuses a view the nav does not know (a window that cannot show what it

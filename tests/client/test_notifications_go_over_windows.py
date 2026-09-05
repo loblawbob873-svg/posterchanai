@@ -84,7 +84,11 @@ def test_the_in_page_panel_survives_for_every_shell_without_a_bridge():
     never on a platform string, or the centre disappears everywhere else."""
     body = _fn("  function toggleNoti(force){") + _fn("  function _notiPopup(){")
     # `toggle`, not `open` — see the note below. The branch is still on the BRIDGE existing.
-    assert "window.pcPopup && pcPopup.toggle" in body
+    # THE GATE, NOT ITS SPELLING. It used to test the `pcPopup` OBJECT, which the preload injects on
+    # every platform -- so the plain desktop app on Windows took the compositor-window path with no
+    # compositor to place the window, and the in-page panel this test is about was skipped. It asks
+    # `_popupWindows()` now: the bridge AND a compositor that answered.
+    assert "_popupWindows() && pcPopup.toggle" in body
     assert "buildNotiPanel(false)" in body, "the in-page panel is gone — this is browser-only UI now"
     code = _decomment(body)
     for token in ("PosterChanOS", "process.platform", "navigator.userAgent"):

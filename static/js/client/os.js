@@ -4124,6 +4124,24 @@
    * So sizes are still WRITTEN in layout pixels, next to the stylesheet numbers they must match,
    * and converted here, once, at the boundary. */
   const popupPx = (v) => Math.round(v * zf());
+  /* CAN THIS MACHINE GIVE A MENU ITS OWN WINDOW?
+   *
+   * `pcPopup` is injected by the preload on EVERY platform, so testing for the object sent the
+   * start menu, the notification centre, the network panel and the tray flyout down the
+   * compositor-window path in the plain desktop app on Windows and macOS -- where there is no
+   * compositor to place the window and no in-page panel drawn either, because taking that branch is
+   * what skips it. Reported as "taskbar, notifications, completely broken on windows app".
+   *
+   * `PCOSShell.available()` is the cached answer to "did a compositor reply": null until asked,
+   * false where there is none. A literal true is required, so anything else draws the in-page panel
+   * -- which is what the web and the APK have always used and what works. Same rule, and the same
+   * reason, as `PCOSWin.enabled()`. */
+  function _popupWindows(){
+    try{
+      return !!(window.pcPopup && window.PCOSShell
+                && typeof PCOSShell.available === 'function' && PCOSShell.available() === true);
+    }catch(_){ return false; }
+  }
   /* WHERE THE TOP OF THE TASKBAR IS, IN THE SPACE A POPUP'S GEOMETRY IS EXPRESSED IN.
    *
    * Every flyout hangs off the bar, so every one of them needs this number and they were each
@@ -7636,7 +7654,7 @@
     /* THE PROCESS THAT HOLDS THE WINDOW DECIDES — see toggleNet. `notiOpen` is a paint flag and the
      * popup closes on blur, on Escape and on every choice, none of which this renderer is told
      * about, so consulting it first makes the bell work on alternate presses. */
-    if(window.pcPopup && pcPopup.toggle && force !== false){
+    if(_popupWindows() && pcPopup.toggle && force !== false){
       const old = $('#os-noti', root);
       if(old) old.remove();
       toggleStart(false); toggleNet(false);
@@ -8097,7 +8115,7 @@
      * written from the answer. The in-page fallback below (a browser, the Windows/macOS builds)
      * keeps the old behaviour, because there the panel is a div this renderer really does own. */
     const wantPopup = (force === undefined || !!force) || netOpen;
-    if(window.pcPopup && pcPopup.toggle && wantPopup){
+    if(_popupWindows() && pcPopup.toggle && wantPopup){
       clearInterval(_netT); _netT = null;
       const old = $('#os-net-panel', root);
       if(old) old.remove();
@@ -8266,7 +8284,7 @@
      * there. That is the same "Super six times gave menu, nothing, menu, menu, nothing, menu" this
      * was supposed to have fixed, and it came back as "start menu not even functional now too".
      * `force === false` is the defensive close scattered through this file and stays local. */
-    if(!_menuInPopup && window.pcPopup && pcPopup.toggle && force !== false){
+    if(!_menuInPopup && _popupWindows() && pcPopup.toggle && force !== false){
       const stale = $('#os-startmenu', root);
       if(stale) stale.remove();
       _nativeMenuLayer(false);
@@ -9471,7 +9489,7 @@
    * composer at all rather than only for a menu. */
   function _composeInWindow(opts){
     if(!on || popupKind()) return false;                 // not the desktop, or already a popup
-    if(!(window.pcPopup && pcPopup.open)) return false;  // no compositor to hand a window to
+    if(!(_popupWindows() && pcPopup.open)) return false;  // no compositor to hand a window to
     const o = opts || {};
     if(o.files || o.articleComment || o.articleParent || o.open) return false;
     const arg = {};

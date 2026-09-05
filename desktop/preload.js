@@ -235,6 +235,9 @@ if (isOurPage) {
     available: () => ipcRenderer.invoke('pc:wm:available'),
     windows: () => ipcRenderer.invoke('pc:wm:windows'),
     self: () => ipcRenderer.invoke('pc:wm:self'),
+    /* Minimise/maximise/close THIS window without a compositor -- the fallback a popped-out window's
+     * title bar uses on Windows and macOS, where `self()` has nothing to identify itself against. */
+    control: (action) => ipcRenderer.invoke('pc:win:control', String(action || '')),
     /* `windows` is this shell surface's ownership view; `allIds` distinguishes an app that moved
      * to another output from one that actually exited. */
     snapshot: () => ipcRenderer.invoke('pc:wm:snapshot'),
