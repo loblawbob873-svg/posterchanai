@@ -34,7 +34,13 @@ def run(script):
     tmp = Path(tempfile.mkdtemp())
     try:
         js = tmp / "t.js"
-        js.write_text("const _workAreas = new Map();\n" + body + "\n" + script)
+        # A default output set and a 3-argument alias, so every case below can call the shipped
+        # function either way without repeating the wiring.
+        prelude = ("const _workAreas = new Map();\n"
+                   "let OUTS = [{rect:{x:0, y:0, width:3840, height:2560}},\n"
+                   "            {rect:{x:3840, y:0, width:3840, height:2560}}];\n")
+        alias = "\nconst snapPopupToWorkArea2 = (w, r, k) => snapPopupToWorkArea(w, r, k, OUTS);\n"
+        js.write_text(prelude + body + alias + script)
         out = subprocess.run(["node", str(js)], capture_output=True, text=True, timeout=60)
         return out
     finally:
@@ -64,7 +70,7 @@ class TestAFlyoutSitsOnTheBar(unittest.TestCase):
 
     def test_the_start_menu_is_moved_onto_the_bar(self):
         """The exact rectangle measured on the desk."""
-        got = self._y("out(snapPopupToWorkArea({x:10, y:1072, w:975, h:1150}, row, 'start'));")
+        got = self._y("out(snapPopupToWorkArea2({x:10, y:1072, w:975, h:1150}, row, 'start'));")
         self.assertEqual(got["y"] + got["h"], 2492,
                          f"the menu still does not reach the taskbar: {got}")
         self.assertEqual(got["h"], 1150, "it was resized; it must only be moved")
@@ -72,24 +78,62 @@ class TestAFlyoutSitsOnTheBar(unittest.TestCase):
 
     def test_every_taskbar_flyout_is_snapped(self):
         for kind in ("start", "noti", "net", "tray"):
-            got = self._y(f"out(snapPopupToWorkArea({{x:0, y:8, w:400, h:900}}, row, '{kind}'));")
+            got = self._y(f"out(snapPopupToWorkArea2({{x:0, y:8, w:400, h:900}}, row, '{kind}'));")
             self.assertEqual(got["y"] + got["h"], 2492, f"{kind} was left off the bar: {got}")
 
     def test_a_flyout_on_the_second_monitor_uses_that_monitor_s_bar(self):
         """Each output publishes its own area; picking the wrong one moves the menu to the other
         screen's bar."""
-        got = self._y("out(snapPopupToWorkArea({x:3850, y:1072, w:975, h:1150}, "
+        got = self._y("out(snapPopupToWorkArea2({x:3850, y:1072, w:975, h:1150}, "
                       "{rect:{x:3850, y:1072, width:975, height:1150}}, 'start'));")
         self.assertEqual(got["y"] + got["h"], 2492, got)
         self.assertEqual(got["x"], 3850, "the flyout was moved horizontally")
 
     def test_one_that_already_sits_correctly_is_unchanged(self):
-        got = self._y("out(snapPopupToWorkArea({x:0, y:1342, w:975, h:1150}, row, 'start'));")
+        got = self._y("out(snapPopupToWorkArea2({x:0, y:1342, w:975, h:1150}, row, 'start'));")
         self.assertEqual(got["y"], 1342)
 
     def test_it_never_pushes_a_flyout_off_the_top(self):
-        got = self._y("out(snapPopupToWorkArea({x:0, y:0, w:400, h:2490}, row, 'start'));")
+        got = self._y("out(snapPopupToWorkArea2({x:0, y:0, w:400, h:2490}, row, 'start'));")
         self.assertGreaterEqual(got["y"], 0)
+
+
+class TestAnOutputThatNeverPublishedItsOwnArea(unittest.TestCase):
+    """ONE MONITOR'S TASKBAR IS THE OTHER MONITOR'S TASKBAR.
+
+    Only a shell surface that has measured its bar publishes an area, and MEASURED on the real desk
+    only DP-2 ever did -- the file held `{"x":3840,...}` and nothing for DP-1. A menu opened on DP-1
+    matched no area and was left hanging over the bar, which is what shipping the first version of
+    this snap actually produced. The two bars are the same bar, so the HEIGHT is borrowed and
+    applied to the output's own rectangle.
+    """
+
+    def _y(self, script):
+        r = run(script)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    SETUP_ONE = """
+_workAreas.set('3840,0', {x:3840, y:0, w:3840, h:2500, reserve:60});
+const row = {rect:{x:10, y:1572, width:975, height:1150}};
+const out = (o) => console.log(JSON.stringify(o));
+"""
+
+    def test_the_unpublished_monitor_still_snaps(self):
+        """The exact rectangle the desk produced after the first version shipped."""
+        got = self._y(self.SETUP_ONE +
+                      "out(snapPopupToWorkArea({x:10, y:1572, w:975, h:1150}, row, 'start', OUTS));")
+        self.assertEqual(got["y"] + got["h"], 2492,
+                         f"a menu on the monitor that never published is still off the bar: {got}")
+
+    def test_with_nothing_measured_anywhere_it_is_left_alone(self):
+        """Nothing to borrow: guessing a taskbar height is worse than the renderer's own answer."""
+        got = self._y("""
+OUTS = [{rect:{x:0, y:0, width:3840, height:2560}}];
+console.log(JSON.stringify(
+  snapPopupToWorkArea({x:10, y:1572, w:975, h:1150}, {rect:{}}, 'start', OUTS)));
+""")
+        self.assertEqual(got["y"], 1572)
 
 
 class TestItLeavesEverythingElseAlone(unittest.TestCase):
@@ -100,7 +144,7 @@ class TestItLeavesEverythingElseAlone(unittest.TestCase):
 
     def test_the_composer_is_not_a_taskbar_flyout(self):
         """It is centred on the output; moving it to the bar is a correction nobody asked for."""
-        got = self._r("out(snapPopupToWorkArea({x:100, y:600, w:900, h:950}, row, 'compose'));")
+        got = self._r("out(snapPopupToWorkArea2({x:100, y:600, w:900, h:950}, row, 'compose'));")
         self.assertEqual(got["y"], 600)
 
     def test_an_unmeasured_output_changes_nothing(self):
@@ -108,7 +152,7 @@ class TestItLeavesEverythingElseAlone(unittest.TestCase):
         renderer's own answer."""
         r = run("""
 const row = {rect:{x:9999, y:0, width:1280, height:800}};
-console.log(JSON.stringify(snapPopupToWorkArea({x:0, y:5, w:300, h:400}, row, 'start')));
+console.log(JSON.stringify(snapPopupToWorkArea2({x:0, y:5, w:300, h:400}, row, 'start')));
 """)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1])["y"], 5)
@@ -119,12 +163,12 @@ console.log(JSON.stringify(snapPopupToWorkArea({x:0, y:5, w:300, h:400}, row, 's
 const _a = {x:0, y:0, w:3840, h:2560, reserve:0};
 _workAreas.set('0,0', _a);
 const row = {rect:{x:0, y:0, width:3840, height:2560}};
-console.log(JSON.stringify(snapPopupToWorkArea({x:0, y:7, w:300, h:400}, row, 'start')));
+console.log(JSON.stringify(snapPopupToWorkArea2({x:0, y:7, w:300, h:400}, row, 'start')));
 """)
         self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1])["y"], 7)
 
     def test_a_flyout_taller_than_the_area_is_left_alone(self):
-        got = self._r("out(snapPopupToWorkArea({x:0, y:0, w:400, h:9000}, row, 'start'));")
+        got = self._r("out(snapPopupToWorkArea2({x:0, y:0, w:400, h:9000}, row, 'start'));")
         self.assertEqual(got["y"], 0)
 
 
@@ -132,7 +176,7 @@ class TestThePlacementCallUsesIt(unittest.TestCase):
     def test_place_popup_snaps_before_it_commits(self):
         body = MAIN[MAIN.index("async function placePopupWindow"):]
         body = body[: body.index("ipcMain.handle('pc:popup:close'")]
-        self.assertIn("snapPopupToWorkArea(want, row, _popupKind)", body)
+        self.assertIn("snapPopupToWorkArea(want, row, _popupKind, _popupOutputs)", body)
         self.assertIn("placeAndReveal(Number(row.id), Math.round(put.x)", body,
                       "the snapped rectangle is computed and then not used")
 

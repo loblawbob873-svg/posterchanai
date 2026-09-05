@@ -2143,7 +2143,7 @@ async function openPopupWindow(e, kind, rect, arg){
 /* The flyouts that hang off the taskbar. The composer is deliberately not one of them: it is
  * centred on the output and moving it to the bar would be a correction nobody asked for. */
 const _BAR_FLYOUTS = new Set(['start', 'noti', 'net', 'tray']);
-function snapPopupToWorkArea(want, row, kind){
+function snapPopupToWorkArea(want, row, kind, outputs){
   try{
     if(!_BAR_FLYOUTS.has(String(kind || ''))) return want;
     const rect = row && row.rect;
@@ -2160,17 +2160,36 @@ function snapPopupToWorkArea(want, row, kind){
      * added back on the vertical test -- a flyout asked for low enough to overlap the taskbar must
      * still find the area it belongs to, and that is exactly the case this exists to correct. */
     const px = Number(want.x) || 0, py = Number(want.y) || 0;
+    const h = Number(want.h) || 0;
+    if(!(h > 0)) return want;
     const area = [..._workAreas.values()].find(a =>
       px >= a.x && px < a.x + a.w
       && py >= a.y && py < a.y + a.h + (Number(a.reserve) || 0));
-    if(!area || !(area.reserve > 0)) return want;
-    const h = Number(want.h) || 0;
-    if(!(h > 0) || h > area.h) return want;       // taller than the area: nothing sensible to do
-    /* Sit ON the bar: eight pixels of breathing room, never across it, never off the top. Moved and
-     * not resized -- the renderer sized this to its own content, and shortening it would cut the
-     * menu off rather than move it. */
-    const y = Math.max(area.y, (area.y + area.h) - h - 8);
-    return Object.assign({}, want, { y: y });
+    if(area && area.reserve > 0 && h <= area.h)
+      return Object.assign({}, want, { y: Math.max(area.y, (area.y + area.h) - h - 8) });
+
+    /* ONE MONITOR'S TASKBAR IS THE OTHER MONITOR'S TASKBAR.
+     *
+     * Only the shell surface that has measured its bar publishes an area, and MEASURED on the real
+     * desk only DP-2 ever did -- the file held `{"x":3840,...}` and nothing for DP-1 -- so a menu
+     * opened on DP-1 matched no area and was left exactly where the renderer put it, still hanging
+     * over the bar. Waiting for the other surface to publish is not a fix: it may never.
+     *
+     * The two bars are the same bar. They are drawn by the same build at the same UI scale in the
+     * same session, and the height is what is being borrowed -- not a position. So an output with
+     * no area of its own uses the most recent reserve from any output, applied to ITS OWN
+     * rectangle, which is exact rather than guessed. With nothing measured anywhere there is
+     * nothing to borrow and the renderer's own answer stands. */
+    const reserve = [..._workAreas.values()].map(a => Number(a.reserve) || 0)
+      .filter(r => r > 0).pop();
+    if(!reserve) return want;
+    const out = (outputs || []).find(o => o && o.rect
+      && px >= o.rect.x && px < o.rect.x + o.rect.width
+      && py >= o.rect.y && py < o.rect.y + o.rect.height + reserve);
+    if(!out || !(Number(out.rect.height) > 0)) return want;
+    const bottom = Number(out.rect.y) + Number(out.rect.height) - reserve;
+    if(h > Number(out.rect.height) - reserve) return want;
+    return Object.assign({}, want, { y: Math.max(Number(out.rect.y), bottom - h - 8) });
   }catch(_){ return want; }
 }
 async function placePopupWindow(win, want){
@@ -2178,11 +2197,15 @@ async function placePopupWindow(win, want){
     if(win.isDestroyed() || _popupWin !== win) return;
     try{
       const rows = await wm().windows();
+      /* The outputs are needed for the borrowed-reserve path above; asked for here so a compositor
+       * that cannot answer costs the placement nothing. */
+      let _popupOutputs = [];
+      try{ _popupOutputs = await wm().outputs(); }catch(_){ _popupOutputs = []; }
       const row = rows.find(x => String(x.title || '') === POPUP_TITLE);
       if(row){
         /* sway.config maps this title transparent. Reveal only in the SAME transaction as its final
          * geometry, otherwise Wayland's unavoidable initial centre placement visibly flashes. */
-        const put = snapPopupToWorkArea(want, row, _popupKind);
+        const put = snapPopupToWorkArea(want, row, _popupKind, _popupOutputs);
         await wm().placeAndReveal(Number(row.id), Math.round(put.x), Math.round(put.y),
                                   Math.round(put.w), Math.round(put.h));
         try{ win.webContents.send('pc:host:popup-placed'); }catch(_){ }
