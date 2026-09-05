@@ -182,6 +182,33 @@
     try{ root.document.title = TITLE + (view ? ' — ' + view : ''); }catch(_){ }
     try{ root.document.documentElement.classList.add('pc-oswin'); }catch(_){ }
     const host = desktop();
+    /* A WINDOW IS A FRAME ON A DISPLAY, NOT A SMALL SCREEN.
+     *
+     * The stylesheet picks its scale from the VIEWPORT WIDTH -- .67 under 1366, .72 under 1600,
+     * .77 under 1920, then 1 -- which is right for a browser window on somebody's laptop and wrong
+     * for a frame the desktop just placed on a 4K monitor. Each popped-out window is its own
+     * viewport, so each one landed in a different tier purely because of the size `place()` chose
+     * for it. MEASURED on the real desk: `global` 2058px wide at zoom 1, `messages` 1728px at .77,
+     * and a News or Notifications window near 1100px at .67 -- three different text sizes for three
+     * frames on one screen, reported as "not every window is sized and displayed right ... global
+     * has better zoom and wider window decoration compared to Notifications and News".
+     *
+     * So the scale comes from the DESKTOP THAT OPENED THIS WINDOW, which is the one thing that
+     * knows what the display is being rendered at. Its COMPUTED body zoom, not its configured
+     * display-scale setting: on an ordinary 1366px laptop the desktop itself is at .67, and a
+     * window that took the setting instead would be the only thing on that screen at full size --
+     * the same inconsistency with the sign flipped. Nothing is applied when it cannot be read; the
+     * stylesheet's own tiers then decide exactly as before. */
+    try{
+      let z = 0;
+      if(host){
+        try{ z = parseFloat(host.getComputedStyle(host.document.body).zoom || '') || 0; }catch(_){ }
+        if(!z && host.PCOS && host.PCOS.uiScaleEffective)
+          z = Number(host.PCOS.uiScaleEffective()) || 0;
+      }
+      if(z > 0 && isFinite(z))
+        root.document.documentElement.style.setProperty('--ui-scale', String(z));
+    }catch(_){ }
     const state = root.__PC_WIN_STATE__ || { view, shared: false, label: '' };
     state.view = view || state.view; state.shared = !!host;
     try{ state.label = String(root.__PC_WINDOW_LABEL__ || ''); }catch(_){ }

@@ -445,7 +445,26 @@
       /* `machineUnusable`, NOT `firstRunNeeded` — see osfirstrun.js. An unanswered question is not
        * a reason to stand in front of a computer somebody is already using, and walking them to the
        * sign-in step would refuse a desktop that worked as a guest a minute earlier. */
-      if(!FR().machineUnusable(world)) return false;
+      const unusable = FR().machineUnusable(world);
+      /* SAY WHICH SCREEN THIS MACHINE DECIDED ON, AND WHY.
+       *
+       * This is the only decision on a fresh install that has no visible failure mode: a wizard
+       * that does not appear looks exactly like a wizard that was already answered, and a machine
+       * that boots past it to a desktop it cannot use looks like a machine that is simply slow.
+       * Both were invisible in every log. It is also the one thing a LiveCD test can ask of a
+       * running session without photographing the screen — an ISO that BOOTS proves nothing about
+       * whether it boots to the welcome screen, and a picture of a framebuffer is a test of QEMU's
+       * font rendering. `scripts/check_livecd_welcome.py` reads exactly this line over the guest's
+       * serial console. No user content: a step name and the answered/unanswered state of five
+       * questions. */
+      try{
+        const next = FR().nextStep(world) || {};
+        console.log('[firstrun] ' + (unusable ? 'showing' : 'skipped')
+                    + ' step=' + (next.step || 'none')
+                    + ' blocked=' + (next.blocked ? 1 : 0)
+                    + ' state=' + JSON.stringify(next.state || {}));
+      }catch(_){ }
+      if(!unusable) return false;
       await run();
       return true;
     }catch(_){ return false; }

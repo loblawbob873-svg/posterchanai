@@ -4043,6 +4043,24 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
   .app{ height:calc(100dvh / var(--ui-scale,1.25)) }
   .main{ height:100% }
 }
+/* ---- A POPPED-OUT WINDOW IS A FRAME, NOT A SCREEN ---------------------------
+   Every tier above keys off the VIEWPORT WIDTH, which is right for a browser window on somebody's
+   laptop and wrong for a frame the desktop just placed on a 4K monitor: each popped-out window is
+   its own viewport, so each landed in a different tier purely because of the size `place()` chose.
+   MEASURED on the real desk -- `global` 2058px at zoom 1, `messages` 1728px at .77, a News window
+   near 1100px at .67 -- three text sizes for three frames on one screen.
+
+   `--ui-scale` is set on this window by oswin.js `adopt()` from the COMPUTED body zoom of the
+   desktop that opened it, so every frame matches the desktop and each other. It is deliberately
+   NOT a fixed 1: on an ordinary 1366px laptop the desktop itself renders at .67, and pinning
+   windows to full size there would be the same inconsistency with the sign flipped.
+
+   Last, so it wins over every tier above regardless of this window's own width. The fallback is 1
+   rather than a tier value because an unreadable opener means "no desktop said otherwise", and a
+   window with no desktop behind it is an ordinary page. */
+html.pc-oswin body{ zoom:var(--ui-scale,1); --zf:var(--ui-scale,1) }
+html.pc-oswin .app{ height:calc(100dvh / var(--ui-scale,1)) }
+html.pc-oswin .main{ height:100% }
 /* Feed post cards are intrinsically sized for a big 4K panel (avatar 52px, body 18.5px), so at laptop
    widths they still read oversized next to the now well-scaled rails — even under the zoom above. Trim
    the post card itself here only. 4K (>1920) keeps the full size; mobile (≤820) has its own block. */
