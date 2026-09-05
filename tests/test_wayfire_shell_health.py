@@ -500,3 +500,73 @@ def test_the_marker_is_retired_once_the_shell_is_declared_ready():
     # retiring it means stopping that too — otherwise it is put straight back.
     assert "disconnect()" in drop
     assert "m.remove()" in drop
+
+
+def _wlr(tmp_path, text, name="wlr-randr"):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    tool = tmp_path / name
+    _fake(tool, "cat <<'EOF'\n" + text + "\nEOF\n")
+    return tool
+
+
+def test_a_blanked_screen_is_not_a_desktop_that_failed_to_draw(tmp_path):
+    """grim cannot copy a DPMS-off output, and reading that as "it did not render" is what left a
+    laptop with a live compositor and NO desktop after an unattended update.
+
+    Measured: a shell restart while the panel had blanked logged "no shell marker" on every retry
+    and the launcher gave up with "failed the Wayfire surface/GPU health gate". The machine had
+    blanked because nobody was at it -- which is precisely why the update was left running.
+    """
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    outputs = [{"id": 1, "name": "eDP-1"}]
+    views = [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1}]
+    stub = WayfireStub(tmp_path / "wf.socket", outputs, views)
+    grim = tmp_path / "grim"
+    _fake(grim, 'echo "failed to copy output eDP-1" >&2\nexit 1\n')
+    off = _wlr(tmp_path, 'eDP-1 "Lenovo (eDP-1)"\n  Make: Lenovo\n  Enabled: no\n  Modes:\n    1920x1080 px')
+    on = _wlr(tmp_path, name="wlr-randr-on", text='eDP-1 "Lenovo (eDP-1)"\n  Make: Lenovo\n  Enabled: yes\n  Modes:\n    1920x1080 px')
+    base = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar),
+                         "PC_GRIM": str(grim), "PC_GRIM_TIMEOUT": ".5"}
+    try:
+        blanked = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".3"], text=True,
+                                 capture_output=True, env=base | {"PC_WLR_RANDR": str(off)})
+        assert blanked.returncode == 0, blanked.stderr
+        assert "powered off" in blanked.stderr, blanked.stderr
+
+        # AND THE CHECK STILL FAILS FOR THE REASON IT EXISTS. The same unreadable capture on an
+        # output the compositor says is POWERED is a desktop that did not render.
+        powered = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".3"], text=True,
+                                 capture_output=True, env=base | {"PC_WLR_RANDR": str(on)})
+        assert powered.returncode == 1, powered.stderr
+        assert "no shell marker" in powered.stderr
+
+        # With no wlr-randr at all the answer is "I do not know", which keeps the strict behaviour.
+        unknown = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".3"], text=True,
+                                 capture_output=True,
+                                 env=base | {"PC_WLR_RANDR": str(tmp_path / "no-such-tool")})
+        assert unknown.returncode == 1, unknown.stderr
+    finally:
+        stub.close()
+
+
+def test_a_second_screen_being_off_does_not_hide_a_broken_first_one(tmp_path):
+    """Skipping a blanked output must not turn the multi-monitor checks off with it."""
+    asar = tmp_path / "app.asar"; asar.write_bytes(b"wm-wayfire.js")
+    black = tmp_path / "black.png"; _png(black, marker=False)
+    outputs = [{"id": 1, "name": "DP-1"}, {"id": 2, "name": "DP-2"}]
+    views = [{"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 1},
+             {"pid": os.getpid(), "app-id": "place.poster.desktop", "output-id": 2}]
+    stub = WayfireStub(tmp_path / "wf.socket", outputs, views)
+    # DP-1 captures and is black; DP-2 cannot be captured and is switched off.
+    grim = tmp_path / "grim"
+    _fake(grim, f'if [ "$2" = "DP-1" ]; then cp "{black}" "$3"; else exit 1; fi\n')
+    off = _wlr(tmp_path, 'DP-1 "a"\n  Enabled: yes\nDP-2 "b"\n  Enabled: no')
+    env = os.environ | {"WAYFIRE_SOCKET": stub.path, "PC_DESKTOP_ASAR": str(asar),
+                        "PC_GRIM": str(grim), "PC_WLR_RANDR": str(off), "PC_GRIM_TIMEOUT": ".5"}
+    try:
+        done = subprocess.run([str(HEALTH), "wait", str(os.getpid()), ".3"], text=True,
+                              capture_output=True, env=env)
+        assert done.returncode == 1, done.stderr
+        assert "no shell marker" in done.stderr
+    finally:
+        stub.close()

@@ -140,6 +140,30 @@ def has_marker(path, colours=PRIMARY_MARKER):
                    for pixel in pixels) for wanted in colours)
 
 
+def output_is_off(name):
+    """Is this output powered DOWN right now?
+
+    ASKED ONLY WHEN A CAPTURE HAS ALREADY FAILED, so the normal path pays nothing and a machine
+    without wlr-randr simply answers "I do not know" -- which keeps the old, strict behaviour.
+    """
+    tool = os.environ.get("PC_WLR_RANDR", "wlr-randr")
+    try:
+        run = subprocess.run([tool], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             timeout=float(os.environ.get("PC_WLR_TIMEOUT", "5")), text=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if run.returncode:
+        return False
+    # `wlr-randr` prints one block per output: the name at column 0, its fields indented.
+    current, enabled = None, {}
+    for line in (run.stdout or "").splitlines():
+        if line[:1].strip():
+            current = line.split()[0] if line.split() else None
+        elif current and line.strip().lower().startswith("enabled:"):
+            enabled[current] = line.split(":", 1)[1].strip().lower() in ("yes", "true", "1")
+    return enabled.get(name) is False
+
+
 def rendered(outputs, shells):
     grim = os.environ.get("PC_GRIM", "grim")
     capture_timeout = float(os.environ.get("PC_GRIM_TIMEOUT", "10"))
@@ -183,7 +207,25 @@ def rendered(outputs, shells):
         # surface, and no two show the SAME one. That still catches the failures this exists for --
         # an output that never rendered, and one renderer painting both screens -- and it cannot
         # fail because a pair came up in the other order.
-        seen = {}
+        # A SCREEN THAT IS SWITCHED OFF IS NOT A DESKTOP THAT FAILED TO DRAW.
+        #
+        # grim cannot copy an output whose panel is DPMS-off -- it exits nonzero with "failed to
+        # copy output <name>" -- and that is indistinguishable here from a GPU that never rendered.
+        # Read as a failure it took the whole desktop down: measured on the laptop, a shell restart
+        # while the screen had blanked logged "no shell marker" for every retry, the launcher gave
+        # up with "failed the Wayfire surface/GPU health gate", and the session was left with a live
+        # compositor and NO desktop at all. That is exactly the case an unattended
+        # `update-posterchan` runs into -- the machine has been idle long enough to blank, which is
+        # why it was left unattended -- and it is the shape of "ctrl alt_backspace broke the display
+        # again after upgrading".
+        #
+        # So an output the compositor has powered down is SKIPPED, loudly, and everything else is
+        # judged exactly as before. The gate still fails when a powered output shows no marker, and
+        # still fails when two show the same one. It also still fails if NOTHING could be measured
+        # AND there were outputs to measure -- see the check after the loop -- because "every screen
+        # is off" is not evidence that a desktop rendered, it is simply no evidence at all, and the
+        # caller uses this answer to decide whether to keep retrying.
+        seen, skipped = {}, []
         for name, target, capture in captures:
             output = next(row for row in outputs if str(row.get("name")) == name)
             shell = by_output.get(int(output.get("id")))
@@ -191,6 +233,10 @@ def rendered(outputs, shells):
             if not capture.returncode and os.path.isfile(target):
                 if has_marker(target, PRIMARY_MARKER): which = "primary"
                 elif has_marker(target, SECONDARY_MARKER): which = "secondary"
+            if which is None and capture.returncode and output_is_off(name):
+                print(f"pc-wayfire-health: {name} is powered off; not judged", file=sys.stderr)
+                skipped.append(name)
+                continue
             if which is None:
                 preserved = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"),
                                          "posterchan-health-" + name + ".png")
@@ -205,6 +251,17 @@ def rendered(outputs, shells):
                       f"surface", file=sys.stderr)
                 return False
             seen[which] = name
+        if skipped and not seen:
+            # EVERY SCREEN IS OFF, so this probe measured nothing -- and "I could not look" must not
+            # cost the user their desktop. This is the single-panel laptop case, which is the one
+            # that actually happens: it blanks because nobody is there, and nobody is there because
+            # the update was left to run. Refusing here ends the session with a live compositor and
+            # no desktop, discovered hours later; allowing it starts a desktop that has not been
+            # photographed, on a machine where nothing is being displayed anyway. The failures this
+            # gate exists for are unaffected -- a GPU that renders black still CAPTURES, and fails
+            # on the marker.
+            print("pc-wayfire-health: every output is powered off; nothing to judge, allowing",
+                  file=sys.stderr)
     return True
 
 
