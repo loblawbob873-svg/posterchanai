@@ -1004,7 +1004,23 @@
      * than read from a global: this file has no zf() and the anchor gives the same answer, being an
      * element inside the same zoomed body. */
     const ar = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
-    const k = (ar && ar.width > 0 && anchor.offsetWidth > 0) ? (ar.width / anchor.offsetWidth) : 1;
+    /* AN ANCHOR THAT CANNOT BE MEASURED MUST NOT MEAN "SCALE 1, LEFT EDGE".
+     *
+     * A detached or zero-sized chip gives ar.width === 0, and the old fallback answered k = 1 and
+     * then x = max(0, 0 - w) = 0 -- Quick Settings in the bottom-LEFT corner at 1/zoom of the size
+     * the panel renders at. Measured exactly that on the laptop (a 360x640 window at x=0 where
+     * 276x491 at x=1488 was right), and it is silent: no throw, no log, just a flyout on the wrong
+     * side of the screen. The TASKBAR is the second witness to the same ratio and it is the surface
+     * this flyout belongs to, so ask it before giving up, and keep the right edge either way. */
+    let k = (ar && ar.width > 0 && anchor.offsetWidth > 0) ? (ar.width / anchor.offsetWidth) : 0;
+    if(!(k > 0)){
+      try{
+        const b = root.document.getElementById('os-bar');
+        if(b && b.offsetWidth > 0){ const br = b.getBoundingClientRect();
+                                    if(br && br.width > 0) k = br.width / b.offsetWidth; }
+      }catch(_){ }
+    }
+    if(!(k > 0)) k = 1;
     const px = (v) => Math.round(v * k);
     const w = px(360);
     const h = px(Math.min(640, Math.max(360, Math.round(((root.innerHeight || 900) / k) * 0.62))));
@@ -1022,7 +1038,9 @@
     let x = Math.max(0, (root.innerWidth || 1280) - w - 8), y = Math.max(0, barTop - h - 8);
     try{
       const r = anchor.getBoundingClientRect();
-      x = Math.max(0, Math.round(r.right - w));
+      /* Only when the chip really was measured -- see the k fallback above. `r.right` of a detached
+       * element is 0, and clamping 0 - w put the flyout hard against the left edge. */
+      if(r && r.width > 0) x = Math.max(0, Math.round(r.right - w));
     }catch(_){}
     /* TOGGLE, NEVER OPEN — see the branch in bindPanel that calls this. `open` is not a toggle: a
      * press made while the flyout is already up DESTROYS that window and asks for a replacement,

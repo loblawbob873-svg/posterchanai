@@ -10036,6 +10036,22 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
   /* Its own corners and edge come back: against a transparent window it is a panel again, not a
      surface that happens to end. */
   border-radius:12px;border:1px solid var(--line);box-shadow:0 18px 44px rgba(0,0,0,.55)}
+/* THE START MENU IS ITS WINDOW, and this rule is the one that was missing while the other two
+   panels had theirs. `.os-startmenu` is positioned for the DESKTOP: 10px in from the edge, 56px up
+   from the bottom to clear the taskbar it opens above, and `calc(100vh - 78px)` tall for the same
+   reason. Hosted in its own popup window there is no taskbar and no wallpaper — so those offsets
+   became 56px of empty translucent window UNDER the menu and 10px of it either side. The window
+   itself is placed 8px above the bar, exactly as intended, and the menu inside it then floated a
+   measured 64px clear of the taskbar with a translucent skirt beneath it. That is the whole of
+   "start menu is not attached to the taskbar, looks weird", reported four times and measured as
+   fixed each time, because the WINDOW was what got measured and the window was never wrong.
+   `.os-noti` and `.os-pop` got this rule when they moved into windows; the menu did not.
+   The mac skin's own `left:50%`/`transform` are reset here too, or that style re-centres the menu
+   inside a window already positioned for it and takes half of it off the screen edge. */
+.os-popup-body.os-popup-start{background:transparent}
+.os-popup-body.os-popup-start .os-startmenu{position:static;inset-inline-start:auto;left:auto;
+  right:auto;bottom:auto;transform:none;margin:0;box-sizing:border-box;
+  width:100%;max-width:none;height:100vh;max-height:100vh}
 /* The client's own DOM stays in the document (its bindings need it) and is simply not painted. */
 /* THE SAME RULE, ONE NETWORK FETCH EARLIER. `os-popup-body` is added by `popupHost()`, which runs
    from `restore()`, which app.js calls after `_cfgCache(CFG)` — so on a slow or unreachable node

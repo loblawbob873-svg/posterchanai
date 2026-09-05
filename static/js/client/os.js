@@ -9618,6 +9618,10 @@
      * window's host instead of the desktop's root. Reimplementing it here is what produced a flat
      * list of names and "start menu is ass"; there is one start menu and this is it. */
     const host = popupHost();
+    /* SAY WHICH POPUP THIS IS, so the stylesheet can undo the desktop positioning `.os-startmenu`
+     * carries for the taskbar it normally opens above. Without it the menu sat 56px up and 10px in
+     * from the edges of a window that had been placed correctly — see the rule in client.css. */
+    try{ document.body.classList.add('os-popup-start'); }catch(_){ }
     _menuInPopup = true;
     root = host;
     startOpen = false;
