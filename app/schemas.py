@@ -905,6 +905,7 @@ class UserSettingsUpdate(BaseModel):
     fedi_bridge_enabled: Optional[bool] = None
     # Cross-post my top-level Nostr notes to my linked Pleroma account
     fedi_crosspost_enabled: Optional[bool] = None
+    fedi_only: Optional[bool] = None
     # NOTE: the global relay/Blossom/GIF settings that used to live here were MOVED to
     # SettingsResponse (they're admin-global, not per-user) — see that class.
 
@@ -943,3 +944,4 @@ class UserSettingsResponse(BaseModel):
     fedi_bridge_enabled: bool = False
     # Cross-post my top-level Nostr notes to my linked Pleroma account
     fedi_crosspost_enabled: bool = False
+    fedi_only: bool = False

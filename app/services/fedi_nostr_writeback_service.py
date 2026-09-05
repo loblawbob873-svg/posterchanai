@@ -328,7 +328,7 @@ def _target_row(db, ev: dict):
         kind = int(ev.get("kind") or 0)
     except (TypeError, ValueError):
         kind = 0
-    if kind in (6, 7):
+    if kind in (6, 7, 16):
         etags = [t[1] for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]]
         pid = etags[-1] if etags else None
     else:
@@ -898,7 +898,9 @@ async def _delete_federated(db, user, ev: dict) -> bool:
     return ok
 
 
-async def _handle(db, ev: dict) -> None:
+async def _handle(db, ev: dict, *, private_user=None) -> None:
+    if private_user is None and ["client-mode", "fedi-only"] in (ev.get("tags") or []):
+        return
     eid = ev.get("id")
     if not eid or eid in _seen_events:
         return
@@ -906,9 +908,9 @@ async def _handle(db, ev: dict) -> None:
         await _handle_dm_reply(db, ev)
         return
     pk = ev.get("pubkey", "")
-    if pk not in _bridge_allowed_pubkeys():
+    if private_user is None and pk not in _bridge_allowed_pubkeys():
         return
-    user = _user_for_pubkey(db, pk)
+    user = private_user if private_user is not None else _user_for_pubkey(db, pk)
     if not user:
         return                       # not a local user with a linked Pleroma account → ignore
     if int(ev.get("kind", 1)) == 5:
@@ -924,7 +926,7 @@ async def _handle(db, ev: dict) -> None:
         # fediverse as an out-of-context standalone post (the reported bug). Quote-posts (q-tag /
         # 'mention'-marked e-tag) and notes that only @mention a fedi user DO still cross-post (mentions
         # are translated to @handles). Replies whose parent IS bridged/cross-posted are threaded below.
-        if (int(ev.get("kind", 1)) == 1 and getattr(user, "fedi_crosspost_enabled", False)
+        if (int(ev.get("kind", 1)) == 1 and (getattr(user, "fedi_crosspost_enabled", False) or private_user is not None)
                 and not _is_reply(ev)):
             await _crosspost(db, user, ev)
         return
@@ -944,7 +946,7 @@ async def _handle(db, ev: dict) -> None:
         # into ~100 and got us reported by several instances.
         # Checked against the row _record_action writes, INCLUDING tombstoned (undone) ones — a
         # reaction the user removed must not come back on the next replay.
-        if kind in (6, 7):
+        if kind in (6, 7, 16):
             if db.query(FediBridgeAction).filter(
                     FediBridgeAction.nostr_event_id == eid,
                     FediBridgeAction.nostr_pubkey == pk).first():
@@ -953,7 +955,7 @@ async def _handle(db, ev: dict) -> None:
         if kind == 7:
             action, emoji = await _react(inst, token, target_id, ev)   # emoji reaction if it IS one, else favourite
             _record_action(db, ev, inst, target_id, action, emoji)     # so a later kind-5 can undo it
-        elif kind == 6:
+        elif kind in (6, 16):
             await pleroma_service.reblog_status(inst, token, target_id)      # server-idempotent
             _record_action(db, ev, inst, target_id, "reblog", None)
         elif kind == 1:

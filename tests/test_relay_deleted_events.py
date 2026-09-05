@@ -61,3 +61,11 @@ def test_giftwrap_keeps_its_existing_deletion_rules(store):
     original = signed(1059)
     assert put(signed(5, [['e', original['id']]]))
     assert put(original)
+
+
+@pytest.mark.parametrize('kind', [1, 5, 6, 7, 16, 30078])
+def test_private_fediverse_action_is_never_stored_on_public_relay(store, kind):
+    put, conn = store
+    ev = signed(kind, [['client-mode', 'fedi-only']])
+    assert not put(ev)
+    assert conn.execute('SELECT count(*) FROM events').fetchone()[0] == 0

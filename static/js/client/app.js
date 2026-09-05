@@ -97,7 +97,18 @@
   async function loadThemeFromServer(){
     try{ await ensureAiSession(); }
     catch(e){ console.warn('theme sync skipped: '+((e&&e.message)||e)); return; }
-    try{ const r=await fetch('/api/auth/settings'); if(r.ok){ const s=await r.json(); if(s&&s.theme) applyTheme(s.theme); } }catch(_){}
+    try{
+      const r=await fetch('/api/auth/settings'); if(!r.ok) return;
+      const s=await r.json();
+      if(s && s.theme) applyTheme(s.theme);
+      if(s && typeof s.fedi_only==='boolean'){
+        _fediModeSupported=true; _setFediOnly(s.fedi_only);
+        try{
+          await _loadFediOnlyHistory();
+          if(VIEW==='home'||VIEW==='global') _drawTimeline(true);
+        }catch(e){ console.warn(e.message); }
+      }
+    }catch(_){}
   }
   // PWA install: capture the install prompt (fires before the app mounts) so a button can trigger it.
   let _deferredInstall = null;
@@ -1404,8 +1415,78 @@
     } finally { _selfProofP=null; } })();
     return _selfProofP;
   }
+  // A signed routing marker keeps Fediverse-only actions private across retries and cache syncs.
+  const _FEDI_SOCIAL_KINDS = new Set([1,5,6,7,16,1068,1018,1111,1311,30023,30311]);
+  let _fediModeSupported=null;
+  function _fediOnlyEvent(ev){ return !!(ev && (ev.tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only')); }
+  function _fediOnly(){ return !!(ME && ClientSettings.get('fediOnly:'+ME.pubkey,false)); }
+  function _setFediOnly(value){
+    if(!ME) return;
+    const changed=_fediOnly()!==!!value;
+    ClientSettings.set('fediOnly:'+ME.pubkey,!!value);
+    if(changed && (VIEW==='home' || VIEW==='global')){ try{ switchView(VIEW); }catch(_){} }
+  }
+  async function _loadFediOnlyHistory(all=false){
+    if(_standalone() || !ME) return [];
+    const pk=ME.pubkey, out=[]; let cursor='';
+    await ensureAiSession();
+    do{
+      const r=await fetch('/api/pleroma/private-events?limit=200'+cursor);
+      if(!r.ok) throw new Error('Could not load your Fediverse-only history');
+      const d=await r.json(), events=Array.isArray(d.events)?d.events:[];
+      if(!ME || ME.pubkey!==pk) throw new Error('Account changed — history load stopped');
+      for(const ev of events) if(ev.pubkey===pk && _fediOnlyEvent(ev)){
+        Store.saveEvent(ev); if(ev.kind===5) _applyDeletion(ev); out.push(ev);
+      }
+      if(!all || events.length<200) break;
+      const last=events[events.length-1], next='&before='+last.created_at+'&before_id='+encodeURIComponent(last.id);
+      if(next===cursor) throw new Error('Could not finish loading Fediverse-only history');
+      cursor=next;
+    }while(true);
+    invalidateCounts();
+    return out;
+  }
+  async function _refreshFediOnly(){
+    if(_standalone()) return _fediOnly();
+    const pk=ME && ME.pubkey;
+    await ensureAiSession();
+    const r=await fetch('/api/auth/settings');
+    if(!r.ok) throw new Error('Could not check your posting mode. Try again.');
+    const s=await r.json();
+    if(!ME || ME.pubkey!==pk) throw new Error('Account changed — posting stopped');
+    _fediModeSupported=typeof s.fedi_only==='boolean';
+    if(!_fediModeSupported){
+      if(_fediOnly()) throw new Error('Your instance needs an update before Fediverse-only posting can work');
+      return false;
+    }
+    _setFediOnly(s.fedi_only);
+    return s.fedi_only;
+  }
+  Relay.socialRoute=async function(ev, broadcastOnly=false){
+    if(!_FEDI_SOCIAL_KINDS.has(ev.kind)) return null;
+    if(_standalone()) return (_fediOnly() || _fediOnlyEvent(ev))
+      ? {ok:false,noQueue:true,msg:'Connect your PosterChan instance to post to the Fediverse'} : null;
+    const pk=ME && ME.pubkey;
+    try{
+      await ensureAiSession();
+      if(!ME || ME.pubkey!==pk) throw new Error('Account changed — posting stopped');
+      if(_fediModeSupported!==true && !_fediOnlyEvent(ev)){
+        await _refreshFediOnly();
+        if(_fediModeSupported===false && !_fediOnly()) return null;
+      }
+      const r=await fetch('/api/pleroma/social-publish',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({event:ev,broadcast_only:broadcastOnly})});
+      if(!r.ok) throw new Error('Could not reach the Fediverse posting route ('+r.status+')');
+      const d=await r.json();
+      if(d.route==='nostr' && !_fediOnlyEvent(ev)) return null;
+      if(d.route!=='fediverse') throw new Error('Could not confirm your posting mode');
+      return {ok:!!d.ok,msg:d.msg||'',fediverse:true,noQueue:true};
+    }catch(e){ return {ok:false,noQueue:_fediOnly()||_fediOnlyEvent(ev),msg:e.message||'Could not check your posting mode'}; }
+  };
+
   async function publish(kind, content, tags, opts){
     if(GUEST || !signer){ _guestPrompt(); throw new Error('login required'); }   // read-only guest → nudge to log in
+    const postingAuthor=ME && ME.pubkey;
     // Replaceable-list wipe guard (kind-3 follows / kind-10000 mutes): NEVER publish a member list that's
     // drastically shorter than the last-known count. A throttled/empty relay read producing an empty base
     // is exactly how the whole follows/mutes list got erased before — block it instead of erasing it.
@@ -1457,6 +1538,17 @@
         }
       }
     }
+    if(_FEDI_SOCIAL_KINDS.has(kind)){
+      try{
+        if(await _refreshFediOnly() && !(kind===5 && opts && opts.publicDeletion) && !(tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only'))
+          tags=[...(tags||[]),['client-mode','fedi-only']];
+      }catch(e){
+        if(_fediOnly() || !ME || ME.pubkey!==postingAuthor){ toast(e.message); return {ok:false,noQueue:true,msg:e.message}; }
+        // Normal-mode drafts may still enter the offline outbox. Relay.socialRoute
+        // checks the server policy before any later delivery; no unchecked fallback.
+      }
+      if(!ME || ME.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
+    }
     // Interop (OPT-IN, default off): stamp your Monero address on your kind-1 notes (like Nosmero) so ANY
     // client can tip you straight from a post. Off by default — attaching a receiving address to EVERY post
     // links all your posts to one Monero identifier (a real privacy/correlation cost). Enable it in Edit
@@ -1466,6 +1558,7 @@
     if(!InstEmoji.loaded && InstEmoji.SC_RE.test(content||'')) { try{ await InstEmoji.load(); }catch(_){ } }
     tags = _enrichTags(kind, tags, content);
     const ev = await sign(kind, content, tags);
+    if(_FEDI_SOCIAL_KINDS.has(kind) && ev.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
     Store.saveEvent(ev); invalidateCounts(); applySobLive(ev);   // optimistic: show it instantly
     const r = await Relay.publish(ev);
     // publish() reports {ok}; it never throws on a relay failure. On failure it ROLLS BACK the optimistic
@@ -1487,7 +1580,7 @@
       // queued first half with the destructive half already done would be the worst of both worlds, so a
       // queued write must never read as a completed one. `queued` is there for callers that want to say
       // something kinder; opts.noQueue opts a multi-step caller out of queueing entirely.
-      const queued = !(opts && opts.noQueue) && window.Outbox && Outbox.canQueue(kind) && Outbox.add(ev);
+      const queued = !r.noQueue && !(opts && opts.noQueue) && window.Outbox && Outbox.canQueue(kind) && Outbox.add(ev);
       if (queued){
         try{ refreshOfflineBar(); }catch(_){}
         if(!(opts && opts.quiet)) toast('saved — this will send when you’re back online');
@@ -1495,7 +1588,7 @@
       }
       try{ Store.removeEvent(ev.id); }catch(_){} invalidateCounts();
       // Callers that show their OWN specific failure message pass {quiet:true} so we don't double-toast.
-      if(!(opts && opts.quiet)) toast('couldn’t reach the relay — try again in a moment');
+      if(!(opts && opts.quiet)) toast(r.msg || 'couldn’t reach the relay — try again in a moment');
     }
     if(r.ok && kind===3 && opts && opts._confirmedFollowBaseline){
       /* Commit the new recovery baseline only AFTER the signed event is accepted. Cancellation,
@@ -5328,19 +5421,23 @@
       _forgetPhonebook().catch(() => {}).then(_go); } }
 
   // Settings → Account → "Delete all my posts": delete posts/replies, reactions and reposts
-  // authored by this account (kinds 1, 6, 7 and 16). Pages back through its history via `until`,
+  // authored by this account, including stream announcements and chat. Pages back through its history via `until`,
   // then asks the relay to delete the events in batches (one kind-5
   // carrying up to _DN_BATCH `e` tags — NIP-09 allows many). Best-effort broadcast to the wider write relays so
   // copies elsewhere go too; local removal is immediate so the feed reflects it without a reload.
   const _DN_BATCH = 100;
-  const _DN_KINDS = [1, 6, 7, 16];
+  const _DN_KINDS = [1, 6, 7, 16, 1311, 30311];
   async function _deleteAllMyNotes(){
     if(GUEST || !ME){ _guestPrompt&&_guestPrompt(); return; }
     const author=ME.pubkey;
     const st=document.getElementById('set-del-notes-status'); const setS=(m)=>{ if(st) st.textContent=m; };
-    if(!await uiConfirm('Delete ALL your posts, replies, likes/reactions and reposts? This asks relays to remove this activity and CANNOT be undone.\n\nYour profile, follows and DMs are NOT affected.')) return;
-    setS('Finding your posts, reactions and reposts…');
+    if(!await uiConfirm('Delete ALL your posts, replies, likes/reactions and reposts, streams and stream chat? This asks relays to remove this activity and CANNOT be undone.\n\nYour profile, follows and DMs are NOT affected.')) return;
+    setS('Finding your posts, reactions, reposts and streams…');
     const ids=new Map(); let until=Math.floor(Date.now()/1000)+1, limit=200, incomplete=false;
+    if(_fediModeSupported===true || _fediOnly()){
+      try{ for(const ev of await _loadFediOnlyHistory(true)) if(_DN_KINDS.includes(ev.kind)) ids.set(ev.id,ev); }
+      catch(_){ incomplete=true; }
+    }
     while(true){
       if(!ME || ME.pubkey!==author){ setS('Account changed — deletion stopped.'); return; }
       let batch=[];
@@ -5351,7 +5448,7 @@
       let oldest=until;
       batch.forEach(e=>{
         if(e.pubkey!==author || !_DN_KINDS.includes(e.kind)) return;
-        ids.set(e.id,e.kind);
+        ids.set(e.id,e);
         if(Number.isInteger(e.created_at) && e.created_at<oldest) oldest=e.created_at;
       });
       setS(`Found ${ids.size} events…`);
@@ -5366,19 +5463,27 @@
       until--; limit=200;
     }
     const partial=incomplete?' The relay history was incomplete; more activity may remain.':'';
-    if(!ids.size){ setS('No posts, reactions or reposts found to delete.'+partial); return; }
-    if(!await uiConfirm(`Found ${ids.size} post/reply, reaction or repost event(s). Permanently request their deletion now?${partial}`)){ setS(''); return; }
-    const all=[...ids.keys()]; let done=0, failed=0;
-    for(let i=0; i<all.length; i+=_DN_BATCH){
+    if(!ids.size){ setS('No posts, reactions, reposts or streams found to delete.'+partial); return; }
+    if(!await uiConfirm(`Found ${ids.size} post/reply, reaction, repost, stream or stream chat event(s). Permanently request their deletion now?${partial}`)){ setS(''); return; }
+    // Keep private and public targets separate: a bridge-only deletion cannot remove Nostr copies.
+    const groups=[false,true].map(privateEvent=>[...ids.keys()].filter(id=>_fediOnlyEvent(ids.get(id))===privateEvent));
+    let done=0, failed=0;
+    for(const all of groups) for(let i=0; i<all.length; i+=_DN_BATCH){
       const chunk=all.slice(i, i+_DN_BATCH);
+      const privateEvent=_fediOnlyEvent(ids.get(chunk[0]));
       if(!ME || ME.pubkey!==author){ setS('Account changed — deletion stopped.'); return; }
       const tags=chunk.map(id=>['e', id]);
-      for(const kind of new Set(chunk.map(id=>ids.get(id)))) tags.push(['k',String(kind)]);
+      for(const kind of new Set(chunk.map(id=>ids.get(id).kind))) tags.push(['k',String(kind)]);
+      for(const addr of new Set(chunk.filter(id=>ids.get(id).kind===30311).map(id=>_streamAddr(ids.get(id))))) tags.push(['a',addr]);
+      if(privateEvent) tags.push(['client-mode','fedi-only']);
       try{
-        const r=await publish(5, '', tags, {quiet:true});
+        const r=await publish(5, '', tags, {quiet:true,publicDeletion:!privateEvent});
         if(r && r.ok){ done+=chunk.length;
           if(r.ev){ try{ Relay.publishTo(_writeRelays(), r.ev).catch(()=>{}); }catch(_){} }   // best-effort: other relays too
-          chunk.forEach(id=>{ try{ Store.removeEvent(id); }catch(_){} });
+          chunk.forEach(id=>{
+            if(ids.get(id).kind===30311) _forgetDeletedStream(ids.get(id));
+            try{ Store.removeEvent(id); }catch(_){}
+          });
         } else failed+=chunk.length;
       }catch(_){ failed+=chunk.length; }
       setS(`Requested deletion of ${done}/${ids.size}…`);
@@ -7105,7 +7210,7 @@
     // render as orphaned posts in a flat feed (they belong in the thread / a Channels view).
     // Channel messages (42) stay out too; channel definitions are compact enough to remain
     // discoverable here.
-    if (VIEW==='home') return [{ kinds:[1,6,1068,5,30023], authors:[...FOLLOWS], limit:_flim(80) }];
+    if (VIEW==='home' && !_fediOnly()) return [{ kinds:[1,6,1068,5,30023], authors:[...FOLLOWS], limit:_flim(80) }];
     return [{ kinds:[1,6,1068,5,30023], limit:_flim(120) }];
   }
   // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
@@ -8312,9 +8417,11 @@
     // Default TRUE — the bridge mirrors whole remote timelines, so left visible it is most of what a
     // new account sees on Nostr. A REPOST of a bridged note is left alone: the wrapper is a real Nostr
     // user choosing to share it, which is not the firehose this filter exists to keep out.
-    const hideFedi = ClientSettings.get('hideFediBridge', true);
-    const follows = view==='home' ? (e=>FOLLOWS.has(e.pubkey)) : null;
-    return ev => (!follows || follows(ev))
+    const fediOnly=_fediOnly();
+    const hideFedi = !fediOnly && ClientSettings.get('hideFediBridge', true);
+    const follows = view==='home' && !fediOnly ? (e=>FOLLOWS.has(e.pubkey)) : null;
+    return ev => (!fediOnly || isFediBridged(ev) || _fediOnlyEvent(ev))
+              && (!follows || follows(ev))
               && !(hideR && isReply(ev))
               && !(hideFedi && isFediBridged(ev));
   }
@@ -9873,24 +9980,24 @@
     if(!await uiConfirm('Delete this stream? It’s removed from Nostr for everyone.')) return;
     const d=(e.tags.find(t=>t[0]==='d')||[])[1]||'';
     try{
-      const r=await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']], {quiet:true});
+      const r=await publish(5, '', [['a', `30311:${e.pubkey}:${d}`], ['e', e.id], ['k','30311']], {quiet:true,publicDeletion:true});
       if(!(r && r.ok)){ toast('couldn’t reach the relay — the stream was NOT deleted, try again'); return; }
       // The 30311 also lives on the external stream relays — publish() only hit our local one, so ask them to
       // remove it too (best-effort), else the profile/Streams re-fetch it from there and it comes back.
       try{ if(r.ev) Relay.publishTo(STREAM_RELAYS, r.ev).catch(()=>{}); }catch(_){}
-      _markStreamDeleted(`30311:${e.pubkey}:${d}`);   // persistent guard: never re-render this address again
-      try{ if(Store.removeEvent) Store.removeEvent(e.id); }catch(_){}
-      // Drop the parked "ended" event too — otherwise the server publishes it when the feed stops and
-      // RESURRECTS the stream we just deleted (a fresh event at the same address, after the kind-5).
-      _clearEndSentinel();
-      if(d) _endedStreams.add(d);   // don't let _adoptOwnLive resurrect a deleted stream from stale cache
-      if(_liveStream && ((_liveStream.d||_liveStream.token)===d)){ _stopLiveHb(); _liveStream=null; }
-      // Same teardown as _endLive: a deleted stream must still release the camera / native screen capture.
-      // (The old inline version deref'd .pc unconditionally, which threw for a native share — leaving the
-      // screen capture running with no overlay left to stop it.)
-      if(_phoneStream && _phoneStream.token===d) _teardownPhoneStream();
+      _forgetDeletedStream(e);
+      try{ Store.removeEvent(e.id); }catch(_){}
       _closeStreamChat(); toast('stream deleted'); switchView('streams');
     }catch(_){ toast('couldn’t delete the stream'); }
+  }
+  function _forgetDeletedStream(e){
+    const d=((e.tags||[]).find(t=>t[0]==='d')||[])[1]||'';
+    _markStreamDeleted(_streamAddr(e));
+    _clearEndSentinel();
+    if(d) _endedStreams.add(d);
+    if(_liveStream && ((_liveStream.d||_liveStream.token)===d)){ _stopLiveHb(); _liveStream=null; }
+    if(_phoneStream && _phoneStream.token===d) _teardownPhoneStream();
+    _closeStreamChat();
   }
   // ---------- live stream chat (NIP-53 kind-1311, addressed to the stream's `a` tag) ----------
   // Interop: the chat format is already spec (kind-1311, `a`-tagged to the 30311 with a root marker), but a
@@ -9967,7 +10074,7 @@
   // and re-cache the event, resurrecting it. Keyed by 30311 address `30311:<pubkey>:<d>`.
   let _deletedStreams = new Set((()=>{ try{ return ClientSettings.get('deletedStreams', []) || []; }catch(_){ return []; } })());
   let _sweptReplays=false;   // the startup replay-stamp sweep runs once per session
-  function _streamAddr(e){ const d=(e.tags.find(t=>t[0]==='d')||[])[1]||''; return `30311:${e.pubkey}:${d}`; }
+  function _streamAddr(e){ const d=((e.tags||[]).find(t=>t[0]==='d')||[])[1]||''; return `30311:${e.pubkey}:${d}`; }
   function _isDeletedStream(e){ return e && _deletedStreams.has(_streamAddr(e)); }
   function _markStreamDeleted(addr){ if(!addr) return; _deletedStreams.add(addr);
     try{ ClientSettings.set('deletedStreams', [..._deletedStreams].slice(-300)); }catch(_){} }
@@ -31585,8 +31692,15 @@
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Telegram<label class="switch"><input type="checkbox" id="us-social-notif" ${s.social_notif_enabled?'checked':''}><span class="slider"></span></label></label>
         </div>
         <div class="us-pane" data-pane="social">
+          ${typeof s.fedi_only==='boolean' ? `
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Fediverse-only mode<label class="switch"><input type="checkbox" id="us-fedi-only" ${s.fedi_only?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Show only bridge posts in timelines. Send posts, replies, likes and reposts through your linked Fediverse account without publishing them to Nostr. Private app data and messages keep working. Requires a connected Fediverse account to post.</div>
+          ` : ''}
+
+          <div id="us-fedi-hide-options" ${s.fedi_only?'hidden':''}>
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Hide fediverse posts in timelines<label class="switch"><input type="checkbox" id="set-hide-fedi" ${ClientSettings.get('hideFediBridge',true)?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">On by default. The bridge mirrors whole fediverse timelines onto Nostr under stand-in keys — this keeps them out of Home and Nostrverse. Mentions, replies and DMs from fediverse people still reach you either way.</div>
+          </div>
 
           <div class="us-conn"><div class="set-title small">Pleroma / Mastodon</div>
             <label class="fld">Instance URL<input class="input" id="us-plr-url" value="${enc(s.pleroma_instance_url||'')}" placeholder="https://pleroma.example"></label>
@@ -32088,6 +32202,11 @@
     // Presets are only persisted on Save if the user actually edited them (else an unrelated Save clobbers).
     let _presetsEdited=false;
     { const zi=$('#us-zap-presets'), xi=$('#us-xmr-presets'), bi=$('#us-bch-presets'); if(zi) zi.oninput=()=>_presetsEdited=true; if(xi) xi.oninput=()=>_presetsEdited=true; if(bi) bi.oninput=()=>_presetsEdited=true; }
+    { const fm=$('#us-fedi-only'); if(fm){
+      const update=()=>{ const hide=$('#us-fedi-hide-options'), cross=$('#us-fedi-crosspost');
+        if(hide) hide.hidden=fm.checked; if(cross) cross.disabled=fm.checked; };
+      fm.onchange=update; update();
+    } }
     // Save (text + toggles; connect flows persist themselves)
     $('#us-save').onclick=async()=>{
       // Amount presets are CLIENT prefs (not account columns): only touch them if the user actually EDITED
@@ -32116,6 +32235,7 @@
         telegram_notifications:_fv('#us-tg-notif'), social_notif_enabled:_fc('#us-social-notif'),
                 fedi_bridge_enabled:_fc('#us-fedi-bridge'),
         fedi_crosspost_enabled:_fc('#us-fedi-crosspost'),
+        ...($('#us-fedi-only') ? {fedi_only:_fc('#us-fedi-only')} : {}),
         pleroma_instance_url:_fv('#us-plr-url'),
         theme:($('#us-theme')&&$('#us-theme').value)||'cyberpunk',
         mail_accounts:usCollectMail() };
@@ -32167,7 +32287,7 @@
         return;
       }
       try{ const r=await fetch('/api/auth/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        if(r.ok){ applyTheme(body.theme); toast('settings saved');
+        if(r.ok){ applyTheme(body.theme); if(typeof body.fedi_only==='boolean') _setFediOnly(body.fedi_only); toast('settings saved');
           if(st) st.textContent=needReload?'✓ Saved — reloading':'✓ Saved';
           if(needReload) setTimeout(()=>location.reload(),600);
         } else if(st) st.textContent='save failed ('+r.status+')';

@@ -6,6 +6,8 @@
  * reaches the app. The public API (connect/subscribe/query/publish/close/worker) is identical
  * whether one relay or several are connected — the app code doesn't change. */
 (function(){
+  const _SOCIAL_KINDS = new Set([1,5,6,7,16,1068,1018,1111,1311,30023,30311]);
+  const _fediPrivate = event => (event.tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only');
   // ---- worker RPC (crypto: sign / keygen / nip04 / verify) ----
   class WorkerRPC {
     constructor(url){
@@ -637,6 +639,9 @@
     },
     // publish to every connected relay; resolves on the first relay that accepts (OK true)
     async publish(event, timeout=8000){
+      if(this.socialRoute){ const routed=await this.socialRoute(event); if(routed) return routed; }
+      if(_fediPrivate(event))
+        return {ok:false,noQueue:true,msg:'Fediverse-only activity cannot be published to Nostr'};
       /* A post is an interaction, hence a reliable recovery trigger. On a resumed phone the pool
        * may say off/connecting even though the relay is healthy. ready() repairs dead, zombie and
        * overlong-CONNECTING sockets before the acknowledgement timeout starts. */
@@ -689,6 +694,7 @@
      * instance's own relay, where the other player is), then ANY open socket. Never a dropped packet
      * while a live socket exists. */
     publishFast(event, url){
+      if(_SOCIAL_KINDS.has(event.kind) || _fediPrivate(event)) return 0;
       const up = (c) => !!(c && c.ws && c.ws.readyState === 1);
       let c = this._conns.get(url || this.url);
       if (!up(c)) c = [...this._conns.values()].find(up);
@@ -712,6 +718,7 @@
      * Returns how many sockets took it — 0 means the packet went nowhere, which the caller must not
      * discard silently. */
     publishFastAll(event, { max = 4 } = {}){
+      if(_SOCIAL_KINDS.has(event.kind) || _fediPrivate(event)) return 0;
       const up = (c) => !!(c && c.ws && c.ws.readyState === 1);
       const seen = new Set();
       const order = [];
@@ -741,7 +748,9 @@
     // reconnect, no pool membership, deduped + capped fan-out so a send can't spike CPU/sockets.
     // Resolves with the number of relays that accepted. Skips relays already in the pool (publish()
     // covered them) and is a no-op when there are none.
-    publishTo(urls, event, { timeout=5000, max=4 } = {}){
+    async publishTo(urls, event, { timeout=5000, max=4 } = {}){
+      if(_fediPrivate(event)) return 0;
+      if(this.socialRoute && await this.socialRoute(event,true)) return 0;
       const targets = [...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u => !this._conns.has(u)).slice(0, max);
       if (!targets.length) return Promise.resolve(0);
       return Promise.all(targets.map(u => new Promise(resolve => {
@@ -775,7 +784,7 @@
       const stop=()=>{ if(closed)return;closed=true;if(tm)clearTimeout(tm);sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
       stop.ready=ready;
       stop.hasTargets=targets.length>0;
-      stop.publish=event=>{let sent=0;for(const ws of sockets){try{if(!closed&&ws.readyState===1){ws.send(JSON.stringify(['EVENT',event]));sent++;}}catch(_){}}return sent;};
+      stop.publish=event=>{if(_SOCIAL_KINDS.has(event.kind) || _fediPrivate(event))return 0;let sent=0;for(const ws of sockets){try{if(!closed&&ws.readyState===1){ws.send(JSON.stringify(['EVENT',event]));sent++;}}catch(_){}}return sent;};
       if(!targets.length)markReady(true); // every requested URL is already in the managed pool
       if(timeout>0) tm=setTimeout(stop,timeout);
       targets.forEach((u,n)=>{
@@ -797,7 +806,9 @@
     // (which must resolve to a signed kind-22242 event) and replays the EVENT once authed. Resolves
     // { ok, msg } like publish(). signAuth runs in the app (it owns the active signer — extension /
     // NIP-46 / local key), so relay.js stays signer-agnostic.
-    publishAuthed(url, event, signAuth, { timeout = 9000 } = {}){
+    async publishAuthed(url, event, signAuth, { timeout = 9000 } = {}){
+      if(_fediPrivate(event)) return {ok:false,noQueue:true,msg:'Fediverse-only activity cannot be published to Nostr'};
+      if(this.socialRoute){ const routed=await this.socialRoute(event,true); if(routed) return routed; }
       if(_isBlockedRelay(url))return Promise.resolve({ok:false,msg:'relay unavailable'});
       return new Promise(resolve => {
         let ws, done = false, tm, rtm, pgm, authSent = false, authedEventId = null, authResent = false, lastReject = '';

@@ -8,22 +8,24 @@ SOURCE = (ROOT / 'static/js/client/app.js').read_text()
 ACTION = SOURCE[SOURCE.index('  const _DN_BATCH = 100;'):SOURCE.index('  // The wider relays')]
 
 
-def run_action(events, *, fail=False, change_account=False, incomplete=False):
+def run_action(events, *, fail=False, change_account=False, incomplete=False, fedi_only=False):
     js = r'''
 const vm=require('node:vm');
-const events=EVENTS, removed=[], sent=[], confirms=[], status={textContent:''};
+const events=EVENTS, removed=[], forgotten=[], sent=[], confirms=[], status={textContent:''};
 let calls=0;
-const context={GUEST:false,ME:{pubkey:'mine'},VIEW:'settings',
+const context={GUEST:false,ME:{pubkey:'mine'},VIEW:'settings',_fediModeSupported:false,_fediOnly:()=>FEDI_ONLY,_fediOnlyEvent:e=>(e.tags||[]).some(t=>t[0]==='client-mode'&&t[1]==='fedi-only'),
+ _streamAddr:e=>'30311:'+e.pubkey+':'+((e.tags||[]).find(t=>t[0]==='d')||['',''])[1],
+ _forgetDeletedStream:e=>forgotten.push(e.id),_loadFediOnlyHistory:async()=>[],
  document:{getElementById:()=>status},
  uiConfirm:async msg=>{confirms.push(msg); if(CHANGE && confirms.length===2)context.ME={pubkey:'other'};return true;},
  Relay:{query:async filters=>{calls++; const f=filters[0]; const batch=events.filter(e=>f.kinds.includes(e.kind) && e.created_at<=f.until).sort((a,b)=>b.created_at-a.created_at).slice(0,f.limit); batch.complete=!INCOMPLETE; return batch;},publishTo:async()=>{}},
- publish:async(kind,content,tags)=>{sent.push({kind,tags});return {ok:!FAIL,ev:{}};},
+ publish:async(kind,content,tags,opts)=>{sent.push({kind,tags,opts});return {ok:!FAIL,ev:{}};},
  Store:{removeEvent:id=>removed.push(id)},invalidateCounts:()=>{},_writeRelays:()=>[]};
 vm.createContext(context);
 vm.runInContext(ACTION,context);
-context._deleteAllMyNotes().then(()=>process.stdout.write(JSON.stringify({removed,sent,confirms,status:status.textContent})));
+context._deleteAllMyNotes().then(()=>process.stdout.write(JSON.stringify({removed,forgotten,sent,confirms,status:status.textContent})));
 '''
-    for key, value in [('EVENTS', events), ('CHANGE', change_account), ('FAIL', fail), ('INCOMPLETE', incomplete), ('ACTION', ACTION)]:
+    for key, value in [('EVENTS', events), ('FEDI_ONLY', fedi_only), ('CHANGE', change_account), ('FAIL', fail), ('INCOMPLETE', incomplete), ('ACTION', ACTION)]:
         js = js.replace(key, json.dumps(value))
     result = subprocess.run(['node'], input=js, capture_output=True, text=True, timeout=15, check=True)
     return json.loads(result.stdout)
@@ -84,3 +86,25 @@ def test_relay_page_ceiling_is_reported_as_incomplete():
     assert 'history was incomplete' in result['confirms'][1]
     assert 'history was incomplete' in result['status']
     assert len(result['removed']) == 5000
+
+
+def test_stream_announcements_and_chat_are_deleted_with_address_tags():
+    own = dict(event(30311), tags=[['d', 'broadcast:one']])
+    result = run_action([own, event(1311), dict(own, id='foreign', pubkey='other')])
+    assert set(result['removed']) == {'mine-30311', 'mine-1311'}
+    assert result['forgotten'] == ['mine-30311']
+    assert ['a', '30311:mine:broadcast:one'] in result['sent'][0]['tags']
+    assert ['k', '30311'] in result['sent'][0]['tags']
+    assert ['k', '1311'] in result['sent'][0]['tags']
+
+
+def test_failed_stream_deletion_keeps_stream_running_and_visible():
+    result = run_action([event(30311)], fail=True)
+    assert result['removed'] == []
+    assert result['forgotten'] == []
+
+
+def test_public_stream_cleanup_in_private_mode_is_explicit():
+    result=run_action([event(30311)], fedi_only=True)
+    assert result['sent'][0]['opts']['publicDeletion'] is True
+    assert result['removed']==['mine-30311']

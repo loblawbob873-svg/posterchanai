@@ -410,6 +410,10 @@ class RelayStore:
                         created - int(time.time()))
             return False
         tags = ev.get("tags") or []
+        # These signed actions belong exclusively to the authenticated HTTP Fediverse route.
+        # Reject cached restores and accidental relay sends before storing or fanout.
+        if ["client-mode", "fedi-only"] in tags:
+            return False
         # NIP-40: parse the expiration timestamp (if any). An already-expired event is never
         # stored — applies to direct writes AND synced/bulk events uniformly.
         expiration = None

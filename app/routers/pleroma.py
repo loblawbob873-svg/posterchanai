@@ -133,6 +133,7 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
         return _error_page(f"Token exchange failed: {e}")
 
     # Verify the token works and get username
+    account = {}
     try:
         account = await verify_credentials(pending["instance_url"], access_token)
         display = account.get("username") or account.get("acct") or "unknown"
@@ -180,6 +181,9 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None,
     user.pleroma_enabled = True
     user.pleroma_instance_url = pending["instance_url"]
     user.pleroma_access_token = access_token
+    from app.services.fedi_bridge_identity import acct_of
+    from urllib.parse import urlparse
+    user.pleroma_acct = acct_of(account, urlparse(pending["instance_url"]).netloc).lower() or None
     db.commit()
     # One-time: mirror the bridged accounts the user already follows on Nostr onto their new Pleroma.
     _fire_backfill(pending["user_id"])
@@ -213,6 +217,7 @@ async def disconnect_pleroma(
     current_user.pleroma_enabled = False
     current_user.pleroma_instance_url = None
     current_user.pleroma_access_token = None
+    current_user.pleroma_acct = None
     current_user.pleroma_notif_since = None
     # Clear the once-flag so a future (re)connect re-runs the follow-list backfill (e.g. a different account).
     from app.models import UserSetting
@@ -381,3 +386,38 @@ async def follow_bridged(data: FollowBridgedReq, current_user: User = Depends(ge
         logger.warning("[pleroma] follow-bridged failed: %s", e)
         return {"ok": False, "error": "could not reach your Pleroma instance"}
     return {"ok": True, "acct": acct.get("acct") or acct.get("username") or ""}
+
+
+class SocialPublishReq(BaseModel):
+    event: dict
+    broadcast_only: bool = False
+
+
+@router.post("/social-publish")
+async def publish_social(data: SocialPublishReq, current_user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """Route signed social activity according to the authenticated account's current setting."""
+    import json
+    from app.services.fedi_only_service import route, SOCIAL_KINDS
+    if len(json.dumps(data.event)) > 256_000:
+        raise HTTPException(status_code=413, detail="Social event is too large")
+    if data.event.get("kind") not in SOCIAL_KINDS:
+        raise HTTPException(status_code=400, detail="Not a social event")
+    return await route(db, current_user, data.event, broadcast_only=data.broadcast_only)
+
+
+@router.get("/private-events")
+def private_social_history(before: int | None = None, before_id: str | None = None,
+                           limit: int = 200, current_user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """Only this account's Fediverse-only history; timestamp+id cursor avoids burst truncation."""
+    import json
+    from sqlalchemy import or_, and_
+    from app.models import FediOnlyEvent
+    q = db.query(FediOnlyEvent).filter(FediOnlyEvent.user_id == current_user.id,
+                                      FediOnlyEvent.deleted.is_(False))
+    if before is not None:
+        q = q.filter(or_(FediOnlyEvent.created_at < before,
+                        and_(FediOnlyEvent.created_at == before, FediOnlyEvent.id < (before_id or ""))))
+    rows = q.order_by(FediOnlyEvent.created_at.desc(), FediOnlyEvent.id.desc()).limit(max(1,min(limit,500))).all()
+    return {"events": [json.loads(row.raw) for row in rows]}

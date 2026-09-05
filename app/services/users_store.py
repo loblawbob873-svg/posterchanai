@@ -46,10 +46,10 @@ CONFIG_FIELDS = (
     "notification_email", "avatar", "theme",
     "news_sources",
     "telegram_enabled", "telegram_chat_id", "telegram_notifications",
-    "pleroma_enabled", "pleroma_instance_url", "pleroma_access_token",
+    "pleroma_enabled", "pleroma_instance_url", "pleroma_access_token", "pleroma_acct",
     "nostr_enabled", "nostr_relays", "nostr_media_service", "nostr_media_endpoint",
     "social_notif_enabled",
-    "fedi_bridge_enabled", "fedi_crosspost_enabled",   # Nostr↔Fediverse opt-ins (cursors *_since stay local)
+    "fedi_bridge_enabled", "fedi_crosspost_enabled", "fedi_only",   # Nostr↔Fediverse opt-ins (cursors *_since stay local)
     "stream_record",   # per-user opt-in: save ended live streams to the user's Blossom drive
 )
 

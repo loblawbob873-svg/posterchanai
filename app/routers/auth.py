@@ -661,6 +661,7 @@ def get_user_settings(current_user: User = Depends(get_current_user), db: Sessio
         social_notif_enabled=current_user.social_notif_enabled if hasattr(current_user, 'social_notif_enabled') else False,
         fedi_bridge_enabled=current_user.fedi_bridge_enabled if hasattr(current_user, 'fedi_bridge_enabled') else False,
         fedi_crosspost_enabled=current_user.fedi_crosspost_enabled if hasattr(current_user, 'fedi_crosspost_enabled') else False,
+        fedi_only=bool(getattr(current_user, "fedi_only", False)),
     )
 
 
@@ -671,6 +672,14 @@ def update_user_settings(
     db: Session = Depends(get_db)
 ):
     """Update current user's settings including custom AI service configuration"""
+    if (settings.fedi_only is True and current_user.pleroma_instance_url and current_user.pleroma_access_token
+            and (not current_user.fedi_only or not current_user.pleroma_acct)):
+        import asyncio as _aio
+        from app.services.fedi_only_service import verify_link
+        try:
+            _aio.run(verify_link(current_user))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Could not verify your Fediverse account. Reconnect it before enabling Fediverse-only mode.")
     # Update notification email if provided
     if settings.notification_email is not None:
         notification_email = settings.notification_email.strip()
@@ -771,6 +780,8 @@ def update_user_settings(
     # Cross-post my top-level Nostr notes to my linked Pleroma account
     if settings.fedi_crosspost_enabled is not None:
         current_user.fedi_crosspost_enabled = settings.fedi_crosspost_enabled
+    if settings.fedi_only is not None:
+        current_user.fedi_only = settings.fedi_only
 
     try:
         # Flush changes to database before commit

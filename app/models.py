@@ -100,6 +100,7 @@ class User(Base):
     # Cross-post: when on, this user's top-level Nostr notes are federated to their linked Pleroma
     # account as new public posts (replies/likes/reposts already federate via the write-back path).
     fedi_crosspost_enabled = Column(Boolean, default=False)
+    fedi_only = Column(Boolean, default=False)  # view bridge posts; send social activity through HTTP only
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -455,6 +456,16 @@ class FediReconcileState(Base):
     last_repaired = Column(Integer, default=0)           # posts re-delivered on the last pass
     total_repaired = Column(Integer, default=0)
     last_error = Column(String(300), nullable=True)
+
+
+class FediOnlyEvent(Base):
+    """Owner-only social history for the HTTP Fediverse route; never exposed through Nostr REQ."""
+    __tablename__ = "fedi_only_events"
+    id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(BigInteger, nullable=False, index=True)
+    raw = Column(Text, nullable=False)
+    deleted = Column(Boolean, default=False, nullable=False)
 
 
 class FediBridgeAction(Base):

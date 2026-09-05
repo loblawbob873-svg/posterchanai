@@ -605,6 +605,9 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
                      detail=str(raw.get("visibility") or ""))
         return None
     account = raw.get("account") or {}
+    from app.services.fedi_only_service import suppress_mirror
+    if suppress_mirror(db, account, instance_host):
+        return None
     p = await ident.ensure_puppet(db, port, account, instance_host)
     if not p:
         _record_skip(db, "no-puppet", platform=platform, instance_url=instance_url, post=post,
