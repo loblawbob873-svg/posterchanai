@@ -28229,7 +28229,7 @@
     const ifr=host.querySelector('iframe');
     if(ifr && ifr.dataset.loaded==='1') ifr.style.opacity='1';   // already loaded → show instantly
   }
-  function renderAdmin(){
+  function renderAdmin(opts){
     const feed=$('#feed');
     if(!IS_ADMIN){ feed.innerHTML='<div class="empty">Admins only.</div>'; return; }
     // /admin needs the session cookie nostr-login sets. If it's already established, render the
@@ -28237,10 +28237,21 @@
     // spinner and render when it resolves.
     if(_aiAuth && _aiAuth.is_admin){ _adminFrame(feed); return; }
     feed.innerHTML='<div class="spinner"></div>';
-    ensureAiSession().then(a=>{
-      if(VIEW!=='admin') return;
+    const author=ME && ME.pubkey;
+    ensureAiSession(opts).then(a=>{
+      if(VIEW!=='admin' || !ME || ME.pubkey!==author) return;
       if(a && a.is_admin) _adminFrame(feed);
       else feed.innerHTML='<div class="empty">Admin session unavailable — log in with your admin Nostr key.</div>';
+    }).catch(e=>{
+      if(VIEW!=='admin' || !ME || ME.pubkey!==author) return;
+      const why=(e && e.message)||'Could not establish your admin session';
+      const extensionUnavailable=/receiving end does not exist|could not establish connection|extension context|context invalidated/i.test(why);
+      feed.style.display='';
+      const host=document.getElementById('admin-host'); if(host) host.style.display='none';
+      feed.innerHTML='<div class="empty"><h2>'+(extensionUnavailable?'Signer extension unavailable':'Admin sign-in failed')+'</h2><p>'
+        +(extensionUnavailable?'Open the PosterChan signer extension and try again. If it still cannot connect, disable and re-enable the extension in Firefox’s Add-ons Manager, then reload this page. Keep your existing pairing.':enc(why))
+        +'</p><button class="btn btn-cyan" id="admin-session-retry">Retry admin sign-in</button></div>';
+      const retry=$('#admin-session-retry'); if(retry) retry.onclick=()=>renderAdmin({force:true});
     });
   }
   /* Name the half that is being waited on. `ME.mode` is set wherever the signer is built, so this
