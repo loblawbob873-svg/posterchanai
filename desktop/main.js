@@ -1702,7 +1702,19 @@ async function wireShellRecovery(){
       backend:wm().backend,
       shellIds:()=>Array.from(_shellSurfaces.values()).map(record=>Number(record&&record.conId)).filter(Number.isFinite),
       windows:()=>wm().windows(),
-      focus:id=>wm().focus(id)
+      focus:id=>wm().focus(id),
+      /* THE SAME EXCEPTION `sinkShellSurfaces` ALREADY HONOURED. Both of them lower the desktop and
+       * only one of them knew that a surface drawing System Settings must stay up -- see the block
+       * on createDesktopBottomGuard. A con_id maps back to the renderer that owns it through the
+       * surface record, which is the id `pc:wm:shell-front` records. */
+      wantsFront:(conId)=>{
+        for(const record of _shellSurfaces.values()){
+          if(!record || Number(record.conId) !== Number(conId)) continue;
+          const wc = record.browser && !record.browser.isDestroyed() ? record.browser.webContents : null;
+          return !!(wc && _shellWantsFront.has(Number(wc.id)));
+        }
+        return false;
+      }
     }));
     wm().on('window', (ev) => {
       const row=ev&&ev.wayfireView;
