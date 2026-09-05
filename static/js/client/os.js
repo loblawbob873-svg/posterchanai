@@ -1486,7 +1486,28 @@
         else _focusNativeDecorated(w.native,focusToken);
       }).catch(()=>{});
     }
-    else if(w.native == null) _stackDomAboveNative(w,focusToken).catch(()=>{});
+    /* THE WISH GOES OUT BEFORE THE FOCUS, AND THAT ORDER IS THE WHOLE FIX.
+     *
+     * `_stackDomAboveNative` ends by focusing the SHELL surface, because an in-page window has no
+     * toplevel of its own to raise. Main sinks the shell on every focus event it sees
+     * (`sinkShellOnFocus`) and skips only the surfaces in `_shellWantsFront` -- and that set was
+     * filled from `drawBar` BELOW this line, i.e. after the focus had already been sent. So the
+     * sequence really was: focus the shell, main sinks it, and only then does the renderer say it
+     * wanted to be forward -- to which `shellFront(true)` answers `wm-actions/send-to-back` with
+     * `state:false`, which CLEARS the flag and does not raise anything. The desktop stayed at the
+     * back with the window drawn on it.
+     *
+     * Measured on the laptop: open Social (a popped-out toplevel), then click the System Settings
+     * icon. The frame is created and carries `focused`, and Wayfire still reports view 174 (Social)
+     * focused with the shell behind it. Reported as "Running Global then clicking on System
+     * Settings causes the windows to conflict, System settings never gets focus", and as "social is
+     * stuck behind terminal and can't move".
+     *
+     * Published here the set is populated before the focus event exists, so the sink skips the
+     * surface instead of racing it. `_publishShellFront` is idempotent and only calls out on a
+     * change, so the drawBar below still costs nothing. */
+    _publishShellFront();
+    if(w.native == null) _stackDomAboveNative(w,focusToken).catch(()=>{});
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
     if(w.isolated){
