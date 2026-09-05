@@ -3616,6 +3616,20 @@
       const focused = list.find(x => x && x.focused && Number(x.id) !== shellId
                                   && !OURS.test(String(x.app || '')));
       const foreign = !!focused;
+      /* AND WHETHER THIS SURFACE ITSELF HOLDS THE KEYBOARD, which is a different question from
+       * "is a foreign app focused" and is what the taskbar needs. A window drawn INSIDE the desktop
+       * keeps its `.focused` class for as long as it is open -- correctly, it is still the frame the
+       * desktop would hand the keyboard to -- so with a popped-out window focused the taskbar drew
+       * System Settings as the active task, and the next click on that button was read as "you are
+       * already here" and MINIMISED it instead of raising it. Measured: click Social, click System
+       * Settings, and the compositor keeps Social focused while the button goes dark.
+       *
+       * The native branch of the same click handler already learned this ("the event-fed row can lag
+       * the click by one compositor frame"); for an in-page frame the class is not one frame stale,
+       * it is about a different thing entirely. */
+      const holds = Number.isFinite(shellId)
+        && !!list.find(x => x && x.focused && Number(x.id) === shellId);
+      if(holds !== _shellHasKeyboard){ _shellHasKeyboard = holds; drawBar(); }
       if(foreign !== _foreignFocused){ _foreignFocused = foreign; _publishShellFront(); }
     }
     /* Before anything else reads this list: a window on the bar is on it now, and adoption below
@@ -7397,6 +7411,14 @@
    *
    * Only on change: this is on the draw path, and an IPC call per repaint is a call per clock tick. */
   let _shellFrontSent = null, _foreignFocused = false;
+  /* Does the desktop surface itself hold the compositor keyboard focus? With no compositor to ask
+   * (a browser tab, the Windows or macOS build) the DOM is the only truth there is, so the answer
+   * is yes and every taskbar button behaves exactly as it always has. */
+  let _shellHasKeyboard = true;
+  /* A window drawn inside the desktop is the one you are USING only if the desktop is also the
+   * surface with the keyboard -- see the block that maintains _shellHasKeyboard. */
+  const _webTaskActive = (w) => !!(w && w.el && w.el.classList.contains('focused')
+                                   && !w.min && _shellHasKeyboard);
   function _publishShellFront(){
     if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
     let want = false;
@@ -7458,7 +7480,7 @@
             test_every_shipped_module_parses.py mutates this line to prove that check is real, so the
             marker is load-bearing: deleting it turns the guard red rather than silently blind. The
             dashes are -- and not em-dashes for the same reason: keep this plain. -->${pinHtml + wins.map(w =>
-         `<button class="os-task${w.el.classList.contains('focused') && !w.min ? ' on' : ''}"
+         `<button class="os-task${_webTaskActive(w) ? ' on' : ''}"
                   data-id="${w.id}" data-kind="web"${tint(w.machineApp ? w.machineApp.id : w.view)} title="${enc(w.title)}">
             ${w.machineApp ? appIcon(w.machineApp) : iconSvg(w.icon)}<span>${enc(w.title)}</span></button>`).join('')
          + nativeTasks.map(w =>
@@ -7560,8 +7582,11 @@
       }
       const w = wins.find(x => String(x.id) === b.dataset.id);
       if(!w) return;
-      // Clicking the focused window's own task button minimises it, the way a taskbar does.
-      if(w.el.classList.contains('focused') && !w.min) minimise(w); else focusWin(w);
+      /* Clicking the focused window's own task button minimises it, the way a taskbar does -- but
+       * only when this surface is the one holding the keyboard. Otherwise the press means "bring
+       * that window forward", and answering it with a minimise is why System Settings could be
+       * raised once and never again. */
+      if(_webTaskActive(w)) minimise(w); else focusWin(w);
     });
     $$('.os-task', bar).forEach(b => b.oncontextmenu = (e) => {
       e.preventDefault(); e.stopPropagation();
