@@ -94,7 +94,10 @@ PROBE = r"""(async () => {
             || document.querySelector('.os-icon[data-view]');
   if (!icon) return {skip: 'no desktop icons to open'};
   const view = icon.dataset.view;
-  icon.dispatchEvent(new MouseEvent('dblclick', {bubbles: true}));
+  /* A SINGLE CLICK OPENS, and that is deliberate: "a double-click that does nothing the first time
+     reads as broken" (os.js). A synthetic `dblclick` never fires `onclick`, so a first version of
+     this probe reported that nothing opened -- a bug in the check, not the app. */
+  icon.click();
   await new Promise(r => setTimeout(r, 1200));
   out.view = view;
   out.opened = count() - before;

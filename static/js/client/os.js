@@ -71,7 +71,7 @@
       if(window.pcPopup && pcPopup.act){
         /* Percent-encoded: a search query or a file path carries spaces, slashes and punctuation,
            and this crosses a process boundary as one string. */
-        pcPopup.act(arg == null || arg === '' ? kind : kind + ':' + encodeURIComponent(String(arg)));
+        _popupTell('act', arg == null || arg === '' ? kind : kind + ':' + encodeURIComponent(String(arg)));
         return true;
       }
     }catch(_){ }
@@ -4136,6 +4136,20 @@
    * false where there is none. A literal true is required, so anything else draws the in-page panel
    * -- which is what the web and the APK have always used and what works. Same rule, and the same
    * reason, as `PCOSWin.enabled()`. */
+  /* FIRE-AND-FORGET, AND A REJECTION IS NOT AN EXCEPTION.
+   *
+   * Every one of these calls was wrapped in `try{ ... }catch(_){}`, which catches a THROW and does
+   * nothing about a rejected promise -- and off a compositor every one of them rejects. So the
+   * machine with no window manager, which is exactly the machine that must not care, reported
+   * "Error invoking remote method 'pc:wm:popup.close': no compositor" into the page. Measured by
+   * scripts/check_desktop_app_without_a_compositor.py after the gate below was already in place. */
+  function _popupTell(fn, ...args){
+    try{
+      const r = window.pcPopup && typeof pcPopup[fn] === 'function' ? pcPopup[fn](...args) : null;
+      if(r && typeof r.catch === 'function') r.catch(() => {});
+      return r;
+    }catch(_){ return null; }
+  }
   function _popupWindows(){
     try{
       return !!(window.pcPopup && window.PCOSShell
@@ -7692,7 +7706,7 @@
   function buildNotiPanel(inPopup){
     const shut = () => { if(inPopup){ try{ window.close(); }catch(_){ } } else hideNoti(); };
     const send = (action) => {
-      try{ if(window.pcPopup && pcPopup.act){ pcPopup.act(action); return true; } }catch(_){ }
+      if(window.pcPopup && pcPopup.act){ _popupTell('act', action); return true; }
       return false;
     };
     const panel = document.createElement('div');
@@ -8019,7 +8033,7 @@
       }; }
     { const b = $('#os-net-relays', panel); if(b) b.onclick = (e) => {
         e.stopPropagation(); hideNet();
-        if(popupKind() && window.pcPopup && pcPopup.pick) pcPopup.pick('settings');
+        if(popupKind()) _popupTell('pick', 'settings');
         else openApp('settings', 'Settings', '#i-gear');
       }; }
   }
@@ -8120,7 +8134,7 @@
       const old = $('#os-net-panel', root);
       if(old) old.remove();
       if(force === false){
-        try{ pcPopup.close && pcPopup.close(); }catch(_){ }
+        _popupTell('close');
         netOpen = false; drawBar(); return;
       }
       toggleStart(false); toggleNoti(false);
@@ -8302,7 +8316,7 @@
                     /* Only close a popup when this really is "put it away" — never on the
                        defensive toggleStart(false) calls scattered through this file, which would
                        shut a menu the person had just opened. The toggle path above owns it. */
-                    if(wasStart) try{ if(window.pcPopup && pcPopup.close) pcPopup.close(); }catch(_){ }
+                    if(wasStart) _popupTell('close');
                     drawBar(); return; }
     /* A REAL WINDOW WHERE THERE IS A COMPOSITOR TO GIVE IT TO.
      *
@@ -8818,7 +8832,7 @@
             else if(p === 'pc:notifications') toggleNoti(true);
             else if(p === 'pc:notifications:close'){
               toggleNoti(false);
-              try{ if(window.pcPopup&&pcPopup.close)pcPopup.close(); }catch(_){ }
+              _popupTell('close');
             }
             /* PRINT SCREEN, through the same function the tray button calls. A screenshot taken by
              * the key and one taken from the tray must land in the same folder under the same

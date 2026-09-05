@@ -34,7 +34,8 @@ def test_popup_window_can_accept_the_requested_tall_sizes():
 
 def test_connectivity_settings_action_routes_back_to_the_shell():
     net = OS.split("function paintNet(){", 1)[1].split("/* ONE click-away handler", 1)[0]
-    assert "pcPopup.pick('settings')" in net
+    # Same channel, through the one caller that cannot leak a rejection: see _popupTell in os.js.
+    assert "_popupTell('pick', 'settings')" in net
 
 
 def test_connectivity_popup_uses_shell_snapshot_not_its_cold_relay_pool():

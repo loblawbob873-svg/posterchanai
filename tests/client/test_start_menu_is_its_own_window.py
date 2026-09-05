@@ -137,7 +137,9 @@ def test_choosing_goes_through_the_bridge():
     app, a file or a search result opens."""
     assert "function _menuAct(kind, arg){" in OS_JS
     body = _fn(OS_JS, "  function _menuAct(kind, arg){")
-    assert "pcPopup.act(" in body
+    # Routed through `_popupTell`, which swallows the REJECTION a fire-and-forget bridge call makes
+    # off a compositor -- the try/catch round the call never could. The channel is unchanged.
+    assert "_popupTell('act'" in body
     assert "encodeURIComponent" in body, (
         "a search query or a file path carries spaces and slashes and crosses a process boundary "
         "as one string")
@@ -272,7 +274,7 @@ def test_a_defensive_close_does_not_shut_a_menu_somebody_just_opened():
     """`toggleStart(false)` is called from several places that mean "make sure it is not showing".
     Forwarding every one of those to the popup closed the window the toggle had just opened."""
     body = (_fn(OS_JS, "  function toggleStart(force){") + _fn(OS_JS, "  function _startPopup(){"))
-    at = body.index("pcPopup.close()")
+    at = body.index("_popupTell('close')")
     assert "wasStart" in body[max(0, at - 300):at]
 
 

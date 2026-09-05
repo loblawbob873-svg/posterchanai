@@ -7,7 +7,10 @@ def test_notification_flyout_has_compositor_action_open_and_close_routes():
     close = os_js[os_js.index("p === 'pc:notifications:close'") :]
     close = close[:close.index("else if(p === 'pc:shot')")]
     assert "toggleNoti(false)" in close
-    assert "pcPopup.close()" in close
+    # Through `_popupTell`, the one caller that swallows the REJECTION a fire-and-forget bridge call
+    # makes off a compositor -- the try/catch round it never could, and that leak surfaced in the
+    # page as "no compositor" on Windows. Same channel, same close.
+    assert "_popupTell('close')" in close
 
 
 def test_compositor_actions_are_dispatched_only_to_shell_surfaces():
