@@ -1279,3 +1279,39 @@ setTimeout(() => {
         if (b) b.onclick = scan;
     });
 })();
+
+// Relay access policy has its own save action; the main settings form cannot enable it accidentally.
+(() => {
+    const enabled=document.getElementById('access-policy-enabled'), fedi=document.getElementById('access-policy-fedi');
+    if(!enabled || !fedi) return;
+    const status=document.getElementById('access-policy-status');
+    const buttons=['preview','run','save'].map(k=>document.getElementById('access-policy-'+k));
+    const describe=d=>`${d.domain}: ${d.accounts} accounts; ${d.ai} AI grants, ${d.blossom} Blossom grants, ${d.whitelist} whitelist entries.`;
+    let loaded=false, busy=false;
+    async function request(path,method,body){
+        const r=await csrfFetch('/api/admin/relay-access-policy'+path,{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+        const d=await r.json();if(!r.ok)throw new Error(d.detail||'Policy request failed');return d;
+    }
+    async function load(){
+        if(busy)return;
+        try{const d=await request('','GET');enabled.checked=d.enabled;fedi.checked=d.exempt_fediverse;loaded=true;
+            status.textContent=d.last_run?'Last cleanup: '+d.last_run.completed_at+'. '+describe(d.last_run):'No automatic cleanup recorded yet.';
+        }catch(e){status.textContent=e.message;}
+    }
+    document.querySelector('.tab-btn[data-tab="relay"]')?.addEventListener('click',load);
+    buttons.forEach((button,i)=>button.addEventListener('click',async()=>{
+        if(busy)return;if(!loaded){await load();return;}
+        busy=true;buttons.forEach(b=>b.disabled=true);
+        const body={enabled:enabled.checked,exempt_fediverse:fedi.checked};
+        try{
+            if(i===2){await request('','PUT',body);status.textContent='Policy saved. '+(body.enabled?'Cleanup runs every 15 minutes.':'Automatic cleanup is off.');}
+            else{
+                const preview=await request('/preview','POST',body);status.textContent=describe(preview);
+                if(i===1 && await pcConfirm(describe(preview)+' Revoke this access now?')){
+                    const result=await request('/run','POST',body);status.textContent='Cleanup completed. '+describe(result);
+                }
+            }
+        }catch(e){status.textContent=e.message;}
+        finally{busy=false;buttons.forEach(b=>b.disabled=false);}
+    }));
+})();

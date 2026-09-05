@@ -1,5 +1,29 @@
 <!-- Nostr Relay Tab -->
 <div class="tab-content" id="tab-relay">
+    <fieldset>
+        <legend>PosterChan client restriction</legend>
+        <label><input type="checkbox" id="nostr_relay_posterchan_clients_only" name="nostr_relay_posterchan_clients_only"> Allow PosterChan clients only (best-effort)</label>
+        <p>Accept PosterChan web/native origins or a PosterChan User-Agent. Internal bridge, bot and server connections remain available. Other connections receive: <strong>use a PosterChan client</strong>.</p>
+        <small>Client headers can be copied; this filter is not proof of which software is running. Saving a change restarts the relay and reconnects clients.</small>
+        <div class="form-group">
+            <label for="nostr_relay_posterchan_origins">Allowed PosterChan origins</label>
+            <textarea id="nostr_relay_posterchan_origins" name="nostr_relay_posterchan_origins" rows="3" placeholder="https://poster.place&#10;https://localhost&#10;capacitor://localhost&#10;app://posterchan"></textarea>
+            <small>One exact origin per line. Leave blank to use this relay's NIP-05 domain over HTTPS plus PosterChan's native app origins.</small>
+        </div>
+    </fieldset>
+    <fieldset id="relay-access-policy">
+        <legend>AI and Blossom access policy</legend>
+        <p>Remove AI and Blossom grants from Nostr accounts without a registered NIP-05 name on this instance. This does not delete accounts or stored files, and does not grant access to anyone.</p>
+        <label><input type="checkbox" id="access-policy-enabled"> Automatically clean up access every 15 minutes</label>
+        <div class="form-group"><label><input type="checkbox" id="access-policy-fedi" checked> Exempt Fediverse accounts</label></div>
+        <small>Admins, bots and configured processing peers keep their infrastructure access. Only names registered by this relay count; a profile claiming a name is insufficient. Disabling the policy does not restore revoked permissions.</small>
+        <div class="form-group">
+            <button type="button" id="access-policy-preview" class="btn-secondary">Preview affected access</button>
+            <button type="button" id="access-policy-run" class="btn-secondary">Run cleanup now</button>
+            <button type="button" id="access-policy-save" class="btn-primary">Save access policy</button>
+        </div>
+        <p id="access-policy-status" role="status" aria-live="polite">Open this tab to load the policy.</p>
+    </fieldset>
 
     <fieldset>
         <legend>Built-in Nostr Relay (Web of Trust)</legend>

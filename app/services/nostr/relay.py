@@ -261,6 +261,8 @@ async def _connect(relay: str, direct: bool, **kw):
     flaky/down Tor proxy degrades to a direct connection instead of dropping federation entirely.
     Loopback relays never proxy; `direct=True` callers skip the proxy attempt. Extra kwargs (e.g.
     max_size for the firehose) pass through."""
+    # Identify PosterChan server traffic even when a peer is reached through a public proxy.
+    kw.setdefault("user_agent_header", "PosterChan/Server")
     base = _conn_kw(relay, direct)
     try:
         try:

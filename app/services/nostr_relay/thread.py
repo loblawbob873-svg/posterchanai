@@ -437,6 +437,10 @@ def _read_config() -> dict:
             # bridge relayed them. The domain blocklist above can't catch these — a mirror's nip05 is
             # on a normal domain and its proxy URL points at the original instance, never the bridge.
             "block_bridged": gb("nostr_relay_block_bridged", False),
+            "posterchan_clients_only": gb("nostr_relay_posterchan_clients_only", False),
+            "posterchan_origins": (g("nostr_relay_posterchan_origins", "") or
+                ("https://" + g("nostr_relay_nip05_domain", "poster.place").strip().lstrip("@") +
+                 " https://localhost capacitor://localhost app://posterchan")).replace(",", " ").split(),
             # Built-in NIP-05 identity server (served over HTTP by the relay subprocess at
             # /.well-known/nostr.json). Defaults preserve the entries previously on router.lan.
             "nip05": {

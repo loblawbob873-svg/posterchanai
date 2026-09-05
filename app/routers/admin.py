@@ -612,6 +612,7 @@ def update_settings(
             "nostr_relay_send_only", "nostr_relay_wot_enabled", "nostr_relay_firehose_enabled",
             "nostr_relay_mirror_feeds", "nostr_relay_disable_proxy",
             "nostr_relay_bind", "nostr_relay_port",
+            "nostr_relay_posterchan_clients_only", "nostr_relay_posterchan_origins",
         )
         _relay_will_restart = any(k in changed_keys for k in _relay_topology_keys)
 
@@ -1713,3 +1714,62 @@ async def test_proxy_chain(
 
 
 # WebDAV sync config endpoints removed
+
+
+class RelayAccessPolicyRequest(BaseModel):
+    enabled: bool = False
+    exempt_fediverse: bool = True
+
+
+@router.get('/relay-access-policy')
+def relay_access_policy_status(db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    import json
+    from app.services import relay_access_policy as policy
+    policy.settings.hydrate_from_db(db)
+    cfg = policy.configuration()
+    try:
+        last = json.loads(policy.settings.get('relay_access_policy_last_run', '') or 'null')
+    except ValueError:
+        last = None
+    return {**cfg, 'last_run': last}
+
+
+@router.post('/relay-access-policy/preview')
+def relay_access_policy_preview(data: RelayAccessPolicyRequest, db: Session = Depends(get_db),
+                                admin: User = Depends(get_admin_user)):
+    from app.services import relay_access_policy as policy
+    try:
+        return policy.plan(db, data.exempt_fediverse)[2]
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.put('/relay-access-policy')
+async def relay_access_policy_save(data: RelayAccessPolicyRequest, db: Session = Depends(get_db),
+                                   admin: User = Depends(get_admin_user)):
+    from app.services import relay_access_policy as policy
+    async with policy._lock:
+        if data.enabled:
+            try:
+                policy.plan(db, data.exempt_fediverse)
+            except ValueError as e:
+                raise HTTPException(409, str(e))
+        import json
+        changes = {'relay_access_policy': json.dumps({'enabled': data.enabled, 'exempt_fediverse': data.exempt_fediverse})}
+        if await policy.settings.write_through(db, changes) != len(changes):
+            raise HTTPException(503, 'Could not save the complete policy. Reload to check its state.')
+        for key, value in changes.items():
+            policy.settings.put(key, value, write_relay=False)
+    return {'ok': True}
+
+
+@router.post('/relay-access-policy/run')
+async def relay_access_policy_run(data: RelayAccessPolicyRequest, db: Session = Depends(get_db),
+                                  admin: User = Depends(get_admin_user)):
+    from app.services import relay_access_policy as policy
+    try:
+        return await policy.run(db, data.exempt_fediverse)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))

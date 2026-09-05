@@ -295,6 +295,29 @@ def _client_ip(hdrs, connection) -> str:
     return ip if _IP_CHARS.match(ip) else ""
 
 
+def _posterchan_client_allowed(config, headers, connection):
+    """Best-effort client filter, not software attestation: headers can be imitated."""
+    if not config.get("posterchan_clients_only", False):
+        return True
+    import ipaddress
+    peer = getattr(connection, "remote_address", None)
+    try:
+        peer_private = ipaddress.ip_address(peer[0]).is_private
+        client_private = ipaddress.ip_address(_client_ip(headers, connection)).is_private
+    except (ValueError, TypeError, IndexError):
+        peer_private = client_private = False
+    # Internal bots, bridge, datastore and cluster traffic. A public socket cannot
+    # gain this exemption by supplying a forged X-Real-IP header.
+    if peer_private and client_private:
+        return True
+    origin = _one_header(headers, "Origin").rstrip('/').lower()
+    origins = {o.rstrip('/').lower() for o in config.get("posterchan_origins", [])}
+    if origin and origin in origins:
+        return True
+    ua = _one_header(headers, "User-Agent")
+    return bool(re.search(r"(?:^|[\s;(])PosterChan(?:AI)?(?:/|[\s;)]|$)", ua, re.I))
+
+
 class _OutQ:
     """One connection's outbound frame queue: a bounded deque + a wakeup event.
 
@@ -576,6 +599,9 @@ class RelayServer:
         try:
             hdrs = request.headers
             if hdrs.get("Upgrade", "").lower() == "websocket":
+                if not _posterchan_client_allowed(self.cfg, hdrs, connection):
+                    return Response(403, "Forbidden", Headers({"Content-Type": "text/plain; charset=utf-8"}),
+                                    b"use a PosterChan client")
                 try:
                     setattr(connection, "_pcai_ip", _client_ip(hdrs, connection))
                     host = _one_header(hdrs, "Host") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"

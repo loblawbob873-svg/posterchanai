@@ -631,6 +631,8 @@ class SettingsResponse(BaseModel):
     nostr_relay_disable_proxy: Optional[bool] = None  # bypass Tor for relay upstream traffic
     nostr_relay_backup_datastore: Optional[bool] = True  # broadcast the encrypted pcai: config docs (settings/accounts/bots) to upstream relays for disaster recovery (ON by default — Nostr-based DR)
     nostr_relay_firehose_enabled: Optional[bool] = None  # live firehose sync (real-time)
+    nostr_relay_posterchan_clients_only: Optional[bool] = False
+    nostr_relay_posterchan_origins: Optional[str] = ""
     nostr_relay_bind: Optional[str] = None
     nostr_relay_port: Optional[int] = None
     nostr_relay_wot_seeds: Optional[str] = None          # npub/hex seeds, newline/comma
