@@ -1,4 +1,4 @@
-"""Profiles derive their joined date from relay history, never the recent page cache."""
+"""Profiles label relay history as observed activity, not an account creation date."""
 
 from pathlib import Path
 
@@ -15,7 +15,10 @@ def test_profile_searches_historical_relay_coverage_for_joined_date():
     assert "_nostrFirstSeen(pk)" in body
     assert "authors:[pk],until,limit:1" in APP
     assert "r.complete===false" in APP
-    assert "Joined Nostr" in body
+    assert "Joined Nostr" not in body
+    assert "Earliest activity found" in body
+    assert "Your actual join date may be earlier" in body
+    assert "cannot be changed in profile settings" in body
 
 
 def test_joined_date_is_hidden_until_historical_lookup_succeeds():

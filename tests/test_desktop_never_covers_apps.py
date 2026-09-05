@@ -240,7 +240,13 @@ def test_the_shell_surface_is_sent_back_whenever_it_is_focused():
     # ever sees — so without this one open utility window would entitle the desktop to cover the
     # monitor on every later taskbar click, which is the original report all over again.
     assert "!_foreignFocused" in front
-    assert "list.find(x => x && x.focused && Number(x.id) !== shellId)" in OS_JS
+    # FOREIGN means somebody ELSE'S application. This asserted the exact expression, which counted
+    # our own popped-out windows and the other monitor's shell surface as foreign -- so a window
+    # drawn inside the desktop could never come forward while one was focused ("System settings
+    # never gets focus"). tests/client/test_our_own_windows_are_not_foreign.py owns the rule; here
+    # it is enough that the compositor's own answer is what settles it.
+    assert "x.focused" in OS_JS and "!== shellId" in OS_JS
+    assert "OURS.test(String(x.app" in OS_JS, "our own windows are counted as foreign again"
 
 
 def test_alt_tab_photographs_the_window_and_not_the_screen_behind_it():

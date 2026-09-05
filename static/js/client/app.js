@@ -27155,8 +27155,9 @@
   /* A profile page normally loads only the newest handful of notes, so its local cache cannot tell
    * when an account first appeared. Search the relay's HISTORY instead: "has any event at or before
    * T" is monotonic, which lets us locate the first hour with ~16 tiny queries rather than download
-   * somebody's entire publishing history. Results are public, cached per pubkey for 30 days, and an
-   * incomplete/timed-out relay answer produces NO date rather than another confident wrong date. */
+   * somebody's entire publishing history. This only finds activity in the queried relays' retained
+   * history, never an account creation date. Results are public and cached per pubkey for 30 days;
+   * an incomplete/timed-out relay answer produces NO date. */
   async function _nostrFirstSeen(pk){
     const key='pc_first_seen_v2_'+pk, now=Math.floor(Date.now()/1000), ttl=30*86400;
     try{ const c=JSON.parse(localStorage.getItem(key)||'null');
@@ -27283,7 +27284,7 @@
         ${p.lud16?`<button class="ln-addr" id="prof-ln" title="send a zap"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>${enc(p.lud16)}</button>`:''}
         ${isXmrAddr(xmrOf(p))?`<button class="ln-addr xmr" id="prof-xmr" title="tip Monero (XMR)">ɱ ${enc(xmrOf(p).slice(0,10))}…${enc(xmrOf(p).slice(-6))}</button>`:''}
         ${isBchAddr(bchOf(p))?`<button class="ln-addr bch" id="prof-bch" title="tip Bitcoin Cash (BCH)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-coin"></use></svg>${enc(bchOf(p).slice(0,14))}…${enc(bchOf(p).slice(-6))}</button>`:''}
-        <div class="prof-joined" id="prof-joined" hidden><svg class="ic" aria-hidden="true"><use href="#i-clock"></use></svg><span>Joined Nostr</span><b></b></div>
+        <div class="prof-joined" id="prof-joined" hidden title="Based on available relay history. Your actual join date may be earlier. This date is calculated automatically and cannot be changed in profile settings."><svg class="ic" aria-hidden="true"><use href="#i-clock"></use></svg><span>Earliest activity found</span><b></b></div>
         <div class="about">${linkify(p.about||'')}</div>
         <div id="prof-music">${_profileMusicHtml(p)}</div>
         <div class="follow-stats"><button class="statbtn" id="show-posts"><b>·</b> Posts</button><button class="statbtn" id="show-following"><b>·</b> Following</button><button class="statbtn" id="show-followers"><b>·</b> Followers</button></div>

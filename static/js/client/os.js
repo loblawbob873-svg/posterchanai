@@ -3579,7 +3579,21 @@
        * without this the desktop would stay entitled to sit above every application from the moment
        * one utility window was opened until it was closed. The compositor's own answer settles it,
        * and this pass runs on every window event. */
-      const focused = list.find(x => x && x.focused && Number(x.id) !== shellId);
+      /* FOREIGN MEANS SOMEBODY ELSE'S APPLICATION, NOT ANY WINDOW THAT IS NOT THIS SURFACE.
+       *
+       * This counted every focused window with another id -- which includes OUR OWN popped-out
+       * windows and the other monitor's shell surface. So with a popped-out window focused, this
+       * renderer reported that a foreign application held the keyboard, the desktop was sunk below
+       * applications, and a window drawn INSIDE it could never come forward: reported as "running
+       * Global then clicking on System Settings causes the windows to conflict, System settings
+       * never gets focus". System Settings is one of those in-page frames.
+       *
+       * A PosterChan window is ours by app id -- the same test `taskbarRows` and `sinkShellSurfaces`
+       * use, and the same one that keeps a desktop surface from being adopted as a task. Somebody
+       * else's window still sinks the desktop, which is the rule this exists for. */
+      const OURS = /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i;
+      const focused = list.find(x => x && x.focused && Number(x.id) !== shellId
+                                  && !OURS.test(String(x.app || '')));
       const foreign = !!focused;
       if(foreign !== _foreignFocused){ _foreignFocused = foreign; _publishShellFront(); }
     }

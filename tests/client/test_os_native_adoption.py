@@ -21,10 +21,15 @@ def test_every_shell_lookup_accepts_electron_44_wayland_app_id_case():
     # (a full-output window containing the very frame being raised) and every popped-out PosterChan
     # window, which has no HTML frame left to bring it back with.
     #
-    # THE COUNT IS A PROXY AND THE PROPERTY IS BELOW. It has now been bumped four times by
+    # …and the FOREIGN-FOCUS test, which decides whether the desktop may sit above applications.
+    # Counting our own popped-out windows as foreign there sank the desktop while one was focused,
+    # so a window drawn INSIDE it could never come forward ("running Global then clicking on System
+    # Settings ... System settings never gets focus").
+    #
+    # THE COUNT IS A PROXY AND THE PROPERTY IS BELOW. It has now been bumped five times by
     # legitimate new call sites; what actually matters is that no site spells the lookup any other
     # way, which the next assertion checks directly.
-    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 7
+    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 8
     # And no site spells it any other way: a lookup that misses `place.poster.desktop` adopts the
     # shell as a recursive black native window, which is the failure this guard exists for.
     assert "posterchan(?:-desktop)?" not in OS.replace(

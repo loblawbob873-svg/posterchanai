@@ -285,7 +285,11 @@ def test_the_guard_runs_on_the_pass_that_sees_windows_nobody_here_hosts():
     bug does not happen in. `adoptAll` is the pass that runs whether anything is hosted or not."""
     src = open(os.path.join(ROOT, "static", "js", "client", "os.js"), encoding="utf-8").read()
     guard = src[src.index("async function _guardTaskbar("):src.index("/* Whatever the compositor has")]
-    adopt = src[src.index("async function adoptAll(){"):src.index("async function adoptAll(){") + 2500]
+    # To the END of the function, not a fixed 2500 characters: a slice measured in bytes stops
+    # reaching the call it is looking for the moment anything above it grows, and then reports
+    # "defined and never called" about code that is still there.
+    _a = src.index("async function adoptAll(){")
+    adopt = src[_a:src.index("\n  async function ", _a + 10)]
     assert "_guardTaskbar(list, shellId)" in adopt, "the guard is defined and never called"
     assert "NAT().taskbarPlan(" in guard, "the decision is never consulted"
     assert "pcWM.place(" in guard, "a plan nothing performs"

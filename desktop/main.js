@@ -2148,11 +2148,21 @@ function snapPopupToWorkArea(want, row, kind){
     if(!_BAR_FLYOUTS.has(String(kind || ''))) return want;
     const rect = row && row.rect;
     if(!rect || !(Number(rect.height) > 0)) return want;
-    /* The area measured for the output this window actually landed on. Keyed by the output's
-     * origin, with a width match as the fallback for a single-output machine whose surface has
-     * moved. */
-    const area = _workAreas.get(String(rect.x) + ',' + String(rect.y))
-              || [..._workAreas.values()].find(a => Number(a.w) === Number(rect.width));
+    /* THE AREA THAT CONTAINS THIS FLYOUT, found by asking which one it lands in.
+     *
+     * A first version keyed the lookup on the popup's OWN rect, which is never an output origin --
+     * measured, the menu sat at (10,1072) and the areas are keyed (0,0) and (3840,0), so it matched
+     * nothing and every flyout was returned unmoved. `workAreaFor` in wm.js is no help either: it
+     * looks for an area CONTAINED IN the rectangle it is given, which is the right question for an
+     * output and the wrong one for a 975px menu.
+     *
+     * The reserved band is part of the output even though it is not part of the area, so it is
+     * added back on the vertical test -- a flyout asked for low enough to overlap the taskbar must
+     * still find the area it belongs to, and that is exactly the case this exists to correct. */
+    const px = Number(want.x) || 0, py = Number(want.y) || 0;
+    const area = [..._workAreas.values()].find(a =>
+      px >= a.x && px < a.x + a.w
+      && py >= a.y && py < a.y + a.h + (Number(a.reserve) || 0));
     if(!area || !(area.reserve > 0)) return want;
     const h = Number(want.h) || 0;
     if(!(h > 0) || h > area.h) return want;       // taller than the area: nothing sensible to do

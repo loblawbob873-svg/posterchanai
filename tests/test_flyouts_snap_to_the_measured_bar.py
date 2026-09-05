@@ -41,10 +41,17 @@ def run(script):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-# The real numbers off the desk: a 3840x2560 output whose taskbar measured 60px.
+# The real numbers off the desk: two 3840x2560 outputs whose taskbars measured 60px.
+#
+# `row.rect` IS THE POPUP'S OWN RECTANGLE, because that is what `wm().windows()` returns for it --
+# a 975x1150 menu at (10,1072), not the output. A first version of this fixture used an
+# output-shaped rect, which happened to match the lookup the code was doing and so passed against a
+# version that moved nothing on the real machine. The fixture has to be the shape the caller
+# actually passes or the test agrees with the bug.
 SETUP = """
 _workAreas.set('0,0', {x:0, y:0, w:3840, h:2500, reserve:60});
-const row = {rect:{x:0, y:0, width:3840, height:2560}};
+_workAreas.set('3840,0', {x:3840, y:0, w:3840, h:2500, reserve:60});
+const row = {rect:{x:10, y:1072, width:975, height:1150}};
 const out = (o) => console.log(JSON.stringify(o));
 """
 
@@ -67,6 +74,14 @@ class TestAFlyoutSitsOnTheBar(unittest.TestCase):
         for kind in ("start", "noti", "net", "tray"):
             got = self._y(f"out(snapPopupToWorkArea({{x:0, y:8, w:400, h:900}}, row, '{kind}'));")
             self.assertEqual(got["y"] + got["h"], 2492, f"{kind} was left off the bar: {got}")
+
+    def test_a_flyout_on_the_second_monitor_uses_that_monitor_s_bar(self):
+        """Each output publishes its own area; picking the wrong one moves the menu to the other
+        screen's bar."""
+        got = self._y("out(snapPopupToWorkArea({x:3850, y:1072, w:975, h:1150}, "
+                      "{rect:{x:3850, y:1072, width:975, height:1150}}, 'start'));")
+        self.assertEqual(got["y"] + got["h"], 2492, got)
+        self.assertEqual(got["x"], 3850, "the flyout was moved horizontally")
 
     def test_one_that_already_sits_correctly_is_unchanged(self):
         got = self._y("out(snapPopupToWorkArea({x:0, y:1342, w:975, h:1150}, row, 'start'));")

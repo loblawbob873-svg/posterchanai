@@ -235,7 +235,32 @@
   function placeReactionPicker(anchor,picker){
     /* The message list scrolls and clips its descendants. Portal the picker to the viewport, then
        flip it above a bottom-edge trigger (the common last-message case) and clamp both axes. */
-    document.body.appendChild(picker);const at=reactionPickerPosition(anchor,picker);picker.style.setProperty('position','fixed','important');picker.style.setProperty('inset','auto','important');picker.style.setProperty('left',at.left+'px','important');picker.style.setProperty('top',at.top+'px','important');
+    document.body.appendChild(picker);
+    const at=reactionPickerPosition(anchor,picker);
+    /* RECT PIXELS IN, STYLE PIXELS OUT -- and they are not the same pixel under `body{zoom}`.
+     *
+     * `reactionPickerPosition` works in `getBoundingClientRect()` space, which IS scaled by the
+     * page zoom; `style.left` on a `position:fixed` child of that zoomed body is NOT -- it is
+     * multiplied by the zoom on the way to the screen. So at a 1.25 display scale the picker was
+     * placed 25% further right and further down than it was told, which for a control anchored
+     * near the right edge of a message row puts it off the screen entirely. Reported as "emoji
+     * reaction in concord does nothing": the button worked, the picker opened, and nobody could
+     * see it. Same mistake as the taskbar flyouts and the desktop's own `openPop` before them.
+     *
+     * The ratio is measured off the anchor rather than read from a global: this file has no zf(),
+     * and the anchor is an element inside the same zoomed body, so its own rect against its layout
+     * width is exactly the factor. An anchor with no layout width leaves it at 1, which is what
+     * every un-zoomed page has always done. */
+    let k=1;
+    try{
+      const ar=anchor.getBoundingClientRect();
+      if(ar.width>0&&anchor.offsetWidth>0)k=ar.width/anchor.offsetWidth;
+      if(!(k>0)||!isFinite(k))k=1;
+    }catch(_){ k=1; }
+    picker.style.setProperty('position','fixed','important');
+    picker.style.setProperty('inset','auto','important');
+    picker.style.setProperty('left',(at.left/k)+'px','important');
+    picker.style.setProperty('top',(at.top/k)+'px','important');
   }
   function normalizeIcon(raw){
     const v=String(raw||'').trim(); if(!v)return '';
