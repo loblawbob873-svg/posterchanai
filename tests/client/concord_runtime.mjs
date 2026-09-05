@@ -6,6 +6,10 @@ const data = new Map();
 globalThis.localStorage = {
   getItem: key => data.has(key) ? data.get(key) : null,
   setItem: (key, value) => data.set(key, String(value)),
+  /* The real API has this and the client uses it -- clearing an emptied left-communities ledger
+     goes through it. Without the stub the membership sync died with "removeItem is not a function"
+     and the failure surfaced as an unrelated assertion two steps later. */
+  removeItem: key => { data.delete(key); },
 };
 
 const makeClassList = () => ({added:[],removed:[],values:new Set(),add(...x){this.added.push(...x);x.forEach(v=>this.values.add(v));},remove(...x){this.removed.push(...x);x.forEach(v=>this.values.delete(v));},contains(x){return this.values.has(x);},toggle(x,on){const yes=on===undefined?!this.values.has(x):!!on;yes?this.values.add(x):this.values.delete(x);return yes;}});

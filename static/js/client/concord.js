@@ -1311,10 +1311,43 @@
        * and is therefore not in `dead`; re-seeding from the stale tombstone beside it would refuse
        * the join the person had just made. */
       for(const id of dead){
+        /* A TOMBSTONE ALONE IS NOT ENOUGH TO BLACKLIST A COMMUNITY FOR EVER.
+         *
+         * `dead` counts a tombstone with NO membership entry as winning -- `added_at` defaults to 0
+         * and every timestamp beats it -- which is right for hiding the room on this pass and very
+         * wrong as a permanent local record: `wasLocallyLeft` then refuses that community on every
+         * future pass, including after a fresh join. Reported the same day this shipped as "my
+         * concord community for posterchan is no longer appearing in Concord".
+         *
+         * So the ledger is only taught by a tombstone that beat a REAL entry -- the shape a genuine
+         * leave has, since leaving something you joined leaves both behind. That is exactly the
+         * case this was written for ("it brought me back to Soapbox which I left many times") and
+         * it no longer costs a community that has a tombstone and nothing to compare it against. */
+        if(!entries.has(id)) continue;
         const ref=tombRefs.get(id)||{},entry=entries.get(id)||{},
           url=inviteRefUrl(ref.invite_ref||entry.invite_ref||''),
           naddr=String(ref.naddr||'')||(url?String((inviteParts(url)||{}).naddr||''):'');
         noteLeftFromVault(viewer.pubkey,{communityId:id,naddr,url},Number(tombs.get(id))||0);
+      }
+      /* AND IT HEALS, BUT ONLY AGAINST A TOMBSTONE IT CAN SEE.
+       *
+       * A community whose entry BEATS its tombstone is one this account is in, so a local record
+       * saying otherwise is stale -- from a re-join on another device, or from the over-eager
+       * seeding this used to do. Clearing it brings a wrongly-hidden community back with nobody
+       * having to find a setting.
+       *
+       * `tombs.has(id)` is what makes that safe, and it is not a formality: a relay that has not
+       * yet received the tombstone answers with the old JOIN and nothing else, and healing on that
+       * would undo a leave the person really made -- the empty-read wipe this codebase has paid for
+       * more than once. No tombstone is "I cannot see one", never "there is none". The runtime
+       * scenario in tests/client/concord_runtime.mjs drives exactly that stale relay. */
+      for(const [id, entry] of entries){
+        if(dead.has(id) || !tombs.has(id)) continue;
+        const ref=tombRefs.get(id)||{},
+          url=inviteRefUrl(ref.invite_ref||(entry&&entry.invite_ref)||''),
+          naddr=String(ref.naddr||'')||(url?String((inviteParts(url)||{}).naddr||''):'');
+        if(wasLocallyLeft(viewer.pubkey,{communityId:id,naddr,url}))
+          forgetLeftCommunity(viewer.pubkey,{communityId:id,naddr,url});
       }
       const activeId=state.community==null?'':roomIdentity(rooms[state.community]),kept=rooms.filter(room=>!dead.has(room.communityId)&&!wasLocallyLeft(viewer.pubkey,room));
       if(kept.length!==rooms.length){

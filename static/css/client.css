@@ -2437,6 +2437,14 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
    icon space". 96px with a 56px glyph is the proportion an OS icon has — the art fills its box, and
    a row holds more files. */
 .file-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;height:96px;gap:2px;font-size:56px;background:none}
+/* A TILE THAT IS SHOWING THE PICTURE DOES NOT ALSO NEED THE GLYPH FOR IT. `data-thumb-host` is set
+   by hostfiles.js only when it has a real address for a small image on this computer, so the glyph
+   and its extension label are replaced rather than covered -- a 📎 behind a photo is what "0
+   thumbnails" looked like from the other side. Nothing here runs on the web or in the APK: the
+   attribute needs `pcHost.fileUrl`, which only the desktop shell has. */
+.file-icon[data-thumb-host]{background-size:cover;background-position:center;
+  background-repeat:no-repeat;border-radius:8px}
+.file-icon[data-thumb-host] > *{display:none}
 .fx-file-ic{width:58px;height:58px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round;
   color:var(--cyan,#5ff);filter:drop-shadow(0 0 8px rgba(0,240,255,.22));pointer-events:none}
 .fx-file-image{color:#72e6ff}.fx-file-video{color:#c592ff}.fx-file-audio{color:#ff70c8}

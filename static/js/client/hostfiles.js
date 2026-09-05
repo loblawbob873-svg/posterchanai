@@ -185,6 +185,29 @@
     const details = u.view === 'details';
     if(!entries.length) return '<div class="empty">This folder is empty.</div>';
 
+    /* A PICTURE ON THIS COMPUTER CAN SHOW ITSELF.
+     *
+     * The drive's tiles have had thumbnails for a long time; This Computer never did -- reported as
+     * "0 thumbnails loaded in File Manager", which on this pane was not a failure but an absence:
+     * there was no thumbnail code here at all.
+     *
+     * It costs nothing now. `pcHost.fileUrl` addresses a local file over the shell's own scheme
+     * (main.js `serveHostFile`), so the tile just points an <img> at it -- no read through the IPC
+     * bridge, no bytes in this renderer's heap, and the browser decodes and scales it. Only IMAGES,
+     * and only small ones: a thumbnail is worth a decode, and a 40MB RAW file is not.
+     *
+     * Absent on the web and in the APK, where `pcHost` does not exist -- those keep the glyph they
+     * have always had, which is why this is an attribute and not a second code path. */
+    const THUMB_EXT = /^(?:png|jpe?g|jfif|gif|webp|avif|bmp|ico)$/i;
+    const THUMB_MAX = 12 * 1024 * 1024;
+    const thumbAttr = (e, ext) => {
+      try{
+        if(e.dir || e.broken || !THUMB_EXT.test(String(ext || ''))) return '';
+        if(Number(e.size) > THUMB_MAX) return '';
+        const url = window.pcHost && pcHost.fileUrl ? pcHost.fileUrl(e.path) : '';
+        return url ? ` style="background-image:url('${H(url)}')" data-thumb-host="1"` : '';
+      }catch(_){ return ''; }
+    };
     const cells = entries.map(e => {
       const ext = extOf(e);
       const sel = _sel.has(e.path);
@@ -207,7 +230,7 @@
            data-p="${H(e.path)}" data-d="${e.dir ? '1' : ''}" title="${H(e.path)}">
         <button class="selbox hf-select" type="button" aria-label="${sel ? 'Deselect' : 'Select'} ${H(e.name)}"
           aria-pressed="${sel ? 'true' : 'false'}">${sel ? '✓' : ''}</button>
-        <div class="file-icon">${ic}<span>${H(e.dir ? 'folder' : (ext || ''))}</span></div>
+        <div class="file-icon"${thumbAttr(e, ext)}>${ic}<span>${H(e.dir ? 'folder' : (ext || ''))}</span></div>
         <div class="meta"><span class="fname" title="${H(e.name)}">${H(e.name)}</span>
           <span class="fc-acts">${e.dir ? '' : H(fmt(e.size))}</span></div></div>`;
     }).join('');
