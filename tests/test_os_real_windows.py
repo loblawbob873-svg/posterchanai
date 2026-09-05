@@ -498,5 +498,11 @@ def test_opening_an_app_asks_for_a_real_window_first():
     body = body[:body.index("const existing = wins.find")]
     assert "PCOSWin.open(" in body and "PCOSWin.enabled()" in body
     assert "popOutView(" in body, "an EXTRA or doc: frame could be handed a window it cannot fill"
-    assert "if(real) return null;" in body, "a refused window must fall back to the in-page frame"
+    # A REFUSED window still falls through to the in-page frame -- that is what the `if(real)`
+    # guard is for and it has not changed. What is new is that a SUCCESSFUL one is recorded, because
+    # returning a bare null made "I opened a real toplevel" indistinguishable from "I opened
+    # nothing", and openThread reads the difference: see
+    # tests/client/test_popped_out_view_counts_as_opened.py.
+    assert "if(real){ _openedReal = true; return null; }" in body, (
+        "a refused window must fall back to the in-page frame, and a successful one must say so")
     assert "if(!direct){" in body, "a managed re-open must not be turned into a toplevel"

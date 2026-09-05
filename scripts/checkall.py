@@ -196,6 +196,10 @@ CHECKS = {
 
     # --- self-contained, but slower than the default ---------------------------------------------
     "check_os_desktop":                dict(group="ui", secs=900),
+    # Needs a running instance: it drives the REAL client (app.js + os.js together), because the
+    # desktop half lives in one and the thread half in the other and this bug is what they do to
+    # each other. The os.js unit harness stubs PC() and cannot see it.
+    "check_notification_opens_a_post": dict(group="live", secs=420),
     "check_meme_mobile":               dict(group="ui", secs=600),
     # Opens a 100-video player after its grid. Running beside five other Chromium instances can
     # delay the player repaint past the probe and report its already-rendered Back button missing.

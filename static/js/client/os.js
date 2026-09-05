@@ -1824,7 +1824,21 @@
         if(window.PCOSWin && PCOSWin.enabled() && popOutView({view, appView:view}))
           real = PCOSWin.open(view, label || view, _windowOpenHint(view) || {});
       }catch(_){ real = null; }
-      if(real) return null;
+      /* A REAL WINDOW OPENED, AND `null` CANNOT SAY SO.
+       *
+       * There is no in-page window to hand back -- the view is a separate compositor toplevel now --
+       * so this returns null, which every caller reads as "nothing was opened". `openThread` then
+       * falls out of its desktop branch and renders the thread into the BASE VIEW, replacing the
+       * desktop behind it: reported as "I clicked on a notification and all the apps dissappear,
+       * then, the post window is unscrollable". Both halves are this one line -- the desktop is
+       * gone because the page navigated, and the post is unscrollable because it was painted into
+       * a page the desktop was still styling rather than into the window that did open.
+       *
+       * Invisible on the web, where PCOSWin is never enabled and this branch cannot run, which is
+       * why every browser-driven check passes. The flag is read and cleared by `openDoc`, the one
+       * caller whose contract is "did you open something" rather than "give me the frame"; the
+       * internal `openApp` callers still want the in-page object and still get null. */
+      if(real){ _openedReal = true; return null; }
     }
     const existing = wins.find(w => sameAppWindow(w.view, view));
     if(existing){
@@ -2098,6 +2112,9 @@
    * entirely, which would put the old results back on top of the new ones. `scrollTop` is cleared
    * for the same reason — `restoreScroll` spends a second trying to put a fresh result list back at
    * the previous query's offset. */
+  /* Set by openApp when it opened a REAL compositor window instead of an in-page frame -- see the
+   * note there. Module-scoped and consumed immediately below, never read anywhere else. */
+  let _openedReal = false;
   function openDoc(key, label, icon, render, noFeed, rerun){
     const view = 'doc:' + key;
     const existing = wins.find(w => w.view === view);
@@ -2112,7 +2129,15 @@
       focusWin(existing);
       return existing;
     }
-    return openApp(view, label, icon, render, noFeed);
+    _openedReal = false;
+    const made = openApp(view, label, icon, render, noFeed);
+    if(made) return made;
+    /* Truthy, so `if(PCOS.openDoc(...)) return;` stops -- there IS a window, it simply is not one
+     * this page owns. Deliberately a plain marker and not a fake frame: a caller that goes on to
+     * use it as a window would be reaching into a different renderer, and should fail visibly
+     * rather than paint into nothing. */
+    if(_openedReal){ _openedReal = false; return { poppedOut: true, view: view }; }
+    return null;
   }
 
   function openSystemSettings(){
