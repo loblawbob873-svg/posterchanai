@@ -149,6 +149,8 @@ import json
 m = json.load(open('manifest.json'))
 m.pop('browser_specific_settings', None)          # Firefox-only; Chrome warns on it
 m['background'] = {'service_worker': 'background-chrome.js'}
+m['permissions'] = [p for p in m['permissions'] if p not in ('webRequest', 'webRequestBlocking')]
+m['permissions'].append('declarativeNetRequestWithHostAccess')
 m['minimum_chrome_version'] = '111'                # "world": "MAIN" landed in 111
 # NIP-07 goes into the PAGE'S WORLD DIRECTLY on Chrome. Firefox has to smuggle inject.js in as an
 # inline <script> built by content.js, because a `src` to the extension leaks a per-install UUID —

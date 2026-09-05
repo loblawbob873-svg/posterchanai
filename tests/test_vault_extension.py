@@ -96,7 +96,7 @@ class ExtensionCore(unittest.TestCase):
         with open(os.path.join(REPO, "extension", "background.js"), encoding="utf-8") as _fh:
             self.assertIn("alarms.", _fh.read(), "the alarms permission is requested but never used")
         self.assertEqual(sorted(man.get("permissions", [])),
-                         ["activeTab", "alarms", "bookmarks", "clipboardWrite", "scripting", "storage"])
+                         ["activeTab", "alarms", "bookmarks", "clipboardWrite", "scripting", "storage", "webRequest", "webRequestBlocking"])
         src = ""
         for f in ("background.js", "popup.js", "content.js", "bookmarks.js", "shot.js", "drive.js"):
             with open(os.path.join(REPO, "extension", f), encoding="utf-8") as fh:
@@ -111,11 +111,13 @@ class ExtensionCore(unittest.TestCase):
         # hide sticky elements and scroll it. Earned by a call, exactly like the others.
         self.assertIn("B.scripting.executeScript", src,
                       "the scripting permission is requested but never used")
+        # Firefox needs these permissions to identify only its own relay WebSockets.
+        self.assertIn("B.webRequest.onBeforeSendHeaders.addListener", src)
         # And NOT `tabs`, which would hand over every tab's URL and title. captureVisibleTab runs on
         # the host permission this add-on already has, and tabs.get/query return the id, active flag
         # and windowId — everything the capture needs — without it.
-        # Still no history, no cookies, no downloads, no webRequest, no blanket tabs.
-        for never in ("history", "cookies", "downloads", "webRequest", "tabs"):
+        # Still no history, no cookies, no downloads, no blanket tabs.
+        for never in ("history", "cookies", "downloads", "tabs"):
             self.assertNotIn(never, man.get("permissions", []), f"{never} is not needed")
 
 

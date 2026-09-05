@@ -26,6 +26,35 @@ const B = (typeof browser !== 'undefined') ? browser : chrome;
 const V = (typeof PCVaultCore !== 'undefined') ? PCVaultCore : self.PCVaultCore;
 const NT = () => (typeof NostrTools !== 'undefined' ? NostrTools : self.NostrTools);
 
+/* Identify only this extension's relay sockets. A browser WebSocket cannot set its own
+ * User-Agent; without this the PosterChan-only relay rejects Firefox's generic UA.
+ * Never tag page requests or another extension's traffic as PosterChan. */
+function installRelayIdentity(){
+  if(!B.runtime.getURL || !B.runtime.getManifest) return Promise.resolve();
+  const own=B.runtime.getURL('');
+  const marker='PosterChan/'+B.runtime.getManifest().version;
+  if(own.startsWith('moz-extension://') && B.webRequest){
+    B.webRequest.onBeforeSendHeaders.addListener(details=>{
+      if(!String(details.originUrl||'').startsWith(own)) return {};
+      const headers=details.requestHeaders||[];
+      const ua=headers.find(h=>h.name.toLowerCase()==='user-agent');
+      if(ua) ua.value=(ua.value||'')+' '+marker;
+      else headers.push({name:'User-Agent',value:marker});
+      return {requestHeaders:headers};
+    },{urls:['<all_urls>'],types:['websocket']},['blocking','requestHeaders']);
+    return Promise.resolve();
+  }
+  if(B.declarativeNetRequest){
+    return B.declarativeNetRequest.updateSessionRules({removeRuleIds:[148],addRules:[{
+      id:148,priority:1,
+      condition:{initiatorDomains:[B.runtime.id],resourceTypes:['websocket']},
+      action:{type:'modifyHeaders',requestHeaders:[{header:'user-agent',operation:'set',value:marker}]}
+    }]});
+  }
+  return Promise.resolve();
+}
+const relayIdentityReady=installRelayIdentity();
+
 const KIND = 30078;
 const D_ITEM = 'pcai:pw:';
 const D_FOLDER = 'pcai:pwfolder:';
@@ -1425,7 +1454,7 @@ async function code(raw){
  * against an EMPTY map, so nothing deduped and every bookmark was republished under a fresh sync id,
  * which every other browser dutifully created as new. "Keeps getting unchecked" and "keeps bringing
  * back dupe folders" are the same bug, twice. */
-const ready = loadCfg().then(async () => { if(cfg) connect(); await initBookmarks(); });
+const ready = loadCfg().then(async () => { await relayIdentityReady; if(cfg) connect(); await initBookmarks(); });
 // A phone suspends the whole extension; re-check the socket whenever anything talks to us.
 setInterval(() => { if(cfg && !_anyOpen()) connect(); }, 30000);
 
