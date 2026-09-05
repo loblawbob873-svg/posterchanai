@@ -5327,34 +5327,53 @@
       setTimeout(_go, 4000);
       _forgetPhonebook().catch(() => {}).then(_go); } }
 
-  // Settings → Account → "Delete all my notes": NIP-09 delete EVERY kind-1 (posts AND replies) the user
-  // authored — and ONLY kind-1 (profile, follows, reactions, reposts, DMs, streams are untouched). Pages back
-  // through the user's kind-1 history via `until`, then asks the relay to delete them in batches (one kind-5
+  // Settings → Account → "Delete all my posts": delete posts/replies, reactions and reposts
+  // authored by this account (kinds 1, 6, 7 and 16). Pages back through its history via `until`,
+  // then asks the relay to delete the events in batches (one kind-5
   // carrying up to _DN_BATCH `e` tags — NIP-09 allows many). Best-effort broadcast to the wider write relays so
   // copies elsewhere go too; local removal is immediate so the feed reflects it without a reload.
   const _DN_BATCH = 100;
+  const _DN_KINDS = [1, 6, 7, 16];
   async function _deleteAllMyNotes(){
     if(GUEST || !ME){ _guestPrompt&&_guestPrompt(); return; }
+    const author=ME.pubkey;
     const st=document.getElementById('set-del-notes-status'); const setS=(m)=>{ if(st) st.textContent=m; };
-    if(!await uiConfirm('Delete ALL your posts and replies? This asks relays to remove every note you’ve written (NIP-09) and CANNOT be undone.\n\nYour profile, follows, reactions and DMs are NOT affected.')) return;
-    setS('Finding your notes…');
-    const ids=new Set(); let until=Math.floor(Date.now()/1000)+1;
-    for(let round=0; round<80; round++){   // cap ~16k notes so a runaway can't loop forever
+    if(!await uiConfirm('Delete ALL your posts, replies, likes/reactions and reposts? This asks relays to remove this activity and CANNOT be undone.\n\nYour profile, follows and DMs are NOT affected.')) return;
+    setS('Finding your posts, reactions and reposts…');
+    const ids=new Map(); let until=Math.floor(Date.now()/1000)+1, limit=200, incomplete=false;
+    while(true){
+      if(!ME || ME.pubkey!==author){ setS('Account changed — deletion stopped.'); return; }
       let batch=[];
-      try{ batch=await Relay.query([{ authors:[ME.pubkey], kinds:[1], until, limit:200 }]); }catch(_){ break; }
+      try{ batch=await Relay.query([{ authors:[author], kinds:_DN_KINDS, until, limit }]); }
+      catch(_){ incomplete=true; break; }
+      if(batch && batch.complete===false) incomplete=true;
       if(!batch || !batch.length) break;
       let oldest=until;
-      batch.forEach(e=>{ ids.add(e.id); if(e.created_at && e.created_at<oldest) oldest=e.created_at; });
-      setS(`Found ${ids.size} notes…`);
-      if(batch.length<200 || oldest>=until) break;   // last page / no forward progress
-      until=oldest;   // next page ends just before the oldest note this round
+      batch.forEach(e=>{
+        if(e.pubkey!==author || !_DN_KINDS.includes(e.kind)) return;
+        ids.set(e.id,e.kind);
+        if(Number.isInteger(e.created_at) && e.created_at<oldest) oldest=e.created_at;
+      });
+      setS(`Found ${ids.size} events…`);
+      if(oldest<until){ until=oldest; limit=200; continue; }
+      // NIP-01's until is inclusive. Fetch the boundary second again with a larger
+      // limit when it fills a page, so a burst of reactions cannot hide older activity.
+      if(batch.length>=limit){
+        if(limit<5000){ limit=Math.min(limit*2,5000); continue; }
+        incomplete=true; break;
+      }
+      if(until<=0) break;
+      until--; limit=200;
     }
-    if(!ids.size){ setS('No notes found to delete.'); return; }
-    if(!await uiConfirm(`Found ${ids.size} note(s). Permanently request their deletion now?`)){ setS(''); return; }
-    const all=[...ids]; let done=0, failed=0;
+    const partial=incomplete?' The relay history was incomplete; more activity may remain.':'';
+    if(!ids.size){ setS('No posts, reactions or reposts found to delete.'+partial); return; }
+    if(!await uiConfirm(`Found ${ids.size} post/reply, reaction or repost event(s). Permanently request their deletion now?${partial}`)){ setS(''); return; }
+    const all=[...ids.keys()]; let done=0, failed=0;
     for(let i=0; i<all.length; i+=_DN_BATCH){
       const chunk=all.slice(i, i+_DN_BATCH);
-      const tags=chunk.map(id=>['e', id]); tags.push(['k','1']);   // NIP-09: k = kind being deleted
+      if(!ME || ME.pubkey!==author){ setS('Account changed — deletion stopped.'); return; }
+      const tags=chunk.map(id=>['e', id]);
+      for(const kind of new Set(chunk.map(id=>ids.get(id)))) tags.push(['k',String(kind)]);
       try{
         const r=await publish(5, '', tags, {quiet:true});
         if(r && r.ok){ done+=chunk.length;
@@ -5362,10 +5381,10 @@
           chunk.forEach(id=>{ try{ Store.removeEvent(id); }catch(_){} });
         } else failed+=chunk.length;
       }catch(_){ failed+=chunk.length; }
-      setS(`Deleted ${done}/${ids.size}…`);
+      setS(`Requested deletion of ${done}/${ids.size}…`);
     }
     try{ invalidateCounts(); }catch(_){}
-    setS(`Done — requested deletion of ${done} note(s)${failed?`, ${failed} failed`:''}. Other relays may take a moment to drop them.`);
+    setS(`Done — requested deletion of ${done} event(s)${failed?`, ${failed} failed`:''}. Other relays may retain copies.${partial}`);
     if(VIEW==='home' || VIEW==='global' || VIEW==='profile'){ try{ switchView(VIEW); }catch(_){} }
   }
   // The wider relays to ALSO send a note deletion to (beyond our own local relay) — the common public relays a
@@ -31261,7 +31280,7 @@
             <button class="btn btn-ghost small hidden" id="set-google-link"><svg class="ic b-ic" aria-hidden="true"><use href="#i-key"></use></svg>Sign in with Google on other devices</button>
             <button class="btn btn-ghost small" id="set-sync-posts">⤓ Sync my data to this relay</button>
             <button class="btn btn-ghost small" id="set-logout"><svg class="ic b-ic" aria-hidden="true"><use href="#i-logout"></use></svg>Logout</button>
-            <button class="btn btn-ghost small" id="set-del-notes" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete all my notes</button>
+            <button class="btn btn-ghost small" id="set-del-notes" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete all my posts</button>
             <button class="btn btn-ghost small" id="set-del-account" style="color:var(--danger)"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete my account</button>
           </div>
           <div class="muted small" id="set-sync-status">Pulls your posts back from other relays — and your notes, passwords, calendar and contacts from this server's private backup, if it has one.</div>

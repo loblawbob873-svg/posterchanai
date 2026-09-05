@@ -428,6 +428,15 @@ class RelayStore:
             expiration = None
         if expiration is not None and expiration <= int(time.time()):
             return False
+        # A sync/backfill must not resurrect an event its author already deleted. The
+        # retained kind-5 event and its indexed e-tag are the deletion record, including
+        # when the deletion arrived before the original. Other authors cannot erase it.
+        # Giftwraps use Concord's own deletion rules; deletion requests cannot be deleted.
+        if kind not in (5, 1059) and conn.execute(
+                "SELECT 1 FROM event_tags t JOIN events d ON d.id=t.event_id "
+                "WHERE t.tag='e' AND t.value=? AND d.kind=5 AND d.pubkey=? LIMIT 1",
+                (eid, pubkey)).fetchone():
+            return False
         if True:
             # Replaceable-event handling: drop older versions so only the newest survives.
             if _REPLACEABLE(kind):
@@ -537,7 +546,7 @@ class RelayStore:
                         # Author-gating kind-5 would therefore let any member erase the room.
                         # Concord deletions travel inside a giftwrap and are folded by clients.
                         r = conn.execute(
-                            "DELETE FROM events WHERE id=? AND pubkey=? AND kind<>1059 RETURNING id",
+                            "DELETE FROM events WHERE id=? AND pubkey=? AND kind NOT IN (5,1059) RETURNING id",
                             (t[1], pubkey)).fetchone()
                         if r:
                             conn.execute("DELETE FROM event_tags WHERE event_id=?", (t[1],))
