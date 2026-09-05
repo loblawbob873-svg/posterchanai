@@ -28,6 +28,28 @@
 (function(){
   'use strict';
 
+  /* A POPUP WINDOW MUST NEVER SHOW THE ORDINARY CLIENT, NOT EVEN FOR A MOMENT.
+   *
+   * A start menu, the notification centre, the tray flyout and the composer are each their own
+   * compositor window running this same bundle, so each one BOOTS THE WHOLE CLIENT. What makes the
+   * window a menu instead of a client is `os-popup-body`, added by `popupHost()` — which runs from
+   * `restore()`, which app.js calls from boot AFTER `_cfgCache(CFG)`. That is a network fetch. So
+   * on a node that is slow or unreachable the sidebar, the timeline and the search box are painted,
+   * full size, inside a 780x920 menu, for as long as the fetch takes — reported as "start menu and
+   * other taskbar widgets looks like it's loading a classic webui because it can't connect to the
+   * relay", which is exactly what it is. Nothing throws and nothing logs; the menu arrives later
+   * and replaces it.
+   *
+   * The window's identity is in its URL and needs nothing from the network, so it is decided HERE,
+   * synchronously at parse time, before a single view has rendered. `<html>` and not `<body>`
+   * because this file may be evaluated before the body exists. The class only ever HIDES, and
+   * `popupHost()` still does its own work, so this cannot change what a popup finally draws — it
+   * only removes the window in which the wrong thing is visible. */
+  try{
+    if(new URLSearchParams(window.location.search).get('pcpopup'))
+      document.documentElement.classList.add('pc-popup-boot');
+  }catch(_){ }
+
   const MIN_WIDTH = 1024;          // below this the desktop is not offered at all
   const KEY = 'osMode';            // ClientSettings: remembered across sessions
   const FX_KEY = 'osCompositing';  // full, or off/low-power; presentation only
@@ -4045,6 +4067,24 @@
   }
   const vwL = () => window.innerWidth / zf();
   const vhL = () => window.innerHeight / zf();
+  /* A POPUP WINDOW'S GEOMETRY IS COMPOSITOR PIXELS. EVERY SIZE IN THIS FILE IS LAYOUT PIXELS.
+   *
+   * `vwL`/`vhL` divide by `zf()` because that is what the stylesheet's 100vw/100vh mean inside a
+   * zoomed body -- so a menu capped at `min(780px, 100vw-20px)` is 780 LAYOUT px. But
+   * `getBoundingClientRect()` IS scaled by zoom, and `pcPopup.open/toggle` hands its numbers
+   * straight to the compositor. Every opener below mixed the two in one expression --
+   * `r.top - h - 8` subtracts a layout height from a scaled coordinate -- and asked for a window
+   * 1/zf of the size its own content would render at.
+   *
+   * At zoom 1 the two spaces are identical, which is why this survived: it is invisible until a
+   * display scale is in force. On a 3840x2560 panel at 1.25 the start menu is asked for at 920px
+   * while its contents render 1150, and its top edge is computed 230px too low -- reported as
+   * "start menu is not attached to the taskbar, looks weird". Same arithmetic in the notification
+   * centre, the network panel and the tray flyout.
+   *
+   * So sizes are still WRITTEN in layout pixels, next to the stylesheet numbers they must match,
+   * and converted here, once, at the boundary. */
+  const popupPx = (v) => Math.round(v * zf());
   let ghost = null, layoutFor = null, layoutT = 0;
 
   /* Snap against the area windows actually live in.  Deriving this from innerHeight and the
@@ -7515,12 +7555,13 @@
        CSS popup body stretches the panel to fill it. */
     const w = Math.min(430, Math.max(300, Math.round(vwL() - 16)));
     const h = Math.min(1200, Math.max(420, Math.round(vhL() - 56)));
-    let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
+    const wD = popupPx(w), hD = popupPx(h);
+    let x = Math.max(0, window.innerWidth - wD - 8), y = 8;
     try{
       const b = $('#os-bell', bar), r = b && b.getBoundingClientRect();
-      if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
+      if(r){ x = Math.max(0, Math.round(r.right - wD)); y = Math.max(0, Math.round(r.top - hD - 8)); }
     }catch(_){ }
-    Promise.resolve(pcPopup.toggle('noti', { x, y, width: w, height: h }))
+    Promise.resolve(pcPopup.toggle('noti', { x, y, width: wD, height: hD }))
       .then(open => { notiOpen = !!open; drawBar(); })
       .catch(() => { notiOpen = false; drawBar(); });
     drawBar();
@@ -7956,10 +7997,11 @@
   function _netPopup(){
     const w = Math.min(520, Math.max(320, Math.round(vwL() - 16)));
     const h = Math.min(900, Math.max(360, Math.round(vhL() - 96)));
-    let x = Math.max(0, Math.round(vwL()) - w - 8), y = 8;
+    const wD = popupPx(w), hD = popupPx(h);
+    let x = Math.max(0, window.innerWidth - wD - 8), y = 8;
     try{
       const b = $('#os-net', bar), r = b && b.getBoundingClientRect();
-      if(r){ x = Math.max(0, Math.round(r.right - w)); y = Math.max(0, Math.round(r.top - h - 8)); }
+      if(r){ x = Math.max(0, Math.round(r.right - wD)); y = Math.max(0, Math.round(r.top - hD - 8)); }
     }catch(_){ }
     const state = netState();
     /* Only plain connection facts cross the renderer boundary. Do not pass WebSockets or relay
@@ -7969,7 +8011,7 @@
       conns: state.conns.slice(0,20).map(c => ({ url:String(c.url || '').slice(0,256), status:String(c.status || '').slice(0,32),
         open:!!c.open, idle:c.idle == null ? null : Number(c.idle), trusted:!!c.trusted }))
     }});
-    Promise.resolve(pcPopup.toggle('net', { x, y, width:w, height:h }, snapshot))
+    Promise.resolve(pcPopup.toggle('net', { x, y, width:wD, height:hD }, snapshot))
       .then(open => { netOpen=!!open; drawBar(); })
       .catch(() => { netOpen=false; drawBar(); });
     drawBar();
@@ -8132,12 +8174,13 @@
        pixels (vwL/vhL), because that is what the stylesheet's 100vw/100vh mean under body zoom. */
     const w = Math.min(780, Math.max(360, Math.round(vwL() - 20)));
     const h = Math.min(920, Math.max(320, Math.round(vhL() - 78)));
+    const wD = popupPx(w), hD = popupPx(h);
     const x = Math.max(0, Math.round((rect ? rect.left : 10)));
-    const y = Math.max(0, Math.round((rect ? rect.top : vhL()) - h - 8));
+    const y = Math.max(0, Math.round((rect ? rect.top : window.innerHeight) - hD - 8));
     /* TOGGLE, decided by the main process. `startOpen` is a paint flag here, not the decision:
        the window closes on blur, on Escape and on every choice, none of which this renderer sees
        in time. Asking it to remember made Super work every other press, unpredictably. */
-    Promise.resolve(pcPopup.toggle('start', { x, y, width: w, height: h }))
+    Promise.resolve(pcPopup.toggle('start', { x, y, width: wD, height: hD }))
       .then(open => { startOpen = !!open; drawBar(); })
       .catch(() => { startOpen = false; drawBar(); });
     drawBar();
@@ -9375,8 +9418,10 @@
     const w = Math.min(720, Math.max(420, Math.round(vwL() * 0.42)));
     const h = Math.min(760, Math.max(380, Math.round(vhL() * 0.62)));
     try{
-      pcPopup.open('compose', { x: Math.round((vwL() - w) / 2), y: Math.round((vhL() - h) / 2),
-                                width: w, height: h }, payload);
+      const wD = popupPx(w), hD = popupPx(h);
+      pcPopup.open('compose', { x: Math.round((window.innerWidth - wD) / 2),
+                                y: Math.round((window.innerHeight - hD) / 2),
+                                width: wD, height: hD }, payload);
     }catch(_){ return false; }
     return true;
   }
@@ -9553,7 +9598,14 @@
         else if(k === 'tray'){
           if(window.PCOSShell && PCOSShell.openTrayPopup) PCOSShell.openTrayPopup();
         }
-      }catch(_){ }
+      }catch(e){
+        /* A THROW HERE USED TO BE INVISIBLE AND USED TO LOOK LIKE THE CLIENT. Every branch above
+           paints into `popupHost()`, so a failure part-way leaves an empty menu — and before the
+           boot shield above, an empty menu meant the ordinary client showing through. Say which
+           popup and why: this window has no other surface to report on. */
+        try{ console.warn('[os] popup ' + popupKind() + ' failed to render', e); }catch(_){ }
+        try{ popupHost(); }catch(_){ }
+      }
       return;
     }
     /* A POPOUT IS NOT A DESKTOP, and the size check cannot tell the difference.

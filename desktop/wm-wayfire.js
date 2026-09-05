@@ -143,7 +143,58 @@ class WayfireWM{
     },wait);
     if(timer&&timer.unref)timer.unref();
   }
-  _send(method,data){return this._connect().then(s=>new Promise((resolve,reject)=>{this.pending.push({resolve,reject});s.write(wfFrame({method,data:data||{}}));}));}
+  /* A DEAD SOCKET IS HANDED OUT UNTIL `close` FIRES, AND EVERY WRITE TO IT THROWS.
+   *
+   * `_connect` returns `this.sock` when it is set, and that field is cleared only by the socket's
+   * `close` event. Between the peer going away and that event arriving, every request is written
+   * to a corpse: MEASURED on the real desk, `Error: EPIPE ... at wm-wayfire.js:146` with a stack
+   * ending in this write, after which nothing the shell asked of the compositor worked again --
+   * reported as "two windows on one monitor are stuck and not moveable". The re-watch added for
+   * the lost event subscription does not help here: it is armed FROM `close`, which is exactly the
+   * event that has not happened yet.
+   *
+   * So writability is checked before the request is queued, a failed write drops the socket rather
+   * than leaving it installed, and the call is retried ONCE on a fresh connection. Once, not in a
+   * loop: a compositor that is genuinely gone must surface as a failure the caller can report, not
+   * as a hot reconnect loop in the session's last log lines.
+   *
+   * The pending entry is removed on a failed write. Responses are matched by ORDER, so an entry
+   * left behind after a write that never went out would shift every later reply by one -- the
+   * geometry of one window answering for another. */
+  _dropSocket(s){
+    if(s && this.sock === s) this.sock = null;
+    try{ if(s && !s.destroyed) s.destroy(); }catch(_){ }
+    /* The watch belonged to that connection. `close` will normally say so, but a socket destroyed
+     * here may never emit one, and a shell with no window events is the failure this class exists
+     * to avoid. Re-arming twice is a no-op -- `_watchLost` returns unless a watch was live. */
+    try{ this._watchLost(); }catch(_){ }
+  }
+  _send(method,data,retried){
+    return this._connect().then(s=>new Promise((resolve,reject)=>{
+      /* `unsent` marks the ONE class of failure it is safe to repeat: the request provably never
+       * left this process. A compositor that ANSWERED with an error must not be asked twice --
+       * `subscribe()` negotiates its event list by sending a watch and reading the refusal, so a
+       * blanket retry doubles every legitimate error and the negotiation walks the list at half
+       * speed (caught by test_wayfire_wm's event-negotiation count). And a request that DID go out
+       * before the socket closed is not repeatable either: nothing here can tell whether the
+       * compositor applied it, and re-sending a geometry or a close is not a free action. */
+      const unsent=(e)=>{ try{ e.pcUnsent=true; }catch(_){ } return e; };
+      if(!s || s.destroyed || s.writableEnded || s.writable === false){
+        this._dropSocket(s); reject(unsent(new Error('Wayfire IPC socket is gone'))); return;
+      }
+      const entry={resolve,reject};
+      const forget=()=>{const i=this.pending.indexOf(entry);if(i>=0)this.pending.splice(i,1);};
+      this.pending.push(entry);
+      try{
+        s.write(wfFrame({method,data:data||{}}),err=>{
+          if(err){ forget(); this._dropSocket(s); reject(unsent(err)); }
+        });
+      }catch(e){ forget(); this._dropSocket(s); reject(unsent(e)); }
+    })).catch(e=>{
+      if(retried || !(e && e.pcUnsent)) throw e;
+      return this._send(method,data,true);
+    });
+  }
   _event(msg){const event=String(msg.event||'');let name=event.startsWith('view-')?'window':event.startsWith('output-')?'output':event.includes('workspace')?'workspace':event==='posterchan-tick'?'tick':'';if(!name)return;if(name==='output')this._forgetOutputs();const raw=msg.view||msg.data&&msg.data.view;const ev={change:event,payload:msg.payload||msg.data&&msg.data.payload};if(raw)ev.wayfireView=this._toGlobal(normalizeView(raw),this._origins);for(const fn of(this.listeners.get(name)||[]))try{fn(ev);}catch(_){}}
   version(){return this._send('list-methods').then(r=>({human_readable:'Wayfire IPC',methods:r&&r.methods||[]}));}
   /* VIEW GEOMETRY IS OUTPUT-LOCAL AND EVERYTHING ABOVE READS IT AS GLOBAL.

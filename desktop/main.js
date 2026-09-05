@@ -2114,8 +2114,39 @@ ipcMain.handle('pc:wm:place', (e, id, x, y, w, h) => {
  * windows straight over the bar. The renderer knows how tall the bar really is at this zoom on this
  * display; this is where that answer crosses back, so every rectangle the compositor side decides
  * is clamped into it. Backends without one keep behaving exactly as they did. */
+/* THE TASKBAR IS ONE FACT, AND IT WAS BEING GUESSED IN THREE PLACES.
+ *
+ * Only the renderer can measure the bar -- it is a flex child whose height moves with the UI scale,
+ * the font size and the safe-area inset -- so it publishes the rectangle and main keeps it. But the
+ * KEY BINDINGS are separate processes: `pc-window-snap`, run from Super+Left/Right/Up, cannot read
+ * this object and carried its own `height - 72` instead. MEASURED on the real desk: the bar is 48
+ * css px, which is 48 device px at ui-scale 1 and 60 at 1.25 -- so that constant was never once
+ * correct, and a snapped window's bottom edge landed inside the taskbar (2503 on a 2560 output,
+ * three pixels in) or short of it, depending only on the scale in force. Reported as "window
+ * snapping covers taskbar".
+ *
+ * So the measurement is written where another process can read it. A FILE and not an argument,
+ * because the binding is fired by the compositor with no way to pass one, and in $XDG_RUNTIME_DIR
+ * because it describes this login session and must not outlive it. Written on every publish; the
+ * renderer already only publishes what it actually measured. */
+function publishWorkAreaFile(area){
+  const dir = process.env.XDG_RUNTIME_DIR;
+  if(!dir || !area || !(Number(area.w) > 0) || !(Number(area.h) > 0)) return;
+  const file = path.join(dir, 'posterchan-workarea.json');
+  const body = JSON.stringify({ x: Number(area.x) || 0, y: Number(area.y) || 0,
+                                w: Number(area.w), h: Number(area.h),
+                                reserve: Number(area.reserve) || 0, at: Date.now() });
+  /* Written through a temp file and renamed: the reader is a short script that may run at any
+   * moment, and a half-written JSON file is a reader that falls back for no reason. */
+  try{
+    const tmp = file + '.' + process.pid;
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, file);
+  }catch(_){ }
+}
 ipcMain.handle('pc:wm:workarea', (e, area) => {
   fsGuard(e);
+  publishWorkAreaFile(area);
   const w = wm();
   return w && typeof w.setWorkArea === 'function' ? w.setWorkArea(area) : false;
 });

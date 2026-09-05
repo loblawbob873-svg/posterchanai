@@ -983,8 +983,18 @@
 
   /* Ask the shell's main process for a floating surface, anchored to the tray chip. */
   function openTrayWindow(anchor){
-    const w = 360;
-    const h = Math.min(640, Math.max(360, Math.round((root.innerHeight || 900) * 0.62)));
+    /* LAYOUT PIXELS FOR THE PANEL, COMPOSITOR PIXELS FOR THE WINDOW -- see popupPx in os.js.
+     * `360` is the flyout's CSS width and `getBoundingClientRect()` is scaled by `body{zoom}`, so
+     * mixing them asked for a window 1/zoom of the size the panel renders at and anchored it with
+     * a height from the wrong space. Invisible at zoom 1; at a 1.25 display scale the flyout is 90
+     * px too narrow and sits 160 px off the tray chip. The ratio is measured off the anchor rather
+     * than read from a global: this file has no zf() and the anchor gives the same answer, being an
+     * element inside the same zoomed body. */
+    const ar = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+    const k = (ar && ar.width > 0 && anchor.offsetWidth > 0) ? (ar.width / anchor.offsetWidth) : 1;
+    const px = (v) => Math.round(v * k);
+    const w = px(360);
+    const h = px(Math.min(640, Math.max(360, Math.round(((root.innerHeight || 900) / k) * 0.62))));
     let x = Math.max(0, (root.innerWidth || 1280) - w - 8), y = 8;
     try{
       const r = anchor.getBoundingClientRect();

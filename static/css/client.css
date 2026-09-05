@@ -10001,6 +10001,14 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
      surface that happens to end. */
   border-radius:12px;border:1px solid var(--line);box-shadow:0 18px 44px rgba(0,0,0,.55)}
 /* The client's own DOM stays in the document (its bindings need it) and is simply not painted. */
+/* THE SAME RULE, ONE NETWORK FETCH EARLIER. `os-popup-body` is added by `popupHost()`, which runs
+   from `restore()`, which app.js calls after `_cfgCache(CFG)` — so on a slow or unreachable node
+   the ordinary client is painted inside the menu until that fetch returns. os.js stamps
+   `pc-popup-boot` on <html> synchronously from the URL, which needs nothing from the network, and
+   this is what that stamp does. Both hosts are spared, because the compose popup draws into
+   `#modal-root` and every other popup into `#os-popup-host`; the rules below then take over with
+   no visible change. It only ever hides, so it cannot alter what a popup finally draws. */
+html.pc-popup-boot body > *:not(#os-popup-host):not(#modal-root){display:none!important}
 .os-popup-body:not(.os-popup-compose) > *:not(#os-popup-host){display:none!important}
 #os-popup-host{display:block;position:fixed;inset:0;overflow:hidden}
 /* A COMPOSE popup shows the client's own modal layer instead of a host of its own — the composer is

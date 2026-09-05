@@ -44,7 +44,11 @@ def test_connectivity_popup_uses_shell_snapshot_not_its_cold_relay_pool():
     paint = OS.split("  function paintNet(){", 1)[1].split("/* ONE click-away handler", 1)[0]
     assert "const state = netState();" in toggle
     assert "state.conns.slice(0,20)" in toggle
-    assert "pcPopup.toggle('net', { x, y, width:w, height:h }, snapshot)" in toggle
+    # The SNAPSHOT is what this test is about; the geometry beside it moved to compositor pixels
+    # (see tests/client/test_popup_geometry_is_compositor_pixels.py) and pinning that expression
+    # here only made this fail for an unrelated fix.
+    assert "pcPopup.toggle('net'" in toggle
+    assert ", snapshot)" in toggle
     assert "URLSearchParams(window.location.search).get('pcarg')" in render
     assert "_popupNetState = s" in render
     assert "const s = _popupNetState || netState();" in paint

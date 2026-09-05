@@ -29,7 +29,14 @@ function run(opts, env) {
     const on = ctx.on;
     const popupKind = () => ctx.popupKind;
     const vwL = () => 2560, vhL = () => 1706;
-    const window = { pcPopup: ctx.bridge ? { open: (k, r, a) => ctx.opened.push([k, r, a]) } : undefined };
+    /* LAYOUT PIXELS IN, COMPOSITOR PIXELS OUT -- os.js converts at the boundary now, because
+     * getBoundingClientRect is scaled by body{zoom} and vwL/vhL are not. This sim is about the
+     * GATE (what the composer refuses to hand to a window), so the scale is 1 here and the
+     * conversion is exercised by tests/client/test_popup_geometry_is_compositor_pixels.py. The
+     * stubs still have to exist, or every case dies before reaching the decision. */
+    const popupPx = (v) => Math.round(v * (ctx.zoom || 1));
+    const window = { innerWidth: 2560, innerHeight: 1706,
+                     pcPopup: ctx.bridge ? { open: (k, r, a) => ctx.opened.push([k, r, a]) } : undefined };
     const pcPopup = window.pcPopup;
     ${inner}
   `);

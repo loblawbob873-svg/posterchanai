@@ -61,6 +61,37 @@ def _neighbour(outputs, here, direction):
     return best[1] if best else None
 
 
+def taskbar_reserve(box):
+    """How many pixels at the bottom of this output the taskbar owns.
+
+    ONLY THE SHELL CAN MEASURE THIS. The taskbar is a flex child whose height moves with the UI
+    scale, the font size and the safe-area inset, so the renderer measures it and the desktop
+    process writes the result to $XDG_RUNTIME_DIR/posterchan-workarea.json. This script is fired by
+    a compositor key binding with no way to be passed an argument, which is why it used to carry a
+    hardcoded `72` -- a number that was never right: the bar is 48 css px, i.e. 48 device px at ui
+    scale 1 and 60 at 1.25. Too small and a snapped window covers the taskbar (measured: 2503 on a
+    2560 output); too large and it stops short of it with a gap.
+
+    An unreadable or stale file falls back to the old constant rather than to zero: a wrong reserve
+    misplaces one window, a zero reserve puts every snapped window over the bar. Stale is judged
+    generously -- the shell republishes on every layout change, not on a timer, so an old file on a
+    desktop nobody has touched is still describing the taskbar correctly.
+    """
+    try:
+        run = os.environ.get("XDG_RUNTIME_DIR")
+        if run:
+            with open(os.path.join(run, "posterchan-workarea.json"), "r") as fh:
+                area = json.load(fh)
+            reserve = int(area.get("reserve") or 0)
+            height = int(box.get("height", 0) or 0)
+            # It must be a band at the bottom of THIS output, not a stray number from another.
+            if 0 < reserve <= max(1, height) // 2:
+                return reserve
+    except Exception:
+        pass
+    return 72
+
+
 def wayfire_main(side):
     views = wayfire("window-rules/list-views")
     win = next((v for v in views if v.get("mapped", True) and v.get("activated")), None)
@@ -130,7 +161,7 @@ def wayfire_main(side):
     if not out:
         return
     box = out.get("workarea") or out.get("geometry") or {}
-    width, height = int(box.get("width", 1)), max(1, int(box.get("height", 1)) - 72)
+    width, height = int(box.get("width", 1)), max(1, int(box.get("height", 1)) - taskbar_reserve(box))
     current = win.get("geometry") or {}
     if side == "edge":
         x, y = int(current.get("x", 0)), int(current.get("y", 0))
