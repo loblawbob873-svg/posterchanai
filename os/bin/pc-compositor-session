@@ -231,6 +231,25 @@ if true; then
 		PC_WAYFIRE_SHELL_PID_FILE="$XDG_RUNTIME_DIR/posterchan-wayfire-shell.pid"
 		export PC_WAYFIRE_READY_FILE PC_WAYFIRE_SHELL_PID_FILE
 		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
+		# THE SESSION CONFIG IS APPLIED HERE, BECAUSE HERE IS THE ONLY PLACE NO SESSION IS RUNNING.
+		#
+		# Portage installs a changed /etc/wayfire.ini as `._cfg0000_wayfire.ini`, and
+		# `update-posterchan` used to move it into place immediately -- which is a write to the
+		# config file of a compositor that is running. Wayfire watches that file and re-reads it, and
+		# a re-read that has to LOAD A PLUGIN is not the same operation as loading one at startup.
+		# MEASURED on the real desk: the release that added `view-shot` and `force-fullscreen` was
+		# installed at 19:24, wayfire died at 19:24:28 -- "Fatal Wayland communication error: Broken
+		# pipe" in the shell log, then a text console -- and the identical file started a healthy
+		# session seconds later. The content was never the problem; applying it live was.
+		#
+		# So the pending copy is applied at STARTUP, before wayfire is told to exist. That also keeps
+		# the promise update-posterchan already prints ("the new desktop starts at your next login")
+		# instead of contradicting it. The previous file is kept beside it, as it was before.
+		for pending in /etc/._cfg[0-9][0-9][0-9][0-9]_wayfire.ini; do
+			[ -e "$pending" ] || continue
+			[ ! -e /etc/wayfire.ini ] || cp -a /etc/wayfire.ini /etc/wayfire.ini.pre-update 2>/dev/null || true
+			mv -f "$pending" /etc/wayfire.ini 2>/dev/null || true
+		done
 		wayfire -c "${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}" >"$state_dir/wayfire.log" 2>&1 &
 		wayfire_pid=$!
 		# WAIT ON THE LAUNCHER, NOT ON A CLOCK.

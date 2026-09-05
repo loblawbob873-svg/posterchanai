@@ -312,11 +312,28 @@ pc_own_config() {
 		*) return 1 ;;
 	esac
 }
+# ...BUT NOT THE COMPOSITOR'S OWN CONFIG WHILE THE COMPOSITOR IS READING IT.
+#
+# Wayfire watches /etc/wayfire.ini and re-reads it when it changes, and a re-read that has to LOAD A
+# PLUGIN is not the operation that ran at startup. MEASURED: the release adding `view-shot` and
+# `force-fullscreen` was installed at 19:24 and wayfire died at 19:24:28 ("Fatal Wayland
+# communication error: Broken pipe", then a text console); the identical file started a healthy
+# session seconds later. Applying it live is what broke, so a running session leaves the `._cfg`
+# file alone and `pc-compositor-session` applies it at the next start -- which is exactly what the
+# message above already promises. Nothing is lost and nothing is left for the user to find: this
+# says so, by name.
+pc_config_is_live() {
+	[ "$1" = /etc/wayfire.ini ] || return 1
+	pgrep -x wayfire >/dev/null 2>&1
+}
 if find /etc -name '._cfg????_*' -print -quit 2>/dev/null | grep -q .; then
-	pc_applied=0 pc_left=0
+	pc_applied=0 pc_left=0 pc_deferred=0
 	while IFS= read -r pending; do
 		target="${pending%/*}/$(basename "$pending" | sed 's/^\._cfg[0-9]\{4\}_//')"
-		if pc_own_config "$target"; then
+		if pc_own_config "$target" && pc_config_is_live "$target"; then
+			pc_deferred=$((pc_deferred + 1))
+			echo "${YEL}${target} will be applied at your next login (a session is running)${OFF}"
+		elif pc_own_config "$target"; then
 			[ ! -e "$target" ] || cp -a "$target" "$target.pre-update" 2>/dev/null || true
 			if mv -f "$pending" "$target" 2>/dev/null; then
 				pc_applied=$((pc_applied + 1))
