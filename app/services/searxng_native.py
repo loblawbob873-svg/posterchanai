@@ -189,7 +189,22 @@ def _proxy_wanted() -> tuple[bool, str]:
     """
     try:
         from app.services import settings_store
-        on = settings_store.get_bool("searxng_proxy_engines", True)
+        # UNREADABLE SETTINGS DO NOT RAISE — THEY READ AS THE DEFAULT, WHICH IS HOW THE ADMIN TOGGLE
+        # CAME TO DO NOTHING ON THE ONE INSTANCE THAT MATTERS. `posterchanai-searxng.service` runs a
+        # bare `python -m app.services.searxng_native`, which never hydrates the store: measured on a
+        # live node, `all_settings()` is EMPTY there, so every `get_bool` below quietly returned its
+        # own default and this function rewrote settings.yml from it. An operator who followed the
+        # help text under the toggle ("turn this off if searches start coming back empty"), unchecked
+        # it and restarted got the proxy block written straight back at every start — and the unit is
+        # the copy `resolve_searxng_url` PREFERS (step 2, because it is already warm), so the setting
+        # was inert exactly where it was load-bearing. The `except` below was written for this case
+        # and could never fire, because an empty cache is not an error.
+        #
+        # `is_hydrated()` is the store's own word for "an empty read means 'not loaded', not
+        # 'unset'" — the same guard that stops a list setting being rewritten from an empty read.
+        if not settings_store.is_hydrated():
+            return False, ""
+        on = settings_store.get_bool("searxng_proxy_engines", False)
         port = settings_store.get_int("proxy_fallback_port", 8119)
     except Exception:
         # Settings unreadable (a bare `python -m app.services.searxng_native`, an early boot). Do

@@ -261,6 +261,43 @@ class SearchPageTests(unittest.TestCase):
         self.assertEqual(out["results"], [])
         self.assertTrue(out["error"], "an unreachable instance must not look like 'no results'")
 
+    def test_every_engine_unresponsive_is_not_no_results(self):
+        """SearXNG answers 200 to "nobody replied" and to "nothing matched" alike.
+
+        A search whose engines have all timed out, been CAPTCHA'd or are serving one of SearXNG's
+        hour-long suspensions comes back HTTP 200 with `results: []` and the engines listed in
+        `unresponsive_engines`. Read as an empty list — which is all this used to do — it renders as
+        a clean "no results for your query", so the one failure an operator can act on is the one
+        nothing reports. That is what made a day of unreliable search invisible.
+
+        Verified to fail without the fix: pre-fix this returned error=None.
+        """
+        out = self._run_search({"results": [], "answers": [], "suggestions": [],
+                                "unresponsive_engines": [["google", "timeout"],
+                                                         ["brave", "Suspended: too many requests"]]})
+        self.assertEqual(out["results"], [])
+        self.assertTrue(out["error"], "every engine failing must not look like 'no results'")
+        self.assertIn("google", out["error"])
+
+    def test_unresponsive_engines_alongside_results_are_not_an_error(self):
+        """Both halves of the discrimination are required.
+
+        Unresponsive engines on their own are ORDINARY — measured on a healthy node, a good search
+        returns 20 results with three engines suspended. Only zero results WITH an engine that never
+        answered means "we could not ask"; zero results and every engine answering is a genuinely
+        obscure query and must still report no error.
+        """
+        payload = _searx_payload(2)
+        payload["unresponsive_engines"] = [["brave", "Suspended: too many requests"]]
+        out = self._run_search(payload)
+        self.assertEqual(len(out["results"]), 2)
+        self.assertIsNone(out["error"], "a partial engine failure with results is not a failure")
+
+        empty = self._run_search({"results": [], "answers": [], "suggestions": [],
+                                  "unresponsive_engines": []})
+        self.assertEqual(empty["results"], [])
+        self.assertIsNone(empty["error"], "engines answered and nothing matched — that is no error")
+
     def test_no_instance_at_all_reports_it(self):
         self.svc.searxng_url = ""
         with mock.patch.object(S, "local_searxng_url", return_value=""), \

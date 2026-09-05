@@ -5,6 +5,7 @@
 const net=require('net');
 const fs=require('fs');
 const path=require('path');
+const os=require('os');
 const {spawn}=require('child_process');
 const {clampRectToOutputs,pidFamily,rememberWorkArea,workAreaFor}=require('./wm.js');
 
@@ -93,11 +94,55 @@ function randrHead(h){
 function procParents(){const out=[];if(process.platform!=='linux')return out;try{for(const n of fs.readdirSync('/proc'))if(/^\d+$/.test(n))try{const s=fs.readFileSync('/proc/'+n+'/stat','utf8'),i=s.lastIndexOf(')'),f=s.slice(i+1).trim().split(/\s+/);out.push({pid:Number(n),ppid:Number(f[1])});}catch(_){}}catch(_){}return out;}
 
 class WayfireWM{
-  constructor(sockPath,opts){this.backend='wayfire';this._origins=null;this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this.actionServer=null;this.spawn=opts&&opts.spawn||spawn;this._randrRows=null;this._randrAt=0;this._randrPending=null;this._work=[];}
+  constructor(sockPath,opts){this.backend='wayfire';this._origins=null;this.paths=wayfireSockets(sockPath);this.path=this.paths[0]||'';this.sock=null;this.connecting=null;this.pending=[];this.listeners=new Map();this.moves=new Map();this.subscribed=false;this._watchEvents=null;this._rewatching=false;this.actionServer=null;this.spawn=opts&&opts.spawn||spawn;this._randrRows=null;this._randrAt=0;this._randrPending=null;this._work=[];}
   available(){return this.paths.length>0;}
   _connect(){if(this.sock)return Promise.resolve(this.sock);if(this.connecting)return this.connecting;if(!this.paths.length)return Promise.reject(new Error('no compositor socket — WAYFIRE_SOCKET is not set'));this.connecting=(async()=>{let last;for(const p of this.paths)try{return await this._connectPath(p);}catch(e){last=e;}throw last||new Error('no live Wayfire socket');})().finally(()=>{this.connecting=null;});return this.connecting;}
-  _connectPath(p){return new Promise((resolve,reject)=>{const s=net.createConnection(p);let settled=false;const feed=wfDecoder(msg=>{if(msg&&msg.event){this._event(msg);return;}const q=this.pending.shift();if(q){if(msg&&msg.error)q.reject(new Error(msg.error));else q.resolve(msg);}});s.on('data',c=>{try{feed(c);}catch(e){s.destroy(e);}});s.on('error',e=>{if(!settled){settled=true;reject(e);}this._fail(e);});s.on('close',()=>{if(this.sock===s)this.sock=null;this._fail(new Error('Wayfire IPC closed'));});s.on('connect',()=>{if(settled)return;settled=true;this.sock=s;this.path=p;resolve(s);});});}
+  _connectPath(p){return new Promise((resolve,reject)=>{const s=net.createConnection(p);let settled=false;const feed=wfDecoder(msg=>{if(msg&&msg.event){this._event(msg);return;}const q=this.pending.shift();if(q){if(msg&&msg.error)q.reject(new Error(msg.error));else q.resolve(msg);}});s.on('data',c=>{try{feed(c);}catch(e){s.destroy(e);}});s.on('error',e=>{if(!settled){settled=true;reject(e);}this._fail(e);});s.on('close',()=>{if(this.sock===s)this.sock=null;this._fail(new Error('Wayfire IPC closed'));this._watchLost();});s.on('connect',()=>{if(settled)return;settled=true;this.sock=s;this.path=p;resolve(s);});});}
   _fail(e){for(const q of this.pending.splice(0))q.reject(e);}
+  /* A WATCH BELONGS TO A CONNECTION, AND `subscribed` WAS A LATCH THAT OUTLIVED ONE.
+   *
+   * `window-rules/events/watch` is registered per IPC connection, and this class holds exactly ONE
+   * socket for requests and events alike. When it closed -- eight times in one session's shell.log,
+   * as `Error: Wayfire IPC closed` -- the next `_send` transparently opened a NEW socket that had
+   * never asked to watch anything, while `this.subscribed` stayed true so nothing ever asked again.
+   * Every window event stopped for the life of the process: silently, with the compositor healthy,
+   * every request still working, and nothing in any log to say the desktop had gone deaf.
+   *
+   * That is the whole promotion path for a game. `enforceNativeGameFullscreen` is the only thing
+   * that fullscreens a Steam title on this session (the compositor rule that claimed to was a
+   * no-op, and Gamescope -- which used to map its surface already fullscreen -- became opt-in), and
+   * it is driven exclusively by these events. Measured on the real desk with an XWayland window
+   * whose class is `steam_app_999999`: 8.25s to be promoted in one run and STILL floating after 9s
+   * in another, against a design budget of 180ms. A game that spends that long as a small floating
+   * window on a two-monitor desktop is a game whose pointer is somewhere else.
+   *
+   * Re-arming is not the same as re-subscribing: the event list was NEGOTIATED down once (0.10
+   * rejects the whole request over one unknown name), so the accepted list is remembered and
+   * replayed verbatim. Listeners are told, because anything that depended on events has missed
+   * some. */
+  _watchLost(){
+    if(!this.subscribed&&!this._rewatching)return;
+    this.subscribed=false;
+    this._rewatch(0);
+  }
+  _rewatch(attempt){
+    if(this._rewatching&&attempt===0)return;
+    if(!this._watchEvents||!this._watchEvents.length){this._rewatching=false;return;}
+    this._rewatching=true;
+    const wait=Math.min(4000,250*Math.pow(2,Math.min(attempt,4)));
+    const timer=setTimeout(()=>{
+      this._send('window-rules/events/watch',{events:this._watchEvents}).then(()=>{
+        this._rewatching=false;this.subscribed=true;
+        for(const fn of(this.listeners.get('reconnect')||[]))try{fn({change:'rewatch'});}catch(_){}
+      }).catch(()=>{
+        /* Give up quietly rather than spinning on a compositor that has gone: the session is over
+         * in that case, and a hot reconnect loop would be the last thing in its journal. */
+        if(attempt<8){this._rewatching=false;this._rewatch(attempt+1);}
+        else this._rewatching=false;
+      });
+    },wait);
+    if(timer&&timer.unref)timer.unref();
+  }
   _send(method,data){return this._connect().then(s=>new Promise((resolve,reject)=>{this.pending.push({resolve,reject});s.write(wfFrame({method,data:data||{}}));}));}
   _event(msg){const event=String(msg.event||'');let name=event.startsWith('view-')?'window':event.startsWith('output-')?'output':event.includes('workspace')?'workspace':event==='posterchan-tick'?'tick':'';if(!name)return;if(name==='output')this._forgetOutputs();const raw=msg.view||msg.data&&msg.data.view;const ev={change:event,payload:msg.payload||msg.data&&msg.data.payload};if(raw)ev.wayfireView=this._toGlobal(normalizeView(raw),this._origins);for(const fn of(this.listeners.get(name)||[]))try{fn(ev);}catch(_){}}
   version(){return this._send('list-methods').then(r=>({human_readable:'Wayfire IPC',methods:r&&r.methods||[]}));}
@@ -235,6 +280,46 @@ class WayfireWM{
     return this._viewConfig(id,{x:b.x-o.rect.x,y:b.y-o.rect.y,w:b.width,h:b.height},{output_id:o.id});}
   async moveToAssignment(id,assignment){const outs=await this.outputs(),o=outs.find(x=>x.name===String(assignment&&assignment.output));if(!o)throw new Error('Wayfire output not found');return this._viewConfig(id,null,{output_id:o.id});}
   decorate(){return Promise.resolve(true);} // UI chrome is theme-owned; Wayfire rules exclude it.
+  /* THERE IS NO "TILED IS PAINTED UNDER FLOATING" ON THIS COMPOSITOR, AND THE WHOLE DESKTOP WAS
+   * BUILT ON THE OPPOSITE ASSUMPTION.
+   *
+   * Sway has two stacks and paints one under the other unconditionally; every comment in os.js,
+   * osnative.js and main.js that says "a PosterChan window can never be drawn in front of Firefox"
+   * is that fact. Wayfire has ONE workspace layer stacked by focus, and the shell surface fills the
+   * whole output opaquely — so focusing it (a click on the taskbar, on a desktop icon, on the tray,
+   * or anything here calling `focus(shellId)`) puts an opaque screen-sized window over every
+   * application on that monitor. MEASURED on the real desk: `focus-view 74` (OBS) photographed OBS
+   * on top of the desktop; `focus-view 400` (the shell) photographed the bare desktop with OBS,
+   * LibreOffice and every popped-out PosterChan window gone. Nothing was minimised, nothing moved,
+   * nothing was logged. That is "opening a new window hides all the other windows", "the volume
+   * widget hides every open window", the same for notifications, and it is why every Alt+Tab
+   * preview is a blank rectangle (grim photographs SCREEN pixels, and the screen is the desktop).
+   *
+   * `wm-actions/send-to-back` is the lever, and it is ONE-SHOT, not a sticky state: measured,
+   * send-to-back followed by a focus put the shell straight back on top. So it is re-issued from
+   * main.js on every focus of a shell surface rather than being set once at assignment. */
+  keepBelow(id,on){return this._send('wm-actions/send-to-back',{'view_id':Number(id),state:on!==false});}
+  /* A PICTURE OF ONE VIEW, NOT OF THE SCREEN WHERE THAT VIEW HAPPENS TO BE.
+   *
+   * `grim -g` can only photograph what is on the screen, so an occluded window photographs as
+   * whatever covers it and a covered one has to be refused outright — which on Wayfire is nearly
+   * every window, because the shell is above them. Wayfire's `view-shot` plugin renders the view
+   * itself. Measured against a window that was underneath both the shell and a fullscreen game:
+   * a 1942x1529 PNG of the window's real contents.
+   *
+   * The plugin is optional (`view-shot` in [core] plugins); an unavailable method resolves EMPTY so
+   * main.js falls back to the grim path rather than losing previews on a machine without it. */
+  captureView(id){
+    const n=Number(id);
+    if(!Number.isFinite(n))return Promise.resolve('');
+    const file=path.join(os.tmpdir(),'pc-view-'+process.pid+'-'+n+'-'+Date.now()+'.png');
+    return this._send('view-shot/capture',{'view-id':n,file}).then(()=>{
+      const b=fs.readFileSync(file);
+      const png=b.length>=8&&b.length<=16*1024*1024&&
+        b.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+      return png?'data:image/png;base64,'+b.toString('base64'):'';
+    }).catch(()=>'').then(v=>{try{fs.unlinkSync(file);}catch(_){}return v;});
+  }
   async windows(){const [r,at]=await Promise.all([this._send('window-rules/list-views'),this._outputOrigins()]);
     return (Array.isArray(r)?r:r&&r.views||[]).filter(v=>v&&v.mapped!==false&&v.role!=='desktop-environment')
       .map(normalizeView).map(row=>this._toGlobal(row,at));}
@@ -295,6 +380,8 @@ class WayfireWM{
         if(!match)throw e;const at=events.indexOf(match[1]);if(at<0)throw e;events.splice(at,1);}
     }
     if(!events.length)throw new Error('Wayfire exposes no usable window events');
+    /* Remembered so a reconnect replays the ACCEPTED list — see _watchLost. */
+    this._watchEvents=events.slice();
     this._openActionSocket();this.subscribed=true;
   }
   on(name,fn){if(!this.listeners.has(name))this.listeners.set(name,new Set());this.listeners.get(name).add(fn);return()=>this.listeners.get(name).delete(fn);}

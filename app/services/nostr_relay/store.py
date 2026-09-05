@@ -156,10 +156,82 @@ _BRIDGE_DM_TTL_DAYS = 4
 # other/unknown kind. (Client-published `origin='direct'` events are additionally never pruned
 # regardless of kind — so the instance's OWN chat/articles/streams survive; only synced-in copies
 # from the WoT firehose age out.) Prunable feed content: notes/reposts/reactions/comments, plus
-# public-chat messages (42), long-form articles (30023) and live-stream events (30311) — all of
-# which accumulate from the sync. Channel/community DEFINITIONS (40/34550) are kept (tiny, and
-# needed to render rooms).
-_PRUNABLE_KINDS = (1, 6, 7, 42, 1111, 30023, 30311)
+# long-form articles (30023) and live-stream events (30311) — all of which accumulate from the sync.
+#
+# NIP-28 public chat (42) used to be in here and is NOT any more: it is RETIRED (see
+# _RETIRED_KINDS below), so its rows are deleted outright by the retired rule rather than aged out
+# by this one. Leaving it in both would mean the age rule deleted the copies older than the
+# retention window and the retired rule the rest — the same rows twice over in the preview's
+# upper-bound `total`, and a reader of this tuple would think 42 was still content the relay keeps.
+_PRUNABLE_KINDS = (1, 6, 7, 1111, 30023, 30311)
+
+# ---------------------------------------------------------------------------------------------
+# RETIRED FEATURES — the kinds of screens this app removed. ONE list, because the same set has to
+# be refused on every ingest path AND deleted by the pruner, and four scattered literals is how
+# the effect-command lists drifted. Every entry names its feature and when it went.
+#
+#   40, 41, 42, 43, 44   NIP-28 public chat (channel create / metadata / message / hide / mute).
+#                        The legacy chat client is gone; PosterChan's public-room protocol is
+#                        CONCORD. Refused from the firehose since 2026-08 and on the WS write path
+#                        since 2026-09-04; swept from here 2026-09-04.
+#   30402, 30403         NIP-99 classified listing + DRAFT listing — the Shopping screen, removed
+#                        2026-09-04 (c01677c9b). Both: the editor's "save draft" published 30403.
+#   34550                NIP-72 moderated community DEFINITION — the Communities screen, removed
+#                        2026-09-04 (c01677c9b).
+#   34236                Divine's short video — Discover → Shorts, removed 2026-09-04 (c01677c9b).
+#                        This is the kind that screen PUBLISHED (measured off wss://relay.divine.video).
+#
+# DELIBERATELY NOT RETIRED, each verified rather than assumed:
+#   21, 22, 34235        NIP-71 video (normal / short / horizontal). The Shorts screen READ these
+#                        alongside 34236 and published none of them; they are what every other
+#                        client's video posts arrive as (measured on this relay: 629 rows of kind 22
+#                        from 189 authors, mostly ancestor/firehose). Refusing them would be a
+#                        decision about ordinary video, not about a screen we removed. The owner
+#                        confirmed: "i just want to reject the divine like short-formed videos".
+#   4550                 NIP-72 community POST APPROVAL. It appears NOWHERE in this repo — the
+#                        removed Communities screen never wrote or read one — so it is not part of
+#                        "the feature we removed"; the rows on this relay (283, 279 of them direct)
+#                        were published by other people's clients. Left alone.
+#   1111                 NIP-22 comments were how the removed screen posted INTO a community, but
+#                        the kind is ordinary comment traffic everywhere else. Kind-scoped rules
+#                        only; a community's posts stay.
+#
+# NOTHING HERE MAY OVERLAP the git kinds, the never-expire kinds (30078 is this app's own
+# datastore) or CONCORD, which is the chat product in use. The asserts below are that guarantee.
+_RETIRED_KINDS = (40, 41, 42, 43, 44, 30402, 30403, 34236, 34550)
+
+# Concord's event kinds (static/js/client/concord.js), listed here for ONE reason: so the assert
+# below fails loudly if a future retirement ever names one of them. "Legacy chat" means NIP-28.
+_CONCORD_KINDS = (9, 1000, 1002, 1018, 1036, 1040, 1059, 1061, 1063, 1068, 1074, 1075)
+
+# What a refused author is told. NIP-01 lets an OK:false carry a reason, and a client whose events
+# vanish silently has no way to learn the feature is gone — so every path that can answer, answers.
+_RETIRED_REASONS = {
+    "chat": "blocked: NIP-28 public chat is retired on this relay; use Concord",
+    "shop": "blocked: classified listings (NIP-99) are retired on this relay",
+    "community": "blocked: NIP-72 communities are retired on this relay",
+    "short": "blocked: Divine short videos (kind 34236) are retired on this relay",
+}
+
+
+def retired_kind_reason(kind: int):
+    """The NIP-01 OK-message for a retired kind, or None if the kind is still accepted. The single
+    place that decides `is this kind retired?` — the WS write path, the firehose and the store's
+    insert backstop all ask this, so they cannot drift into disagreeing about one kind."""
+    try:
+        kind = int(kind)
+    except (TypeError, ValueError):
+        return None
+    if kind not in _RETIRED_KINDS:
+        return None
+    if 40 <= kind <= 44:
+        return _RETIRED_REASONS["chat"]
+    if kind in (30402, 30403):
+        return _RETIRED_REASONS["shop"]
+    if kind == 34550:
+        return _RETIRED_REASONS["community"]
+    return _RETIRED_REASONS["short"]
+
 
 # Events deleted per prune PASS. The writer thread is single, so this is the unit of ingestion stall:
 # one pass' delete + its event_tags cleanup runs to completion before any queued write gets in.
@@ -198,6 +270,21 @@ _PRUNABLE_SQL = ("(kind IN (%s) AND NOT (kind = 1111 AND id IN "
 # later, from the relay that holds the only copy. Kept regardless, at ingest and in the sweep.
 _NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078,)
 assert not (set(_NEVER_EXPIRE_KINDS) & set(_PRUNABLE_KINDS)), "never-expire kinds must never be prunable"
+
+# The retired rule is the ONLY rule in this file that deletes by kind alone — no age, no origin, no
+# preserve clause — so what may NOT be on that list is the whole safety argument, and it is asserted
+# rather than remembered. 30078 (settings, Notes, calendars, contacts, the vault, the desktop) and
+# the git kinds are somebody's only copy; Concord is the chat product this app actually ships.
+assert not (set(_RETIRED_KINDS) & set(_NEVER_EXPIRE_KINDS)), \
+    "a retired kind must never be a never-expire kind — 30078 is this app's own datastore"
+assert not (set(_RETIRED_KINDS) & set(_GIT_KINDS)), "git events are a repo's source of truth"
+assert not (set(_RETIRED_KINDS) & set(_CONCORD_KINDS)), \
+    "Concord is the chat product in use — 'legacy chat' means NIP-28 (40-44), never Concord"
+assert not (set(_RETIRED_KINDS) & set(_PRUNABLE_KINDS)), \
+    "a retired kind is deleted outright, so it must not ALSO be aged out as feed content"
+
+# `kind IN (…)` for the retired rule + its preview. Literal ints from the tuple above, never input.
+_RETIRED_SQL = "kind IN (%s)" % ",".join(str(k) for k in _RETIRED_KINDS)
 
 
 class RelayStore:
@@ -301,6 +388,14 @@ class RelayStore:
         kind = int(ev["kind"])
         pubkey = ev["pubkey"]
         created = int(ev["created_at"])
+        # RETIRED FEATURES — refused here, at the ONE place every path writes through: the WS write
+        # path, the firehose, the windowed WoT sync, ancestor/thread backfill, a member restore and
+        # negentropy reconciliation all end up in _insert_one. The callers that can speak back to a
+        # client refuse earlier with a readable NIP-01 reason (server._on_event); this is the
+        # backstop that makes the refusal STRUCTURAL rather than a list of remembered call sites,
+        # and it is also what stops a sync re-importing the very rows the pruner just deleted.
+        if kind in _RETIRED_KINDS:
+            return False
         # Reject far-future events (bad client clock or malicious): a stored future created_at permanently
         # freezes replaceable updates for that pubkey/kind (every real update compares as "older" → rejected
         # below) AND evades age-based retention (created_at never falls before the cutoff). 15-min skew
@@ -1104,6 +1199,17 @@ class RelayStore:
 
         expired = _n(f"SELECT COUNT(*) AS c FROM events WHERE expiration IS NOT NULL AND "
                      f"expiration <= ? AND kind NOT IN ({_keepk})", (now,))
+        # Retired features. Broken down PER KIND as well as totalled: this rule deletes rows of a
+        # kind outright, at any age and whoever wrote them, so "≈N notes would go" is not enough for
+        # an operator to consent to it — "34236: 12,686" is.
+        retired_by_kind = {}
+        try:
+            for row in conn.execute("SELECT kind, COUNT(*) AS c FROM events WHERE "
+                                    + _RETIRED_SQL + " GROUP BY kind ORDER BY kind").fetchall():
+                retired_by_kind[int(row["kind"])] = int(row["c"])
+        except Exception:
+            retired_by_kind = {}
+        retired = sum(retired_by_kind.values())
         aged = 0
         if self.retention_days:
             aged = _n(f"SELECT COUNT(*) AS c FROM events WHERE created_at < ? AND "
@@ -1121,8 +1227,9 @@ class RelayStore:
         tiered = {label: _n(f"SELECT COUNT(*) AS c FROM events WHERE {where}", params)
                   for label, where, params in self._tiered_rules(now)}
         return {"expired": expired, "aged": aged, "bridge_dm": bridge_dm, "capped": capped,
+                "retired": retired, "retired_by_kind": retired_by_kind,
                 **tiered,
-                "total": expired + aged + bridge_dm + capped + sum(tiered.values()),
+                "total": expired + aged + bridge_dm + capped + retired + sum(tiered.values()),
                 "retention_days": self.retention_days, "max_events": self.max_events,
                 "free_retention_days": self.free_retention_days,
                 "paid_retention_days": self.paid_retention_days,
@@ -1177,6 +1284,17 @@ class RelayStore:
         _keepk = ",".join(str(k) for k in _NEVER_EXPIRE_KINDS)
         ids = _delete(f"expiration IS NOT NULL AND expiration <= ? AND kind NOT IN ({_keepk})",
                       (int(time.time()),))
+        gone += ids; removed += len(ids)
+        # RETIRED FEATURES (_RETIRED_KINDS): the screens are gone, so these rows serve nothing here.
+        # Deliberately kind-only — no age window, no preserve clause, no origin test. Every other
+        # rule in this pass spares `origin='direct'` because a direct write can be the only copy of
+        # something the owner still uses; that reasoning does not apply to a kind whose reader no
+        # longer exists, and sparing it would leave exactly the local users' listings and shorts
+        # behind. Precision comes from the kind list instead, which is asserted above to contain no
+        # git kind, no 30078 and nothing of Concord's. It runs SECOND so a first pass on a relay
+        # holding a large backlog spends its budget clearing retired rows rather than re-walking
+        # the age rule's much larger candidate set; ingest refuses these kinds, so it converges.
+        ids = _delete(_RETIRED_SQL, ())
         gone += ids; removed += len(ids)
         # Age-based auto-cleaner — THE cleaner. Deletes only old feed content (kinds in
         # _PRUNABLE_KINDS: notes/reposts/reactions/comments + public chat/articles/streams), and only

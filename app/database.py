@@ -470,10 +470,13 @@ def init_db():
             # web search, the news digests and the bots.
             "searxng_url": "",
             # The bundled instance's ENGINE requests go through this node's own proxy
-            # (Tor1 → Tor2 → direct). Turn OFF if engines start answering with CAPTCHAs — a Tor exit
-            # is a shared address and some engines rate-limit it, and SearXNG suspends an engine that
-            # answers that way for an hour, which reads as "no results" rather than as a proxy problem.
-            "searxng_proxy_engines": "true",
+            # (Tor1 → Tor2 → direct). OFF, because a Tor exit is a shared address: engines rate-limit
+            # it and SearXNG suspends an engine that answers that way for an HOUR, which reads as "no
+            # results" rather than as a proxy problem. Seeded "true" until 2026-09-04, which is how
+            # every node shipped with the configuration this file's own comment warns about — 7 of 10
+            # searches empty at the 12s ceiling, vs 8 of 8 in about a second direct. Turn it ON in
+            # Admin → Tools if hiding this node's IP from the engines is worth that.
+            "searxng_proxy_engines": "false",
             "searxng_load_balance": "true",
             "torrent_site_url": "",  # TorrentGalaxy or compatible site URL
             "tts_voice": "en-GB-SoniaNeural",

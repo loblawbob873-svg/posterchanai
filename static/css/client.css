@@ -4003,15 +4003,46 @@ a.hashtag:hover{text-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
    taller than the window and its top went off screen; resizing narrow enough to leave this tier made
    the two agree again, which is exactly how it was reported: "i have to resize the entire windows
    app to see the desktop normally". `zoom` and `--zf` are one fact and must be written together. */
-@media (min-width:1921px){ body{ zoom:1; --zf:1 } .app{ height:100dvh } .main{ height:100% } }
+@media (min-width:1921px){ body{ zoom:var(--ui-scale,1); --zf:var(--ui-scale,1) } .app{ height:calc(100dvh / var(--ui-scale,1)) } .main{ height:100% } }
 /* OS display scaling shrinks a screen's CSS width, so a high-DPI DESKTOP panel (e.g. 1868px CSS at
    devicePixelRatio 1.25 = Windows 125%) lands in the laptop-shrink tiers above and renders everything
    tiny. Key off device-pixel-ratio: give these screens native scale. A genuine ~1.0-dPR laptop reports
    a true small width AND low dPR, so it still gets the shrink tiers. Placed AFTER them to win the cascade.
    MUST be gated to real MOUSE desktops (hover + fine pointer): a high-DPI TOUCH tablet (Galaxy Tab) is also
    ≥1400px at dPR≥1.2, and native desktop scale is far too big on it — those stay in the shrink tiers. */
-@media (min-width:1400px) and (min-resolution:1.2dppx) and (hover:hover) and (pointer:fine){ body{ zoom:1; --zf:1 } .app{ height:100dvh } .main{ height:100% } }
-@media (min-width:1400px) and (-webkit-min-device-pixel-ratio:1.2) and (hover:hover) and (pointer:fine){ body{ zoom:1; --zf:1 } .app{ height:100dvh } .main{ height:100% } }
+@media (min-width:1400px) and (min-resolution:1.2dppx) and (hover:hover) and (pointer:fine){ body{ zoom:var(--ui-scale,1); --zf:var(--ui-scale,1) } .app{ height:calc(100dvh / var(--ui-scale,1)) } .main{ height:100% } }
+@media (min-width:1400px) and (-webkit-min-device-pixel-ratio:1.2) and (hover:hover) and (pointer:fine){ body{ zoom:var(--ui-scale,1); --zf:var(--ui-scale,1) } .app{ height:calc(100dvh / var(--ui-scale,1)) } .main{ height:100% } }
+/* ---- 4K-CLASS PANELS AT OUTPUT SCALE 1 --------------------------------------
+   Everything above tops out at `zoom:1`, on the assumption that a big screen is a screen with room
+   on it. A 3840x2560 desktop monitor is not: it is 9.8 MEGAPIXELS OF CSS PIXEL, roughly 165 ppi, and
+   every size in this stylesheet is a px tuned for ~96-110 ppi. At zoom 1 the whole app is drawn at
+   about two-thirds the physical size it was designed to be read at, and there was no tier above
+   1921px to say otherwise — the tiers only ever scaled DOWN.
+
+   THE OBVIOUS FIX IS THE ONE THAT MUST NOT BE USED. Telling the COMPOSITOR the output is 1.25 makes
+   every native app readable in one line, and it was measured to cost every game dearly: Xwayland
+   gets no `-scale`, so a fullscreen game is told to render 3072x2048 and is then upscaled to the
+   3840x2560 panel — blurry, and because the buffer never matches the output mode DIRECT SCANOUT is
+   impossible and every frame pays a full composite+scale pass. So the outputs stay at scale 1 and
+   the UI is scaled instead: here for this app, and in `os/bin/pc-compositor-session`
+   (GDK_DPI_SCALE / QT_FONT_DPI / XCURSOR_SIZE) for the native toolkits. A game is untouched by both.
+
+   GATED ON WIDTH *AND* HEIGHT, because width alone cannot tell a 4K panel from a wide one. A 34"
+   3440x1440 ultrawide and a 49" 5120x1440 are ~110 ppi — ordinary desktops that must keep zoom 1 —
+   and both are wider than any threshold that still catches 3840. Their HEIGHT is what separates
+   them: a 4K-class panel is >=1800 CSS px tall. 3500px rather than 3840 leaves room for a window
+   that is not quite full-screen on such a panel; 2560-wide (27" 1440p) is deliberately below it.
+
+   1.25 is the default because it is the number the owner had already chosen as the compositor's
+   output scale, so the app comes back at the size he was reading it at — with the games given back
+   their native panel. `--ui-scale` overrides it (Settings -> Appearance -> Display scale, stored as
+   `osUiScale`); the fallback is what applies when nothing is stored, which is why the number is
+   written in the CSS three times rather than resolved in script. */
+@media (min-width:3500px) and (min-height:1800px){
+  body{ zoom:var(--ui-scale,1.25); --zf:var(--ui-scale,1.25) }
+  .app{ height:calc(100dvh / var(--ui-scale,1.25)) }
+  .main{ height:100% }
+}
 /* Feed post cards are intrinsically sized for a big 4K panel (avatar 52px, body 18.5px), so at laptop
    widths they still read oversized next to the now well-scaled rails — even under the zoom above. Trim
    the post card itself here only. 4K (>1920) keeps the full size; mobile (≤820) has its own block. */
@@ -7755,6 +7786,35 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* Cyberpunk's fixed scanline layer otherwise crosses the white PDF/Office/email page. */
 .pc-document-focus .scanlines{display:none!important}
 
+/* ===== DECORATION DOES NOT CROSS A DOCUMENT. =====
+   The rule, not a list of screens: a surface that shows a DOCUMENT, a MESSAGE or a piece of MEDIA
+   the user came to read marks itself `pc-doc`, and for as long as one is in the page the flagship's
+   page-wide decoration is off. Nothing here names Office, Email or Preview — a fourth reader gets
+   this by wearing the class, and a reader that is closed loses it by being removed, so there is no
+   state to leave behind (which is the bug `pc-document-focus` had to be patched for twice: closeWin
+   and minimise both had to learn to clear it).
+
+   MEASURED, and only ONE of the three decorative layers is guilty. Against the shipped stylesheet,
+   over the real Office frame / HTML-mail frame / Preview media surface:
+     .scanlines  z-index 9990, ON TOP  → tints 38% of every document pixel (#fff → #e9e9e9)
+     .grid-bg    z-index -1,  BEHIND   → 0 pixels changed
+     .city-bg    z-index -2,  BEHIND   → 0 pixels changed
+   The two underlays sit behind an opaque surface and are invisible there, so they are deliberately
+   left alone — hiding them would be cargo cult, and they are the flagship's character everywhere
+   else on the page. `.lightbox` (z-index 100000) is already ABOVE the scanlines and measured clean.
+
+   `:has()` and not a class on <html>: a marker on the surface cannot outlive the surface. Measured
+   at 3000 timeline inserts, alternating trials, the selector costs 133.4ms → 135.3ms (~1%, inside
+   the noise) — a class-keyed :has() argument is a hash lookup per inserted element.
+
+   NOT on the windowed desktop (`body.os-on`). There a document owns a WINDOW, not the page, and the
+   window manager already decides this better than a document can: `pc-document-focus` above follows
+   FOCUS, so a Preview parked behind the timeline does not strip the desktop's decoration. Off the
+   desktop — classic web, the APK, and a popped-out `html.pc-oswin` window, which runs no desktop at
+   all and is where Office and Preview are actually read — there is no window manager, and the
+   surface owns the page. */
+body:not(.os-on):has(.pc-doc) .scanlines{display:none!important}
+
 /* Alt+Tab is a visible choice, not a focus shortcut. It is centered on this renderer/output and
    every card retains an icon/title even when a native thumbnail is temporarily unavailable. */
 .os-alt-switch{position:fixed;z-index:2147483500;left:50%;top:50%;transform:translate(-50%,-50%);
@@ -9949,3 +10009,15 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
    specificity and no class-only rule can override it. */
 .os-popup-body.os-popup-compose > *:not(#modal-root){display:none!important}
 .os-popup-body.os-popup-compose #modal-root .modal-bg{position:fixed;inset:0}
+
+/* A GAME OWNS THIS MONITOR — the desktop behind it must cost nothing.
+   Set from os.js `_setDesktopIdle`, which is told by main.js which output a fullscreen native
+   surface is covering. Measured behind a fullscreen client on the real desk: the shell surfaces
+   kept painting at full rate (58.8% of a core idle, 80.2% steady behind the game) because a Wayland
+   client is never told it is occluded and `backgroundThrottling:false` is set on these windows.
+   `animation:none`, NEVER `animation-play-state:paused` — a paused animation holds whatever
+   keyframe it reached, which is how the timeline once froze every card at `opacity:0`; a disabled
+   one always resolves to the element's resting style, so removing the class cannot strand anything.
+   Transitions go too: they are the other per-frame cost, and nobody is watching one behind a game. */
+html.os-idle #os-root,
+html.os-idle #os-root *{animation:none!important;transition:none!important}

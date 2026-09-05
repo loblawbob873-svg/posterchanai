@@ -265,5 +265,66 @@ def test_a_missing_or_unwritable_file_is_not_fatal(tmp_path, monkeypatch):
     assert sn.apply_outgoing_proxy() == "no settings file"
 
 
+def test_an_unhydrated_settings_cache_does_not_choose_a_policy(monkeypatch):
+    """The bug that made the admin toggle inert on the instance that matters.
+
+    `posterchanai-searxng.service` runs a bare `python -m app.services.searxng_native`, which never
+    hydrates the settings store. An empty store does not RAISE — every `get_bool` quietly returns its
+    own default — so `_proxy_wanted` used to answer "proxy the engines" no matter what the operator
+    had chosen, and rewrote settings.yml from that at every start. The unit is the copy
+    `resolve_searxng_url` prefers, so the setting was dead exactly where it decided things.
+
+    Verified to fail without the guard: with `is_hydrated` False and the toggle stored OFF, the
+    pre-fix code still answered (True, ...).
+    """
+    from app.services import searxng_native as sn
+    from app.services import settings_store
+
+    monkeypatch.setattr(settings_store, "is_hydrated", lambda: False)
+    # The store answers as if nothing were set — which is what an unhydrated cache does.
+    monkeypatch.setattr(settings_store, "get", lambda key, default=None: default)
+    on, proxy = sn._proxy_wanted()
+    assert (on, proxy) == (False, ""), \
+        "an unhydrated store must leave the file alone, not write its own default into it"
+
+
+def test_the_engine_proxy_is_off_unless_something_says_otherwise(monkeypatch):
+    """OFF by default, because ON was measured to break search.
+
+    Through a Tor exit the default engines answer "too many requests" / "access denied" / a CAPTCHA
+    and SearXNG suspends each for an HOUR. Measured on server1 with the block on: 1 of 10 searches
+    returned anything and 8 of 10 were cut off at the 12s ceiling; direct, 10 of 10 in about a
+    second. The schema, the seeded defaults, the admin checkbox and this resolver must agree on OFF,
+    or a node ships the configuration its own comments warn about.
+    """
+    from app.services import searxng_native as sn
+    from app.services import settings_store
+    from app.schemas import SettingsResponse
+
+    assert SettingsResponse.model_fields["searxng_proxy_engines"].default is False
+
+    # The seeded default is a literal inside init_db(), so read it out of the shipped source rather
+    # than importing DEFAULT_SETTINGS (which is empty until init_db has run against a database).
+    import pathlib, re as _re
+    src = (pathlib.Path(__file__).resolve().parent.parent / "app" / "database.py").read_text()
+    m = _re.search(r'"searxng_proxy_engines":\s*"(\w+)"', src)
+    assert m, "the seeded default for searxng_proxy_engines vanished from app/database.py"
+    assert m.group(1).lower() == "false", \
+        f"app/database.py still seeds searxng_proxy_engines={m.group(1)!r} — every new node would "
+    "route engine requests through Tor and search would come back empty"
+
+    # The admin checkbox must not be pre-ticked either: it is what an operator reads as the default.
+    tools = (pathlib.Path(__file__).resolve().parent.parent
+             / "templates" / "admin" / "tabs" / "tools.html").read_text()
+    tag = _re.search(r'<input[^>]*id="searxng_proxy_engines"[^>]*>', tools)
+    assert tag and "checked" not in tag.group(0), \
+        "the Admin -> Tools checkbox is pre-ticked, which contradicts the stored default"
+
+    monkeypatch.setattr(settings_store, "is_hydrated", lambda: True)
+    monkeypatch.setattr(settings_store, "get", lambda key, default=None: default)
+    on, _ = sn._proxy_wanted()
+    assert on is False, "a node with nothing stored must not route engine requests through Tor"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

@@ -168,12 +168,26 @@ setup_searxng() {
     # The 12s timeout rides WITH the proxy and is not padding: SearXNG's default engine timeout is 3s,
     # and over a Tor circuit essentially everything times out at 3s (measured: 0 results at the default,
     # 25 at 12s, same circuits).
+    #
+    # SO IT IS SEEDED OFF, AND `SEARXNG_TOR=1` IS THE OPT-IN. The installer used to write the proxy
+    # block unconditionally, which is how every node ever built shipped with the exact configuration
+    # the paragraph above warns about — and the admin toggle could not undo it, because the unit that
+    # rewrites this file reads no settings (see searxng_native._proxy_wanted). Measured on this
+    # deployment before the change: 7 of 10 searches returned HTTP 200 with an empty result list,
+    # each after exactly 12.0s — the ceiling this very block sets.
     local proxy_url proxy_block
     proxy_url="${SEARXNG_PROXY:-http://127.0.0.1:${POSTERCHANAI_PROXY_FALLBACK_PORT:-8119}}"
-    proxy_block=$(printf '# >>> posterchanai: outgoing proxy (managed — Admin → Tools) >>>\noutgoing:\n  # 3s (SearXNG'"'"'s default) is too short for a Tor circuit, and an engine that\n  # times out is dropped from the results with nothing said.\n  request_timeout: 12.0\n  max_request_timeout: 20.0\n  proxies:\n    all://:\n      - %s\n# <<< posterchanai: outgoing proxy <<<' "$proxy_url")
-    echo "Search: engine requests go through this node's proxy ($proxy_url -> Tor1 -> Tor2 -> direct)."
-    echo "        Turn it off in Admin -> Tools if searches start coming back empty:"
-    echo "        engines suspend Tor exits, and a suspended engine reads as 'no results'."
+    if [ "${SEARXNG_TOR:-0}" = "1" ]; then
+        proxy_block=$(printf '# >>> posterchanai: outgoing proxy (managed — Admin → Tools) >>>\noutgoing:\n  # 3s (SearXNG'"'"'s default) is too short for a Tor circuit, and an engine that\n  # times out is dropped from the results with nothing said.\n  request_timeout: 12.0\n  max_request_timeout: 20.0\n  proxies:\n    all://:\n      - %s\n# <<< posterchanai: outgoing proxy <<<' "$proxy_url")
+        echo "Search: engine requests go through this node's proxy ($proxy_url -> Tor1 -> Tor2 -> direct)."
+        echo "        Turn it off in Admin -> Tools if searches start coming back empty:"
+        echo "        engines suspend Tor exits, and a suspended engine reads as 'no results'."
+    else
+        proxy_block=$(printf '# >>> posterchanai: outgoing proxy (managed — Admin → Tools) >>>\n# Engine requests go DIRECT — searxng_proxy_engines is off in Admin → Tools.\n# Re-run with SEARXNG_TOR=1, or turn it on in Admin → Tools, to route them through this node'"'"'s proxy.\n# <<< posterchanai: outgoing proxy <<<')
+        echo "Search: engine requests go DIRECT from this node."
+        echo "        SEARXNG_TOR=1 (or Admin -> Tools) routes them through Tor1 -> Tor2 -> direct,"
+        echo "        at the cost of engines suspending the shared exit address for an hour at a time."
+    fi
 
     # --- settings.yml -------------------------------------------------------------------------
     # ONE template for both install paths (docker/searxng/settings.yml, also baked into the image), so

@@ -346,6 +346,12 @@ class WM {
   decorate(id, hosted){
     return this.command('[con_id='+Number(id)+'] '+(hosted?'border none':'border normal 3')+', sticky disable');
   }
+  /* SWAY ALREADY DOES THIS AND CANNOT BE ASKED TO DO IT AGAIN. The shell is the TILED window and
+   * every application floats, and sway paints floating over tiled unconditionally — so the desktop
+   * is structurally below and there is no command that would improve on it. Answering FALSE (rather
+   * than throwing, or pretending) is what lets main.js sink a Wayfire shell and leave a Sway one
+   * alone with one call site instead of a backend test at each. */
+  keepBelow(){ return Promise.resolve(false); }
 
   async windows(){ return flatten(await this.tree(), [], ''); }
 

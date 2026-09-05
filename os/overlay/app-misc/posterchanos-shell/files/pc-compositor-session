@@ -59,6 +59,150 @@ rescue() {
 
 [ -z "${note_stale:-}" ] || note "compositor selector still says 'sway'; Wayfire is the only session now."
 
+# ---- READ THE SCREEN WITHOUT BLURRING THE GAMES -----------------------------------------------
+#
+# THE OUTPUTS STAY AT SCALE 1. A 3840x2560 panel was being run at compositor scale 1.25 for
+# readability, and that was measured to cost every game dearly: Xwayland is given no `-scale`, so a
+# fullscreen game is told to render 3072x2048 and Wayfire upscales it to the panel -- blurry, and
+# because the buffer never matches the output mode DIRECT SCANOUT is impossible and every single
+# frame pays a full composite+scale pass. Output scale is the compositor's lever, and it is the one
+# lever a game cannot opt out of.
+#
+# So the UI is scaled instead, per toolkit, from here -- the session's own environment, inherited by
+# Wayfire and by everything Wayfire and the shell go on to start. A game reads none of these.
+#
+#   GDK_DPI_SCALE   GTK *3* only: multiplies the font dpi. Deliberately not GDK_SCALE, which is the
+#                   whole-surface knob and is INTEGER-only -- its smallest step past 1 is 2 (200%),
+#                   far past what this panel wants, and on Wayland it makes every GTK client submit
+#                   a 2x buffer for the compositor to scale back down, which is the composite pass
+#                   this whole change exists to avoid. Scaling TEXT carries GTK's chrome with it
+#                   (most of it is sized from font metrics) and leaves icons crisp at 1:1.
+#   text-scaling-   ...AND GTK 4 IGNORES GDK_DPI_SCALE ENTIRELY. Measured on the machine, GTK 4.20
+#   factor          against the live Wayland display: with GDK_DPI_SCALE=1.25 (and with =2)
+#                   gtk-xft-dpi stayed 98304 (96dpi) and "The quick brown fox" at Adwaita Sans 11
+#                   measured 132x17px -- identical to no variable at all. `gtk-xft-dpi` in
+#                   gtk-4.0/settings.ini did nothing either, with or without GTK_USE_PORTAL. What
+#                   moved it was the SETTINGS PORTAL's org.gnome.desktop.interface
+#                   text-scaling-factor: at 1.25, gtk-xft-dpi 122880 (120dpi) and the same string
+#                   165x21px. So that key is set as well, below -- an env-only fix would have left
+#                   every GTK4 app on this desktop (which is all of them but Firefox) at 96dpi while
+#                   looking exactly like it had worked.
+#   QT_FONT_DPI     Qt 5/6: the same idea, and the Qt equivalent of Xft.dpi. Deliberately not
+#                   QT_SCALE_FACTOR, which resamples the entire UI including pixmaps (soft icons)
+#                   and, again, hands the compositor an oversized surface.
+#   Xft.dpi         X11/Xwayland clients that read neither of the above (xterm, the older Java
+#                   toolkits, Steam's own chrome). It lives in the X resource database, not the
+#                   environment, so it cannot simply be exported -- see the merge below.
+#   XCURSOR_SIZE    24px is the toolkit default and is a DOT on a 165ppi panel. Snapped to a size
+#                   cursor themes actually ship (24/32/48/64) rather than scaled continuously: an
+#                   off-size cursor is resampled and looks soft, which is exactly the blur being
+#                   avoided everywhere else here.
+#   XCURSOR_THEME   wlroots' default theme name is "default", which on a machine with no `default`
+#                   symlink falls back to the X11 core cursor -- a bitmap that HAS no large size. A
+#                   named scalable theme is what makes XCURSOR_SIZE mean anything.
+#
+# Every one of these is honoured only if the session did not already carry it, so a user who exports
+# their own in .bash_profile still wins.
+#
+# THE FACTOR IS NOT HARDCODED, because this same script runs on 1080p laptops. It is asked of the
+# PANELS through DRM (no compositor is running yet, so wlr-randr cannot answer), using the same
+# threshold the client stylesheet uses for its own zoom tier: a 4K-CLASS panel is one whose native
+# mode is at least 3500x1800. Width alone cannot tell a 4K panel from a 5120x1440 ultrawide, which is
+# ~110ppi and must not be scaled. `$config_dir/uiscale` (or PC_UI_SCALE) overrides the probe.
+pc_scale_probe() {
+	drm=${PC_DRM_ROOT:-/sys/class/drm}
+	found=1
+	for modes in "$drm"/*/modes; do
+		[ -r "$modes" ] || continue
+		status=${modes%/modes}/status
+		[ -r "$status" ] || continue
+		IFS= read -r st <"$status" 2>/dev/null || continue
+		[ "$st" = connected ] || continue
+		IFS= read -r mode <"$modes" 2>/dev/null || continue
+		w=${mode%%x*}
+		h=${mode#*x}
+		h=${h%%[!0-9]*}
+		case "$w" in ''|*[!0-9]*) continue ;; esac
+		case "$h" in ''|*[!0-9]*) continue ;; esac
+		if [ "$w" -ge 3500 ] && [ "$h" -ge 1800 ]; then found=1.25; fi
+	done
+	printf '%s' "$found"
+}
+pc_scale=${PC_UI_SCALE:-}
+if [ -z "$pc_scale" ] && [ -r "$config_dir/uiscale" ]; then
+	IFS= read -r pc_scale <"$config_dir/uiscale" 2>/dev/null || pc_scale=''
+fi
+case "$pc_scale" in ''|*[!0-9.]*) pc_scale=$(pc_scale_probe) ;; esac
+# One awk for all the derived numbers: the shell has no floating point, and every one of these is a
+# rounding of the same factor.
+set -- $(awk -v s="$pc_scale" 'BEGIN{
+	if (!(s + 0 > 0)) s = 1;
+	if (s < 0.5) s = 0.5;
+	if (s > 3) s = 3;
+	c = (s < 1.15) ? 24 : ((s < 1.6) ? 32 : ((s < 2.2) ? 48 : 64));
+	printf "%.4g %d %d\n", s, int(96 * s + 0.5), c;
+}')
+pc_scale=${1:-1} pc_dpi=${2:-96} pc_cursor=${3:-24}
+set --   # the awk results are read; leave no positional arguments behind
+# A seam for tests, and for anybody asking this machine what it decided. It prints and exits BEFORE
+# the session does anything, so it can never be the reason a login goes wrong.
+if [ -n "${PC_UI_SCALE_PROBE:-}" ]; then
+	printf 'scale=%s dpi=%s cursor=%s\n' "$pc_scale" "$pc_dpi" "$pc_cursor"
+	exit 0
+fi
+if [ "$pc_dpi" -ne 96 ]; then
+	[ -n "${GDK_DPI_SCALE:-}" ] || export GDK_DPI_SCALE="$pc_scale"
+	[ -n "${QT_FONT_DPI:-}" ] || export QT_FONT_DPI="$pc_dpi"
+	[ -n "${XCURSOR_SIZE:-}" ] || export XCURSOR_SIZE="$pc_cursor"
+	if [ -z "${XCURSOR_THEME:-}" ] && [ -d "${PC_ICON_ROOT:-/usr/share/icons}/Adwaita/cursors" ]; then
+		export XCURSOR_THEME=Adwaita
+	fi
+fi
+note "ui scale $pc_scale (font dpi $pc_dpi, cursor ${pc_cursor}px); outputs left at their own scale."
+
+# THE GTK4 HALF IS A SETTING, NOT A VARIABLE, so it is written rather than exported -- and written
+# in BOTH directions, or a machine that goes back to an ordinary monitor keeps 125% text for ever
+# with nothing to say why. A value this script did not write is somebody's own choice and is left
+# alone; the marker file is what tells the two apart.
+pc_gtk_text_scale() {
+	command -v gsettings >/dev/null 2>&1 || return 0
+	if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+		bus=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus
+		[ -S "$bus" ] || return 0
+		DBUS_SESSION_BUS_ADDRESS="unix:path=$bus"
+		export DBUS_SESSION_BUS_ADDRESS
+	fi
+	cur=$(gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null) || return 0
+	[ -n "$cur" ] || return 0
+	cur=$(awk -v v="$cur" 'BEGIN{ printf "%.4g", v + 0 }')
+	[ "$cur" != "$pc_scale" ] || return 0
+	mark=''
+	[ ! -r "$state_dir/uiscale-gtk" ] || IFS= read -r mark <"$state_dir/uiscale-gtk"
+	if [ "$cur" = "1" ] || [ "$cur" = "$mark" ]; then
+		gsettings set org.gnome.desktop.interface text-scaling-factor "$pc_scale" 2>/dev/null || return 0
+		printf '%s\n' "$pc_scale" >"$state_dir/uiscale-gtk"
+		note "gtk text-scaling-factor $cur -> $pc_scale"
+	else
+		note "gtk text-scaling-factor left at $cur (not ours); this session's ui scale is $pc_scale"
+	fi
+}
+
+# Xft.dpi HAS NO ENVIRONMENT VARIABLE, and the X server it belongs to does not exist yet: Wayfire
+# starts Xwayland itself, after this point. Merging it now would silently do nothing, and merging it
+# from the shell launcher would tie it to a restart of the shell. Wait for the socket in the
+# BACKGROUND instead -- the session must not be delayed by an X server that, on a machine with no X
+# clients, may legitimately never appear -- and give up quietly if it does not.
+(
+	pc_gtk_text_scale
+	[ "$pc_dpi" -ne 96 ] || exit 0
+	xsock=${PC_XWAYLAND_SOCKET:-/tmp/.X11-unix/X0}
+	n=0
+	while [ ! -S "$xsock" ] && [ "$n" -lt 300 ]; do sleep 0.2; n=$((n + 1)); done
+	[ -S "$xsock" ] || exit 0
+	command -v xrdb >/dev/null 2>&1 || exit 0
+	printf 'Xft.dpi: %s\n' "$pc_dpi" | DISPLAY=${DISPLAY:-:0} xrdb -merge -
+) >/dev/null 2>&1 &
+
 if true; then
 	# QEMU's non-GL virtio-vga exposes a DRM card but no accelerated VirGL context. Chromium's
 	# compositor aborts (SIGTRAP) when it tries that unusable render node. Keep physical GPUs and

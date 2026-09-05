@@ -35,9 +35,16 @@ def test_ingest_kinds_exclude_retired_nip28_chat():
 
 
 def test_relay_rejects_nip28_but_keeps_concord_wraps():
+    """The refusal moved into store._RETIRED_KINDS (2026-09-04) when Shopping, Communities and
+    Divine shorts were retired alongside it — one list for every ingest path and the pruner, rather
+    than a range check here and another in the firehose. Concord's gift wraps are untouched."""
+    from app.services.nostr_relay.store import _CONCORD_KINDS, _RETIRED_KINDS, retired_kind_reason
+
     server = (THREAD.parent / "server.py").read_text()
-    assert 'if 40 <= kind <= 44:' in server
-    assert 'NIP-28 chat is not supported; use Concord' in server
+    assert "_retired_kind_reason(kind)" in server
+    assert set(range(40, 45)) <= set(_RETIRED_KINDS)
+    assert "use Concord" in retired_kind_reason(42)
+    assert not (set(_CONCORD_KINDS) & set(_RETIRED_KINDS))
     assert 'elif kind in (1059, 21059):' in server
 
 

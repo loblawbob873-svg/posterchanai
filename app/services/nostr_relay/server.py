@@ -22,6 +22,7 @@ from websockets.http11 import Response
 from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
+from .store import retired_kind_reason as _retired_kind_reason
 
 
 # pcai: CONFIG d-tags eligible for the opt-in DR backup to upstream (small + critical). Bulky /
@@ -902,10 +903,15 @@ class RelayServer:
             self._challenge(conn)
             self._refuse(conn, eid, ev, "auth-required: authenticate as the NIP-78 event author")
             return
-        # PosterChan's public-room protocol is Concord/CORD (opaque kind-1059 wraps). The retired
-        # NIP-28 client is gone, so do not keep accepting or storing its channel event family.
-        if 40 <= kind <= 44:
-            self._refuse(conn, eid, ev, "blocked: NIP-28 chat is not supported; use Concord")
+        # RETIRED FEATURES (store._RETIRED_KINDS): NIP-28 public chat (PosterChan's public-room
+        # protocol is Concord/CORD, opaque kind-1059 wraps), NIP-99 Shopping listings, NIP-72
+        # communities and Divine short videos. Their screens are gone, so the relay no longer
+        # accepts or stores their events. Answered as an explicit NIP-01 OK:false naming the
+        # feature — a client whose publishes vanish silently has no way to learn why, and this is
+        # the one ingest path with a socket to answer on.
+        _retired = _retired_kind_reason(kind)
+        if _retired:
+            self._refuse(conn, eid, ev, _retired)
             return
         # Reject EMPTY text notes (kind-1 with blank/whitespace-only content) — pure spam/noise with
         # nothing to render. Other kinds legitimately have empty content (kind-3 follows, kind-6 reposts,

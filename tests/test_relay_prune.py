@@ -733,3 +733,173 @@ def test_an_explicit_empty_d_tag_still_replaces(store_factory):
         assert len(await store.query([{"authors": [pk], "kinds": [30078], "limit": 50}])) == 2
 
     _run(go)
+
+
+# ------------------------------------------------------------------ retired features
+
+
+def _plant(store, events, origin="direct"):
+    """Write rows straight into the events table, past the store's ingest gate.
+
+    Ingest now REFUSES the retired kinds (that is half the retirement), so `add_event` cannot be
+    used to set up the pruner's own test — the rows it has to clear are the ones written BEFORE the
+    refusal existed, which is exactly what this reproduces. Same columns _insert_one writes.
+    """
+    import json as _json
+    conn = psycopg2.connect(store.dsn, connect_timeout=5)
+    conn.autocommit = True
+    cur = conn.cursor()
+    for ev in events:
+        cur.execute("INSERT INTO events (id, pubkey, created_at, kind, content, tags, sig, raw, "
+                    "origin, expiration) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL) "
+                    "ON CONFLICT (id) DO NOTHING",
+                    (ev["id"], ev["pubkey"], ev["created_at"], ev["kind"], ev.get("content", ""),
+                     _json.dumps(ev.get("tags") or []), ev.get("sig", ""), _json.dumps(ev), origin))
+    conn.close()
+
+
+def _retired_ev(i, kind, *, age_days=0, pubkey=None, dtag=None):
+    """A retired-feature event. Addressable kinds (30402/34236/34550) collapse per (pubkey, kind, d),
+    so each gets its own `d` — otherwise ten listings under one author would be ONE stored row and
+    "the prune deleted them all" would be a statement about a single event."""
+    ev = _ev(i, kind=kind, age_days=age_days, pubkey=pubkey)
+    if dtag is not None:
+        ev["tags"] = [["d", dtag]] + ev["tags"]
+    return ev
+
+
+def test_the_retired_features_are_deleted_at_any_age_and_previewed_per_kind(store_factory):
+    """Shopping (30402/30403), Communities (34550), Divine Shorts (34236) and legacy NIP-28 chat
+    (40-44) are gone from the client, so the relay deletes what it still holds of them.
+
+    This rule is unlike every other one in the file: it is kind-only. No age window (a listing
+    published this morning is as unreadable as one from 2023), no `origin != 'direct'` preserve
+    (sparing direct writes would leave exactly the local users' listings and shorts behind, which is
+    the opposite of what was asked), no author test. So the two things worth pinning are that it
+    really does ignore all of that — and that the PREVIEW says so first, per kind, because an
+    operator cannot consent to "≈N notes would go" when the rule is "every event of this kind".
+    """
+    async def go(loop):
+        # retention_days=365 + max_events=0: the age rule and the count cap CANNOT fire, so
+        # everything deleted here was deleted by the retired rule and nothing else.
+        store = store_factory(loop, retention_days=365, max_events=0)
+        local = "a" * 64
+        store.preserve_pubkeys = frozenset({local})    # a preserved local author, deliberately
+        retired = []
+        i = 1
+        for kind in (40, 41, 42, 43, 44, 30403):
+            for age in (0, 500):                       # fresh AND ancient
+                retired.append(_retired_ev(i, kind, age_days=age, pubkey=f"{i:064x}")); i += 1
+        for kind in (30402, 34236, 34550):
+            for age in (0, 500):
+                retired.append(_retired_ev(i, kind, age_days=age, pubkey=local,
+                                           dtag=f"{kind}-{age}")); i += 1
+        # origin='direct' AND a preserved author: the combination every other rule spares.
+        await store.add_events_bulk(retired, origin="direct")
+        # The store REFUSES these kinds on insert (that is the ingest half of the retirement), so
+        # plant them the way rows written before the retirement exist: straight into the table.
+        stored = await store.count()
+        assert stored == 0, ("a retired kind was accepted by the store — the ingest backstop in "
+                             "_insert_one is what stops the firehose re-importing what this prunes")
+        _plant(store, retired)
+        assert await store.count() == len(retired)
+
+        preview = await store.prune_preview()
+        assert preview["retired"] == len(retired), "the preview under-reported a destructive rule"
+        assert preview["retired_by_kind"] == {40: 2, 41: 2, 42: 2, 43: 2, 44: 2,
+                                              30402: 2, 30403: 2, 34236: 2, 34550: 2}, \
+            "the preview must break the count down per kind — a total does not name the feature"
+        assert preview["total"] >= preview["retired"]
+
+        removed = await store.prune(chunk=4)
+        assert removed == len(retired), f"prune removed {removed}, preview promised {len(retired)}"
+        assert await store.count() == 0
+        assert (await store.prune_preview())["retired"] == 0
+
+        # …and UNBOUNDED (chunk=0, the single-transaction form) removes exactly the same rows. The
+        # two forms take different SQL paths — one binds a LIMIT, the other binds nothing at all —
+        # and a rule whose params tuple is empty is the one most likely to break on the latter.
+        _plant(store, retired)
+        assert await store.prune(chunk=0) == len(retired)
+        assert await store.count() == 0
+
+    _run(go)
+
+
+def test_concord_the_datastore_and_ordinary_posts_survive_the_retired_rule(store_factory):
+    """The other half, and the one that matters: what the retired rule must NEVER reach.
+
+    "Legacy chats" means NIP-28 (40-44). CONCORD is the chat product the owner uses and its kinds
+    sit right beside them (9, 1000, 1002, 1018, 1036, 1040, 1059, 1061, 1063, 1068, 1074, 1075) —
+    a range check written one digit wide, or a "chat" grep, takes it with them. Kind 30078 is the
+    app's own datastore (settings, Notes, calendars, contacts, the vault, the desktop arrangement);
+    the git kinds are a repo's source of truth; kind 22 is NIP-71 short video, which OTHER clients
+    publish and this relay still serves — the owner's decision was "i just want to reject the divine
+    like short-formed videos", so 34236 goes and 22 stays; and 4550 (NIP-72 post approval) appears
+    nowhere in this repo, so it was never part of the feature that was removed.
+
+    Nothing here is aged or expired and the age/cap rules are switched off, so a failure can only be
+    the retired rule having grown too wide. Widen `_RETIRED_KINDS` by one entry and this fails.
+    """
+    async def go(loop):
+        store = store_factory(loop, retention_days=365, max_events=0)
+        keep = []
+        i = 1
+        # Concord, by kind and by name — the list is also the record of what is being protected.
+        for kind in (9, 1000, 1002, 1018, 1036, 1040, 1059, 1061, 1063, 1068, 1074, 1075):
+            keep.append(_ev(i, kind=kind, pubkey=f"{i:064x}")); i += 1
+        # The app's own datastore, a git repo announcement + an issue, an ordinary note and a
+        # repost, and the NIP-71 video kinds the Shorts screen only ever READ.
+        for kind in (30078, 30617, 1621, 1, 6, 21, 22, 34235, 4550):
+            ev = _ev(i, kind=kind, pubkey=f"{i:064x}")
+            if kind in (30078, 30617, 34235):
+                ev["tags"] = [["d", f"keep-{kind}"]] + ev["tags"]
+            keep.append(ev); i += 1
+        retired = [_retired_ev(900 + n, k, pubkey=f"{900 + n:064x}", dtag="x")
+                   for n, k in enumerate((42, 30402, 34236, 34550))]
+        await store.add_events_bulk(keep, origin="direct")
+        _plant(store, retired)                          # ingest refuses them; the pruner clears them
+
+        before = {e["id"] for e in keep}
+        for _ in range(4):
+            await store.prune(chunk=5)
+
+        left = {e["id"] for e in await store.query([{"limit": 200}])}
+        lost = sorted(before - left)
+        assert not lost, (
+            f"the retired rule deleted {len(lost)} event(s) it must never touch. Concord is the chat "
+            "product in use, 30078 is this app's entire datastore, the git kinds are a repo's source "
+            "of truth and NIP-71 video (21/22/34235) is ordinary video other clients publish — only "
+            "NIP-28 40-44, 30402/30403, 34550 and 34236 are retired. Narrow _RETIRED_KINDS back.")
+        assert not ({e["id"] for e in retired} & left), "the retired rows should still be gone"
+
+    _run(go)
+
+
+def test_the_store_refuses_a_retired_kind_on_every_origin(store_factory):
+    """The ingest backstop, at the funnel every path writes through.
+
+    `_insert_one` is where the WS write path, the live firehose, the windowed WoT sync, ancestor
+    backfill and a member restore all end up, so refusing here is what makes the retirement
+    structural rather than a list of remembered call sites — and it is what stops the next sync tick
+    re-importing exactly the rows the pruner just deleted. The origins are the callers: 'direct' is a
+    client publishing here, 'wot' the firehose/sync, 'ancestor' a backfilled thread parent.
+    """
+    async def go(loop):
+        store = store_factory(loop, retention_days=365, max_events=0)
+        i = 1
+        for origin in ("direct", "wot", "ancestor"):
+            for kind in (40, 41, 42, 43, 44, 30402, 30403, 34236, 34550):
+                ev = _retired_ev(i, kind, pubkey=f"{i:064x}", dtag="d"); i += 1
+                assert await store.add_event(ev, origin=origin) is False, \
+                    f"kind {kind} was accepted over origin={origin}"
+        assert await store.count() == 0
+        # …and the same funnel still accepts what is NOT retired, incl. Concord and NIP-71 video.
+        keep = [_ev(i + n, kind=k, pubkey=f"{i + n:064x}")
+                for n, k in enumerate((1, 9, 22, 1059, 1068, 4550, 34235))]
+        for ev in keep:
+            if ev["kind"] >= 30000:
+                ev["tags"] = [["d", "k"]] + ev["tags"]
+        assert await store.add_events_bulk(keep, origin="wot") == len(keep)
+
+    _run(go)

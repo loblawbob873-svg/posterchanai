@@ -20771,7 +20771,7 @@
        * maximise, sit behind another window and be dragged between monitors like everything else.
        * `modal()` can do none of that — it is one centred box with a backdrop. */
       const bodyHTML = `<div class="office-head"><h3>📝 ${enc(file.name)}</h3><span class="muted small">Changes are temporary until you tap Save.</span></div>
-        <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
+        <iframe class="office-frame pc-doc" name="${frameName}" title="Office editor"></iframe>
         <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
           <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
         <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-ghost" id="office-pdf">Save as PDF…</button><button class="btn btn-ghost" id="office-saveas">Save As…</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
@@ -24968,7 +24968,7 @@
      * dropped for the SYNC, which was never the expensive half. */
     try{ Mail.refreshIfStale(); }catch(_){}
     if(mounted && Mail.root===mounted) return;      // already up — never remount
-    feed.innerHTML='<div id="mail-root" class="mail-root"></div>';
+    feed.innerHTML='<div id="mail-root" class="mail-root pc-doc"></div>';
     return Mail.render($('#mail-root',feed));
   }
   // Unread mail, on its own nav badge. It used to bump the DM badge, which said "you have messages"

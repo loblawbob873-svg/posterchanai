@@ -34,18 +34,23 @@ FEATURES = {
     "bookmarks + repo star lists": [10003, 30003],
     "articles": [30023],
     "live streams": [30311],
-    # The client no longer HAS a Shopping / Communities / Shorts screen (removed 2026-09-04), and
-    # these three rows are deliberately unchanged. The relay is not this client: it stores and
-    # serves for every reader on it, and a member restored here must still get back the listings,
-    # communities and short videos they published from any other Nostr client. Dropping the kinds
-    # would silently hole a restore for events this node is still asked to serve.
-    "listings (relay-only — no client screen)": [30402],
     "git repos": [30617],
-    "communities (relay-only — no client screen)": [34550],
     "torrents": [2003, 2004],
-    "short videos, relay-only — Divine writes 34236 (measured), NIP-71 current is 21/22": [21, 22, 34235, 34236],
+    # NIP-71 video. The removed Shorts screen READ these and published none of them; they are what
+    # every other client's video posts arrive as, so they keep syncing. Divine's 34236 is the kind
+    # that screen published and is NOT here — see RETIRED below.
+    "short videos (NIP-71 — other clients' video posts)": [21, 22, 34235],
     "calendar events + RSVPs": [31922, 31923, 31924, 31925],
 }
+
+# THE OPPOSITE AUDIT, added 2026-09-04 when the owner retired these features on the relay itself:
+# a kind the relay REFUSES must not be asked for. This file used to assert the reverse — the relay
+# kept ingesting and serving listings, communities and shorts for every other client on it, on the
+# reasoning that removing a screen is not a decision about other people's events. The owner decided
+# otherwise ("make sure our relay no longer accepts events from the featurs we removed"), so the
+# store now drops these on insert. A restore cannot restore what the store refuses to write, and a
+# backfill that asks for them spends a member's budget fetching rows that die on arrival.
+RETIRED = [40, 41, 42, 43, 44, 30402, 30403, 34236, 34550]
 
 
 class SyncCoverage(unittest.TestCase):
@@ -62,6 +67,22 @@ class SyncCoverage(unittest.TestCase):
             for k in ks:
                 self.assertIn(k, kinds, f"{feature}: kind {k} missing from ingest_kinds — "
                                         f"new writes made elsewhere never arrive")
+
+    def test_no_feature_maps_to_a_kind_the_relay_now_refuses(self):
+        """A row in FEATURES is a promise that the sync carries it. The retired kinds cannot be
+        carried — store._insert_one drops them — so a row naming one would be a promise the relay
+        breaks on every tick."""
+        from app.services.nostr_relay.store import _RETIRED_KINDS
+        self.assertEqual(sorted(_RETIRED_KINDS), sorted(RETIRED))
+        for feature, ks in FEATURES.items():
+            for k in ks:
+                self.assertNotIn(k, RETIRED, f"{feature} names retired kind {k}")
+
+    def test_the_retired_kinds_are_asked_for_nowhere(self):
+        backfill, default = _backfill_kinds(), _ingest_kinds()
+        for k in RETIRED:
+            self.assertNotIn(k, backfill, f"backfill_author still asks for retired kind {k}")
+            self.assertNotIn(k, default, f"ingest_kinds still asks for retired kind {k}")
 
 
 if __name__ == "__main__":

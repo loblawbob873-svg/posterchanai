@@ -1,0 +1,7 @@
+{
+  "policies": {
+    "Preferences": {
+      "browser.tabs.inTitlebar": { "Value": 0, "Status": "default" }
+    }
+  }
+}

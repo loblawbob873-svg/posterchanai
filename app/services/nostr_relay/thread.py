@@ -24,7 +24,7 @@ import subprocess
 from websockets.asyncio.server import serve
 
 from app.services.nostr import nostr_service
-from .store import RelayStore
+from .store import RelayStore, _RETIRED_KINDS
 from .wot import WotGate
 from .server import RelayServer, _git_comment_root
 from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
@@ -387,8 +387,11 @@ def _read_config() -> dict:
             # live events (30311). Including 0/3/10002 lets the firehose stream WoT members' IDENTITY
             # metadata too, so the relay serves profiles without a separate fetch — same
             # stream-and-filter path, no extra crawl. (30311 powers the client's Streams view.)
-            # 30402 = NIP-99 classified listings (the Market/Store); 30017/30018 = NIP-15 marketplace
-            # stalls/products — ingest + firehose them so the Discover → Market view sees WoT listings.
+            # 30017/30018 = NIP-15 marketplace stalls/products. NIP-99 classified listings (30402),
+            # NIP-72 communities (34550) and Divine shorts (34236) were HERE and are gone: those
+            # screens were removed and the relay now refuses those kinds outright
+            # (store._RETIRED_KINDS), so asking upstream for them would fetch rows only to have
+            # _insert_one drop them. NIP-71 video (21/22/34235) stays — it is not a retired feature.
             # 2003/2004 = NIP-35 torrents (+comments), 30617 = NIP-34 git repo announcement — the
             # Discover → Torrents / Git Repos views. GRASP git-over-nostr (NIP-34): 30618 repo state,
             # 1617 patch, 1621 issue, 1622 reply, 1623 repo-reply, 1630-1633 issue/patch status —
@@ -398,7 +401,7 @@ def _read_config() -> dict:
             # 10005 is the NIP-51 "public chats" join list. Each node's push watcher reads it to decide
             # whose devices to notify about a channel message, so a list published on one node has to
             # reach the others or that user gets chat pushes from one node only.
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,21,22,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,2003,2004,30000,30001,30003,30023,30311,34235,34236,34550,30402,30017,30018,30617,30618,1617,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,21,22,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,2003,2004,30000,30001,30003,30023,30311,34235,30017,30018,30617,30618,1617,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit() and int(k) not in range(40,45)],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't
@@ -792,8 +795,13 @@ async def _main(cfg: dict) -> None:
         if cfg.get("block_bridged") and is_bridged_post(ev) and not gate.is_operator(ev.get("pubkey", "")):
             return
         _kind = int(ev.get("kind", 1))
-        if 40 <= _kind <= 44:
-            return  # retired NIP-28 chat must not re-enter through upstream ingestion
+        if _kind in _RETIRED_KINDS:
+            # A RETIRED feature's events (store._RETIRED_KINDS: NIP-28 chat, Shopping listings,
+            # NIP-72 communities, Divine shorts) must not re-enter through upstream ingestion —
+            # otherwise the firehose re-imports, minute by minute, exactly what the pruner deletes.
+            # Dropped silently here on purpose: the firehose is a READ of someone else's relay, so
+            # there is no author on the other end of it to tell (the WS write path does the telling).
+            return
         if _kind in (9735, 1059):
             # Zap receipts (9735) are authored by the LNURL zap SERVICE and gift wraps (1059) by a
             # throwaway ephemeral key — neither author is in the WoT, so gate on the RECIPIENT p-tag
@@ -1268,8 +1276,13 @@ async def _main(cfg: dict) -> None:
                                 _write_status()
                                 logger.info("[nostr-relay] auto-clean DRY RUN: would remove ~%d event(s) "
                                             "(aged=%d expired=%d bridge-dm=%d count-cap=%d "
-                                            "pay-to-stay: free=%d paid=%d)", pv["total"],
+                                            "retired=%d %s pay-to-stay: free=%d paid=%d)", pv["total"],
                                             pv["aged"], pv["expired"], pv["bridge_dm"], pv["capped"],
+                                            pv.get("retired", 0),
+                                            # PER KIND: the retired rule deletes a kind outright, so
+                                            # the log has to say which feature the number belongs to.
+                                            " ".join("%d:%d" % kv for kv in
+                                                     sorted((pv.get("retired_by_kind") or {}).items())),
                                             pv.get("aged_free", 0), pv.get("aged_paid", 0))
                             else:
                                 removed = await _prune_fresh()   # logs the count + writes status

@@ -238,6 +238,14 @@
                                                     var v=p.preview||{};
                                                     var extra=(v.free_retention_days?
                                                         ', pay-to-stay free '+(v.aged_free||0)+'/paid '+(v.aged_paid||0):'');
+                                                    // Retired features (NIP-28 chat, listings,
+                                                    // communities, Divine shorts) are deleted by
+                                                    // KIND, at any age — so the preview names the
+                                                    // kinds and their counts, not just a total.
+                                                    var rk=v.retired_by_kind||{}, rks=Object.keys(rk);
+                                                    if(v.retired) extra+=', retired '+v.retired+
+                                                        (rks.length?' ('+rks.sort(function(a,b){return a-b;})
+                                                            .map(function(k){return 'kind '+k+': '+rk[k];}).join(', ')+')':'');
                                                     resolve('≈'+(v.total||0)+' note(s) would go — aged '+(v.aged||0)+
                                                             ', expired '+(v.expired||0)+', bridge DMs '+(v.bridge_dm||0)+
                                                             ', over cap '+(v.capped||0)+extra);
@@ -255,7 +263,7 @@
                 }
                 dbtn.addEventListener('click', function(){ runPrune(true); });
                 abtn.addEventListener('click', async function(){
-                    if(!(await pcConfirm('Delete every feed note past the retention window above? Preview first if you have not. This cannot be undone.'))) return;
+                    if(!(await pcConfirm('Delete every feed note past the retention window above, plus every stored event of a RETIRED feature (NIP-28 chat, Shopping listings, NIP-72 communities, Divine shorts) at any age? Preview first if you have not. This cannot be undone.'))) return;
                     runPrune(false);
                 });
             }

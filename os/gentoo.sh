@@ -156,7 +156,17 @@ VIDEO_CARDS="intel amdgpu radeon radeonsi virgl"
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
 SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
-SPECIAL_PACKAGE_USE+=("gui-wm/wayfire X dbus gles3" "gui-libs/wlroots x11-backend vulkan" "gui-wm/gamescope libei pipewire wsi-layer" "media-libs/mesa vulkan wayland")
+# `vaapi` ON MESA IS WHAT PUTS A HARDWARE VIDEO ENCODER ON THIS MACHINE AT ALL.
+# Without it Mesa builds no VA driver, and MEASURED on the real box `/usr/lib64/dri/*_drv_video.so`
+# is EMPTY while the kernel is happily advertising the card's encode rings (`ring vcn_enc_0.0`).
+# Nothing says so: libva simply reports "unknown libva error" and every caller quietly falls back to
+# the CPU. OBS's own profile on that machine reads `Encoder=obs_x264` at 3840x2560@60 -- a software
+# H.264 encode of a 9.8-megapixel screencast, on the same CPU as the game, which is exactly what
+# "game performance was terrible, stuttering during obs recording" costs. The desktop shell hits the
+# same wall from the other side (`vaInitialize failed: unknown libva error` in shell.log, i.e. no
+# accelerated video decode in the client either). This does not configure anybody's OBS; it makes
+# the hardware encoder exist so it can be chosen.
+SPECIAL_PACKAGE_USE+=("gui-wm/wayfire X dbus gles3" "gui-libs/wlroots x11-backend vulkan" "gui-wm/gamescope libei pipewire wsi-layer" "media-libs/mesa vulkan wayland vaapi")
 #
 # External desktop monitors expose brightness over DDC/CI rather than /sys/class/backlight.
 BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
@@ -232,7 +242,7 @@ POSTERCHANOS_PACKAGES="gui-wm/wayfire gui-libs/wayfire-plugins-extra gui-wm/game
 gui-apps/wl-clipboard \
 gui-apps/grim gui-apps/slurp \
 net-print/cups \
-x11-misc/xdg-utils \
+x11-misc/xdg-utils x11-apps/xrdb gnome-base/gsettings-desktop-schemas \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
 games-util/steam-launcher games-util/game-device-udev-rules \
@@ -1875,6 +1885,19 @@ PROFILE
 	fi
 	if [ ! -f "${TARGET}/etc/wayfire.ini" ]; then
 		echo -e "\033[1;31m  ✗ /etc/wayfire.ini not shipped — a Wayfire session cannot start and will fall back to Sway\033[0m"
+	fi
+	# Firefox's title bar, for the same reason wayfire.ini is copied here: the overlay emerge may not
+	# have run. GTK does not implement zxdg_decoration_manager_v1 (measured: not one occurrence in
+	# libxul), so the compositor cannot frame Firefox and the browser has to draw its own.
+	if [ ! -f "${TARGET}/etc/firefox/policies/policies.json" ]; then
+		for F in "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/firefox-policies.json" \
+			"/var/db/repos/posterchan/app-misc/posterchanos-shell/files/firefox-policies.json"; do
+			if [ -f "$F" ]; then
+				mkdir -p "${TARGET}/etc/firefox/policies"
+				install -m 0644 "$F" "${TARGET}/etc/firefox/policies/policies.json"
+				break
+			fi
+		done
 	fi
 	[ -f "${TARGET}/usr/local/bin/pc-shell-start-wayfire" ] || \
 		echo -e "\033[1;31m  ✗ pc-shell-start-wayfire not shipped — the session has nothing to start\033[0m"

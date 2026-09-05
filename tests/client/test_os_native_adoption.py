@@ -15,10 +15,16 @@ def test_every_shell_lookup_accepts_electron_44_wayland_app_id_case():
     #
     # …and the taskbar guard, which must not "correct" one of our own surfaces onto the bar.
     #
-    # THE COUNT IS A PROXY AND THE PROPERTY IS BELOW. It has now been bumped three times by
+    # …and `_stackDomAboveNative`, which must not MINIMISE one either. `domStackPlan` skips
+    # `row.own` and nothing ever set it on a `pcWM.snapshot()` row, so the plan's one protection
+    # against putting away our own surfaces was inert — and the two it would put away are the shell
+    # (a full-output window containing the very frame being raised) and every popped-out PosterChan
+    # window, which has no HTML frame left to bring it back with.
+    #
+    # THE COUNT IS A PROXY AND THE PROPERTY IS BELOW. It has now been bumped four times by
     # legitimate new call sites; what actually matters is that no site spells the lookup any other
     # way, which the next assertion checks directly.
-    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 6
+    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 7
     # And no site spells it any other way: a lookup that misses `place.poster.desktop` adopts the
     # shell as a recursive black native window, which is the failure this guard exists for.
     assert "posterchan(?:-desktop)?" not in OS.replace(

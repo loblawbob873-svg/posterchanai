@@ -82,6 +82,21 @@ src_install() {
 	# capture. `portals.conf` is the unqualified fallback the portal always reads.
 	insinto /etc/xdg/xdg-desktop-portal
 	newins "${FILESDIR}/portals.conf" portals.conf
+
+	# FIREFOX CANNOT BE GIVEN A COMPOSITOR FRAME, SO IT IS TOLD TO DRAW ONE.
+	#
+	# `preferred_decoration_mode = server` only reaches clients that speak zxdg_decoration_manager_v1.
+	# Qt does (OBS gets a Wayfire title bar); GTK does not, and MEASURED on this machine there is not
+	# one occurrence of that interface name anywhere in Firefox's libxul. So no compositor setting,
+	# per-app rule or window rule can put a frame on Firefox -- reported as "firefox has no window
+	# decoration" beside "OBS has totally different window decorations than the rest of the OS", which
+	# is the same fact from both ends. With `browser.tabs.inTitlebar` at its Linux default Firefox
+	# draws its tab strip where a title bar goes, which is why it reads as having none.
+	#
+	# `Status: default` rather than locked: this is the shipped default and the user may still change
+	# it in about:config, exactly like every other preference on their own machine.
+	insinto /etc/firefox/policies
+	newins "${FILESDIR}/firefox-policies.json" policies.json
 }
 
 pkg_postinst() {

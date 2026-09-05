@@ -54,6 +54,38 @@
     return { x, y, w, h };
   }
 
+  /* HOW BIG A NEW COMPOSITOR WINDOW SHOULD BE OPENED, given the size the desktop chose for it.
+   *
+   * os.js's `place()` already answers "how big should this app's window be on this desk" — it
+   * measures the free area and picks a shape per app (a workbench takes the width, a mail client is
+   * a column, a game board is square). On PosterChanOS that answer was reaching NOTHING: an app
+   * launched from an icon or the start menu opens a real compositor toplevel, and `openApp` asked
+   * for one with no size at all, so every window on the machine opened at oswin.js's fallback
+   * 1100x760. Measured live on the 3072x2048-per-output desk: `PosterChan Window — bookmarks` and
+   * `— terminal` were both exactly 1100x760, while the two windows that had been POPPED OUT of an
+   * in-page frame (which does pass a size) were 1910x1487 and 1983x1831. Reported as "its not
+   * opening windows at a decent size, we fixed this before on the old sway".
+   *
+   * THREE COORDINATE SYSTEMS, and this is the conversion between them. `place()` answers in LAYOUT
+   * pixels (it divides the measured desk by the body zoom, see its own comment); `zoom` turns those
+   * into the visual CSS pixels the page is actually drawn in; and `scale` — the shell's own window
+   * measured in both systems at once, exactly as scaleFrom() derives it for native placement —
+   * turns those into the compositor units an Electron window is created in.
+   *
+   * A missing scale falls back to the zoom alone rather than to nothing: that is what popOut has
+   * always passed, so the worst case is the size that already ships for the ⧈ button, never the
+   * 1100x760 fallback. A zero or absurd result is refused, because a window opened at 8 pixels is
+   * worse than one opened at the default. */
+  function windowOpenSize(rect, zoom, scale){
+    const z = Number(zoom) > 0 ? Number(zoom) : 1;
+    const sx = scale && Number(scale.x) > 0 ? Number(scale.x) : 1;
+    const sy = scale && Number(scale.y) > 0 ? Number(scale.y) : 1;
+    const w = Math.round((Number(rect && rect.w) || 0) * z * sx);
+    const h = Math.round((Number(rect && rect.h) || 0) * z * sy);
+    if(!(w >= 200) || !(h >= 150) || w > 32000 || h > 32000) return null;
+    return { width: w, height: h };
+  }
+
   /* Clamp a PosterChan frame to one renderer/output's usable rectangle. Kept DOM-free because the
    * same rule must govern floating geometry saved before a snap and live frame geometry. */
   function clampLocalRect(rect, bounds, minimum){
@@ -373,7 +405,7 @@
     return (max - min) <= 6 && (sum / n) <= 24;
   }
 
-  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, coversMoreThanASliver,
+  const API = { scaleFrom, mapRect, clampLocalRect, overlaps, coversMoreThanASliver, windowOpenSize,
                 workAreaFrom, inWorkOutput, taskbarPlan,
                 stashPlan, domStackPlan, changed, driftPlan,
                 previewIsBlank };

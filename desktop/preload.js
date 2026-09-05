@@ -289,6 +289,11 @@ if (isOurPage) {
     /* Minimise, as the compositor can express it: the window is moved to the scratchpad, keeps
      * running, and comes back where it was. */
     hide: (id) => ipcRenderer.invoke('pc:wm:hide', Number(id)),
+    /* "The desktop has a window of its own on screen." The shell surface is opaque and fills the
+     * output, so on a compositor that stacks it with applications (Wayfire does; sway did not) any
+     * focus of it hides every app on that monitor. Main keeps it at the back except while this is
+     * true — see sinkShellOnFocus. */
+    shellFront: (want) => ipcRenderer.invoke('pc:wm:shell-front', !!want),
     show: (id) => ipcRenderer.invoke('pc:wm:show', Number(id)),
     restore: (id,x,y,w,h) => ipcRenderer.invoke('pc:wm:restore',Number(id),Number(x),Number(y),
                                                  Number(w),Number(h)),

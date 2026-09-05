@@ -187,7 +187,16 @@ def test_the_wayfire_session_is_shipped_whole(tmp_path=None):
     assert '"gui-libs/wlroots x11-backend vulkan"' in gentoo
     # Gamescope requires SDL's OpenGL or GLES backend in addition to Vulkan.
     assert '"media-libs/libsdl2 -pipewire vulkan opengl"' in gentoo
-    assert '"media-libs/mesa vulkan wayland"' in gentoo
+    # THE FLAGS, NOT THE LITERAL LINE. Pinned as an exact string this asserted that nobody may ever
+    # add a Mesa USE flag, which is not the property — and `vaapi` had to be added, because without
+    # it Mesa builds no VA driver at all and the machine has no hardware video encoder however
+    # capable the card is (measured: /usr/lib64/dri/*_drv_video.so empty, encode rings advertised,
+    # OBS falling back to software x264 at 3840x2560@60 beside a running game).
+    mesa_use = next(l for l in gentoo.splitlines()
+                    if l.startswith("SPECIAL_PACKAGE_USE") and "media-libs/mesa" in l)
+    mesa_use = mesa_use.split("media-libs/mesa", 1)[1].split('"', 1)[0].split()
+    for flag in ("vulkan", "wayland", "vaapi"):
+        assert flag in mesa_use, f"Mesa is built without {flag}: {mesa_use}"
     assert "/usr/local/bin/pc-compositor-session" in gentoo
     assert "xwayland = true" in config
     assert "preferred_decoration_mode = server" in config

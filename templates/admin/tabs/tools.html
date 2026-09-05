@@ -65,16 +65,19 @@
         </div>
         <div class="form-group">
             <label for="searxng_proxy_engines">
-                <input type="checkbox" id="searxng_proxy_engines" name="searxng_proxy_engines" checked>
+                <input type="checkbox" id="searxng_proxy_engines" name="searxng_proxy_engines">
                 Send engine requests through this node's proxy
             </label>
             <small>The <b>bundled</b> instance's own requests to Google/Bing/etc go through this node's
                 HTTP proxy (Tor1 → Tor2 → direct), so a search doesn't leave from this server's real IP.
                 This is a different hop from the URL above: that one is app → instance and is already
                 proxied for a remote instance; this one is instance → search engine, which SearXNG makes
-                itself. <b>Turn this off if searches start coming back empty</b> — a Tor exit is a shared
-                address, and an engine that answers it with a CAPTCHA gets suspended by SearXNG for an
-                hour, which looks exactly like "no results".</small>
+                itself. <b>Off by default, and leaving it off is the reliable setting.</b> A Tor exit is
+                a shared address: engines answer it with "too many requests" or a CAPTCHA, and SearXNG
+                suspends an engine that replies that way for an <b>hour</b>, which looks exactly like
+                "no results". Measured here: 6.5–12.0s per search through the proxy against a 12s
+                ceiling, so most searches timed out empty; 0.5–1.6s and results every time without it.
+                Turn it on only if hiding this node's IP from the engines is worth that.</small>
         </div>
         <div class="form-group">
             <label for="searxng_load_balance">

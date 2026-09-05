@@ -237,6 +237,11 @@
   /* Mount, wire, and hand back a `close`. The two hosts differ only in where this goes and how it is
    * taken away again - exactly the split the office editor uses. */
   function mount(host, name, mime, size, kind, url, shut, blob) {
+    /* THE VIEWER IS A DOCUMENT SURFACE — see "DECORATION DOES NOT CROSS A DOCUMENT" in client.css.
+       Marked HERE and not at the two host sites, because this is the one function both of them go
+       through (a desktop window's slot and the full-screen sheet), and the class then lives and
+       dies with the element rather than with a page-level flag somebody has to remember to clear. */
+    try { host.classList.add('pc-doc'); } catch (_) {}
     host.innerHTML = bodyHTML(name, mime, size, kind);
     var q = function (s) { return host.querySelector(s); };
     var cleanup = function () {};

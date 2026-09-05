@@ -604,6 +604,38 @@ class SearchService:
                 answers.append(str(txt)[:800])
         suggestions = [str(s)[:100] for s in (data.get("suggestions") or [])[:8]]
 
+        # "NOBODY ANSWERED" IS NOT "NOTHING MATCHED", AND SEARXNG SAYS 200 TO BOTH.
+        #
+        # A search whose engines all timed out, got CAPTCHA'd or are serving an hour-long suspension
+        # comes back as HTTP 200 with `results: []` and every engine listed in `unresponsive_engines`.
+        # Read as an empty result list — which is all this did — it renders as a clean "no results for
+        # your query", so the one failure the operator can actually act on is also the one nothing
+        # reports. That is what made a day of unreliable search invisible: the screen was truthfully
+        # showing what it was told, and what it was told left out that nobody had been reached.
+        #
+        # The discrimination is exact and needs both halves. Unresponsive engines ALONE are normal —
+        # measured here, a perfectly good search returns 20 results with three engines suspended. It
+        # is only zero results WITH at least one engine that never answered that means "we could not
+        # ask". Zero results and every engine answering is a genuinely obscure query, and still says
+        # so by returning no error.
+        #
+        # Same rule as Trending's `unreachable`: a query no relay EOSE'd is "the relays never spoke",
+        # never "nothing is trending".
+        if not out and not answers:
+            silent = []
+            for u in (data.get("unresponsive_engines") or []):
+                # [name, reason] pairs on 1.x; be forgiving, this is only ever used for a message.
+                name = (u[0] if isinstance(u, (list, tuple)) and u else u)
+                if name:
+                    silent.append(str(name))
+            if silent:
+                logger.warning("Web search reached no engine (%s): %s", query, ", ".join(silent[:8]))
+                return {"results": [], "answers": [], "suggestions": suggestions,
+                        "error": ("no search engine answered ("
+                                  + ", ".join(sorted(set(silent))[:6])
+                                  + "). They are rate-limited or suspended, not out of results — "
+                                    "try again, and see Admin → Tools if it keeps happening.")}
+
         return {"results": out, "answers": answers, "suggestions": suggestions, "error": None}
 
     async def image_search(self, query: str, limit: int = 10) -> list[dict]:

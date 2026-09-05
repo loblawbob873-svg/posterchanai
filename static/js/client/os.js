@@ -114,6 +114,54 @@
     .replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   const settings = () => window.ClientSettings || { get: (k, d) => d, set(){} };
+
+  /* ---- DISPLAY SCALE -------------------------------------------------------------------------
+   * The stylesheet's tiers decide how big this app is drawn (`body{zoom}` paired with `--zf`; see
+   * "4K-CLASS PANELS" in client.css). They are keyed off the viewport, and on a 3840x2560 panel at
+   * output scale 1 the default they land on is 1.25 — readable, but a number in a stylesheet is a
+   * number nobody can adjust, and the owner had already changed his mind about this once.
+   *
+   * So this writes ONE custom property and nothing else. Every tier reads `var(--ui-scale, N)`, so
+   * a stored value overrides the tier and an ABSENT one is removed rather than written as 1 — the
+   * default then stays where the media query put it, which is what makes moving the window to a
+   * different-sized screen still do the right thing with no resize handling here at all.
+   *
+   * NOT the same number as the toolkit scaling in os/bin/pc-compositor-session: that one is read by
+   * GTK/Qt/X11 once, when the session starts, and there is no way to push a change into apps that
+   * are already running. Changing this one is instant and changes only this app. */
+  const UI_SCALE_KEY = 'osUiScale';
+  const UI_SCALE_CHOICES = [1, 1.1, 1.25, 1.5, 1.75, 2];
+  /* The tier's own condition, written once here and once in client.css. It has to be duplicated —
+   * a stylesheet cannot be asked "which rule won" — so it is duplicated as a matchMedia string that
+   * reads the same as the @media line, rather than as a pair of numbers compared by hand. */
+  const UI_SCALE_BIG = '(min-width:3500px) and (min-height:1800px)';
+  function uiScaleStored(){
+    let v = 0;
+    try{ v = parseFloat(settings().get(UI_SCALE_KEY, '')); }catch(_){ v = 0; }
+    return (isFinite(v) && v >= 0.5 && v <= 3) ? v : 0;
+  }
+  /* What the page is ACTUALLY drawn at, which is what a settings control must show as selected:
+   * with nothing stored that is the stylesheet's default, and offering "100%" there would make the
+   * one honest choice look like a change and 125% look like a no-op. */
+  function uiScaleEffective(){
+    const stored = uiScaleStored();
+    if(stored) return stored;
+    try{ if(window.matchMedia && matchMedia(UI_SCALE_BIG).matches) return 1.25; }catch(_){}
+    return 1;
+  }
+  function applyUiScale(){
+    const el = document.documentElement; if(!el || !el.style) return;
+    const v = uiScaleStored();
+    if(v) el.style.setProperty('--ui-scale', String(v));
+    else el.style.removeProperty('--ui-scale');
+  }
+  function setUiScale(v){
+    const n = Number(v);
+    if(!(isFinite(n) && n >= 0.5 && n <= 3)) return;
+    try{ settings().set(UI_SCALE_KEY, n); }catch(_){}
+    applyUiScale();
+  }
+  try{ applyUiScale(); }catch(_){}
   function applyDesktopEffects(){
     if(!root) return;
     const full=settings().get(FX_KEY,'full')!=='off';
@@ -1319,7 +1367,25 @@
     const mapped=scale&&NAT().mapRect(_frameRect(w),scale);
     if(!mapped){ if(shell)await _focusCompositorCurrent(shell.id,focusToken); return; }
     const rect={left:mapped.x,top:mapped.y,width:mapped.w,height:mapped.h};
-    const plan=NAT().domStackPlan(rows,rect);
+    /* `domStackPlan` skips `row.own` — and NOTHING HAS EVER SET IT. The rows here come straight from
+     * `pcWM.snapshot()`, i.e. the compositor's own view records, which carry no such field: only
+     * `taskbarRows` adds it, and that list is not this one. So the plan's one protection against
+     * putting away our OWN surfaces was inert, and the surfaces it would put away are the shell (a
+     * full-output window containing this very frame, minimising the entire desktop) and every
+     * popped-out PosterChan window, which has no HTML frame to bring it back with.
+     *
+     * AND ON A COMPOSITOR THAT CAN KEEP THE DESKTOP BELOW, THE WHOLE PLAN IS OBSOLETE. It exists
+     * because sway painted floating over tiled, so the only way to show a frame drawn inside the
+     * shell was to take the covering application off the screen. Wayfire stacks by focus, main
+     * sinks the shell whenever it does not need to be forward, and `shellFront` (published from
+     * drawBar) is what tells it this frame does need it — so the surface simply rises and nothing
+     * is hidden. Minimising somebody's browser to show a Settings window is precisely "opening a
+     * new window hides all the other windows"; do not do it where the compositor can be asked. */
+    const mine=/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i;
+    const others=rows.map(r=>r&&mine.test(String(r.app||''))?Object.assign({},r,{own:true}):r);
+    const plan=typeof pcWM.shellFront==='function'
+      ? {hide:[],show:NAT().domStackPlan(others,rect).show}
+      : NAT().domStackPlan(others,rect);
     for(const id of plan.show) if(_domCoveredNative.has(id)){
       try{ await pcWM.show(id); _domCoveredNative.delete(id); }catch(_){}
       if(gen!==_domStackGen||!_focusCurrent(focusToken))return;
@@ -1622,6 +1688,30 @@
     catch(_){ return ''; }
   }
 
+  /* THE SIZE `place()` CHOSE, IN THE UNITS A COMPOSITOR WINDOW IS CREATED IN.
+   *
+   * `place()` is where this desktop decides how big an app's window should be — the free area
+   * measured rather than derived, and a shape per app. On PosterChanOS it was reaching nothing: an
+   * icon or start-menu launch opens a real toplevel, and that call passed NO size, so oswin.js's
+   * 1100x760 fallback was the size of every window on the machine (measured: `bookmarks` and
+   * `terminal` both exactly 1100x760 on a 3072x2048 output, beside two popped-out windows at
+   * 1910x1487 and 1983x1831 — those go through popOut, which does pass one).
+   *
+   * The cascade index counts the windows this desktop already opened, so the second Files window
+   * still steps clear of the first exactly as an in-page one does. */
+  let _shellBox = null;          // this surface's compositor rectangle; set by adoptAll
+  function _windowOpenHint(view){
+    try{
+      if(!NAT() || typeof NAT().windowOpenSize !== 'function') return null;
+      const opened = nativeTasks.filter(r => r && r.own).length + wins.length;
+      const visual = window.visualViewport;
+      const scale = NAT().scaleFrom(_shellBox,
+        visual && visual.width > 0 ? visual.width : window.innerWidth,
+        visual && visual.height > 0 ? visual.height : window.innerHeight);
+      return NAT().windowOpenSize(place(opened, view), zf(), scale);
+    }catch(_){ return null; }
+  }
+
   function popOut(w){
     if(!w) return null;
     let child = null;
@@ -1710,7 +1800,7 @@
       let real = null;
       try{
         if(window.PCOSWin && PCOSWin.enabled() && popOutView({view, appView:view}))
-          real = PCOSWin.open(view, label || view, {});
+          real = PCOSWin.open(view, label || view, _windowOpenHint(view) || {});
       }catch(_){ real = null; }
       if(real) return null;
     }
@@ -2125,6 +2215,7 @@
           <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}`:`${displayError?'':`<div class="empty">No displays were detected. Reconnect a display, then reopen Settings.</div>`}`}</section></section>
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
         <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Choose PosterChan's desktop or a complete macOS-style layout with a menu bar, floating Dock, launcher and matching windows.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
+        <section class="os-setting-row os-set-control"><div><b>Display scale</b><span>How large text and controls are drawn in PosterChan. A 4K-class monitor starts at 125% so it is readable at its native resolution &mdash; the screens themselves stay at 100%, which is what keeps games sharp and full speed.</span></div><select data-ui-scale aria-label="Display scale">${UI_SCALE_CHOICES.map(n=>`<option value="${n}" ${n===uiScaleEffective()?'selected':''}>${Math.round(n*100)}%</option>`).join('')}</select></section>
         <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Shadows, restrained transparency and short visual transitions. This never changes window focus or placement.</span></div><select data-window-effects aria-label="Window effects"><option value="full" ${settings().get(FX_KEY,'full')!=='off'?'selected':''}>Modern</option><option value="off" ${settings().get(FX_KEY,'full')==='off'?'selected':''}>Low power / off</option></select></section></section>
         ${[['sound','volume','Sound','Output, input, and application volume.','Open sound controls'],
            ['network','wifi','Network','Wi-Fi and wired network connections.','Open network controls'],
@@ -2248,6 +2339,14 @@
       }
       const profile=host.querySelector('[data-power-profile]'); if(profile)profile.onchange=async()=>{
         profile.disabled=true;try{await pcPower.setProfile(profile.value);PC().toast('Power mode updated');}catch(e){PC().toast(String(e&&e.message||e));}finally{profile.disabled=false;}
+      };
+      const uiScale=host.querySelector('[data-ui-scale]');if(uiScale)uiScale.onchange=()=>{
+        setUiScale(uiScale.value);
+        /* The desktop is laid out in LAYOUT pixels and every measurement it caches (icon grid,
+         * window placement, snap zones) was taken at the old zoom. Nothing sends a resize event
+         * when `body{zoom}` changes, so without this the icons keep the old grid and a window
+         * opened next lands using a work area that no longer exists. */
+        try{ window.dispatchEvent(new Event('resize')); }catch(_){}
       };
       const effects=host.querySelector('[data-window-effects]');if(effects)effects.onchange=()=>{
         settings().set(FX_KEY,effects.value==='off'?'off':'full');applyDesktopEffects();
@@ -3000,7 +3099,7 @@
    * authority and the compositor is not. */
   let _natBeat = 0;
   function _natHeartbeatOn(){
-    if(_natBeat || !window.pcWM) return;
+    if(_natBeat || _deskIdle || !window.pcWM) return;
     _natBeat = setInterval(() => {
       try{
         if(!nativeWins().length) return;
@@ -3420,6 +3519,23 @@
         shellId = Number(snap && snap.shellId);
       }else list = await pcWM.windows();
     }catch(_){ return false; }
+    /* THE ONE RECTANGLE MEASURABLE IN BOTH COORDINATE SYSTEMS AT ONCE, kept for openApp.
+     * `_natShell` is nsync's and nsync returns immediately unless a native app is HOSTED, which is
+     * off by default — so on an ordinary machine nothing ever recorded the shell's compositor
+     * rectangle, and a new window had no way to convert a size in page pixels into the compositor's
+     * units. See _windowOpenHint. */
+    if(Number.isFinite(shellId)){
+      const me = list.find(x => Number(x && x.id) === shellId);
+      if(me && me.rect && me.rect.width > 0 && me.rect.height > 0) _shellBox = me.rect;
+      /* AND WHETHER SOMEBODY ELSE HOLDS THE KEYBOARD. A Settings frame keeps its `focused` class
+       * for as long as it is open — clicking Firefox is not something this renderer ever sees — so
+       * without this the desktop would stay entitled to sit above every application from the moment
+       * one utility window was opened until it was closed. The compositor's own answer settles it,
+       * and this pass runs on every window event. */
+      const focused = list.find(x => x && x.focused && Number(x.id) !== shellId);
+      const foreign = !!focused;
+      if(foreign !== _foreignFocused){ _foreignFocused = foreign; _publishShellFront(); }
+    }
     /* Before anything else reads this list: a window on the bar is on it now, and adoption below
      * can decide to do nothing at all. Failure here must never cost the adoption pass. */
     try{ await _guardTaskbar(list, shellId); }catch(_){}
@@ -6336,6 +6452,8 @@
     }
     if(!_mounted.size) return;
     if(typeof document !== 'undefined' && document.hidden) return;
+    /* A game owns this monitor. Nothing here is on screen, and a repaint costs the game a frame. */
+    if(_deskIdle) return;
     const ms = _wgtPeriod();
     // A running timer at the WRONG period is not "already started": adding a clock to a desk that
     // held only a ticker must speed the timer up, and removing it must let it slow back down.
@@ -6345,10 +6463,48 @@
     _wgtTimer = setInterval(() => {
       if(!on || !_mounted.size){ _wgtStop(); return; }
       if(typeof document !== 'undefined' && document.hidden){ _wgtStop(); return; }
+      if(_deskIdle){ _wgtStop(); return; }
       _wgtRefreshDue(false);
     }, ms);
   }
   function _wgtStop(){ if(_wgtTimer){ clearInterval(_wgtTimer); _wgtTimer = null; } _wgtMs = 0; }
+
+  /* THE DESKTOP GOES QUIET WHILE A GAME OWNS ITS MONITOR — AND NOTHING USED TO TELL IT TO.
+   *
+   * A Wayland client is never told it is covered: `document.hidden` stays false behind a fullscreen
+   * game, and `backgroundThrottling:false` is set on these surfaces on purpose, so Chromium will not
+   * slow the timers either. Measured on the real desk with a fullscreen client over DP-1 (5s /proc
+   * windows, wayfire + every shell process): 58.8% of a core idle, 113.0% while it went fullscreen,
+   * 80.2% steady BEHIND it. Not quieter — busier, on the machine that is also running the game and
+   * OBS's encoder. Reported as "game performance was terrible, stuttering during obs recording".
+   *
+   * main.js measures the occlusion per OUTPUT (it is the only half that can) and sends it here, so
+   * a game on one monitor never stops the desktop somebody is still reading on the other.
+   *
+   * The class disables ANIMATION, it does not pause it: a paused animation holds whatever keyframe
+   * it reached, which is how `anim-off` once froze a whole timeline at `opacity:0`. `animation:none`
+   * always resolves to the element's resting style, so it cannot strand anything on screen.
+   *
+   * Coming back is a CATCH-UP, never a plain restart: a widget whose interval fell due behind the
+   * game has to repaint now, and the bar has to be drawn once because its clock was stopped. */
+  let _deskIdle = false;
+  function _setDesktopIdle(idle){
+    idle = !!idle;
+    if(idle === _deskIdle) return;
+    _deskIdle = idle;
+    try{ document.documentElement.classList.toggle('os-idle', idle); }catch(_){}
+    if(idle){
+      _wgtStop();
+      if(_natBeat){ clearInterval(_natBeat); _natBeat = 0; }
+      if(_clock){ clearInterval(_clock); _clock = null; }
+      return;
+    }
+    try{ _wgtRefreshDue(true); }catch(_){}
+    try{ _wgtStart(); }catch(_){}
+    try{ _natHeartbeatOn(); }catch(_){}
+    try{ _startClock(); }catch(_){}
+    try{ drawBar(); }catch(_){}
+  }
 
   // The player has no event to subscribe to, so app.js calls this when its state changes — the same
   // shape as `syncPlayer`. Cheap: it touches two nodes of one widget.
@@ -7066,7 +7222,41 @@
     if(tray.parentElement!==host)host.appendChild(tray);
   }
 
+  /* DOES THE DESKTOP SURFACE NEED TO BE IN FRONT OF THE APPLICATIONS RIGHT NOW?
+   *
+   * Almost never, and that is the point. This shell is ONE opaque compositor window filling the
+   * whole output, and Wayfire stacks it with every application — so anything that focuses it (a
+   * click on the taskbar, a desktop icon, the tray chip, `_raiseShell`) covers Firefox, OBS, Steam
+   * and every popped-out PosterChan window at once. Measured with grim: focus the shell and the
+   * photograph of that monitor is the bare desktop. Sway never had this problem because it painted
+   * floating over tiled unconditionally, which is the assumption most of this file is written on.
+   *
+   * Main keeps the surface at the back for us (`wm-actions/send-to-back`), and asks here for the
+   * one case where it genuinely must not: a window this shell DRAWS — System Settings, Task
+   * Manager, Virtual Machines, Remote Desktop, a folder — is focused, and there is no toplevel of
+   * its own to raise instead. Everything else the desktop shows above applications (Start, the
+   * notification centre, the tray flyout, the composer) is already its own window.
+   *
+   * Only on change: this is on the draw path, and an IPC call per repaint is a call per clock tick. */
+  let _shellFrontSent = null, _foreignFocused = false;
+  function _publishShellFront(){
+    if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
+    let want = false;
+    /* LEAVING THE DESKTOP GIVES THE SURFACE BACK TO THE APPLICATION. With `Classic` chosen there is
+     * no taskbar and no desktop — this window is just PosterChan, and an application that cannot be
+     * raised above Firefox is not one. So the rule is off entirely outside desktop mode, and `exit`
+     * says so at the moment it changes rather than waiting for a draw that will never come. */
+    try{ want = !on || (!_foreignFocused
+      && wins.some(w => w && !w.min && w.el && w.el.classList.contains('focused'))); }
+    catch(_){ want = false; }
+    if(want === _shellFrontSent) return;
+    _shellFrontSent = want;
+    try{ Promise.resolve(pcWM.shellFront(want)).catch(()=>{ _shellFrontSent = null; }); }
+    catch(_){ _shellFrontSent = null; }
+  }
+
   function drawBar(){
+    _publishShellFront();
     if(!bar) return;
     /* A preceding macOS draw leaves its tray beside the Dock. The markup below creates the one new
      * tray for this frame, so discard the old detached instance first instead of accumulating
@@ -8426,6 +8616,9 @@
         try{
           _tickOff = pcWM.onEvent((ev) => {
             if(!ev) return;
+            /* A Wayland client cannot see that it is covered, so main measures it and says so —
+             * per output, because this desk has two. See _setDesktopIdle. */
+            if(ev.name === 'occlusion'){ _setDesktopIdle(String(ev.payload || '') === 'on'); return; }
             /* Adopt window::new from the event itself. This is deliberately before the slower
              * reconciliation watcher below: its job is to heal missed events and closes, not to
              * make every new native application wait for two GET_TREE round trips. */
@@ -8885,7 +9078,7 @@
      * while the panel was open, which is the one thing on the bar that has to keep moving. */
     // The desktop taskbar clock: nobody is reading it behind another window, and it repaints the
     // whole bar. 30s of DOM work every 30s, forever, for a clock nobody can see.
-    _clock = setInterval(() => { if(document.hidden) return; if(on && !startOpen && !notiOpen) drawBar(); }, 30000);
+    _startClock();
     // Leaving full screen by pressing Escape never goes through our button, so the label has to
     // follow the browser rather than our own last action.
     document.addEventListener('fullscreenchange', onFullChange);
@@ -8900,6 +9093,7 @@
     if(_menuAct('classic')) return;
     if(!on) return;
     on = false;
+    _publishShellFront();   // this surface is an application again — see _publishShellFront
     try{ delete window.__PC_COMPOSE_HOST; }catch(_){ window.__PC_COMPOSE_HOST = null; }
     _deskLayoutSize=null;
     _keyboardViewport=false;
@@ -8980,6 +9174,10 @@
   }
 
   let _clock = null;
+  function _startClock(){
+    if(_clock || _deskIdle) return;
+    _clock = setInterval(() => { if(document.hidden) return; if(on && !startOpen && !notiOpen) drawBar(); }, 30000);
+  }
   /* Stable managed-desktop dimensions. A tablet keyboard changes only the visual viewport height
    * when Terminal takes focus; treating that as a monitor resize visibly resnaps every window. */
   let _deskLayoutSize = null;
@@ -9508,7 +9706,24 @@
    * only guarantees that a partially completed enter cannot miss the prepare event forever. */
   try{ wireNativeHandoff(); }catch(_){}
 
+  /* WHAT THIS SHELL THINKS THE SCREEN IS, in one call.
+   *
+   * There are two coordinate spaces here (see zf) and every placement bug in this file has been one
+   * of them being read as the other. A check can measure the BROWSER's viewport for itself; what it
+   * cannot see is the number the desktop is using, and the two silently disagreeing is exactly the
+   * failure — a "half of the screen" snap that covers a third of it, an icon grid laid out for a
+   * viewport that is not there. Read by scripts/check_hidpi_ui_scale.py; harmless to call. */
+  function metrics(){
+    let deskR = null;
+    try{ const r = desk && desk.getBoundingClientRect ? desk.getBoundingClientRect() : null;
+         if(r) deskR = { w:+r.width.toFixed(2), h:+r.height.toFixed(2) }; }catch(_){}
+    return { zf: zf(), vw: +vwL().toFixed(2), vh: +vhL().toFixed(2),
+             taskbar: TASKBAR, desk: deskR,
+             uiScale: uiScaleEffective(), uiScaleStored: uiScaleStored() };
+  }
+
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh,
+                  metrics, applyUiScale, setUiScale, uiScaleEffective,
                   /* Android launcher tiles are MOBILE destinations even on a landscape tablet.
                    * Leave the windowed desktop for this session without changing the user's saved
                    * desktop preference; an ordinary later launch may restore it. */

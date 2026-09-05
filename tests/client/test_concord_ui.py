@@ -225,15 +225,23 @@ def test_created_and_joined_communities_survive_browser_storage_loss():
 
 def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     assert 'id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"' in CONCORD
-    assert "leaveShortcut.onclick=()=>{const action=$('#cc-leave-community');if(action)action.click();}" in CONCORD
+    # Two entry points, one handler: the conversation header AND the rooms/channels pane, which is
+    # the screen a phone opens on ('.cc-conversation' is display:none there until a channel is
+    # opened, so a control that lives only in its header is present and 0x0).
+    assert 'id="cc-leave-room" title="Leave community"' in CONCORD
+    assert "const leaveShortcut=$('#cc-leave-shortcut');if(leaveShortcut)leaveShortcut.onclick=leaveByHeader;" in CONCORD
+    assert "const leaveRoom=$('#cc-leave-room');if(leaveRoom)leaveRoom.onclick=leaveByHeader;" in CONCORD
     assert 'async function leaveArmadaMembership(p,room)' in CONCORD
-    assert "tombs.set(room.communityId,{community_id:room.communityId,removed_at:removedAt})" in CONCORD
+    # The tombstone names the INVITE too — a tombstone keyed only on community_id is unmatchable
+    # by the owner's own announcement, which is the only thing that can put the room back.
+    assert "tombs.set(room.communityId,{community_id:room.communityId,removed_at:removedAt," in CONCORD
+    assert "...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});" in CONCORD
     assert "rememberLeftCommunity(viewer.pubkey,room,removedAt)" in CONCORD
     assert "forgetLeftCommunity(viewer.pubkey,room)" in CONCORD
     assert "wasLocallyLeft(viewer.pubkey,item)" in CONCORD
     assert "kept=rooms.filter(room=>!dead.has(room.communityId)&&!wasLocallyLeft(viewer.pubkey,room))" in CONCORD
     assert "await p.publish(13302,content,[])" in CONCORD
-    handler = CONCORD.split("const leave=$('#cc-leave-community')", 1)[1].split("const settingsSave", 1)[0]
+    handler = CONCORD.split("const leave=$('#cc-leave-community')", 1)[1].split("const leaveByHeader", 1)[0]
     assert handler.index('await leaveArmadaMembership(p,room)') < handler.index('const latest=saved()')
     assert 'removeCommunityByIdentity(latest,leavingId)' in handler
     assert "rooms.splice(index,1)" not in handler
@@ -632,7 +640,7 @@ def test_all_joined_community_metadata_repaints_live_without_moving_chat():
     assert 'eligible[metadataCursor++%eligible.length]' in block
     assert 'roomControls.set(loadKey,wraps||[])' in block
     assert "assign('name'" in block and "assign('description'" in block
-    assert "await applyRoomIconMetadata(room,info,loadKey)" in block
+    assert "await applyRoomIconMetadata(room,info,loadKey,seed)" in block
     assert 'const roomIconRefs=new Map()' in CONCORD
     assert 'rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>backgroundRender())' in block
     assert 'scrollChatBottom' not in block
@@ -673,8 +681,8 @@ def test_icon_removal_and_failure_cannot_block_room_history_hydration():
     assert "console.warn('Concord community icon could not be loaded'" in helper
     assert 'nonce.byteLength!==16&&nonce.byteLength!==12' in decrypt
     assert 'return false' in helper
-    assert 'void applyRoomIconMetadata(room,info,loadKey).then' in hydrate
-    assert 'await applyRoomIconMetadata(room,info,loadKey)' not in hydrate
+    assert 'void applyRoomIconMetadata(room,info,loadKey,seed).then' in hydrate
+    assert 'await applyRoomIconMetadata(room,info,loadKey' not in hydrate
     assert 'const channelCount=applyControl(controlWraps)' in hydrate
     assert 'const channelCount=await applyControl(controlWraps)' not in hydrate
 

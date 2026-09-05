@@ -876,7 +876,8 @@ function createWindow(assignment) {
 
   const contentsId = created.webContents.id;
   if(assignment) _shellScopes.set(contentsId, assignment);
-  created.on('closed', () => { _shellScopes.delete(contentsId); _handoffReady.delete(contentsId); });
+  created.on('closed', () => { _shellScopes.delete(contentsId); _handoffReady.delete(contentsId);
+                               _shellWantsFront.delete(contentsId); });
   loadApp(created);
   return created;
 }
@@ -1431,6 +1432,7 @@ const _nativeGameReconcileTimers = new Set();
 async function reconcileNativeGameFullscreen(){
   let rows=[];
   try{ rows=await wm().windows(); }catch(_){ return; }
+  publishShellOcclusion(rows);
   const alive=new Set(rows.map(row=>Number(row&&row.id)).filter(Number.isFinite));
   for(const id of [..._nativeGameFullscreenAsked]) if(!alive.has(id)) _nativeGameFullscreenAsked.delete(id);
   for(const id of [..._nativeBrowserSized]) if(!alive.has(id)) _nativeBrowserSized.delete(id);
@@ -1453,9 +1455,77 @@ async function reconcileNativeGameFullscreen(){
     }
   }
 }
+/* THE DESKTOP DOES NOT STOP PAINTING BEHIND A GAME, AND NOTHING EVER TOLD IT TO.
+ *
+ * Both shell surfaces are full-output Electron renderers with `backgroundThrottling:false` (set
+ * deliberately, so the clock and the widgets keep their time in the background), and a Wayland
+ * client is never told it is occluded. Measured on the real two-monitor desk with a fullscreen
+ * client covering DP-1, sampling /proc CPU over 5s windows: 58.8% of a core across
+ * wayfire + the shell processes at idle, 113.0% while the surface went fullscreen and 80.2%
+ * steady behind it — i.e. it got BUSIER, never quieter. That is spent beside the game and beside
+ * OBS's encoder, and it is what "game performance was terrible, stuttering during obs recording"
+ * costs. The renderer is the only half that can idle itself, so it is told; what it does with the
+ * news is os.js's `_setDesktopIdle`.
+ *
+ * Scoped per OUTPUT, because the desk has two: a game on DP-1 must not stop the desktop somebody
+ * is still reading on DP-2. Our own surfaces are skipped — a shell surface is full-output by
+ * construction and would otherwise report itself occluded for ever. */
+const _shellOccluded=new Map();       // output name -> boolean last delivered
+function publishShellOcclusion(rows){
+  const covered=new Set();
+  for(const row of rows||[]){
+    if(!row||!row.fullscreen)continue;
+    const app=String(row.app||'');
+    if(/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(app))continue;
+    const name=String(row.outputName||'');
+    if(name)covered.add(name);
+  }
+  const live=new Set();
+  for(const target of BrowserWindow.getAllWindows()){
+    let scope=null;
+    try{ scope=_shellScopes.get(target.webContents.id); }catch(_){ continue; }
+    if(!scope||!scope.output)continue;
+    const on=covered.has(String(scope.output)),key=String(scope.output)+'#'+target.webContents.id;
+    live.add(key);
+    if(_shellOccluded.get(key)===on)continue;
+    _shellOccluded.set(key,on);
+    try{ target.webContents.send('pc:wm:event',
+      {name:'occlusion',change:'fullscreen',payload:on?'on':'off',window:null}); }catch(_){}
+  }
+  /* A renderer that has gone must take its remembered state with it: a webContents id is reused,
+   * and a stale `true` would make the replacement's first real answer look like no change at all. */
+  for(const key of [..._shellOccluded.keys()]) if(!live.has(key)) _shellOccluded.delete(key);
+  /* Keep sweeping while anything is fullscreen: the sweep is also how the desktop learns the game
+   * has GONE, and an armed window that expires mid-game would leave it idle for ever. */
+  if(covered.size)armNativeGameSweep(15000);
+}
+
+/* A PROMOTION THAT ONLY EVENTS CAN TRIGGER IS A PROMOTION THAT A LOST EVENT CANCELS.
+ *
+ * Every sweep below was scheduled FROM a window event, so the one failure the shell actually has —
+ * a Wayfire IPC reconnect, which used to lose the per-connection watch permanently — took the whole
+ * feature with it and nothing else could notice. Measured with an XWayland window classed
+ * `steam_app_999999`: promoted after 8.25s in one run, still floating after 9s in another. The
+ * watch now re-arms (wm-wayfire.js `_watchLost`), and this is the second half: a bounded 2s
+ * heartbeat armed by a launch, by any window event and by a reconnect, so the promotion happens
+ * whether or not a single event arrives. It is BOUNDED and once-per-view-id, not a watchdog: a
+ * person can still leave fullscreen and it will not drag them back. */
+let _nativeGameSweepTimer=null,_nativeGameSweepUntil=0;
+function armNativeGameSweep(ms){
+  _nativeGameSweepUntil=Math.max(_nativeGameSweepUntil,Date.now()+(Number(ms)||30000));
+  if(_nativeGameSweepTimer)return;
+  _nativeGameSweepTimer=setInterval(()=>{
+    if(Date.now()>_nativeGameSweepUntil){
+      clearInterval(_nativeGameSweepTimer);_nativeGameSweepTimer=null;return;
+    }
+    reconcileNativeGameFullscreen().catch(()=>{});
+  },2000);
+  if(_nativeGameSweepTimer&&_nativeGameSweepTimer.unref)_nativeGameSweepTimer.unref();
+}
 function scheduleNativeGameReconcile(){
   /* One XWayland map may cause several title/focus events. Share a single bounded sweep rather
    * than multiplying full-tree requests, while still covering Proton's delayed WM_CLASS. */
+  armNativeGameSweep(30000);
   if(_nativeGameReconcileTimers.size)return;
   for(const ms of [180,900,2500]){
     const timer=setTimeout(()=>{
@@ -1494,12 +1564,70 @@ function enforceNativeGameFullscreen(ev){
   _nativeGameFullscreenAsked.add(id);
   wm().fullscreen(id,true).catch(()=>_nativeGameFullscreenAsked.delete(id));
 }
+/* THE DESKTOP IS NOT AN APPLICATION AND MUST NOT BE STACKED LIKE ONE.
+ *
+ * Sway had two stacks and painted floating over tiled, always; the shell is the tiled window, so it
+ * was structurally underneath every application and nothing here ever had to think about it. Wayfire
+ * has ONE workspace layer ordered by focus, and the shell surface is opaque and fills the output —
+ * so every focus of it (a click on the taskbar, on a desktop icon, on the tray chip, or any
+ * `focus(shellId)` in this codebase) covers every application on that monitor. Measured with grim:
+ * focus OBS, OBS is photographed on top; focus the shell, the same photograph shows the bare
+ * desktop and OBS, LibreOffice and four popped-out PosterChan windows are simply not there. Nothing
+ * is minimised, nothing moves, nothing is logged — which is exactly how it was reported: "opening a
+ * new window hides all the other windows on the desktop", "volume widget hides every open window",
+ * "same for notifications", "resizing windows with super + click, hides it right after resize".
+ *
+ * So the shell is pushed back down whenever it is focused. `wm-actions/send-to-back` does not
+ * change the keyboard focus, so the desktop still receives the click it just took; it is one-shot
+ * (measured: a single later focus put the shell back on top), which is why this is an EVENT
+ * handler and not something set once at assignment.
+ *
+ * THE ONE EXCEPTION IS THE SHELL'S OWN WINDOWS. System Settings, Task Manager, Virtual Machines,
+ * Remote Desktop and folders are drawn INSIDE this surface — they are not toplevels — so while one
+ * of them is focused the desktop genuinely does have to be in front, and the renderer says so
+ * through `pc:wm:shell-front`. Everything else the shell has to show above applications (Start, the
+ * notification centre, the tray flyout, the composer) is already its own window and is unaffected.
+ *
+ * Backends that do not need it answer false from `keepBelow` and nothing happens — see wm.js. */
+const _shellWantsFront = new Set();      // webContents ids that have a window of their own on screen
+function shellSurfaceIds(){
+  return new Map(Array.from(_shellSurfaces.values())
+    .filter(record => record && Number.isFinite(Number(record.conId)))
+    .map(record => [Number(record.conId), record]));
+}
+function sinkShellSurfaces(){
+  for(const [id, record] of shellSurfaceIds()){
+    const wc = record.browser && !record.browser.isDestroyed() ? record.browser.webContents : null;
+    if(wc && _shellWantsFront.has(Number(wc.id))) continue;
+    /* ALT+TAB IS THE OTHER TIME THE DESKTOP IS DELIBERATELY IN FRONT, and it says so by going
+     * FULLSCREEN — the one state that outranks everything, which is why the chooser can be seen at
+     * all. Its own gesture generates focus events, so without this the surface would be pushed back
+     * under the applications with the chooser drawn on it, mid-press. `_shellFullscreenFailsafes`
+     * holds exactly the ids that asked, and only while the gesture's own 3s failsafe is armed. */
+    if(_shellFullscreenFailsafes.has(id)) continue;
+    try{ Promise.resolve(wm().keepBelow(id, true)).catch(()=>{}); }catch(_){ }
+  }
+}
+/* EVERY shell surface, on every focus and map — not only the one named in the event. A raise this
+ * process did not observe (the compositor picking a successor when a window closes, a `focus` from
+ * a helper, the renderer's own `_raiseShell`) is exactly the case that leaves a desktop covering a
+ * monitor with nothing on screen to say why, and re-sending to a surface already at the back costs
+ * one no-op IPC call. */
+function sinkShellOnFocus(ev){
+  const change = String((ev && ev.change) || '');
+  if(change !== 'view-focused' && change !== 'view-mapped' && change !== 'focus') return;
+  sinkShellSurfaces();
+}
 async function wireShellRecovery(){
   if(!SHELL_MODE || _shellRecoveryWired || !wm().available()) return;
   _shellRecoveryWired = true;
   try{
     await wm().subscribe(['window','workspace','output','tick']);
     wm().on('window', enforceNativeGameFullscreen);
+    wm().on('window', sinkShellOnFocus);
+    /* A reconnect means events were missed while the socket was down — including, quite possibly,
+     * the map of the game somebody just started. Sweep rather than wait for the next one. */
+    wm().on('reconnect', () => armNativeGameSweep(30000));
     wm().on('window', createDesktopBottomGuard({
       backend:wm().backend,
       shellIds:()=>Array.from(_shellSurfaces.values()).map(record=>Number(record&&record.conId)).filter(Number.isFinite),
@@ -1632,6 +1760,10 @@ async function reconcileShellDisplays(){
       }
       if(!record.browser.isVisible()) record.browser.show();
     }
+    /* The desktop starts underneath, not merely once something has been focused. A surface that is
+     * assigned while an application is already up (a shell restart, a monitor hotplug, an update)
+     * otherwise sits over that application until the next focus event — see sinkShellOnFocus. */
+    sinkShellSurfaces();
   })().catch(e => {
       console.warn('[shell displays]', (e && e.message) || e);
       clearTimeout(_displayReconcileTimer);
@@ -1743,7 +1875,20 @@ ipcMain.handle('pc:wm:focus', (e, id) => { fsGuard(e); return wm().focus(Number(
 ipcMain.handle('pc:wm:preview', async (e, id) => {
   fsGuard(e); id=Number(id); if(!Number.isFinite(id))return '';
   const rows=scopedWindows(e,await wm().windows()),target=rows.find(row=>Number(row.id)===id);
-  if(!target||target.stashed||target.visible===false||!target.rect)return '';
+  if(!target)return '';
+  /* A PICTURE OF THE VIEW BEATS A PICTURE OF THE SCREEN, and on this compositor it is the only one
+   * that works. Everything below photographs a screen RECTANGLE, so it has to refuse a window that
+   * is stashed or overlapped — and since the desktop shell is an opaque full-output surface that
+   * any focus raises, "overlapped" is nearly every window and "photographed" is nearly always the
+   * desktop. That is why every Alt+Tab card was blank. Wayfire's view-shot renders the view itself,
+   * occluded or not; measured on a window underneath both the shell and a fullscreen game, it
+   * returned that window's real contents. Anything else (no plugin, another backend) falls through
+   * to the grim path unchanged. */
+  if(typeof wm().captureView==='function'){
+    const shot=await wm().captureView(id).catch(()=>'');
+    if(shot)return shot;
+  }
+  if(target.stashed||target.visible===false||!target.rect)return '';
   /* grim captures screen pixels, not a con_id. Refuse if another native client intersects the
    * requested surface: an exact rectangle is not enough if it could contain somebody else's app.
    * The PosterChan shell is tiled behind the target and is the only safe overlap. */
@@ -2107,6 +2252,17 @@ ipcMain.handle('pc:wm:preview-frame', (e, payload, direction) => {
   record.browser.webContents.send('pc:wm:preview-frame', p);
   return true;
 });
+/* "I have a window of my own on screen." The only reason the desktop surface is ever allowed to sit
+ * above an application — see sinkShellOnFocus. Asked for by the renderer, because only the renderer
+ * knows whether the thing you just clicked was a Settings frame drawn inside the desktop or the
+ * desktop itself. Released the moment it stops being true, and on the surface going away. */
+ipcMain.handle('pc:wm:shell-front', (e, want) => {
+  fsGuard(e);
+  const id = Number(e.sender.id);
+  if(want) _shellWantsFront.add(id);
+  else { _shellWantsFront.delete(id); sinkShellSurfaces(); }
+  return true;
+});
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });
 ipcMain.handle('pc:wm:show', (e, id) => { fsGuard(e); return wm().show(Number(id)); });
 ipcMain.handle('pc:wm:restore', (e, id, x, y, w, h) => {
@@ -2335,6 +2491,13 @@ ipcMain.handle('pc:wm:launch', async (e, argv, opts) => {
     catch(_){firefoxBefore=[];}
   }
   const started = wm().launch(list, launchOpts);
+  /* A GAME LAUNCH IS THE ONE MOMENT WE KNOW A GAME IS COMING, so arm the sweep from it rather than
+   * from an event that may never arrive. It is also the only route that survives the Steam library:
+   * every per-game .desktop entry on this machine reads `Exec=steam steam://rungameid/<id>`, which
+   * hands the URL to the ALREADY-RUNNING client and exits, so the game is a child of Steam and not
+   * of anything we spawned — nothing we wrap around this command can reach it. What we can still do
+   * is watch for its surface. Proton launchers take their time, hence the long window. */
+  try{ if(opts&&(opts.game||opts.gamescope)) armNativeGameSweep(120000); else armNativeGameSweep(20000); }catch(_){}
   /* The window is matched by PID and reported back, so the desktop can place what it just opened
    * rather than guessing which of several windows appeared. Null when it never shows — an app that
    * failed to start must not be reported as launched.

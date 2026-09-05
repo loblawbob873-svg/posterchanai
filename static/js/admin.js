@@ -122,7 +122,7 @@ async function copyRelayKey(which) {
     const v = _relayKeys && _relayKeys[which];
     if (!v) { pcAlert('No ' + which + ' available (no operator key).'); return; }
     const ok = await copyToClipboard(v, btn);
-    if (!ok) window.prompt('Copy the ' + which + ' manually:', v);   // nothing on screen to select
+    if (!ok) await pcPrompt('Copy the ' + which + ' manually:', v);   // nothing on screen to select
 }
 
 // On-demand model download (kind = chat | image | music). Models aren't auto-downloaded; this

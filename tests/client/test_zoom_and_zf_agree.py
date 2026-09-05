@@ -29,23 +29,48 @@ class ZoomAndZfAgree(unittest.TestCase):
         # Strip comments: they quote `body{zoom:.67-.77}` all over, as prose.
         cls.code = re.sub(r"/\*.*?\*/", "", cls.src, flags=re.S)
 
+    # A tier writes its factor one of two ways, and both have to be read the same:
+    #   zoom:.72                      — a fixed step
+    #   zoom:var(--ui-scale,1.25)     — a step a user can override (Settings → Appearance)
+    # The second form is what a 4K-class panel gets, and matching only the first would let a var()
+    # tier set `zoom` with no `--zf` — the exact bug this file exists for — while still "passing",
+    # because the rule simply would not be seen. The FALLBACK is the number being compared: it is
+    # what applies when nothing is stored, and `--ui-scale` is one value read by both declarations,
+    # so a stored override can never make them disagree.
+    _ZOOM = r"(?<![-\w])zoom\s*:\s*(?:var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)|([0-9.]+))"
+    _ZF = r"--zf\s*:\s*(?:var\(\s*--ui-scale\s*,\s*([0-9.]+)\s*\)|([0-9.]+))"
+
+    @staticmethod
+    def _num(m):
+        return float(m.group(1) if m.group(1) is not None else m.group(2))
+
     def test_every_rule_that_sets_zoom_also_sets_zf_to_the_same_value(self):
         blocks = re.findall(r"body\s*\{([^}]*)\}", self.code)
         seen = 0
         for b in blocks:
-            mz = re.search(r"(?<![-\w])zoom\s*:\s*([0-9.]+)", b)
+            mz = re.search(self._ZOOM, b)
             if not mz:
+                self.assertNotRegex(
+                    b, r"(?<![-\w])zoom\s*:",
+                    "a body rule sets `zoom` in a form this test cannot read, so it is no longer "
+                    "checked against --zf at all: %r" % b.strip())
                 continue
             seen += 1
-            mf = re.search(r"--zf\s*:\s*([0-9.]+)", b)
+            mf = re.search(self._ZF, b)
             self.assertIsNotNone(
                 mf, "a body rule sets zoom:%s and no --zf — every container written "
                     "calc(100dvh / var(--zf)) is now sized for a zoom the page is not using: %r"
-                    % (mz.group(1), b.strip()))
+                    % (mz.group(0), b.strip()))
             self.assertEqual(
-                float(mz.group(1)), float(mf.group(1)),
+                self._num(mz), self._num(mf),
                 "zoom and --zf disagree in one rule (%s vs %s) — they are the same fact: %r"
-                % (mz.group(1), mf.group(1), b.strip()))
+                % (mz.group(0), mf.group(0), b.strip()))
+            # ...and if one of them is user-overridable the other must be too, or a stored scale
+            # moves the page and leaves every full-height container sized for the default.
+            self.assertEqual(
+                mz.group(1) is not None, mf.group(1) is not None,
+                "one of zoom/--zf reads var(--ui-scale) and the other does not, so a stored "
+                "display scale would change only half of the pair: %r" % b.strip())
         self.assertGreaterEqual(seen, 4, "the zoom tiers moved — re-read this test")
 
     def test_the_desktop_is_one_of_the_containers_that_depends_on_it(self):

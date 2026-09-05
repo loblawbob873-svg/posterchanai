@@ -245,6 +245,12 @@ CHECKS = {
     "check_contacts_mobile":           dict(group="ui", secs=600),
     "check_vault_mobile":              dict(group="ui", secs=600),
     "check_websearch_mobile":          dict(group="ui", secs=600),
+    # Web Search measured as a RATE, not once. "Usually does not work the first time" passed every
+    # single-shot check there was; the number was 3 of 10, and the seven failures were HTTP 200 with
+    # an empty result list at the 12s engine-timeout wall. Needs real network and this node's own
+    # SearXNG, so it skips cleanly where there is neither.
+    "check_websearch_rate":            dict(group="unit", secs=420, serial=True,
+                                            why="searches answer at a rate, not once in three"),
     "check_notes_mobile":              dict(group="ui", secs=600),
     # Picture messages in Texts, on a device that is not the phone. The node simulator has no DOM,
     # and the bug that hid every attachment on the old messages lived entirely in one.
@@ -253,6 +259,11 @@ CHECKS = {
     "check_files_explorer":            dict(group="ui", secs=600),
     "check_mail_mobile":               dict(group="ui", secs=600),
     "check_concord_mobile":            dict(group="ui", secs=420),
+    # Leaving a community, on the screen a phone actually opens on, and then on the NEXT
+    # device — "I left Soapbox many times" was the vault tombstone being unmatchable by the
+    # owner's own invite announcement, which is what put the room back.
+    "check_concord_leave":             dict(group="ui", secs=420,
+                                            why="leave is reachable, is not a native dialog, and sticks"),
     "check_article_editor":            dict(group="ui", secs=600),
 
     # --- browser checks that drive a page they build themselves ----------------------------------

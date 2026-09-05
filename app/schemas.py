@@ -275,7 +275,14 @@ class SettingsResponse(BaseModel):
     # IP. Separate from `searxng_url`'s transport, which is the app→instance hop and already proxied
     # for a REMOTE instance (search_service.search_transport); this is the instance→Google/Bing hop,
     # which SearXNG makes itself and which was going out direct.
-    searxng_proxy_engines: bool = True
+    # OFF by default, and that is a MEASUREMENT, not a preference. Routed through Tor the default
+    # engines answer "too many requests" / "access denied" / a CAPTCHA, and SearXNG suspends an
+    # engine that replies that way for an HOUR — which reaches the user as "no results", never as a
+    # proxy problem. Measured on this deployment with the block on: engine round-trips of 6.5-12.0s
+    # against the 12.0s ceiling the block itself sets, so 7 of 10 searches hit the wall and came back
+    # HTTP 200 with an empty result list; direct, the same queries took 0.5-1.6s and 8 of 8 answered.
+    # That is the "usually doesn't work the first time, works on the third" report.
+    searxng_proxy_engines: bool = False
     # Spread searches over the nodes in Site → Load Balancing, the way chat/image/music/video are.
     searxng_load_balance: bool = True
     torrent_site_url: str = ""  # TorrentGalaxy or compatible site URL

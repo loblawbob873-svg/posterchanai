@@ -244,11 +244,15 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     #    applies them on ingest). 1063: file metadata. 1068: polls. 10000/10001: mutes and pins —
     #    both render here and both are lists a member expects to follow their account. 10007/10063:
     #    search/blossom server lists. 30000/30001: follow sets + the legacy generic list other
-    #    clients still write bookmarks into (measured on a real member's relay). 30402: listings.
-    #    34550: communities. tests/test_user_data_sync_coverage.py maps each feature to its kinds.
+    #    clients still write bookmarks into (measured on a real member's relay).
+    #    tests/test_user_data_sync_coverage.py maps each feature to its kinds.
+    # NOT here, and not an oversight: the RETIRED kinds (store._RETIRED_KINDS — NIP-28 chat 40-44,
+    # listings 30402/30403, communities 34550, Divine shorts 34236). A restore cannot restore what
+    # the store refuses to insert, so asking for them would spend a member's whole backfill budget
+    # on rows that are dropped on arrival. NIP-71 video (21/22/34235) is NOT retired and stays.
     kinds = kinds or [0, 1, 3, 5, 6, 7, 21, 22, 1063, 1068, 1111, 2003, 2004, 10000, 10001, 10002,
-                      10003, 10007, 10050, 10063, 30000, 30001, 30003, 30023, 30311, 30402, 30617,
-                      34235, 34236, 34550, 31922, 31923, 31924, 31925]
+                      10003, 10007, 10050, 10063, 30000, 30001, 30003, 30023, 30311, 30617,
+                      34235, 31922, 31923, 31924, 31925]
     logger.info("[nostr-relay] sync started for %s…", pubkey[:12])
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
     stored = await _backfill_filter(store, server, upstream,

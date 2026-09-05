@@ -21,7 +21,11 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NATIVE = re.compile(r"(?<![.\w$])(alert|confirm|prompt)\s*\(")
+# `window.confirm(` IS THE NATIVE DIALOG, and the lookbehind that skips property access on
+# some object (`opts.prompt(...)`) skipped it too — so the rule read every file and could not
+# see the most common spelling of the thing it forbids. Concord's "Leave community" and "Ban
+# member" both sat behind one for as long as this audit has existed.
+NATIVE = re.compile(r"(?<![.\w$])(?:(?:window|globalThis|self)\s*\.\s*)?(alert|confirm|prompt)\s*\(")
 # The file that DEFINES the replacements necessarily talks about them.
 EXEMPT = {"admin-dialogs.js"}
 

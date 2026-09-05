@@ -579,12 +579,21 @@ class PosterChanOSProfile(unittest.TestCase):
         What must be true HERE is that neither the config nor the launcher ever asks for fullscreen.
         """
         config = self._session_configs()["overlay wayfire.ini"]
-        # The one fullscreen rule that IS wanted names Steam; nothing else may ask for it.
+        # NOTHING HERE MAY PUT A WINDOW FULLSCREEN BY ITSELF. What is scanned is what could: a
+        # `rule_` (evaluated at map time, on whatever the compositor decides matches) and the
+        # launcher. `force-fullscreen` is deliberately NOT one of those — it is a plugin whose only
+        # trigger is a keybinding, loaded for the one pointer option this compositor has
+        # (`constrain_pointer`, the answer to "cursor went to other monitor"), and its section is
+        # asserted by tests/test_game_fullscreen_survives_the_ipc.py. A game is fullscreened over
+        # IPC by the shell, never from this file: Wayfire 0.10's window-rules has no fullscreen
+        # action at all, which is why the rule that used to be here logged an error and did nothing.
         asks = [l for l in config.splitlines()
-                if "fullscreen" in l and not l.lstrip().startswith("#")
-                and not l.startswith("disable_on_fullscreen")]
+                if "fullscreen" in l and l.startswith("rule_")]
         for line in asks:
             self.assertIn("steam_app_", line, f"the session fullscreens something else: {line}")
+        loads = next(l for l in config.splitlines() if l.startswith("plugins = "))
+        self.assertNotIn("force-fullscreen", loads.replace("force-fullscreen", "", 1),
+                         "force-fullscreen is loaded twice")
         body = open(os.path.join(ROOT, "os", "bin", "pc-shell-start-wayfire"), encoding="utf-8").read()
         self.assertNotIn("fullscreen", body, "the launcher pins the shell fullscreen")
 

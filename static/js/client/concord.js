@@ -699,9 +699,32 @@
     const hash=bytesHex(await crypto.subtle.digest('SHA-256',plain)); if(hash!==String(pointer.hash).toLowerCase())throw new Error('community icon failed integrity check');
     const mime=imageMime(plain);if(!mime)throw new Error('community icon is not a supported image');try{if(window.PCConcordCache)await window.PCConcordCache.putIcon(loadKey,ref,plain,mime);}catch(e){console.warn('Concord icon cache write failed',e);}return URL.createObjectURL(new Blob([plain],{type:mime}));
   }
-  async function applyRoomIconMetadata(room,info,loadKey){
+  /* AN EMPTY ICON FROM A CONTROL READ IS "COULD NOT READ IT", NEVER "IT WAS CLEARED".
+   *
+   * Reported as "Concord communities avatar keeps disappearing and coming back", and it is the
+   * empty-read wipe this codebase keeps re-learning, on a four-second timer. `inspectControl`
+   * ALWAYS returns an `icon` key and it is `""` whenever the folded control state carried no
+   * metadata — which is any pass whose wraps came back thin. That is the ORDINARY case here, not
+   * an edge: `refreshRoomMetadata` runs every 4s while its network read is throttled to 60s, so
+   * fourteen passes out of fifteen see only what the envelope cache gives them, and that cache
+   * answers `[]` for a failure as well as for a miss (another window holding the IndexedDB at a
+   * different version is enough — the desktop shell plus a browser tab does it). The wipe was
+   * then PERSISTED with save(), so the community lost its picture until a complete read put it
+   * back. The line above this one already knew: `name` is written as `info.name||room.name`.
+   *
+   * The trade is stated rather than hidden: an owner who deletes their community's icon upstream
+   * leaves everyone else's copy showing the old one. That is decoration against a rail that
+   * flickers every four seconds, and the owner's own "Community settings" save still clears it
+   * locally — it writes room.icon directly and does not come through here. */
+  async function applyRoomIconMetadata(room,info,loadKey,seed=null){
     if(!room||!info||!Object.prototype.hasOwnProperty.call(info,'icon'))return false;
     const value=info.icon,ref=iconRef(value);
+    /* `seed` is inspectControl(bundle,[]) — the same community with NO control events folded in.
+     * A read that matches it in every profile field folded no metadata at all, which is the only
+     * way to tell "the owner cleared the picture" from "this pass saw nothing". A caller that
+     * passes no seed is asserting its answer (the icon dialog's own path). */
+    const thin=!!seed&&!info.description&&!value&&String(info.name||'')===String(seed.name||'');
+    if(thin&&(room.iconPointer||room.icon||(roomIconRefs.get(loadKey)||{}).url))return false;
     const cached=roomIconRefs.get(loadKey);
     if(cached&&cached.ref===ref)return false;
     const failed=failedIconRefs.get(loadKey);
@@ -904,9 +927,43 @@
   }
   function forgetLeftCommunity(pubkey,room){saveLeftCommunities(pubkey,leftCommunities(pubkey).filter(row=>!leftMatches(row,room)));}
   function wasLocallyLeft(pubkey,room){return leftCommunities(pubkey).some(row=>leftMatches(row,room));}
+  /* A LEAVE IS AN ACCOUNT DECISION, AND THIS LEDGER IS A DEVICE'S MEMORY OF ONE.
+   *
+   * The vault tombstone is the durable half and it is keyed on `community_id`; this ledger is what
+   * the resurrection paths actually consult, and every one of them (a discovered announcement, an
+   * old public invite card) knows a naddr and a URL and NO community id at all. So the tombstones
+   * are replayed into this ledger on every membership pass — that is the only reason a laptop
+   * knows about a community left on a phone. Written only when it says something new, because
+   * this runs on a timer. */
+  function noteLeftFromVault(pubkey,room,removedAt){
+    if(!pubkey||!roomIdentity(room))return false;
+    const known=leftCommunities(pubkey).find(row=>leftMatches(row,room));
+    const naddr=String(room&&room.naddr||''),url=String(room&&room.url||'');
+    if(known&&(!naddr||known.naddr===naddr)&&(!url||known.url===url))return false;
+    rememberLeftCommunity(pubkey,{...room,naddr:naddr||(known&&known.naddr)||'',url:url||(known&&known.url)||''},
+      known&&!removedAt?known.removedAt:removedAt);
+    return true;
+  }
+  /* AN ANNOUNCEMENT MUST NOT BE ACTED ON BEFORE THE VAULT HAS BEEN READ.
+   *
+   * Discovery answers off a warm relay in milliseconds and the membership read is several
+   * round trips behind it, so the owner's own kind-1 rebuilt the room, on screen, before anything
+   * had learned it was tombstoned — and `recoveredOwnedInvites` then made that decision final for
+   * the session. Hold the item instead and replay it once this account's vault has actually been
+   * decoded. Nothing is lost: an announcement is not membership, so waiting costs a repaint. */
+  let membershipReadFor='';
+  const pendingOwnedInvites=[];
+  function flushOwnedInvites(p){
+    const queued=pendingOwnedInvites.splice(0,pendingOwnedInvites.length);
+    for(const item of queued)recoverOwnedInvite(p,item);
+  }
   function recoverOwnedInvite(p,item){
     const viewer=p.viewer?p.viewer():{};
     if(!item||!viewer.pubkey||item.source.pubkey!==viewer.pubkey||recoveredOwnedInvites.has(item.naddr))return;
+    if(membershipReadFor!==viewer.pubkey){
+      if(!pendingOwnedInvites.some(x=>x&&x.naddr===item.naddr))pendingOwnedInvites.push(item);
+      return;
+    }
     /* An announcement is not membership. Owners commonly announce the invite once and later leave
      * the Soapbox room; discovery replays that old kind-1 on every reconnect. Never turn it back
      * into a joined room after an explicit leave. An intentional Join clears this ledger only
@@ -1177,11 +1234,12 @@
   }
   async function syncArmadaMemberships(p,viewer,localOnly=false){
     if((state.community!=null&&!localOnly)||membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
-    let recovered=false;
+    let recovered=false,vaultEmpty=false;
     try{
       if(membershipViewer!==viewer.pubkey){membershipViewer=viewer.pubkey;membershipDocs.clear();}
       const activeRecovery=localOnly==='recovery',signal=localOnly&&!activeRecovery?null:discoveryAbortController&&discoveryAbortController.signal;
       const candidates=await membershipEvents(p,viewer.pubkey,{external:!localOnly||activeRecovery,legacyRecovery:activeRecovery,signal});
+      vaultEmpty=!candidates.length;
       if(state.community!=null&&!localOnly)return;
       // Armada has emitted both kinds and may leave several list shards on relays. Decode every
       // valid snapshot: choosing one newest event can hide communities stored in another shard.
@@ -1193,8 +1251,12 @@
           decrypted.push({event,doc}); recovered=true;
         }catch(_){}
       }
-      const list=decodeMembershipLists(decrypted);
-      for(const t of list.tombstones){if(t&&t.community_id)tombs.set(t.community_id,Math.max(Number(tombs.get(t.community_id))||0,Number(t.removed_at)||0));}
+      const list=decodeMembershipLists(decrypted),tombRefs=new Map();
+      for(const t of list.tombstones){if(!t||!t.community_id)continue;tombs.set(t.community_id,Math.max(Number(tombs.get(t.community_id))||0,Number(t.removed_at)||0));
+        /* A tombstone written by this build names the invite it retired. Older ones (and Armada's)
+         * name only the community id, which no announcement carries — the entry beside it is then
+         * the only place the invite_ref survives, so both are merged below. */
+        const ref=tombRefs.get(t.community_id)||{};tombRefs.set(t.community_id,{invite_ref:t.invite_ref||ref.invite_ref||'',naddr:t.naddr||ref.naddr||''});}
       for(const e of list.entries){
         if(!e||!e.community_id||!(e.current||e.seed))continue;
         /* The first released 13302 writers stored only `seed`; `current` was added for instant
@@ -1210,6 +1272,25 @@
       /* A tombstone must also REMOVE a room already rebuilt by cached membership or an old public
        * invite. The previous fold only declined to add it, leaving the stale local row untouched. */
       const dead=new Set([...tombs].filter(([id,at])=>Number(at)>=Number((entries.get(id)||{}).added_at||0)).map(([id])=>id));
+      /* THE TOMBSTONE TEACHES THIS DEVICE, EVERY PASS. Reported as "on laptop, I loaded
+       * Communities and it brought me back to Soapbox which I left many times": the vault said the
+       * community was left and the laptop believed it — right up until discovery replayed the
+       * OWNER'S OWN invite announcement, which `recoverOwnedInvite` rebuilt into a joined room
+       * because the only thing that had ever refused it was a localStorage ledger belonging to the
+       * device the Leave button was pressed on. The rebuilt room carries no `community_id` either,
+       * so the `dead` filter below could never see it. Seeding the ledger from the winning
+       * tombstones — with the invite reference, which is the key an announcement actually has —
+       * closes both halves at once.
+       *
+       * ONLY THE WINNING ONES. A deliberate re-join publishes an entry newer than its tombstone
+       * and is therefore not in `dead`; re-seeding from the stale tombstone beside it would refuse
+       * the join the person had just made. */
+      for(const id of dead){
+        const ref=tombRefs.get(id)||{},entry=entries.get(id)||{},
+          url=inviteRefUrl(ref.invite_ref||entry.invite_ref||''),
+          naddr=String(ref.naddr||'')||(url?String((inviteParts(url)||{}).naddr||''):'');
+        noteLeftFromVault(viewer.pubkey,{communityId:id,naddr,url},Number(tombs.get(id))||0);
+      }
       const activeId=state.community==null?'':roomIdentity(rooms[state.community]),kept=rooms.filter(room=>!dead.has(room.communityId)&&!wasLocallyLeft(viewer.pubkey,room));
       if(kept.length!==rooms.length){
         rooms=kept;changed=true;
@@ -1262,6 +1343,12 @@
       if(changed){save(rooms);backgroundRender();}
     }catch(e){ console.warn('Concord membership sync failed',e); }
     finally{
+      /* "A DOCUMENT WAS OPENED" IS THE ONLY HONEST LATCH. Candidates that decoded nothing means
+       * "could not open", never "there is nothing there"; an empty candidate set means every
+       * source — cache, own relay and, on the first pass, the compatibility relays — agreed this
+       * account has published no vault, which is a real answer. Anything else leaves owned-invite
+       * recovery held, and holding it only costs a community the invite link can restore. */
+      if(viewer.pubkey&&(recovered||vaultEmpty)){membershipReadFor=viewer.pubkey;flushOwnedInvites(p);}
       membershipBusy=false;
       // Native desktop starts with an empty origin and relays may not be connected on first paint.
       // Retry a failed/empty recovery instead of permanently hiding the user's Armada rooms.
@@ -1300,7 +1387,19 @@
         for(const t of Array.isArray(list.tombstones)?list.tombstones:[]){if(t&&t.community_id&&Number(t.removed_at||0)>=Number((tombs.get(t.community_id)||{}).removed_at||0))tombs.set(t.community_id,t);}
       }catch(_){}
     }
-    const removedAt=Date.now();tombs.set(room.communityId,{community_id:room.communityId,removed_at:removedAt});
+    /* THE TOMBSTONE CARRIES THE INVITE, NOT ONLY THE COMMUNITY ID.
+     *
+     * Every path that can put a left community back — a discovered public card, and above all the
+     * owner's own kind-1 invite announcement, which discovery replays on every reconnect — knows a
+     * naddr and a URL and no community id whatsoever. A tombstone keyed only on `community_id` is
+     * therefore unmatchable by the thing it has to beat, which is how "I left Soapbox many times"
+     * happened. The ENTRY goes too: leaving it behind (correct only because `removed_at` outranks
+     * its `added_at`) is one arithmetic accident away from a resurrection, and a client that folds
+     * entries without folding tombstones sees a membership. */
+    const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=String(room.naddr||'');
+    entries.delete(room.communityId);
+    tombs.set(room.communityId,{community_id:room.communityId,removed_at:removedAt,
+      ...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});
     const content=await p.nip44enc(viewer.pubkey,JSON.stringify({entries:[...entries.values()],tombstones:[...tombs.values()]})),made=await p.publish(13302,content,[]);
     if(made&&made.ev&&p.relayPublishTo){const accepted=await p.relayPublishTo(CORD_RELAYS,made.ev);if(!accepted)throw new Error('membership relays rejected the leave update');}
     rememberLeftCommunity(viewer.pubkey,room,removedAt);
@@ -1319,7 +1418,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);
-      const applyControl=wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
+      const applyControl=wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
@@ -1781,7 +1880,7 @@
       const assign=(key,value)=>{if(value!==undefined&&JSON.stringify(room[key])!==JSON.stringify(value)){room[key]=value;changed=true;}};
       assign('name',info.name||room.name); assign('description',info.description===undefined?room.description:info.description);
       assign('banned',Array.isArray(info.banned)?info.banned:room.banned||[]);
-      if(await applyRoomIconMetadata(room,info,loadKey))changed=true;
+      if(await applyRoomIconMetadata(room,info,loadKey,seed))changed=true;
       const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
       if(channels.length)assign('channels',channels);
       if(changed){rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>backgroundRender());}
@@ -1905,7 +2004,7 @@
     feed.innerHTML=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${mobileDrawerOpen?' drawer-open':''}${state.community==null?' home-view':''}">
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
       <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Join a community">+</button></aside>
-      <aside class="cc-channels"><header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button>':''}<button class="cc-head-btn" id="cc-invite" title="Join with invite">+</button></header>
+      <aside class="cc-channels"><header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-room" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button>':''}<button class="cc-head-btn" id="cc-invite" title="Join with invite">+</button></header>
         <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
@@ -2035,7 +2134,7 @@
     if(input)input.onpaste=event=>{ const images=[...(event.clipboardData&&event.clipboardData.items||[])].filter(item=>item.kind==='file'&&String(item.type||'').startsWith('image/')).map(item=>item.getAsFile&&item.getAsFile()).filter(Boolean); if(!images.length)return; event.preventDefault(); void uploadAttachments(images); };
     const members=$('#cc-members'); if(members)members.onclick=()=>{if(!window.matchMedia||window.matchMedia('(max-width:820px)').matches){$('#cc-members-dialog').classList.remove('hidden');return;}const pane=$('.cc-members-pane');if(!pane)return;const hide=localStorage.getItem('pc.concord.members.hidden')!=='1';pane.classList.toggle('hidden',hide);localStorage.setItem('pc.concord.members.hidden',hide?'1':'0');};
     const membersClose=$('#cc-members-close'); if(membersClose)membersClose.onclick=()=>$('#cc-members-dialog').classList.add('hidden');
-    const banMember=async target=>{ const initial=saved(),room=initial[state.community],roomId=roomIdentity(room),viewer=p.viewer?p.viewer():{},bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader,loadKey=room&&(room.communityId||room.naddr),wraps=roomControls.get(loadKey); if(!bundle||!reader||!reader.createBanWrap||!wraps)return p.toast('community moderation is not ready'); if(typeof window.confirm==='function'&&!window.confirm('Ban this member from the community?'))return; try{ const made=await reader.createBanWrap(bundle,wraps,target,viewer.pubkey,p.signTemplate),relays=roomRelays(bundle),accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the ban');/* A signer may keep this promise open while the owner changes rooms. Update the moderated room by durable identity instead of overwriting the newly active numeric index. */const latest=saved(),roomIndex=latest.findIndex(item=>roomIdentity(item)===roomId);if(roomIndex<0)throw new Error('community was removed while moderation was pending');latest[roomIndex].banned=made.banned;save(latest);render();p.toast('member banned'); }catch(e){p.toast('member was not banned: '+(e&&e.message||e));} };
+    const banMember=async target=>{ const initial=saved(),room=initial[state.community],roomId=roomIdentity(room),viewer=p.viewer?p.viewer():{},bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader,loadKey=room&&(room.communityId||room.naddr),wraps=roomControls.get(loadKey); if(!bundle||!reader||!reader.createBanWrap||!wraps)return p.toast('community moderation is not ready'); if(p.uiConfirm&&!await p.uiConfirm('Ban this member from the community?',{ok:'Ban',danger:true}))return; try{ const made=await reader.createBanWrap(bundle,wraps,target,viewer.pubkey,p.signTemplate),relays=roomRelays(bundle),accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the ban');/* A signer may keep this promise open while the owner changes rooms. Update the moderated room by durable identity instead of overwriting the newly active numeric index. */const latest=saved(),roomIndex=latest.findIndex(item=>roomIdentity(item)===roomId);if(roomIndex<0)throw new Error('community was removed while moderation was pending');latest[roomIndex].banned=made.banned;save(latest);render();p.toast('member banned'); }catch(e){p.toast('member was not banned: '+(e&&e.message||e));} };
     const closeMemberMenu=()=>{const old=document.querySelector('.cc-member-menu');if(old)old.remove();};
     const openMemberMenu=(event,target)=>{closeMemberMenu();const canBan=isOwner&&target!==viewer.pubkey,canMessage=target!==viewer.pubkey,menu=document.createElement('div');menu.className='cc-member-menu';menu.setAttribute('role','menu');menu.innerHTML=`<button data-cc-member-profile="${p.enc(target)}" role="menuitem">View profile</button>${canMessage?`<button data-cc-member-message="${p.enc(target)}" role="menuitem">Message</button>`:''}${canBan?`<button class="danger" data-cc-member-ban="${p.enc(target)}" role="menuitem">Ban from community</button>`:''}`;document.body.appendChild(menu);const anchor=event.currentTarget||(event.target&&event.target.closest&&event.target.closest('[data-cc-member]')),rect=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null,rows=1+(canMessage?1:0)+(canBan?1:0),x=Math.min(rect?rect.right+6:(event.clientX||12),window.innerWidth-190),y=Math.min(rect?rect.top:(event.clientY||12),window.innerHeight-(rows*42+8));menu.style.left=Math.max(8,x)+'px';menu.style.top=Math.max(8,y)+'px';menu.querySelector('[data-cc-member-profile]').onclick=()=>{closeMemberMenu();if(p.openProfile)p.openProfile(target);};const message=menu.querySelector('[data-cc-member-message]');if(message)message.onclick=()=>{closeMemberMenu();if(p.messageUser)p.messageUser(target);};const ban=menu.querySelector('[data-cc-member-ban]');if(ban)ban.onclick=()=>{closeMemberMenu();void banMember(target);};setTimeout(()=>document.addEventListener('pointerdown',e=>{if(!menu.contains(e.target))closeMemberMenu();},{once:true}),0);};
     $$('[data-cc-member]').forEach(row=>{const target=row.dataset.ccMember;let held=null,longPressed=false;row.onclick=e=>{e.preventDefault();/* Android/iOS synthesize click after a completed long press. Consume that click or the menu is immediately replaced by Profile. Resolve the viewport now, not when this row was rendered: rotation and desktop window resizing can cross the responsive boundary without causing a Concord repaint. */const action=memberTapAction(memberViewportIsNarrow(),longPressed);longPressed=false;if(action==='consume')return;if(action==='profile'){if(p.openProfile)p.openProfile(target);return;}openMemberMenu(e,target);};row.oncontextmenu=e=>{e.preventDefault();longPressed=false;openMemberMenu(e,target);};row.onpointerdown=e=>{if(e.pointerType==='mouse')return;longPressed=false;held=setTimeout(()=>{held=null;longPressed=true;openMemberMenu(e,target);},550);};row.onpointerup=row.onpointercancel=row.onpointermove=()=>{if(held){clearTimeout(held);held=null;}};});
@@ -2043,8 +2142,16 @@
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
     const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); const announcement=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]); const accepted=await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev); if(!accepted)throw new Error('Armada discovery relays rejected the listing'); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>$('#cc-settings-dialog').classList.add('hidden');
-    const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;if(typeof window.confirm==='function'&&!window.confirm('Leave '+roomName(room,index)+'?'))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)localStorage.setItem('pc.concord.active',String(state.community));else localStorage.removeItem('pc.concord.active');render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
-    const leaveShortcut=$('#cc-leave-shortcut');if(leaveShortcut)leaveShortcut.onclick=()=>{const action=$('#cc-leave-community');if(action)action.click();};
+    const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)localStorage.setItem('pc.concord.active',String(state.community));else localStorage.removeItem('pc.concord.active');render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
+    /* THE CONVERSATION HEADER IS NOT A SURFACE ON A PHONE. `.cc-conversation` is display:none until
+     * a channel is opened, so the only Leave control lived behind a tap somebody has no reason to
+     * make first — "mobile has no way to leave concord communities", with the button measurably
+     * present and measurably 0x0. It belongs beside the community name, on the pane a phone opens
+     * on, which is where a desktop looks for it too. Both delegate to the one real handler so the
+     * three cannot drift. */
+    const leaveByHeader=()=>{const action=$('#cc-leave-community');if(action)action.click();};
+    const leaveShortcut=$('#cc-leave-shortcut');if(leaveShortcut)leaveShortcut.onclick=leaveByHeader;
+    const leaveRoom=$('#cc-leave-room');if(leaveRoom)leaveRoom.onclick=leaveByHeader;
     const settingsSave=$('#cc-settings-save'); if(settingsSave)settingsSave.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; const description=String($('#cc-description-value').value||'').trim().slice(0,1000),icon=normalizeIcon($('#cc-settings-icon').value); settingsSave.disabled=true; try{ if(!room.local){const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room.cord&&room.cord.bundle,loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);if(!reader||!reader.createMetadataWrap||!bundle)throw new Error('community profile is not ready');let wraps=roomControls.get(loadKey);if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});}const made=await reader.createMetadataWrap(bundle,wraps||[],{name:room.name,description,icon},viewer.pubkey,p.signTemplate),accepted=await p.relayPublishTo(relays,made.wrap);if(!accepted)throw new Error('community relays rejected the profile update');roomControls.set(loadKey,[...(wraps||[]),made.wrap]);} room.description=description; room.icon=icon; if(!Array.isArray(room.channels))room.channels=[]; let channel=room.channels.find(c=>c.name===(state.channel||'general')); if(!channel){ channel={name:state.channel||'general'}; room.channels.push(channel); } channel.private=$('#cc-channel-visibility').value==='private'; save(a); render(); p.toast('community profile updated'); }catch(e){settingsSave.disabled=false;p.toast('community profile was not updated: '+(e&&e.message||e));} };
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community],viewerPk=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,viewerPk).filter(pk=>pk!==viewerPk); if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
@@ -2073,7 +2180,7 @@
     const dismissBlur=()=>closeMessageActions();
     document.addEventListener('pointerdown',dismissPointer,true);document.addEventListener('keydown',dismissKey,true);window.addEventListener('blur',dismissBlur);
     actionDismissOff=()=>{document.removeEventListener('pointerdown',dismissPointer,true);document.removeEventListener('keydown',dismissKey,true);window.removeEventListener('blur',dismissBlur);};
-    $$('[data-cc-delete]').forEach(button=>button.onclick=async()=>{ closeMessageActions();const room=saved()[state.community],storeId=channelStoreId(room,state.channel),messages=testMessages(storeId),id=button.dataset.ccDelete,found=messages.find(m=>messageId(m)===id),viewer=p.viewer?p.viewer():{}; if(!found||!viewer.pubkey||found.pubkey!==viewer.pubkey)return; const confirmed=p.uiConfirm?await p.uiConfirm('Delete this message?',{ok:'Delete',danger:true}):(typeof window.confirm!=='function'||window.confirm('Delete this message?')); if(!confirmed)return; button.disabled=true; try{ if(!room.local)await publishCordMessage(p,room,state.channel,'',[['e',id],['k',String(found.kind||9)]],5); saveTestMessages(storeId,messages.filter(m=>messageId(m)!==id)); if(!removeMessageRow(id))preserveChatScroll(()=>render()); }catch(e){ button.disabled=false; p.toast('message was not deleted: '+(e&&e.message||e)); } });
+    $$('[data-cc-delete]').forEach(button=>button.onclick=async()=>{ closeMessageActions();const room=saved()[state.community],storeId=channelStoreId(room,state.channel),messages=testMessages(storeId),id=button.dataset.ccDelete,found=messages.find(m=>messageId(m)===id),viewer=p.viewer?p.viewer():{}; if(!found||!viewer.pubkey||found.pubkey!==viewer.pubkey)return; const confirmed=p.uiConfirm?await p.uiConfirm('Delete this message?',{ok:'Delete',danger:true}):true; if(!confirmed)return; button.disabled=true; try{ if(!room.local)await publishCordMessage(p,room,state.channel,'',[['e',id],['k',String(found.kind||9)]],5); saveTestMessages(storeId,messages.filter(m=>messageId(m)!==id)); if(!removeMessageRow(id))preserveChatScroll(()=>render()); }catch(e){ button.disabled=false; p.toast('message was not deleted: '+(e&&e.message||e)); } });
     /* VOTING IS A MESSAGE TOO — kind 1018 into this channel's own stream, which is what makes the
      * answers readable by everybody in the room and by nobody outside it. `response` is Armada's
      * tag (its reader collects exactly that), and the `e` tag names the poll. A single-choice poll
@@ -2189,7 +2296,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
