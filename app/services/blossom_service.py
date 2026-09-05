@@ -347,6 +347,9 @@ def _operator_pubkeys(db: Session) -> frozenset:
     try:
         from app.models import Bot
         for u in db.query(User).filter(User.nostr_nsec.isnot(None)).all():
+            # A stored signing key must not override an explicit upload revocation.
+            if u.access_revoked and not (u.is_admin or u.can_blossom):
+                continue
             try:
                 out.add(nostr_service.derive_pubkey(nostr_service.decode_seckey(u.nostr_nsec)))
             except Exception:

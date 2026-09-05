@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 ACCOUNT_FIELDS = (
     "username", "email", "email_verified", "is_admin",
     "can_ai", "can_image", "can_music", "can_video", "can_torrent", "can_blossom", "can_stream",
-    "storage_quota",
+    "storage_quota", "access_revoked",
 )
 
 # Per-user CONFIG (the old "User Settings" UI) — also mirrored so settings live in the relay and a
