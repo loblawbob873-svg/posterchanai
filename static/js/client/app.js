@@ -22432,16 +22432,42 @@
   /* Encrypt → upload → return a self-contained reference. `keep` because this blob is the only copy
      the recipient will ever have (the age sweep must not delete it out from under them), `noMirror`
      because a DR mirror would hand our ciphertext to a third-party server for no benefit. */
-  async function uploadSharedEnc(file, statEl){
+  async function uploadSharedEnc(file, statEl, options){
     const setS = t => { if(statEl) statEl.textContent = t; };
     const key = crypto.getRandomValues(new Uint8Array(32));
-    const buf = new Uint8Array(await file.arrayBuffer());
-    setS('encrypting…');
-    const blob = await _masterEncrypt(key, buf);
-    setS('uploading…');
-    const url = await uploadBlob(new File([blob], (file.name||'file')+'.enc',
-                                          {type:'application/octet-stream'}), {noMirror:true, keep:true, noCompress:true});
+    const chunkBytes = 4 * 1024 * 1024 - 28;
     const meta = { k:_b64u(key), m:file.type||'application/octet-stream', n:file.name||'' };
+    const upload = async bytes => {
+      const blob = await _masterEncrypt(key, bytes);
+      return uploadBlob(new File([blob], (file.name||'file')+'.enc',
+        {type:'application/octet-stream'}), {noMirror:true, keep:true, noCompress:true});
+    };
+    let url;
+    if(options && options.chunked && file.size > chunkBytes){
+      if(file.size > chunkBytes * 4096) throw new Error('This file exceeds the shared-file size limit');
+      const chunks = [];
+      let origin = '';
+      for(let start = 0; start < file.size; start += chunkBytes){
+        setS('uploading ' + Math.floor(start / file.size * 100) + '%…');
+        const bytes = new Uint8Array(await file.slice(start, start + chunkBytes).arrayBuffer());
+        const part = await upload(bytes);
+        const parsed = new URL(part, location.href);
+        const sha = (parsed.pathname.match(/(?:^|\/)([0-9a-f]{64})(?:\.[^/]*)?$/i)||[])[1];
+        if(!sha) throw new Error('The media server returned an invalid file address');
+        const base = parsed.origin + parsed.pathname.slice(0, parsed.pathname.lastIndexOf('/') + 1);
+        if(origin && origin !== base) throw new Error('The media server changed during the upload; please retry');
+        origin = base;
+        chunks.push({sha:sha.toLowerCase(), size:bytes.length});
+      }
+      url = await upload(new TextEncoder().encode(JSON.stringify({v:1,size:file.size,chunks})));
+      const manifestURL = new URL(url, location.href);
+      if(manifestURL.origin + manifestURL.pathname.slice(0, manifestURL.pathname.lastIndexOf('/') + 1) !== origin)
+        throw new Error('The media server changed during the upload; please retry');
+      meta.c = 1;
+    }else{
+      setS('uploading…');
+      url = await upload(new Uint8Array(await file.arrayBuffer()));
+    }
     setS('');
     // Strip any fragment uploadBlob may have produced before appending ours, and base64url the whole
     // descriptor as ONE token: no separator can then collide with linkify's trailing-punctuation trim.

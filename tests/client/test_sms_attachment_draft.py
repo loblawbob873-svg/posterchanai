@@ -8,7 +8,7 @@ CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
 
 def test_selected_mms_is_visible_and_removable_before_send():
     assert 'class="sms-attachment-draft"' in JS
-    assert 'ready to send as MMS' in JS
+    assert 'ready to send' in JS
     assert 'id="sms-attach-clear"' in JS
     assert "clear.onclick=()=>{clearAttachment();paint();}" in JS
     assert ".sms-attachment-draft{" in CSS
@@ -20,9 +20,9 @@ def test_attachment_cannot_leak_to_another_recipient():
     assert "clearAttachment(); S.open = key(to);" in JS
 
 
-def test_mms_send_captures_the_displayed_file_and_accepts_photos_or_videos_only():
-    assert "if(file&&!isMmsFile(file))return {ok:false,error:'MMS supports photos and videos'};" in JS
-    assert 'accept="image/*,video/*"' in JS
+def test_send_captures_the_displayed_file_and_allows_documents_as_links():
+    assert "if(!isMmsFile(file) ||" in JS
+    assert 'id="sms-file" type="file"' in JS
     assert "const attachment=S.attach;" in JS
     assert "send(t.address, body, attachment)" in JS
     assert "if(S.attach===attachment)clearAttachment();" in JS
@@ -52,9 +52,9 @@ def test_texts_attachment_menu_offers_camera_device_and_readable_files():
     assert 'id="sms-src-device"' in JS
     assert 'id="sms-src-blossom"' in JS
     assert "PC.blossomPicker(null, async ({url,type,ext,name})" in JS
-    assert "filter:b=>/^(?:image|video)\\//" in JS
+    assert "MMS supports photos and videos" not in JS[JS.index("const acceptFile ="):JS.index("if(blossomLaunch)")]
     assert "acceptFile(new File([blob],pickedName" in JS
-    assert "title:'📁 Attach photo or video from Files'" in JS
+    assert "title:'📁 Attach from Files'" in JS
 
 
 def test_attach_files_uses_connected_instances_cors_safe_media_reader():

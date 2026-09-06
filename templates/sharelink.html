@@ -102,22 +102,46 @@
   if(meta.u && /^https?:\/\//i.test(meta.u) && String(meta.u).toLowerCase().indexOf({{ sha|tojson }}) >= 0)
     src = meta.u.split('#')[0];
 
-  fetch(src, {cache:'no-store'}).then(function(r){
-    /* 404 IS THE EXPECTED FAILURE HERE and it is not an error to apologise for: these blobs are
-     * kept, but a sender can delete their own files. Saying which is the difference between "try
-     * again" and "ask them to resend". */
+  async function download(url){
+    var r = await fetch(url, {cache:'no-store', credentials:'omit'});
     if(r.status === 404 || r.status === 410) throw new Error('gone');
     if(!r.ok) throw new Error('http ' + r.status);
-    return r.arrayBuffer();
-  }).then(function(buf){
-    var blob = new Uint8Array(buf);
-    if(blob.length < 13) throw new Error('short');
-    return crypto.subtle.importKey('raw', b64uDec(meta.k), 'AES-GCM', false, ['decrypt'])
-      .then(function(ck){
-        return crypto.subtle.decrypt({name:'AES-GCM', iv: blob.slice(0,12)}, ck, blob.slice(12));
-      });
-  }).then(function(plain){
-    var out = new Blob([plain], {type: mime});
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  async function openFile(){
+    var ck = await crypto.subtle.importKey('raw', b64uDec(meta.k), 'AES-GCM', false, ['decrypt']);
+    async function decrypt(blob){
+      if(blob.length < 28) throw new Error('short');
+      return crypto.subtle.decrypt({name:'AES-GCM', iv:blob.slice(0,12)}, ck, blob.slice(12));
+    }
+    var plain = await decrypt(await download(src));
+    if(meta.c !== 1) return new Blob([plain], {type:mime});
+    var manifest = JSON.parse(new TextDecoder().decode(plain));
+    if(manifest.v !== 1 || !Number.isSafeInteger(manifest.size) || manifest.size <= 0 ||
+       !Array.isArray(manifest.chunks) || !manifest.chunks.length || manifest.chunks.length > 4096)
+      throw new Error('invalid file manifest');
+    var total = 0;
+    for(var item of manifest.chunks){
+      if(!item || !/^[0-9a-f]{64}$/.test(item.sha) || !Number.isSafeInteger(item.size) ||
+         item.size <= 0 || item.size > 4 * 1024 * 1024 - 28) throw new Error('invalid file chunk');
+      total += item.size;
+    }
+    if(total !== manifest.size) throw new Error('invalid file length');
+    var parts = [], loaded = 0;
+    for(var item of manifest.chunks){
+      // Hashes cannot inject a host or path. All chunks stay on the manifest's media server.
+      var bytes = await download(new URL(item.sha, new URL(src, location.href)).href);
+      if(bytes.length !== item.size + 28) throw new Error('incomplete file chunk');
+      var sum = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      var sha = Array.from(sum, function(b){return b.toString(16).padStart(2,'0');}).join('');
+      if(sha !== item.sha) throw new Error('file chunk failed verification');
+      parts.push(new Blob([await decrypt(bytes)]));
+      loaded += item.size;
+      msg.textContent = 'Opening… ' + Math.floor(loaded / total * 100) + '%';
+    }
+    return new Blob(parts, {type:mime});
+  }
+  openFile().then(function(out){
     var url = URL.createObjectURL(out);
     bar.remove();
     msg.remove();

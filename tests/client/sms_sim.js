@@ -495,7 +495,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
     else if(step.slice(0, 9) === 'sendfile:'){
       const [to, size, ...rest] = step.slice(9).split(':');
       const bytes = new Uint8Array(Number(size) || 0);
-      const f = new File([bytes], 'photo.jpg', { type:'image/jpeg' });
+      const f = new File([bytes], opt.fileName || 'photo.jpg', { type:opt.fileType || 'image/jpeg' });
       const r = await S.send(to, rest.join(':'), f);
       calls.push(['sendFileResult', r.ok, r.where || r.error || '', r.link || '']);
     }

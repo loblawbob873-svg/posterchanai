@@ -147,6 +147,15 @@ async def drive(base, cases):
                         problems.append(("no-download", f"[{label}] no way to save the file"))
                     if not got["img"]:
                         problems.append(("no-preview", f"[{label}] an image did not render inline"))
+                    digest = await js("""(async()=>{const a=document.querySelector('a.btn[download]');
+                        if(!a)return '';const b=await(await fetch(a.href)).arrayBuffer();
+                        return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',b)),
+                          x=>x.toString(16).padStart(2,'0')).join('');})()""")
+                    if digest != hashlib.sha256(PNG).hexdigest():
+                        problems.append(("wrong-bytes", f"[{label}] saved bytes differ from the original"))
+                elif want == "invalid":
+                    if not got["err"] or got["dl"]:
+                        problems.append(("bad-manifest", f"[{label}] invalid chunks were offered as a file"))
                 elif want == "truncated":
                     if not got["err"] or "incomplete" not in got["err"].lower():
                         problems.append(("truncated-link",
@@ -224,6 +233,19 @@ def main():
     meta = b64u(json.dumps({"k": KEY_B64U, "m": "image/png", "n": "hello.png"}).encode())
     META_TOKEN = meta
 
+    blobs = {sha: blob}
+    def store(data):
+        encrypted = encrypt(data, key)
+        digest = hashlib.sha256(encrypted).hexdigest()
+        blobs[digest] = encrypted
+        return digest
+    chunks = [{"sha":store(part), "size":len(part)} for part in (PNG[:30], PNG[30:])]
+    chunk_sha = store(json.dumps({"v":1, "size":len(PNG), "chunks":chunks}).encode())
+    missing_chunks = [dict(chunks[0]), dict(chunks[1], sha="c" * 64)]
+    missing_sha = store(json.dumps({"v":1, "size":len(PNG), "chunks":missing_chunks}).encode())
+    bad_sha = store(json.dumps({"v":1, "size":len(PNG)+1, "chunks":chunks}).encode())
+    chunk_meta = b64u(json.dumps({"k":KEY_B64U,"m":"image/png","n":"hello.png","c":1}).encode())
+
     client = TestClient(M.app)
     _pages = {}
 
@@ -246,7 +268,9 @@ def main():
     class H(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
             REQUESTS.append(self.path)
-            if self.path.startswith("/blossom/" + sha):
+            requested = self.path.split("/blossom/")[-1].split("?")[0]
+            if self.path.startswith("/blossom/") and requested in blobs:
+                blob = blobs[requested]
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
                 self.send_header("Content-Length", str(len(blob)))
@@ -275,6 +299,9 @@ def main():
 
     cases = [
         ("a photo", f"{base}/f/{sha}#pcenc1={meta}", "ok"),
+        ("chunked photo", f"{base}/f/{chunk_sha}#pcenc1={chunk_meta}", "ok"),
+        ("missing chunk", f"{base}/f/{missing_sha}#pcenc1={chunk_meta}", "gone"),
+        ("invalid chunk length", f"{base}/f/{bad_sha}#pcenc1={chunk_meta}", "invalid"),
         # A messaging app that percent-encoded the fragment on the way.
         ("percent-encoded", f"{base}/f/{sha}#pcenc1%3D{meta}", "ok"),
         ("no fragment", f"{base}/f/{sha}", "truncated"),

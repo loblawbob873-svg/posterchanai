@@ -249,39 +249,59 @@ public final class SyncNet implements SyncIo.Net {
      * disappears from everyone's folder some weeks later.
      */
     public String putBlob(byte[] blob) throws IOException {
-        String sha = SyncCrypto.sha256hex(blob);
-        HttpURLConnection c = open(mediaBase + "/upload", "PUT", READ_TIMEOUT_MS);
-        try {
-            c.setDoOutput(true);
-            c.setFixedLengthStreamingMode(blob.length);
-            c.setRequestProperty("Content-Type", "application/octet-stream");
-            c.setRequestProperty("Authorization", authHeader(24242, "Upload blob",
-                    Arrays.asList(tag("t", "upload"), tag("x", sha),
-                                  tag("expiration", String.valueOf(System.currentTimeMillis() / 1000L + 3600)))));
-            c.setRequestProperty("X-No-Mirror", "1");
-            c.setRequestProperty("X-Keep", "1");
-            OutputStream os = c.getOutputStream();
-            os.write(blob);
-            os.flush();
-            os.close();
-            int code = c.getResponseCode();
-            if (code < 200 || code >= 300) {
-                throw new IOException("upload refused (" + code + ") " + reason(c));
+        return putBlob(new java.io.ByteArrayInputStream(blob), blob.length, SyncCrypto.sha256hex(blob));
+    }
+
+    /** Hash and transmit from disk without holding the entire upload in the Java heap. */
+    public String putBlob(java.io.File file) throws IOException {
+        final java.security.MessageDigest hash;
+        try { hash = java.security.MessageDigest.getInstance("SHA-256"); }
+        catch (java.security.NoSuchAlgorithmException e) { throw new IOException(e); }
+        byte[] buffer = new byte[64 * 1024];
+        try (InputStream in = new java.io.FileInputStream(file)) {
+            int n; while ((n = in.read(buffer)) != -1) hash.update(buffer, 0, n);
+        }
+        StringBuilder sha = new StringBuilder();
+        for (byte b : hash.digest()) sha.append(String.format("%02x", b & 255));
+        return putBlob(new java.io.FileInputStream(file), file.length(), sha.toString());
+    }
+
+    private String putBlob(InputStream blob, long length, String sha) throws IOException {
+        try (InputStream owned = blob) {
+            HttpURLConnection c = open(mediaBase + "/upload", "PUT", READ_TIMEOUT_MS);
+            try {
+                c.setDoOutput(true);
+                c.setFixedLengthStreamingMode(length);
+                c.setRequestProperty("Content-Type", "application/octet-stream");
+                c.setRequestProperty("Authorization", authHeader(24242, "Upload blob",
+                        Arrays.asList(tag("t", "upload"), tag("x", sha),
+                                      tag("expiration", String.valueOf(System.currentTimeMillis() / 1000L + 3600)))));
+                c.setRequestProperty("X-No-Mirror", "1");
+                c.setRequestProperty("X-Keep", "1");
+                OutputStream os = c.getOutputStream();
+                byte[] buffer = new byte[64 * 1024];
+                int n; while ((n = owned.read(buffer)) != -1) os.write(buffer, 0, n);
+                os.flush();
+                os.close();
+                int code = c.getResponseCode();
+                if (code < 200 || code >= 300) {
+                    throw new IOException("upload refused (" + code + ") " + reason(c));
+                }
+                String body = new String(drain(c.getInputStream()), "UTF-8");
+                String got = shaIn(Json.str(Json.obj(Json.parse(body)).get("url"), ""));
+                if (got.isEmpty()) got = shaIn(Json.str(Json.obj(Json.parse(body)).get("sha256"), ""));
+                /* THE SERVER'S ANSWER IS THE AUTHORITY, and when it disagrees with what we hashed the
+                 * upload is a failure rather than a curiosity: recording our sha would put a manifest
+                 * entry against bytes that are not there, and every other device would fail to download
+                 * a file this one reports as synced. */
+                if (!got.isEmpty() && !got.equalsIgnoreCase(sha)) {
+                    throw new IOException("the media server stored a different blob (" + shortSha(got)
+                                          + " for " + shortSha(sha) + ")");
+                }
+                return sha;
+            } finally {
+                c.disconnect();
             }
-            String body = new String(drain(c.getInputStream()), "UTF-8");
-            String got = shaIn(Json.str(Json.obj(Json.parse(body)).get("url"), ""));
-            if (got.isEmpty()) got = shaIn(Json.str(Json.obj(Json.parse(body)).get("sha256"), ""));
-            /* THE SERVER'S ANSWER IS THE AUTHORITY, and when it disagrees with what we hashed the
-             * upload is a failure rather than a curiosity: recording our sha would put a manifest
-             * entry against bytes that are not there, and every other device would fail to download
-             * a file this one reports as synced. */
-            if (!got.isEmpty() && !got.equalsIgnoreCase(sha)) {
-                throw new IOException("the media server stored a different blob (" + shortSha(got)
-                                      + " for " + shortSha(sha) + ")");
-            }
-            return sha;
-        } finally {
-            c.disconnect();
         }
     }
 

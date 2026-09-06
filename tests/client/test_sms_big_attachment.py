@@ -173,6 +173,30 @@ class TooBigForMms(unittest.TestCase):
         self.assertFalse(calls_of(res, "send"), "a link to nothing was texted")
         self.assertTrue(result(res)[1], result(res))
 
+    def test_large_video_and_document_send_links_on_phone_and_web(self):
+        for local in (True, False):
+            for name, mime in (("holiday.mp4", "video/mp4"), ("document.pdf", "application/pdf")):
+                with self.subTest(local=local, name=name):
+                    res = run(steps=["sendfile:+15550100:%d:for mom" % (24 * 1024 * KB)],
+                              telephony=local, fileName=name, fileType=mime)
+                    self.assertTrue(result(res)[1], result(res))
+                    self.assertIn("link", result(res)[2])
+                    self.assertFalse(calls_of(res, "sendMms"))
+                    self.assertFalse(calls_of(res, "uploadEncFile"))
+                    self.assertTrue(calls_of(res, "uploadSharedEnc"))
+
+    def test_required_link_upload_failure_never_falls_back_to_oversized_mms(self):
+        for local in (True, False):
+            for size, mime in ((24 * 1024 * KB, "image/jpeg"), (900 * KB, "video/mp4"), (40 * KB, "application/pdf")):
+                with self.subTest(local=local, size=size, mime=mime):
+                    res = run(steps=["sendfile:+15550100:%d" % size], telephony=local,
+                              fileName="attachment", fileType=mime, uploadFails=True)
+                    self.assertFalse(result(res)[1], result(res))
+                    self.assertIn("blossom said no", result(res)[2])
+                    self.assertFalse(calls_of(res, "sendMms"))
+                    self.assertFalse(calls_of(res, "send"))
+                    self.assertFalse(calls_of(res, "uploadEncFile"))
+
 
 if __name__ == "__main__":
     unittest.main()

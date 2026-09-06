@@ -266,8 +266,9 @@ class TheNativeTextsAppTakesThatRoute(unittest.TestCase):
                          "dead end this feature exists to remove")
         self.assertFalse("tooLargeMessage" in picker,
                          "the carrier's sentence is still shown for a file the app can send")
-        self.assertIn("SmsSweep.WHOLE_BYTES", picker)
-        self.assertIn("tooBigToCopyMessage", picker)
+        self.assertNotIn("SmsSweep.WHOLE_BYTES", picker)
+        self.assertIn("MmsDraft.save(ThreadActivity.this, who, in", picker)
+        self.assertIn("new Thread(", picker)
 
     def test_the_send_asks_for_the_link_route_before_the_carrier_one(self):
         send = self.thread[self.thread.index("private void sendMms(String body)"):

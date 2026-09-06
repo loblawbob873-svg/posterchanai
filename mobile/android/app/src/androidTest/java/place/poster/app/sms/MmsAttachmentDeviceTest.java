@@ -41,6 +41,50 @@ public class MmsAttachmentDeviceTest {
         MmsDraft.remove(context, "+15550199");
     }
 
+    @Test
+    public void largeVideoContentUriStagesWithoutTheOldTwelveMegabyteLimit() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        File file = new File(context.getCacheDir(), "mms-large-video.mp4");
+        String who = "+15550200";
+        try {
+            try (FileOutputStream out = new FileOutputStream(file)) {
+                byte[] block = new byte[65536];
+                for (int i = 0; i < 400; i++) out.write(block);
+            }
+            Uri uri = FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", file);
+            try (InputStream in = context.getContentResolver().openInputStream(uri)) {
+                MmsDraft.save(context, who, in, "video/mp4", "large.mp4");
+            }
+            file.delete();
+            MmsDraft.Value restored = MmsDraft.load(context, who);
+            assertNotNull(restored);
+            assertEquals(25L * 1024 * 1024, restored.file.length());
+            org.junit.Assert.assertTrue(MmsLink.required(restored.mime, restored.file.length(),
+                    300 * 1024, MmsAttachment.MAX_STAGED_BYTES));
+        } finally { file.delete(); MmsDraft.remove(context, who); }
+    }
+
+    @Test
+    public void interruptedStreamingCopyPreservesThePreviousDraft() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String who = "+15550201";
+        byte[] original = new byte[]{1,2,3};
+        try {
+            MmsDraft.save(context, who, original, "image/jpeg", "original.jpg");
+            try {
+                MmsDraft.save(context, who, new InputStream() {
+                    public int read() throws java.io.IOException { throw new java.io.IOException("provider lost"); }
+                }, "video/mp4", "new.mp4");
+                org.junit.Assert.fail("copy should fail");
+            } catch (java.io.IOException expected) { }
+            MmsDraft.Value restored = MmsDraft.load(context, who);
+            assertEquals("original.jpg", restored.name);
+            try (InputStream in = new java.io.FileInputStream(restored.file)) {
+                assertArrayEquals(original, MmsAttachment.read(in, 100));
+            }
+        } finally { MmsDraft.remove(context, who); }
+    }
+
     @Test(expected = java.io.FileNotFoundException.class)
     public void revokedOrRemovedContentIsAnOpenFailureNotAnOversizeFailure() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();

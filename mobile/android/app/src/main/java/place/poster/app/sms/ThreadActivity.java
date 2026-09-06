@@ -155,7 +155,9 @@ public class ThreadActivity extends PcActivity {
         findViewById(R.id.pc_th_attach).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { chooseAttachmentSource(); }
         });
-        findViewById(R.id.pc_th_attachment_remove).setOnClickListener(v -> clearAttachmentDraft());
+        findViewById(R.id.pc_th_attachment_remove).setOnClickListener(v -> {
+            if (!attachmentBusy()) clearAttachmentDraft();
+        });
         findViewById(R.id.pc_th_emoji).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { pickEmoji(); }
         });
@@ -344,7 +346,10 @@ public class ThreadActivity extends PcActivity {
         if (show) count.setText(parts + "×");
     }
 
+    private boolean stagingAttachment, sendingLink;
+
     private void send() {
+        if (attachmentBusy()) return;
         String body = input.getText().toString();
         /* Camera capture is an in-memory JPEG, while Device is a content URI.  Treat them as the
          * same draft: checking only the URI made a photo-only send do nothing and made a captioned
@@ -374,13 +379,22 @@ public class ThreadActivity extends PcActivity {
     private void pickAttachment() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT)
                 .addCategory(Intent.CATEGORY_OPENABLE)
-                .setType("*/*")
-                .putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
+                .setType("*/*");
         try { startActivityForResult(i, PICK_MMS_IMAGE); }
         catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); }
     }
 
+    private boolean attachmentBusy() {
+        MmsDraft.Value current = MmsDraft.load(this, address);
+        if (stagingAttachment || sendingLink || (current != null && MmsDraft.SENDING.equals(current.state))) {
+            say("Please wait for the attachment to finish.");
+            return true;
+        }
+        return false;
+    }
+
     private void chooseAttachmentSource() {
+        if (attachmentBusy()) return;
         new AlertDialog.Builder(this).setTitle(R.string.sms_add_attachment)
                 .setItems(new CharSequence[]{"Camera photo", "Device", "Files"}, (dialog, which) -> {
                     if (which == 1) { pickAttachment(); return; }
@@ -443,8 +457,14 @@ public class ThreadActivity extends PcActivity {
         if (attachmentDraftRow == null) return;
         attachmentDraftRow.setVisibility(attachmentDraft == null ? View.GONE : View.VISIBLE);
         if (attachmentDraft == null) { attachmentPreview.setImageDrawable(null); return; }
-        Bitmap thumb = BitmapFactory.decodeFile(attachmentDraft.file.getAbsolutePath());
-        attachmentPreview.setImageBitmap(thumb);
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(attachmentDraft.file.getAbsolutePath(), options);
+        options.inSampleSize = 1;
+        while (options.outWidth / options.inSampleSize > 256 || options.outHeight / options.inSampleSize > 256)
+            options.inSampleSize *= 2;
+        options.inJustDecodeBounds = false;
+        attachmentPreview.setImageBitmap(BitmapFactory.decodeFile(attachmentDraft.file.getAbsolutePath(), options));
         String state = attachmentDraft.state;
         String line = attachmentDraft.name + " · " + state;
         if (!attachmentDraft.error.isEmpty()) line += "\n" + attachmentDraft.error;
@@ -492,10 +512,7 @@ public class ThreadActivity extends PcActivity {
         if (request == CAPTURE_MMS_IMAGE) {
             if (result == RESULT_OK && pendingCameraFile != null && pendingCameraFile.length() > 0) {
                 attachment = pendingCameraUri;
-                try (InputStream in = getContentResolver().openInputStream(pendingCameraUri)) {
-                    stageAttachment(readAttachment(in), "image/jpeg", pendingCameraFile.getName());
-                } catch (Throwable t) { say(getString(R.string.sms_attachment_bad)); return; }
-                say(getString(R.string.sms_attachment_ready));
+                stageAttachment(pendingCameraUri, "image/jpeg", pendingCameraFile.getName());
                 return;
             }
             Object raw = result == RESULT_OK && data != null && data.getExtras() != null
@@ -511,6 +528,7 @@ public class ThreadActivity extends PcActivity {
             return;
         }
         if (request != PICK_MMS_IMAGE || result != RESULT_OK || data == null) return;
+        if (attachmentBusy()) return;
         Uri picked = data.getData();
         if (picked == null) return;
         try {
@@ -535,40 +553,32 @@ public class ThreadActivity extends PcActivity {
             }
         } catch (Throwable ignored) { }
         attachmentMime = MmsSender.normalizedMime(attachmentMime, attachmentName);
-        if (!attachmentMime.startsWith("image/") && !attachmentMime.startsWith("video/")) {
-            attachment = null; say(getString(R.string.sms_attachment_bad)); return;
-        }
-        /* THE CARRIER CEILING IS NOT THE PICKER'S BUSINESS ANY MORE, and that was the bug: a video
-         * over it was refused HERE, so the only thing this app could say about a file it is
-         * perfectly able to send was that the carrier would not take it. The ceiling decides which
-         * ROUTE the send takes (sendMms → MmsLink), which is a decision that belongs at send time
-         * next to the thing that can act on it. What is left is the one limit the picker really
-         * owns: what this phone will copy in one piece — SmsSweep's ceiling, because there is one
-         * answer on this handset to "how much will it hold in memory at once" and the archive
-         * already stated it. */
-        int readLimit = SmsSweep.WHOLE_BYTES;
-        try {
-            MmsAttachment.rejectKnownSize(attachmentSize, readLimit);
-            try (InputStream in = getContentResolver().openInputStream(picked)) {
-                stageAttachment(MmsAttachment.read(in, readLimit), attachmentMime, attachmentName);
-            }
-        } catch (MmsAttachment.TooLarge large) {
-            attachment = null;
-            say(MmsAttachment.tooBigToCopyMessage(attachmentSize >= 0 ? attachmentSize : large.size,
-                    large.limit));
-            return;
-        } catch (SecurityException denied) {
-            attachment = null; say(getString(R.string.sms_attachment_permission)); return;
-        } catch (Throwable t) {
-            attachment = null; say(getString(R.string.sms_attachment_bad)); return;
-        }
-        say(getString(R.string.sms_attachment_ready));
+        stageAttachment(picked, attachmentMime, attachmentName);
     }
 
-    /* SmsSweep's ceiling, not the MMS staging one: a draft may legitimately be bigger than any
-     * picture message now that an oversized one leaves as an encrypted link, and reading it back
-     * with the smaller limit would refuse — at SEND time, with the file already staged — exactly the
-     * attachments the link route exists for. */
+    /** Copy to durable private storage off the UI thread, without an in-memory file-size ceiling. */
+    private void stageAttachment(final Uri uri, final String mime, final String name) {
+        if (attachmentBusy()) return;
+        stagingAttachment = true;
+        attachment = null;
+        final String who = address;
+        say("Preparing attachment…");
+        new Thread(() -> {
+            String error = "";
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new java.io.IOException("could not open attachment");
+                MmsDraft.save(ThreadActivity.this, who, in, mime, name);
+            } catch (Exception e) { error = "Could not prepare attachment: " + e.getMessage(); }
+            final String failure = error;
+            main.post(() -> {
+                stagingAttachment = false;
+                if (!who.equals(address)) return;
+                restoreAttachmentDraft();
+                say(failure.isEmpty() ? getString(R.string.sms_attachment_ready) : failure);
+            });
+        }, "pc-sms-stage").start();
+    }
+
     private byte[] readAttachment(InputStream in) throws Exception {
         return MmsAttachment.read(in, SmsSweep.WHOLE_BYTES);
     }
@@ -586,13 +596,14 @@ public class ThreadActivity extends PcActivity {
      * a second tap during the upload cannot post the same file twice — and a failure puts it back to
      * FAILED with the reason on the card, where it can be retried.
      */
-    private void sendAsLink(final String body, final byte[] raw, final String mime, final String name) {
+    private void sendAsLink(final String body, final File raw, final String mime, final String name) {
         final String draftKey = attachmentDraft == null ? null : attachmentDraft.key;
         if (draftKey != null) {
             MmsDraft.state(this, draftKey, MmsDraft.SENDING, "");
             restoreAttachmentDraft();
         }
-        say("Too big for a picture message — sending it as a private link…");
+        sendingLink = true;
+        say("Sending it as a private link…");
         final String who = address;
         new Thread(() -> {
             /* THE SIGNER IS NEVER TOUCHED ON THE MAIN LOOPER. SignerKey.load opens the AndroidKeyStore
@@ -608,28 +619,35 @@ public class ThreadActivity extends PcActivity {
                         + "in once, so this phone can send big files as a private link instead.");
             } else {
                 final SyncNet net = new SyncNet(store.apiBase(), store.mediaBase(), sec);
-                r = MmsLink.send(new MmsLink.Io() {
+                r = MmsLink.send(new MmsLink.FileIo() {
                     public String apiBase() { return store.apiBase(); }
                     public String mediaBase() { return store.mediaBase(); }
                     public String upload(byte[] blob) throws Exception { return net.putBlob(blob); }
+                    public String upload(File blob) throws Exception { return net.putBlob(blob); }
                     public String sendText(String text) {
                         SmsSender.Result sent = SmsSender.send(ThreadActivity.this, who, text, threadId);
                         return sent.ok ? "" : (sent.error == null || sent.error.isEmpty()
                                 ? getString(R.string.sms_failed) : sent.error);
                     }
-                }, body, raw, mime, name);
+                }, body, raw, mime, name, getCacheDir());
+            }
+            if (draftKey != null) {
+                if (r.ok) MmsDraft.remove(ThreadActivity.this, who);
+                else MmsDraft.state(ThreadActivity.this, draftKey, MmsDraft.FAILED, r.error);
             }
             main.post(() -> {
+                sendingLink = false;
                 // The screen may have moved to another conversation while the upload ran. The text
                 // went to `who` either way; only the draft bookkeeping belongs to this screen.
                 if (!who.equals(address)) return;
                 if (!r.ok) {
-                    if (draftKey != null) MmsDraft.state(ThreadActivity.this, draftKey, MmsDraft.FAILED, r.error);
                     restoreAttachmentDraft();
                     say(r.error);
                     return;
                 }
-                clearAttachmentDraft();
+                // Storage was finalized above. Do not delete a newer draft from another Activity.
+                attachmentDraft = null; attachment = null; capturedAttachment = null;
+                discardPendingCamera(); paintAttachmentDraft();
                 input.setText("");
                 updateCount();
                 say("Sent as a private link.");
@@ -640,6 +658,11 @@ public class ThreadActivity extends PcActivity {
 
     /** Build a carrier MMS PDU and hand it to Android's public system MMS transport. */
     private void sendMms(String body) {
+        if (attachmentDraft != null && MmsLink.required(attachmentDraft.mime,
+                attachmentDraft.file.length(), MmsSender.videoLimit(), MmsAttachment.MAX_STAGED_BYTES)) {
+            sendAsLink(body, attachmentDraft.file, attachmentDraft.mime, attachmentDraft.name);
+            return;
+        }
         byte[] raw = null;
         if (attachmentDraft != null) try (InputStream in = new java.io.FileInputStream(attachmentDraft.file)) {
             raw = readAttachment(in);
@@ -674,7 +697,10 @@ public class ThreadActivity extends PcActivity {
          * from MmsSender.videoLimit(), i.e. this SIM's own carrier config, which is the same number
          * the transport below would apply; nothing here is a constant about "MMS". */
         if (MmsLink.required(mime, raw.length, MmsSender.videoLimit(), MmsAttachment.MAX_STAGED_BYTES)) {
-            sendAsLink(body, raw, mime, fileName);
+            try {
+                stageAttachment(raw, mime, fileName);
+                sendAsLink(body, attachmentDraft.file, mime, fileName);
+            } catch (Exception e) { say("Could not prepare attachment: " + e.getMessage()); }
             return;
         }
         try {

@@ -38,12 +38,19 @@ final class MmsDraft {
     }
 
     static Value save(Context ctx, String address, byte[] bytes, String mime, String name) throws Exception {
+        return save(ctx, address, new java.io.ByteArrayInputStream(bytes), mime, name);
+    }
+
+    static Value save(Context ctx, String address, java.io.InputStream input, String mime, String name) throws Exception {
         String key = key(address); File d = dir(ctx);
         if (!d.exists() && !d.mkdirs()) throw new Exception("could not save picture draft");
         File tmp = new File(d, key + ".tmp");
         try (FileOutputStream out = new FileOutputStream(tmp)) {
-            out.write(bytes); out.getFD().sync();
-        }
+            byte[] buffer = new byte[64 * 1024]; int n;
+            while ((n = input.read(buffer)) != -1) out.write(buffer, 0, n);
+            out.getFD().sync();
+            if (tmp.length() == 0) throw new java.io.IOException("empty attachment");
+        } catch (Exception e) { tmp.delete(); throw e; }
         File dst = media(ctx, key);
         if (!tmp.renameTo(dst)) { tmp.delete(); throw new Exception("could not save picture draft"); }
         prefs(ctx).edit().putString(key + ".mime", mime).putString(key + ".name", name)

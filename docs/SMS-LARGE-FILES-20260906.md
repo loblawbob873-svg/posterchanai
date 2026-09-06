@@ -1,0 +1,13 @@
+# SMS large-file regression repair
+
+Android's native Texts picker copied files into a byte array with a 12 MiB limit before the existing Blossom-link route ran. The web client also hid upload failures and handed oversized videos to MMS, which could only reject them.
+
+The native picker now streams content URIs into durable private drafts off the UI thread. Sending chooses the link route from the file's metadata before any MMS byte-array read. Preview decoding is sampled. Files above the carrier video ceiling, above MMS staging capacity, and non-MMS documents use an encrypted link. The web client uses the same link route; only resizable photos within the native staging bound may fall back to MMS if Blossom is offline.
+
+Large link attachments use independently AES-GCM-authenticated chunks no larger than 4 MiB including overhead. A separately encrypted manifest records ordered hashes and plaintext lengths. The random key and chunk-format flag remain in the URL fragment. The public `/f/` page validates manifest lengths and chunk hashes, decrypts sequentially, and offers the original file without requiring an account. Existing single-blob links remain supported; other shared-upload callers retain their existing format.
+
+Review: uploads finish before any SMS is sent; a failed chunk never produces a text link. Temporary native ciphertext is removed on success and failure. Native drafts survive interrupted staging. Draft removal/replacement is blocked during active sends, and completion does not delete a newer draft from another Activity. Sync uploads retain authenticated hash commitments and keep/no-mirror headers.
+
+Validation includes a 25 MiB native file under a 24 MiB JVM heap, independent decryption and full-content hash comparisons for native and actual JavaScript uploaders, failure of the second upload, changed media-server rejection, local-radio and remote-web send decisions, old-link compatibility, and real-browser download reconstruction/missing-chunk/invalid-manifest cases. Android content-URI staging and interrupted-copy tests are included in the emulator suite. No SMS was sent to a real contact during automated testing.
+
+Limits: uploads still require connectivity, storage quota, and a Blossom server accepting 4 MiB blobs. Files are limited to 4096 chunks. Desktop's older native IPC file picker retains its 64 MiB ceiling; browser file inputs and native Android use the new large-file path. Interrupted uploads can leave retained encrypted chunks on Blossom, as existing failed shared uploads can; no plaintext or decryption key is uploaded.

@@ -57,6 +57,79 @@ final class MmsLink {
         String sendText(String body);
     }
 
+    interface FileIo extends Io {
+        String upload(java.io.File blob) throws Exception;
+    }
+
+    static final int CHUNK_BYTES = 4 * 1024 * 1024 - 28;
+
+    /** Large files use an encrypted manifest and independently authenticated, bounded chunks. */
+    static Result send(FileIo io, String body, java.io.File plain, String mime, String name,
+                       java.io.File cache) {
+        if (plain == null || plain.length() == 0) return refused("missing attachment");
+        if (trim(io.apiBase()).isEmpty() || trim(io.mediaBase()).isEmpty())
+            return refused("Sign in to your instance once to send this file as a private link.");
+        if (plain.length() > (long) CHUNK_BYTES * 4096)
+            return refused("This file exceeds the shared-file size limit.");
+        byte[] key = new byte[32]; RNG.nextBytes(key);
+        String sha;
+        boolean chunked = plain.length() > CHUNK_BYTES;
+        try (java.io.InputStream in = new java.io.FileInputStream(plain)) {
+            java.util.List<Object> chunks = new java.util.ArrayList<Object>();
+            long remaining = plain.length();
+            sha = "";
+            while (remaining > 0) {
+                int size = (int) Math.min(CHUNK_BYTES, remaining);
+                sha = uploadChunk(io, in, size, key, cache);
+                Map<String, Object> chunk = new LinkedHashMap<String, Object>();
+                chunk.put("sha", sha); chunk.put("size", size); chunks.add(chunk);
+                remaining -= size;
+            }
+            if (chunked) {
+                Map<String, Object> manifest = new LinkedHashMap<String, Object>();
+                manifest.put("v", 1); manifest.put("size", plain.length()); manifest.put("chunks", chunks);
+                byte[] encoded = SyncCrypto.utf8(Json.write(manifest));
+                sha = uploadChunk(io, new java.io.ByteArrayInputStream(encoded), encoded.length, key, cache);
+            }
+        } catch (Exception e) {
+            return refused("Could not upload it: " + e.getMessage());
+        }
+        Result result = new Result();
+        result.link = url(io.apiBase(), io.mediaBase(), sha, key, mime, name, chunked);
+        String error = io.sendText(note(body, name, plain.length(), result.link));
+        if (error != null && !error.isEmpty()) return refused(error);
+        result.ok = true;
+        return result;
+    }
+
+    private static String uploadChunk(FileIo io, java.io.InputStream in, int size, byte[] key,
+                                      java.io.File cache) throws Exception {
+        java.io.File encrypted = java.io.File.createTempFile("sms-link-", ".enc", cache);
+        try {
+            byte[] iv = new byte[SyncCrypto.IV_LEN]; RNG.nextBytes(iv);
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, new javax.crypto.spec.SecretKeySpec(key, "AES"),
+                    new javax.crypto.spec.GCMParameterSpec(128, iv));
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(encrypted)) {
+                out.write(iv);
+                byte[] buffer = new byte[64 * 1024];
+                int remaining = size;
+                while (remaining > 0) {
+                    int n = in.read(buffer, 0, Math.min(buffer.length, remaining));
+                    if (n < 0) throw new java.io.IOException("attachment ended before it was copied");
+                    byte[] part = cipher.update(buffer, 0, n);
+                    if (part != null) out.write(part);
+                    remaining -= n;
+                }
+                out.write(cipher.doFinal());
+            }
+            String sha = io.upload(encrypted);
+            if (sha == null || !sha.matches("[0-9a-fA-F]{64}"))
+                throw new java.io.IOException("the media server returned an invalid file address");
+            return sha.toLowerCase(java.util.Locale.ROOT);
+        } finally { encrypted.delete(); }
+    }
+
     static final class Result {
         boolean ok;
         String error = "";
@@ -92,7 +165,8 @@ final class MmsLink {
          * video as often as not. Re-deriving it here would put a second copy of that table in the
          * one class that must stay Android-free. */
         String type = mime == null ? "" : mime.split(";", 2)[0].trim().toLowerCase(java.util.Locale.ROOT);
-        return type.startsWith("video/") && bytes > carrierVideoCeiling;
+        return (!type.startsWith("image/") && !type.startsWith("video/"))
+                || (type.startsWith("video/") && bytes > carrierVideoCeiling);
     }
 
     /**
@@ -149,7 +223,13 @@ final class MmsLink {
      * reaches a server either, and the page refuses one that does not name this same blob.
      */
     static String url(String apiBase, String mediaBase, String sha, byte[] key, String mime, String name) {
+        return url(apiBase, mediaBase, sha, key, mime, name, false);
+    }
+
+    private static String url(String apiBase, String mediaBase, String sha, byte[] key, String mime,
+                              String name, boolean chunked) {
         Map<String, Object> meta = new LinkedHashMap<String, Object>();
+        if (chunked) meta.put("c", 1);
         meta.put("k", b64u(key));
         meta.put("m", mime == null || mime.isEmpty() ? "application/octet-stream" : mime);
         meta.put("n", name == null ? "" : name);

@@ -142,14 +142,20 @@ DRIVER = r"""
 """.replace("SECRET", SEC)
 
 
-def _run():
+def _run(file_upload=False):
     if shutil.which("javac") is None or shutil.which("java") is None:
         pytest.skip("no JDK")
     with tempfile.TemporaryDirectory() as tmp:
+        driver = DRIVER
+        if file_upload:
+            driver = driver.replace('results.put("put", net.putBlob("hello blossom".getBytes("UTF-8")));',
+                'java.io.File file = java.io.File.createTempFile("sms-upload", ".enc");'
+                'try { java.nio.file.Files.write(file.toPath(), "hello blossom".getBytes("UTF-8"));'
+                'results.put("put", net.putBlob(file)); } finally { file.delete(); }')
         src = os.path.join(tmp, "NetDriver.java")
         with open(src, "w", encoding="utf-8") as fh:
             fh.write("package place.poster.app.sync;\npublic class NetDriver {\n"
-                     "  public static void main(String[] a) throws Exception {\n%s\n  }\n}\n" % DRIVER)
+                     "  public static void main(String[] a) throws Exception {\n%s\n  }\n}\n" % driver)
         out = os.path.join(tmp, "out")
         os.makedirs(out)
         c = subprocess.run(["javac", "-nowarn", "-d", out, "-sourcepath",
@@ -162,9 +168,9 @@ def _run():
         return json.loads(r.stdout.strip())
 
 
-@pytest.fixture(scope="module")
-def wire():
-    return _run()
+@pytest.fixture(scope="module", params=[False, True], ids=["bytes", "streamed-file"])
+def wire(request):
+    return _run(request.param)
 
 
 def test_the_transfer_does_what_it_says(wire):

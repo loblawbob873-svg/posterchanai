@@ -2114,24 +2114,17 @@
     return out;
   }
 
-  /* Send `file` as a link instead of as an attachment. Returns null when it cannot, so the caller
-   * can fall back to trying the MMS rather than refusing to send anything at all. */
+  /* A failed optional photo upload may fall back to carrier resizing. A required link must
+   * preserve its upload error: handing a large video to MMS cannot recover it. */
   async function sendAsLink(to, body, file, limit, remote){
-    if(!PC.uploadSharedEnc) return null;
+    const canFallback = mmsMime(file).startsWith('image/') && file.size <= 8 * 1024 * 1024;
+    const failed = error => canFallback ? null : {ok:false, error:'Could not upload the private link: ' + error};
+    if(!PC.uploadSharedEnc) return failed('encrypted file sharing is unavailable');
     let ref = '';
-    try{ ref = await PC.uploadSharedEnc(file); }
-    catch(_){
-      /* OFFLINE MUST NOT DISABLE THE PHONE'S RADIO. A normal camera photo is almost always larger
-       * than a carrier MMS ceiling, so the preferred encrypted-link route is attempted first. But
-       * Blossom/relay connectivity and carrier connectivity are independent: rejecting here made
-       * Add photo silently depend on the account being online even while SMS itself worked. `null`
-       * means "this optional route is unavailable" and makes send() try the actual MMS transport.
-       * The MMS library will resize for the carrier; if that transport rejects it, its own error is
-       * the one the person needs to see. */
-      return null;
-    }
+    try{ ref = await PC.uploadSharedEnc(file, null, {chunked:true}); }
+    catch(e){ return failed(e && e.message || String(e)); }
     const link = shareLinkFor(ref);
-    if(!link) return null;
+    if(!link) return failed('the media server returned an invalid link');
     const note = (body ? body + '\n\n' : '')
                + (file.name ? file.name + ' \u00b7 ' : '')
                + fmtBytes(file.size) + ' \u2014 too big to send as a picture message, so here it is '
@@ -2146,7 +2139,7 @@
       return {ok:true, where:'queued-link', link, limit:limit&&limit.bytes, doc:queued.doc};
     }
     const P = plug('send');
-    if(!P || !P.send) return null;
+    if(!P || !P.send) return {ok:false,error:'no text messages plugin'};
     try{
       const r = await P.send({ to, body: note });
       if(!r || !r.ok) return { ok:false, error:(r && r.error) || 'the phone would not send it' };
@@ -2164,7 +2157,7 @@
 
   async function send(to, body, file){
     if(!to || (!body && !file)) return { ok:false, error:'nothing to send' };
-    if(file&&!isMmsFile(file))return {ok:false,error:'MMS supports photos and videos'};
+
     /* THE RADIO IS IN THIS DEVICE OR IT IS NOT — the ROLE is a different question.
      *
      * This used to ask `isPhone()`, which is "do we hold the SMS role". On a phone that has not
@@ -2187,10 +2180,9 @@
        that SIM, so mmsLimit() uses the documented conservative default. */
     if(file){
       const limit = await mmsLimit();
-      if(file.size > Math.max(MMS_FLOOR, limit.bytes - MMS_HEADROOM)){
+      if(!isMmsFile(file) || file.size > 8 * 1024 * 1024 || file.size > Math.max(MMS_FLOOR, limit.bytes - MMS_HEADROOM)){
         const viaLink = await sendAsLink(to, body, file, limit, !st0.telephony);
-        // `null` means encrypted storage was unavailable. A phone may still try its MMS transport;
-        // a desktop falls through to the existing encrypted outbox attachment rather than losing it.
+        // Only a resizable photo within native MMS staging bounds can fall back after upload failure.
         if(viaLink) return viaLink;
       }
     }
@@ -3726,10 +3718,10 @@
             + (retryable ? `<button class="btn small sms-retry" data-sms-retry="${enc(m.doc)}">Retry</button>` : '')
             + `</div>`;
         }).join('')}</div>
-        ${S.attach?`<div class="sms-attachment-draft"><span>${ICO(String(S.attach.type||'').startsWith('video/')?'film':'image','b-ic')}<b>${enc(S.attach.name||'Attachment')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send as MMS</small></span><button id="sms-attach-clear" aria-label="Remove attachment">×</button></div>`:''}
+        ${S.attach?`<div class="sms-attachment-draft"><span>${ICO(String(S.attach.type||'').startsWith('video/')?'film':'image','b-ic')}<b>${enc(S.attach.name||'Attachment')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send</small></span><button id="sms-attach-clear" aria-label="Remove attachment">×</button></div>`:''}
         <div class="sms-compose">
-          <button class="btn small" id="sms-attach" title="Add photo or video">${ICO('paperclip','b-ic')}</button>
-          <input id="sms-file" type="file" accept="image/*,video/*" hidden>
+          <button class="btn small" id="sms-attach" title="Add an attachment">${ICO('paperclip','b-ic')}</button>
+          <input id="sms-file" type="file" hidden>
           <input id="sms-camera" type="file" accept="image/*" capture="environment" hidden>
           <button class="btn small" id="sms-emoji" title="Add emoji" aria-label="Add emoji">${ICO('smile','b-ic')}</button>
           ${(PC.gifEnabled && PC.gifEnabled())?`<button class="btn small" id="sms-gif" title="Add GIF" aria-label="Add GIF">${ICO('film','b-ic')}</button>`:''}
@@ -3761,13 +3753,11 @@
     if(gifBtn) gifBtn.onclick = () => { if(PC.gifPicker) PC.gifPicker(input); };
     const pick = PC.$('#sms-file'), camera = PC.$('#sms-camera'), attachBtn = PC.$('#sms-attach');
     const acceptFile = file => {
-      if(file&&!isMmsFile(file)){PC.toast('MMS supports photos and videos');return false;}
       if(file){ S.attach=file; paint(); }
       return !!file;
     };
     const fromBlossom = () => PC.blossomPicker(null, async ({url,type,ext,name}) => {
       try{
-        if(!/^(?:image|video)\//.test(String(type||''))) throw new Error('MMS supports photos and videos');
         /* A tile can DISPLAY cross-origin without CORS and still fail when Texts reads its bytes.
          * Use the app's authenticated/native-aware media path: own-instance credentials, omitted
          * cross-origin credentials, then the connected instance's guarded proxy. Older bundles
@@ -3780,7 +3770,7 @@
                    +(ext&&!String(url).split(/[?#]/)[0].includes('.')?'.'+ext:''));
         acceptFile(new File([blob],pickedName,{type:type||blob.type||'application/octet-stream'}));
       }catch(e){ PC.toast('could not attach Files media: '+String(e&&e.message||e)); }
-    }, {title:'📁 Attach photo or video from Files',filter:b=>/^(?:image|video)\//.test(String(b.type||''))});
+    }, {title:'📁 Attach from Files'});
     if(blossomLaunch){blossomLaunch=false;setTimeout(fromBlossom,0);}
     const fromDevice = async () => {
       /* Electron's hidden file input is not reliable when the Texts window has just changed focus
@@ -3789,7 +3779,7 @@
        * crossing IPC, then restored as a real File so every existing MMS/upload path stays shared. */
       if(window.pcHost && pcHost.pickFile){
         try{
-          const chosen=await pcHost.pickFile({accept:['image/*','video/*'],max:32*1024*1024,title:'Add a photo or video to Texts'});
+          const chosen=await pcHost.pickFile({accept:[],max:100*1024*1024,title:'Add an attachment to Texts'});
           if(!chosen)return false;
           const file=new File([chosen.data],chosen.name,{type:chosen.type});
           return acceptFile(file);
@@ -3804,7 +3794,7 @@
        * account-scoped Files client, and hiding that source made web Texts offer Blossom while the
        * installed app only offered the local disk. `Device` still uses the reliable host dialog. */
       if(PC.blossomPicker && PC.modal){
-        PC.modal('<h3>Add a photo or video</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera photo</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">📁 Files</button></div>', root=>{
+        PC.modal('<h3>Add an attachment</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera photo</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">📁 Files</button></div>', root=>{
           root.querySelector('#sms-src-camera').onclick=()=>{PC.closeModal();camera.click();};
           root.querySelector('#sms-src-device').onclick=()=>{PC.closeModal();fromDevice();};
           root.querySelector('#sms-src-blossom').onclick=()=>{PC.closeModal();fromBlossom();};
