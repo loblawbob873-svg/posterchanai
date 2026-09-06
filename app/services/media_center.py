@@ -548,7 +548,11 @@ def transcode(library, item, profile, number, config=None):
                                 total -= old.stat().st_size
                                 old.unlink()
                             if len(data) <= budget:
-                                target.write_bytes(data)
+                                # Publish the completed file atomically. A killed
+                                # worker must never leave a partial cache hit.
+                                # Both names are on the same /tmp filesystem;
+                                # NamedTemporaryFile removes its name on exit.
+                                os.link(temp.name, target)
                         return data
                 except (OSError, subprocess.SubprocessError):
                     if encoder != "libx264":

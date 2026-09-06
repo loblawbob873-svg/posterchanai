@@ -78,3 +78,36 @@ The interpreter and checkout are test-only tools in /tmp; requirements.txt,
 installer and Docker need no additional runtime dependencies for this correction.
 Review completed before deploying the Roku follow-up. Physical playback confirmation
 remains required after deployment.
+
+## Concurrency and recovery follow-up
+
+Roku playback and artwork are now confirmed working by the user. Fire TV and
+Google TV remain covered by API contract tests, without physical device testing.
+
+Review found that writing directly to the final segment-cache filename could
+leave a partial cache hit after a killed process. Completed FFmpeg output is now
+published with an atomic hard link under the existing cache lock, on the same
+/tmp filesystem. Temporary-file cleanup removes the staging name; the completed
+cache entry remains. This also avoids copying the segment a second time to disk.
+No dependency, installer, Docker or configuration change is needed.
+
+Regression coverage exercises repeated eight-viewer traffic, shared encoding and
+its two-worker bound, enforced per-viewer bandwidth, disconnecting one or all
+viewers, cancellation without charging unsent bytes, interrupted cache publication,
+and cache reuse from a fresh Python process. Jellyfin recovery coverage drops
+volatile state for local and NAS configurations and verifies that the existing
+approved token can reopen the item with its saved position.
+
+Recovery is not seamless playback through an app-server restart: active Jellyfin
+play IDs are memory-only and return 404 afterward. Reopening the item obtains a
+fresh play ID; device approval and saved progress remain available. These tests
+use isolated fixtures, not disruptive restarts of production services. They do
+not establish a multi-hour hardware soak or recovery behavior in every TV app.
+
+Validation: the full Media Center, Jellyfin and packaging suite passed 113 tests;
+the two additional local/NAS restart-recovery cases also passed. The extended
+stress case passed 400 rounds with eight concurrent viewers (3,200 deliveries,
+800 shared encode jobs) in 66.92 seconds, keeping the two-encode limit and the
+default 200 KB/s per-viewer cap. Encoding is simulated in this stress case;
+the full suite separately exercises actual FFmpeg output and client decoding.
+Python compilation and whitespace checks passed. Review completed before rollout.

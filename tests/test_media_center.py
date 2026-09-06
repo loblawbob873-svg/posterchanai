@@ -792,3 +792,164 @@ def test_shared_with_me_distinguishes_ownership_and_revocation(api):
     assert not any(lib['can_manage'] for lib in result.values())
     docs['library:abc']['shared_with'] = []
     assert [lib['id'] for lib in client.get('/api/media-center').json()['libraries']] == ['shared']
+
+
+def test_disconnect_keeps_shared_encode_and_releases_slots(monkeypatch):
+    import threading
+
+    async def exercise():
+        monkeypatch.setattr(media, '_job_condition', asyncio.Condition())
+        monkeypatch.setattr(media, '_segment_jobs', {})
+        monkeypatch.setattr(media, '_active_transcodes', 0)
+        started, release = threading.Event(), threading.Event()
+        calls = []
+        def encode(*args):
+            calls.append(args[3])
+            started.set()
+            assert release.wait(5)
+            return b'complete'
+        monkeypatch.setattr(media, 'transcode', encode)
+        library = {'folder': '/media', 'encoder': 'cpu'}
+        config = {**media.DEFAULT_LIMITS, 'max_transcodes': 1}
+        first = asyncio.create_task(media.segment(library, {'id': 'a'}, '360p', 0, config))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            second = asyncio.create_task(media.segment(library, {'id': 'a'}, '360p', 0, config))
+            await asyncio.sleep(0)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert media._active_transcodes == 1
+            assert not second.done()
+        finally:
+            release.set()
+        assert await second == b'complete'
+        await asyncio.sleep(0)
+        assert calls == [0]
+        assert media._active_transcodes == 0 and not media._segment_jobs
+        # All viewers disappearing also leaves no leaked slot or job.
+        started.clear()
+        release.clear()
+        abandoned = asyncio.create_task(media.segment(library, {'id': 'a'}, '360p', 1, config))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            abandoned.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await abandoned
+            job = next(iter(media._segment_jobs.values()))
+        finally:
+            release.set()
+        assert await job == b'complete'
+        await asyncio.sleep(0)
+        assert media._active_transcodes == 0 and not media._segment_jobs
+    asyncio.run(exercise())
+
+
+def test_repeated_multi_viewer_streams_remain_bounded(monkeypatch):
+    import threading
+    import time
+
+    async def exercise():
+        monkeypatch.setattr(media, '_job_condition', asyncio.Condition())
+        monkeypatch.setattr(media, '_segment_jobs', {})
+        monkeypatch.setattr(media, '_active_transcodes', 0)
+        monkeypatch.setattr(media, '_rate_due', {})
+        monkeypatch.setattr(media, '_rate_lock', asyncio.Lock())
+        active = peak = calls = 0
+        lock = threading.Lock()
+        def encode(*args):
+            nonlocal active, peak, calls
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                calls += 1
+            time.sleep(.01)
+            with lock:
+                active -= 1
+            return b'x' * 32768
+        monkeypatch.setattr(media, 'transcode', encode)
+        config = {**media.DEFAULT_LIMITS, 'max_transcodes': 2}
+        library = {'folder': '/media', 'encoder': 'cpu'}
+        start = time.monotonic()
+        async def viewer(index, number):
+            data = await media.segment(library, {'id': str(index % 2)}, '360p', number, config)
+            return sum([len(chunk) async for chunk in media.paced_bytes(data, str(index), config)])
+        for number in range(400):
+            assert await asyncio.gather(*(viewer(i, number) for i in range(8))) == [32768] * 8
+            assert media._active_transcodes == 0 and not media._segment_jobs
+        assert calls == 800 and peak == 2
+        assert len(media._rate_due) == 9
+        # Each identity received 400 * 32 KiB, at the enforced default 200 KB/s.
+        assert time.monotonic() - start >= (400 * 32768 - 16384) / 200000
+    asyncio.run(exercise())
+
+
+def test_cancelled_bandwidth_wait_does_not_charge_unsent_bytes(monkeypatch):
+    async def exercise():
+        monkeypatch.setattr(media, '_rate_due', {})
+        monkeypatch.setattr(media, '_rate_lock', asyncio.Lock())
+        stream = media.paced_bytes(b'x' * 65536, VIEWER, media.DEFAULT_LIMITS)
+        assert len(await anext(stream)) == 16384
+        charged = dict(media._rate_due)
+        waiting = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        waiting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        assert media._rate_due == charged
+        await stream.aclose()
+    asyncio.run(exercise())
+
+
+def test_cache_publication_is_atomic_and_survives_fresh_process(tmp_path, monkeypatch):
+    import os
+    import sys
+    source = tmp_path / 'movie.mp4'
+    source.write_bytes(b'source')
+    cache = tmp_path / 'cache'
+    monkeypatch.setenv('POSTERCHANAI_MEDIA_CACHE', str(cache))
+    monkeypatch.setattr(media, 'source_path', lambda *args: source)
+    monkeypatch.setattr(media, 'encoder_candidates', lambda *args: ['libx264'])
+    payload = b'complete transport stream' * 1000
+    def encode(cmd, **kwargs):
+        Path(cmd[-1]).write_bytes(payload)
+    monkeypatch.setattr(media.subprocess, 'run', encode)
+    library = {'folder': str(tmp_path), 'encoder': 'cpu'}
+    item = {'id': 'movie', 'duration': 13, 'video': True}
+    link = os.link
+    publications = []
+    def publish(src, dst):
+        assert not Path(dst).exists()
+        assert Path(src).read_bytes() == payload
+        publications.append(str(dst))
+        link(src, dst)
+    monkeypatch.setattr(os, 'link', publish)
+    assert media.transcode(library, item, '360p', 0) == payload
+    assert len(publications) == 1 and not list(cache.glob('*.part'))
+    # A fresh interpreter reuses the disk cache without invoking FFmpeg.
+    script = '''
+import json, sys
+from pathlib import Path
+from app.services import media_center as media
+source, library, item, expected = json.loads(sys.argv[1])
+media.source_path = lambda *args: Path(source)
+def forbidden(*args, **kwargs):
+    raise AssertionError('cached segment encoded after restart')
+media.subprocess.run = forbidden
+assert media.transcode(library, item, '360p', 0) == expected.encode()
+'''
+    # Popen is separate from the patched subprocess.run used by the encoder.
+    child = subprocess.Popen([sys.executable, '-c', script,
+                              json.dumps([str(source), library, item, payload.decode()])],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = child.communicate(timeout=30)
+    assert child.returncode == 0, stderr.decode()
+    # Failure before atomic publication leaves no truncated cache entry to reuse.
+    def interrupted(src, dst):
+        raise OSError('simulated publication interruption')
+    monkeypatch.setattr(os, 'link', interrupted)
+    with pytest.raises(RuntimeError, match='Transcoding failed'):
+        media.transcode(library, item, '360p', 1)
+    assert len(list(cache.glob('*.ts'))) == 1 and not list(cache.glob('*.part'))
+    monkeypatch.setattr(os, 'link', publish)
+    assert media.transcode(library, item, '360p', 1) == payload

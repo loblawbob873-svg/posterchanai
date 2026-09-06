@@ -1026,3 +1026,29 @@ end sub
     path.write_text(broken)
     failed = subprocess.run([interpreter,"-r",str(tmp_path),str(path)],capture_output=True,text=True,timeout=20)
     assert failed.returncode != 0 or 'CONTAINER=ts' not in failed.stdout
+
+
+def test_existing_device_reopens_saved_video_after_volatile_state_loss(api):
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    old_url = '/jellyfin/' + info['MediaSources'][0]['TranscodingUrl']
+    assert c.get(old_url).status_code == 200
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json={
+        'PlaySessionId': info['PlaySessionId'], 'PositionTicks': 60000000,
+    }).status_code == 204
+    # Model the volatile state lost in a restart, retaining the encrypted store.
+    jf._plays.clear()
+    jf._locators.clear()
+    media._sessions.clear()
+    media._catalog_cache.clear()
+    media._rate_due.clear()
+    assert c.get(old_url).status_code == 404
+    # No new Quick Connect approval is needed for the already approved device.
+    resumed = c.get('/jellyfin/UserItems/Resume', headers=h)
+    assert resumed.status_code == 200
+    assert resumed.json()['Items'][0]['UserData']['PlaybackPositionTicks'] == 60000000
+    reopened, fresh = playable(api, login)
+    assert reopened['Id'] == item['Id']
+    assert fresh['PlaySessionId'] != info['PlaySessionId']
+    assert c.get('/jellyfin/' + fresh['MediaSources'][0]['TranscodingUrl']).status_code == 200
