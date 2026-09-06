@@ -510,9 +510,15 @@ if (isOurPage) {
      * heap -- see serveHostFile in main.js. Built here rather than in the client so the origin is
      * stated once, and so a build without the handler simply has no `fileUrl` and the caller falls
      * back to reading bytes. It grants nothing `read` above does not: the same path gate applies. */
+    /* A URL, not bytes. The `.then((b) => new Uint8Array(b))` that used to hang off the end of this
+     * was a fragment of `read` pasted in by mistake, and it made EVERY call throw
+     * "String(...).split(...).map(...).join(...).then is not a function". `thumbAttr` in
+     * hostfiles.js wraps the call in a try/catch and answers '' on failure -- the right shape for a
+     * host that has no such bridge -- so every thumbnail silently vanished and the file list looked
+     * exactly as it had before the feature was added. Reported as "0 thumbnails loaded in File
+     * Manager", twice, because the first fix shipped with this line in it. */
     fileUrl: (target) => 'app://posterchan/__hostfile/'
-      + String(target || '').split('/').map(encodeURIComponent).join('/')
-      .then((b) => new Uint8Array(b)),
+      + String(target || '').split('/').map(encodeURIComponent).join('/'),
     open: (target) => ipcRenderer.invoke('pc:host:open', String(target || '')),
   });
 
