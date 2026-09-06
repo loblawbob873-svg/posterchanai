@@ -73,20 +73,88 @@ class CDP:
         remote = result.get("result", {})
         if remote.get("subtype") == "error":
             raise RuntimeError(remote.get("description") or remote)
+        # A THROW MUST NOT ARRIVE AS AN EMPTY DICT.
+        #
+        # With `returnByValue`, a rejected promise is serialised as its Error object — and an Error
+        # has no enumerable own properties, so it crosses as `{}`. Every gate here then reported
+        # `AssertionError: {}` while the driver had thrown a sentence saying exactly what was wrong
+        # ("Code and Terminal did not open as distinct windows", "System Settings did not open in
+        # its own window"). The reason was measured, formatted and discarded one layer above the
+        # assertion that needed it.
+        detail = result.get("exceptionDetails")
+        if detail:
+            described = ((detail.get("exception") or {}).get("description")
+                         or detail.get("text") or "")
+            raise RuntimeError(str(described).strip() or "the page threw with no message")
         return remote.get("value")
+
+
+async def choose_shell_page(timeout_s=20.0):
+    """The page that OWNS THE DESKTOP, not merely the first one attached.
+
+    Every gate here used to pick `pages[0]`, and /json/list is ordered by the browser. A popped-out
+    window is the same origin in the same renderer, so it looks identical to a shell by every test
+    those pickers applied — one window left open by an earlier gate therefore became every later
+    gate's target. `PCOS.openSystemSettings` exists there, `PCOS.isOn()` is false, no window is ever
+    found, and the gate fails with an EMPTY result that names the feature it was testing. Measured
+    on the laptop: one Files window left by the account gate turned System Settings, Code focus and
+    native Files red at once while the desktop beside them worked perfectly.
+
+    Falls back to any attached PosterChan page, so a gate that genuinely does not need the shell
+    behaves exactly as it did.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    first = None
+    while True:
+        pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
+                 if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
+        for page in pages:
+            if first is None:
+                first = page
+            try:
+                async with CDP(page["webSocketDebuggerUrl"]) as cdp:
+                    if await cdp.eval("!!(window.PCOS && PCOS.isOn && PCOS.isOn())"):
+                        return page
+            except Exception:
+                continue
+        if asyncio.get_event_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.25)
+    if first is not None:
+        return first
+    raise RuntimeError("no installed PosterChan page is attached")
 
 
 async def choose_authenticated_page():
     # CDP becomes reachable before the installed renderer has restored IndexedDB and the OS-backed
     # identity. A one-shot probe made a healthy signed-in package look logged out on slower disks.
     # Poll the actual identity instead; never substitute a guest/throwaway identity in current mode.
+    # PREFER THE PAGE THAT OWNS THE DESKTOP, AND DO NOT SETTLE FOR "IS SIGNED IN".
+    #
+    # A popped-out window is the same origin in the same renderer, so `__PC.me()` is true there too
+    # — and /json/list is ordered by the browser, not by us. One window left open by an earlier gate
+    # therefore becomes every later gate's target, where `PCOS.openSystemSettings` is present but
+    # `PCOS.isOn()` is false and there are no windows to find. Every one of those gates then fails
+    # with an empty result and blames the feature it was testing. Measured on the laptop: a Files
+    # window left by the account gate turned System Settings, Code focus and native Files red at
+    # once, with the desktop beside them working perfectly.
+    #
+    # The shell is the page that has the desktop ON. Any authenticated page is still accepted as a
+    # fallback, so a gate that does not need the shell is unaffected.
     for _ in range(100):
         pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
                  if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
+        fallback = None
         for page in pages:
             async with CDP(page["webSocketDebuggerUrl"]) as cdp:
-                if await cdp.eval("!!(window.__PC && __PC.me && __PC.me())"):
+                if not await cdp.eval("!!(window.__PC && __PC.me && __PC.me())"):
+                    continue
+                if await cdp.eval("!!(window.PCOS && PCOS.isOn && PCOS.isOn())"):
                     return page
+                if fallback is None:
+                    fallback = page
+        if fallback is not None:
+            return fallback
         await asyncio.sleep(0.2)
     raise RuntimeError("no authenticated installed PosterChan page is attached")
 

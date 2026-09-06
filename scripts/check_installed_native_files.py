@@ -17,7 +17,7 @@ import tempfile
 import urllib.error
 import urllib.request
 
-from check_installed_desktop_account import BASE, CDP, native_files_check
+from check_installed_desktop_account import BASE, CDP, native_files_check, choose_shell_page
 
 
 async def choose_page():
@@ -25,7 +25,8 @@ async def choose_page():
              if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
     if not pages:
         raise RuntimeError("no installed PosterChan page is attached")
-    return pages[0]
+    # THE SHELL, not whatever /json/list happened to list first — see choose_shell_page.
+    return await choose_shell_page()
 
 
 async def main():
