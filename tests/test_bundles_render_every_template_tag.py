@@ -27,6 +27,7 @@ next tag is covered before anybody thinks about it.
 from __future__ import annotations
 
 import re
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -86,22 +87,26 @@ def test_the_instance_still_gets_to_answer_at_runtime():
         encoding="utf-8").split("async def client_config")[1], (
         "/client/config does not publish registration_enabled, so a bundle can never learn that "
         "signup is closed on the instance it is pointed at")
-    app = APP_JS.read_text(encoding="utf-8")
-    gating = app.split("function applyInstanceGating(){")[1].split("\n  }")[0]
-    assert "auth-foot" in gating and "registration_enabled" in gating, (
-        "nothing applies the instance's registration answer to the signup row")
+    assert runtime_signup_hidden(enabled=False, solo=False)
+    assert not runtime_signup_hidden(enabled=True, solo=False)
+
+
+def runtime_signup_hidden(enabled, solo):
+    if not shutil.which('node'):
+        pytest.skip('Node unavailable')
+    app = APP_JS.read_text(encoding='utf-8')
+    helper = app[app.index('  function _registrationOpen('):app.index('  function applyInstanceGating(')]
+    gating = app.split('function applyInstanceGating(){')[1]
+    start = gating.index('    try{')
+    end = gating.index('    }catch(_){ }', start) + len('    }catch(_){ }')
+    code = f"const CFG={{registration_enabled:{json.dumps(enabled)}}},_standalone=()=>{json.dumps(solo)};let hidden=null;const document={{querySelector:()=>({{classList:{{toggle:(name,on)=>hidden=on}}}})}};" + helper + gating[start:end] + 'console.log(JSON.stringify(hidden));'
+    result = subprocess.run(['node', '-e', code], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
 
 
 def test_a_standalone_bundle_keeps_signup():
-    """With NO instance, 'create a new identity' is a local keypair — there is no node to have an
-    opinion about it, so a closed instance's answer must not reach that case."""
-    app = APP_JS.read_text(encoding="utf-8")
-    gating = app.split("function applyInstanceGating(){")[1].split("\n  }")[0]
-    line = [l for l in gating.splitlines()
-            if "classList.toggle('hidden'" in l and "_foot" in l]
-    assert line, "the signup row is no longer toggled here"
-    assert "!solo" in line[0], (
-        "a standalone bundle now hides signup, which leaves it with no way to make an identity")
+    assert not runtime_signup_hidden(enabled=False, solo=True)
 
 
 def test_the_mobile_bundle_is_unaffected_because_it_fetches_a_rendered_page():

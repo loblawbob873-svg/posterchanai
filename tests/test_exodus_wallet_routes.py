@@ -12,6 +12,8 @@ WHAT THESE EXIST TO CATCH, in order of how much they cost when wrong:
 """
 import pytest
 from fastapi.testclient import TestClient
+from fastapi import FastAPI
+from unittest.mock import AsyncMock
 
 import app.main as main
 from app.database import get_db
@@ -60,12 +62,16 @@ def client(monkeypatch):
     monkeypatch.setattr("app.services.nostr_store.get_doc", _get_doc, raising=False)
     monkeypatch.setattr("app.services.nostr_store.put_doc", _put_doc, raising=False)
     db.store["doc"] = doc_store
-    main.app.dependency_overrides[auth.get_current_user] = lambda: _User()
-    main.app.dependency_overrides[get_db] = lambda: db
-    with TestClient(main.app) as c:
+    app = FastAPI()
+    from app.routers.exodus_wallet import router
+    app.include_router(router)
+    monkeypatch.setattr("app.services.exodus_chain_service.balances", AsyncMock(return_value={}))
+    app.dependency_overrides[auth.get_current_user] = lambda: _User()
+    app.dependency_overrides[get_db] = lambda: db
+    with TestClient(app) as c:
         c._db = db
         yield c
-    main.app.dependency_overrides.clear()
+    app.dependency_overrides.clear()
 
 
 def _created(client):
