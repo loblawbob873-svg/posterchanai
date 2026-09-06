@@ -52,8 +52,9 @@ class TestTheVaultKeyIsTheRoomsIdentity(unittest.TestCase):
     def test_it_still_needs_an_invite_url(self):
         """The url carries the `#fragment`, which is the key. Without it another device can list
         the room and never open it, which is worse than not listing it."""
-        body = _fn("  async function persistArmadaMembership(p,room){")
-        self.assertIn("!room.url", body)
+        body = _fn("  async function persistArmadaMemberships(p,rooms){")
+        self.assertIn("roomIdentity(room)&&room.url", body,
+                      "a room with no invite url must be filtered out, not written keyless")
         self.assertIn("invite_ref:room.url", body)
 
     def test_leaving_uses_the_same_identity(self):
@@ -70,9 +71,36 @@ class TestTheVaultKeyIsTheRoomsIdentity(unittest.TestCase):
                       "(room.communityId||room.naddr||room.url)||''); }", CONCORD)
 
 
+class TestOneWritePerPass(unittest.TestCase):
+    """13302 IS REPLACEABLE, SO EVERY WRITE REWRITES THE WHOLE DOCUMENT.
+
+    Called once per room, persist reads the prior document, adds one entry and publishes the lot.
+    In a loop it races itself: the second call's READ can be answered before the first call's
+    publish is queryable, so the document it writes is the old one plus its own entry -- dropping
+    the entry before it. Awaiting each call orders the PUBLISHES; it is the reads that overlap.
+
+    Measured on a real account: the backfill ran over three rooms and the vault afterwards held the
+    last two, written 18:20:09 and 18:20:17, with the first missing entirely.
+    """
+
+    def test_the_list_is_the_unit_of_work(self):
+        body = _fn("  async function persistArmadaMemberships(p,rooms){")
+        self.assertEqual(body.count("await p.publish(13302"), 1,
+                         "more than one publish per call is the race again")
+        self.assertEqual(body.count("membershipEvents(p,viewer.pubkey)"), 1,
+                         "one read, or two calls can read the same stale document")
+        self.assertIn("for(const room of wanted)", body,
+                      "every room must be folded into the one document before it is published")
+
+    def test_the_single_room_entry_point_delegates(self):
+        self.assertIn("async function persistArmadaMembership(p,room){ return "
+                      "persistArmadaMemberships(p,[room]); }", CONCORD,
+                      "two implementations would drift, and the join path uses the single one")
+
+
 class TestTheBackfill(unittest.TestCase):
     def setUp(self):
-        at = CONCORD.index("if(recovered) for(const room of rooms){")
+        at = CONCORD.index("if(recovered){")
         self.block = CONCORD[at: CONCORD.index("if(!live.length)", at)]
 
     def test_it_only_runs_on_a_vault_that_was_actually_read(self):
@@ -80,25 +108,31 @@ class TestTheBackfill(unittest.TestCase):
                         "an unread vault looks exactly like an empty one; republishing on it would "
                         "restore every community the person has left")
 
+    def test_it_publishes_once_for_all_of_them(self):
+        self.assertIn("persistArmadaMemberships(p,missing)", self.block,
+                      "a room per call raced itself and lost the first room every time")
+        self.assertNotIn("for(const room of rooms){\n        const rid", self.block)
+
     def test_it_skips_rooms_the_vault_already_knows(self):
-        self.assertIn("entries.has(rid)", self.block)
+        self.assertIn("!entries.has(rid)", self.block)
 
     def test_it_skips_a_tombstoned_room(self):
-        self.assertIn("tombs.has(rid)", self.block,
+        self.assertIn("!tombs.has(rid)", self.block,
                       "re-adding a left room would be a resurrection loop between two devices")
         self.assertIn("wasLocallyLeft(viewer.pubkey,room)", self.block)
 
     def test_a_purely_local_room_stays_local(self):
-        self.assertIn("!room.url", self.block)
+        self.assertIn("room.url", self.block,
+                      "a room with no invite url has nothing another device could open")
 
     def test_a_failed_publish_does_not_abort_the_pass(self):
         self.assertIn("catch(_)", self.block,
-                      "one unreachable membership relay must not stop the rooms after it")
+                      "an unreachable membership relay must not abort the whole pass")
 
     def test_it_runs_before_the_early_return(self):
         """`if(!live.length) return` fires for an account whose vault holds nothing yet -- which is
         exactly the account that most needs its local rooms written into it."""
-        self.assertLess(CONCORD.index("if(recovered) for(const room of rooms){"),
+        self.assertLess(CONCORD.index("if(recovered){"),
                         CONCORD.index("if(!live.length){if(changed)backgroundRender();return;}"))
 
 

@@ -1398,11 +1398,16 @@
        * Only rooms with an invite `url` can go: that url carries the `#fragment` another device
        * needs to decrypt the room, and persist refuses without one. A purely local room stays local,
        * which is what it is. */
-      if(recovered) for(const room of rooms){
-        const rid=roomIdentity(room);
-        if(!rid||!room.url||entries.has(rid)||tombs.has(rid))continue;
-        if(wasLocallyLeft(viewer.pubkey,room))continue;
-        try{ await persistArmadaMembership(p,room); }catch(_){ /* next pass tries again */ }
+      if(recovered){
+        const missing=rooms.filter(room=>{
+          const rid=roomIdentity(room);
+          return rid&&room.url&&!entries.has(rid)&&!tombs.has(rid)
+                 &&!wasLocallyLeft(viewer.pubkey,room);
+        });
+        /* ONE write for all of them -- see persistArmadaMemberships. A room per call raced itself
+         * and lost the first room every time. */
+        if(missing.length) try{ await persistArmadaMemberships(p,missing); }
+                           catch(_){ /* next pass tries again */ }
       }
       if(!live.length){if(changed)backgroundRender();return;}
       for(const e of live){
@@ -1481,10 +1486,27 @@
    * asks only that `community_id` be non-empty. `invite_ref` still carries the FULL url including its
    * `#fragment`, which is the decryption key -- without it another device can list the room and never
    * open it. */
-  async function persistArmadaMembership(p,room){
+  async function persistArmadaMembership(p,room){ return persistArmadaMemberships(p,[room]); }
+  /* EVERY ROOM IN ONE WRITE, BECAUSE 13302 IS REPLACEABLE AND EACH WRITE IS A READ-MODIFY-WRITE.
+   *
+   * Called once per room, this reads the prior document, adds one entry and publishes the WHOLE
+   * list back. Called in a loop it therefore races itself: the second call's read can be answered
+   * before the first call's publish is queryable, and the document it then writes is the old one
+   * plus its own entry -- silently dropping the entry before it.
+   *
+   * Measured, not reasoned about. The backfill ran over three rooms and the vault afterwards held
+   * the LAST TWO, written 18:20:09 and 18:20:17, with the first one missing entirely: "still don't
+   * see my concord community for posterchan on webui". This is the same replaceable-document hazard
+   * Budget serialises with `chain`, and awaiting each call is not enough -- the await orders the
+   * PUBLISHES, and it is the READS that overlap them.
+   *
+   * So the list is the unit of work. One read, every entry, one publish. */
+  async function persistArmadaMemberships(p,rooms){
     const viewer=p.viewer?p.viewer():{};
-    const cid=roomIdentity(room);
-    if(!viewer.pubkey||!p.nip44enc||!room||!cid||!room.url)return false;
+    if(!viewer.pubkey||!p.nip44enc)return false;
+    const wanted=(Array.isArray(rooms)?rooms:[rooms])
+      .filter(room=>room&&roomIdentity(room)&&room.url);
+    if(!wanted.length)return false;
     let list={entries:[],tombstones:[]};
     try{
       const prior=(await membershipEvents(p,viewer.pubkey))[0];
@@ -1492,15 +1514,19 @@
     }catch(_){}
     if(!Array.isArray(list.entries))list.entries=[];
     if(!Array.isArray(list.tombstones))list.tombstones=[];
-    const now=Date.now(),current={...(room.cord&&room.cord.bundle||{}),name:room.name,invite_ref:room.url};
-    const entry={community_id:cid,seed:current,added_at:now,current,invite_ref:room.url};
-    const i=list.entries.findIndex(e=>e&&e.community_id===cid);
-    if(i<0)list.entries.push(entry); else list.entries[i]={...list.entries[i],...entry};
-    list.tombstones=list.tombstones.filter(t=>t&&t.community_id!==cid);
+    const now=Date.now();
+    for(const room of wanted){
+      const cid=roomIdentity(room);
+      const current={...(room.cord&&room.cord.bundle||{}),name:room.name,invite_ref:room.url};
+      const entry={community_id:cid,seed:current,added_at:now,current,invite_ref:room.url};
+      const i=list.entries.findIndex(e=>e&&e.community_id===cid);
+      if(i<0)list.entries.push(entry); else list.entries[i]={...list.entries[i],...entry};
+      list.tombstones=list.tombstones.filter(t=>t&&t.community_id!==cid);
+    }
     const content=await p.nip44enc(viewer.pubkey,JSON.stringify(list));
     const made=await p.publish(13302,content,[]);
     if(made&&made.ev&&p.relayPublishTo)await p.relayPublishTo(CORD_RELAYS,made.ev);
-    forgetLeftCommunity(viewer.pubkey,room);
+    for(const room of wanted)forgetLeftCommunity(viewer.pubkey,room);
     return true;
   }
   /* LEAVING USES THE SAME IDENTITY AS JOINING, or a room the vault knows by its naddr could be
@@ -2428,7 +2454,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
