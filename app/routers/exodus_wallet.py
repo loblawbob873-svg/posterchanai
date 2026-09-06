@@ -230,8 +230,8 @@ async def _monero_row(user: User) -> dict:
                 "note": "sign in with a Nostr account to use the Monero wallet"}
     try:
         from app.services.monero_user_wallets import user_wallets
-        wallets = user_wallets
-        if not wallets.enabled():
+        wallets = user_wallets()
+        if not wallets:
             return {"address": "", "known": False, "units": None, "amount": None,
                     "note": "this node's Monero wallet is switched off"}
         got = await wallets.balance(key)
