@@ -173,11 +173,8 @@
     </div>`;
   }
 
-  /* WHICH CHAINS CAN ACTUALLY SEND. Receiving works everywhere; spending is implemented for the
-     EVM chains only, and the button is absent rather than present-and-refusing — a control that
-     always says no is a worse answer than no control. The server refuses these too, because a
-     button the page hides is not a rule. */
-  const SENDABLE = new Set(['ETH', 'MATIC', 'BNB', 'AVAX', 'XMR']);
+  // Only expose sends backed by a reviewed server transaction implementation.
+  const SENDABLE = new Set(['ETH', 'MATIC', 'BNB', 'AVAX', 'XMR', 'SOL', 'XRP']);
   const canSend = (sym) => SENDABLE.has(String(sym || '').toUpperCase());
 
   function row(sym, name, cell, quote){
@@ -252,7 +249,8 @@
     return `<div class="ex-panel">
       <h3>Send ${esc(sym)}</h3>
       <p class="ex-hint">From <code>${esc(from)}</code></p>
-      <label>To <input id="ex-to" spellcheck="false" autocomplete="off" placeholder="0x…"></label>
+      <label>To <input id="ex-to" spellcheck="false" autocomplete="off" placeholder="Recipient address"></label>
+      ${sym==='XRP'?'<label>Destination tag (if required) <input id="ex-destination-tag" inputmode="numeric" autocomplete="off" placeholder="Optional for personal wallets"></label>':''}
       <label>Amount (${esc(sym)}) <input id="ex-amt" inputmode="decimal" autocomplete="off" placeholder="0.01"></label>
       <p class="ex-hint">Check the address character by character. An address one character wrong is
         still a valid address — it is simply one nobody holds the key to, and the coins are gone
@@ -402,7 +400,7 @@
           const out=$('#ex-send-out');
           if(result.state==='idle'||result.state==='not_sent'){
             go.disabled=false;if(out)out.textContent=result.state==='not_sent'?'The previous attempt did not reach the network.':'';
-          }else if(out){out.textContent=(result.state==='accepted'?'Sent. Transaction ':'Transfer remains unconfirmed. Transaction ')+(result.hash||'');}
+          }else if(out){out.textContent=(result.state==='accepted'?'Sent. Transaction ':result.state==='failed'?'The network confirmed this payment failed. A network fee may have been charged. Close this panel before starting a new payment. Transaction ':'Transfer remains unconfirmed. Transaction ')+(result.hash||'');}
         }catch(error){if(current(generation)&&go.isConnected){const out=$('#ex-send-out');if(out)out.textContent='Transfer status could not be confirmed. Check again before sending.';}}
       };
       const statusButton=$('#ex-send-status');if(statusButton)statusButton.onclick=checkStatus;
@@ -412,25 +410,29 @@
         const to = String(($('#ex-to') || {}).value || '').trim();
         const amount = String(($('#ex-amt') || {}).value || '').trim();
         if(!to || !amount) return PC.toast && PC.toast('an address and an amount, please');
+        const tagText=String(($('#ex-destination-tag')||{}).value||'').trim();
+        if(tagText && (!/^\d+$/.test(tagText)||Number(tagText)>4294967295))return PC.toast&&PC.toast('Enter a destination tag from 0 to 4294967295');
+        const destinationTag=tagText?Number(tagText):null;
         _busy = true; go.disabled = true;
         const out = $('#ex-send-out');
         let submitted=false;
         try{
           if(PC.uiConfirm && !await PC.uiConfirm(
-            'Send ' + amount + ' ' + sym + ' to\n' + to + '?\n\nThis cannot be undone.',
+            'Send ' + amount + ' ' + sym + ' to\n' + to + (destinationTag===null?'':'\nDestination tag: '+destinationTag) + '?\n\nThis cannot be undone.',
             { ok: 'Send', danger: true })) return;
           if(!current(generation))return;
           submitted=true;
-          const res = await request('/api/wallet/exodus/send', J({ symbol: sym, to, amount, requestId }));
+          const res = await request('/api/wallet/exodus/send', J({ symbol: sym, to, amount, requestId, destinationTag }));
           /* THE 202. A send whose outcome is unknown is not a failure, and must never be offered a
              retry button: a retry is a second real payment. Say so, and stop. */
           if(res && res.unsure){
             if(out) out.innerHTML = `<div class="ex-note ex-warn">${esc(res.msg || '')}</div>`;
             return;
           }
-          if(out) out.innerHTML = `<div class="ex-note">Sent. Transaction
+          const resultText=res?.state==='failed'?'The network confirmed this payment failed.':res?.pending?'Submitted. Waiting for network confirmation.':'Sent.';
+          if(out) out.innerHTML = `<div class="ex-note">${esc(resultText)} Transaction
             <code>${esc((res && res.hash) || '')}</code></div>`;
-          PC.toast && PC.toast('sent');
+          PC.toast && PC.toast(res?.state==='failed'?'Payment failed':res?.pending?'Payment submitted':'sent');
         }catch(e){
           if(out) out.innerHTML = `<div class="ex-note ex-bad">${esc(e.message)}</div>`;
           go.disabled = !(e.status>=400 && e.status<500);

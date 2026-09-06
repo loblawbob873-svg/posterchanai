@@ -273,3 +273,6 @@ bip_utils>=2.9.3
 # because a wrong byte spends the wrong amount to the wrong place. Without it the wallet still
 # receives and shows balances; only /send refuses, with a sentence rather than a traceback.
 eth-account>=0.13
+# Native SOL/XRP transaction encoding and signatures use maintained chain SDKs.
+solders==0.29.0
+xrpl-py==5.1.0

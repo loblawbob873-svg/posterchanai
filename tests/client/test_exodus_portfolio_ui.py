@@ -223,3 +223,34 @@ document.querySelector('#result').textContent=JSON.stringify({
   labels:document.querySelector('.ex-allocation-list').textContent.includes('77.8%')});
 ''', theme=theme)
     assert result == {'distinct': True, 'labels': True}, result
+@pytest.mark.parametrize('pending', [True, False])
+def test_native_send_distinguishes_submission_from_confirmation_and_sends_xrp_tag(tmp_path, pending):
+    result = page(tmp_path, '''
+const oldFetch=__PC.authFetch;let body;
+__PC.authFetch=async(path,opts)=>{
+ if(path.includes('/send?')){body=JSON.parse(opts.body);return reply({hash:'fixture-hash',pending:PENDING});}
+ return oldFetch(path,opts);
+};
+const button=document.querySelector('.ex-send');button.dataset.sym='XRP';button.click();
+setTimeout(async()=>{
+ document.querySelector('#ex-to').value='rRecipient';document.querySelector('#ex-amt').value='2';
+ document.querySelector('#ex-destination-tag').value='123';
+ await document.querySelector('#ex-send-go').onclick();
+ document.querySelector('#result').textContent=JSON.stringify({tag:body.destinationTag,symbol:body.symbol,
+ text:document.querySelector('#ex-send-out').textContent.replace(/\\s+/g,' ').trim(),disabled:document.querySelector('#ex-send-go').disabled});
+},40);
+'''.replace('PENDING', 'true' if pending else 'false'))
+    assert result == {'tag':123,'symbol':'XRP','text':
+        ('Submitted. Waiting for network confirmation.' if pending else 'Sent.')+' Transaction fixture-hash','disabled':True}
+
+
+def test_failed_network_status_is_not_displayed_as_sent(tmp_path):
+    result = page(tmp_path, '''
+const oldFetch=__PC.authFetch;
+__PC.authFetch=async(path,opts)=>path.includes('/send-status?')?reply({state:'failed',hash:'fixture-hash'}):oldFetch(path,opts);
+document.querySelector('.ex-send').click();
+setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({
+ text:document.querySelector('#ex-send-out').textContent,disabled:document.querySelector('#ex-send-go').disabled});},40);
+''')
+    assert result['disabled'] is True
+    assert 'payment failed' in result['text'] and 'Sent.' not in result['text']

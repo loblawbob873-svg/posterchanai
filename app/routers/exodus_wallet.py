@@ -240,6 +240,7 @@ class SendReq(BaseModel):
     symbol: str = Field(min_length=2, max_length=8)
     to: str = Field(min_length=4, max_length=128)
     amount: str = Field(min_length=1, max_length=64)
+    destinationTag: int | None = Field(default=None, ge=0, le=2**32-1, strict=True)
 
 
 @router.post("/send")
@@ -256,7 +257,7 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), w
     spec = W.CHAINS.get(symbol)
     if not spec and symbol != "XMR":
         raise HTTPException(status_code=400, detail=f"unsupported chain {symbol!r}")
-    if symbol != 'XMR' and (not spec or spec['kind'] != 'evm'):
+    if symbol not in ('XMR', 'SOL', 'XRP') and (not spec or spec['kind'] != 'evm'):
         raise HTTPException(501, f'Sending {symbol} is not available in this build')
 
     doc, phrase = await _open(db, user, wallet_id, portfolio)
@@ -291,12 +292,22 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), w
             from app.services import exodus_transfers as T
             source = D.address(phrase, symbol, index=index, account=portfolio, format=D.profile(doc))
             async def execute(before_broadcast):
+                if symbol in ('SOL', 'XRP'):
+                    from app.services import exodus_account_send as A
+                    args = dict(private_key=D.private_key(phrase, symbol, index=index, account=portfolio, format=D.profile(doc)),
+                                to=req.to, units=units, endpoint=C.endpoint_for(symbol, _settings()),
+                                from_address=source, before_broadcast=before_broadcast)
+                    if symbol == 'SOL':
+                        return await A.send_solana(**args, request_id=req.requestId)
+                    return await A.send_xrp(**args, destination_tag=req.destinationTag)
                 return await S.send_evm(symbol=symbol,
                     private_key=D.private_key(phrase, symbol, index=index, account=portfolio, format=D.profile(doc)),
                     to=req.to, units=units, endpoint=C.endpoint_for(symbol, _settings()),
                     from_address=source, before_broadcast=before_broadcast)
             got = await T.send(T.scope(user.id, symbol, source), _seckey(db, user),
-                               req.requestId, req.to, units, execute)
+                               req.requestId, req.to, units, execute, symbol=symbol, destination_tag=req.destinationTag)
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f'{symbol} transaction signing is not installed on this node') from exc
     except S.SendUnsure as exc:
         # 202: taken, outcome unknown. NOT an error status — a client that sees 4xx/5xx offers a
         # retry, and a retry here is a second real payment.
@@ -306,7 +317,7 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), w
     except W.WalletError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info("[exodus] sent %s %s (nonce %s)", req.amount, symbol, got.get("nonce"))
-    return {"ok": True, **got}
+    return {"ok": got.get('state') != 'failed', **got}
 
 
 @router.post("/label")
@@ -383,7 +394,7 @@ async def send_status(req: SendStatusReq, user: CurrentUser, db: Session = Depen
         if symbol == 'XMR':
             keys = W.monero_keys(phrase, portfolio, Collections.monero_recovery(doc, _seckey(db, user), portfolio))
             return await M.send_status(M.identity(user.id, wallet_id, portfolio, keys.PrimaryAddress()), _seckey(db, user))
-        if W.CHAINS.get(symbol, {}).get('kind') != 'evm':
+        if symbol not in ('SOL', 'XRP') and W.CHAINS.get(symbol, {}).get('kind') != 'evm':
             raise HTTPException(400, 'Unsupported transfer status asset')
         source = D.address(phrase, symbol, account=portfolio, index=int(doc.get('addressIndex') or 0), format=D.profile(doc))
         return await T.status(T.scope(user.id, symbol, source), _seckey(db, user), symbol, C.endpoint_for(symbol, _settings()))

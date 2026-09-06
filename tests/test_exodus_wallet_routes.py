@@ -186,10 +186,38 @@ def _send(client, **kw):
 
 def test_a_chain_that_cannot_send_says_so_instead_of_half_trying(client):
     _created(client)
-    for sym in ("BTC", "LTC", "DOGE", "BCH", "SOL"):
+    for sym in ("BTC", "LTC", "DOGE", "BCH"):
         r = _send(client, symbol=sym, to="1" + "a" * 33)
         assert r.status_code == 501, (sym, r.status_code, r.text)
         assert "not available" in r.text
+
+
+@pytest.mark.parametrize('symbol', ['SOL', 'XRP'])
+def test_native_account_send_uses_selected_wallet_keys_and_preserves_pending_retry(client, monkeypatch, symbol):
+    from app.services import exodus_account_send as A, exodus_derivation as D
+    _created(client)
+    phrase = client.post('/api/wallet/exodus/reveal').json()['mnemonic']
+    captured = []
+    async def send(**kwargs):
+        captured.append(kwargs)
+        assert kwargs['private_key'] == D.private_key(phrase, symbol, format=D.EXODUS)
+        assert kwargs['from_address'] == D.address(phrase, symbol, format=D.EXODUS)
+        assert kwargs['units'] == (10000000 if symbol == 'SOL' else 10000)
+        await kwargs['before_broadcast']('fixture-hash', 7)
+        return {'hash': 'fixture-hash', 'pending': True}
+    monkeypatch.setattr(A, 'send_solana' if symbol == 'SOL' else 'send_xrp', send)
+    first = _send(client, symbol=symbol, destinationTag=123 if symbol == 'XRP' else None)
+    assert first.status_code == 200 and first.json()['pending'] is True
+    assert _send(client, symbol=symbol, destinationTag=123 if symbol == 'XRP' else None).json() == first.json()
+    blocked = _send(client, symbol=symbol, requestId='02'*16)
+    assert blocked.status_code == 202 and blocked.json()['unsure'] is True
+    assert len(captured) == 1
+    if symbol == 'XRP': assert captured[0]['destination_tag'] == 123
+
+
+@pytest.mark.parametrize('tag', [-1, 4294967296, True, '123', 1.5])
+def test_destination_tag_validation_rejects_coercion_before_signing(client, tag):
+    assert _send(client, symbol='XRP', destinationTag=tag).status_code == 422
 
 
 def test_an_amount_with_too_much_precision_is_refused_before_signing(client):

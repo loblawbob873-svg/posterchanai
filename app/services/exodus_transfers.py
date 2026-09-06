@@ -1,4 +1,4 @@
-"""Encrypted, durable EVM transfer identities shared by this node's server workers."""
+"""Encrypted, durable transfer identities shared by this node's server workers."""
 from contextlib import contextmanager
 import fcntl
 import hashlib
@@ -13,7 +13,8 @@ from app.services.exodus_monero import _write
 
 def scope(user_id, symbol, address):
     # Importing the same seed twice must not create two independent nonce/spend locks.
-    return hashlib.sha256(json.dumps([user_id, symbol, address.lower()]).encode()).hexdigest()
+    canonical = address.lower() if symbol in S.NETWORKS else address
+    return hashlib.sha256(json.dumps([user_id, symbol, canonical]).encode()).hexdigest()
 
 
 def _folder(identity):
@@ -50,11 +51,15 @@ def _token(value):
     return value
 
 
-async def send(identity, key, token, to, units, operation):
+async def send(identity, key, token, to, units, operation, *, symbol=None, destination_tag=None):
     token = _token(token)
     folder = _folder(identity)
     path, pending = folder / (token + '.enc'), folder / 'pending'
-    fingerprint = hashlib.sha256(json.dumps([to.lower(), units]).encode()).hexdigest()
+    # Preserve the existing EVM fingerprint on disk. Base58 addresses are case-sensitive.
+    details = [to if symbol in ('SOL', 'XRP') else to.lower(), units]
+    if symbol == 'XRP':
+        details.append(destination_tag)
+    fingerprint = hashlib.sha256(json.dumps(details).encode()).hexdigest()
     with _lock(folder):
         if path.exists():
             previous = _read(path, key)
@@ -69,16 +74,20 @@ async def send(identity, key, token, to, units, operation):
         _save(path, record, key)
         _write(pending, token)
 
-        async def before_broadcast(tx_hash, nonce):
+        async def before_broadcast(tx_hash, nonce, **metadata):
+            if any(name not in ('solana', 'xrp') for name in metadata):
+                raise ValueError('Unsupported transaction checkpoint metadata')
             record.update(state='broadcast', hash=tx_hash, nonce=nonce,
                           message=f'Transaction {tx_hash} may have been sent. Check its status before another payment.')
+            record.update(metadata)
             _save(path, record, key)
 
         try:
             result = await operation(before_broadcast)
-            record.update(state='accepted', result=result)
+            record.update(state='broadcast' if result.get('pending') else 'accepted', result=result)
             _save(path, record, key)
-            pending.unlink(missing_ok=True)
+            if not result.get('pending'):
+                pending.unlink(missing_ok=True)
             return result
         except S.SendRefused:
             # send_evm reserves this exception for failures BEFORE its broadcast hook.
@@ -101,7 +110,7 @@ async def status(identity, key, symbol, endpoint):
         token = _token(pending.read_text())
         path = folder / (token + '.enc')
         record = _read(path, key)
-        if record.get('result'):
+        if record.get('result') and not record['result'].get('pending'):
             pending.unlink()
             return {'state': 'accepted', **record['result']}
         if record['state'] == 'preparing':
@@ -110,6 +119,17 @@ async def status(identity, key, symbol, endpoint):
             path.unlink(); pending.unlink()
             return {'state': 'not_sent'}
         async with S._client(S.RPC_TIMEOUT) as client:
+            if symbol in ('SOL', 'XRP'):
+                from app.services.exodus_account_send import transfer_status
+                answer = await transfer_status(client, endpoint, symbol, record)
+                if answer['state'] == 'not_sent':
+                    path.unlink(); pending.unlink()
+                    return answer
+                if answer['state'] in ('accepted', 'failed'):
+                    result = {**record.get('result', {}), **answer, 'pending': False}
+                    record.update(state=answer['state'], result=result)
+                    _save(path, record, key); pending.unlink()
+                return answer
             chain = S._quantity(await S._rpc(client, endpoint, 'eth_chainId', []))
             if chain != S.NETWORKS.get(symbol):
                 raise S.SendRefused('The RPC network does not match the selected asset')

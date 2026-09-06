@@ -82,3 +82,73 @@ async def test_concurrent_worker_is_refused_without_entering_its_operation(direc
     release.set()
     with pytest.raises(S.SendRefused): await task
     assert not (directory/'pending').exists()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('symbol', ['SOL', 'XRP'])
+async def test_submitted_account_payment_keeps_lock_and_retries_never_rebroadcast(directory, symbol):
+    calls = []
+    async def submit(checkpoint):
+        calls.append(1)
+        await checkpoint('signed-hash', 7)
+        return {'hash': 'signed-hash', 'pending': True}
+    result = await T.send(IDENTITY, STORE_KEY, TOKEN, 'CaseSensitiveAddress', 1, submit, symbol=symbol)
+    assert result['pending'] and (directory/'pending').exists()
+    assert await T.send(IDENTITY, STORE_KEY, TOKEN, 'CaseSensitiveAddress', 1, submit, symbol=symbol) == result
+    with pytest.raises(S.SendUnsure):
+        await T.send(IDENTITY, STORE_KEY, '34'*16, 'CaseSensitiveAddress', 1, submit, symbol=symbol)
+    with pytest.raises(S.SendRefused, match='different payment'):
+        await T.send(IDENTITY, STORE_KEY, TOKEN, 'casesensitiveaddress', 1, submit, symbol=symbol)
+    assert len(calls) == 1
+
+
+@pytest.mark.anyio
+async def test_xrp_destination_tag_is_part_of_retry_identity(directory):
+    async def submit(checkpoint):
+        await checkpoint('hash', 7)
+        return {'hash': 'hash', 'pending': True}
+    await T.send(IDENTITY, STORE_KEY, TOKEN, 'recipient', 1, submit, symbol='XRP', destination_tag=1)
+    with pytest.raises(S.SendRefused, match='different payment'):
+        await T.send(IDENTITY, STORE_KEY, TOKEN, 'recipient', 1, submit, symbol='XRP', destination_tag=2)
+
+
+def test_base58_wallet_identity_preserves_case_but_evm_does_not():
+    assert T.scope(1, 'SOL', 'AbC') != T.scope(1, 'SOL', 'abc')
+    assert T.scope(1, 'XRP', 'AbC') != T.scope(1, 'XRP', 'abc')
+    assert T.scope(1, 'ETH', '0xAbC') == T.scope(1, 'ETH', '0xabc')
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('symbol', ['SOL', 'XRP'])
+@pytest.mark.parametrize('outcome', ['unconfirmed', 'accepted', 'failed'])
+async def test_pending_result_only_releases_lock_after_definitive_network_result(directory, monkeypatch, symbol, outcome):
+    from app.services import exodus_account_send as A
+    async def submit(checkpoint):
+        await checkpoint('hash', 7)
+        return {'hash': 'hash', 'pending': True}
+    async def status(*args): return {'state': outcome, 'hash': 'hash'}
+    monkeypatch.setattr(A, 'transfer_status', status)
+    await T.send(IDENTITY, STORE_KEY, TOKEN, 'recipient', 1, submit, symbol=symbol)
+    answer = await T.status(IDENTITY, STORE_KEY, symbol, 'https://fixture.invalid')
+    assert answer['state'] == outcome
+    assert (directory/'pending').exists() == (outcome == 'unconfirmed')
+    retry = await T.send(IDENTITY, STORE_KEY, TOKEN, 'recipient', 1, submit, symbol=symbol)
+    assert retry['pending'] == (outcome == 'unconfirmed')
+    if outcome == 'failed': assert retry['state'] == 'failed'
+
+
+@pytest.mark.anyio
+async def test_proven_expired_xrp_transaction_can_be_retried_after_status_releases_lock(directory, monkeypatch):
+    from app.services import exodus_account_send as A
+    calls = []
+    async def submit(checkpoint):
+        calls.append(1)
+        await checkpoint('hash', 7, xrp={'firstLedger':1000,'lastLedger':1004})
+        return {'hash': 'hash', 'pending': True}
+    async def status(*args): return {'state':'not_sent','hash':'hash'}
+    monkeypatch.setattr(A, 'transfer_status', status)
+    await T.send(IDENTITY, STORE_KEY, TOKEN, 'recipient', 1, submit, symbol='XRP')
+    assert (await T.status(IDENTITY, STORE_KEY, 'XRP', 'fixture'))['state'] == 'not_sent'
+    assert not (directory/'pending').exists() and not (directory/(TOKEN+'.enc')).exists()
+    await T.send(IDENTITY, STORE_KEY, TOKEN, 'recipient', 1, submit, symbol='XRP')
+    assert len(calls) == 2
