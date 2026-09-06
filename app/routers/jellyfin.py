@@ -35,12 +35,29 @@ class ClientCORS:
     def __init__(self, app):
         from starlette.middleware.cors import CORSMiddleware
         self.app = app
+        # Jellyfin's ASP.NET routes accept casing used by different clients.
+        # Canonicalize only known API routes, preserving opaque parameter values.
+        self.paths = []
+        for route in router.routes:
+            parts = re.split(r'(\{[^}]+\})', route.path)
+            pattern = ''.join('([^/]+)' if part.startswith('{') else re.escape(part) for part in parts)
+            self.paths.append((re.compile('^' + pattern + '$', re.IGNORECASE), parts))
         self.cors = CORSMiddleware(app, allow_origins=['*'], allow_credentials=False,
-                                   allow_methods=['GET', 'POST', 'OPTIONS'], allow_headers=['*'],
+                                   allow_methods=['GET', 'HEAD', 'POST', 'OPTIONS'], allow_headers=['*'],
                                    expose_headers=['Content-Length', 'Content-Type'])
 
     async def __call__(self, scope, receive, send):
-        target = self.cors if scope.get('type') == 'http' and scope.get('path', '').startswith('/jellyfin/') else self.app
+        path = scope.get('path', '')
+        is_api = path.lower() == '/jellyfin' or path.lower().startswith('/jellyfin/')
+        if is_api:
+            for pattern, parts in self.paths:
+                match = pattern.fullmatch(path)
+                if match:
+                    values = iter(match.groups())
+                    canonical = ''.join(next(values) if part.startswith('{') else part for part in parts)
+                    scope = {**scope, 'path': canonical, 'raw_path': canonical.encode()}
+                    break
+        target = self.cors if scope.get('type') == 'http' and is_api else self.app
         await target(scope, receive, send)
 
 
@@ -136,12 +153,16 @@ def user_dto(user):
                        'PasswordResetProviderId': 'Posterchan.MediaCenter'}}
 
 
-@router.get('/System/Info/Public')
+@router.api_route('', methods=['GET', 'HEAD'])
+@router.api_route('/', methods=['GET', 'HEAD'])
+@router.api_route('/System/Info/Public', methods=['GET', 'HEAD'])
 async def public_info(request: Request):
+    scheme = request.headers.get('x-forwarded-proto', '').split(',')[0].strip().lower()
+    base = request.base_url.replace(scheme=scheme) if scheme in ('http', 'https') else request.base_url
     return {'Id': SERVER_ID, 'ServerName': 'Posterchan Media Center',
             # Official SDK discovery requires this literal protocol marker.
             'ProductName': 'Jellyfin Server', 'Version': '10.11.11',
-            'LocalAddress': str(request.base_url).rstrip('/') + '/jellyfin',
+            'LocalAddress': str(base).rstrip('/') + '/jellyfin',
             'StartupWizardCompleted': True}
 
 

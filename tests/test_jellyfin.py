@@ -373,3 +373,24 @@ def test_playback_info_audio_and_subtitle_contract(api):
     assert api.client.get('/jellyfin/'+source['TranscodingUrl']+'&AudioStreamIndex=999').status_code == 400
     bad=api.client.post('/jellyfin/Items/'+uid+'/PlaybackInfo',headers={'X-Emby-Token':login['AccessToken']},json={'AudioStreamIndex':3})
     assert bad.status_code==400
+
+
+def test_server_url_and_case_insensitive_discovery(api):
+    c = api.client
+    expected = c.get('/jellyfin/System/Info/Public').json()
+    for path in ('/jellyfin', '/jellyfin/', '/Jellyfin/system/info/public', '/jellyfin/system/info/public'):
+        response = c.get(path, follow_redirects=False)
+        assert response.status_code == 200
+        assert response.json()['Id'] == expected['Id']
+        assert response.json()['ProductName'] == 'Jellyfin Server'
+        assert 'location' not in response.headers
+    assert c.get('/jellyfin/quickconnect/enabled').json() is True
+    assert c.head('/jellyfin').status_code == 200
+    assert c.get('/jellyfin', headers={'X-Forwarded-Proto':'https'}).json()['LocalAddress'] == 'https://testserver/jellyfin'
+    pending = c.post('/jellyfin/quickconnect/initiate').json()
+    state = c.get('/jellyfin/quickconnect/connect', params={'Secret':pending['Secret']})
+    assert state.status_code == 200 and state.json()['Authenticated'] is False
+    assert c.get('/jellyfin/users/me').status_code == 401
+    assert c.get('/jellyfin/web/index.html').status_code == 404
+    login = connect(api)
+    assert c.get('/jellyfin/users/me', headers=headers(login)).json()['Id'] == login['User']['Id']
