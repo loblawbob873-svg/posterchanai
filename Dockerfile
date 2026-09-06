@@ -329,6 +329,11 @@ RUN if [ "$INSTALL_VOICE" = "1" ] && [ "$GPU" != "nostr" ]; then \
 
 # --- app source ---------------------------------------------------------------
 COPY . /app
+# Android's Media Center host needs these local assets even in the lean image.
+RUN test -s /app/templates/media_center_app.html \
+ && test -s /app/static/js/media_center_app.js \
+ && test -s /app/static/css/media_center_app.css \
+ && test -s /app/static/vendor/hls/hls.min.js
 
 # Normalise line endings on anything the container EXECUTES. Git for Windows checks out CRLF by default,
 # which turns the shebang into `#!/usr/bin/env bash\r` — the kernel then looks for a binary literally

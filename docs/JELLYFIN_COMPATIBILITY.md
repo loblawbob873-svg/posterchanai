@@ -42,5 +42,5 @@ JELLYFIN_TEST_SDK=/tmp/pc-jellyfin-sdk/node_modules/@jellyfin/sdk \
 ```
 
 The SDK is a test-only dependency. Browser integration needs Chrome and FFmpeg;
-those tests skip if the tools are absent. Browser fixtures contain generated media
+those tests skip if the tools are absent. Android-host coverage includes native-bridge fullscreen/Back, browser fullscreen, active WebVTT cues on/off, and an audio-language switch verified by decoding the selected HLS audio tone. Browser fixtures contain generated media
 and isolated users, never a copy of the production library or app credentials.

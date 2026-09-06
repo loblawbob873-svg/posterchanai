@@ -41,6 +41,7 @@ setup_directories() {
     fi
     print_success "Media Center: $MEDIA_PATH (override roots in media-center.env)"
     echo "  Configure the NAS proxy in Admin -> Storage; grant Media Center in Additional permissions."
+    echo "  Jellyfin Android/TV: use your public HTTPS address followed by /jellyfin and approve Quick Connect in Media Center."
     echo "  Transcodes use /tmp/posterchan-media-center; mount /tmp as tmpfs to avoid SSD writes."
 }
 

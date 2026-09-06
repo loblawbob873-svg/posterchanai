@@ -63,3 +63,18 @@ def test_compose_read_only_media_and_tmpfs_preserve_data_volumes(tmp_path):
                              cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
     assert missing.returncode != 0
     assert 'POSTERCHANAI_MEDIA_PATH' in missing.stderr
+
+
+def test_android_host_assets_are_present_and_docker_checks_them():
+    import re
+    from urllib.parse import urlsplit
+    html = (ROOT / 'templates/media_center_app.html').read_text()
+    for url in re.findall(r'(?:src|href)="([^"]+)"', html):
+        path = urlsplit(url).path
+        if path.startswith('/static/'):
+            assert (ROOT / path.lstrip('/')).stat().st_size > 0, path
+    docker = (ROOT / 'Dockerfile').read_text()
+    for asset in ['templates/media_center_app.html', 'static/js/media_center_app.js',
+                  'static/css/media_center_app.css', 'static/vendor/hls/hls.min.js']:
+        assert (ROOT / asset).stat().st_size > 0
+        assert 'test -s /app/' + asset in docker

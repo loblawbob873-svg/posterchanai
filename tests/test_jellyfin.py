@@ -512,11 +512,16 @@ def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monke
     chrome = shutil.which('google-chrome') or shutil.which('chromium') or '/opt/google/chrome/chrome'
     if not Path(chrome).exists() or not shutil.which('ffmpeg'):
         pytest.skip('Chrome and FFmpeg required for Android host browser test')
-    source = tmp_path / 'Anime' / 'Season 2' / 'movie.mp4'
+    source = tmp_path / 'Anime' / 'Season 2' / 'movie.mkv'
     source.parent.mkdir(parents=True)
+    captions = tmp_path / 'captions.srt'
+    captions.write_text('1\n00:00:00,000 --> 00:00:30,000\nCaption test visible\n')
     subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=24',
-                    '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '13', '-c:v', 'libx264',
-                    '-threads', '1', '-c:a', 'aac', str(source)], check=True, timeout=20)
+                    '-f', 'lavfi', '-i', 'sine=frequency=440', '-f', 'lavfi', '-i', 'sine=frequency=880',
+                    '-i', str(captions), '-map', '0:v', '-map', '1:a', '-map', '2:a', '-map', '3:s',
+                    '-t', '30', '-c:v', 'libx264', '-threads', '1', '-c:a', 'aac', '-c:s', 'srt',
+                    '-metadata:s:a:0', 'language=eng', '-metadata:s:a:1', 'language=jpn',
+                    '-metadata:s:s:0', 'language=eng', str(source)], check=True, timeout=20)
     monkeypatch.setenv('POSTERCHANAI_MEDIA_ROOTS', str(tmp_path))
     monkeypatch.setenv('POSTERCHANAI_MEDIA_CACHE', str(tmp_path / 'cache'))
     api.catalog['page:movies'] = media.scan(str(tmp_path))[0]
@@ -549,7 +554,8 @@ def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monke
                                 '--user-data-dir='+str(profile), 'about:blank'],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     async def exercise():
-        async with httpx.AsyncClient() as client:
+        # This client also downloads bandwidth-paced HLS alongside the browser.
+        async with httpx.AsyncClient(timeout=60) as client:
             for _ in range(100):
                 if server.started and (profile / 'DevToolsActivePort').exists():
                     break
@@ -581,7 +587,42 @@ def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monke
                 await browser.until("document.querySelector('#heading').textContent==='Season 2' && document.querySelector('.card')?.textContent==='movie'")
                 await browser.js("document.querySelector('.card').click()", True)
                 await browser.until("document.querySelector('video').currentTime>1")
+                await browser.js("document.querySelector('#subtitles').value='3';document.querySelector('#subtitles').dispatchEvent(new Event('change'))", True)
+                await browser.until("document.querySelector('video').textTracks[0]?.mode==='showing' && document.querySelector('video').textTracks[0]?.activeCues?.[0]?.text==='Caption test visible'")
+                await browser.js("document.querySelector('#subtitles').value='-1';document.querySelector('#subtitles').dispatchEvent(new Event('change'))", True)
+                assert await browser.js("!document.querySelector('video track')")
+                await browser.js("document.querySelector('#audio').value='2';document.querySelector('#audio').dispatchEvent(new Event('change'))", True)
+                await browser.until("document.querySelector('#audio').value==='2' && document.querySelector('video').currentTime>1 && !document.querySelector('video').paused")
+                assert any('audio=2' in record['url'] for record in jf._plays.values())
+                # Decode the actual selected stream: English is 440 Hz, Japanese 880 Hz.
+                from array import array
+                from urllib.parse import urlencode
+                play_id, record = next((key, value) for key, value in jf._plays.items() if 'audio=2' in value['url'])
+                token = await browser.js("JSON.parse(localStorage.pc_media_app).AccessToken")
+                segment = await client.get(f"http://127.0.0.1:{port}/jellyfin/Videos/{record['item']}/360p-0.ts?" + urlencode({'api_key':token,'PlaySessionId':play_id}))
+                assert segment.status_code == 200
+                pcm = subprocess.run(['ffmpeg', '-v', 'error', '-i', 'pipe:0', '-t', '2', '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1'], input=segment.content, capture_output=True, check=True, timeout=15).stdout
+                samples = array('h', pcm)
+                frequency = sum(a <= 0 < b for a,b in zip(samples,samples[1:])) * 8000 / len(samples)
+                assert 850 < frequency < 910, frequency
+
+                await browser.js("document.querySelector('#subtitles').value='3';document.querySelector('#subtitles').dispatchEvent(new Event('change'))", True)
+                await browser.until("document.querySelector('video').textTracks[0]?.mode==='showing' && document.querySelector('video').textTracks[0]?.activeCues?.[0]?.text==='Caption test visible'")
+
                 assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
+                # The Android bridge is required: requestFullscreen alone does not
+                # expand a WebView without a native custom-view implementation.
+                await browser.js("window.fullscreenCalls=[];window.NativeInterface={enableFullscreen(){fullscreenCalls.push('enter');},disableFullscreen(){fullscreenCalls.push('exit');}}")
+                await browser.js("document.querySelector('#fullscreen').click()", True)
+                assert await browser.js("document.body.classList.contains('mc-fullscreen') && fullscreenCalls.at(-1)==='enter'")
+                assert await browser.js("Math.abs(document.querySelector('#player').getBoundingClientRect().height-innerHeight)<2")
+                await browser.js("history.back()")
+                await browser.until("!document.body.classList.contains('mc-fullscreen') && fullscreenCalls.at(-1)==='exit'")
+                await browser.js("delete window.NativeInterface")
+                await browser.js("document.querySelector('#fullscreen').click()", True)
+                await browser.until("document.fullscreenElement===document.querySelector('#player')")
+                await browser.js("document.querySelector('#fullscreen').click()", True)
+                await browser.until("!document.fullscreenElement && !document.body.classList.contains('mc-fullscreen')")
                 await browser.js("document.querySelector('#stop').click()", True)
                 await browser.until("document.querySelector('#player').hidden")
                 await browser.call('Page.reload')

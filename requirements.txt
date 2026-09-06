@@ -17,6 +17,7 @@ aiosqlite>=0.19.0
 # Media Center reuses httpx (NAS streaming proxy), Pillow (covers), and the existing
 # Nostr crypto/storage dependencies. FFmpeg + ffprobe are OS packages, not pip packages;
 # installing ffmpeg-python would not provide the executables or GPU drivers.
+# The Android host is bundled HTML/CSS/JS with the existing HLS player; no extra pip package.
 # HTTP clients for async/sync requests
 # Used for: Storage server proxying, RSS feeds, API calls, Radicale import, and Nostr
 # media uploads / fediverse clients routed through the built-in proxy.
