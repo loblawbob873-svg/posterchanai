@@ -15,6 +15,12 @@ Opening a library shows its server folders immediately, without waiting for medi
 Select folder cards and use the breadcrumb buttons to go back; search finds scanned titles
 throughout the library. Scanning runs in the background and playable titles appear as they
 are discovered. Refreshing scan results preserves the current folder and active player.
+Folder cards use thumbnails from up to three titles inside each folder. Artwork loads only
+near the viewport, with two requests at a time. A `.ignore` marker excludes its folder and
+all descendants from scanning and browsing, including previously indexed titles.
+Long scans save encrypted catalog checkpoints after the first five seconds and then at
+most every twenty seconds. After a restart, saved titles remain available; an interrupted
+scan can be resumed with **Rescan**, reusing metadata for unchanged files.
 
 The source files stay on disk. Catalog pages, library ownership, sharing lists and limits
 are NIP-44-encrypted, operator-signed kind-30078 events under `pcai:media-center:` in the

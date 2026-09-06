@@ -608,3 +608,60 @@ def test_folder_navigation_before_scan_and_access_boundaries(api):
         assert client.get('/api/media-center/abc/folders', params={'path':path}).status_code == 400
     docs['library:abc']['shared_with'] = []
     assert client.get('/api/media-center/abc/folders').status_code == 404
+
+
+def test_ignore_marker_excludes_subtree_and_existing_catalog(api, monkeypatch):
+    client, docs, user, root = api
+    seed(docs, root)
+    hidden = root / 'Hidden'
+    child = hidden / 'Nested'
+    child.mkdir(parents=True)
+    (hidden / '.ignore').touch()
+    (child / 'private.mp4').write_bytes(b'media')
+    (root / 'public.mp4').write_bytes(b'media')
+    monkeypatch.setattr(media, 'probe', lambda path: {'duration':10, 'video':True})
+    scanned, _ = media.scan(str(root))
+    assert [item['path'] for item in scanned] == ['public.mp4']
+    docs['page:abc:1:0'] = [dict(scanned[0], id='hidden', path='Hidden/Nested/private.mp4', folder='Hidden/Nested'), scanned[0]]
+    assert client.get('/api/media-center/abc/folders').json()['folders'] == []
+    assert client.get('/api/media-center/abc/folders', params={'path':'Hidden/Nested'}).json()['folders'] == []
+    assert [item['id'] for item in client.get('/api/media-center/abc/items').json()['items']] == [scanned[0]['id']]
+    assert client.post('/api/media-center/abc/play/hidden').status_code == 404
+    (root / '.ignore').touch()
+    assert media.scan(str(root))[0] == []
+    assert client.get('/api/media-center/abc/items').json()['items'] == []
+
+
+def test_scan_checkpoint_survives_loss_of_in_memory_preview(api, monkeypatch):
+    import threading
+    client, docs, user, root = api
+    library = seed(docs, root)
+    library['count'] = 0
+    docs['page:abc:1:0'] = []
+    release = threading.Event()
+    item = {'id':'checkpoint', 'name':'Saved', 'path':'saved.mp4', 'folder':'.', 'duration':10, 'video':True}
+    def slow_scan(folder, previous, on_item):
+        on_item(item)
+        assert release.wait(15)
+        return [item], 0
+    monkeypatch.setattr(media, 'scan', slow_scan)
+    async def exercise():
+        task = asyncio.create_task(routes.run_scan(library))
+        try:
+            for _ in range(120):
+                if docs['library:abc'].get('scan_incomplete'):
+                    break
+                await asyncio.sleep(.05)
+            saved = docs['library:abc']
+            assert saved['scan_incomplete'] is True
+            assert saved['count'] == 1
+            routes._scan_previews.clear()
+            routes._scans.clear()
+            media._catalog_cache.clear()
+            assert (await routes.items('abc', user))['items'][0]['id'] == 'checkpoint'
+            assert routes.public_library(saved, OWNER, admin=True)['scan']['state'] == 'interrupted'
+        finally:
+            release.set()
+            await task
+        assert docs['library:abc']['scan_incomplete'] is False
+    asyncio.run(exercise())

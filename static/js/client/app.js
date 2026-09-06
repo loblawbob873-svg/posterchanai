@@ -9408,7 +9408,7 @@
         let scanButton=null;
         const update=()=>{
           open.textContent=lib.name+' · '+(lib.count||0);
-          progress.textContent=lib.scan?.state==='running'?'Scanning · '+(lib.scan.count||0)+' found':lib.scan?.state==='failed'?lib.scan.error:'';
+          progress.textContent=lib.scan?.state==='running'?'Scanning · '+(lib.scan.count||0)+' found':lib.scan?.state==='failed'?lib.scan.error:lib.scan?.state==='interrupted'?'Scan interrupted · saved titles available · Rescan to continue':'';
           if(scanButton)scanButton.disabled=lib.scan?.state==='running';
         };
         libraryRows.set(lib.id,{lib,open,update});update();

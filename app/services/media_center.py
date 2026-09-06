@@ -170,6 +170,8 @@ def safe_root(value):
 def source_path(library, item):
     root = safe_root(library["folder"])
     path = root / item["path"]
+    if ignored_folder(root, path.parent):
+        raise ValueError('This folder is excluded from Media Center')
     # Do not follow symlinks, including a directory swapped since scanning.
     if Path(item["path"]).is_absolute() or ".." in Path(item["path"]).parts:
         raise ValueError("Invalid media path")
@@ -203,6 +205,24 @@ def natural(value):
     return [int(p) if p.isdigit() else p.casefold() for p in re.split(r"(\d+)", value)]
 
 
+def ignored_folder(root, folder, memo=None):
+    """A .ignore marker excludes its entire subtree; memoize ancestors per listing."""
+    memo = {} if memo is None else memo
+    if folder in memo:
+        return memo[folder]
+    if folder != root and root not in folder.parents:
+        return True
+    ignored = (folder / '.ignore').exists() or (folder != root and ignored_folder(root, folder.parent, memo))
+    memo[folder] = ignored
+    return ignored
+
+
+def visible_catalog(library, items):
+    root = Path(library['folder'])
+    memo = {}
+    return [item for item in items if not ignored_folder(root, (root / item['path']).parent, memo)]
+
+
 def scan(folder, previous=None, on_item=None):
     root = safe_root(folder)
     items, skipped = [], 0
@@ -210,6 +230,9 @@ def scan(folder, previous=None, on_item=None):
     def failed(error):
         raise error  # An unreadable subtree must not silently erase the old catalog.
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
+        if '.ignore' in files or '.ignore' in dirs:
+            dirs[:] = []
+            continue
         dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not (Path(directory) / d).is_symlink())
         for name in sorted(files):
             path = Path(directory) / name

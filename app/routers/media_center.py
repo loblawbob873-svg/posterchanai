@@ -231,10 +231,11 @@ async def available_catalog(library):
     committed = await media.catalog(library)
     preview = _scan_previews.get(library['id'])
     if not preview:
-        return committed
+        return await asyncio.to_thread(media.visible_catalog, library, committed)
     merged = {item['id']: item for item in committed}
     merged.update(preview)
-    return sorted(merged.values(), key=lambda item: (media.natural(item['folder']), media.natural(item['path'])))
+    visible = await asyncio.to_thread(media.visible_catalog, library, merged.values())
+    return sorted(visible, key=lambda item: (media.natural(item['folder']), media.natural(item['path'])))
 
 
 def scan_revision(library):
@@ -246,7 +247,7 @@ def public_library(library, pubkey, *, admin=False):
     fields = ("id", "name", "owner", "count", "scanned_at", "skipped", "encoder")
     result = {key: library.get(key) for key in fields}
     result["can_manage"] = bool(admin and library["owner"] == pubkey)
-    result["scan"] = _scans.get(library['id'], {'state': 'idle'})
+    result["scan"] = _scans.get(library['id'], {'state': 'interrupted' if library.get('scan_incomplete') else 'idle'})
     result["revision"] = scan_revision(library)
     result["count"] = max(library.get('count', 0), len(_scan_previews.get(library['id'], {})))
     if result["can_manage"]:
@@ -260,8 +261,30 @@ async def save_scan(library):
     def found(item):
         preview[item['id']] = item
         _scans[library['id']] = {'state': 'running', 'count': len(preview)}
-    items, skipped = await asyncio.to_thread(media.scan, library["folder"], await media.catalog(library),
-                                             lambda item: loop.call_soon_threadsafe(found, item))
+    previous = await media.catalog(library)
+    worker = asyncio.create_task(asyncio.to_thread(media.scan, library["folder"], previous,
+                                                  lambda item: loop.call_soon_threadsafe(found, item)))
+    saved_count = 0
+    try:
+        while not worker.done():
+            await asyncio.wait({worker}, timeout=5 if saved_count == 0 else 20)
+            if not worker.done() and len(preview) > saved_count:
+                merged = {item['id']: item for item in previous}
+                merged.update(preview)
+                snapshot = sorted(merged.values(), key=lambda item: (media.natural(item.get('folder', '.')), media.natural(item['path'])))
+                try:
+                    library = await persist_scan_catalog(library, snapshot, 0, incomplete=True)
+                    saved_count = len(preview)
+                except Exception:
+                    logging.getLogger(__name__).exception('Media scan checkpoint failed; scan continues')
+        items, skipped = await worker
+        return await persist_scan_catalog(library, items, skipped)
+    finally:
+        if not worker.done():
+            worker.cancel()
+
+
+async def persist_scan_catalog(library, items, skipped, incomplete=False):
     pages = []
     # Small pages fit NIP-44's payload limit. Commit the manifest only after every
     # page is acknowledged, so readers retain the last complete scan on failure.
@@ -284,7 +307,7 @@ async def save_scan(library):
     async with media.mutation_lock:
         # Sharing can change during a long scan. Never overwrite the current ACL.
         current = await media.read("library:" + library["id"])
-        updated = {**(current or library), "pages": pages, "count": len(items), "skipped": skipped, "scanned_at": int(time.time())}
+        updated = {**(current or library), "pages": pages, "count": len(items), "skipped": skipped, "scanned_at": int(time.time()), "scan_incomplete": incomplete}
         await media.write("library:" + library["id"], updated)
     return updated
 
@@ -364,6 +387,8 @@ async def folders(library_id: str, path: str = ".", user=Depends(get_media_user)
             if target.is_symlink():
                 raise ValueError('Linked folders are not available')
         target.resolve().relative_to(root.resolve())
+        if media.ignored_folder(root, target):
+            return {'path': relative.as_posix(), 'folders': []}
         cover_map = {}
         prefix = '' if relative.as_posix() == '.' else relative.as_posix() + '/'
         for item in catalog:
@@ -378,7 +403,7 @@ async def folders(library_id: str, path: str = ".", user=Depends(get_media_user)
         result = []
         with os.scandir(target) as entries:
             for entry in entries:
-                if not entry.name.startswith('.') and entry.is_dir(follow_symlinks=False):
+                if not entry.name.startswith('.') and entry.is_dir(follow_symlinks=False) and not (Path(entry.path) / '.ignore').exists():
                     folder_path = (relative / entry.name).as_posix()
                     folder = {'name': entry.name, 'path': folder_path}
                     covers = cover_map.get(entry.name, [])
