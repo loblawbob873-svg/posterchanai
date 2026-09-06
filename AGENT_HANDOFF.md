@@ -64,3 +64,11 @@ e6d184789 and earlier wallet work. Full suite 10,736 passed + 630 subtests, 25 s
 later DM/UI/wallet selection 132 passed. Deployed server1/NAS/router, verified
 matching public assets and healthy services. Desktop CI published 1.0.1491 for all
 platforms; continuation updating the Gentoo pin and final deployment records.
+
+SIGNER PRIORITY FOLLOW-UP: user prioritizes correcting regression in 4a7e7a7d3.
+Continuation owns app.js DM queue/cache barrier, dm_delivery/dm_retry harnesses,
+release workflow gates, and check_nip46_bulk_lane helper correction. Full suite
+will run before signer deployment. Do not blanket-commit or publish this checkout.
+Other requested fixes (agent.txt OS first-run/window controls and AI/Blossom/Live
+Streaming policy preview + 15-minute cleanup) follow that deployment. Unfinished
+welcome/first-run test patches are saved in /tmp/pc-followup-after-signer.patch.

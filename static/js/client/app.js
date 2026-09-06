@@ -24924,17 +24924,39 @@
     if(!el){ el=document.createElement('div'); el.id='dm-progress'; el.className='muted small'; el.style.padding='8px 10px'; wrap.prepend(el); }
     el.textContent=_dmProg;
   }
-  let _dmWatching=false, _dmHistoryDrain=null;
-  const _dmHistoryQueue=new Map();
+  let _dmWatching=false, _dmHistoryDrain=null, _dmHistoryReady=false, _dmHistoryPauseUntil=0;
+  const _dmHistoryQueue=new Map(), _dmHistoryFailures=new Map();
   function _queueDmHistory(wraps){
-    for(const ev of wraps) if(ev?.id && !_wrapTried.has(ev.id)) _dmHistoryQueue.set(ev.id,ev);
-    if(!_dmHistoryDrain) _dmHistoryDrain=(async()=>{
-      while(_dmHistoryQueue.size){
-        const batch=Array.from(_dmHistoryQueue.values()).slice(0,6);
-        batch.forEach(ev=>_dmHistoryQueue.delete(ev.id));
-        await Promise.allSettled(batch.map(ev=>ingestWrap(ev,false)));
-      }
-    })().finally(()=>{_dmHistoryDrain=null; if(_dmHistoryQueue.size) _queueDmHistory([]);});
+    for(const ev of wraps){
+      if(!ev?.id || _wrapTried.has(ev.id)) continue;
+      if((_dmHistoryFailures.get(ev.id)?.at || 0)>Date.now()) continue;
+      _dmHistoryQueue.set(ev.id,ev);
+    }
+    // Register live delivery immediately, but never decrypt its history replay before the cache.
+    if(!_dmHistoryReady || Date.now()<_dmHistoryPauseUntil) return Promise.resolve();
+    if(!_dmHistoryDrain){
+      // External signers may be the same phone serving several clients. Leave room for live work.
+      const slots=signer?.mode==='local'?6:2;
+      const drain=async()=>{
+        while(_dmHistoryQueue.size && Date.now()>=_dmHistoryPauseUntil){
+          const [id,ev]=_dmHistoryQueue.entries().next().value;
+          _dmHistoryQueue.delete(id);
+          try{ await ingestWrap(ev,false); }catch(_){}
+          if(_wrapTried.has(id)) _dmHistoryFailures.delete(id);
+          else{
+            // A failed signer must not be asked to try every remaining historical message.
+            _dmHistoryPauseUntil=Date.now()+30000;
+            const attempts=(_dmHistoryFailures.get(id)?.attempts || 0)+1;
+            _dmHistoryFailures.set(id,{attempts,at:Date.now()+Math.min(300000,60000*2**Math.min(attempts-1,3))});
+          }
+        }
+      };
+      // Each worker advances independently; one stalled decrypt must not hold up the entire batch.
+      _dmHistoryDrain=Promise.all(Array.from({length:slots},drain)).finally(()=>{
+        _dmHistoryDrain=null;
+        if(_dmHistoryQueue.size && Date.now()>=_dmHistoryPauseUntil) _queueDmHistory([]);
+      });
+    }
     return _dmHistoryDrain;
   }
   function _watchDMs(modern){
@@ -24981,11 +25003,12 @@
     if(_dmLoaded) return; _dmLoaded=true;
     const modern = !!(signer && signer.nip17unwrap);   // gift wraps need the local secret key
     _watchDMs(modern); // Live delivery must not wait for cache downloads or historical decryption.
-    /* Load the shared cache before queuing the bulk history. The live subscription is already
-     * active; its backlog uses at most six decryptions at once, leaving new arrivals able to
-     * enter the signer transport without waiting behind hundreds of historical requests. */
+    /* Replayed history waits for the shared cache. Post-EOSE arrivals remain live throughout
+     * that download, so fixing signer pressure does not bring back the missing-DM startup gap. */
     if(modern) try{ const n = await DmCache.pullShared();
                     if(n) console.info('[dm] ' + n + ' messages from the shared cache'); }catch(_){}
+    _dmHistoryReady=true;
+    _queueDmHistory([]);
     Store.byKind(4).forEach(ingestDM);                 // show cached legacy DMs instantly
     if(modern) _queueDmHistory(Store.byKind(1059));   // unwrap cached gift wraps (async)
     if(VIEW==='messages') renderMessages();

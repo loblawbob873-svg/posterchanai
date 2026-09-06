@@ -84,6 +84,7 @@ async def drive(url):
     bunker = rec.clone_bunker(sig.Bunker(relay_url), relay_url)
     bunker.start()
     try:
+        await bunker.wait_ready()
         page = None
         for _ in range(60):
             try:
@@ -137,7 +138,7 @@ async def drive(url):
 
             uri = ("bunker://" + bunker.pk + "?relay="
                    + urllib.parse.quote(relay_url, safe="") + "&secret=s3cret")
-            r = await js(f"({sig.LOGIN})({json.dumps(uri)})", awaited=True) or {}
+            r = await js(f"({sig.LOGIN})({json.dumps(uri)}, {json.dumps(bunker.user_pk)})", awaited=True) or {}
             if not r.get("ok"):
                 print(f"SKIP  could not log in ({r.get('err') or 'no answer'})")
                 return 2
@@ -159,6 +160,7 @@ async def drive(url):
             bunker = rec.clone_bunker(bunker, relay_url)
             bunker.delay = 0.4
             bunker.start()
+            await bunker.wait_ready()
             await asyncio.sleep(2.0)
 
             out = await js(f"({PROBEJS})(60000)", awaited=True) or {}
@@ -190,7 +192,12 @@ async def drive(url):
         except Exception:
             pass
         proc.terminate()
-        subprocess.run(["rm", "-rf", PROFILE], check=False)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        shutil.rmtree(PROFILE, ignore_errors=True)
 
     if problems:
         for why, err, note in problems:

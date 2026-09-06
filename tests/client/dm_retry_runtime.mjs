@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
+const source = fs.readFileSync(process.argv[2] || new URL('../../static/js/client/app.js', import.meta.url), 'utf8');
 function extract(decl){
   const start = source.indexOf(decl);
   if(start < 0) throw new Error('missing: ' + decl);
