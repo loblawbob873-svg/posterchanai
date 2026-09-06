@@ -37,7 +37,7 @@ def test_attach_starts_at_live_prompt_then_respects_manual_scrolling():
     # be armed before term.write, or that event disables follow mode before its callback can land at
     # the prompt.
     out = TERM[TERM.index("if(m.t === 'out')"):TERM.index("if(m.t === 'ready')")]
-    assert out.index("scrollingByUs=true") < out.index("term.write(m.d")
+    assert out.index("scrollingByUs=true") < out.index("term.write(output")
     assert "const followThisWrite=followBottom" in out
 
 

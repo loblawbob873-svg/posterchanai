@@ -146,7 +146,7 @@ class HistoryRules(unittest.TestCase):
         # laid out the new bytes). History still has to observe the same bytes immediately after
         # that write is scheduled; requiring the old one-argument spelling made the test reject a
         # functioning collector whenever terminal scrolling was improved.
-        self.assertTrue(re.search(r"term\.write\(m\.d(?:,[\s\S]{0,300}?)?\);\s*\n\s*_histSaw\(m\.d\)", src),
+        self.assertTrue(re.search(r"term\.write\(output(?:,[\s\S]{0,300}?)?\);\s*\n\s*_histSaw\(output\)", src),
                         "the shell's output is not fed to the collector — nothing is ever echoed, "
                         "so the echo rule refuses every line and the history stays empty")
         # And it must be encrypted to the user's own key, never published in the clear.
