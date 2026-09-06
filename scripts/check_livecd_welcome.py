@@ -55,7 +55,8 @@ def ovmf():
 VERDICT = re.compile(r"\[firstrun\]\s+(showing|skipped)\s+step=(\S+)\s+blocked=(\d)")
 
 
-def run_guest(args, boot_iso: str | None, disk: str | None, seconds: int):
+def run_guest(args, boot_iso: str | None, disk: str | None, seconds: int,
+              networked: bool = False):
     """Boot, capture the serial console, and return everything it said."""
     qemu = shutil.which("qemu-system-x86_64")
     if not qemu:
