@@ -183,6 +183,16 @@ async def main():
                                                                                   "deviceScaleFactor": 1, "mobile": False})
                         await browser.call("Page.navigate", {"url": "http://127.0.0.1:19438/"})
                         await browser.until("document.title==='READY'")
+                        await browser.until("document.querySelector('.mc-directory')?.textContent.includes('Adventure')")
+                        await browser.screenshot(name + '-folders.png')
+                        await browser.js("document.querySelector('.mc-directory').click()", gesture=True)
+                        await browser.until("document.querySelectorAll('.mc-folder-trail button').length===2")
+                        for index in range(3):
+                            await browser.js("document.querySelectorAll('.mc-tool-card')["+str(index)+"].open=true")
+                            await asyncio.sleep(.1)
+                            assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
+                            await browser.screenshot(name + '-control-' + str(index) + '.png')
+                            await browser.js("document.querySelectorAll('.mc-tool-card')["+str(index)+"].open=false")
                         pending = (await client.post('http://127.0.0.1:19438/jellyfin/QuickConnect/Initiate')).json()
                         await browser.js("document.querySelector('#mc-jellyfin').open=true")
                         await browser.js("document.querySelector('#mc-jellyfin-approve input').value=" + json.dumps(pending['Code']) +
