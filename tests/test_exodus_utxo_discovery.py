@@ -86,3 +86,13 @@ async def test_custom_dogecoin_esplora_provider_keeps_its_history_contract(monke
                                              {'exodus_rpc_doge': 'https://fixture.invalid', 'exodus_api_doge': 'esplora'})
     assert result == {'units': 0, 'used': True}
     assert calls == ['/address/public-address']
+
+
+@pytest.mark.anyio
+async def test_contradictory_spent_history_is_not_treated_as_an_unused_address():
+    def handle(request):
+        return httpx.Response(200, json={'chain_stats': {'funded_txo_sum': 9, 'spent_txo_sum': 9, 'tx_count': 0},
+                                        'mempool_stats': {'funded_txo_sum': 0, 'spent_txo_sum': 0, 'tx_count': 0}})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(B.Incomplete, match='disagree'):
+            await B.address_state(client, 'https://fixture.invalid', 'public-address')

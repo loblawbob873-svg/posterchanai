@@ -35,7 +35,7 @@ async def address_state(client, endpoint, address):
     if units < 0:
         raise Incomplete('Bitcoin balance is inconsistent')
     used = values[2] + values[5] > 0
-    if units and not used:
+    if any(values[index] for index in (0, 1, 3, 4)) and not used:
         raise Incomplete('Address balance and transaction history disagree')
     return {'units':units, 'used':used}
 
