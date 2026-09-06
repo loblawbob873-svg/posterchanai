@@ -176,10 +176,18 @@ wallet stylesheet and service-worker bytes matched the checkout.
 
 [Desktop 1.0.1491](https://github.com/loblawbob873-svg/posterchanai/releases/tag/desktop-v1.0.1491)
 was built from that commit and published successfully for Windows, macOS and Linux.
-The Windows update feed advertises 1.0.1491. The Gentoo desktop pin was updated to
+The Windows update feed advertises 1.0.1491. The published Windows installer's
+SHA512 matched that feed; extracted app.js bytes matched the tested checkout.
+Both DM behavioral harnesses passed against those extracted installer bytes.
+Welcome and wallet assets matched after Windows line-ending normalization.
+Android build 2209 published successfully; the mirrored APK's embedded app.js
+matched the checkout too. The Gentoo desktop pin was updated to
 1.0.1491 after verifying the Linux payload's published SHA512 checksum. Hardware
 Windows/Roku behavior remains unobserved as described above.
 
 Task-owned scanner environment, upstream scratch checkouts and recovery snapshot
 were removed after preserving this report and committing the recovered files.
 Other agents' working files and live application caches were left alone.
+
+The final deployment/report/package-pin commit `26273de39` is synchronized across
+server1, NAS, router and both Git remotes. Its changes do not alter client code.
