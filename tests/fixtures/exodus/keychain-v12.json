@@ -451,6 +451,366 @@
       "path": "m/86'/0'/15'/1/1",
       "privateKey": "447d720453ab903a543c0b8420432ef4c5387efc89ff5c08680280d91e397b8d",
       "publicKey": "03fac7b9a6eabd67dde1d464f1efac8cca4e35268977d72a20a86d14ac44a7c31d"
+    },
+    {
+      "symbol": "LTC",
+      "account": 0,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/2'/0'/0/0",
+      "privateKey": "4baa38b7623a40da63836cd9ee8c51d0b6273e766c88adde156fd5fec6e19008",
+      "publicKey": "030fe9d8d0e15d432d1ae9b3c52f4cb6e37e3c7a41af0139783da09eab85a182dc"
+    },
+    {
+      "symbol": "LTC",
+      "account": 0,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/2'/0'/0/1",
+      "privateKey": "283be22e374a05514dfda4f6c0bfcf6e1d5f4412db91b104eb88d8aa537f1668",
+      "publicKey": "0203ad530f7e87938f70848f383b5c2be35e3d3cec5b34b9e0a107fcb268b94019"
+    },
+    {
+      "symbol": "LTC",
+      "account": 0,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/2'/0'/1/0",
+      "privateKey": "fc5f1e275b0df1fa12c86e0ea96da3de8406f976705e8ee34b56e47a0e1685f7",
+      "publicKey": "028f87e5269b767db9a6d3614ec64a763e4c8236ff8a2f153b234ee0a0a9afc257"
+    },
+    {
+      "symbol": "LTC",
+      "account": 0,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/2'/0'/1/1",
+      "privateKey": "28783a9f4d78049f93f15a088534fe77964616b94cd825427d861025991c801c",
+      "publicKey": "02023e6da898ee0010d622db1ba7477038db613bd0a0cc23b78a756fa992ca4c8b"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 0,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/3'/0'/0/0",
+      "privateKey": "21f5e16d57b9b70a1625020b59a85fa9342de9c103af3dd9f7b94393a4ac2f46",
+      "publicKey": "02cc6b0dc33aabcf3a23643e5e2919a80c50fb3dd2129ce409bbc5f0d4643d05e0"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 0,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/3'/0'/0/1",
+      "privateKey": "0ce96fd14dd5bd468a0927b5016d138e06d5dfb1db64c69a1b22e79c65120b63",
+      "publicKey": "025a8ad8881f6facdc949c4a4d03257414153faea67e96acf57344660080610788"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 0,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/3'/0'/1/0",
+      "privateKey": "da27a8fcc03519980a5db5dfdceaeab7b61985e9463f3fb750a1d86b2cefd65c",
+      "publicKey": "020745c065a8b7cb03a843a57339cf9164d675a2e5010c6fbd61c09239bbb5f4df"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 0,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/3'/0'/1/1",
+      "privateKey": "6799f60741b5023781d69ef9b865714d12d99ffa2ee1c66d1edd091cab07182d",
+      "publicKey": "02475f40b385bb486ef27171fe119a89ce9b46fa1ab0f5bc542ee0e1e1fcd78623"
+    },
+    {
+      "symbol": "BCH",
+      "account": 0,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/145'/0'/0/0",
+      "privateKey": "28e9c4f61f735a059af93e0d9aca0b640126c827975841ad83723ccef295e659",
+      "publicKey": "02bbe7dbcdf8b2261530a867df7180b17a90b482f74f2736b8a30d3f756e42e217"
+    },
+    {
+      "symbol": "BCH",
+      "account": 0,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/145'/0'/0/1",
+      "privateKey": "a7140cd08d7fcd9cbc65ce5d09459b7f4ff99c861129d6436e06ffe8e45ae4dc",
+      "publicKey": "0262f8bf1ab1d25111c569da0133c30f8b3fa411e2f8af2565d3f0111cb34ae7f6"
+    },
+    {
+      "symbol": "BCH",
+      "account": 0,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/145'/0'/1/0",
+      "privateKey": "22e49c6ee01b43d7d7cbf2ee18bd9709d8bacd8c379fa2f02c6e303dcd7ce977",
+      "publicKey": "02f178b9410d11e47e10bef8a8e4bc53e48d9ae15864a024a54f87a802dad5f514"
+    },
+    {
+      "symbol": "BCH",
+      "account": 0,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/145'/0'/1/1",
+      "privateKey": "ccac4f167f1b51f042d57e23ed56b5040cffdc14c2799374a2a701b50e8e72e5",
+      "publicKey": "03c22e6c518ca3f006a7cb43bbc68f6388277925d751baf1d22c36db201700c901"
+    },
+    {
+      "symbol": "LTC",
+      "account": 1,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/2'/1'/0/0",
+      "privateKey": "643851c14fd0accc0ef560248b05201540d84e38a4361abdefad16276754202a",
+      "publicKey": "02f30a297e5222d7953f1d1cb68b7d6e46960eaa649886ab91dd36e373335442ed"
+    },
+    {
+      "symbol": "LTC",
+      "account": 1,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/2'/1'/0/1",
+      "privateKey": "56d6321577f2eab04449cd72a14722caeb2f7dea3379395bb3b4c48280bf97b4",
+      "publicKey": "0384d7a15f8ab672aff76977133c674e8a113029de527532522f0ecb424301702f"
+    },
+    {
+      "symbol": "LTC",
+      "account": 1,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/2'/1'/1/0",
+      "privateKey": "d7e59bee6d8990c06e29d981258cc14b16ccdcfb0c68b694f58050e5e3f7e42c",
+      "publicKey": "03408146da4092e93991dc6131de9ee8cdcacb8d4b9d7a0bd6035af3bdc6638303"
+    },
+    {
+      "symbol": "LTC",
+      "account": 1,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/2'/1'/1/1",
+      "privateKey": "8792b1f14c6f06baaaa9d883e1dec5618094e9d405b2850581b3b298e4314209",
+      "publicKey": "03544d266e8a0e24f4d4745e78fd8d504f81b44e21341d706f55d18242095d1cfc"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 1,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/3'/1'/0/0",
+      "privateKey": "c209a99226c31c4c29e3546b133fddf3f41a2eb1ad7098f77a8ff8e42d349e55",
+      "publicKey": "031c2d0c31468c97dc9dbbc69f9905eba2b321c3b21b995463d578f905df5bc3c4"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 1,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/3'/1'/0/1",
+      "privateKey": "3fb3dc4c96949f0d05c9a2826ad1ffe75b1a47e7f660baebf923312b5bf6c8e7",
+      "publicKey": "03df195afdc9990c577f1c160de13c49d5436c1cf8a7b93f0bd309cc8ec237b0d4"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 1,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/3'/1'/1/0",
+      "privateKey": "e89a0746a3125f4def8122f5d634467faa7aff34211e8118175f4bc9b4333deb",
+      "publicKey": "038dcb95c91823be4718dd999e7888f4e34e4acbae42775e11b0d1bbeefa26d6ad"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 1,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/3'/1'/1/1",
+      "privateKey": "71e8d1996a8c2a425757eb7bed1a084d00329719709dcebf85c33614706cde13",
+      "publicKey": "02a6eb0fb4692daebbf9a07b2757a06d2b357dcf078b33f231d3a986f4822abc34"
+    },
+    {
+      "symbol": "BCH",
+      "account": 1,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/145'/1'/0/0",
+      "privateKey": "e24dfd20c8eedf041a1a9168d8e37872ec4cef68b96b3d57e7ed1ab3c09b9cd1",
+      "publicKey": "03fde4d8c8eb41b7816e42d38dde89bccc60bef303316d17e419f49046fcdfbe58"
+    },
+    {
+      "symbol": "BCH",
+      "account": 1,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/145'/1'/0/1",
+      "privateKey": "ed6ce6b4f872bd6677a574c9b19100270fb0935ee123d4e3430018a143ef5ce5",
+      "publicKey": "02cd5e4cead7bbebb8987b4cd7439b13d23cbdaf1f10df7fa987848a0b076789d4"
+    },
+    {
+      "symbol": "BCH",
+      "account": 1,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/145'/1'/1/0",
+      "privateKey": "a0f29f5c7ca4effd07535a59b53e4a9b8b2898f70fb00b9c8e02dd44ef73da17",
+      "publicKey": "033652dcc9360b024c16e3c1e6f801e789bfedf65d5bea9a8a26cb94f167340bd9"
+    },
+    {
+      "symbol": "BCH",
+      "account": 1,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/145'/1'/1/1",
+      "privateKey": "e5c78639a3c7cd27a323e41b9593426b7aa17c757f446ba3100cce7ffb1cbb2c",
+      "publicKey": "0397732c786d5b87a8a996336215d785a4e0d4e1014f8a5e4670098dc9ae1cae1d"
+    },
+    {
+      "symbol": "LTC",
+      "account": 15,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/2'/15'/0/0",
+      "privateKey": "3260007d36b597cce58336dfa56e5834ad841ef98655180567bc0786ede42b15",
+      "publicKey": "02f08d982537ec2ec42f55a609741f02e981f1a51a253c6fdbebd3d90f0f375009"
+    },
+    {
+      "symbol": "LTC",
+      "account": 15,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/2'/15'/0/1",
+      "privateKey": "05e8447047b5c79aed91c6cbc9ec665d30954d263e8ae6ae59478395e63290af",
+      "publicKey": "030953be717fd9e31fe503c08d66f628133d9c80888b93efa5b2d34bc88a842b69"
+    },
+    {
+      "symbol": "LTC",
+      "account": 15,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/2'/15'/1/0",
+      "privateKey": "caa817c3c2c27d03ce2bd75d38cd88bdc1a7d5fbb0a851e253fee9288cd52d0f",
+      "publicKey": "02229a1fada30041bb917d4d046e3f4067e1994bbd015aee798bae780b46ee6a1a"
+    },
+    {
+      "symbol": "LTC",
+      "account": 15,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/2'/15'/1/1",
+      "privateKey": "5e927371a7887f81c2e2c5c80fa874435d2346320fb38a7e1593f06f8e47be1b",
+      "publicKey": "03a2741f902e01e1ff212817cd7185a2b0cc3b8888b6f0dd66bd3d3b9dab4b7863"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 15,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/3'/15'/0/0",
+      "privateKey": "2eab23098d07c0baae889cf49f51585f4d8c56509ae70f1e667e374c8be6fe9a",
+      "publicKey": "022010a403441d11c8add83ff04ea57fa621470894efeadc497f4270732cd4a46f"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 15,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/3'/15'/0/1",
+      "privateKey": "874586478173ed9239dd307085b82294b2434c321d711854d79102710e2aa08d",
+      "publicKey": "032e09f597d9e5acb67c7176f7644c4826dd504f3355ae99fcbfecab683022bada"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 15,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/3'/15'/1/0",
+      "privateKey": "34472fff7e2a423659f13978c7baae38e08f10b2aad06626d662d4e6dcfe75f3",
+      "publicKey": "03c54379b9fa2adcfaf5c1415f9d138bcaa58ad05834055d9a015532d32d63a4ce"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 15,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/3'/15'/1/1",
+      "privateKey": "08aae4022dd73baba8ae29d602a8a9c0eca53307c0d87eb68950396848f411f9",
+      "publicKey": "034b05ae94ee2de3e50cfe8c40d2df5397e9e4aa3246676d2149ac7f42574dafe1"
+    },
+    {
+      "symbol": "BCH",
+      "account": 15,
+      "purpose": 44,
+      "change": 0,
+      "index": 0,
+      "path": "m/44'/145'/15'/0/0",
+      "privateKey": "4655d5f01bff92382df53ffc55915dab176450f36830c8679a481f5c6a03c5ff",
+      "publicKey": "03404f77f869bc25d0fff292f9f8478de86d4ab99ba9169495ea8196ef4794f422"
+    },
+    {
+      "symbol": "BCH",
+      "account": 15,
+      "purpose": 44,
+      "change": 0,
+      "index": 1,
+      "path": "m/44'/145'/15'/0/1",
+      "privateKey": "02bfd19b8fa8e4b768f7af59be1744d3c81b49537b538b3368b2c764526f5c31",
+      "publicKey": "03e3b0a0981eb9ce3ac8d55a0888d84bfa35db20738636fe487665f4094b3c2079"
+    },
+    {
+      "symbol": "BCH",
+      "account": 15,
+      "purpose": 44,
+      "change": 1,
+      "index": 0,
+      "path": "m/44'/145'/15'/1/0",
+      "privateKey": "d7513af365ffbb110c4c166f98a4dfd2dd55e6c5295e1d96e6024a2c580de74a",
+      "publicKey": "02cf504ab2bbe40124d5bf496073cb4e43280aa7524db7b4629e094215e82fc26e"
+    },
+    {
+      "symbol": "BCH",
+      "account": 15,
+      "purpose": 44,
+      "change": 1,
+      "index": 1,
+      "path": "m/44'/145'/15'/1/1",
+      "privateKey": "04d421bfdb094a7279863f3702e38ae784fe674ee68c93e23a65204c0ffd8035",
+      "publicKey": "02bea2ebcbbbd514a0360e5db5b83997c11b7a7cb47944f9460ae1dd0a737c3276"
     }
   ]
 }

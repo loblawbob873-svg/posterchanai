@@ -202,9 +202,10 @@ async def balances(user: CurrentUser, db: Session = Depends(get_db), wallet_id: 
     doc, phrase = await _open(db, user, wallet_id, portfolio)
     addrs = D.addresses(doc, phrase, account=portfolio)
     from app.services import exodus_chain_service as C
-    out = await C.balances({symbol: address for symbol, address in addrs.items() if symbol != 'BTC'}, _settings(db))
     from app.services import exodus_bitcoin_discovery as B
-    out['BTC'] = await B.balance(user.id, doc, phrase, portfolio, _seckey(db, user), _settings(db))
+    out = await C.balances({symbol: address for symbol, address in addrs.items() if symbol not in B.SYMBOLS}, _settings(db))
+    for symbol in B.SYMBOLS:
+        out[symbol] = await B.balance(user.id, doc, phrase, portfolio, _seckey(db, user), _settings(db), symbol=symbol)
     from app.services import exodus_monero as M
     out['XMR'] = await M.balance(user.id, wallet_id, portfolio, phrase, _seckey(db, user), doc.get('moneroHeight', 0), Collections.monero_recovery(doc, _seckey(db, user), portfolio))
     result = {"ok": True, "index": int(doc.get("addressIndex") or 0), "balances": out}

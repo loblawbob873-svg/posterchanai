@@ -19,6 +19,8 @@ def private_key(phrase, symbol, *, account=0, index=0, format=EXODUS, purpose=84
         raise W.WalletError('invalid address index')
     if symbol == 'BTC' and format == EXODUS:
         return bitcoin_node(phrase, account=account, index=index, change=change, purpose=purpose).PrivateKey().Raw().ToBytes()
+    if symbol in ('LTC', 'DOGE', 'BCH'):
+        return utxo_node(phrase, symbol, account=account, index=index, change=change).PrivateKey().Raw().ToBytes()
     if format == LEGACY or symbol not in ('SOL', 'XRP'):
         return W.private_key_for(phrase, symbol, index, account=account)
     from bip_utils import Bip32Slip10Secp256k1
@@ -33,6 +35,8 @@ def address(phrase, symbol, *, account=0, index=0, format=EXODUS, purpose=84, ch
         raise W.WalletError('unsupported key format')
     if symbol == 'BTC' and format == EXODUS:
         return bitcoin_node(phrase, account=account, index=index, change=change, purpose=purpose).PublicKey().ToAddress()
+    if symbol in ('LTC', 'DOGE', 'BCH'):
+        return utxo_node(phrase, symbol, account=account, index=index, change=change).PublicKey().ToAddress()
     if format == LEGACY or symbol not in ('SOL', 'XRP'):
         return W.address_for(phrase, symbol, index, account=account)
     key = private_key(phrase, symbol, account=account, index=index, format=format)
@@ -64,3 +68,15 @@ def bitcoin_node(phrase, *, account=0, index=0, change=0, purpose=84):
     cls, coin = choices[purpose]
     branch = Bip44Changes.CHAIN_EXT if change == 0 else Bip44Changes.CHAIN_INT
     return cls.FromSeed(W._seed_bytes(phrase), coin).Purpose().Coin().Account(account).Change(branch).AddressIndex(index)
+
+
+def utxo_node(phrase, symbol, *, account=0, index=0, change=0):
+    """The documented Exodus BIP-44 receive/change families for LTC, DOGE and BCH."""
+    if symbol not in ('LTC', 'DOGE', 'BCH') or type(account) is not int or not 0 <= account < 16:
+        raise W.WalletError('invalid asset or portfolio')
+    if type(index) is not int or not 0 <= index < 2**31 or type(change) is not int or change not in (0, 1):
+        raise W.WalletError('invalid address index')
+    from bip_utils import Bip44, Bip44Coins, Bip44Changes
+    branch = Bip44Changes.CHAIN_EXT if change == 0 else Bip44Changes.CHAIN_INT
+    return (Bip44.FromSeed(W._seed_bytes(phrase), getattr(Bip44Coins, W.CHAINS[symbol]['coin']))
+            .Purpose().Coin().Account(account).Change(branch).AddressIndex(index))

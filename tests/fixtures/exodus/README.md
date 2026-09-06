@@ -12,6 +12,8 @@ are not bundled into the application.
 The fixture covers every currently listed BIP-39 asset at portfolio accounts 0, 1 and 15,
 including Solana's Exodus-specific BIP-32 derivation and XRP's hardened child paths.
 Bitcoin includes BIP-44, BIP-84 and BIP-86, receive/change branches and subsequent addresses.
+Litecoin, Dogecoin and Bitcoin Cash also include both branches and subsequent addresses;
+the fixture now contains ninety independently generated key pairs.
 
 Reference: https://www.exodus.com/support/en/articles/8598933-derivation-paths-in-exodus
 This verifies key compatibility. It does not verify address discovery, network balances,

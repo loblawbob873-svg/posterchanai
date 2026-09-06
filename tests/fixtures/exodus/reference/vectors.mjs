@@ -17,4 +17,10 @@ for(const account of [0,1,15])for(const purpose of [84,86])for(const change of [
  const got=await keychain.exportKey({seedId,keyId,exportPrivate:true});
  vectors.push({symbol:'BTC',account,purpose,change,index,path,privateKey:got.privateKey.toString('hex'),publicKey:got.publicKey.toString('hex')});
 }
+for(const account of [0,1,15])for(const symbol of ['LTC','DOGE','BCH'])for(const change of [0,1])for(const index of [0,1]){
+ const path=`m/44'/${paths[symbol]}'/${account}'/${change}/${index}`;
+ const keyId={assetName:symbol.toLowerCase(),derivationAlgorithm:'BIP32',derivationPath:path,keyType:'secp256k1'};
+ const got=await keychain.exportKey({seedId,keyId,exportPrivate:true});
+ vectors.push({symbol,account,purpose:44,change,index,path,privateKey:got.privateKey.toString('hex'),publicKey:got.publicKey.toString('hex')});
+}
 console.log(JSON.stringify({source:'@exodus/keychain 12.0.0; official derivation path table retrieved 2026-09-06',mnemonic,vectors},null,2));

@@ -6,6 +6,7 @@
   let PC = null, booted = false;
   let _state = null, _busy = false, _seq = 0, _wallets = [], _balances = null;
   let _selected = {wallet:'default',portfolio:0}, _scope = '', _range = '7d';
+  let _balanceTimer = null;
 
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -265,7 +266,35 @@
   }
 
   /* ---------------------------------------------------------------- the view */
+  function scheduleBalances(mine, status, feed, delay){
+    clearTimeout(_balanceTimer);
+    _balanceTimer=setTimeout(()=>{
+      if(!current(mine))return;
+      // Keep an active send/import/recovery form and its keyboard focus untouched.
+      if(_busy || document.querySelector('#ex-panel')?.childElementCount){
+        scheduleBalances(mine,status,feed,15000);return;
+      }
+      refreshBalances(mine,status,feed);
+    },delay);
+  }
+
+  async function refreshBalances(mine, status, feed){
+    let balances = null;
+    try{ balances = await request('/api/wallet/exodus/balances?valuation=true'); }catch(_){ balances = null; }
+    if(!current(mine))return;
+    _balances=balances;
+    const panel=document.querySelector('#ex-panel'), active=document.activeElement;
+    const focused=panel?.contains(active), selection=focused&&typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null;
+    feed.innerHTML = walletView(status, balances);
+    if(panel)document.querySelector('#ex-panel').replaceWith(panel);
+    wireWallet();
+    if(focused){active.focus({preventScroll:true});if(selection)active.setSelectionRange(...selection);}
+    const incomplete=!balances || Object.values(balances.balances||{}).some(cell=>cell?.known!==true);
+    scheduleBalances(mine,status,feed,incomplete?15000:60000);
+  }
+
   async function render(){
+    clearTimeout(_balanceTimer);
     const scope = accountScope();
     if(scope !== _scope){
       _scope=scope;_wallets=[];_state=null;_balances=null;_selected={wallet:'default',portfolio:0};
@@ -295,14 +324,7 @@
     // seconds; a spinner in front of an address somebody wants to copy is the delay this avoids.
     feed.innerHTML = walletView(status, null);
     wireWallet();
-    let balances = null;
-    try{ balances = await request('/api/wallet/exodus/balances?valuation=true'); }catch(_){ balances = null; }
-    if(!current(mine) || !PC.isView || !PC.isView('exodus')) return;
-    _balances=balances;
-    const panel=document.querySelector('#ex-panel');
-    feed.innerHTML = walletView(status, balances);
-    if(panel)document.querySelector('#ex-panel').replaceWith(panel);
-    wireWallet();
+    await refreshBalances(mine,status,feed);
   }
 
   function wireEmpty(){

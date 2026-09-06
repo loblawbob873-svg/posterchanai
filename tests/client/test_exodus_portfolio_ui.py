@@ -16,6 +16,8 @@ def page(tmp_path, action='', width=1280, theme='professional', mode='normal'):
     setup = f'''
 document.documentElement.dataset.theme={json.dumps(theme)};
 const SECOND='1'.repeat(32), mode={json.dumps(mode)};let releaseBalance,releaseAddress,releaseConfirm,calls=[];
+let balancePoll;
+if(mode==='poll'){{const timer=window.setTimeout;window.setTimeout=(callback,delay)=>{{if(delay===15000||delay===60000){{balancePoll=callback;return 1000000;}}return timer(callback,delay);}};}}
 const wallets=[{{id:'default',name:'Main wallet'}},{{id:SECOND,name:'Savings'}}];
 const reply=data=>({{ok:true,status:200,json:async()=>data}});
 const dataFor=wallet=>({{balances:{{BTC:{{known:true,amount:'1'}},ETH:{{known:true,amount:'2'}}}},valuation:{{complete:true,total:wallet==='default'?'900.00':'200.00',known_total:wallet==='default'?'900.00':'200.00',missing:[],assets:{{BTC:{{usd:wallet==='default'?'700.00':'100.00'}},ETH:{{usd:wallet==='default'?'200.00':'100.00'}}}},prices_at:Math.floor(Date.now()/1000)}},history:{{available:true,points:[{{at:Math.floor(Date.now()/1000)-3600,usd:'100'}},{{at:Math.floor(Date.now()/1000),usd:'200'}}]}}}});
@@ -156,3 +158,35 @@ document.querySelector('#ex-add-form').dispatchEvent(new Event('submit',{cancela
 setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify(imported);},50);
 ''')
     assert result == {'label':'Legacy wallet','mnemonic':'public-legacy-fixture','derivation':'cloudos-v1'}
+
+
+def test_balance_poll_preserves_open_send_form_and_then_updates_the_total(tmp_path):
+    result = page(tmp_path, '''
+let balanceReads=0;
+const fetchBefore=__PC.authFetch;
+__PC.authFetch=async(path,opts)=>{
+ if(path.includes('/balances?')){balanceReads++;const next=dataFor('default');next.valuation.total='1234.00';return reply(next);}
+ return fetchBefore(path,opts);
+};
+document.querySelector('.ex-send').click();
+setTimeout(()=>{
+ const input=document.querySelector('#ex-to');input.value='keep-this-recipient';input.focus();
+ const before=balanceReads;
+ balancePoll();
+ const retained=input===document.activeElement&&input.value==='keep-this-recipient';
+ const idle=balanceReads===before;
+ document.querySelector('#ex-panel-close').click();balancePoll();
+ setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({retained,idle,total:document.querySelector('.ex-total').textContent});},50);
+},30);
+''', mode='poll')
+    assert result == {'retained':True,'idle':True,'total':'$1,234.00'}
+
+
+def test_balance_poll_stops_after_leaving_the_wallet(tmp_path):
+    result = page(tmp_path, '''
+const before=calls.length;
+__PC.isView=()=>false;
+balancePoll();
+setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({noRequest:calls.length===before});},30);
+''', mode='poll')
+    assert result == {'noRequest':True}

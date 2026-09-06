@@ -26,18 +26,21 @@ than a JSON file upload.
 Native sends are implemented for ETH, MATIC, BNB, AVAX and independent XMR. Sending
 BTC, LTC, DOGE, BCH, SOL and XRP remains unavailable; those buttons are not shown.
 This is not full Exodus asset or token support. No real funds were sent during testing.
-Bitcoin discovery scans receive and change branches. LTC, DOGE and BCH currently read
-only the selected derived address; balances held at other historical receive/change
-addresses are not discovered. Their displayed address balance is not proof that an
-imported wallet has no additional funds. Complete imported-portfolio discovery remains
-unfinished for those assets.
+Bitcoin, LTC, DOGE and BCH discovery scans receive and change branches. Spent addresses
+still extend the scan; one missing history response prevents a complete balance. The
+gap limit is twenty unused addresses with a maximum of one thousand addresses per
+branch. Bitcoin includes BIP-44/84/86; the other three use their documented Exodus
+BIP-44 families. Native Dogecoin and Bitcoin Cash providers and custom Esplora
+endpoints retain their distinct history contracts. Expired or incomplete scans remain
+unknown, never a confident zero. The dashboard polls while visible and pauses around
+open send/import/recovery forms so it does not interrupt typing.
 
 ## Transfer review
 
 EVM sends verify the selected network and sender, calculate fees before broadcast,
 and persist the locally signed transaction identity before sending. Request identities
 and wallet locks are shared by this node's workers. Duplicate imports of the same key
-share the spend lock. Lost acknowledgements remain uncertain until the recorded hash
+within the same authenticated user share the spend lock. Lost acknowledgements remain uncertain until the recorded hash
 can be found; neither a new request ID nor a worker restart silently repeats a payment.
 
 Independent Monero sends prepare without relaying and persist encrypted transaction
@@ -72,11 +75,16 @@ claimed by this review document.
 
 ## Validation evidence
 
-* Complete final Exodus core and browser run: 250 passed (223 core, 27 browser), including actual offline
+* Complete final Exodus core and browser run on production Python 3.11: 295 passed
+  (266 core, 29 browser), including actual offline
   Monero wallet creation, reopening and matching recovery words.
-* Actual Chrome wallet dashboard and recovery actions: 27 passed, including all
+* Actual Chrome wallet dashboard and recovery actions: 29 passed, including all
   configured themes at phone/desktop widths, stale responses, duplicate send clicks,
   downloading both phrases and clearing the revealed words.
+* The complete client suite caught one stale assertion requiring the old custody
+  wording that the user requested changing. The corrected eight-test group requires
+  a visible server-managed summary plus accurate operator-key and recovery-export
+  disclosure. Its focused rerun passed.
 * Cleanup-after-relay regressions: two failed before the production fix and two
   passed after it. The final core run includes these new cases.
 * Successful and uncertain relay attempts both invalidate the prior Monero balance
@@ -91,3 +99,10 @@ and `/tmp/pc-wallet-phone.png`, using deterministic public fixture balances.
 Logs are preserved under `/tmp/pc-wallet-*-review.log` and
 `/tmp/pc-wallet-backup-browser-rerun.log`. Integration and the complete repository
 suite are separate release gates.
+
+Discovery contracts were checked against the [Exodus path table](https://www.exodus.com/support/en/articles/8598933-derivation-paths-in-exodus),
+the [BlockCypher address API](https://www.blockcypher.com/dev/bitcoin/#address-balance-endpoint),
+and the [PSF BCH consumer](https://github.com/Permissionless-Software-Foundation/bch-consumer).
+A public-address read verified the current BCH `/bch/txHistory` response; no transfer
+was made. Thirty-six additional official keychain vectors cover LTC/DOGE/BCH receive
+and change indices across three portfolios.

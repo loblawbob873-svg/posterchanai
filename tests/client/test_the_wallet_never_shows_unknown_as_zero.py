@@ -10,6 +10,7 @@ The shipped row renderer RUNS here, because the question is what the HTML says �
 version and the correct one read the same field names, so matching the source proves nothing.
 """
 import json
+import re
 import shutil
 import subprocess
 import textwrap
@@ -83,9 +84,11 @@ def test_the_custody_line_is_not_hidden_in_a_help_page():
     # Whitespace-normalised: the copy wraps across lines in the template literal, and a test that
     # breaks when somebody re-wraps a sentence is a test nobody keeps.
     html = " ".join(json.loads(out.stdout)["html"].split()).lower()
-    assert "node holds the keys" in html
-    assert "can spend this wallet" in html
-    assert "hot wallet" in html
+    summary = re.search(r'<summary>(.*?)</summary>', html)
+    assert summary and 'server-managed wallet' in summary[1]
+    assert 'back up your recovery phrase' in summary[1]
+    assert 'operator can access the wallet keys' in html
+    assert 'export your phrase' in html
 
 
 # ── which chains offer a Send button ───────────────────────────────────────────────────────────
