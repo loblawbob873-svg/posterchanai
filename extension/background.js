@@ -29,7 +29,36 @@ const NT = () => (typeof NostrTools !== 'undefined' ? NostrTools : self.NostrToo
 /* Identify only this extension's relay sockets. A browser WebSocket cannot set its own
  * User-Agent; without this the PosterChan-only relay rejects Firefox's generic UA.
  * Never tag page requests or another extension's traffic as PosterChan. */
+/* NOTHING HERE MAY STOP THIS FILE FROM REGISTERING ITS MESSAGE LISTENER.
+ *
+ * This runs at TOP LEVEL, ~1200 lines above `runtime.onMessage.addListener`. In Manifest V3 Firefox
+ * does not grant `webRequestBlocking` to an ordinary add-on, so
+ * `onBeforeSendHeaders.addListener(..., ['blocking', …])` raises
+ *
+ *     Using the 'blocking' extraInfoSpec requires the 'webRequestBlocking' permission
+ *
+ * and the exception propagates out of this call, out of the `const relayIdentityReady = …`
+ * initialiser, and aborts the whole script. The listener is never reached. EVERY message from every
+ * page then answers "Could not establish connection. Receiving end does not exist." -- for ever, on
+ * every wake, with nothing in the page console to say the background died.
+ *
+ * That is the whole of "why is the signer extension so shit", "I can't fucking send any posts from
+ * webui", "can't even upload an attachment": one refused permission at line 56 took out signing,
+ * uploading (a Blossom auth event is signed) and posting, all at once, and left a symptom that
+ * points at the messaging layer instead of at the cause.
+ *
+ * The header rewrite is a nicety -- it labels this extension's relay sockets so a PosterChan-only
+ * relay recognises them. Signing is local and needs no relay at all. A nicety must never be able to
+ * cost the whole extension, so every branch is guarded and the failure is logged rather than
+ * thrown. */
 function installRelayIdentity(){
+  try{ return _installRelayIdentity(); }
+  catch(e){
+    try{ console.warn('[posterchan] relay identity header not installed:', (e && e.message) || e); }catch(_){ }
+    return Promise.resolve();
+  }
+}
+function _installRelayIdentity(){
   if(!B.runtime.getURL || !B.runtime.getManifest) return Promise.resolve();
   const own=B.runtime.getURL('');
   const marker='PosterChan/'+B.runtime.getManifest().version;
@@ -45,11 +74,14 @@ function installRelayIdentity(){
     return Promise.resolve();
   }
   if(B.declarativeNetRequest){
-    return B.declarativeNetRequest.updateSessionRules({removeRuleIds:[148],addRules:[{
+    /* A rejected PROMISE here is the same hazard one step later: `ready` chains on it, and an
+     * unhandled rejection there wedges every message that awaits it. */
+    return Promise.resolve(B.declarativeNetRequest.updateSessionRules({removeRuleIds:[148],addRules:[{
       id:148,priority:1,
       condition:{initiatorDomains:[B.runtime.id],resourceTypes:['websocket']},
       action:{type:'modifyHeaders',requestHeaders:[{header:'user-agent',operation:'set',value:marker}]}
-    }]});
+    }]})).catch(e=>{ try{ console.warn('[posterchan] relay identity rule not installed:',
+                                       (e && e.message) || e); }catch(_){ } });
   }
   return Promise.resolve();
 }
@@ -1251,6 +1283,8 @@ B.runtime.onMessage.addListener((msg, sender, reply) => {
       // so answering now would report "not paired" on a paired install and hand back an empty list
       // for every fill. Wait for the one load, always.
       await ready;
+      // See bookmarksReady: only these wait for the bookmark engine, and they must.
+      if(String((msg && msg.type) || '').startsWith('bm-')) await bookmarksReady;
       switch(msg && msg.type){
         case 'state':
           return reply({ paired: !!cfg, mode: cfg && cfg.mode, count: items.size, status, lastSync,
@@ -1454,7 +1488,38 @@ async function code(raw){
  * against an EMPTY map, so nothing deduped and every bookmark was republished under a fresh sync id,
  * which every other browser dutifully created as new. "Keeps getting unchecked" and "keeps bringing
  * back dupe folders" are the same bug, twice. */
-const ready = loadCfg().then(async () => { await relayIdentityReady; if(cfg) connect(); await initBookmarks(); });
+/* EVERY MESSAGE AWAITS THIS, SO IT MUST ALWAYS SETTLE, AND SOON.
+ *
+ * `runtime.onMessage` opens with `await ready`, which is right -- answering before the config has
+ * loaded reports "not paired" on a paired install. It also means anything that can hang in here
+ * hangs EVERY fill, every signature and every upload behind it, for the caller's full timeout, with
+ * no error anywhere. `initBookmarks` was in this chain and bookmark sync has frozen a browser
+ * before; a relay connect is a network call; and an unhandled rejection here leaves the promise
+ * rejected for the life of the event page, so every later message throws too.
+ *
+ * So: the chain covers only what a message genuinely needs (the config), it cannot reject, and it
+ * cannot wait for ever. Bookmarks initialise ALONGSIDE it -- the vault, the signer and uploads do
+ * not need them, and the bm-* handlers already answer "unavailable" when the engine is not up. */
+const ready = (async () => {
+  try{ await Promise.race([
+    loadCfg(),
+    new Promise(r => setTimeout(r, 8000)),      // a slow load must not become an infinite one
+  ]); }catch(e){ try{ console.warn('[posterchan] config load failed:', (e && e.message) || e); }catch(_){ } }
+  try{ await relayIdentityReady; }catch(_){ }
+  try{ if(cfg) connect(); }catch(e){ try{ console.warn('[posterchan] relay connect failed:',
+                                                       (e && e.message) || e); }catch(_){ } }
+})();
+/* BOOKMARKS KEEP THEIR GUARANTEE, AND ONLY BOOKMARK MESSAGES PAY FOR IT.
+ *
+ * `bm-*` handlers must not run while the engine's state is still loading -- one answered early sees
+ * an empty set, and an empty set is a DELETE ORDER to a reconcile (the phone-book lesson, and this
+ * engine has frozen a browser once already). So they await this.
+ *
+ * Nothing else does. A signature, a fill and an upload have no opinion about bookmarks, and making
+ * them wait on a bookmark tree is how one slow subsystem became "the signer is not responding". */
+const bookmarksReady = ready.then(() => initBookmarks()).catch(e => {
+  try{ console.warn('[posterchan] bookmark init failed:', (e && e.message) || e); }catch(_){ }
+});
 // A phone suspends the whole extension; re-check the socket whenever anything talks to us.
 setInterval(() => { if(cfg && !_anyOpen()) connect(); }, 30000);
 

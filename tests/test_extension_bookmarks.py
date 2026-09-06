@@ -399,8 +399,18 @@ def test_the_engine_refuses_to_act_before_its_state_is_loaded():
         assert guard in src, f"missing the half-loaded guard: {guard}"
 
     bg = open(os.path.join(ROOT, "extension", "background.js"), encoding="utf-8").read()
-    assert "await initBookmarks();" in bg, \
+    # A bm-* message must not be answered while the engine is still loading -- one answered early
+    # sees an empty set, and an empty set is a delete order to a reconcile. It waits on its OWN gate
+    # now rather than on the chain every message uses: making a signature or an upload wait for the
+    # bookmark tree is how one slow subsystem became "the signer is not responding".
+    assert "const bookmarksReady = ready.then(() => initBookmarks())" in bg, \
         "the engine's init is fired and forgotten again; a message handled during it sees empty state"
+    assert "if(String((msg && msg.type) || '').startsWith('bm-')) await bookmarksReady;" in bg, \
+        "bm-* handlers no longer wait for the bookmark engine to finish loading"
+    # And the wait is bookmark-only: the general chain must not await it.
+    chain = bg[bg.index("const ready = (async () => {"): bg.index("const bookmarksReady")]
+    assert "initBookmarks" not in chain, \
+        "initBookmarks is back in the chain every message awaits"
 
 
 def test_enabling_before_load_does_not_republish_everything():
