@@ -577,11 +577,12 @@
   /* Wipe the autofill service's copy. Called on logout and when the device is told not to stay
    * unlocked — without it, a shared or handed-down phone keeps offering the previous user's
    * passwords in every other app, indefinitely, with nothing on screen to say so. */
-  let _androidWrites = Promise.resolve();
+  // Capacitor dispatches these synchronous native methods in FIFO order. Do not
+  // delay clear behind a JS acknowledgement: logout may reload the page first.
   async function _clearAndroid(){
     try{
       const plug = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.VaultAutofill;
-      if(plug && plug.clear) await (_androidWrites = _androidWrites.catch(()=>{}).then(() => plug.clear()));
+      if(plug && plug.clear) await plug.clear();
     }catch(_){ }
   }
 
@@ -626,12 +627,9 @@
                    totp:i.totp||'', uris, hosts,
                    domains: Array.from(new Set(wide.map(h => V().baseDomain(h)).filter(Boolean))) };
         });
-      const owner = _owner;
-      return await (_androidWrites = _androidWrites.catch(()=>{}).then(async () => {
-        if(!_sameOwner() || _owner !== owner || !stayUnlocked()) return false;
-        const result = await plug.put({ items: JSON.stringify(items) });
-        return result?.ok !== false;
-      }));
+      if(!_sameOwner() || !stayUnlocked()) return false;
+      const result = await plug.put({ items: JSON.stringify(items) });
+      return result?.ok !== false;
     }catch(_){ return false; }
   }
 

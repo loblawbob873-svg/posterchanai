@@ -59,3 +59,21 @@ assert.equal((await harness({incomplete:true})).writes.length,0,'incomplete rela
 assert.equal((await harness({locked:true})).calls,0,'disabled persistence does not background-unlock');
 assert.equal((await harness({noKey:true})).writes.length,0,'background sync must never mint a vault');
 console.log('PASS: cold local-key sync without opening Passwords; bank entries, reconnect coalescing, incomplete reads, lock and missing key');
+
+const logoutRace=await harness();
+let acknowledgePut, putStarted=false, clears=0;
+logoutRace.ctx.Capacitor.Plugins.VaultAutofill.put=()=>{
+  putStarted=true;
+  return new Promise(resolve=>{acknowledgePut=resolve;});
+};
+logoutRace.ctx.Capacitor.Plugins.VaultAutofill.clear=async()=>{clears++;};
+const pendingPut=logoutRace.ctx.PCVault.syncAndroid();
+await new Promise(resolve=>setTimeout(resolve,0));
+assert(putStarted,'the native write was dispatched');
+const forgetting=logoutRace.ctx.PCVault.forget();
+await new Promise(resolve=>setTimeout(resolve,0));
+assert.equal(clears,1,'logout must dispatch native clear without waiting for a write acknowledgement that page reload can discard');
+acknowledgePut({ok:true});
+await Promise.all([pendingPut,forgetting]);
+assert.equal(await logoutRace.ctx.PCVault.syncAndroid(),false,'retired vault cannot repopulate the cleared native store');
+console.log('PASS: logout clears native passwords while a previous write acknowledgement is pending');
