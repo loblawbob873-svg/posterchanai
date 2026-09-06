@@ -665,3 +665,61 @@ def test_scan_checkpoint_survives_loss_of_in_memory_preview(api, monkeypatch):
             await task
         assert docs['library:abc']['scan_incomplete'] is False
     asyncio.run(exercise())
+
+
+def test_folder_png_available_before_scan_and_acl_enforced(api):
+    from PIL import Image
+    from io import BytesIO
+    client, docs, user, root = api
+    seed(docs, root)
+    docs['page:abc:1:0'] = []
+    folder = root / 'Films'
+    folder.mkdir()
+    Image.new('RGB', (800,600), 'red').save(folder / 'folder.png')
+    assert client.get('/api/media-center/abc/folders').json()['folders'][0]['has_folder_art'] is True
+    response = client.get('/api/media-center/abc/folder-art', params={'path':'Films'})
+    assert response.status_code == 200
+    assert Image.open(BytesIO(response.content)).size == (400,300)
+    user.nostr_npub = VIEWER
+    assert client.get('/api/media-center/abc/folder-art', params={'path':'Films'}).status_code == 200
+    for path in ('../', '/tmp'):
+        assert client.get('/api/media-center/abc/folder-art', params={'path':path}).status_code == 404
+    (folder / '.ignore').touch()
+    assert client.get('/api/media-center/abc/folder-art', params={'path':'Films'}).status_code == 404
+    (folder / '.ignore').unlink()
+    (folder / 'folder.png').unlink()
+    (folder / 'folder.png').symlink_to(root / 'outside.png')
+    assert client.get('/api/media-center/abc/folder-art', params={'path':'Films'}).status_code == 404
+    docs['library:abc']['shared_with'] = []
+    assert client.get('/api/media-center/abc/folder-art', params={'path':'Films'}).status_code == 404
+
+
+def test_rescan_generates_missing_folder_png_and_preserves_existing(tmp_path, monkeypatch):
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+        pytest.skip('FFmpeg required')
+    from PIL import Image
+    monkeypatch.setenv('POSTERCHANAI_MEDIA_ROOTS', str(tmp_path))
+    folder = tmp_path / 'Show' / 'Season 1'
+    folder.mkdir(parents=True)
+    source = folder / 'episode.mp4'
+    subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=320x240:rate=8',
+                    '-t','1','-c:v','libx264','-threads','1',str(source)], check=True, timeout=20)
+    existing = tmp_path / 'Show' / 'folder.png'
+    Image.new('RGB', (20,20), 'red').save(existing)
+    original = existing.read_bytes()
+    items, skipped = media.scan(str(tmp_path))
+    assert len(items) == 1 and skipped == 0
+    for image in (folder / 'folder.png', tmp_path / 'folder.png'):
+        with Image.open(image) as generated:
+            assert generated.format == 'PNG' and generated.width == 480
+    assert existing.read_bytes() == original
+    stamp = (folder / 'folder.png').stat().st_mtime_ns
+    media.scan(str(tmp_path), items)
+    assert (folder / 'folder.png').stat().st_mtime_ns == stamp
+    (folder / 'folder.png').unlink()
+    media.scan(str(tmp_path), items)
+    assert (folder / 'folder.png').is_file()  # Reused metadata still repairs missing artwork.
+    (folder / 'folder.png').unlink()
+    (folder / '.ignore').touch()
+    assert media.scan(str(tmp_path), items)[0] == []
+    assert not (folder / 'folder.png').exists()

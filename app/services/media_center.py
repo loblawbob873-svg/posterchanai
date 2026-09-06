@@ -44,7 +44,7 @@ def cover_path(library, item):
     source = source_path(library, item)
     root = safe_root(library["folder"])
     candidates = [source.with_suffix(ext) for ext in (".jpg", ".png", ".webp")]
-    candidates += [source.parent / name for name in ("poster.jpg", "cover.jpg", "folder.jpg", "cover.png")]
+    candidates += [source.parent / name for name in ("folder.png", "poster.jpg", "cover.jpg", "folder.jpg", "cover.png")]
     for path in candidates:
         if path.is_symlink() or not path.is_file():
             continue
@@ -52,6 +52,25 @@ def cover_path(library, item):
         if root in resolved.parents and resolved.stat().st_size <= 20 * 1024 * 1024:
             return resolved
     return None
+
+
+def folder_cover_path(library, relative):
+    root = safe_root(library['folder'])
+    parts = Path(relative)
+    if parts.is_absolute() or '..' in parts.parts:
+        raise ValueError('Invalid folder')
+    target = root
+    for part in parts.parts:
+        target = target / part
+        if target.is_symlink():
+            raise ValueError('Linked folders are unavailable')
+    if ignored_folder(root, target):
+        raise ValueError('Ignored folder')
+    image = target / 'folder.png'
+    if image.is_symlink() or not image.is_file() or image.stat().st_size > 20 * 1024 * 1024:
+        raise ValueError('Folder artwork unavailable')
+    image.resolve().relative_to(root)
+    return image
 
 
 @lru_cache(maxsize=128)
@@ -223,10 +242,54 @@ def visible_catalog(library, items):
     return [item for item in items if not ignored_folder(root, (root / item['path']).parent, memo)]
 
 
+def generate_folder_art(root, source, metadata, attempted):
+    """One bounded decode supplies missing ancestor artwork, without replacing user art."""
+    if not metadata.get('video'):
+        return
+    targets = []
+    folder = source.parent
+    while folder == root or root in folder.parents:
+        if folder not in attempted:
+            attempted.add(folder)
+            target = folder / 'folder.png'
+            if not os.path.lexists(target) and os.access(folder, os.W_OK):
+                targets.append(target)
+        if folder == root:
+            break
+        folder = folder.parent
+    if not targets:
+        return
+    try:
+        result = subprocess.run([
+            'ffmpeg', '-v', 'error', '-nostdin', '-threads', '1', '-filter_threads', '1',
+            '-protocol_whitelist', 'file,pipe', '-ss', str(min(30, metadata['duration'] * .1)),
+            '-i', str(source), '-map', '0:v:0', '-frames:v', '1', '-vf', 'scale=480:-2',
+            '-c:v', 'png', '-threads', '1', '-f', 'image2pipe', 'pipe:1',
+        ], capture_output=True, timeout=15, check=True)
+        if not result.stdout.startswith(b'\x89PNG\r\n\x1a\n'):
+            return
+        for target in targets:
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(prefix='.media-cover-', suffix='.png', dir=target.parent, delete=False) as output:
+                    temporary = Path(output.name)
+                    output.write(result.stdout)
+                temporary.chmod(0o644)
+                os.link(temporary, target)  # Atomic and fails if artwork appeared during decoding.
+            except OSError:
+                pass  # Read-only mounts and existing images never fail a media scan.
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def scan(folder, previous=None, on_item=None):
     root = safe_root(folder)
     items, skipped = [], 0
     previous = {item["path"]: item for item in (previous or [])}
+    artwork_attempted = set()
     def failed(error):
         raise error  # An unreadable subtree must not silently erase the old catalog.
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
@@ -248,6 +311,7 @@ def scan(folder, previous=None, on_item=None):
                         raise ValueError("Library limit is 10,000 items; split this folder into libraries")
                     if on_item:
                         on_item(old)
+                    generate_folder_art(root, path, old, artwork_attempted)
                     continue
                 metadata = probe(path)
                 items.append({"id": hashlib.sha256(relative.encode()).hexdigest()[:32], "path": relative,
@@ -255,6 +319,7 @@ def scan(folder, previous=None, on_item=None):
                               "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, **metadata})
                 if on_item and len(items) <= 10000:
                     on_item(items[-1])
+                generate_folder_art(root, path, metadata, artwork_attempted)
             except (ValueError, OSError, subprocess.SubprocessError):
                 skipped += 1
             if len(items) > 10000:

@@ -406,6 +406,9 @@ async def folders(library_id: str, path: str = ".", user=Depends(get_media_user)
                 if not entry.name.startswith('.') and entry.is_dir(follow_symlinks=False) and not (Path(entry.path) / '.ignore').exists():
                     folder_path = (relative / entry.name).as_posix()
                     folder = {'name': entry.name, 'path': folder_path}
+                    image = Path(entry.path) / 'folder.png'
+                    if image.is_file() and not image.is_symlink():
+                        folder['has_folder_art'] = True
                     covers = cover_map.get(entry.name, [])
                     if covers:
                         folder['art'] = covers
@@ -415,6 +418,19 @@ async def folders(library_id: str, path: str = ".", user=Depends(get_media_user)
         return await asyncio.to_thread(listing)
     except (ValueError, OSError) as error:
         raise HTTPException(400, 'Folder is unavailable or outside this library') from error
+
+
+@router.get("/{library_id}/folder-art")
+async def folder_artwork(library_id: str, path: str = '.', user=Depends(get_media_user)):
+    library = await library_for(library_id, media.identity(user))
+    try:
+        async with media.art_slots:
+            image = await asyncio.to_thread(media.folder_cover_path, library, path)
+            stat = image.stat()
+            data = await asyncio.to_thread(media.cover_bytes, image, stat.st_mtime_ns, stat.st_size)
+        return Response(data, media_type='image/jpeg', headers=PRIVATE)
+    except (OSError, ValueError) as error:
+        raise HTTPException(404, 'Folder artwork unavailable') from error
 
 
 @router.get("/{library_id}/art/{item_id}")
