@@ -9221,6 +9221,7 @@
     catch(e){ toast('publish failed: '+e.message); }
   }
 
+  let _mediaCenterSubtitleUrl=null;
   let _mediaCenterFolderCleanup=()=>{};
   let _mediaCenterPollTimer=null;
   let _mediaCenterSession=null, _mediaCenterPlayGeneration=0, _mediaCenterHls=null, _mediaCenterArtObserver=null, _mediaCenterArtUrls=[], _mediaCenterArtGeneration=0;
@@ -9247,6 +9248,8 @@
     return _mediaCenterFetch('/api/media-center/sessions/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket})}).catch(()=>{});
   }
   function stopMediaCenter(clearArt=true){
+    if(_mediaCenterSubtitleUrl){URL.revokeObjectURL(_mediaCenterSubtitleUrl);_mediaCenterSubtitleUrl=null;}
+    document.querySelectorAll('#mc-player track').forEach(track=>track.remove());
     _mediaCenterPlayGeneration++;
     const session=_mediaCenterSession;_mediaCenterSession=null;
     if(clearArt){_mediaCenterFolderCleanup();clearTimeout(_mediaCenterPollTimer);_mediaCenterPollTimer=null;clearMediaCenterArt();}
@@ -9294,7 +9297,7 @@
         <div id="mc-playback" class="mc-playback" hidden><div class="mc-player-toolbar"><h3 id="mc-playing"></h3><button id="mc-fullscreen" class="btn btn-ghost" type="button" aria-label="Enter full screen">Full screen</button><button id="mc-close-player" class="btn btn-ghost" type="button">Close player</button>
           <label>Quality <select id="mc-quality"><option value="auto">Best quality within limit</option>
             <option value="360p">360p · ~0.6 Mbps</option><option value="480p">480p · ~1.2 Mbps</option>
-            <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label></div>
+            <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label><label>Audio <select id="mc-audio"><option value="-1">Default</option></select></label><label>Subtitles <select id="mc-subtitles"><option value="-1">Off</option></select></label></div>
           <video id="mc-player" controls playsinline tabindex="0" aria-label="Media player" preload="metadata" style="width:100%;max-height:65vh"></video>
         </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><nav id="mc-folder-nav" aria-label="Media folders"></nav><div id="mc-items"></div></div>`;
       for(const card of feed.querySelectorAll('.mc-tool-card'))card.ontoggle=()=>{
@@ -9523,7 +9526,41 @@
               _mediaCenterSession=session.url;
               $('#mc-playback').hidden=false;$('#mc-playback').scrollIntoView({block:'nearest',behavior:'smooth'});$('#mc-playing').textContent=item.name;
               const video=$('#mc-player'),quality=$('#mc-quality');quality.value='auto';
-              const source=new URL(session.url,_instanceBase()||location.origin).href;
+              let source=new URL(session.url,_instanceBase()||location.origin).href;
+              const audio=$('#mc-audio'),subtitles=$('#mc-subtitles');
+              audio.replaceChildren(new Option('Default','-1'));subtitles.replaceChildren(new Option('Off','-1'));
+              const trackData=await api('/'+lib.id+'/tracks/'+item.id);
+              if(VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration)return;
+              const languages={eng:'English',jpn:'Japanese',spa:'Spanish',fra:'French',deu:'German',ita:'Italian',zho:'Chinese',kor:'Korean',rus:'Russian',ara:'Arabic',por:'Portuguese',und:'Unknown language'};
+              const label=track=>[languages[track.language]||track.language,track.title,track.codec].filter(Boolean).join(' · ');
+              for(const track of trackData.tracks){const option=new Option(label(track),String(track.index));
+                if(track.type==='audio')audio.append(option);
+                if(track.type==='subtitle'){option.dataset.text=String(track.text);if(!track.text)option.textContent+=' · rendered in video';subtitles.append(option);}}
+              const reloadSource=()=>{
+                const at=video.currentTime;quality.value='auto';
+                if(_mediaCenterHls){_mediaCenterHls.config.startPosition=at;_mediaCenterHls.loadSource(source);_mediaCenterHls.startLoad(at);}
+                else{video.src=source;video.onloadedmetadata=()=>{video.currentTime=at;video.play().catch(()=>{});};}
+              };
+              audio.onchange=()=>{const url=new URL(source);url.searchParams.set('audio',audio.value);source=url.href;reloadSource();};
+              let subtitleGeneration=0;
+              subtitles.onchange=async()=>{
+                const generation=++subtitleGeneration;
+                video.querySelectorAll('track').forEach(track=>track.remove());
+                if(_mediaCenterSubtitleUrl){URL.revokeObjectURL(_mediaCenterSubtitleUrl);_mediaCenterSubtitleUrl=null;}
+                const url=new URL(source),oldBurn=url.searchParams.get('subtitle')||'-1';
+                const burn=subtitles.value!=='-1'&&subtitles.selectedOptions[0].dataset.text==='false'?subtitles.value:'-1';
+                url.searchParams.set('subtitle',burn);source=url.href;if(oldBurn!==burn)reloadSource();
+                if(subtitles.value==='-1'||burn!=='-1')return;
+                try{
+                  status.textContent='Loading subtitles…';
+                  const response=await _mediaCenterFetch(source.replace('master.m3u8','subtitle-'+subtitles.value+'.vtt'));
+                  if(!response.ok)throw new Error('Unable to load subtitles');
+                  const blob=await response.blob();if(generation!==subtitleGeneration||playGeneration!==_mediaCenterPlayGeneration)return;
+                  _mediaCenterSubtitleUrl=URL.createObjectURL(blob);
+                  const track=document.createElement('track');track.kind='subtitles';track.label=subtitles.selectedOptions[0].textContent;
+                  track.src=_mediaCenterSubtitleUrl;track.default=true;video.append(track);track.track.mode='showing';status.textContent='';
+                }catch(error){status.textContent=error.message;}
+              };
               video.onerror=()=>{status.textContent='Playback failed. Try a lower quality or rescan the library.';};
               await loadHls();if(VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration)return;
               if(window.Hls&&Hls.isSupported()){

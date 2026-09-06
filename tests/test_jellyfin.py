@@ -27,7 +27,8 @@ def api(request, monkeypatch, tmp_path):
     library = {'id': 'a' * 32, 'name': 'Movies', 'owner': OWNER, 'shared_with': [VIEWER],
                'folder': str(tmp_path), 'encoder': 'cpu', 'pages': ['page:movies'], 'count': 2}
     entries = [{'id': str(i) * 32, 'name': 'Episode ' + str(i), 'folder': 'Season 2',
-                'path': 'secret/movie.mp4', 'duration': 13, 'video': True} for i in (1, 2)]
+                'path': 'secret/movie.mp4', 'duration': 13, 'video': True,
+                'tracks': [{'index':1, 'type':'audio', 'codec':'aac', 'language':'eng', 'title':'', 'default':True, 'text':False}]} for i in (1, 2)]
     catalog = {'index': {'ids': [library['id']]}, 'library:' + library['id']: library, 'page:movies': entries}
     edge = {} if proxied else catalog
     async def read(key):
@@ -342,3 +343,33 @@ def test_client_websocket_keepalive_and_revocation(api):
 
 def test_api_does_not_serve_jellyfin_web_ui(api):
     assert api.client.get('/jellyfin/web/index.html').status_code == 404
+
+
+def test_playback_info_audio_and_subtitle_contract(api):
+    for entry in api.entries:
+        entry['tracks'] += [
+            {'index':2,'type':'audio','codec':'eac3','language':'jpn','title':'Japanese','default':False,'text':False},
+            {'index':3,'type':'subtitle','codec':'ass','language':'eng','title':'English','default':False,'text':True},
+            {'index':4,'type':'subtitle','codec':'hdmv_pgs_subtitle','language':'jpn','title':'Japanese','default':False,'text':False}]
+    api.catalog['page:movies'] = api.entries
+    login = connect(api)
+    item, _ = playable(api, login)
+    uid = item['Id']
+    response = api.client.post('/jellyfin/Items/'+uid+'/PlaybackInfo', headers={'X-Emby-Token':login['AccessToken']},
+                               json={'AudioStreamIndex':2,'SubtitleStreamIndex':3})
+    assert response.status_code == 200
+    info=response.json();source=info['MediaSources'][0]
+    assert source['DefaultAudioStreamIndex']==2 and source['DefaultSubtitleStreamIndex']==3
+    text=next(s for s in source['MediaStreams'] if s['Index']==3)
+    assert text['IsTextSubtitleStream'] and text['DeliveryMethod']=='External'
+    assert '/Subtitles/3/Stream.vtt?' in text['DeliveryUrl']
+    bitmap=next(s for s in source['MediaStreams'] if s['Index']==4)
+    assert not bitmap['IsTextSubtitleStream'] and bitmap['DeliveryMethod']=='Encode'
+    record=jf._plays[info['PlaySessionId']]
+    assert 'audio=2' in record['url'] and 'subtitle=-1' in record['url']
+    master = api.client.get('/jellyfin/'+source['TranscodingUrl']+'&AudioStreamIndex=1&SubtitleStreamIndex=4')
+    assert master.status_code == 200
+    assert 'AudioStreamIndex=1' in master.text and 'SubtitleStreamIndex=4' in master.text
+    assert api.client.get('/jellyfin/'+source['TranscodingUrl']+'&AudioStreamIndex=999').status_code == 400
+    bad=api.client.post('/jellyfin/Items/'+uid+'/PlaybackInfo',headers={'X-Emby-Token':login['AccessToken']},json={'AudioStreamIndex':3})
+    assert bad.status_code==400

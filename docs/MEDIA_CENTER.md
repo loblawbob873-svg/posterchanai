@@ -15,7 +15,11 @@ Opening a library shows its server folders immediately, without waiting for medi
 Select folder cards and use the breadcrumb buttons to go back; search finds scanned titles
 throughout the library. Scanning runs in the background and playable titles appear as they
 are discovered. Refreshing scan results preserves the current folder and active player.
-Folder cards use thumbnails from up to three titles inside each folder. Artwork loads only
+Folder cards prefer the folder's `folder.png`, with title artwork as a fallback. Rescan
+creates missing `folder.png` files from a video frame, including ancestor folders, with
+one bounded decode at a time. Existing artwork is never replaced. The service needs write
+access to create artwork; read-only folders remain playable and keep existing artwork.
+Artwork loads only
 near the viewport, with two requests at a time. A `.ignore` marker excludes its folder and
 all descendants from scanning and browsing, including previously indexed titles.
 Long scans save encrypted catalog checkpoints after the first five seconds and then at
@@ -93,6 +97,9 @@ read-only and use NVIDIA on the NAS:
 POSTERCHANAI_MEDIA_PATH=/mnt/media docker compose \
   -f docker-compose.yml -f docker-compose.media.yml --profile cuda up -d --build
 ```
+
+To let Rescan create missing folder artwork in this mount, also set
+`POSTERCHANAI_MEDIA_READ_ONLY=false`. The default mount remains read-only.
 
 The host needs NVIDIA drivers and NVIDIA Container Toolkit. The image enables the
 `video` driver capability for NVENC. Use `--profile cpu` or `--profile nostr` for
@@ -188,7 +195,15 @@ Supported compatibility surface: server discovery, Quick Connect, current-user i
 library views, paginated item browsing/search, cover images, playback information,
 HLS video/audio, playback session reporting, client WebSocket keepalives and logout. Direct-play/download endpoints
 are not exposed because they would bypass Media Center's bandwidth controls.
-Jellyfin administration, plugins, Live TV, remote control, subtitles, favorites and
+The player offers audio-language selection and subtitles off/on. Embedded text subtitles
+(including SRT and ASS) are converted to WebVTT; advanced ASS styling is not preserved.
+Bitmap subtitles such as PGS are rendered into the transcoded video. Audio and subtitle
+choices have separate segment cache entries and still obey the configured bandwidth cap.
+Text extraction is cached and serialized, and playback continues while captions load.
+Jellyfin apps receive track metadata and subtitle delivery URLs using the
+[MediaStream API](https://typescript-sdk.jellyfin.org/interfaces/generated-client.MediaStream.html).
+
+Jellyfin administration, plugins, Live TV, remote control, favorites and
 saved watch/resume history are not implemented. There is no bundled Jellyfin web UI.
 Clients that require the server-hosted Jellyfin web interface are outside this API-only adapter.
 The API advertises the Jellyfin 10.11 playback protocol for client discovery while

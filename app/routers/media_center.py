@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import secrets
+import subprocess
 import time
 from typing import Literal
 from types import SimpleNamespace
@@ -367,7 +368,7 @@ async def create_library(body: CreateLibrary, background: BackgroundTasks, user=
 @router.get("/{library_id}/items")
 async def items(library_id: str, user=Depends(get_media_user)):
     library = await library_for(library_id, media.identity(user))
-    return {"items": [{k: v for k, v in item.items() if k not in ("path", "mtime_ns")}
+    return {"items": [{k: v for k, v in item.items() if k not in ("path", "mtime_ns", "tracks")}
                       for item in await available_catalog(library)],
             "scan": _scans.get(library_id, {"state": "idle"}), "revision": scan_revision(library)}
 
@@ -482,6 +483,18 @@ def sign_ticket(library, item_id, pubkey, expires):
     return hmac.new(bytes.fromhex(library["playback_secret"]), payload.encode(), hashlib.sha256).hexdigest()
 
 
+@router.get('/{library_id}/tracks/{item_id}')
+async def tracks(library_id: str, item_id: str, user=Depends(get_media_user)):
+    library = await library_for(library_id, media.identity(user))
+    item = next((item for item in await available_catalog(library) if item['id'] == item_id), None)
+    if not item:
+        raise HTTPException(404, 'Media not found')
+    try:
+        return {'tracks': await asyncio.to_thread(media.item_tracks, library, item)}
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise HTTPException(404, 'Media tracks unavailable') from error
+
+
 @router.post("/{library_id}/play/{item_id}")
 async def playback(library_id: str, item_id: str, user=Depends(get_media_user)):
     pubkey = media.identity(user)
@@ -504,13 +517,15 @@ async def playback(library_id: str, item_id: str, user=Depends(get_media_user)):
 @router.get("/{library_id}/hls/{item_id}/{asset}")
 async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max_length=64),
               expires: int = Query(), ticket: str = Query(max_length=64),
+              audio: int = Query(default=-1, ge=-1, le=1024),
+              subtitle: int = Query(default=-1, ge=-1, le=1024),
               user=Depends(media_user_optional), db=Depends(get_db)):
     ticket_user(viewer, user, db)
     library = await library_for(library_id, viewer)
     if (expires < time.time() or not library.get("playback_secret") or
             not hmac.compare_digest(ticket, sign_ticket(library, item_id, viewer, expires))):
         raise HTTPException(403, "Playback session expired; reopen the media")
-    query = urlencode({"viewer": viewer, "expires": expires, "ticket": ticket})
+    query = urlencode({"viewer": viewer, "expires": expires, "ticket": ticket, 'audio': audio, 'subtitle': subtitle})
     config = await media.limits()
     profiles = media.allowed_profiles(config)
     try:
@@ -527,6 +542,28 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
     item = next((item for item in await available_catalog(library) if item["id"] == item_id), None)
     if not item:
         raise HTTPException(404, "Media not found")
+    if audio >= 0 or subtitle >= 0 or asset.startswith('subtitle-'):
+        try:
+            tracks = await asyncio.to_thread(media.item_tracks, library, item)
+            if audio >= 0:
+                if not any(track['type'] == 'audio' and track['index'] == audio for track in tracks):
+                    raise ValueError('Unavailable audio track')
+                item = {**item, '_audio_stream': audio}
+            if subtitle >= 0:
+                selected = next((track for track in tracks if track['type'] == 'subtitle' and track['index'] == subtitle), None)
+                if not selected or selected['text']:
+                    raise ValueError('Select a bitmap subtitle track for video rendering')
+                item = {**item, '_subtitle_stream': subtitle}
+            if asset.startswith('subtitle-') and asset.endswith('.vtt'):
+                index = int(asset[9:-4])
+                if not any(track['type'] == 'subtitle' and track['index'] == index and track['text'] for track in tracks):
+                    raise ValueError('Unavailable text subtitle track')
+                data = await media.subtitle_track(library, item, index)
+                await library_for(library_id, viewer)
+                await asyncio.to_thread(media.source_path, library, item)
+                return StreamingResponse(media.paced_bytes(data, viewer, config), media_type='text/vtt', headers=PRIVATE)
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            raise HTTPException(404, 'Selected media track unavailable') from error
     count = math.ceil(item["duration"] / media.SEGMENT)
     if asset.endswith(".m3u8") and asset[:-5] in profiles:
         profile = asset[:-5]

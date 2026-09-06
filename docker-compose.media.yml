@@ -6,7 +6,7 @@ x-media: &media
     - type: bind
       source: ${POSTERCHANAI_MEDIA_PATH:?Set POSTERCHANAI_MEDIA_PATH to an existing media folder}
       target: /var/lib/posterchanai/media
-      read_only: true
+      read_only: ${POSTERCHANAI_MEDIA_READ_ONLY:-true}
       bind:
         create_host_path: false
 

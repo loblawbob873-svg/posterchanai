@@ -76,15 +76,20 @@ async def main():
     ARTIFACTS.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pc-media-check-") as directory:
         temp = Path(directory)
-        source = temp / "Adventure" / "Northern Lights.mp4"
+        source = temp / "Adventure" / "Northern Lights.mkv"
         source.parent.mkdir()
+        captions = temp / 'captions.srt'
+        captions.write_text('1\n00:00:00,000 --> 00:00:17,500\nMedia Center subtitle test\n')
         os.environ["POSTERCHANAI_MEDIA_ROOTS"] = str(temp)
         os.environ["POSTERCHANAI_MEDIA_CACHE"] = str(temp / "cache")
         subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24",
-                        "-f", "lavfi", "-i", "sine=frequency=440", "-t", "18", "-c:v", "libx264",
+                        "-f", "lavfi", "-i", "sine=frequency=440", "-f", "lavfi", "-i", "sine=frequency=880", '-i', str(captions),
+                        '-map','0:v:0','-map','1:a:0','-map','2:a:0','-map','3:s:0',
+                        '-metadata:s:a:0','language=jpn','-metadata:s:a:1','language=eng','-metadata:s:s:0','language=eng','-c:s','srt',
+                        "-t", "18", "-c:v", "libx264",
                         "-threads", "1", "-c:a", "aac", str(source)], check=True, timeout=30)
         Image.new("RGB", (600, 400), "#195d78").save(source.parent / "poster.jpg")
-        other = source.parent / "The Long Way Home.mp4"
+        other = source.parent / "The Long Way Home.mkv"
         shutil.copyfile(source, other)
         scanned, _ = media.scan(str(temp))
         library = {"id": "test", "name": "Movies & Shows", "owner": OWNER, "shared_with": [VIEWER],
@@ -138,7 +143,7 @@ async def main():
             return SimpleNamespace(nostr_npub=key, is_admin=key == OWNER, can_media=True)
         app.dependency_overrides[routes.media_user_optional] = user
         javascript = (ROOT / "static/js/client/app.js").read_text()
-        functions = javascript[javascript.index("  let _mediaCenterFolderCleanup="):javascript.index("  // ---------- torrents (NIP-35")]
+        functions = javascript[javascript.index("  let _mediaCenterSubtitleUrl="):javascript.index("  // ---------- torrents (NIP-35")]
         bootstrap = """
           const $=s=>document.querySelector(s);let VIEW='media-center';const _instanceBase=()=>location.origin;
           const enc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
@@ -230,6 +235,16 @@ async def main():
                         await browser.js("document.querySelector('.mc-tile button').onclick()", True)
                         await browser.until("document.querySelector('video')?.currentTime>1")
                         assert await browser.js("document.querySelector('video').videoWidth") == 320
+                        await browser.js("document.querySelector('#mc-subtitles option:last-child').textContent='English (SDH) (Dub) · Full dialogue and translated signs · Subtitle track'")
+                        assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
+                        assert await browser.js("document.querySelectorAll('#mc-audio option').length") == 3
+                        await browser.js("document.querySelector('#mc-subtitles').value='3';document.querySelector('#mc-subtitles').onchange()", True)
+                        await browser.until("document.querySelector('video').textTracks[0]?.activeCues?.length>0")
+                        await browser.js("document.querySelector('#mc-subtitles').value='-1';document.querySelector('#mc-subtitles').onchange()", True)
+                        assert await browser.js("document.querySelectorAll('video track').length") == 0
+                        await browser.js("window.audioSwitchTime=document.querySelector('video').currentTime;document.querySelector('#mc-audio').value='2';document.querySelector('#mc-audio').onchange()", True)
+                        await browser.until("document.querySelector('video').currentTime>window.audioSwitchTime&&!document.querySelector('video').paused")
+                        print(name, 'PASS: subtitles on/off and audio language switching preserve playback', flush=True)
                         await browser.js("document.querySelector('#mc-fullscreen').onclick()", True)
                         assert await browser.js("document.fullscreenElement?.id") == "mc-playback"
                         await browser.screenshot(name + "-fullscreen.png")

@@ -312,12 +312,15 @@ async def media_call(request, auth, db, path='', method='GET', body=None):
         return await native.items(parts[0], auth.user)
     if len(parts) == 3 and parts[1] == 'art':
         return await native.artwork(parts[0], parts[2], auth.user)
+    if len(parts) == 3 and parts[1] == 'tracks':
+        return await native.tracks(parts[0], parts[2], auth.user)
     if len(parts) == 3 and parts[1] == 'play':
         return await native.playback(parts[0], parts[2], auth.user)
     if len(parts) == 4 and parts[1] == 'hls':
         params = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         return await native.hls(parts[0], parts[2], parts[3], params['viewer'], int(params['expires']),
-                                params['ticket'], auth.user, db)
+                                params['ticket'], audio=int(params.get('audio', -1)),
+                                subtitle=int(params.get('subtitle', -1)), user=auth.user, db=db)
     raise HTTPException(404, 'Unsupported Media Center operation')
 
 
@@ -474,23 +477,54 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
     profiles = [p for p in listing['profiles'] if sum(media.PROFILES[p][2:]) * 1200 <= cap]
     if not profiles:
         return {'MediaSources': [], 'ErrorCode': 'NoCompatibleStream'}
+    track_data = await media_call(request, auth, db, f"/{lib['id']}/tracks/{item['id']}")
+    tracks = track_data['tracks']
+    try:
+        audio_index = int(body.get('AudioStreamIndex', query(request, 'AudioStreamIndex', '-1')))
+        subtitle_index = int(body.get('SubtitleStreamIndex', query(request, 'SubtitleStreamIndex', '-1')))
+    except (ValueError, TypeError):
+        raise HTTPException(400, 'Invalid media track')
+    if audio_index >= 0 and not any(t['type'] == 'audio' and t['index'] == audio_index for t in tracks):
+        raise HTTPException(400, 'Unavailable audio track')
+    selected_subtitle = next((t for t in tracks if t['type'] == 'subtitle' and t['index'] == subtitle_index), None)
+    if subtitle_index >= 0 and not selected_subtitle:
+        raise HTTPException(400, 'Unavailable subtitle track')
     playback = await media_call(request, auth, db, f"/{lib['id']}/play/{item['id']}", 'POST')
+    playback['url'] += '&' + urlencode({'audio': audio_index,
+                                        'subtitle': subtitle_index if selected_subtitle and not selected_subtitle['text'] else -1})
     play_id = secrets.token_hex(16)
     _plays[play_id] = {'token': digest(auth.token), 'item': uid, 'url': playback['url'],
-                       'seen': time.monotonic(), 'profiles': profiles}
+                       'seen': time.monotonic(), 'profiles': profiles,
+                       'audio_indices': [t['index'] for t in tracks if t['type'] == 'audio'],
+                       'subtitle_indices': [t['index'] for t in tracks if t['type'] == 'subtitle'],
+                       'text_indices': [t['index'] for t in tracks if t['type'] == 'subtitle' and t['text']]}
     while len(_plays) > 256:
         _plays.popitem(last=False)
     video = item.get('video', True)
     params = urlencode({'api_key': auth.token, 'PlaySessionId': play_id})
     streams = ([{'Type': 'Video', 'Codec': 'h264', 'Index': 0, 'IsDefault': True}] if video else [])
-    streams.append({'Type': 'Audio', 'Codec': 'aac', 'Index': 1 if video else 0,
-                    'Channels': 2, 'SampleRate': 48000, 'IsDefault': True})
+    for track in tracks:
+        stream = {'Type': track['type'].title(), 'Codec': 'aac' if track['type'] == 'audio' else track['codec'],
+                  'Index': track['index'], 'Language': track['language'], 'Title': track['title'],
+                  'DisplayTitle': ' · '.join(filter(None, [track['language'], track['title'], track['codec']])),
+                  'IsDefault': track['default'], 'IsExternal': False}
+        if track['type'] == 'audio':
+            stream.update(Channels=2, SampleRate=48000)
+        else:
+            stream.update(IsTextSubtitleStream=track['text'], SupportsExternalStream=track['text'],
+                          DeliveryMethod='External' if track['text'] else 'Encode')
+            if track['text']:
+                stream['Codec'] = 'webvtt'
+                stream['DeliveryUrl'] = f"/jellyfin/Videos/{uid}/{uid}/Subtitles/{track['index']}/Stream.vtt?{params}"
+        streams.append(stream)
+    default_audio = next((t['index'] for t in tracks if t['type'] == 'audio' and t['default']),
+                         next((t['index'] for t in tracks if t['type'] == 'audio'), -1))
     source = {'Id': uid, 'Name': item['name'], 'Protocol': 'Http', 'Container': 'ts', 'Type': 'Default',
               'RunTimeTicks': int(item['duration'] * 10000000), 'MediaStreams': streams,
               'SupportsDirectPlay': False, 'SupportsDirectStream': False, 'SupportsTranscoding': True,
               'TranscodingUrl': f'Videos/{uid}/master.m3u8?{params}', 'TranscodingSubProtocol': 'hls',
-              'TranscodingContainer': 'ts', 'DefaultAudioStreamIndex': 1 if video else 0,
-              'DefaultSubtitleStreamIndex': -1, 'RequiresOpening': False, 'RequiresClosing': False}
+              'TranscodingContainer': 'ts', 'DefaultAudioStreamIndex': audio_index if audio_index >= 0 else default_audio,
+              'DefaultSubtitleStreamIndex': subtitle_index, 'RequiresOpening': False, 'RequiresClosing': False}
     return {'MediaSources': [source], 'PlaySessionId': play_id}
 
 
@@ -502,13 +536,26 @@ async def hls(uid: str, asset: str, request: Request, auth=Depends(authenticate)
     if asset != 'master.m3u8' and profile not in record['profiles']:
         raise HTTPException(404, 'Unavailable streaming profile')
     original = urlsplit(record['url'])
-    path = original.path.removeprefix('/api/media-center').rsplit('/', 1)[0] + '/' + asset + '?' + original.query
+    native_params = {key: values[0] for key, values in parse_qs(original.query).items()}
+    selections = {}
+    for field, parameter, allowed in [('AudioStreamIndex', 'audio', 'audio_indices'), ('SubtitleStreamIndex', 'subtitle', 'subtitle_indices')]:
+        value = query(request, field, None)
+        if value is not None:
+            try:
+                index = int(value)
+            except (ValueError, TypeError):
+                raise HTTPException(400, 'Invalid media track')
+            if index != -1 and index not in record.get(allowed, []):
+                raise HTTPException(400, 'Unavailable media track')
+            selections[field] = index
+            native_params[parameter] = -1 if parameter == 'subtitle' and index in record.get('text_indices', []) else index
+    path = original.path.removeprefix('/api/media-center').rsplit('/', 1)[0] + '/' + asset + '?' + urlencode(native_params)
     response = await media_call(request, auth, db, path)
     if not asset.endswith('.m3u8'):
         return response
     data = response.body if hasattr(response, 'body') else b''.join([part async for part in response.body_iterator])
     lines = []
-    params = urlencode({'api_key': auth.token, 'PlaySessionId': play_id})
+    params = urlencode({'api_key': auth.token, 'PlaySessionId': play_id, **selections})
     for line in data.decode().splitlines():
         if line.startswith('#EXT-X-STREAM-INF:'):
             lines.append(line)
@@ -521,6 +568,17 @@ async def hls(uid: str, asset: str, request: Request, auth=Depends(authenticate)
         else:
             lines.append(line)
     return Response('\n'.join(lines) + '\n', media_type='application/vnd.apple.mpegurl')
+
+
+@router.get('/Videos/{uid}/{source_id}/Subtitles/{index}/Stream.vtt')
+async def subtitles(uid: str, source_id: str, index: int, request: Request,
+                    auth=Depends(authenticate), db=Depends(get_db)):
+    if source_id != uid:
+        raise HTTPException(404, 'Media source not found')
+    record = play_record(auth, query(request, 'PlaySessionId', ''), uid)
+    original = urlsplit(record['url'])
+    path = original.path.removeprefix('/api/media-center').rsplit('/', 1)[0] + f'/subtitle-{index}.vtt?' + original.query
+    return await media_call(request, auth, db, path)
 
 
 @router.post('/Sessions/Playing', status_code=204)

@@ -723,3 +723,41 @@ def test_rescan_generates_missing_folder_png_and_preserves_existing(tmp_path, mo
     (folder / '.ignore').touch()
     assert media.scan(str(tmp_path), items)[0] == []
     assert not (folder / 'folder.png').exists()
+
+
+def test_audio_language_and_subtitle_endpoints_with_real_media(api):
+    from urllib.parse import urlsplit
+    client, docs, user, root = api
+    if not shutil.which('ffmpeg'):
+        pytest.skip('FFmpeg required')
+    captions = root / 'captions.srt'
+    captions.write_text('1\n00:00:00,000 --> 00:00:03,000\nSubtitle test\n')
+    source = root / 'multi.mkv'
+    subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=160x120:rate=8',
+                    '-f','lavfi','-i','sine=frequency=440','-f','lavfi','-i','sine=frequency=880','-i',str(captions),
+                    '-map','0:v','-map','1:a','-map','2:a','-map','3:s',
+                    '-metadata:s:a:0','language=jpn','-metadata:s:a:1','language=eng','-metadata:s:s:0','language=eng',
+                    '-t','3','-c:v','libx264','-threads','1','-c:a','aac','-c:s','srt',str(source)], check=True, timeout=20)
+    items, _ = media.scan(str(root))
+    item = items[0]
+    seed(docs, root)
+    docs['page:abc:1:0'] = items
+    tracks = client.get('/api/media-center/abc/tracks/'+item['id']).json()['tracks']
+    assert [(t['type'],t['language']) for t in tracks] == [('audio','jpn'),('audio','eng'),('subtitle','eng')]
+    url = client.post('/api/media-center/abc/play/'+item['id']).json()['url']
+    subtitles = client.get(url.replace('master.m3u8','subtitle-3.vtt'))
+    assert subtitles.status_code == 200 and b'Subtitle test' in subtitles.content
+    assert 'no-store' in subtitles.headers['cache-control']
+    audio_outputs=[]
+    for index in (1,2):
+        response = client.get(url.replace('master.m3u8','360p-0.ts')+'&audio='+str(index))
+        assert response.status_code == 200
+        output=root/('audio'+str(index)+'.ts');output.write_bytes(response.content)
+        decoded=subprocess.run(['ffmpeg','-v','error','-i',str(output),'-map','0:a:0','-f','s16le','pipe:1'],capture_output=True,check=True,timeout=10).stdout
+        audio_outputs.append(decoded)
+    assert audio_outputs[0] != audio_outputs[1]
+    for suffix in ('&audio=3','&audio=99','&subtitle=99','&subtitle=3'):
+        assert client.get(url.replace('master.m3u8','360p-0.ts')+suffix).status_code == 404
+    assert client.get(url.replace('master.m3u8','1080p-0.ts')+'&audio=2').status_code == 404
+    (root/'.ignore').touch()
+    assert client.get(url.replace('master.m3u8','subtitle-3.vtt')).status_code == 404

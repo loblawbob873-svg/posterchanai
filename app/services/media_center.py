@@ -38,6 +38,8 @@ _failed_encoders = {}
 _catalog_cache = {}
 _segment_jobs = {}
 art_slots = asyncio.Semaphore(2)
+subtitle_slots = asyncio.Semaphore(1)
+_subtitle_jobs = {}
 
 
 def cover_path(library, item):
@@ -217,7 +219,63 @@ def probe(path):
         raise ValueError("Unsupported media duration")
     video = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"
                   and not s.get("disposition", {}).get("attached_pic")), None)
-    return {"duration": duration, "video": bool(video)}
+    tracks = []
+    for stream in data.get('streams', []):
+        if stream.get('codec_type') not in ('audio', 'subtitle'):
+            continue
+        tags = stream.get('tags', {})
+        tracks.append({'index': stream['index'], 'type': stream['codec_type'],
+                       'codec': stream.get('codec_name', ''), 'language': tags.get('language', 'und'),
+                       'title': tags.get('title', '')[:150],
+                       'default': bool(stream.get('disposition', {}).get('default')),
+                       'text': stream.get('codec_name') in ('subrip', 'ass', 'ssa', 'webvtt', 'mov_text', 'text')})
+    return {"duration": duration, "video": bool(video), 'tracks': tracks}
+
+
+@lru_cache(maxsize=128)
+def cached_tracks(path, mtime_ns, size):
+    return probe(path)['tracks']
+
+
+def item_tracks(library, item):
+    if 'tracks' in item:
+        return item['tracks']
+    path = source_path(library, item)
+    stat = path.stat()
+    return cached_tracks(path, stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=32)
+def subtitle_bytes(path, mtime_ns, size, index):
+    result = subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-threads', '1',
+                             '-discard:v', 'all', '-discard:a', 'all', '-discard:d', 'all',
+                             '-protocol_whitelist', 'file,pipe', '-i', str(path), '-map', f'0:{index}',
+                             '-c:s', 'webvtt', '-f', 'webvtt', 'pipe:1'],
+                            capture_output=True, check=True, timeout=90)
+    if len(result.stdout) > 4 * 1024 * 1024:
+        raise ValueError('Subtitle track is too large')
+    return result.stdout
+
+
+async def subtitle_track(library, item, index):
+    path = await asyncio.to_thread(source_path, library, item)
+    stat = path.stat()
+    key = (path, stat.st_mtime_ns, stat.st_size, index)
+    job = _subtitle_jobs.get(key)
+    if job is None:
+        if len(_subtitle_jobs) >= 16:
+            raise ValueError('Subtitle queue is full')
+        async def extract():
+            async with subtitle_slots:
+                return await asyncio.to_thread(subtitle_bytes, *key)
+        job = asyncio.create_task(extract())
+        _subtitle_jobs[key] = job
+        def finished(task):
+            _subtitle_jobs.pop(key, None)
+            if not task.cancelled():
+                task.exception()
+        job.add_done_callback(finished)
+    return await asyncio.shield(job)
 
 
 def natural(value):
@@ -378,14 +436,20 @@ def command(path, item, profile, number, encoder, output):
     if encoder == "h264_vaapi" and item["video"]:
         cmd += ["-vaapi_device", os.environ.get("POSTERCHANAI_MEDIA_VAAPI_DEVICE", "/dev/dri/renderD128")]
     cmd += ["-ss", str(number * SEGMENT), "-protocol_whitelist", "file,pipe", "-i", str(path),
-            "-t", str(min(SEGMENT, item["duration"] - number * SEGMENT)), "-map", "0:a:0?",
+            "-t", str(min(SEGMENT, item["duration"] - number * SEGMENT)), "-map", f"0:{item['_audio_stream']}" if item.get('_audio_stream', -1) >= 0 else "0:a:0?",
             "-map_metadata", "-1", "-sn", "-dn", "-c:a", "aac", "-ac", "2", "-b:a", f"{audio}k"]
     if item["video"]:
         scale = (f"scale=w='min(iw,{width})':h='min(ih,{height})':"
                  "force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,format=yuv420p")
         if encoder == "h264_vaapi":
             scale += ",format=nv12,hwupload"
-        cmd += ["-map", "0:V:0", "-vf", scale, "-c:v", encoder, "-b:v", f"{bitrate}k",
+        if item.get('_subtitle_stream', -1) >= 0:
+            cmd += ['-filter_complex_threads', '1', '-filter_complex',
+                    f"[0:V:0][0:{item['_subtitle_stream']}]overlay=eof_action=pass:shortest=0,{scale}[subbed]",
+                    '-map', '[subbed]']
+        else:
+            cmd += ['-map', '0:V:0', '-vf', scale]
+        cmd += ["-c:v", encoder, "-b:v", f"{bitrate}k",
                 "-maxrate", f"{bitrate}k", "-bufsize", f"{bitrate * 2}k", "-g", "48", "-threads", "2"]
         if encoder == "libx264":
             cmd += ["-preset", "veryfast"]
