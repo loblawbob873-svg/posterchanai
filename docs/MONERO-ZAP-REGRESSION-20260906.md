@@ -51,3 +51,18 @@ path. A regression test reproduced the unsafe file creation before the guard;
 it passes afterward. The existing settings isolation remains in place.
 160 focused wallet/API tests and all 386 Monero/deployment tests passed. This is separate from pooled-user output
 maintenance, which does not use the operator spending cap.
+
+
+## Authorized live payment verification
+
+At the user's explicit request, two consecutive 0.00001-XMR payments were sent
+from their operator wallet to the affected user's verified pooled account 15.
+Both public `/api/wallet/xmr/transfer/prepare` and `/transfer/confirm` calls returned
+HTTP 200; the recipient wallet reported both incoming transactions in its pool.
+The total sent was 0.00002 XMR and total network fees were 0.00008862 XMR.
+No second-send unlock wait was required. Processing the second transaction took
+about 90 seconds; this is separate from the original 20-minute output lock.
+The test consumed two inputs per payment, so replenishment simulation now covers
+both one-input and two-input selection instead of assuming eight outputs always
+allow eight payments. Transaction records are retained privately; do not repeat
+these live sends automatically.

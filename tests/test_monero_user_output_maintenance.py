@@ -4,6 +4,7 @@ The operator-wallet script cannot see pooled user accounts.  These tests drive t
 ``UserWallets`` RPC boundary and also prove the production worker starts this maintainer.
 """
 import asyncio
+import pytest
 
 from app.services import monero_user_wallets as mod
 from app import worker
@@ -147,7 +148,8 @@ def test_missing_unlock_state_never_authorizes_a_split(monkeypatch):
     assert all(method!='sweep_single' for method,_ in w.calls)
 
 
-def test_replenishment_survives_restart_and_supports_eight_consecutive_zaps(monkeypatch):
+@pytest.mark.parametrize("inputs_per_zap", [1, 2])
+def test_replenishment_survives_restart_and_supports_consecutive_zaps(monkeypatch, inputs_per_zap):
     """Wallet-state simulation follows RPC semantics, including pending-before-mined outputs."""
     monkeypatch.setattr(mod, 'validate_address', lambda *_: None)
     monkeypatch.setattr(mod, 'zap_fee_percent', lambda: mod.Decimal(0))
@@ -166,9 +168,11 @@ def test_replenishment_survives_restart_and_supports_eight_consecutive_zaps(monk
             source['spent']=True; splits.append(params);pending.append({'txid':'split'})
             return {'tx_hash':'ab'*32}
         if method=='transfer_split':
-            source=next(row for row in rows if not row['spent'] and row['unlocked'])
-            source['spent']=True; sent.append(params)
-            rows.append({'amount':source['amount']-sum(p['amount'] for p in params['destinations'])-100_000_000,
+            sources=[row for row in rows if not row['spent'] and row['unlocked']][:inputs_per_zap]
+            assert len(sources)==inputs_per_zap
+            for source in sources: source['spent']=True
+            sent.append(params)
+            rows.append({'amount':sum(source['amount'] for source in sources)-sum(p['amount'] for p in params['destinations'])-100_000_000,
                          'spent':False,'unlocked':False,'frozen':False,'key_image':'change-'+str(len(sent))})
             return {'tx_hash_list':[f'{len(sent):064x}'],'amount_list':[1_000_000_000],'fee_list':[100_000_000]}
         raise AssertionError(method)
@@ -184,11 +188,11 @@ def test_replenishment_survives_restart_and_supports_eight_consecutive_zaps(monk
         rows.extend({'amount':9_000_000_000,'spent':False,'unlocked':False,'frozen':False,'key_image':'split-'+str(i)} for i in range(8))
         assert (await restarted_wallet().maintain_account_outputs(ACCOUNT))['action']=='waiting'
         for row in rows: row['unlocked']=True
-        for _ in range(8):
+        for _ in range(8 // inputs_per_zap):
             w=restarted_wallet()
             result=await w.pay('a'*64, [('recipient',1_000_000_000)])
             assert len(result['tx_hash_list'])==1
             await w.maintain_account_outputs(ACCOUNT)
-        assert len(sent)==8 and len(splits)==1
+        assert len(sent)==8 // inputs_per_zap and len(splits)==1
         assert all(not row['unlocked'] for row in rows if not row['spent'])
     asyncio.run(scenario())

@@ -106,3 +106,22 @@ and the [PSF BCH consumer](https://github.com/Permissionless-Software-Foundation
 A public-address read verified the current BCH `/bch/txHistory` response; no transfer
 was made. Thirty-six additional official keychain vectors cover LTC/DOGE/BCH receive
 and change indices across three portfolios.
+
+
+## Final integration gate
+
+Integrated candidate 7d77e85ae passed 296 wallet tests using the production Python
+3.11 runtime and installed offline wallet-RPC binary, 386 Monero/deployment tests,
+and eight corrected custody-disclosure tests. Generated Android and desktop
+wallet bundles each passed 29 browser tests. The complete repository run passed
+7,535 backend tests plus 519 subtests; the client run passed 3,429 tests plus 111
+subtests and exposed one obsolete exact-copy assertion, subsequently corrected.
+Physical-device/ISO skips remain explicit. The reconnect check skipped under
+full-suite load, then passed separately from the integrated checkout; that repeat
+is not proof that the earlier startup delay cannot recur.
+
+The independent binary and private durable directories are provisioned on both
+application nodes. Service configuration uses the synchronized NAS blockchain
+daemon, never either built-in wallet RPC. No real funds were sent by the Exodus
+wallet tests; separately authorized built-in Monero test zaps are documented in
+the Monero regression report.
