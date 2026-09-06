@@ -69,9 +69,10 @@ def test_picker_honors_document_grant_and_nullable_metadata():
     assert "FLAG_GRANT_PERSISTABLE_URI_PERMISSION" in thread
     assert "OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE" in thread
     assert "if (!c.isNull(1))" in thread
-    assert "MmsAttachment.rejectKnownSize" in thread
-    assert "catch (SecurityException denied)" in thread
-    assert "sms_attachment_permission" in thread
+    picker = thread[thread.index("if (request != PICK_MMS_IMAGE"):thread.index("private byte[] readAttachment")]
+    assert "MmsAttachment.rejectKnownSize" not in picker
+    assert "Could not prepare attachment: " in picker
+    assert "e.getMessage()" in picker
 
 
 def test_picker_stages_a_private_draft_before_uri_grant_can_expire():
@@ -80,7 +81,9 @@ def test_picker_stages_a_private_draft_before_uri_grant_can_expire():
         encoding="utf-8").read()
     result = thread[thread.index("if (request != PICK_MMS_IMAGE"):
                     thread.index("private byte[] readAttachment")]
-    assert result.index("openInputStream(picked)") < result.index("stageAttachment(")
+    assert "stageAttachment(picked, attachmentMime, attachmentName)" in result
+    assert result.index("openInputStream(uri)") < result.index("MmsDraft.save(ThreadActivity.this, who, in")
+    assert result.index("MmsDraft.save(ThreadActivity.this, who, in") < result.index("main.post(")
     assert "static Value save" in open(os.path.join(ROOT,
         "mobile/android/app/src/main/java/place/poster/app/sms/MmsDraft.java"), encoding="utf-8").read()
     assert "restoreAttachmentDraft();" in thread

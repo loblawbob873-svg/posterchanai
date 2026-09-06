@@ -16,7 +16,8 @@ def test_attachment_is_copied_to_a_private_durable_draft_and_drawn_immediately()
     assert 'new File(ctx.getFilesDir(), "mms-drafts")' in draft
     assert "out.getFD().sync()" in draft
     assert "tmp.renameTo(dst)" in draft
-    assert "stageAttachment(readAttachment(in)" in thread
+    assert "stageAttachment(pendingCameraUri," in thread
+    assert "MmsDraft.save(ThreadActivity.this, who, in" in thread
     assert "paintAttachmentDraft();" in thread
     assert 'android:id="@+id/pc_th_attachment_preview"' in layout
 
