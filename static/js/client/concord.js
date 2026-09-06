@@ -226,17 +226,46 @@
   }
   function memberTapAction(narrow,longPressed){ return longPressed?'consume':(narrow?'profile':'menu'); }
   function memberViewportIsNarrow(){ return !!(window.matchMedia&&window.matchMedia('(max-width:820px)').matches); }
-  function reactionPickerPosition(anchor,picker,viewport){
-    const gap=6,margin=8,view=viewport||{},vw=Number(view.width||window.innerWidth||0),vh=Number(view.height||window.innerHeight||0),a=anchor.getBoundingClientRect(),r=picker.getBoundingClientRect(),w=r.width||picker.offsetWidth||0,h=r.height||picker.offsetHeight||0;
+  /* A HIDDEN ANCHOR MEASURES 0x0, AND 0x0 IS A REAL POSITION: THE TOP-LEFT CORNER.
+   *
+   * Every term below is relative to the anchor, so an anchor with no box collapses the whole thing
+   * to `{left:8, top:6}` -- which is not a failure anybody sees as a failure, it is a picker in the
+   * corner of the screen. Reported as "clicking emoji on a chat does nothing", "react broken", and
+   * then precisely: "on webui it loads the emoji picker in the top-left corner, on windows app you
+   * don't see it at all".
+   *
+   * The anchor is hidden by the caller itself. `closeMessageActions()` strips `cc-actions-open`,
+   * and under `(hover:none)` -- which a touch-capable Windows machine reports -- that CSS makes the
+   * toolbar's buttons `display:none`. The button that was just clicked stops having a box, and it
+   * is then measured.
+   *
+   * So the rect may be handed IN, measured before anything was closed. And a degenerate rect is
+   * refused here rather than honoured, because this function cannot tell a corner somebody wants
+   * from a corner that means "I could not measure": callers get a null and place the picker off
+   * something that is definitely laid out. */
+  function reactionPickerPosition(anchor,picker,viewport,anchorRect){
+    const a=anchorRect||anchor.getBoundingClientRect();
+    if(!a||!(a.width>0)||!(a.height>0))return null;
+    const gap=6,margin=8,view=viewport||{},vw=Number(view.width||window.innerWidth||0),vh=Number(view.height||window.innerHeight||0),r=picker.getBoundingClientRect(),w=r.width||picker.offsetWidth||0,h=r.height||picker.offsetHeight||0;
     const left=Math.max(margin,Math.min(a.right-w,vw-w-margin));
     const below=a.bottom+gap,above=a.top-h-gap,top=below+h<=vh-margin?below:(above>=margin?above:Math.max(margin,Math.min(below,vh-h-margin)));
     return{left,top};
   }
-  function placeReactionPicker(anchor,picker){
+  function placeReactionPicker(anchor,picker,measured){
     /* The message list scrolls and clips its descendants. Portal the picker to the viewport, then
        flip it above a bottom-edge trigger (the common last-message case) and clamp both axes. */
     document.body.appendChild(picker);
-    const at=reactionPickerPosition(anchor,picker);
+    /* `measured` is the anchor's rect as it was BEFORE the caller closed anything -- see the note on
+       reactionPickerPosition. Falling back to the message row is what keeps this on screen when even
+       that is missing: a row is always laid out, and beside the right message is a far better answer
+       than the corner of the display. */
+    let at=reactionPickerPosition(anchor,picker,null,measured);
+    if(!at){
+      let row=null;
+      try{ row=anchor.closest?anchor.closest('.cc-message'):null; }catch(_){ row=null; }
+      if(row)at=reactionPickerPosition(row,picker);
+    }
+    if(!at)return false;
     /* RECT PIXELS IN, STYLE PIXELS OUT -- and they are not the same pixel under `body{zoom}`.
      *
      * `reactionPickerPosition` works in `getBoundingClientRect()` space, which IS scaled by the
@@ -253,14 +282,16 @@
      * every un-zoomed page has always done. */
     let k=1;
     try{
-      const ar=anchor.getBoundingClientRect();
-      if(ar.width>0&&anchor.offsetWidth>0)k=ar.width/anchor.offsetWidth;
+      const ar=(measured&&measured.width>0)?measured:anchor.getBoundingClientRect();
+      const ow=(measured&&measured.offsetWidth>0)?measured.offsetWidth:anchor.offsetWidth;
+      if(ar.width>0&&ow>0)k=ar.width/ow;
       if(!(k>0)||!isFinite(k))k=1;
     }catch(_){ k=1; }
     picker.style.setProperty('position','fixed','important');
     picker.style.setProperty('inset','auto','important');
     picker.style.setProperty('left',(at.left/k)+'px','important');
     picker.style.setProperty('top',(at.top/k)+'px','important');
+    return true;
   }
   function normalizeIcon(raw){
     const v=String(raw||'').trim(); if(!v)return '';
@@ -2402,7 +2433,12 @@
     const toggleReaction=async(id,emoji)=>{ const room=saved()[state.community],storeId=channelStoreId(room,state.channel),m=testMessages(storeId),found=m.find(x=>messageId(x)===id),viewer=p.viewer?p.viewer():{},who=viewer.pubkey||'local-user'; if(!found)return; if(!found.reactions||typeof found.reactions!=='object')found.reactions={}; const people=Array.isArray(found.reactions[emoji])?found.reactions[emoji]:[],i=people.indexOf(who); try{if(!room.local){if(i<0)await publishCordMessage(p,room,state.channel,emoji,[['e',id],['p',found.pubkey||''],['k',String(found.kind||9)]],7);else{const rid=found.reactionIds&&found.reactionIds[emoji]&&found.reactionIds[emoji][who];if(!rid)throw new Error('refresh the room before removing this reaction');await publishCordMessage(p,room,state.channel,'',[['e',rid],['k','7']],5);}}}catch(e){p.toast('reaction was not sent: '+(e&&e.message||e));return;} if(i<0)people.push(who);else people.splice(i,1); if(people.length)found.reactions[emoji]=people;else delete found.reactions[emoji]; saveTestMessages(storeId,m); reactionTarget=null; preserveChatScroll(()=>render()); };
     $$('[data-cc-actions]').forEach(b=>b.onclick=e=>{e.stopPropagation();const row=b.closest('.cc-message'),open=!row.classList.contains('cc-actions-open');$$('.cc-message.cc-actions-open').forEach(x=>{x.classList.remove('cc-actions-open');const t=x.querySelector('[data-cc-actions]');if(t)t.setAttribute('aria-expanded','false');});row.classList.toggle('cc-actions-open',open);b.setAttribute('aria-expanded',String(open));});
     $$('[data-cc-react-toggle]').forEach(b=>b.onclick=()=>toggleReaction(b.dataset.ccReactToggle,b.dataset.ccEmoji));
-    $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ const target=b.dataset.ccReact;closeMessageActions();reactionTarget=target; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); placeReactionPicker(b,pop); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation();const id=reactionTarget;closeMessageActions();toggleReaction(id,x.dataset.emoji); }); });
+    $$('[data-cc-react]').forEach(b=>b.onclick=()=>{ const target=b.dataset.ccReact;
+      /* MEASURED FIRST. closeMessageActions() hides this very button under `(hover:none)`, and a
+         button with no box places the picker in the corner of the screen. */
+      let measured=null;
+      try{ const r=b.getBoundingClientRect(); measured={left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height,offsetWidth:b.offsetWidth}; }catch(_){ measured=null; }
+      closeMessageActions();reactionTarget=target; const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); placeReactionPicker(b,pop,measured); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation();const id=reactionTarget;closeMessageActions();toggleReaction(id,x.dataset.emoji); }); });
     $$('[data-cc-zap]').forEach(b=>b.onclick=()=>{closeMessageActions();const room=saved()[state.community],storeId=channelStoreId(room,state.channel),messages=testMessages(storeId),target=messages.find(m=>messageId(m)===b.dataset.ccZap);if(!target)return;const lightning=async amount=>{b.disabled=true;let proof=null;try{p.toast('paying private zap…');proof=await p.payPrivateConcordZap(target.pubkey,amount);const tags=[['e',messageId(target)],['p',target.pubkey],['k',String(target.kind||9)],['amount',String(proof.amountMsats)],['bolt11',proof.bolt11],['preimage',proof.preimage]];const made=await publishCordNative(p,room,state.channel,'',tags,9735);target.zaps=[...(target.zaps||[]),{id:made.rumorId,pubkey:(p.viewer&&p.viewer().pubkey)||'',sats:amount,comment:'',rail:'lightning'}];saveTestMessages(storeId,messages);preserveChatScroll(()=>render());p.toast('⚡ privately zapped '+amount+' sats');}catch(e){b.disabled=false;p.toast((proof?'payment succeeded, but the private tally was not posted: ':'private zap failed: ')+(e&&e.message||e));}};return p.startConcordTip(target.pubkey,lightning);});
   }
   async function webxdcCordParts(ctx){const p=PC(),room=saved().find(r=>roomIdentity(r)===ctx.room),reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle,channel=room&&(room.channels||[]).find(c=>c.id===ctx.channelId||c.name===ctx.channel);if(!p||!room||!reader||!bundle||!channel)throw new Error('Concord Webxdc channel is unavailable');const loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);let controls=roomControls.get(loadKey);if(!controls){const seed=reader.inspectControl(bundle,[]);controls=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,await cachedEnvelopes(envelopeCacheKey(loadKey,'control')));roomControls.set(loadKey,controls||[]);}const view=reader.inspectControl(bundle,controls||[]),wireChannel=view.channels.find(c=>c.id===channel.id);return{p,room,reader,bundle,channel,loadKey,relays,controls:controls||[],streamPubkeys:wireChannel&&wireChannel.streamPubkeys||[]};}
