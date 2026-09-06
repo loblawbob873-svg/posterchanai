@@ -12,8 +12,8 @@
         </div>
     </fieldset>
     <fieldset id="relay-access-policy">
-        <legend>AI and Blossom access policy</legend>
-        <p>Remove AI and Blossom grants from Nostr accounts without a registered NIP-05 name on this instance. This does not delete accounts or stored files, and does not grant access to anyone.</p>
+        <legend>AI, Blossom and Live Streaming access policy</legend>
+        <p>Remove AI, Blossom and Live Streaming grants from Nostr accounts without a registered NIP-05 name on this instance. This does not delete accounts or stored files, and does not grant access to anyone.</p>
         <label><input type="checkbox" id="access-policy-enabled"> Automatically clean up access every 15 minutes</label>
         <div class="form-group"><label><input type="checkbox" id="access-policy-fedi" checked> Exempt Fediverse accounts</label></div>
         <small>Admins, bots and configured processing peers keep their infrastructure access. Only names registered by this relay count; a profile claiming a name is insufficient. Disabling the policy does not restore revoked permissions.</small>
@@ -22,6 +22,7 @@
             <button type="button" id="access-policy-run" class="btn-secondary">Run cleanup now</button>
             <button type="button" id="access-policy-save" class="btn-primary">Save access policy</button>
         </div>
+        <ul id="access-policy-affected" aria-label="Affected accounts"></ul>
         <p id="access-policy-status" role="status" aria-live="polite">Open this tab to load the policy.</p>
     </fieldset>
 

@@ -241,7 +241,8 @@ async def available_catalog(library):
 
 def scan_revision(library):
     scan = _scans.get(library['id'], {})
-    return f"{library.get('scanned_at', 0)}:{scan.get('state', 'idle')}:{scan.get('count', 0)}"
+    catalog_revision = hashlib.sha256(json.dumps(library.get('pages', [])).encode()).hexdigest()[:16]
+    return f"{library.get('scanned_at', 0)}:{catalog_revision}:{scan.get('state', 'idle')}:{scan.get('count', 0)}"
 
 
 def public_library(library, pubkey, *, admin=False):

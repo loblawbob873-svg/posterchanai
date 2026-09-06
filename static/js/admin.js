@@ -1284,36 +1284,84 @@ setTimeout(() => {
 
 // Relay access policy has its own save action; the main settings form cannot enable it accidentally.
 (() => {
-    const enabled=document.getElementById('access-policy-enabled'), fedi=document.getElementById('access-policy-fedi');
-    if(!enabled || !fedi) return;
-    const status=document.getElementById('access-policy-status');
-    const buttons=['preview','run','save'].map(k=>document.getElementById('access-policy-'+k));
-    const describe=d=>`${d.domain}: ${d.accounts} accounts; ${d.ai} AI grants, ${d.blossom} Blossom grants, ${d.whitelist} whitelist entries.`;
-    let loaded=false, busy=false;
-    async function request(path,method,body){
-        const r=await csrfFetch('/api/admin/relay-access-policy'+path,{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
-        const d=await r.json();if(!r.ok)throw new Error(d.detail||'Policy request failed');return d;
+    const enabled = document.getElementById('access-policy-enabled');
+    const fedi = document.getElementById('access-policy-fedi');
+    if (!enabled || !fedi) return;
+    const status = document.getElementById('access-policy-status');
+    const affected = document.getElementById('access-policy-affected');
+    const buttons = ['preview', 'run', 'save'].map(k => document.getElementById('access-policy-' + k));
+    const describe = d => `${d.domain}: ${d.accounts} accounts; ${d.ai} AI grants, ${d.blossom} Blossom grants, ${d.streaming || 0} Live Streaming grants, ${d.whitelist} whitelist entries.`;
+    let loaded = false, loading = null, busy = false;
+    const edited = new Set();
+    for (const input of [enabled, fedi]) input.addEventListener('change', () => edited.add(input));
+    async function request(path, method, body) {
+        const response = await csrfFetch('/api/admin/relay-access-policy' + path, {
+            method, headers: {'Content-Type': 'application/json'},
+            ...(body ? {body: JSON.stringify(body)} : {})
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Policy request failed');
+        return data;
     }
-    async function load(){
-        if(busy)return;
-        try{const d=await request('','GET');enabled.checked=d.enabled;fedi.checked=d.exempt_fediverse;loaded=true;
-            status.textContent=d.last_run?'Last cleanup: '+d.last_run.completed_at+'. '+describe(d.last_run):'No automatic cleanup recorded yet.';
-        }catch(e){status.textContent=e.message;}
+    function load() {
+        if (loading) return loading;
+        if (loaded) return Promise.resolve();
+        status.textContent = 'Loading policy…';
+        loading = request('', 'GET').then(data => {
+            if (!edited.has(enabled)) enabled.checked = data.enabled;
+            if (!edited.has(fedi)) fedi.checked = data.exempt_fediverse;
+            loaded = true;
+            status.textContent = data.last_run
+                ? 'Last cleanup: ' + data.last_run.completed_at + '. ' + describe(data.last_run)
+                : 'No automatic cleanup recorded yet.';
+        }).finally(() => { loading = null; });
+        return loading;
     }
-    document.querySelector('.tab-btn[data-tab="relay"]')?.addEventListener('click',load);
-    buttons.forEach((button,i)=>button.addEventListener('click',async()=>{
-        if(busy)return;if(!loaded){await load();return;}
-        busy=true;buttons.forEach(b=>b.disabled=true);
-        const body={enabled:enabled.checked,exempt_fediverse:fedi.checked};
-        try{
-            if(i===2){await request('','PUT',body);status.textContent='Policy saved. '+(body.enabled?'Cleanup runs every 15 minutes.':'Automatic cleanup is off.');}
-            else{
-                const preview=await request('/preview','POST',body);status.textContent=describe(preview);
-                if(i===1 && await pcConfirm(describe(preview)+' Revoke this access now?')){
-                    const result=await request('/run','POST',body);status.textContent='Cleanup completed. '+describe(result);
+    function showAffected(data) {
+        if (!affected) return;
+        affected.replaceChildren();
+        for (const account of data.affected_accounts || []) {
+            const row = document.createElement('li');
+            const grants = [['ai', 'AI'], ['blossom', 'Blossom'], ['streaming', 'Live Streaming']]
+                .filter(([key]) => account[key]).map(([, label]) => label);
+            row.textContent = `${account.name || account.npub}: ${grants.join(', ') || 'stored access'}`;
+            affected.append(row);
+        }
+        if (data.accounts_not_shown) {
+            const row = document.createElement('li');
+            row.textContent = `${data.accounts_not_shown} additional accounts.`;
+            affected.append(row);
+        }
+    }
+    document.querySelector('.tab-btn[data-tab="relay"]')?.addEventListener('click', () => {
+        load().catch(error => { status.textContent = error.message; });
+    });
+    buttons.forEach((button, index) => button.addEventListener('click', async () => {
+        if (busy) return;
+        busy = true;
+        [...buttons, enabled, fedi].forEach(control => { control.disabled = true; });
+        try {
+            await load();
+            const body = {enabled: enabled.checked, exempt_fediverse: fedi.checked};
+            if (index === 2) {
+                await request('', 'PUT', body);
+                status.textContent = 'Policy saved. ' + (body.enabled ? 'Cleanup runs every 15 minutes.' : 'Automatic cleanup is off.');
+                affected?.replaceChildren();
+            } else {
+                status.textContent = 'Checking affected access…';
+                const preview = await request('/preview', 'POST', body);
+                status.textContent = describe(preview);
+                showAffected(preview);
+                if (index === 1 && await pcConfirm(describe(preview) + ' Revoke this access now?')) {
+                    const result = await request('/run', 'POST', body);
+                    status.textContent = 'Cleanup completed. ' + describe(result);
                 }
             }
-        }catch(e){status.textContent=e.message;}
-        finally{busy=false;buttons.forEach(b=>b.disabled=false);}
+        } catch (error) {
+            status.textContent = error.message;
+        } finally {
+            busy = false;
+            [...buttons, enabled, fedi].forEach(control => { control.disabled = false; });
+        }
     }));
 })();

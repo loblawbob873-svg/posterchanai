@@ -1747,7 +1747,11 @@ def relay_access_policy_preview(data: RelayAccessPolicyRequest, db: Session = De
                                 admin: User = Depends(get_admin_user)):
     from app.services import relay_access_policy as policy
     try:
-        return policy.plan(db, data.exempt_fediverse)[2]
+        targets, _, summary = policy.plan(db, data.exempt_fediverse)
+        return {**summary, 'affected_accounts': [
+            {'name': u.username, 'npub': u.nostr_npub, 'ai': bool(u.can_ai),
+             'blossom': bool(u.can_blossom), 'streaming': bool(u.can_stream)}
+            for u in targets[:100]], 'accounts_not_shown': max(0, len(targets) - 100)}
     except ValueError as e:
         raise HTTPException(409, str(e))
 

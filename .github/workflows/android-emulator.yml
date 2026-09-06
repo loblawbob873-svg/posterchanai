@@ -89,6 +89,7 @@ jobs:
           # DM startup/cache ordering, shared phone pressure and retries must pass on the bundle.
           node ../tests/client/dm_delivery_runtime.mjs www/static/js/client/app.js
           node ../tests/client/dm_retry_runtime.mjs www/static/js/client/app.js
+          node ../tests/client/terminal_hosts_runtime.mjs www/static/js/client/term.js
 
       - name: Capacitor sync
         working-directory: mobile

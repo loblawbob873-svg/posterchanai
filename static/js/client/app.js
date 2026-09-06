@@ -452,6 +452,8 @@
     }
   }
 
+  function _registrationOpen(){ return _standalone() || CFG?.registration_enabled !== false; }
+
   function applyInstanceGating(){
     const solo = _standalone();
     if(solo || (CFG && CFG.nostr_only)) window.PC_NOSTR_ONLY = true;
@@ -464,7 +466,7 @@
      * not an account on anybody's node, so a closed instance must not take it away. */
     try{
       const _foot = document.querySelector('.auth-foot');
-      if(_foot) _foot.classList.toggle('hidden', !solo && !!CFG && CFG.registration_enabled === false);
+      if(_foot) _foot.classList.toggle('hidden', !_registrationOpen());
     }catch(_){ }
     try{
       $$('.nav-item[data-view]').forEach(b => {
@@ -4029,7 +4031,7 @@
     // where someone without a key gives up.
     try{
       const lg=$('#auth-login'), su=$('#auth-signup');
-      if(lg && su){ const signup = which==='signup';
+      if(lg && su){ const signup = which==='signup' && _registrationOpen();
         lg.classList.toggle('hidden', signup); su.classList.toggle('hidden', !signup); }
     }catch(_){}
     /* First boot is already an explicit request to sign in with the phone. Do not make a new owner
@@ -4089,7 +4091,7 @@
     $('#btn-amber-connect').onclick = loginAmberBunker;
     $('#btn-amber-nc').onclick = loginAmberNostrConnect;
     try{ _bindAccountLogins(); }catch(_){}   // Google / fediverse buttons, if this node offers them
-    $('#btn-show-signup').onclick = ()=>{ $('#auth-login').classList.add('hidden'); $('#auth-signup').classList.remove('hidden'); };
+    $('#btn-show-signup').onclick = ()=>{ if(!_registrationOpen()) return; $('#auth-login').classList.add('hidden'); $('#auth-signup').classList.remove('hidden'); };
     $('#btn-back-login').onclick = ()=>{ $('#auth-signup').classList.add('hidden'); $('#auth-login').classList.remove('hidden'); };
     $('#btn-gen-key').onclick = genKey;
     $('#btn-signup-go').onclick = signupGo;
@@ -8128,7 +8130,7 @@
       <img class="guest-logo" src="${enc((CFG && CFG.logo_url) || LOGO)}" onerror="this.src='${LOGO}'" alt="">
       <div class="guest-name">${enc(name)}</div>
       <div class="guest-acts">
-        <button class="btn btn-neon" id="guest-signup">Sign up</button>
+        ${_registrationOpen() ? '<button class="btn btn-neon" id="guest-signup">Sign up</button>' : ''}
         <button class="btn btn-cyan" id="guest-login2">Log in</button>
         <a class="btn guest-src" href="${enc(src)}" target="_blank" rel="noopener noreferrer">Source</a>
       </div>
@@ -9346,7 +9348,7 @@
     const api=async(path='',method='GET',body)=>{
       const r=await _mediaCenterFetch('/api/media-center'+path,{method,keepalive:path.includes('/progress/'),headers:{'Content-Type':'application/json'},
         ...(body===undefined?{}:{body:JSON.stringify(body)})});
-      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(typeof e.detail==='string'?e.detail:'Media Center request failed');}
+      if(!r.ok){const e=await r.json().catch(()=>({}));const error=new Error(typeof e.detail==='string'?e.detail:'Media Center request failed');error.status=r.status;throw error;}
       return r.json();
     };
     try{
@@ -9563,18 +9565,13 @@
           });row.append(share);
         }
         open.onclick=()=>act(open,async()=>{
-          if(folderLibrary!==lib.id)await browseFolder(lib,'.');
+          // Refresh the directory list too: moved/renamed folders must not survive a rescan.
+          try{await browseFolder(lib,folderLibrary===lib.id?currentFolder:'.');}
+          catch(error){if(error.status===400&&currentFolder!=='.')await browseFolder(lib,'.');else throw error;}
           const result=await api('/'+lib.id+'/items');if(VIEW!=='media-center'||renderGeneration!==_mediaCenterRenderGeneration)return;
           const list=$('#mc-items'),refresh=list.dataset.library===lib.id;
           if(!refresh){clearMediaCenterArt();list.replaceChildren();}
           else if(_mediaCenterArtObserver)_mediaCenterArtObserver.disconnect();
-          if(refresh&&$('#mc-folder-nav .mc-directory:not([data-folder-png])')){
-            const folderResult=await api('/'+lib.id+'/folders?path='+encodeURIComponent(currentFolder));
-            for(const folder of folderResult.folders)if(folder.has_folder_art){
-              const card=Array.from($('#mc-folder-nav').querySelectorAll('.mc-directory')).find(card=>card.dataset.path===folder.path);
-              if(card&&!card.dataset.folderPng){card.dataset.folderPng='true';delete card.dataset.artReady;fillFolderArt(card,['folder-art']);}
-            }
-          }
           for(const card of $('#mc-folder-nav').querySelectorAll('.mc-directory'))fillFolderArt(card,result.items.filter(item=>item.folder===card.dataset.path||item.folder?.startsWith(card.dataset.path+'/')).slice(0,3).map(item=>item.id));
           list.dataset.library=lib.id;list.dataset.revision=result.revision||lib.revision||'';
           if(refresh&&list.firstChild?.nodeType===Node.TEXT_NODE)list.replaceChildren();
@@ -14117,12 +14114,13 @@
     if(z && z!==1) pop.style.setProperty('--pop-scale', String(z));
     return pop;
   }
-  function _placePop(pop, anchorBtn){
+  function _placePop(pop, anchorBtn, opts){
+    opts=opts||{};
     // ONE consistent rule for every menu (timeline ☰, profile ☰, compose Attach/React/Translate,
     // emoji): without the desktop right column (<1180px) a right-edge button's menu would spill
     // ~1-2" to the left, so ALL menus become a centered bottom action-sheet there. At >=1180px the
     // layout has room, so they're anchored dropdowns under their button.
-    if(window.matchMedia('(max-width:1179px)').matches){
+    if(!opts.anchored && window.matchMedia('(max-width:1179px)').matches){
       document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove());
       const bd=document.createElement('div'); bd.className='pop-backdrop';
       document.documentElement.appendChild(bd);
@@ -14130,7 +14128,7 @@
       return;
     }
     const M=8, vw=window.innerWidth, vh=window.innerHeight;
-    const r=(anchorBtn||document.body).getBoundingClientRect();
+    const r=opts.anchorRect || (anchorBtn||document.body).getBoundingClientRect();
     const pw=pop.offsetWidth, ph=pop.offsetHeight;   // ph already respects the popover's CSS max-height
     // Horizontal: drop straight under the button (left edges aligned, like a normal dropdown). If
     // that would run off the right edge (a button near the right side), right-align it to the button
@@ -14345,7 +14343,7 @@
       $$('.ep-tab',pop).forEach(b=> b.onmousedown=ev=>{ ev.preventDefault(); _setTab(b.dataset.tab); });
     };
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
-    _placePop(pop, anchorBtn);                    // which throws off fixed-position math for a body child
+    _placePop(pop, anchorBtn, opts);                    // which throws off fixed-position math for a body child
     let _detachKeys=()=>{};
     // Give the popover itself the focus. Without it a picker was only keyboard-navigable when whatever had
     // focus happened to be harmless: _popKeys ignores keys aimed at a text field (so you can keep typing
@@ -14360,9 +14358,11 @@
       // Hand focus back where it came from, so opening a menu mid-sentence does not cost you the caret.
       // Only when the popover still owns it — an item's action may have moved focus deliberately.
       const mine = pop.contains(document.activeElement) || document.activeElement===document.body;
-      _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close);
+      _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); document.removeEventListener('scroll',onScroll,true); window.removeEventListener('resize',close);
       if(mine && _prevFocus && _prevFocus.isConnected){ try{ _prevFocus.focus({preventScroll:true}); }catch(_){ } }
     };
+    const onScroll=e=>{ if(!pop.contains(e.target)) close(); };
+    if(opts.anchored){ document.addEventListener('scroll',onScroll,true); window.addEventListener('resize',close); }
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
     setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
     // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works. Buttons arrive
@@ -14377,13 +14377,14 @@
                          {inText:['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape','Home','End']});
     // Paint the built-in set instantly, then add the tab bar once the instance packs land.
     _show(REACTION_EMOJIS);
+    _placePop(pop, anchorBtn, opts);
     if(!opts.unicodeOnly) InstEmoji.load().then(list=>{
       if(!pop.isConnected) return;
       if(!list.length) return;             // no custom emoji here → no search box, no tabs, as before
       head.hidden=false;
       _buildTabs();
       _setTab(_recents().length ? 'recent' : 'std');
-      _placePop(pop, anchorBtn);           // the head appearing changes the height → re-anchor
+      _placePop(pop, anchorBtn, opts);           // the head appearing changes the height → re-anchor
     });
     // Search looks across EVERY pack (that's the point of a search box with thousands of emoji);
     // clearing it drops back to the tab you were on.

@@ -19,8 +19,8 @@ if (plan.what === 'picker') {
   const p = plan.hasPopover ? { openEmojiPopover: () => { out.picker = 'app'; } } : {};
   const b = { dataset: { ccReact: 'm1' } };
   const noop = () => {};
-  new Function('p', 'b', 'reactionTarget', 'closeMessageActions', 'toggleReaction',
-               block + '\nreturn;')(p, b, 'm1', noop, noop);
+  new Function('p', 'b', 'reactionTarget', 'closeMessageActions', 'toggleReaction', 'measured', 'target',
+               block + '\nreturn;')(p, b, 'm1', noop, noop, {width:24,height:24,left:100,top:200,right:124,bottom:224}, 'm1');
   if (!out.picker) out.picker = 'inline';
 }
 

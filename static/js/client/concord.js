@@ -2380,7 +2380,7 @@
     const replyCancel=$('#cc-reply-cancel'); if(replyCancel)replyCancel.onclick=()=>{ replyTarget=null; render(); };
     const closeMessageActions=()=>{$$('.cc-message.cc-actions-open').forEach(x=>{x.classList.remove('cc-actions-open');const t=x.querySelector('[data-cc-actions]');if(t)t.setAttribute('aria-expanded','false');});const picker=document.querySelector('.cc-reaction-picker');if(picker)picker.remove();reactionTarget=null;};
     if(actionDismissOff){actionDismissOff();actionDismissOff=null;}
-    const dismissPointer=e=>{if(!(e.target&&e.target.closest&&e.target.closest('.cc-message-actions,.cc-reaction-picker')))closeMessageActions();};
+    const dismissPointer=e=>{if(!(e.target&&e.target.closest&&e.target.closest('.cc-message-actions,.cc-reaction-picker,.emoji-pop')))closeMessageActions();};
     const dismissKey=e=>{if(e.key==='Escape')closeMessageActions();};
     const dismissBlur=()=>closeMessageActions();
     document.addEventListener('pointerdown',dismissPointer,true);document.addEventListener('keydown',dismissKey,true);window.addEventListener('blur',dismissBlur);
@@ -2459,7 +2459,7 @@
          The inline grid stays as a FALLBACK for a shell whose bundle predates the popover: losing
          eight faces is a smaller failure than a react button that does nothing. */
       if(p.openEmojiPopover){
-        p.openEmojiPopover(b,(emoji,close)=>{ if(close)close(); const id=reactionTarget; closeMessageActions(); toggleReaction(id,emoji); });
+        p.openEmojiPopover(b,(emoji,close)=>{ if(close)close(); const id=target; closeMessageActions(); toggleReaction(id,emoji); },{anchored:true,anchorRect:measured && measured.width>0 && measured.height>0 ? measured : b.closest('.cc-message')?.getBoundingClientRect()});
         return;
       }
       const choices=['👍','❤️','😂','😮','😢','😡','🎉','💯']; const pop=document.createElement('div'); pop.className='cc-reaction-picker'; pop.innerHTML=choices.map(x=>`<button data-emoji="${x}">${x}</button>`).join(''); placeReactionPicker(b,pop,measured); pop.querySelectorAll('button').forEach(x=>x.onclick=e=>{ e.stopPropagation();const id=reactionTarget;closeMessageActions();toggleReaction(id,x.dataset.emoji); }); });

@@ -605,8 +605,6 @@ async def startup():
         if app_port == 3051 and _role != "all":
             logging.info("[role] running as '%s' — supervising only this role's components", _role)
         if app_port == 3051:
-            from app.services.relay_access_policy import start as start_access_policy
-            start_access_policy()
             try:
                 # Background pollers (social/logs)
                 # run in a SEPARATE worker process so their polling/bridging doesn't contend
@@ -929,8 +927,6 @@ async def shutdown():
     # Only stop schedulers on main instance (port 3051)
     app_port = int(os.environ.get("POSTERCHANAI_PORT", "3051"))
     if app_port == 3051:
-        from app.services.relay_access_policy import stop as stop_access_policy
-        stop_access_policy()
         # Stop the background worker process (fedi-timeline bridge + social/logs
         # pollers all run there now).
         try:

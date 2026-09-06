@@ -40,7 +40,15 @@ a passing earlier suite did not establish that these cases worked.
   stale packaged client.
 
 Full pytest suite: **10,745 passed, 630 subtests passed, 25 skipped** in 26m33s.
-Tested-file SHA-256 hashes verified unchanged before commit. Deployment pending.
+Tested-file SHA-256 hashes verified unchanged before commit.
+
+Deployed `febb0fe004d57e20067612bf19ffe25d652f3196` to server1, NAS and router.
+Public app.js and sw.js match the tested commit. App, worker and media services
+remain active without restart loops. Desktop 1.0.1492 and Android APK builds
+passed their bundled DM gates. The published Windows installer SHA-512 matches
+latest.yml; both DM harnesses also passed against app.js extracted from its ASAR.
+The Gentoo desktop1492 payload checksum and overlay tests passed. Android emulator
+checks completed with device=0 and instrumented=0 (both actually ran).
 
 The other reported issues in `~/agent.txt` and the requested AI/Blossom/Live
 Streaming policy preview and 15-minute enforcement follow the signer release.

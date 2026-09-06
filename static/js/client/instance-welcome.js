@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   let identity = '', checked = '', checking = false, dialog = null, retryAt = 0;
+  const desktopOrSetup = () => !!(window.PCOS?.isOn?.() || window.PCOSWin?.isWindow?.() || document.querySelector('#osfr'));
   const endpoint = path => (window.__PC_API_BASE__ || '') + '/api/instance-welcome/' + path;
   async function request(action, pk) {
     const pc = window.__PC;
@@ -47,19 +48,22 @@
   }
   async function check() {
     const pc = window.__PC;
-    if (!pc || !window.__PC_BOOTED || document.hidden || window.PCOSWin?.isWindow()) return;
+    if (!pc || !window.__PC_BOOTED || document.hidden) return;
+    if (desktopOrSetup()) { close(); return; }
     const pk = pc.viewer().pubkey || '';
     if (identity !== pk) { identity = pk; checked = ''; retryAt = 0; close(); }
     if (!pk || pc.standalone() || checking || checked === pk || Date.now() < retryAt) return;
     checking = true;
     try {
       const data = await request('status', pk);
-      if (pc.viewer().pubkey !== pk) return;
+      if (pc.viewer().pubkey !== pk || desktopOrSetup()) return;
       checked = pk;
       if (data.eligible && !data.pending) show(data, pk);
     } catch (_) { retryAt = Date.now() + 300000; /* Avoid repeated signer prompts while offline. */ }
     finally { checking = false; }
   }
+  // Desktop entry can happen while eligibility is loading, or after the dialog was opened.
+  new MutationObserver(() => { if (desktopOrSetup()) close(); }).observe(document.body, {childList:true});
   document.addEventListener('pc-app-ready', check);
   document.addEventListener('visibilitychange', check);
   setInterval(check, 10000);

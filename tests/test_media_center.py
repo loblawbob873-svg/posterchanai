@@ -953,3 +953,44 @@ assert media.transcode(library, item, '360p', 0) == expected.encode()
     assert len(list(cache.glob('*.ts'))) == 1 and not list(cache.glob('*.part'))
     monkeypatch.setattr(os, 'link', publish)
     assert media.transcode(library, item, '360p', 1) == payload
+
+
+def test_completed_rescan_replaces_moved_and_deleted_entries(api, monkeypatch):
+    client, docs, user, root = api
+    library = seed(docs, root)
+    monkeypatch.setattr(media, 'probe', lambda path: {'duration': 20, 'video': False})
+    first = root / 'Old'
+    first.mkdir()
+    (first / 'Original.mp3').write_bytes(b'audio')
+    assert client.post('/api/media-center/abc/scan').status_code == 200
+    old_revision = client.get('/api/media-center').json()['libraries'][0]['revision']
+    assert [item['path'] for item in asyncio.run(media.catalog(docs['library:abc']))] == ['Old/Original.mp3']
+    second = root / 'New'
+    second.mkdir()
+    (first / 'Original.mp3').rename(second / 'Renamed.mp3')
+    first.rmdir()
+    assert client.post('/api/media-center/abc/scan').status_code == 200
+    assert [item['path'] for item in asyncio.run(media.catalog(docs['library:abc']))] == ['New/Renamed.mp3']
+    assert client.get('/api/media-center').json()['libraries'][0]['revision'] != old_revision
+    assert [folder['name'] for folder in client.get('/api/media-center/abc/folders').json()['folders']] == ['New']
+    (second / 'Renamed.mp3').unlink()
+    assert client.post('/api/media-center/abc/scan').status_code == 200
+    assert asyncio.run(media.catalog(docs['library:abc'])) == []
+
+
+def test_catalog_revision_changes_for_same_second_equal_count_moves():
+    first = {'id': 'revision-test', 'scanned_at': 100, 'pages': ['page:old']}
+    second = {**first, 'pages': ['page:new']}
+    assert routes.scan_revision(first) != routes.scan_revision(second)
+
+
+def test_unreadable_subtree_does_not_replace_committed_catalog(api, monkeypatch):
+    client, docs, user, root = api
+    original = seed(docs, root)
+    pages = list(original['pages'])
+    def unreadable(*args, **kwargs):
+        raise PermissionError('temporarily inaccessible')
+    monkeypatch.setattr(media, 'scan', unreadable)
+    assert client.post('/api/media-center/abc/scan').status_code == 200
+    assert docs['library:abc']['pages'] == pages
+    assert client.get('/api/media-center/abc/scan').json()['state'] == 'failed'

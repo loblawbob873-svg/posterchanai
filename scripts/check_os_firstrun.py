@@ -54,12 +54,17 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="/static/css/client.css">
 </head><body>
 <div class="app"><div id="feed">CLASSIC</div></div>
+<script src="/static/vendor/nostr/nostr.bundle.js"></script>
 <script>
+window.__testKey = new Uint8Array(32).fill(7);
+window.__testPk = NostrTools.getPublicKey(window.__testKey);
+window.__testNpub = NostrTools.nip19.npubEncode(window.__testPk);
 /* The client, as the wizard reaches it. `showAuth` is RECORDED rather than performed: the gate is
  * app.js's and the assertion here is that the wizard hands off to it instead of growing a second
  * sign-in form of its own. */
 window.__shown = [];
 window.__PC = {
+  sign: async (kind,content,tags) => NostrTools.finalizeEvent({kind,content,tags,created_at:Math.floor(Date.now()/1000)}, window.__testKey),
   toast: m => (window.__toasts = window.__toasts || []).push(m),
   apiBase: () => window.__instance || '',
   setInstance: (u) => { window.__instance = u; window.__setInstance = u; },
@@ -89,11 +94,22 @@ window.pcWM = {
                          return []; },
   focus: async () => [], subscribe: async () => true, onEvent: () => () => {},
 };
+const challenges=new Map();
+window.__verifiedProofs=[];
+async function verifyProof(npub,action,proof){
+  if(npub!==window.__testNpub || !proof?.event || !NostrTools.verifyEvent(proof.event))throw Error('invalid identity proof');
+  const e=proof.event,tag=k=>(e.tags.find(t=>t[0]===k)||[])[1];
+  const challenge=tag('challenge');
+  const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(proof.payload)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+  if(e.kind!==27235 || e.pubkey!==window.__testPk || tag('action')!==action || tag('t')!=='posterchanos' || challenges.get(challenge)!==action || e.content!==hash)throw Error('invalid action proof');
+  challenges.delete(challenge);window.__verifiedProofs.push(action);
+}
 window.pcOS = {
-  provision: async () => { window.__provisioned = true; return { ok: true }; },
+  challenge: async (npub,action) => { const challenge=crypto.randomUUID();challenges.set(challenge,action);return {ok:true,challenge}; },
+  provision: async (npub,proof) => { await verifyProof(npub,'provision',proof);window.__provisioned = true; return { ok: true }; },
   identity: async () => window.__identity || '',
   provisioned: async () => !!window.__identity,
-  switch: async (npub) => { window.__identity = npub; return { ok:true }; },
+  switch: async (npub,proof) => { await verifyProof(npub,'switch',proof);window.__identity = npub; return { ok:true }; },
 };
 window.pcPower = { status: async () => ({}) };
 window.pcAudio = { status: async () => ({}) };
@@ -179,12 +195,13 @@ DRIVE = r"""(async () => {
     bad('no-way-past-signin', 'the sign-in step did not open the client\'s own gate');
 
   /* ── the answers survive a reboot ───────────────────────────────────────────────────────────── */
-  window.ME = { npub: 'npub1exampleexampleexampleexampleexampleexampleexampleexample' };
+  window.ME = { npub: window.__testNpub };
   window.GUEST = false;
   await window.PCFirstRunUI.run();
   await sleep(700);
   out.entered = !!window.__entered;
   out.provisioned = !!window.__provisioned;
+  if (JSON.stringify(window.__verifiedProofs)!==JSON.stringify(["provision","switch"])) bad("unsigned-setup","provision and switch must each verify a separate signed challenge");
   out.stillUp = !!card();
   if (out.stillUp)
     bad('step-not-answered', 'everything is answered and the wizard is still on screen ("'

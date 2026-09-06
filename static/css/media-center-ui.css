@@ -28,3 +28,8 @@
 .mc-gallery .mc-directory-label small{margin-top:6px;font-size:12px;letter-spacing:.02em}
 @media(max-width:600px){.mc-actions-menu>summary span{display:none}.mc-actions-menu>summary{padding:0 11px}.mc-gallery .mc-directory-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.mc-gallery .mc-directory-label b{font-size:14px}.mc-gallery .mc-directory-art{aspect-ratio:1}.mc-gallery .mc-directory-label{padding:12px 2px}.mc-gallery .mc-folder-trail button{font-size:12px}.mc-gallery .mc-folder-trail button+button:before{margin:0 7px}}
 @media(prefers-reduced-motion:reduce){.mc-gallery .mc-directory,.mc-gallery .mc-directory-art img{transition:none;transform:none}}
+
+/* Device actions must not inherit the full-width pairing-form buttons. */
+.mc-actions-menu .mc-device-row>.btn{width:auto;flex:none}
+.mc-actions-menu .mc-device-row>div{flex:1;min-width:0}
+.mc-actions-menu .mc-tool-body h4{width:100%;white-space:normal}

@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # (label, module, start-function) — each exposes an idempotent start_* that attaches an
 # APScheduler AsyncIOScheduler to the running loop. Order is not significant.
 _SCHEDULERS = [
+    ("relay-access-policy", "app.services.relay_access_policy", "start"),
     ("instance-welcome", "app.services.instance_welcome", "start_instance_welcome_scheduler"),
     ("logs", "app.services.logs_scheduler", "start_logs_scheduler"),
     ("social-notifications", "app.services.social_notifications_service", "start_social_notifications_scheduler"),

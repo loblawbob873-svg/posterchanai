@@ -82,7 +82,7 @@ async def main():
         captions = temp / 'captions.srt'
         captions.write_text('1\n00:00:00,000 --> 00:00:17,500\nMedia Center subtitle test\n')
         os.environ["POSTERCHANAI_MEDIA_ROOTS"] = str(temp)
-        os.environ["POSTERCHANAI_MEDIA_CACHE"] = str(temp / "cache")
+        os.environ["POSTERCHANAI_MEDIA_CACHE"] = str(temp / ".cache")
         subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24",
                         "-f", "lavfi", "-i", "sine=frequency=440", "-f", "lavfi", "-i", "sine=frequency=880", '-i', str(captions),
                         '-map','0:v:0','-map','1:a:0','-map','2:a:0','-map','3:s:0',
@@ -110,6 +110,7 @@ async def main():
             for item in scanned[1:]:
                 if on_item:on_item(item)
             return scanned, 0
+        real_scan = media.scan
         media.scan = staged_scan
         documents['page:test:fixture'] = []
         library['count'] = 0
@@ -302,6 +303,14 @@ async def main():
                                              second.js("document.querySelector('#mc-close-player').onclick()", True))
                     await asyncio.sleep(.2)
                     assert not media._sessions, media._sessions
+                    await browser.call('Page.bringToFront')
+                    media.scan = real_scan
+                    source.parent.rename(temp / 'Renamed Adventure')
+                    await browser.js("[...document.querySelectorAll('#mc-libraries button')].find(b=>b.textContent==='Rescan').click()", True)
+                    await browser.until("document.querySelector('.mc-directory[data-path=\"Renamed Adventure\"]')&&!document.querySelector('.mc-directory[data-path=\"Adventure\"]')")
+                    await browser.until("[...document.querySelectorAll('.mc-folder')].every(s=>s.dataset.folder==='Renamed Adventure')")
+                    assert (await client.get(f'{app_url}/api/media-center/test/scan')).json()['state'] == 'complete'
+                    print('PASS: a completed rescan removes the old folder and moved titles without reloading the page', flush=True)
                     print("stream slots released PASS; screenshots:", ARTIFACTS, flush=True)
         finally:
             process.terminate()

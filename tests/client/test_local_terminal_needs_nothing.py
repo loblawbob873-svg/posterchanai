@@ -57,7 +57,7 @@ class TheLocalShellNeedsNothing(unittest.TestCase):
     def test_a_local_pty_answers_the_host_list_without_asking_the_server(self):
         body = _decomment(_fn(self.src, "async function loadHosts()"))
         # The early return must come BEFORE anything that talks to the instance.
-        early = body.index("if(LOCAL()){ hosts = _withLocal([]);")
+        early = body.index("if(LOCAL()){ hosts = _withLocal(hosts);")
         for call in ("ensureAiSession", "authFetch"):
             self.assertGreater(body.index(call), early,
                                f"loadHosts reaches {call} before answering from the local PTY, so a "

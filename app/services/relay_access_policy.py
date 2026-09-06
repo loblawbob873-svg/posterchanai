@@ -1,4 +1,4 @@
-"""Operator-controlled cleanup of AI/Blossom grants for non-local Nostr identities."""
+"""Operator-controlled cleanup of AI/Blossom/live-streaming grants for non-local Nostr identities."""
 import asyncio
 import json
 import logging
@@ -54,11 +54,12 @@ def plan(db, exempt_fediverse=True):
     whitelist = set(blossom_service._whitelist_pubkeys(db))
     removed = whitelist - keep
     targets = [u for u in users if u.nostr_npub and ns.to_pubkey_hex(u.nostr_npub) not in keep
-               and (u.can_ai or u.can_blossom or ns.to_pubkey_hex(u.nostr_npub) in removed
+               and (u.can_ai or u.can_blossom or u.can_stream or ns.to_pubkey_hex(u.nostr_npub) in removed
                     or (u.nostr_nsec and not u.access_revoked))]
     summary = {"domain": domain, "accounts": len(targets),
                "ai": sum(bool(u.can_ai) for u in targets),
                "blossom": sum(bool(u.can_blossom) for u in targets),
+               "streaming": sum(bool(u.can_stream) for u in targets),
                "whitelist": len(removed)}
     return targets, whitelist - removed, summary
 
@@ -69,13 +70,13 @@ async def run(db, exempt_fediverse=True):
         # Persist each revocation to the authoritative relay before changing its read-cache.
         # A failed write leaves a visible error and is retried on the next run.
         for u in targets:
-            previous = u.can_ai, u.can_blossom, u.access_revoked
-            u.can_ai = u.can_blossom = False
+            previous = u.can_ai, u.can_blossom, u.can_stream, u.access_revoked
+            u.can_ai = u.can_blossom = u.can_stream = False
             u.access_revoked = True
             with db.no_autoflush:
                 ok = await users_store.sync_user(db, u, force=True)
             if not ok:
-                u.can_ai, u.can_blossom, u.access_revoked = previous
+                u.can_ai, u.can_blossom, u.can_stream, u.access_revoked = previous
                 db.rollback()
                 raise RuntimeError("Account synchronization failed; some revocations may have completed")
             db.commit()

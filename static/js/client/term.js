@@ -368,19 +368,38 @@
 
     /* THE OTHER HOSTS, FETCHED BEHIND THE LOCAL ONE. Never awaited by anything that opens a shell —
      * see loadHosts. Bounded, because the failure this exists for is a request that never answers. */
-    let _hostsAsked = false;
+    let _hostsAsked = false, _hostsScope = '', _hostsGeneration = 0, _hostsRetry = null;
+    function _syncHostScope(){
+      const scope = String(window.__PC_API_BASE__ || window.location?.origin || '') + ':' + (PC.viewer?.()?.pubkey || '');
+      if(scope !== _hostsScope){
+        _hostsScope = scope; ++_hostsGeneration; _hostsAsked = false;
+        hosts = _withLocal([]);
+      }
+      return _hostsGeneration;
+    }
+    function _scheduleHostsRefresh(){
+      clearTimeout(_hostsRetry);
+      if(mounted) _hostsRetry = setTimeout(()=>{ if(mounted) _hostsRefresh(); },30000);
+    }
     async function _hostsRefresh(){
+      const generation = _syncHostScope();
       if(_hostsAsked) return; _hostsAsked = true;
       try{
         await _bounded(PC.ensureAiSession && PC.ensureAiSession(), 6000);
         const r = await _bounded(authFetch('/api/ssh/hosts'), 8000);
-        if(!r || r.status === 403) return;
-        const d = await r.json();
-        const more = (d && d.hosts) || [];
-        if(!more.length) return;
-        hosts = _withLocal(more);
+        if(generation !== _syncHostScope()) return;
+        if(r?.status === 403){ hosts = _withLocal([]); _paintHosts(); return; }
+        if(!r?.ok) throw new Error('host list unavailable');
+        const d = await _bounded(r.json(),8000);
+        if(generation !== _syncHostScope()) return;
+        if(!Array.isArray(d?.hosts)) throw new Error('invalid host list');
+        hosts = _withLocal(d.hosts);
         _paintHosts();
-      }catch(_){ /* a node that cannot be reached is not a machine without a shell */ }
+      }catch(_){
+        if(generation === _syncHostScope()) _state('Could not refresh hosts; retrying. Saved host choices are retained.', 'err');
+      }finally{
+        if(generation === _hostsGeneration){ _hostsAsked = false; _scheduleHostsRefresh(); }
+      }
     }
 
     /* A PROMISE THAT CANNOT HANG FOR EVER. `ensureAiSession` can be waiting on a SIGNER, and a
@@ -392,6 +411,7 @@
     }
 
     async function loadHosts(){
+      const generation = _syncHostScope();
       /* WITH NO SERVER THERE IS STILL A TERMINAL. PosterChanOS runs with no instance configured, and
        * every line below this asks a server something. Answering "the SSH terminal is switched off"
        * on the machine whose own shell is sitting right there would be absurd — so the local host
@@ -411,7 +431,7 @@
        * On PosterChanOS the terminal is how somebody fixes a broken machine. It must not depend on
        * the parts that are broken. So the local host stands alone immediately, and the rest of the
        * list arrives behind it if it ever does. */
-      if(LOCAL()){ hosts = _withLocal([]); _hostsRefresh(); return true; }
+      if(LOCAL()){ hosts = _withLocal(hosts); _hostsRefresh(); return true; }
       try{
         // The bundled apps authenticate with a BEARER, not a cookie (they are cross-origin to the
         // instance), and that token is minted lazily. Without this the first visit to the Terminal
@@ -419,13 +439,17 @@
         // screen. It is a no-op once the session exists.
         try{ await _bounded(PC.ensureAiSession && PC.ensureAiSession(), 6000); }catch(_){}
         const r = await _bounded(authFetch('/api/ssh/hosts'), 8000);
+        if(generation !== _syncHostScope()) return false;
         if(r.status === 403){
           hosts = _withLocal([]);
           if(!hosts.length){ _state('the SSH terminal is switched off, or you are not on its list', 'err'); return false; }
           return true;
         }
-        const d = await r.json();
-        hosts = _withLocal((d && d.hosts) || []);
+        if(!r.ok) throw new Error('host list unavailable');
+        const d = await _bounded(r.json(),8000);
+        if(generation !== _syncHostScope()) return false;
+        if(!Array.isArray(d?.hosts)) throw new Error('invalid host list');
+        hosts = _withLocal(d.hosts);
         if(d && d.available === false && !LOCAL()){
           _state('this node has no SSH library installed — run install.sh', 'err');
           return false;
@@ -433,10 +457,11 @@
         return true;
       }catch(_){
         /* A node that cannot be reached is not a machine without a shell. */
-        hosts = _withLocal([]);
-        if(hosts.length) return true;
-        _state('could not reach the server', 'err'); return false;
-      }
+        if(generation !== _syncHostScope()) return false;
+        hosts = _withLocal(hosts);
+        if(hosts.length){ _state('Could not refresh hosts; retrying. Saved host choices are retained.', 'err'); return true; }
+        _state('could not reach the server; retrying host discovery', 'err'); return false;
+      }finally{ if(generation === _hostsGeneration) _scheduleHostsRefresh(); }
     }
 
     function _mountTerm(){
@@ -1053,6 +1078,7 @@
     // unlocking is the single most common way this socket dies.
     function _wake(){
       if(document.visibilityState !== 'visible') return;
+      if(mounted) _hostsRefresh();
       if(!want || !sid || connected || !mounted) return;
       if(retryT){ clearTimeout(retryT); retryT = null; }
       retry = 0; _open({ resume: sid, host, label });
@@ -1412,6 +1438,7 @@
     }
 
     function unmount(){
+      clearTimeout(_hostsRetry); _hostsRetry = null;
       ++openEpoch;
       ++renderEpoch;                 // every pending continuation now belongs to a dead screen
       // LEAVING THE SCREEN IS DETACHING, never killing: the shell keeps running and the id is kept,

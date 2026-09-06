@@ -26,7 +26,7 @@ def world(monkeypatch):
     monkeypatch.setattr(policy.blossom_service,'_whitelist_pubkeys',lambda db:set(keys))
     users=[]
     for i,key in enumerate(keys[:4]):
-        u=User(username='user'+str(i),password_hash='unused',nostr_npub=ns.npub_of(key),can_ai=True,can_blossom=True,
+        u=User(username='user'+str(i),password_hash='unused',nostr_npub=ns.npub_of(key),can_ai=True,can_blossom=True,can_stream=True,
                is_admin=i==3,pleroma_acct='person@fedi.test' if i==1 else None)
         db.add(u);users.append(u)
     db.add(FediPuppet(actor_uri='https://fedi.test/user',acct='puppet@fedi.test',pubkey_hex=keys[5],nip05_name='puppet'))
@@ -38,7 +38,7 @@ def world(monkeypatch):
 def test_preview_preserves_local_fediverse_admin_and_peer(world):
     targets,keep,result=policy.plan(world.db)
     assert targets==[world.users[2]]
-    assert result==dict(domain='poster.place',accounts=1,ai=1,blossom=1,whitelist=1)
+    assert result==dict(domain='poster.place',accounts=1,ai=1,blossom=1,streaming=1,whitelist=1)
     assert keep==set(world.keys)-{world.keys[2]}
     assert world.users[2].can_ai
 
@@ -53,8 +53,8 @@ def test_run_persists_revocations_and_preserves_exempt_users(world):
     result=asyncio.run(policy.run(world.db))
     assert result['accounts']==1
     u=world.users[2]
-    assert not u.can_ai and not u.can_blossom and u.access_revoked
-    assert all(u.can_ai and u.can_blossom for u in [world.users[0],world.users[1],world.users[3]])
+    assert not u.can_ai and not u.can_blossom and not u.can_stream and u.access_revoked
+    assert all(u.can_ai and u.can_blossom and u.can_stream for u in [world.users[0],world.users[1],world.users[3]])
     assert policy.users_store.sync_user.await_count==1
     assert 'relay_access_policy_last_run' in world.config
 
@@ -62,7 +62,7 @@ def test_run_persists_revocations_and_preserves_exempt_users(world):
 def test_failed_authority_write_does_not_claim_or_commit_success(world,monkeypatch):
     monkeypatch.setattr(policy.users_store,'sync_user',AsyncMock(return_value=False))
     with pytest.raises(RuntimeError):asyncio.run(policy.run(world.db))
-    assert world.users[2].can_ai and world.users[2].can_blossom
+    assert world.users[2].can_ai and world.users[2].can_blossom and world.users[2].can_stream
     assert 'relay_access_policy_last_run' not in world.config
 
 
@@ -97,3 +97,70 @@ def test_admin_routes_require_authentication_and_save_one_policy_record(world):
             r=await client.post('/api/admin/relay-access-policy/run',json=body)
             assert r.status_code==200 and r.json()['accounts']==1
     asyncio.run(go())
+
+
+def test_streaming_only_account_is_selected_and_auth_is_revoked(world, monkeypatch):
+    from app.routers.streams import _may_stream
+    user = world.users[2]
+    user.can_ai = user.can_blossom = False
+    user.access_revoked = True
+    monkeypatch.setattr(policy.blossom_service, '_whitelist_pubkeys', lambda db: set())
+    assert _may_stream(user)
+    result = policy.plan(world.db)[2]
+    assert result['streaming'] == 1 and result['ai'] == 0 and result['blossom'] == 0
+    asyncio.run(policy.run(world.db))
+    assert not _may_stream(user)
+    assert policy.plan(world.db)[2]['accounts'] == 0
+
+
+def test_scheduler_runs_every_fifteen_minutes_and_obeys_config(world, monkeypatch):
+    from app import database, worker
+    from contextlib import nullcontext
+    monkeypatch.setattr(database, 'SessionLocal', lambda: nullcontext(world.db))
+    run = AsyncMock()
+    monkeypatch.setattr(policy, 'run', run)
+    assert worker._SCHEDULERS.count(('relay-access-policy', 'app.services.relay_access_policy', 'start')) == 1
+    async def exercise():
+        policy.start()
+        try:
+            jobs = policy._scheduler.get_jobs()
+            assert len(jobs) == 1
+            job = jobs[0]
+            assert job.trigger.interval.total_seconds() == 900
+            assert job.max_instances == 1 and job.coalesce
+            await job.func()
+            run.assert_not_awaited()
+            world.config['relay_access_policy'] = '{"enabled":true,"exempt_fediverse":false}'
+            await job.func()
+            run.assert_awaited_once_with(world.db, False)
+        finally:
+            policy.stop()
+    asyncio.run(exercise())
+
+
+def test_existing_obs_key_is_denied_after_cleanup_but_public_read_stays_open(world, monkeypatch):
+    from app.models import APIKey, UserSetting
+    from app.routers import streams
+    from starlette.requests import Request
+    for table in (APIKey.__table__, UserSetting.__table__):
+        table.create(world.db.get_bind(), checkfirst=True)
+    user = world.users[2]
+    world.db.add(APIKey(user_id=user.id, key='test-publisher-key', is_active=True))
+    world.db.add(UserSetting(user_id=user.id, key='stream_token', value='test-stream'))
+    world.db.commit()
+    world.config['stream_auth_secret'] = 'test-hook'
+    monkeypatch.setattr(streams.stream_end_service, 'mark_publishing', lambda *args: None)
+    async def auth(action):
+        import json
+        async def receive():
+            return {'type': 'http.request', 'body': json.dumps({
+                'action': action, 'path': 'test-stream', 'query': 'key=test-publisher-key'}).encode()}
+        request = Request({'type': 'http', 'method': 'POST', 'path': '/api/streams/auth',
+                           'query_string': b'hook=test-hook', 'headers': []}, receive)
+        return await streams.stream_auth(request, world.db)
+    async def exercise():
+        assert (await auth('publish')).status_code == 200
+        await policy.run(world.db)
+        assert (await auth('publish')).status_code == 403
+        assert (await auth('read')).status_code == 200
+    asyncio.run(exercise())

@@ -72,3 +72,7 @@ will run before signer deployment. Do not blanket-commit or publish this checkou
 Other requested fixes (agent.txt OS first-run/window controls and AI/Blossom/Live
 Streaming policy preview + 15-minute cleanup) follow that deployment. Unfinished
 welcome/first-run test patches are saved in /tmp/pc-followup-after-signer.patch.
+
+Signer correction febb0fe00 deployed all nodes; full suite 10745 +630 subtests passed,25 skips. Desktop/Android CI running. Continuation now owns welcome/first-run, registration visibility, Concord reaction anchor (shared picker bridge), media device layout and rescan, policy service/admin/worker scheduling, and tests. User additionally requests Exodus presentation, totals/charts/logos and wallet switching; preserve prior wallet implementation and all seeds. Avoid blanket commits/deployment while this stage is dirty.
+
+Coordination: new independent edits detected in os/gentoo.sh (installer memory/mirror/scripted options). Preserved; continuation will not blanket-stage them. Desktop1492 pin verified but its gentoo.sh line shares your dirty file. Please commit/test your installer changes explicitly when ready; sync.sh publishes working-tree overlay so we will deploy only a reviewed snapshot.

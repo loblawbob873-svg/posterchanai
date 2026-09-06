@@ -21,12 +21,15 @@ def render(tmp_path, theme='professional', width=390, eligible=True, pending=Fal
     page = tmp_path / 'welcome.html'
     page.write_text(f'''<!doctype html><html data-theme="{theme}"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>{css}</style><body><pre id="result"></pre><script>
-let applies=0, account='a'.repeat(64), tick;
+let applies=0, account='a'.repeat(64), tick, desktop='{action}'==='already_desktop';
+window.PCOS={{isOn:()=>desktop}};
+window.PCOSWin={{isWindow:()=>'{action}'==='child_window'}};
+if('{action}'==='first_run'){{const setup=document.createElement('div');setup.id='osfr';document.body.append(setup);}}
 window.__PC_BOOTED=true;
 window.__PC={{viewer:()=>({{pubkey:account}}), standalone:()=>false, LOGO:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>',
 signTemplate:async template=>template}};
 window.setInterval=fn=>{{tick=fn;}};
-window.fetch=async(url)=>({{ok:true,json:async()=>{{if(url.endsWith('/apply')){{applies++;return {{ok:true,pending:true}};}}return {config};}}}});
+window.fetch=async(url)=>({{ok:true,json:async()=>{{if(url.endsWith('/apply')){{applies++;return {{ok:true,pending:true}};}}if('{action}'==='enter_before_status') desktop=true;return {config};}}}});
 </script><script>{script}</script><script>
 setTimeout(async()=>{{
 const d=document.querySelector('dialog'), button=d?.querySelector('.iw-apply');
@@ -34,6 +37,7 @@ const shown=!!d?.open, focused=document.activeElement===button;
 const rect=d?.getBoundingClientRect(), style=d?getComputedStyle(d):null;
 const columns=d?getComputedStyle(d.querySelector('.iw-benefits')).gridTemplateColumns.split(' ').length:0;
 if(button&&'{action}'==='apply'){{button.click();button.click();await new Promise(r=>setTimeout(r,50));}}
+if('{action}'==='enter_open'){{desktop=true;document.body.append(document.createElement('div'));await new Promise(r=>setTimeout(r,50));}}
 if('{action}'==='logout'){{account='';await tick();}}
 document.getElementById('result').textContent=JSON.stringify({{shown,focused,columns,applies,
 closed:!document.querySelector('dialog[open]'),status:d?.querySelector('.iw-status').textContent,
@@ -69,3 +73,14 @@ def test_existing_members_and_pending_applicants_are_not_prompted(tmp_path, elig
 def test_logout_removes_the_previous_accounts_splash(tmp_path):
     got = render(tmp_path, action='logout')
     assert got['shown'] and got['closed'] and got['applies'] == 0
+
+
+@pytest.mark.parametrize('action', ['already_desktop', 'child_window', 'first_run', 'enter_before_status'])
+def test_splash_does_not_cover_desktop_or_setup(tmp_path, action):
+    result = render(tmp_path, action=action)
+    assert not result['shown'] and result['applies'] == 0, result
+
+
+def test_entering_desktop_closes_an_already_open_splash(tmp_path):
+    result = render(tmp_path, action='enter_open')
+    assert result['shown'] and result['closed'] and result['applies'] == 0, result
