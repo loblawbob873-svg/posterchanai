@@ -58,3 +58,23 @@ Jellyfin API adapter, not an implementation of every Jellyfin server feature.
 Shared Nostr identities are honored on the connected Posterchan instance and its
 configured NAS. Catalogs are not federated and separate instances are not merged
 into a single Jellyfin connection.
+
+## Roku follow-up review
+
+The user identified the affected device as Roku. Reviewed the released Roku 3.2.3
+client rather than treating its behavior as Android TV behavior. Its unguarded
+`MediaSources[0].Container` access reproduces the playback crash with the adapter's
+old response. Item-detail requests now supply complete source and track DTOs;
+browsing itself creates no native playback session and does not advertise direct
+file access. The same builders generate PlaybackInfo to prevent contract drift.
+
+The Roku image-list exception preserves the app's signed-tag fallback and remains
+behind normal authentication and live library resolution. No image auth checks
+were loosened. User confirmation established that Roku thumbnails now display.
+
+Added per-platform request contracts for Roku, Fire TV and Google/Android TV plus
+an optional test executing the official Roku source functions using `brs` 0.45.0.
+The interpreter and checkout are test-only tools in /tmp; requirements.txt,
+installer and Docker need no additional runtime dependencies for this correction.
+Review completed before deploying the Roku follow-up. Physical playback confirmation
+remains required after deployment.

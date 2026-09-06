@@ -563,6 +563,51 @@ def folder_dto(lib, path, count=0):
             'ImageTags': {'Primary': folder_id(lib, path)}}
 
 
+def stream_dtos(item, tracks):
+    used_indices = {t['index'] for t in tracks}
+    if any(not isinstance(index, int) or index < 0 or index > 1024 for index in used_indices):
+        raise HTTPException(400, 'Unsupported media stream index')
+    video_index = next(index for index in range(1026) if index not in used_indices)
+    video = item.get('video', True)
+    streams = ([{'Type': 'Video', 'Codec': 'h264', 'Index': video_index, 'IsDefault': True}] if video else [])
+    for track in tracks:
+        stream = {'Type': track['type'].title(), 'Codec': 'aac' if track['type'] == 'audio' else track['codec'],
+                  'Index': track['index'], 'Language': track['language'], 'Title': track['title'],
+                  'DisplayTitle': ' · '.join(filter(None, [track['language'], track['title'], track['codec']])),
+                  'IsDefault': track['default'], 'IsForced': track.get('forced', False), 'IsExternal': False}
+        if track['type'] == 'audio':
+            stream.update(Channels=2, SampleRate=48000)
+        else:
+            stream.update(IsTextSubtitleStream=track['text'], SupportsExternalStream=track['text'],
+                          DeliveryMethod='External' if track['text'] else 'Encode')
+            if track['text']:
+                stream['Codec'] = 'webvtt'
+        streams.append(stream)
+    # Legacy TV StreamInfo indexes this list directly by the FFmpeg stream index.
+    # Preserve gaps left by attachments/data rather than shifting subtitle tracks.
+    indexed = {stream['Index']: stream for stream in streams}
+    streams = [indexed.get(index, {'Type': 'Data', 'Codec': 'bin_data', 'Index': index, 'IsDefault': False})
+               for index in range(max(indexed, default=-1) + 1)]
+    for stream in streams:
+        for key in ('IsInterlaced', 'IsForced', 'IsHearingImpaired', 'IsOriginal',
+                    'IsExternal', 'IsTextSubtitleStream', 'SupportsExternalStream'):
+            stream.setdefault(key, False)
+    return streams
+
+
+def source_dto(uid, item):
+    # Item details must include a source even before PlaybackInfo creates a session.
+    # Roku reads MediaSources[0].Container without checking whether the list is empty.
+    return {'Id': uid, 'Name': item['name'], 'Protocol': 'File', 'Container': 'ts', 'Type': 'Default',
+            'RunTimeTicks': int(item['duration'] * 10000000), 'MediaStreams': [],
+            'SupportsDirectPlay': False, 'SupportsDirectStream': False, 'SupportsTranscoding': True,
+            'TranscodingSubProtocol': 'hls', 'TranscodingContainer': 'ts',
+            'DefaultSubtitleStreamIndex': -1, 'RequiresOpening': False, 'RequiresClosing': False,
+            'IsRemote': False, 'ReadAtNativeFramerate': False, 'IgnoreDts': False, 'IgnoreIndex': False,
+            'GenPtsInput': False, 'IsInfiniteStream': False, 'RequiresLooping': False,
+            'SupportsProbing': False, 'HasSegments': False}
+
+
 def item_dto(lib, item):
     uid = remember(lib, item)
     folder = item.get('folder', '.')
@@ -574,7 +619,7 @@ def item_dto(lib, item):
             'MediaType': 'Video' if video else 'Audio', 'IsFolder': False,
             'RunTimeTicks': int(item['duration'] * 10000000), 'CanDownload': False, 'CanDelete': False,
             'PlayAccess': 'Full', 'LocationType': 'FileSystem', 'VideoType': 'VideoFile',
-            'ImageTags': {'Primary': digest(str(item))[:32]}, 'MediaSources': [],
+            'ImageTags': {'Primary': digest(str(item))[:32]},
             'UserData': {'PlaybackPositionTicks': int(saved.get('position', 0) * 10000000),
                          'PlayCount': int(saved.get('played', False)), 'IsFavorite': saved.get('favorite', False),
                          'Played': saved.get('played', False),
@@ -735,6 +780,11 @@ async def extra_parts(uid: str, request: Request, auth=Depends(authenticate), db
 @router.get('/Items/{uid}/Images')
 async def image_list(uid: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
     await resolve(request, auth, db, uid)
+    client_header = request.headers.get('X-Emby-Authorization') or request.headers.get('Authorization', '')
+    if re.search(r'Client\s*=\s*"Jellyfin Roku"', client_header, re.I):
+        # Roku PosterImage discards ImageTag from this list and overrides its
+        # authenticated-tag poster URL. An empty list selects the ImageTags fallback.
+        return []
     tag = with_image_ticket({'Id': uid.replace('-', '').lower()}, auth)['ImageTags']['Primary']
     return [{'ImageType': 'Primary', 'ImageIndex': 0, 'ImageTag': tag, 'Size': 0}]
 
@@ -745,7 +795,17 @@ async def item_details(uid: str, request: Request, auth=Depends(authenticate), d
     lib, item = await resolve(request, auth, db, uid)
     if item and '_folder' in item:
         return with_image_ticket(folder_dto(lib, item['_folder'], item['count']), auth)
-    return with_image_ticket(item_dto(lib, item) if item else library_dto(lib), auth)
+    if not item:
+        return with_image_ticket(library_dto(lib), auth)
+    dto = item_dto(lib, item)
+    tracks = (await media_call(request, auth, db, f"/{lib['id']}/tracks/{item['id']}"))['tracks']
+    dto['MediaSources'] = [source_dto(dto['Id'], item)]
+    dto['MediaStreams'] = stream_dtos(item, tracks)
+    dto['MediaSources'][0]['MediaStreams'] = dto['MediaStreams']
+    dto['MediaSources'][0]['DefaultAudioStreamIndex'] = next(
+        (t['index'] for t in tracks if t['type'] == 'audio' and t['default']),
+        next((t['index'] for t in tracks if t['type'] == 'audio'), -1))
+    return with_image_ticket(dto, auth)
 
 
 @router.get('/Items/{uid}/Images/Primary')
@@ -821,10 +881,7 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
     selected_subtitle = next((t for t in tracks if t['type'] == 'subtitle' and t['index'] == subtitle_index), None)
     if subtitle_index >= 0 and not selected_subtitle:
         raise HTTPException(400, 'Unavailable subtitle track')
-    used_indices = {t['index'] for t in tracks}
-    if any(not isinstance(index, int) or index < 0 or index > 1024 for index in used_indices):
-        raise HTTPException(400, 'Unsupported media stream index')
-    video_index = next(index for index in range(1026) if index not in used_indices)
+    streams = stream_dtos(item, tracks)
     playback = await media_call(request, auth, db, f"/{lib['id']}/play/{item['id']}", 'POST')
     playback['url'] += '&' + urlencode({'audio': audio_index,
                                         'subtitle': subtitle_index if selected_subtitle and not selected_subtitle['text'] else -1})
@@ -836,45 +893,18 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
                        'text_indices': [t['index'] for t in tracks if t['type'] == 'subtitle' and t['text']]}
     while len(_plays) > 256:
         _plays.popitem(last=False)
-    video = item.get('video', True)
     params = urlencode({'api_key': auth.token, 'PlaySessionId': play_id})
-    streams = ([{'Type': 'Video', 'Codec': 'h264', 'Index': video_index, 'IsDefault': True}] if video else [])
-    for track in tracks:
-        stream = {'Type': track['type'].title(), 'Codec': 'aac' if track['type'] == 'audio' else track['codec'],
-                  'Index': track['index'], 'Language': track['language'], 'Title': track['title'],
-                  'DisplayTitle': ' · '.join(filter(None, [track['language'], track['title'], track['codec']])),
-                  'IsDefault': track['default'], 'IsForced': track.get('forced', False), 'IsExternal': False}
-        if track['type'] == 'audio':
-            stream.update(Channels=2, SampleRate=48000)
-        else:
-            stream.update(IsTextSubtitleStream=track['text'], SupportsExternalStream=track['text'],
-                          DeliveryMethod='External' if track['text'] else 'Encode')
-            if track['text']:
-                stream['Codec'] = 'webvtt'
-                stream['DeliveryUrl'] = f"Videos/{uid}/{uid}/Subtitles/{track['index']}/Stream.vtt?{params}"
-        streams.append(stream)
-    # Legacy TV StreamInfo indexes this list directly by the FFmpeg stream index.
-    # Preserve gaps left by attachments/data rather than shifting subtitle tracks.
-    indexed = {stream['Index']: stream for stream in streams}
-    streams = [indexed.get(index, {'Type': 'Data', 'Codec': 'bin_data', 'Index': index, 'IsDefault': False})
-               for index in range(max(indexed, default=-1) + 1)]
     for stream in streams:
-        for key in ('IsInterlaced', 'IsForced', 'IsHearingImpaired', 'IsOriginal',
-                    'IsExternal', 'IsTextSubtitleStream', 'SupportsExternalStream'):
-            stream.setdefault(key, False)
+        if stream['Type'] == 'Subtitle' and stream['IsTextSubtitleStream']:
+            stream['DeliveryUrl'] = f"Videos/{uid}/{uid}/Subtitles/{stream['Index']}/Stream.vtt?{params}"
     default_audio = next((t['index'] for t in tracks if t['type'] == 'audio' and t['default']),
                          next((t['index'] for t in tracks if t['type'] == 'audio'), -1))
     # Describe the backing file, not the HTTP transport of the separate HLS URL.
     # Android TV rejects remote sources before it considers SupportsTranscoding.
-    source = {'Id': uid, 'Name': item['name'], 'Protocol': 'File', 'Container': 'ts', 'Type': 'Default',
-              'RunTimeTicks': int(item['duration'] * 10000000), 'MediaStreams': streams,
-              'SupportsDirectPlay': False, 'SupportsDirectStream': False, 'SupportsTranscoding': True,
-              'TranscodingUrl': f'Videos/{uid}/master.m3u8?{params}', 'TranscodingSubProtocol': 'hls',
-              'TranscodingContainer': 'ts', 'DefaultAudioStreamIndex': audio_index if audio_index >= 0 else default_audio,
-              'DefaultSubtitleStreamIndex': subtitle_index, 'RequiresOpening': False, 'RequiresClosing': False}
-    source.update(IsRemote=False, ReadAtNativeFramerate=False, IgnoreDts=False, IgnoreIndex=False,
-                  GenPtsInput=False, IsInfiniteStream=False, RequiresLooping=False,
-                  SupportsProbing=False, HasSegments=False)
+    source = source_dto(uid, item)
+    source.update(MediaStreams=streams, TranscodingUrl=f'Videos/{uid}/master.m3u8?{params}',
+                  DefaultAudioStreamIndex=audio_index if audio_index >= 0 else default_audio,
+                  DefaultSubtitleStreamIndex=subtitle_index)
     return {'MediaSources': [source], 'PlaySessionId': play_id}
 
 

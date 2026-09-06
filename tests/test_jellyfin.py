@@ -951,3 +951,78 @@ def test_saved_language_defaults_apply_but_explicit_subtitles_off_wins(api):
     off = c.post('/jellyfin/Items/'+item['Id']+'/PlaybackInfo', headers=h,
                  json={'AudioStreamIndex':1,'SubtitleStreamIndex':-1}).json()['MediaSources'][0]
     assert off['DefaultAudioStreamIndex'] == 1 and off['DefaultSubtitleStreamIndex'] == -1
+
+
+@pytest.mark.parametrize('client_name', ['Jellyfin Roku', 'Jellyfin Android TV', 'Jellyfin for Fire TV'])
+def test_tv_clients_receive_metadata_source_before_playback(api, client_name):
+    login = connect(api)
+    h = {'Authorization': 'MediaBrowser Client="'+client_name+'", Token="'+login['AccessToken']+'"'}
+    item, _ = playable(api, login)
+    c = api.client
+    metadata = c.get('/jellyfin/Items/'+item['Id'], headers=h).json()
+    assert metadata['MediaSources'][0]['Container'] == 'ts'
+    assert metadata['MediaSources'][0]['Protocol'] == 'File'
+    assert metadata['MediaSources'][0]['SupportsDirectPlay'] is False
+    assert 'TranscodingUrl' not in metadata['MediaSources'][0]  # Browsing never reserves a stream.
+    assert any(s['Type']=='Audio' and s['IsDefault'] for s in metadata['MediaStreams'])
+    info = c.post('/jellyfin/Items/'+item['Id']+'/PlaybackInfo', headers=h,
+                  params={'UserId':login['User']['Id'],'MediaSourceId':item['Id'],
+                          'IsPlayback':'true','AudioStreamIndex':1,'MaxStreamingBitrate':140000000},
+                  json={'DeviceProfile':{'Name':client_name},'AlwaysBurnInSubtitleWhenTranscoding':True}).json()
+    source = info['MediaSources'][0]
+    assert not source['IsRemote'] and not source['SupportsDirectPlay'] and source['SupportsTranscoding']
+    response = c.get('/jellyfin/'+source['TranscodingUrl'], headers=h)
+    assert response.status_code == 200 and response.text.startswith('#EXTM3U')
+    images = c.get('/jellyfin/Items/'+item['Id']+'/Images', headers=h).json()
+    if client_name == 'Jellyfin Roku':
+        assert images == []  # Forces VideoData.setPoster to retain ImageTags.Primary.
+    else:
+        assert images[0]['ImageType'] == 'Primary'
+    # Client-specific rendering choices never grant access to unshared media.
+    api.catalog['library:'+api.library['id']]['shared_with'] = []
+    assert c.get('/jellyfin/Items/'+item['Id'], headers=h).status_code == 404
+    assert c.get('/jellyfin/'+source['TranscodingUrl'], headers=h).status_code == 404
+
+
+def test_official_roku_brightscript_container_and_poster_runtime(api, tmp_path):
+    """Execute release client functions, not a Python imitation of Roku's behavior."""
+    import os
+    import re
+    import subprocess
+    from pathlib import Path
+    source = os.environ.get('ROKU_TEST_SOURCE')
+    interpreter = os.environ.get('ROKU_TEST_BRS')
+    if not source or not interpreter:
+        pytest.skip('Set ROKU_TEST_SOURCE to official Roku checkout and ROKU_TEST_BRS to brs interpreter')
+    source = Path(source)
+    loader = (source/'components/ItemGrid/LoadVideoContentTask.bs').read_text()
+    container = re.search(r'function getContainerType\(.*?\nend function',loader,re.S).group()
+    video_data = (source/'components/data/VideoData.bs').read_text()
+    poster = re.search(r'sub setPoster\(.*?\nend sub',video_data,re.S).group()
+    login = connect(api)
+    item, _ = playable(api, login)
+    dto = api.client.get('/jellyfin/Items/'+item['Id'], headers=headers(login)).json()
+    literal = json.dumps(dto).replace('"','""')
+    code = container+'\n'+poster+'''
+function ImageURL(id, version, params)
+    return id + "/" + version + "?Tag=" + params.Tag
+end function
+sub main()
+    m.top = {image: invalid}
+    m.top.json = ParseJson("'''+literal+'''")
+    print "CONTAINER="+getContainerType({json:m.top.json})
+    setPoster()
+    print "POSTER="+m.top.posterURL
+end sub
+'''
+    path = tmp_path/'roku-contract.brs'
+    path.write_text(code)
+    result = subprocess.run([interpreter,"-r",str(tmp_path),str(path)],capture_output=True,text=True,timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert 'CONTAINER=ts' in result.stdout
+    assert 'POSTER='+dto['Id']+'/Primary?Tag='+dto['ImageTags']['Primary'] in result.stdout
+    # The previous empty-array response fails in the actual Roku function.
+    broken = code.replace(literal, json.dumps({**dto,'MediaSources':[]}).replace('"','""'))
+    path.write_text(broken)
+    failed = subprocess.run([interpreter,"-r",str(tmp_path),str(path)],capture_output=True,text=True,timeout=20)
+    assert failed.returncode != 0 or 'CONTAINER=ts' not in failed.stdout

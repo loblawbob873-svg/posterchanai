@@ -7,6 +7,34 @@ and Android TV source
 The user's installed APK versions are unknown. Source review and browser tests
 cannot replace a run on those devices.
 
+## Explicit TV targets
+
+- **Amazon Fire TV and Google/Android TV:** the official Android TV client family
+  ([official client listing](https://jellyfin.org/downloads/clients/all/)). Existing
+  Kotlin DTO, folder, image, Quick Connect and HLS contracts cover this family.
+- **Roku:** reviewed against official release
+  [3.2.3](https://github.com/jellyfin/jellyfin-roku/tree/3.2.3), separately from Android TV.
+  The user confirmed thumbnails now load. Roku's `getContainerType` reads
+  `MediaSources[0].Container` from item details; the previous empty array crashes
+  before HLS starts. Item details now provide a source and track metadata without
+  creating a playback session. Source/track contracts are shared with PlaybackInfo.
+  Catalog lists omit unrequested source details to keep browsing inexpensive.
+- **Android phone:** keep the existing hosted player, fullscreen, subtitle/audio,
+  Quick Connect and resume browser regression coverage.
+
+Roku's `PosterImage` helper ignores ImageTag in image-list results and overrides the
+signed-tag URL provided by `VideoData`. For authenticated Roku image-list requests,
+return an empty list to select its built-in `ImageTags.Primary` fallback. Other
+clients retain their ordinary image-list DTOs. Images still require an app token or
+valid, item-scoped image capability; no unauthenticated artwork bypass is added.
+
+The actual reported TV is Roku, superseding the earlier Android TV assumption.
+A BrightScript interpreter executes the release's original container and poster
+functions against fixture API responses: the previous response fails and the new
+response succeeds. This is stronger than a JSON shape check, but it is not a run
+on physical Roku hardware. Amazon/Google native player hardware also needs device
+validation before claiming every playback mode works.
+
 ## Connection and playback blockers addressed
 
 | Client path | Finding and implementation | Verification |
