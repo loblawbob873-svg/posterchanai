@@ -152,7 +152,7 @@ async def main():
             return ("<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
                     "<link rel='stylesheet' href='/static/css/client.css'>"
                     "<style>body{display:block!important;margin:0!important;padding:12px}#feed{width:100%;max-width:1500px;margin:auto}</style>"
-                    "<main id='feed'></main><script src='/static/vendor/hls/hls.min.js'></script><script>" + bootstrap + functions +
+                    "<main id='feed'></main><script src='/static/js/client/sprite.js'></script><script src='/static/vendor/hls/hls.min.js'></script><script>" + bootstrap + functions +
                     "renderMediaCenter().then(async()=>{await document.querySelector('.mc-library-open').onclick();document.title='READY';});</script>")
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=19438, log_level="error"))
         nas_server = uvicorn.Server(uvicorn.Config(nas, host="127.0.0.1", port=19440, log_level="error"))

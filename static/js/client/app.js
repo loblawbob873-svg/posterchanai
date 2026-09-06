@@ -16306,6 +16306,22 @@
   // probe is blocked (CORS) or unreachable.
   async function detectProto(url){
     const base=url.replace(/\/+$/,'');
+    /* DO NOT ASK A SERVER WE ALREADY KNOW THE ANSWER FOR.
+     *
+     * This node's own media server speaks Blossom -- that is not a discovery question, it is a fact
+     * about the software we are running. Probing it for a NIP-96 well-known can only ever fail, and
+     * the failure is LOUD: the host answers 405 with no CORS header, so the browser console shows
+     * "Cross-Origin Request Blocked ... Access-Control-Allow-Origin missing", which reads like a
+     * broken media server. Reported as exactly that. The probe stays for every OTHER host, which is
+     * the case it was written for -- detecting a NIP-96 server by capability rather than hostname. */
+    try{
+      const mine=(_blossomBuiltin().url||'').replace(/\/+$/,'');
+      if(mine && (base===mine || base===_serverOrigin().replace(/\/+$/,''))) return 'blossom';
+      /* `blossom_url` is what /client/config publishes for this node's own media server -- which is
+       * how media.poster.place is reached at all, and the host the console error names. */
+      const ours=String((CFG&&CFG.blossom_url)||'').replace(/\/+$/,'');
+      if(ours && (base===ours || new URL(base).host===new URL(ours).host)) return 'blossom';
+    }catch(_){ }
     try{ const r=await fetch(base+'/.well-known/nostr/nip96.json'); if(r.ok && await r.json().catch(()=>null)) return 'nip96'; }catch(_){}
     return /(^|\.)nostr\.build$/i.test((()=>{try{return new URL(base).hostname;}catch(_){return '';}})())?'nip96':'blossom';
   }

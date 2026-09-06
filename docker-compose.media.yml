@@ -1,0 +1,18 @@
+# Optional read-only NAS media mount; layer onto the main compose file.
+# POSTERCHANAI_MEDIA_PATH=/mnt/media docker compose -f docker-compose.yml \
+#   -f docker-compose.media.yml --profile cuda up -d --build
+x-media: &media
+  volumes:
+    - type: bind
+      source: ${POSTERCHANAI_MEDIA_PATH:?Set POSTERCHANAI_MEDIA_PATH to an existing media folder}
+      target: /var/lib/posterchanai/media
+      read_only: true
+      bind:
+        create_host_path: false
+
+services:
+  cpu: *media
+  nostr: *media
+  cuda: *media
+  rocm: *media
+  intel: *media

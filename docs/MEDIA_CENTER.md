@@ -11,6 +11,11 @@ Authorized ordinary users can browse and play, but cannot scan, change sharing o
 or see server folder paths and sharing controls. Shared users sign in on the
 hosting Posterchan instance. No social messages or invitations are sent automatically.
 
+Opening a library shows its server folders immediately, without waiting for media probing.
+Select folder cards and use the breadcrumb buttons to go back; search finds scanned titles
+throughout the library. Scanning runs in the background and playable titles appear as they
+are discovered. Refreshing scan results preserves the current folder and active player.
+
 The source files stay on disk. Catalog pages, library ownership, sharing lists and limits
 are NIP-44-encrypted, operator-signed kind-30078 events under `pcai:media-center:` in the
 local relay. This namespace is excluded from public federation, disaster-recovery config

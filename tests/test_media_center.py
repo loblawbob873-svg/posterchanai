@@ -586,3 +586,25 @@ def test_discovered_media_is_playable_before_scan_finishes(api, monkeypatch):
         assert docs['library:abc']['playback_secret'] == secret
         assert (await routes.items('abc', user))['items'][0]['id'] == 'early'
     asyncio.run(exercise())
+
+
+def test_folder_navigation_before_scan_and_access_boundaries(api):
+    client, docs, user, root = api
+    seed(docs, root)
+    docs['page:abc:1:0'] = []
+    for name in ('Season 10', 'Season 2', '.hidden'):
+        (root / name).mkdir()
+    (root / 'Season 2' / 'Episodes').mkdir()
+    (root / 'linked').symlink_to(root / 'Season 2', target_is_directory=True)
+    response = client.get('/api/media-center/abc/folders')
+    assert response.status_code == 200
+    assert response.json() == {'path': '.', 'folders': [
+        {'name': 'Season 2', 'path': 'Season 2'}, {'name': 'Season 10', 'path': 'Season 10'}]}
+    assert 'no-store' in response.headers['cache-control']
+    user.nostr_npub = VIEWER
+    assert client.get('/api/media-center/abc/folders', params={'path':'Season 2'}).json()['folders'] == [
+        {'name':'Episodes', 'path':'Season 2/Episodes'}]
+    for path in ('..', '/tmp', 'Season 2/../../', 'linked', 'missing'):
+        assert client.get('/api/media-center/abc/folders', params={'path':path}).status_code == 400
+    docs['library:abc']['shared_with'] = []
+    assert client.get('/api/media-center/abc/folders').status_code == 404
