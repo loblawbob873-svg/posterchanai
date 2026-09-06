@@ -24,8 +24,9 @@ cannot replace a run on those devices.
 
 | Area | Current behavior / next work |
 | --- | --- |
+| TV playback crash | The reported TV crash occurs after PlaybackInfo returns 200 and before any HLS request reaches the server. It remains unconfirmed without the device error/stack trace; do not describe it as fixed. |
 | Physical devices | Test installed Android phone and TV APKs: connect, browse, start video, seek forward/back, switch audio, text/PGS subtitles, fullscreen, background/return and disconnect. The browser test proves HLS playback, not Android ExoPlayer behavior. |
-| Library presentation | Jellyfin views expose each shared/owned library as a home-video collection. Items have folder-prefixed names; the API does not yet expose the native Media Center folder hierarchy or library folder artwork. |
+| Library presentation | Jellyfin views expose each shared/owned library as a home-video collection, with nested folder DTOs, natural folder sorting, clean video names and private folder.png artwork. Android Back moves up one folder. TV image loaders that omit authentication may still fail to load private artwork; access checks remain enforced. |
 | Watch history | Progress keeps playback sessions alive but does not persist watch position or played state. Resume returns an empty collection. Continue Watching, mark played/unplayed and favorites need encrypted per-user state and ACL checks. |
 | Saved preferences | User/display preferences have valid default DTOs, but changes are not persisted. TV `DisplayPreferencesStore` attempts a POST when settings change. Add bounded encrypted preferences before claiming settings survive on native clients. |
 | Advanced playback | Device profiles are not fully negotiated; the adapter supplies H.264/AAC HLS within configured caps. Chapters, intro/credits segments, special features and multi-part items are not modeled. |

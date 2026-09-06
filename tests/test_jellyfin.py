@@ -512,7 +512,8 @@ def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monke
     chrome = shutil.which('google-chrome') or shutil.which('chromium') or '/opt/google/chrome/chrome'
     if not Path(chrome).exists() or not shutil.which('ffmpeg'):
         pytest.skip('Chrome and FFmpeg required for Android host browser test')
-    source = tmp_path / 'movie.mp4'
+    source = tmp_path / 'Anime' / 'Season 2' / 'movie.mp4'
+    source.parent.mkdir(parents=True)
     subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=24',
                     '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '13', '-c:v', 'libx264',
                     '-threads', '1', '-c:a', 'aac', str(source)], check=True, timeout=20)
@@ -569,7 +570,15 @@ def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monke
                 assert await browser.js("!!JSON.parse(localStorage.jellyfin_credentials).Servers[0].AccessToken")
                 assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
                 await browser.js("document.querySelector('.card').click()", True)
-                await browser.until("document.querySelector('#heading').textContent==='Movies' && document.querySelector('.card')?.textContent.includes('movie')")
+                await browser.until("document.querySelector('#heading').textContent==='Movies' && document.querySelector('.card')?.textContent.includes('Anime')")
+                await browser.js("document.querySelector('.card').click()", True)
+                await browser.until("document.querySelector('#heading').textContent==='Anime' && document.querySelector('.card')?.textContent.includes('Season 2')")
+                await browser.js("document.querySelector('.card').click()", True)
+                await browser.until("document.querySelector('#heading').textContent==='Season 2' && document.querySelector('.card')?.textContent==='movie'")
+                await browser.js("document.querySelector('#back').click()", True)
+                await browser.until("document.querySelector('#heading').textContent==='Anime' && document.querySelector('.card')?.textContent.includes('Season 2')")
+                await browser.js("document.querySelector('.card').click()", True)
+                await browser.until("document.querySelector('#heading').textContent==='Season 2' && document.querySelector('.card')?.textContent==='movie'")
                 await browser.js("document.querySelector('.card').click()", True)
                 await browser.until("document.querySelector('video').currentTime>1")
                 assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
@@ -606,7 +615,8 @@ def test_android_tv_accepts_file_source_and_can_release_transcode(api):
     assert api.client.delete(url, headers=headers(first)).status_code == 204
 
 
-def test_folder_hierarchy_artwork_search_and_acl(api, tmp_path):
+def test_folder_hierarchy_artwork_search_and_acl(api, tmp_path, monkeypatch):
+    monkeypatch.setenv('POSTERCHANAI_MEDIA_ROOTS', str(tmp_path))
     from PIL import Image
     entries = api.catalog['page:movies']
     entries[0]['folder'] = 'Anime/Season 2'
