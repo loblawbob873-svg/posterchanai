@@ -24,6 +24,7 @@ from app.models import User, VerificationToken
 from app.routers import auth, chat, admin, tts, stt, openai_api, image_api, media_api, news, mail, torrent, storage, files, music_api, video_api, voice_api, effects_api, search_api
 from app.auth import NATIVE_APP_ORIGINS as _NATIVE_ORIGINS
 from app.routers import youtube_thumb, bots, push, calls, streams, rss, markets, websearch, weather, ssh_term, mempool, monero_wallet, monero_user_wallet
+from app.routers import exodus_wallet
 from app.routers import code as code_router      # PosterChan Code: /api/code/* (editor tree, read/write, beautify)
 from app.routers import office as office_router  # built-in CODE + WOPI document editing
 from app.routers import sharelink as sharelink_router   # /f/<sha> — a shared encrypted file, decrypted in the recipient's browser
@@ -267,6 +268,7 @@ app.include_router(monero_wallet.router, prefix="/api/wallet/monero")
 # THE USER'S OWN Monero wallet — a different router, a different daemon, a different port.
 # Everything here is scoped to the caller's own key; nothing in it can reach the operator's wallet.
 app.include_router(monero_user_wallet.router, prefix="/api/wallet/xmr/me")
+app.include_router(exodus_wallet.router)
 app.include_router(ssh_term.router)
 app.include_router(ssh_term.ws_router)   # /ws/ssh — the PTY socket
 app.include_router(youtube_thumb.router)

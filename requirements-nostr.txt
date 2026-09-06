@@ -84,3 +84,19 @@ a2wsgi>=1.10
 # and `ssh_service.available()` degrades to "this node has no SSH library installed" rather than
 # erroring, so leaving it out means the feature is silently missing instead of loudly absent.
 paramiko>=3.4
+# bip_utils: BIP-39/32/44 for the multi-chain wallet (Discover → Exodus Wallet). NOT optional for
+# that feature and deliberately not hand-rolled: the alternative is writing BIP-39, BIP-32,
+# secp256k1 point arithmetic, ripemd160, keccak256, bech32 and base58check ourselves, and then the
+# part that moves money. This is a maintained implementation with published test vectors, and
+# tests/test_exodus_wallet.py asserts our derivation against the canonical BIP-44 addresses. The
+# wallet endpoints refuse with a sentence when it is absent; nothing else in the app imports it.
+#
+# PACKAGING, MEASURED against Python 3.13 (what scripts/install/setup.sh pins) rather than assumed.
+# bip_utils itself is pure Python but pulls nine transitive deps, and they are not all alike:
+# py-sr25519-bindings, ed25519-blake2b-fork and cbor2 publish cp313 wheels; pynacl and pycryptodome
+# publish abi3; ecdsa and pytoniq-core-fork are pure. The one exception is `crcmod`, which publishes
+# NO wheel and compiles a small C extension — the only dep here that wants a toolchain. Both the
+# Dockerfile and scripts/install/setup.sh install from this file (and requirements-nostr.txt for a
+# nostr-only build), so neither needed editing for this feature; check crcmod first if a slim image
+# without build tools ever fails here.
+bip_utils>=2.9.3

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table, BigInteger
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table, BigInteger, LargeBinary
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -634,3 +634,35 @@ class DirectPushMessage(Base):
     payload = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)
+
+class ExodusWallet(Base):
+    """One BIP-39 seed per account, for the multi-chain wallet (Discover → Exodus Wallet).
+
+    A ROW, NOT A REPLACEABLE RELAY DOC, and this is the one place in the app that breaks that
+    pattern on purpose. Every other private thing here is a kind-30078 document, and a replaceable
+    document is REPLACED by whatever is written next: this codebase has recorded the same accident
+    more than once, where an unreachable relay answers an empty read and the empty read is written
+    back. For a mute list that costs a re-follow. For a wallet seed it costs every coin behind it,
+    permanently, with nothing able to reconstruct it.
+
+    `seed_enc` is AES-GCM ciphertext (nonce ‖ ct ‖ tag). The key is derived from the account's
+    storage key, which lives in the keystore FILE and not in this database — so a stolen dump of
+    this table decrypts to nothing. See app/services/exodus_wallet_service.py.
+
+    `label` is the person's own name for the wallet. `address_index` is which BIP-44 address index
+    is currently shown for receiving; it is stored so that rotating a receive address survives a
+    restart, and so two devices agree about which address was published.
+    """
+    __tablename__ = "exodus_wallets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, unique=True, index=True)
+    seed_enc = Column(LargeBinary, nullable=False)
+    label = Column(String(80), nullable=True)
+    address_index = Column(Integer, nullable=False, default=0)
+    # Set the first time the person confirms they have written the phrase down. Until then the app
+    # keeps offering to show it: a seed nobody has backed up is one node failure from gone, and
+    # "did you write it down?" is not a question the app can infer.
+    backed_up_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
