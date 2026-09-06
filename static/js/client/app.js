@@ -4768,6 +4768,7 @@
     loadThemeFromServer();   // apply the user's Nostr-stored theme on login (best-effort; cache already painted)
     IS_ADMIN = Array.isArray(CFG.admin_npubs) && CFG.admin_npubs.includes(ME.npub);
     applyTermGate();
+    applyMediaGate();refreshMediaGate();
     // Admin now lives inside User Settings (admins only) — it was moved out of the sidebar nav to save room.
     // Warm the admin session only. We DON'T preload the hidden admin iframe anymore: /admin extends
     // base.html, whose script unregisters ALL service workers for the origin — including THIS PWA's —
@@ -9311,7 +9312,21 @@
     const ticket=new URL(url,_instanceBase()||location.origin).searchParams.get('ticket');
     return _mediaCenterFetch('/api/media-center/sessions/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket})}).catch(()=>{});
   }
+  let _mediaCenterSaveProgress=null;
+  function mediaResumePosition(name, seconds){
+    if(!(seconds>0))return Promise.resolve(0);
+    const at=Math.floor(seconds),label=[Math.floor(at/3600),Math.floor(at/60)%60,at%60].map(value=>String(value).padStart(2,'0')).join(':');
+    const dialog=document.createElement('dialog');dialog.className='mc-resume-dialog';
+    dialog.innerHTML='<form method="dialog"><h3>'+enc(name)+'</h3><p>Resume at '+label+'?</p><div class="mc-player-toolbar"><button class="btn btn-neon" value="resume">Resume</button><button class="btn btn-ghost" value="start">Start from beginning</button><button class="btn btn-ghost" value="cancel">Cancel</button></div></form>';
+    document.body.append(dialog);dialog.returnValue='cancel';
+    return new Promise(resolve=>{
+      let settled=false;const finish=value=>{if(settled)return;settled=true;dialog.close();dialog.remove();resolve(value==='resume'?seconds:value==='start'?0:null);};
+      dialog.querySelectorAll('button').forEach(button=>button.onclick=event=>{event.preventDefault();finish(button.value);});
+      dialog.oncancel=event=>{event.preventDefault();finish('cancel');};dialog.onclose=()=>finish(dialog.returnValue);dialog.showModal();
+    });
+  }
   function stopMediaCenter(clearArt=true){
+    if(_mediaCenterSaveProgress){_mediaCenterSaveProgress();_mediaCenterSaveProgress=null;}
     if(_mediaCenterSubtitleUrl){URL.revokeObjectURL(_mediaCenterSubtitleUrl);_mediaCenterSubtitleUrl=null;}
     document.querySelectorAll('#mc-player track').forEach(track=>track.remove());
     _mediaCenterPlayGeneration++;
@@ -9319,7 +9334,7 @@
     if(clearArt){_mediaCenterFolderCleanup();clearTimeout(_mediaCenterPollTimer);_mediaCenterPollTimer=null;clearMediaCenterArt();}
     if(_mediaCenterHls){ _mediaCenterHls.destroy(); _mediaCenterHls=null; }
     const video=document.getElementById('mc-player');
-    if(video){ video.pause(); video.removeAttribute('src'); video.load(); }
+    if(video){video.onpause=null;video.ontimeupdate=null;video.onended=null; video.pause(); video.removeAttribute('src'); video.load(); }
     return releaseMediaCenterSession(session);
   }
   async function renderMediaCenter(openLibraryId=null){
@@ -9328,7 +9343,7 @@
     const feed=$('#feed');
     feed.innerHTML='<div class="empty" id="mc-loading" role="status">Loading Media Center…</div>';
     const api=async(path='',method='GET',body)=>{
-      const r=await _mediaCenterFetch('/api/media-center'+path,{method,headers:{'Content-Type':'application/json'},
+      const r=await _mediaCenterFetch('/api/media-center'+path,{method,keepalive:path.includes('/progress/'),headers:{'Content-Type':'application/json'},
         ...(body===undefined?{}:{body:JSON.stringify(body)})});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(typeof e.detail==='string'?e.detail:'Media Center request failed');}
       return r.json();
@@ -9361,6 +9376,7 @@
           <form id="mc-jellyfin-approve"><label>Code shown in your app <input name="code" inputmode="numeric" autocomplete="off" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="123456"></label>
             <p><button type="submit" class="btn btn-neon">Connect this app</button></p></form>
           <p class="muted">Only approve a code displayed by an app you are connecting. It gets access to your shared Media Center libraries.</p>
+          <h4>Connected Jellyfin devices</h4><div id="mc-jellyfin-devices" role="status">Loading devices…</div><button id="mc-jellyfin-refresh" type="button" class="btn btn-ghost">Refresh devices</button>
           <button id="mc-jellyfin-revoke" type="button" class="btn btn-ghost">Disconnect all apps</button>
         </div></details>
         </div><p id="mc-status" class="mc-status muted" role="status"></p><div id="mc-libraries" class="mc-libraries"></div>
@@ -9398,14 +9414,30 @@
       };
       const act=async(button,fn)=>{button.disabled=true;status.textContent='Working…';try{await fn();status.textContent='';}catch(e){status.textContent=e.message;}finally{button.disabled=false;}};
       $('#mc-jellyfin-server').textContent=(_instanceBase()||location.origin).replace(/\/$/,'')+'/jellyfin';
+      const loadDevices=async()=>{
+        const result=await api('/jellyfin-account');const list=$('#mc-jellyfin-devices');
+        if(!list||renderGeneration!==_mediaCenterRenderGeneration)return;
+        list.replaceChildren();
+        if(!result.devices?.length){list.textContent='No connected devices.';return;}
+        for(const device of result.devices){
+          const row=document.createElement('div');row.className='mc-device-row';
+          const info=document.createElement('div'),name=document.createElement('strong'),detail=document.createElement('small');
+          name.textContent=device.name;detail.textContent=[device.client,device.version,device.created?'Connected '+new Date(device.created*1000).toLocaleDateString():''].filter(Boolean).join(' · ');
+          info.append(name,detail);const revoke=document.createElement('button');revoke.className='btn btn-ghost';revoke.textContent='Revoke';
+          revoke.onclick=()=>act(revoke,async()=>{const response=await _mediaCenterFetch('/api/media-center/jellyfin-account/devices/'+encodeURIComponent(device.id),{method:'DELETE'});if(!response.ok)throw new Error('Unable to revoke device');await loadDevices();});
+          row.append(info,revoke);list.append(row);
+        }
+      };
+      $('#mc-jellyfin-refresh').onclick=e=>act(e.currentTarget,loadDevices);
+      loadDevices().catch(error=>{const list=$('#mc-jellyfin-devices');if(list)list.textContent=error.message;});
       $('#mc-jellyfin-approve').onsubmit=e=>{e.preventDefault();const form=e.currentTarget;act(form.querySelector('button'),async()=>{
         await api('/jellyfin-account/authorize','POST',{code:form.elements.code.value});
-        form.reset();toast('Jellyfin app approved. Return to the app to finish connecting.');
+        await loadDevices();form.reset();toast('Jellyfin app approved. Return to the app to finish connecting.');
       });};
       $('#mc-jellyfin-revoke').onclick=e=>act(e.currentTarget,async()=>{
         const response=await _mediaCenterFetch('/api/media-center/jellyfin-account',{method:'DELETE'});
         if(!response.ok)throw new Error('Could not disconnect Jellyfin apps');
-        toast('All Jellyfin apps disconnected.');
+        await loadDevices();toast('All Jellyfin apps disconnected.');
       });
       const rootsNote=$('#mc-roots');
       if(rootsNote){
@@ -9594,12 +9626,24 @@
             const play=card.querySelector('button');
             card.querySelector('.xdc-cover').onclick=()=>play.click();
             play.onclick=()=>act(play,async()=>{
+              const resumeAt=await mediaResumePosition(item.name,item.progress?.position||0);if(resumeAt===null)return;
               await stopMediaCenter(false);const playGeneration=_mediaCenterPlayGeneration;
               const session=await api('/'+lib.id+'/play/'+item.id,'POST');
               if(VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration){await releaseMediaCenterSession(session.url);return;}
               _mediaCenterSession=session.url;
               $('#mc-playback').hidden=false;$('#mc-playback').scrollIntoView({block:'nearest',behavior:'smooth'});$('#mc-playing').textContent=item.name;
               const video=$('#mc-player'),quality=$('#mc-quality');quality.value='auto';
+              let lastProgress=0;
+              const savePosition=()=>{
+                if(video.readyState<1)return;
+                lastProgress=Date.now();const position=video.currentTime;item.progress={position};
+                api('/'+lib.id+'/progress/'+item.id,'POST',{position}).then(saved=>{item.progress=saved;}).catch(()=>{});
+              };
+              _mediaCenterSaveProgress=savePosition;
+              video.ontimeupdate=()=>{if(Date.now()-lastProgress>=15000)savePosition();};
+              video.onpause=savePosition;video.onended=savePosition;
+              video.addEventListener('loadedmetadata',()=>{if(resumeAt>0)video.currentTime=resumeAt;},{once:true});
+              await api('/'+lib.id+'/progress/'+item.id,'POST',{position:resumeAt});
               let source=new URL(session.url,_instanceBase()||location.origin).href;
               const audio=$('#mc-audio'),subtitles=$('#mc-subtitles');
               audio.replaceChildren(new Option('Default','-1'));subtitles.replaceChildren(new Option('Off','-1'));
@@ -15274,6 +15318,7 @@
   };
   // mobile overflow sheet — holds the secondary views so the bottom bar stays uncluttered
   function moreMenu(){
+    refreshMediaGate();
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
     const counts={drafts:dn, mail:(Number(Mail && Mail.unread)||0)};
     const _navOffKeys=navHiddenSet();
@@ -15294,6 +15339,7 @@
                    // one screen built specifically FOR a phone (the ctrl/esc/arrows key bar), so
                    // shipping it unreachable on one would have been the whole point missed.
                    && !(window.PC_NOSTR_ONLY && v==='terminal')    // SSH runs on the instance
+                   && !(v==='media-center' && !_mediaAllowed())
                    && !(v==='terminal' && !_termAllowed())        // …and only for admins/the allowlist
                    && !(window.PC_NOSTR_ONLY && v==='mail')        // …and so does IMAP/SMTP
                    && !(_viewNeedsInstance(v))                     // server-less bundle: nothing behind it
@@ -28570,6 +28616,19 @@
    * Admins gate at BOOT (public config names them); an allowlisted non-admin is revealed when the
    * session answers can_ssh. `.gated-off` is its own class: `hidden` belongs to instance gating
    * and NAV_OFF to the user's sidebar choices, and borrowing either means fighting its owner. */
+  function _mediaAllowed(){return !GUEST && (IS_ADMIN || !!(_aiAuth && (_aiAuth.is_admin || _aiAuth.can_media)));}
+  function applyMediaGate(){
+    $$('.nav-item[data-view="media-center"]').forEach(button=>button.classList.toggle('media-allowed',_mediaAllowed()));
+  }
+  async function refreshMediaGate(){
+    applyMediaGate();if(GUEST||_standalone())return;
+    try{
+      const headers=_aiToken?{'Authorization':'Bearer '+_aiToken}:{};
+      const response=await fetch('/api/auth/me',{headers,cache:'no-store',signal:AbortSignal.timeout(10000)});
+      if(response.ok){const user=await response.json();_aiAuth={...(_aiAuth||{}),can_media:!!user.can_media,is_admin:!!user.is_admin};}
+      else if(response.status===401){if(_aiAuth)_aiAuth.can_media=false;ensureAiSession().then(applyMediaGate).catch(()=>{});}
+    }catch(_){}applyMediaGate();
+  }
   function _termAllowed(){ return IS_ADMIN || !!(_aiAuth && _aiAuth.can_ssh); }
   function applyTermGate(){
     try{
@@ -28630,7 +28689,7 @@
         let r=null; try{ r=await response.json(); }catch(_){}
         if(!response.ok) throw new Error((r && (r.detail || r.error)) || ('login returned HTTP '+response.status));
         if(r && r.access_token) _setAiToken(r.access_token);
-        if(r && r.user){ _aiAuth = r.user; try{ applyTermGate(); }catch(_){} return _aiAuth; }   // cache only a GOOD session
+        if(r && r.user){ _aiAuth = r.user; try{ applyTermGate();applyMediaGate(); }catch(_){} return _aiAuth; }   // cache only a GOOD session
         throw new Error('login response did not contain a credential');
       }catch(e){
         const why=(e&&e.message)||String(e||'unknown error');

@@ -63,7 +63,7 @@ class Browser:
                 return
             await asyncio.sleep(.1)
         raise AssertionError({"waiting_for": expression, "player": await self.js(
-            "({status:document.querySelector('#mc-status')?.textContent,time:document.querySelector('video')?.currentTime,error:document.querySelector('video')?.error?.message})")})
+            "({status:document.querySelector('#mc-status')?.textContent,time:document.querySelector('video')?.currentTime,error:document.querySelector('video')?.error?.message,dialog:document.querySelector('dialog')?.outerHTML})")})
 
     async def screenshot(self, name):
         result = await self.call("Page.captureScreenshot", {"format": "png"})
@@ -140,7 +140,7 @@ async def main():
         app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
         def user(request: Request):
             key = request.headers.get("X-Test-Viewer") or request.query_params.get("viewer") or OWNER
-            return SimpleNamespace(nostr_npub=key, is_admin=key == OWNER, can_media=True)
+            return SimpleNamespace(nostr_npub=key, username='fixture-'+key[:8], is_admin=key == OWNER, can_media=True)
         app.dependency_overrides[routes.media_user_optional] = user
         javascript = (ROOT / "static/js/client/app.js").read_text()
         functions = javascript[javascript.index("  let _mediaCenterLibraryTab="):javascript.index("  // ---------- torrents (NIP-35")]
@@ -210,6 +210,17 @@ async def main():
                         await browser.until("window.lastToast?.startsWith('Jellyfin app approved')")
                         approved = await client.get('http://127.0.0.1:19438/jellyfin/QuickConnect/Connect', params={'Secret': pending['Secret']})
                         assert approved.json()['Authenticated'] is True
+                        import time
+                        device_key = jellyfin.account_key(jellyfin.account_id(SimpleNamespace(nostr_npub=OWNER)))
+                        documents[device_key] = {'pubkey':OWNER, 'sessions':[{'id':'d'*32, 'hash':'fixture-only',
+                            'expires':int(time.time())+3600, 'created':int(time.time()),
+                            'device':'Living room TV', 'client':'Jellyfin Android TV', 'version':'test'}]}
+                        await browser.js("document.querySelector('#mc-jellyfin-refresh').click()", gesture=True)
+                        await browser.until("document.querySelector('.mc-device-row')?.textContent.includes('Living room TV')")
+                        await browser.js("document.querySelector('.mc-device-row button').click()", gesture=True)
+                        await browser.until("document.querySelector('#mc-jellyfin-devices')?.textContent==='No connected devices.'")
+                        assert documents[device_key]['sessions'] == []
+
                         assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
                         await browser.js("document.querySelector('#mc-jellyfin-revoke').click()", gesture=True)
                         await browser.until("window.lastToast==='All Jellyfin apps disconnected.'")
@@ -220,7 +231,7 @@ async def main():
                         await browser.until("document.querySelector('.mc-tile img')?.complete")
                         if name=='phone':
                             assert (await client.get('http://127.0.0.1:19438/api/media-center/test/scan')).json()['state']=='running'
-                            await browser.js("window.scanFirstCard=document.querySelector('.mc-tile');window.scanFirstImage=scanFirstCard.querySelector('img');document.querySelector('.mc-tile button').click()",gesture=True)
+                            await browser.js("window.scanFirstCard=document.querySelector('.mc-tile');window.scanFirstImage=scanFirstCard.querySelector('img');document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)",gesture=True)
                             await browser.until("document.querySelector('video').currentTime>1")
                             scan_release.set()
                             await browser.until("document.querySelectorAll('.mc-tile').length===2")
@@ -236,7 +247,7 @@ async def main():
                         assert await browser.js("document.querySelectorAll('.mc-tile:not([hidden])').length") == 1
                         await browser.js("document.querySelector('#mc-search').value='';document.querySelector('#mc-search').oninput()")
                         await browser.screenshot(name + ".png")
-                        await browser.js("document.querySelector('.mc-tile button').onclick()", True)
+                        await browser.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True)
                         await browser.until("document.querySelector('video')?.currentTime>1")
                         assert await browser.js("document.querySelector('video').videoWidth") == 320
                         await browser.js("document.querySelector('#mc-subtitles option:last-child').textContent='English (SDH) (Dub) · Full dialogue and translated signs · Subtitle track'")
@@ -270,8 +281,8 @@ async def main():
                         await second.js("document.querySelector('.mc-directory').click()", True)
                         await second.until("document.querySelectorAll('.mc-folder-trail button').length===2")
                         print('PASS: shared viewer opens Shared with me, browses folders, and has no admin controls', flush=True)
-                        await asyncio.gather(browser.js("document.querySelector('.mc-tile button').onclick()", True),
-                                             second.js("document.querySelector('.mc-tile button').onclick()", True))
+                        await asyncio.gather(browser.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True),
+                                             second.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True))
                         await asyncio.gather(browser.until("document.querySelector('video').currentTime>2"),
                                              second.until("document.querySelector('video').currentTime>2"))
                         assert len(media._sessions) == 2, media._sessions

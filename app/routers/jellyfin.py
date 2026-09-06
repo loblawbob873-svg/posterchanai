@@ -124,8 +124,25 @@ async def authenticate(request: Request, db=Depends(get_db)):
 @account_router.get('')
 async def account_status(user=Depends(native.get_media_user)):
     record = await media.read(account_key(account_id(user))) or {}
+    devices = [{'id': session['id'], 'name': session.get('device', 'Jellyfin app'),
+                'client': session.get('client', 'Jellyfin'), 'version': session.get('version', ''),
+                'created': session.get('created'), 'expires': session['expires']}
+               for session in record.get('sessions', []) if session['expires'] > time.time()]
     return {'enabled': True, 'username': user.username,
-            'server_path': '/jellyfin', 'sessions': sum(s['expires'] > time.time() for s in record.get('sessions', []))}
+            'server_path': '/jellyfin', 'sessions': len(devices), 'devices': devices}
+
+
+@account_router.delete('/devices/{device_id}', status_code=204)
+async def revoke_device(device_id: str, user=Depends(native.get_media_user)):
+    async with _account_lock:
+        key = account_key(account_id(user))
+        record = await media.read(key) or {}
+        sessions = record.get('sessions', [])
+        if not any(session['id'] == device_id for session in sessions):
+            raise HTTPException(404, 'Connected device not found')
+        record['sessions'] = [session for session in sessions if session['id'] != device_id]
+        await media.write(key, record)
+    return Response(status_code=204)
 
 
 @account_router.delete('', status_code=204)
@@ -255,7 +272,7 @@ def quick_dto(entry, secret):
 
 
 @router.post('/QuickConnect/Initiate')
-async def initiate_quick():
+async def initiate_quick(request: Request):
     from datetime import datetime, timezone
     async with _account_lock:
         expire_quick()
@@ -266,7 +283,11 @@ async def initiate_quick():
         code = f'{secrets.randbelow(1000000):06d}'
         while code in used:
             code = f'{secrets.randbelow(1000000):06d}'
-        entry = {'code': code, 'created': time.monotonic(),
+        header = request.headers.get('X-Emby-Authorization') or request.headers.get('Authorization', '')
+        fields = {key.lower(): re.sub(r'[\x00-\x1f\x7f]', '', value)[:100]
+                  for key, value in re.findall(r'(Client|Device|Version)\s*=\s*"([^"\r\n]*)"', header, re.I)}
+        entry = {'client': fields.get('client', 'Jellyfin'), 'device': fields.get('device', 'Jellyfin app'),
+                 'version': fields.get('version', ''), 'code': code, 'created': time.monotonic(),
                  'date': datetime.now(timezone.utc).isoformat()}
         _quick[digest(secret)] = entry
     return quick_dto(entry, secret)
@@ -339,7 +360,9 @@ async def redeem_quick(body: QuickSecret, db=Depends(get_db)):
         uid = account_id(user)
         record = await media.read(account_key(uid)) or {'pubkey': media.identity(user)}
         token = uid + '.' + secrets.token_urlsafe(32)
-        session = {'id': secrets.token_hex(16), 'hash': digest(token), 'expires': int(time.time()) + TOKEN_AGE}
+        session = {'id': secrets.token_hex(16), 'hash': digest(token), 'expires': int(time.time()) + TOKEN_AGE,
+                   'created': int(time.time()), 'device': entry.get('device', 'Jellyfin app'),
+                   'client': entry.get('client', 'Jellyfin'), 'version': entry.get('version', '')}
         record['pubkey'] = media.identity(user)
         record['sessions'] = [s for s in record.get('sessions', []) if s['expires'] > time.time()][-15:] + [session]
         await media.write(account_key(uid), record)
@@ -392,6 +415,8 @@ async def media_call(request, auth, db, path='', method='GET', body=None):
         return await native.items(parts[0], auth.user)
     if len(parts) == 3 and parts[1] == 'art':
         return await native.artwork(parts[0], parts[2], auth.user)
+    if len(parts) == 3 and parts[1] == 'progress':
+        return await native.save_playback_progress(parts[0], parts[2], native.PlaybackProgress(**body), auth.user)
     if len(parts) == 3 and parts[1] == 'tracks':
         return await native.tracks(parts[0], parts[2], auth.user)
     if len(parts) == 3 and parts[1] == 'play':
@@ -457,13 +482,17 @@ def item_dto(lib, item):
     folder = item.get('folder', '.')
     name = item['name']
     video = item.get('video', True)
+    saved = item.get('progress', {})
     return {'Id': uid, 'ServerId': SERVER_ID, 'Name': name, 'SortName': name,
             'ParentId': folder_id(lib, folder), 'Type': 'Video' if video else 'Audio',
             'MediaType': 'Video' if video else 'Audio', 'IsFolder': False,
             'RunTimeTicks': int(item['duration'] * 10000000), 'CanDownload': False, 'CanDelete': False,
             'PlayAccess': 'Full', 'LocationType': 'FileSystem', 'VideoType': 'VideoFile',
             'ImageTags': {'Primary': digest(str(item))[:32]}, 'MediaSources': [],
-            'UserData': {'PlaybackPositionTicks': 0, 'PlayCount': 0, 'IsFavorite': False, 'Played': False,
+            'UserData': {'PlaybackPositionTicks': int(saved.get('position', 0) * 10000000),
+                         'PlayCount': int(saved.get('played', False)), 'IsFavorite': False,
+                         'Played': saved.get('played', False),
+                         'LastPlayedDate': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(saved.get('updated', 0))),
                          'Key': uid, 'ItemId': uid}}
 
 
@@ -559,8 +588,19 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
 @router.get('/UserItems/Resume')
 @router.get('/Items/Resume')
 @router.get('/Users/{user_id}/Items/Resume')
-async def resume(auth=Depends(authenticate)):
-    return envelope([])  # Watch history is not implemented by Media Center yet.
+async def resume(request: Request, auth=Depends(authenticate), db=Depends(get_db)):
+    result = []
+    for lib in await libraries(request, auth, db):
+        for item in (await media_call(request, auth, db, '/' + lib['id'] + '/items'))['items']:
+            if item.get('progress', {}).get('position', 0) > 0:
+                result.append((item['progress']['updated'], item_dto(lib, item)))
+    result.sort(key=lambda entry: entry[0], reverse=True)
+    try:
+        start = max(0, int(query(request, 'StartIndex', '0')))
+        limit = min(200, max(0, int(query(request, 'Limit', '100'))))
+    except ValueError:
+        raise HTTPException(400, 'Invalid pagination')
+    return envelope([entry[1] for entry in result[start:start + limit]], start, len(result))
 
 
 @router.get('/Items/{uid}')
@@ -623,7 +663,7 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
                                         'subtitle': subtitle_index if selected_subtitle and not selected_subtitle['text'] else -1})
     play_id = secrets.token_hex(16)
     _plays[play_id] = {'token': digest(auth.token), 'item': uid, 'url': playback['url'],
-                       'seen': time.monotonic(), 'profiles': profiles,
+                       'seen': time.monotonic(), 'profiles': profiles, 'library_id': lib['id'], 'native_id': item['id'],
                        'audio_indices': [t['index'] for t in tracks if t['type'] == 'audio'],
                        'subtitle_indices': [t['index'] for t in tracks if t['type'] == 'subtitle'],
                        'text_indices': [t['index'] for t in tracks if t['type'] == 'subtitle' and t['text']]}
@@ -719,10 +759,24 @@ async def subtitles(uid: str, source_id: str, index: int, request: Request,
     return await media_call(request, auth, db, path)
 
 
+async def persist_progress(request, auth, db, record, body):
+    ticks = body_value(body, 'PositionTicks')
+    if ticks is None:
+        return
+    try:
+        position = float(ticks) / 10000000
+        native.PlaybackProgress(position=position)
+    except (TypeError, ValueError):
+        raise HTTPException(400, 'Invalid playback position')
+    await media_call(request, auth, db, f"/{record['library_id']}/progress/{record['native_id']}",
+                     'POST', {'position': position})
+
+
 @router.post('/Sessions/Playing', status_code=204)
 @router.post('/Sessions/Playing/Progress', status_code=204)
-async def progress(body: dict = Body(default={}), auth=Depends(authenticate)):
-    play_record(auth, body_value(body, 'PlaySessionId', ''))
+async def progress(request: Request, body: dict = Body(default={}), auth=Depends(authenticate), db=Depends(get_db)):
+    record = play_record(auth, body_value(body, 'PlaySessionId', ''))
+    await persist_progress(request, auth, db, record, body)
     return Response(status_code=204)
 
 
@@ -730,6 +784,7 @@ async def progress(body: dict = Body(default={}), auth=Depends(authenticate)):
 async def stopped(request: Request, body: dict = Body(default={}), auth=Depends(authenticate), db=Depends(get_db)):
     play_id = body_value(body, 'PlaySessionId', '')
     record = play_record(auth, play_id)
+    await persist_progress(request, auth, db, record, body)
     ticket = parse_qs(urlsplit(record['url']).query)['ticket'][0]
     await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
     _plays.pop(play_id, None)

@@ -10158,3 +10158,10 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 .mc-directory-label{display:block;padding:14px 16px 16px}.mc-directory-label b{display:block;font-size:16px;line-height:1.4;overflow-wrap:anywhere}.mc-directory-label small{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px;margin-top:7px}.mc-directory-label small>span{margin-left:auto;font-size:20px}.mc-directory-label .ic{width:15px;height:15px;color:var(--neon)}
 @media(max-width:600px){.mc-directory-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.mc-directory-art{aspect-ratio:4/3}.mc-directory-label{padding:11px}.mc-directory-label b{font-size:13px}.mc-directory-label small{font-size:10px}.mc-directory-initial{font-size:40px}}
 @media(prefers-reduced-motion:reduce){.mc-directory{transition:none}.mc-directory:hover{transform:none}}
+
+/* Media Center is opt-in; keep it hidden until the signed-in permission hydrates. */
+.nav-item[data-view="media-center"]:not(.media-allowed){display:none!important}
+
+.mc-resume-dialog{max-width:min(520px,calc(100vw - 32px));background:var(--bg,#10131c);color:var(--fg,#eef6ff);border:1px solid var(--line,#536078);border-radius:16px;padding:24px}.mc-resume-dialog::backdrop{background:#000a}
+
+.mc-device-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line,#334)}.mc-device-row>div{flex:1;min-width:0;overflow-wrap:anywhere}.mc-device-row small{display:block;color:var(--muted,#aab);margin-top:4px}

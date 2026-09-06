@@ -386,6 +386,30 @@ def scan(folder, previous=None, on_item=None):
     return items, skipped
 
 
+_progress_lock = asyncio.Lock()
+
+
+def progress_key(library_id, viewer):
+    return 'progress:' + library_id + ':' + hashlib.sha256(viewer.encode()).hexdigest()
+
+
+async def playback_history(library_id, viewer):
+    return await read(progress_key(library_id, viewer)) or {}
+
+
+async def save_progress(library_id, viewer, item_id, position, duration):
+    position = min(max(0.0, position), max(0.0, duration))
+    played = duration > 0 and position >= duration - min(30, duration * .05)
+    record = {'position': 0 if played else round(position, 3), 'played': played, 'updated': time.time()}
+    async with _progress_lock:
+        history = await playback_history(library_id, viewer)
+        history[item_id] = record
+        # One bounded encrypted document per viewer/library, independent of app tokens.
+        history = dict(sorted(history.items(), key=lambda entry: entry[1]['updated'], reverse=True)[:200])
+        await write(progress_key(library_id, viewer), history)
+    return record
+
+
 async def read(key):
     return await nostr_store.get_doc(settings_store._port(), NS + key,
                                     seckey=settings_store._operator_seckey(None), strict=True)

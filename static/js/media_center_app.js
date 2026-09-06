@@ -2,13 +2,19 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id), base = '/jellyfin/';
-  let account, pending, timer, generation=0, parent='', trail=[], offset=0, searchTimer, hls, play, item, audio=-1, subtitle=-1, playerGeneration=0, activeSource, subtitleAbort, subtitleBlob;
+  let account, pending, timer, generation=0, parent='', trail=[], offset=0, searchTimer, hls, play, item, audio=-1, subtitle=-1, playerGeneration=0, activeSource, subtitleAbort, subtitleBlob, progressTimer, lastProgress=0;
   try { account=JSON.parse(localStorage.getItem('pc_media_app')||'null'); } catch (_) {}
   const status = text => { $('status').textContent=text; };
   async function api(path, body, anonymous=false) {
     const headers={'Content-Type':'application/json'};
+    if(path==='QuickConnect/Initiate'){
+      let device={deviceName:'Android / browser',appName:'Posterchan Media Center',appVersion:'1'};
+      try{if(window.NativeInterface?.getDeviceInformation)device=JSON.parse(window.NativeInterface.getDeviceInformation());}catch(_){}
+      const clean=value=>String(value||'').replace(/["\x00-\x1f]/g,'').slice(0,100);
+      headers['X-Emby-Authorization']='MediaBrowser Client="'+clean(device.appName)+'", Device="'+clean(device.deviceName)+'", Version="'+clean(device.appVersion)+'"';
+    }
     if(account&&!anonymous) headers['X-Emby-Token']=account.AccessToken;
-    const response=await fetch(base+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000),cache:'no-store'});
+    const response=await fetch(base+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(30000),cache:'no-store',keepalive:path.startsWith('Sessions/Playing')});
     if(!response.ok) { const error=new Error(response.status===401?'Your app login expired. Connect again.':'Request failed ('+response.status+'). Try again.');error.status=response.status;throw error; }
     return response.status===204?null:response.json();
   }
@@ -60,11 +66,36 @@
         else {const art=document.createElement('div');art.className='art';art.textContent=entry.IsFolder?'▣':'▶';card.append(art);}
         const title=document.createElement('span');title.textContent=entry.Name;
         if(entry.IsFolder){const count=document.createElement('small');count.textContent=(entry.ChildCount||0)+' titles';title.append(count);}
-        card.append(title);card.onclick=()=>{if(entry.IsFolder){trail.push({id:parent,name:$('heading').textContent});parent=entry.Id;$('heading').textContent=entry.Name;browse();}else{item=entry;audio=-1;subtitle=-1;start(0);}};$('cards').append(card);
+        card.append(title);card.onclick=()=>{if(entry.IsFolder){trail.push({id:parent,name:$('heading').textContent});parent=entry.Id;$('heading').textContent=entry.Name;browse();}else{chooseVideo(entry);}};$('cards').append(card);
       }
       offset+=result.Items.length;$('more').hidden=offset>=result.TotalRecordCount;status(result.TotalRecordCount?result.TotalRecordCount+' available':'No media found.');
     } catch(error){if(current===generation)status(error.message);}
   }
+  function clockLabel(seconds) {
+    seconds=Math.floor(seconds);return (seconds>=3600?Math.floor(seconds/3600)+':':'')+String(Math.floor(seconds/60)%60).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
+  }
+  async function chooseVideo(entry) {
+    try {
+      const latest=await api('Items/'+entry.Id);
+      const position=(latest.UserData?.PlaybackPositionTicks||0)/10000000;
+      let chosen=0;
+      if(position>0) {
+        const dialog=$('resume-dialog');$('resume-time').textContent=clockLabel(position);$('resume-title').textContent=latest.Name;
+        chosen=await new Promise(resolve=>{
+          dialog.returnValue='cancel';dialog.onclose=()=>resolve(dialog.returnValue==='resume'?position:dialog.returnValue==='start'?0:null);dialog.showModal();
+        });
+        if(chosen===null)return;
+      }
+      item=latest;audio=-1;subtitle=-1;start(chosen);
+    } catch(error){status(error.message);}
+  }
+  function reportProgress() {
+    const video=document.querySelector('video');if(!play||video.readyState<1)return;
+    lastProgress=Date.now();
+    api('Sessions/Playing/Progress',{PlaySessionId:play.PlaySessionId,PositionTicks:Math.round(video.currentTime*10000000)}).catch(()=>{});
+  }
+  document.querySelector('video').addEventListener('pause',()=>{if(Date.now()-lastProgress>1000)reportProgress();});
+  document.querySelector('video').addEventListener('ended',reportProgress);
   function clearTextSubtitle() {
     if(subtitleAbort){subtitleAbort.abort();subtitleAbort=null;}
     document.querySelector('video').querySelectorAll('track').forEach(track=>track.remove());
@@ -82,7 +113,7 @@
       const text=await response.text();if(controller.signal.aborted)return;
       if(!text.startsWith('WEBVTT'))throw new Error('Invalid subtitle response.');
       subtitleBlob=URL.createObjectURL(new Blob([text],{type:'text/vtt'}));
-      const node=document.createElement('track');node.kind='subtitles';node.label=track.DisplayTitle||'Subtitles';node.srclang=track.Language||'en';node.src=subtitleBlob;node.default=true;
+      const node=document.createElement('track');node.kind='subtitles';node.label=track.DisplayTitle||'Subtitles';node.srclang=track.Language||'en';node.src=subtitleBlob, progressTimer, lastProgress=0;node.default=true;
       node.onload=()=>{if(!controller.signal.aborted&&node.isConnected){node.track.mode='showing';$('subtitle-status').textContent='';}};
       node.onerror=()=>{$('subtitle-status').textContent='This device could not display the subtitles.';};
       document.querySelector('video').append(node);node.track.mode='showing';
@@ -120,9 +151,11 @@
   function stop(keepFullscreen=false) {
     if(!keepFullscreen)closeFullscreen();
     clearTextSubtitle();activeSource=null;
+    clearInterval(progressTimer);progressTimer=null;
+    const stoppedPosition=document.querySelector('video').currentTime||0;
     ++playerGeneration;if(hls){hls.destroy();hls=null;}
     const video=document.querySelector('video');video.pause();video.removeAttribute('src');video.load();video.querySelectorAll('track').forEach(t=>t.remove());
-    if(play){api('Sessions/Playing/Stopped',{PlaySessionId:play.PlaySessionId}).catch(()=>{});play=null;}
+    if(play){api('Sessions/Playing/Stopped',{PlaySessionId:play.PlaySessionId,PositionTicks:Math.round(stoppedPosition*10000000)}).catch(()=>{});play=null;}
     $('player').hidden=true;
   }
   async function start(position) {
@@ -141,7 +174,7 @@
       if(window.Hls?.isSupported()){hls=new Hls({maxBufferLength:18,maxMaxBufferLength:30});hls.loadSource(url);hls.attachMedia(video);hls.on(Hls.Events.ERROR,(_,error)=>{if(error.fatal)status('Playback interrupted. Reopen the video to retry.');});}
       else if(video.canPlayType('application/vnd.apple.mpegurl'))video.src=url;
       else throw new Error('This device cannot play HLS video.');
-      await api('Sessions/Playing',{PlaySessionId:info.PlaySessionId,ItemId:item.Id});status('');if(track)loadTextSubtitle(track);$('player').scrollIntoView({behavior:'smooth'});
+      await api('Sessions/Playing',{PlaySessionId:info.PlaySessionId,ItemId:item.Id,PositionTicks:Math.round(position*10000000)});progressTimer=setInterval(()=>reportProgress(),15000);status('');if(track)loadTextSubtitle(track);$('player').scrollIntoView({behavior:'smooth'});
     } catch(error){if(current===playerGeneration){stop();status(error.message);}}
   }
   $('new-code').onclick=connect;$('back').onclick=()=>{stop();const previous=trail.pop()||{id:'',name:'Your libraries'};parent=previous.id;$('search').value='';$('heading').textContent=previous.name;if(account)browse();};

@@ -207,7 +207,7 @@ Jellyfin apps receive track metadata and subtitle delivery URLs using the
 [MediaStream API](https://typescript-sdk.jellyfin.org/interfaces/generated-client.MediaStream.html).
 
 Jellyfin administration, plugins, Live TV, remote control, favorites and
-saved watch/resume history are not implemented. There is no bundled Jellyfin web UI.
+manual watched-state changes are not implemented. Playback progress is saved privately per user and library, with the latest 200 items retained. Android and the web player offer Resume or Start from beginning, and Jellyfin clients receive the saved position through UserData and Resume. There is no bundled Jellyfin web UI.
 The official Android phone app receives a small Posterchan host page at `/jellyfin/`
 when requesting HTML. It implements Android's deferred-script readiness handoff,
 Quick Connect, saved media-only app login, library search, HLS playback, audio and
@@ -300,3 +300,15 @@ JELLYFIN_TEST_SDK=/tmp/pc-jellyfin-sdk/node_modules/@jellyfin/sdk \
 Without that environment variable, only the two SDK/FFmpeg cases are skipped; the
 local/proxy Quick Connect, permission, revocation, token isolation, CORS, pagination,
 bandwidth and relay-acknowledgement regression cases still run.
+
+### Connected devices and visibility
+
+Media Center is hidden by default for non-admins. Grant access from a user's
+Profile → Permissions → Media Center. Both the sidebar and mobile More menu
+hydrate that permission from the signed-in session; the API enforces it independently.
+
+Under Media Center → Connect an app, Connected Jellyfin devices lists that user's
+approved app tokens with device/app names and connection dates. Revoke one device
+without disconnecting the others, or use Disconnect all. Older approvals without
+metadata appear as “Jellyfin app”. Device records and playback progress are encrypted,
+local-only Media Center events and survive restart. Neither changes the library ACL.

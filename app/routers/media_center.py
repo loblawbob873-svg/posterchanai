@@ -369,7 +369,9 @@ async def create_library(body: CreateLibrary, background: BackgroundTasks, user=
 @router.get("/{library_id}/items")
 async def items(library_id: str, user=Depends(get_media_user)):
     library = await library_for(library_id, media.identity(user))
-    return {"items": [{k: v for k, v in item.items() if k not in ("path", "mtime_ns", "tracks")}
+    history = await media.playback_history(library_id, media.identity(user))
+    return {"items": [{**{k: v for k, v in item.items() if k not in ("path", "mtime_ns", "tracks")},
+                       "progress": history.get(item["id"], {})}
                       for item in await available_catalog(library)],
             "scan": _scans.get(library_id, {"state": "idle"}), "revision": scan_revision(library)}
 
@@ -482,6 +484,19 @@ async def share(library_id: str, body: Sharing, user=Depends(get_media_admin)):
 def sign_ticket(library, item_id, pubkey, expires):
     payload = f"media-center:{library['id']}:{item_id}:{pubkey}:{expires}"
     return hmac.new(bytes.fromhex(library["playback_secret"]), payload.encode(), hashlib.sha256).hexdigest()
+
+
+class PlaybackProgress(BaseModel):
+    position: float = Field(ge=0, allow_inf_nan=False)
+
+
+@router.post('/{library_id}/progress/{item_id}')
+async def save_playback_progress(library_id: str, item_id: str, body: PlaybackProgress, user=Depends(get_media_user)):
+    library = await library_for(library_id, media.identity(user))
+    item = next((entry for entry in await available_catalog(library) if entry['id'] == item_id), None)
+    if item is None:
+        raise HTTPException(404, 'Media not found')
+    return await media.save_progress(library_id, media.identity(user), item_id, body.position, item['duration'])
 
 
 @router.get('/{library_id}/tracks/{item_id}')

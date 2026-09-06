@@ -440,3 +440,28 @@ def test_the_terminal_is_gated_to_admins_and_the_ssh_allowlist():
     assert '"can_ssh"' in auth, "the login payload cannot reveal an allowlisted non-admin"
     css = open(os.path.join(root, "static", "css", "client.css"), encoding="utf-8").read()
     assert ".gated-off{display:none" in css
+
+
+def test_media_center_visibility_requires_admin_or_explicit_permission():
+    import json
+    import subprocess
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    app = (root / 'static/js/client/app.js').read_text()
+    start = app.index('  function _mediaAllowed()')
+    function = app[start:app.index('\n', start)]
+    script = "let GUEST=false,IS_ADMIN=false,_aiAuth=null;" + function + """
+const result=[];
+result.push(_mediaAllowed());
+IS_ADMIN=true;result.push(_mediaAllowed());
+IS_ADMIN=false;_aiAuth={can_media:true};result.push(_mediaAllowed());
+_aiAuth={can_media:false};result.push(_mediaAllowed());
+GUEST=true;IS_ADMIN=true;result.push(_mediaAllowed());
+process.stdout.write(JSON.stringify(result));
+"""
+    result = subprocess.run(['node', '-e', script], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == [False, True, True, False, False]
+    menu = app[app.index('function moreMenu('):app.index('function filesMenu(')]
+    assert "v==='media-center' && !_mediaAllowed()" in menu
+    assert '.nav-item[data-view="media-center"]:not(.media-allowed)' in (root / 'static/css/client.css').read_text()
+    assert '"can_media": bool(user.is_admin' in (root / 'app/routers/auth.py').read_text()

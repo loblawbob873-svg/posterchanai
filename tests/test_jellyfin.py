@@ -38,6 +38,7 @@ def api(request, monkeypatch, tmp_path):
     monkeypatch.setattr(media, 'read', read)
     monkeypatch.setattr(media, 'write', write)
     monkeypatch.setattr(media, 'mutation_lock', asyncio.Lock())
+    monkeypatch.setattr(media, '_progress_lock', asyncio.Lock())
     monkeypatch.setattr(jf, '_account_lock', asyncio.Lock())
     for cache in (jf._quick, jf._approvals, jf._plays, jf._locators, media._sessions, media._catalog_cache):
         cache.clear()
@@ -627,6 +628,22 @@ def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monke
                 await browser.until("document.querySelector('#player').hidden")
                 await browser.call('Page.reload')
                 await browser.until("!!document.querySelector('.card') && document.querySelector('#connect').hidden")
+                for label in ['Movies', 'Anime', 'Season 2']:
+                    await browser.js("document.querySelector('.card').click()", True)
+                    await browser.until("document.querySelector('#heading').textContent==="+json.dumps(label)+" && !!document.querySelector('.card')")
+                await browser.js("document.querySelector('.card').click()", True)
+                await browser.until("document.querySelector('#resume-dialog').open")
+                assert await browser.js("document.querySelector('#resume-time').textContent!=='00:00'")
+                await browser.js("document.querySelector('#resume-dialog button[value=resume]').click()", True)
+                await browser.until("document.querySelector('video').currentTime>1 && !document.querySelector('video').paused")
+                await browser.js("document.querySelector('#stop').click()", True)
+                await browser.until("document.querySelector('#player').hidden")
+                await browser.js("document.querySelector('.card').click()", True)
+                await browser.until("document.querySelector('#resume-dialog').open")
+                await browser.js("document.querySelector('#resume-dialog button[value=start]').click()", True)
+                await browser.until("!document.querySelector('#player').hidden && document.querySelector('video').readyState>=2")
+                assert await browser.js("document.querySelector('video').currentTime<3")
+
                 await browser.js("document.querySelector('#logout').click()", True)
                 await browser.until("/^\\d{6}$/.test(document.querySelector('#code')?.textContent) && !localStorage.getItem('pc_media_app')")
     try:
@@ -687,3 +704,83 @@ def test_folder_hierarchy_artwork_search_and_acl(api, tmp_path, monkeypatch):
     api.catalog['library:'+api.library['id']]['shared_with'] = []
     assert c.get('/jellyfin/Items/'+anime['Id'], headers=h).status_code == 404
     assert c.get('/jellyfin/Items/'+anime['Id']+'/Images/Primary', headers=h).status_code == 404
+
+
+def test_progress_persists_per_user_and_resume_can_restart(api):
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    body = {'playSessionId':info['PlaySessionId'], 'positionTicks':60000000}
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
+    assert c.get('/jellyfin/Items/'+item['Id'], headers=h).json()['UserData']['PlaybackPositionTicks'] == 60000000
+    assert c.get('/jellyfin/UserItems/Resume', headers=h).json()['Items'][0]['Id'] == item['Id']
+    # A different app token belonging to this person hydrates the same saved position.
+    second = connect(api)
+    jf._plays.clear()
+    jf._locators.clear()
+    assert c.get('/jellyfin/Items/'+item['Id'], headers=headers(second)).json()['UserData']['PlaybackPositionTicks'] == 60000000
+    api.state['user'] = OWNER
+    owner = connect(api)
+    assert c.get('/jellyfin/Items/'+item['Id'], headers=headers(owner)).json()['UserData']['PlaybackPositionTicks'] == 0
+    assert c.get('/jellyfin/UserItems/Resume', headers=headers(owner)).json()['Items'] == []
+    _, info = playable(api, second)
+    body = {'PlaySessionId':info['PlaySessionId'], 'PositionTicks':0}
+    assert c.post('/jellyfin/Sessions/Playing', headers=headers(second), json=body).status_code == 204
+    assert c.get('/jellyfin/UserItems/Resume', headers=headers(second)).json()['Items'] == []
+    body['PositionTicks'] = 130000000  # Completion clears Resume but retains Played.
+    assert c.post('/jellyfin/Sessions/Playing/Stopped', headers=headers(second), json=body).status_code == 204
+    saved = c.get('/jellyfin/Items/'+item['Id'], headers=headers(second)).json()['UserData']
+    assert saved['Played'] and saved['PlaybackPositionTicks'] == 0
+    # Revocation applies to reading/writing progress as well as streaming.
+    api.catalog['library:'+api.library['id']]['shared_with'] = []
+    assert c.get('/jellyfin/Items/'+item['Id'], headers=headers(second)).status_code == 404
+    assert c.get('/jellyfin/UserItems/Resume', headers=headers(second)).json()['Items'] == []
+
+
+def test_media_permission_denied_by_default_and_revokes_app_access(api):
+    with Session(api.engine) as db:
+        user = db.query(User).filter(User.nostr_npub == VIEWER).first()
+        user.can_media = False
+        db.commit()
+    pending = api.client.post('/jellyfin/QuickConnect/Initiate').json()
+    assert api.client.post('/api/media-center/jellyfin-account/authorize', json={'code':pending['Code']}).status_code == 403
+    with Session(api.engine) as db:
+        user = db.query(User).filter(User.nostr_npub == VIEWER).first()
+        user.can_media = True
+        db.commit()
+    login = connect(api)
+    assert api.client.get('/jellyfin/UserViews', headers=headers(login)).status_code == 200
+    with Session(api.engine) as db:
+        user = db.query(User).filter(User.nostr_npub == VIEWER).first()
+        user.can_media = False
+        db.commit()
+    assert api.client.get('/jellyfin/UserViews', headers=headers(login)).status_code == 401
+    api.state['user'] = OWNER
+    with Session(api.engine) as db:
+        owner = db.query(User).filter(User.nostr_npub == OWNER).first()
+        owner.can_media = False
+        db.commit()
+    assert connect(api)['User']['Id']
+
+
+def test_connected_devices_metadata_and_individual_revocation(api):
+    c = api.client
+    pending = c.post('/jellyfin/QuickConnect/Initiate', headers={'X-Emby-Authorization':
+        'MediaBrowser Client="Jellyfin Android TV", Device="Living room TV", Version="1.2"'}).json()
+    c.post('/api/media-center/jellyfin-account/authorize', json={'code':pending['Code']})
+    login = c.post('/jellyfin/Users/AuthenticateWithQuickConnect', json={'secret':pending['Secret']}).json()
+    second = connect(api)
+    status = c.get('/api/media-center/jellyfin-account').json()
+    assert status['sessions'] == 2
+    device = status['devices'][0]
+    assert device['name'] == 'Living room TV' and device['client'] == 'Jellyfin Android TV'
+    assert device['version'] == '1.2' and device['created'] > 0
+    assert all('hash' not in row and 'AccessToken' not in row for row in status['devices'])
+    api.state['user'] = OWNER
+    assert c.delete('/api/media-center/jellyfin-account/devices/'+device['id']).status_code == 404
+    assert c.get('/jellyfin/UserViews', headers=headers(login)).status_code == 200
+    api.state['user'] = VIEWER
+    assert c.delete('/api/media-center/jellyfin-account/devices/'+device['id']).status_code == 204
+    assert c.get('/jellyfin/UserViews', headers=headers(login)).status_code == 401
+    assert c.get('/jellyfin/UserViews', headers=headers(second)).status_code == 200
+    assert c.get('/api/media-center/jellyfin-account').json()['sessions'] == 1

@@ -269,6 +269,7 @@ async def nostr_login(data: NostrLogin, response: Response, request: Request, db
                  # Same reason as can_stream: the Terminal's API refuses non-allowlisted users on
                  # every endpoint, so showing them the row only ever produces a permission error.
                  "can_ssh": _can_ssh(db, user),
+                 "can_media": bool(user.is_admin or getattr(user, "can_media", False)),
                  "new": created},
     }
 
