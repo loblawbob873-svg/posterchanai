@@ -79,3 +79,40 @@ def test_it_never_gives_up_on_a_relay_that_stays_down():
     come back on its own -- a subscription that exhausts its retries is the same bug again, later."""
     r = _run({"live": True, "deadRelay": True, "drop": True, "advanceMs": 600000})
     assert r["pendingTimers"] >= 1, "it stopped trying to reconnect"
+
+
+# --- AND THE ROOM HAS TO ASK FOR IT. -----------------------------------------------------------
+#
+# The reconnect lives in relay.js; whether a Concord room gets it is one word at the call site.
+# Losing that word restores the original bug in full and changes nothing a reader would notice, so
+# it is asserted by RUNNING startChatLive against a stubbed Relay rather than by looking for the
+# string — a source-text assertion here would pass against a comment that mentions it.
+
+CHAT_SIM = ROOT / "tests/client/start_chat_live_sim.mjs"
+
+
+def _arm():
+    out = subprocess.run(["node", str(CHAT_SIM)], cwd=ROOT, text=True, capture_output=True,
+                         timeout=120)
+    assert out.returncode == 0, out.stderr[:3000]
+    return {c["how"]: c for c in json.loads(out.stdout)["calls"]}
+
+
+def test_the_chat_stream_asks_for_a_socket_that_comes_back():
+    calls = _arm()
+    assert "subscribeFrom" in calls, "the room's own relays are not subscribed to at all"
+    assert calls["subscribeFrom"]["opts"].get("live") is True, \
+        "the room's relays are subscribed without reconnect: " + str(calls["subscribeFrom"]["opts"])
+
+
+def test_the_chat_stream_is_open_ended():
+    """`timeout: 0` is what makes this the one caller that must reconnect — every other one is a
+    bounded read whose timeout ends it."""
+    assert _arm()["subscribeFrom"]["opts"].get("timeout") == 0
+
+
+def test_the_pooled_half_is_live_too():
+    """Two paths carry a room: the managed pool (which re-arms its own live subs on reconnect) and
+    the room's own relays. Both have to be live or the room is half-deaf in a way that depends on
+    which relay the message took."""
+    assert _arm()["subscribe"]["opts"].get("live") is True
