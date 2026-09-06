@@ -132,7 +132,15 @@ COMPRESSION='compress=zstd:10'
 AUTO_DECRYPT='True'
 DISK_PASSWORD='123456'
 ##############################
-REPO_CHOICE="local"
+# WHICH GENTOO THIS INSTALLS FROM. "local" means gentoo.poster.place -- our own cached mirror of
+# Gentoo's signed snapshots, stage3s and binary packages -- and it is the default for every path,
+# interactive or scripted. It is not a convenience: the binhost is what makes a from-scratch build
+# finish in a VM at all (FEATURES/EMERGE_DEFAULT_OPTS below both carry getbinpkg), and the webrsync
+# snapshot is what makes `emerge --sync` work on a machine that is not on this LAN.
+#
+# PC_REPO_CHOICE=remote is the deliberate way out, for testing against upstream. An unset variable
+# must never mean "remote" -- that is a several-hour compile nobody asked for.
+REPO_CHOICE="${PC_REPO_CHOICE:-local}"
 #Overrided Swap File Size
 #SWAP_SIZE='1G'
 #
@@ -269,7 +277,22 @@ net-vpn/tor gui-apps/swayidle"
 # That is fragmentation with nothing on the other side of it. `/etc/posterchanos` is still written,
 # because an installed system should be able to say what it is, but nothing branches on it.
 PACKAGES="$BASE_PACKAGES $POSTERCHANOS_PACKAGES"
-TMPFS_SIZE="32G"
+# PORTAGE'S BUILD DIRECTORY IN RAM -- SIZED FROM THE RAM THAT IS ACTUALLY THERE.
+#
+# This was a flat 32G. tmpfs accepts a size larger than memory without complaint, so on the desktop
+# it was a fast build directory and in a 8-12G VM it was a promise the machine could not keep: the
+# mount succeeds, `emerge --jobs 5` fills it, and the kernel kills the compiler. Nothing says
+# "tmpfs"; what you get is a build that dies somewhere different every run.
+#
+# Half of memory, capped at the old value. Below 16G there is no size that is both useful and safe,
+# so the mount is skipped entirely and portage builds on the disk -- slower, and it finishes, which
+# is the only property that matters on the machine that has no RAM to spare.
+TMPFS_SIZE="$(awk '/^MemTotal:/ {
+	gb = int($2 / 1048576)
+	if (gb < 16) { print ""; exit }
+	half = int(gb / 2)
+	print (half > 32 ? 32 : half) "G"
+}' /proc/meminfo 2>/dev/null)"
 CPU_TYPE="x86-64-v3"
 BUILD_SERVER="n"
 BUILD_SERVER_ADDRESS="nas.lan"
@@ -495,7 +518,11 @@ systemMounts() {
 		mount --bind /run $TARGET/run
 		mount --make-slave $TARGET/run
 		mount -t efivarfs none $TARGET/sys/firmware/efi/efivars
-		mount -t tmpfs -o size=$TMPFS_SIZE tmpfs $TARGET/var/tmp/portage
+		if [ -n "$TMPFS_SIZE" ]; then
+			mount -t tmpfs -o size=$TMPFS_SIZE tmpfs $TARGET/var/tmp/portage
+		else
+			echo -e "\033[1;33mLess than 16G of RAM: building on disk instead of a tmpfs.\033[0m"
+		fi
 	else
 		echo
 		echo -e "\033[1;33mSystem Mounts: Aborting Install, $BTRFS not found!\033[0m"
@@ -515,6 +542,10 @@ unmaskPackages() {
 		echo "$NAME $ARGS"> /etc/portage/package.use/$FILE_NAME
 	done
 
+	# TRUNCATE, THEN APPEND. `>>` on every run turned this file into the same list over and over --
+	# measured on the test laptop, three identical copies of all 23 atoms. Harmless to portage and
+	# not harmless to a person reading it to find out what this machine unmasks and why.
+	: >/etc/portage/package.accept_keywords
 	for i in "${MASKED_PACKAGES[@]}"; do
 		echo "$i ~amd64" >>/etc/portage/package.accept_keywords
 	done
@@ -556,6 +587,21 @@ configurePortage() {
 		gentooRepo
 	fi
 
+	# THE OVERLAY CANNOT BE CLONED BEFORE THERE IS A git, AND A STAGE3 HAS NONE.
+	#
+	# This was one `emerge --sync` over every configured repository, and the PosterChanOS overlay is
+	# a git repo -- so on a fresh install it answered `!!! Command not found: git` / `Type "emerge
+	# dev-vcs/git" to enable git support` and left /var/db/repos/posterchan EMPTY. Nothing failed:
+	# portage carried on with the gentoo tree, and the first visible consequence was hours later,
+	# when the package set could not resolve `gui-apps/wlr-randr` -- which lives in that overlay --
+	# and took every other package in the set down with it. `dev-vcs/git` is in BASE_PACKAGES, i.e.
+	# installed in the package phase, long after the sync that needs it.
+	#
+	# So the gentoo tree is synced first (webrsync needs nothing but wget), git is installed out of
+	# it, and only then is everything synced. The second sync is a no-op for a tree that was just
+	# refreshed.
+	chroot $TARGET /usr/bin/emerge --sync gentoo
+	chroot $TARGET /usr/bin/emerge --oneshot --noreplace dev-vcs/git
 	chroot $TARGET /usr/bin/emerge --sync
 
 	echo "USE=\"$USE_FLAGS\"" >>$TARGET/etc/portage/make.conf
@@ -570,9 +616,28 @@ configurePortage() {
 	# exercises, so a driver list that only exists during an ISO build is a list that is never
 	# tested where it matters.
 	echo "VIDEO_CARDS=\"$VIDEO_CARDS\"" >>$TARGET/etc/portage/make.conf
-	# Steam and Proton are 32-bit applications even on amd64. Keep both ABIs enabled and let
-	# Portage select the matching current graphics/audio dependency set.
-	echo 'ABI_X86="64 32"' >>$TARGET/etc/portage/make.conf
+	# 32-BIT WHERE STEAM ASKS FOR IT, NOT EVERYWHERE. THIS LINE USED TO BREAK THE ENTIRE BUILD.
+	#
+	# It was `ABI_X86="64 32"`, on the reasoning that Steam and Proton are 32-bit applications. Set
+	# globally it means every multilib-capable package must be built for both ABIs -- and the binary
+	# host's packages are built for one, so portage REFUSES them: measured in a VM install,
+	# `!!! The following binary packages have been ignored due to non matching USE:` naming
+	# dev-libs/glib, x11-libs/gtk+ and app-crypt/libsecret with `-abi_x86_32`. getbinpkg is the only
+	# reason a from-scratch build finishes at all, and this line threw most of it away.
+	#
+	# Then it stopped being slow and started being fatal. Forcing glib, gtk+ and pillow to be BUILT
+	# adds buildtime edges that close a cycle portage cannot break --
+	# docutils -> pillow -> harfbuzz -> glib -> docutils -- and `emerge @world` aborts with
+	# "Error: circular dependencies". MEASURED in the guest, same disk, one variable: with the line
+	# as it was, @world exits 1; with ABI_X86="64", it resolves to 188 binary packages and 16 source
+	# builds and exits 0.
+	#
+	# Steam still gets its 32-bit libraries when it is installed. `games-util/steam-launcher` depends
+	# on `media-libs/mesa[abi_x86_32]` and friends by USE dependency, so portage asks for exactly
+	# those packages to gain the ABI -- which the `--autounmask-write` + `etc-update` pair in
+	# installSteam answers. That is the supported way to do this, and it is the difference between
+	# building 32-bit libmesa and building a 32-bit copy of the whole system.
+	echo 'ABI_X86="64"' >>$TARGET/etc/portage/make.conf
 
 	echo "MAKEOPTS=\"$MAKEOPTS\"" >>$TARGET/etc/portage/make.conf
 
@@ -595,11 +660,17 @@ configurePortage() {
 	fi
 	chroot $TARGET /usr/bin/eselect profile set $GENTOO_PROFILE
 
-	# Steam is maintained in Gentoo's Steam overlay. Make it part of the ordinary install so the
-	# machine is gaming-ready on first boot rather than requiring a hidden post-install step.
-	chroot $TARGET /usr/bin/emerge -1 app-eselect/eselect-repository
-	chroot $TARGET /usr/bin/eselect repository enable steam-overlay
-	chroot $TARGET /usr/bin/emerge --sync steam-overlay
+	# AN INSTALL TALKS TO poster.place AND NOWHERE ELSE. This used to enable Gentoo's Steam overlay
+	# here -- `eselect repository enable steam-overlay`, which downloads a repository list from
+	# api.gentoo.org and then clones a third-party git repo -- so every install depended on two hosts
+	# that are not ours and that we do not mirror. The repositories are the gentoo snapshot, the
+	# binary host and the PosterChanOS overlay, all three on gentoo.poster.place.
+	#
+	# Steam is not dropped: `games-util/steam-launcher` is VENDORED into the PosterChanOS overlay
+	# (os/overlay/games-util/steam-launcher), exactly like gui-apps/wlr-randr, so it still installs
+	# on first boot and it comes from gentoo.poster.place like everything else. Its distfile still
+	# comes from Valve -- the ebuild carries RESTRICT="mirror" and no mirror may hold it -- which is
+	# a download, not a repository.
 
 	mkdir -p $TARGET/etc/portage/package.license
 	echo "*/*  *" >$TARGET/etc/portage/package.license/license
@@ -667,13 +738,25 @@ buildGentoo() {
 		return 1
 	fi
 	cp -f "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"
-	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh install-packages
+	# THE PACKAGE STEP'S VERDICT IS KEPT, and the machine is finished anyway. installPackages already
+	# retries a failed set one package at a time and NAMES what did not install -- and its exit status
+	# was then thrown away, so an install that produced no compositor and no browser still printed
+	# "Gentoo Installation Complete!" and a release gate driving it still saw exit 0. The desktop that
+	# CAN be built is still worth building (that is the whole point of the one-at-a-time retry), so
+	# finalization runs regardless; what changes is that the installer stops claiming it succeeded.
+	PACKAGES_OK=0
+	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh install-packages || PACKAGES_OK=$?
 	echo
 	echo
 	echo -e "\033[1;36m[Configuring Accounts and post-setup tasks]\033[0m"
 	echo
 	echo
-	finalizeInstall
+	finalizeInstall || return 1
+	if [ "$PACKAGES_OK" != 0 ]; then
+		echo -e "\033[1;31mThe machine is installed and bootable, but the package set above did not\033[0m"
+		echo -e "\033[1;31mcomplete. Fix the names and run: gentoo.sh install-packages\033[0m"
+		return "$PACKAGES_OK"
+	fi
 }
 
 finalizeInstall() {
@@ -1961,8 +2044,18 @@ installSteam() {
 		echo "Steam requires a multilib Gentoo profile; this system is no-multilib."
 		return 1
 	fi
-	grep -Eq '^ABI_X86=.*[[:space:]\"]32([[:space:]\"]|$)' /etc/portage/make.conf 2>/dev/null || \
-		echo 'ABI_X86="64 32"' >>/etc/portage/make.conf
+	# AND IT DOES NOT ADD A GLOBAL ABI_X86. This used to append `ABI_X86="64 32"` to make.conf, which
+	# is the same line the installer used to write and the same disaster: every multilib-capable
+	# package then needs a 32-bit build, so the binary host's packages stop matching and the next
+	# `emerge @world` on this machine is a source build that ends in an unbreakable dependency cycle
+	# (see configurePortage). steam-launcher names the packages it needs 32-bit versions of as USE
+	# dependencies, and the --autounmask-write/etc-update pair below turns those into per-package
+	# entries -- 32-bit Mesa, not a 32-bit copy of the system.
+	# NO THIRD-PARTY OVERLAY. `games-util/steam-launcher` is not in the gentoo tree, and this used to
+	# reach for Gentoo's Steam overlay through api.gentoo.org to get it. It is vendored into the
+	# PosterChanOS overlay instead (os/overlay/games-util/steam-launcher, the same place
+	# gui-apps/wlr-randr already lives), which is served from gentoo.poster.place -- so both this
+	# command and an ordinary install talk to one host.
 	mkdir -p /etc/portage/package.use
 	printf '%s\n' 'media-libs/mesa vulkan' > /etc/portage/package.use/posterchan-steam
 	mkdir -p /etc/portage/package.license
@@ -2142,12 +2235,35 @@ initializeDisk() {
 	echo
 	echo -e "\033[1;36m[PosterChanOS Installer - Initialize Device]\033[0m"
 	echo
-	read -p 'Proceed with Wiping the disk? (y/n): ' -i "local" choice
+	# `read -p '(y/n)' -i "local"` offered the word "local" as the default answer to a yes/no
+	# question, and `-i` is IGNORED without `-e` (measured), so it was not even offered: pressing
+	# enter returned an empty string, which is not `y`, and the function returned having said
+	# nothing at all. "I pressed enter and the installer went back to the menu" is that.
+	# PC_ASSUME_YES is the scripted answer and the only one, so an unattended run cannot wipe a
+	# disk by accident.
+	local choice="${PC_ASSUME_YES:+y}"
+	if [ -z "$choice" ]; then
+		read -r -p "Proceed with Wiping /dev/$HARD_DISK? (y/n): " choice
+	fi
 	if [[ $choice = *y* ]]; then
+		# ONLY when a password was supplied. Prompting here would format the disk with a secret that
+		# lives in this process alone: menu 5 wipes, the operator quits, and the next run's
+		# `partitions` opens the volume with the source default and fails "No key available". The
+		# interactive default is unchanged; PC_INSTALL_PASSWORD is how a script chooses.
+		if [ -n "$PC_INSTALL_PASSWORD" ]; then
+			readInstallPassword || return 1
+		fi
 		prepareInstallDisk || return 1
 		echo -e "\033[1;33mInitialize Complete. The disk was verified and is ready to install.\033[0m"
 		echo
-		rm -f /tmp/disk
+		# KEEP /tmp/disk WHEN THE CALLER SUPPLIED IT. Removing it is right for the menu, which
+		# re-detects the new partitions on the next pass; it is wrong for a scripted install, whose
+		# next phase (download-setup -> setDevices) then has nothing to read and stops at a prompt
+		# that no one is there to answer.
+		[ -n "$PC_KEEP_DISK_HOOK" ] || rm -f /tmp/disk
+	else
+		echo -e "\033[1;33mNothing was wiped.\033[0m"
+		return 1
 	fi
 }
 
@@ -2163,6 +2279,9 @@ show-help() {
 	echo -e "\033[1;33m./gentoo.sh wifi\033[0m"
 	echo -e "\033[1;36m[./gentoo.sh bootloader [disk] [ROOT_NAME] [ROOT_MAPPER_NAME]\033[0m"
 	echo -e "\033[1;33m./gentoo.sh initialize\033[0m"
+	echo -e "\033[1;36m[./gentoo.sh init-disk        partition+LUKS the disk in /tmp/disk\033[0m"
+	echo -e "\033[1;33m./gentoo.sh scratch          whole build from a blank disk (init-disk+download+build)\033[0m"
+	echo -e "\033[1;36m[  PC_ASSUME_YES=1 answers the wipe prompt, PC_INSTALL_PASSWORD sets the LUKS key\033[0m"
 	echo -e "\033[1;36m[./gentoo.sh tar [device name] [location]\033[0m"
 	echo -e "\033[1;33m./gentoo.sh snapshot\033[0m"
 	echo -e "\033[1;33m./gentoo.sh reomve-snapshot\033[0m"
@@ -3554,6 +3673,28 @@ GRUB
 	return 0
 }
 
+# A WHOLE INSTALL FROM A BLANK DISK, WITH NOBODY AT THE KEYBOARD.
+#
+# This is the path the product is actually built by -- stage3, portage, @world, the kernel, the
+# PosterChanOS package set, the bootloader -- and until now it could only be driven by typing 5, 2
+# and 3 into the menu and answering prompts. That is why no gate ever covered it: an installer whose
+# only from-scratch path is a human is an installer that gets tested when somebody happens to
+# reinstall. `install-live` (option 9) is a different thing entirely -- it copies an already-built
+# live image onto a disk and proves nothing about the build.
+#
+# The three phases are the menu's three, in one process on purpose. The LUKS password, the mapper
+# name derived from the UUID that luksFormat has just minted, and the /tmp/disk hook are all state
+# that only survives inside one run; splitting them across invocations is what makes a scripted
+# install ask for a passphrase nobody is there to type.
+scratchInstall() {
+	# Wiping a disk is not something an argument alone should be able to do. `init-disk` asks; this
+	# asks the same question through the same code, and PC_ASSUME_YES is the only way past it.
+	setDevices || return 1
+	PC_KEEP_DISK_HOOK=1 initializeDisk || return 1
+	download-setup || return 1
+	buildGentoo
+}
+
 download-setup() {
 	clear
 	echo -e "\033[1;36m[Choose Deployment Type]\033[0m"
@@ -3592,7 +3733,18 @@ download-setup() {
 		fstab
 		cp -f /etc/resolv.conf $TARGET/etc/
 		configurePortage
-		cp -f gentoo.sh $TARGET/usr/bin/
+		# NEVER FROM THE CALLER'S WORKING DIRECTORY. `cp -f gentoo.sh` copied whatever happened to
+		# be named that where the operator stood -- nothing at all when run from $HOME, and a stale
+		# unrelated file when run from an old checkout. Every other copy of the installer in this
+		# script already resolves through PCOS_TREE; this one did not, and it is the copy the target
+		# uses for `emerge --sync`/repair before finalization replaces it.
+		local INSTALLER_SRC="$PCOS_TREE/gentoo.sh"
+		[ -f "$INSTALLER_SRC" ] || INSTALLER_SRC="/usr/local/share/posterchanos/gentoo.sh"
+		if [ ! -f "$INSTALLER_SRC" ]; then
+			echo -e "\033[1;31mPosterChanOS installer source is missing -- cannot seed the target.\033[0m"
+			return 1
+		fi
+		cp -f "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"
 	fi
 }
 
@@ -3630,7 +3782,7 @@ menu() {
 		echo
 		echo -e "\033[1;33mDo you want to use your local repo or the official Gentoo Repo?\033[0m"
 		echo
-		read -p 'local or remote:' -e -i "local" REPO_CHOICE
+		read -p 'local or remote:' -e -i "$REPO_CHOICE" REPO_CHOICE
 		download-setup
 		read -p "Press enter key to Continue"
 		menu
@@ -4065,6 +4217,29 @@ elif [ "$1" = "install" ]; then
 	setDevices
 	download-setup
 	buildGentoo
+elif [ "$1" = "init-disk" ]; then
+	# The menu's option 5 as a command: partition, LUKS-format and verify the disk named by
+	# /tmp/disk. PC_ASSUME_YES=1 answers the wipe prompt, PC_INSTALL_PASSWORD chooses the passphrase.
+	setDevices
+	initializeDisk
+elif [ "$1" = "scratch" ]; then
+	scratchInstall
+elif [ "$1" = "mount" ]; then
+	# GET BACK INTO A HALF-FINISHED INSTALL. An install that stops in the middle -- a package that
+	# will not resolve, a machine that was rebooted -- leaves a perfectly good encrypted root that
+	# there was no command to open: every phase mounts as a side effect of doing something else, so
+	# the only way back to the chroot was to retype the cryptsetup/mount sequence by hand and get
+	# the subvolumes right. `gentoo.sh mount` then `chroot /tmp/install` is the repair path, and it
+	# is what makes a failed build diagnosable instead of restartable.
+	#
+	# IT ASKS FOR THE PASSPHRASE, because the volume was formatted with one nobody stored: the
+	# source default in this file is a placeholder, and reaching `partitions` with it produces "No
+	# key available with this passphrase" about a disk that is perfectly fine. PC_INSTALL_PASSWORD
+	# answers it for a script; a person is prompted once, with no confirmation, because this opens
+	# an existing volume rather than creating one.
+	setDevices
+	readInstallPassword open || exit 1
+	systemMounts
 elif [ "$1" = "btrfs-tweaks" ]; then
 	btrfsTweaks
 elif [ "$1" = "btrfs-tweaks-rewrite" ]; then

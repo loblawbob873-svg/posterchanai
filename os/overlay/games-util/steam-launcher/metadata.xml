@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "http://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>chewi@gentoo.org</email>
+		<name>James Le Cuirot</name>
+	</maintainer>
+	<longdescription>
+		This ebuild installs common files for the Steam environment,
+		like bootstrap archive and icons, but not the client itself.
+	</longdescription>
+	<upstream>
+		<bugs-to>https://github.com/anyc/steam-overlay</bugs-to>
+	</upstream>
+	<use>
+		<flag name="desktop-portal">Enable desktop integration, e.g. for file pickers</flag>
+		<flag name="dialogs">Support additional dialogs before the client starts</flag>
+		<flag name="steamruntime">Use the official Steam runtime libraries</flag>
+		<flag name="steamvr">Enable SteamVR virtual reality support</flag>
+		<flag name="trayicon">Enable system tray icon</flag>
+	</use>
+</pkgmetadata>

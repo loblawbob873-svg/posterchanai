@@ -26,12 +26,26 @@ SCRIPT = (Path(__file__).resolve().parents[1] / "scripts" / "publish_overlay.sh"
 
 
 class ThePublishChecksItself(unittest.TestCase):
-    def test_it_asks_the_public_url_whether_the_repository_is_there(self):
-        self.assertRegex(SCRIPT, r'git ls-remote "\$URL"',
-                         "publish_overlay.sh never contacts the URL it just published to")
+    def test_it_clones_the_public_url_rather_than_asking_for_its_refs(self):
+        """`git ls-remote` reads ONE file, info/refs. A dumb-HTTP repository is one the client walks
+        itself, so a repo whose refs are perfect and whose objects are not passes ls-remote and fails
+        every `emerge --sync`. Measured minutes after a successful publish on 2026-09-06:
+
+            error: Unable to find 1e3fbb... under https://gentoo.poster.place/posterchan-overlay.git
+            Cannot obtain needed tree ... while processing commit ...
+
+        The object was on nas, world-readable, in a directory that push had just created; router.lan
+        serves the tree over NFS and had a negative dentry cached for it."""
+        verify = SCRIPT[SCRIPT.index("# VERIFY, RATHER THAN PRINT"):]
+        self.assertRegex(verify, r'git clone -q "\$URL"',
+                         "publish_overlay.sh does not prove the repository can be CLONED")
+        self.assertIn("profiles/repo_name", verify,
+                      "a clone that produced an empty tree would still count as success")
+        self.assertIn("sleep 20", verify,
+                      "the NFS view can lag a push by about a minute; one attempt cannot see that")
 
     def test_an_unreachable_publish_is_a_failure_not_a_notice(self):
-        tail = SCRIPT[SCRIPT.index("git ls-remote \"$URL\""):]
+        tail = SCRIPT[SCRIPT.index("# VERIFY, RATHER THAN PRINT"):]
         self.assertIn("exit 1", tail,
                       "an unreachable overlay exits 0, so sync.sh reports a green deploy while "
                       "every installed machine has lost its update path")

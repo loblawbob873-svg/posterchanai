@@ -249,6 +249,13 @@ CHECKS = {
     # the other heavy gates.
     "check_livecd_vm":                 dict(group="ui", secs=900, serial=True,
                                             why="the image reaches a desktop and keeps it"),
+    # THE BUILD, not the deployer. `check_livecd_install_vm` copies an already-built live image onto
+    # a disk; this one starts from a stock Gentoo ISO and an empty disk and runs the installer's
+    # from-scratch path -- stage3, portage against our mirror, @world, the kernel, the PosterChanOS
+    # package set, the bootloader. Hours, and it owns a KVM guest, so it is serial and opts in on
+    # PC_GENTOO_ISO for the same reason the two above opt in on PC_LIVECD_ISO.
+    "check_scratch_install_vm":        dict(group="ui", secs=32400, serial=True,
+                                            why="PosterChanOS can still be BUILT from scratch"),
     "check_sharelink":                 dict(group="ui", secs=420),
     "check_contacts_mobile":           dict(group="ui", secs=600),
     "check_vault_mobile":              dict(group="ui", secs=600),

@@ -170,12 +170,37 @@ ssh "$NAS" "cd '$DEST' && git symbolic-ref HEAD refs/heads/main && git update-se
 #
 # and the machine could not update at all. The mirror now excludes it (admintools servers.py), but a
 # publish that cannot prove its own result will hide the next cause just as well as it hid this one.
+# AND THE CHECK IS A CLONE, NOT `ls-remote`. `ls-remote` reads one file, info/refs, and the whole
+# point of a dumb-HTTP repository is that the CLIENT walks the objects itself -- so a repo whose refs
+# are perfect and whose objects are not passes ls-remote and fails every `emerge --sync`. Measured
+# here on 2026-09-06, minutes after a successful publish:
+#
+#     error: Unable to find 1e3fbb... under https://gentoo.poster.place/posterchan-overlay.git
+#     Cannot obtain needed tree ... while processing commit ...
+#
+# The object was on nas, world-readable, in a directory created by that same push. router.lan serves
+# the tree over NFS and had a NEGATIVE DENTRY cached for the newly-created objects/1e/ directory, so
+# the web server answered 404 for a file that existed. It cleared itself in about a minute -- which
+# is exactly why this retries rather than failing on the first attempt, and exactly why one attempt
+# at ls-remote could never have seen it.
 if command -v git >/dev/null 2>&1; then
-    if git ls-remote "$URL" >/dev/null 2>&1; then
-        echo "[overlay] published and reachable"
+    VERIFY_DIR="$(mktemp -d)"
+    ok=""
+    for attempt in 1 2 3 4 5 6; do
+        rm -rf "$VERIFY_DIR/clone"
+        if git clone -q "$URL" "$VERIFY_DIR/clone" >/dev/null 2>&1 \
+            && [ -f "$VERIFY_DIR/clone/profiles/repo_name" ]; then
+            ok=yes
+            break
+        fi
+        [ "$attempt" = 6 ] || sleep 20
+    done
+    rm -rf "$VERIFY_DIR"
+    if [ -n "$ok" ]; then
+        echo "[overlay] published, and a full clone of it succeeds"
         echo "[overlay]   sync-uri = $URL"
     else
-        echo "[overlay] PUBLISHED BUT NOT REACHABLE at $URL" >&2
+        echo "[overlay] PUBLISHED BUT NOT CLONEABLE at $URL" >&2
         echo "[overlay] The files are on $NAS; something between them and the web is wrong." >&2
         echo "[overlay] Installed machines cannot 'emerge --sync' until this resolves." >&2
         exit 1

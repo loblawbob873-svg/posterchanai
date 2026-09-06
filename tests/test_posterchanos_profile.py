@@ -7,6 +7,7 @@ was made. So the profile is checked as a list of requirements with reasons, not 
 What this cannot do is build Gentoo. It reads the script.
 """
 import os
+from pathlib import Path
 import re
 import subprocess
 import unittest
@@ -663,6 +664,14 @@ class PosterChanOSProfile(unittest.TestCase):
                               "this profile line does not exclude plasma, so KDE arrives through "
                               "the USE flags whatever the package list says")
 
+    @staticmethod
+    def _code(body):
+        """The function with its comments removed.
+
+        This file explains its own history at length, so a plain substring search for a value that
+        was REMOVED is satisfied by the paragraph explaining why it was removed."""
+        return "\n".join(l for l in body.splitlines() if not l.strip().startswith("#"))
+
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""
@@ -682,20 +691,45 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("rm -f /etc/portage/patches/sys-apps/systemd/010-posterchanos-sbat-url.patch", steam,
                       "upgrades must remove the previously shipped systemd patch")
         self.assertIn("no-multilib", steam, "the repair path can install a launcher with no 32-bit runtime")
-        self.assertIn('ABI_X86="64 32"', steam, "the repair path does not enable Steam's 32-bit ABI")
+        # NOT a global ABI_X86. Setting it for the whole system makes every multilib-capable package
+        # need a 32-bit build, so the binary host's packages stop matching and the next @world on
+        # this machine is a source build that ends in an unbreakable dependency cycle. steam-launcher
+        # names the packages it needs 32-bit copies of as USE dependencies, and the
+        # --autounmask-write/etc-update pair below turns those into per-package entries.
+        self.assertNotIn('ABI_X86="64 32"', self._code(steam),
+                         "a global 32-bit ABI invalidates the binary host and breaks @world")
+        self.assertIn("--autounmask-write games-util/steam-launcher", steam,
+                      "nothing asks portage for the 32-bit packages steam-launcher depends on")
         self.assertIn("media-libs/mesa vulkan", steam, "Mesa may be built without a Vulkan driver")
         self.assertIn("media-libs/vulkan-loader", steam, "the Vulkan driver has no libvulkan.so.1 loader")
         self.assertIn("dev-util/vulkan-tools", steam, "the installed graphics stack cannot be verified")
 
         configure = self._fn("configurePortage")
-        self.assertIn('ABI_X86="64 32"', configure,
-                      "Steam's 32-bit runtime and graphics libraries are not enabled")
+        self.assertIn('ABI_X86="64"', configure, "the installed system has no explicit ABI_X86")
+        self.assertNotIn('ABI_X86="64 32"', self._code(configure),
+                         "measured in a VM: a global 32-bit ABI makes emerge @world exit 1")
         self.assertIn("vulkan", self.src.split('USE_FLAGS="', 1)[1].split('"', 1)[0],
                       "fresh installs can build Mesa without Vulkan support")
         self.assertIn("grep -vi 'plasma\\|gnome\\|no-multilib'", configure,
                       "the installer can select a no-multilib profile")
-        self.assertIn("eselect repository enable steam-overlay", configure)
-        self.assertIn("emerge --sync steam-overlay", configure)
+        # AND IT COMES FROM OUR OWN REPOSITORY. This used to be `eselect repository enable
+        # steam-overlay`, which fetches a repository list from api.gentoo.org and clones a
+        # third-party git repo — two hosts an install depended on and we do not mirror. The ebuild is
+        # vendored into the PosterChanOS overlay instead, the same place gui-apps/wlr-randr lives,
+        # and that overlay is served from gentoo.poster.place like everything else an install needs.
+        self.assertNotIn("steam-overlay", self._code(configure),
+                         "an install must not enable a third-party repository")
+        self.assertNotIn("steam-overlay", self._code(steam),
+                         "the steam command must not enable a third-party repository either")
+        overlay = Path(ROOT, "os/overlay/games-util/steam-launcher")
+        self.assertTrue(any(overlay.glob("steam-launcher-*.ebuild")),
+                        "steam-launcher is in the package set and in no repository we serve")
+        self.assertTrue((overlay / "Manifest").is_file(),
+                        "without a Manifest portage refuses the tarball it just downloaded")
+        self.assertIn("games-util", Path(ROOT, "os/overlay/profiles/categories").read_text(),
+                      "portage ignores a package whose category the overlay does not declare")
+        self.assertTrue(Path(ROOT, "os/overlay/licenses/ValveSteamLicense").is_file(),
+                        "the ebuild names a license the overlay does not carry")
 
     def test_every_package_name_has_a_category(self):
         """`games-util/gamescope` does not exist — it is `gui-wm/gamescope` — and emerge refuses the
