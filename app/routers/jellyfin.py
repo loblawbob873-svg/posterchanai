@@ -15,6 +15,7 @@ import time
 from types import SimpleNamespace
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
+from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
@@ -121,6 +122,35 @@ async def authenticate(request: Request, db=Depends(get_db)):
     return SimpleNamespace(user=user, uid=uid, token=token, session=session)
 
 
+def with_image_ticket(dto, auth):
+    # TV image loaders omit app auth but preserve ImageTags in the tag query.
+    # This capability grants only this item's artwork, not API or video access.
+    expires = min(int(auth.session['expires']), (int(time.time()) // 3600 + 2) * 3600)
+    payload = f"{auth.uid}.{auth.session['id']}.{expires}"
+    signature = hmac.new(SECRET_KEY.encode(), (dto['Id'] + '.Primary.' + payload + '.' + auth.session['hash']).encode(), hashlib.sha256).hexdigest()
+    dto['ImageTags'] = {'Primary': 'pcimg.' + payload + '.' + signature}
+    return dto
+
+
+async def authenticate_image(request: Request, db=Depends(get_db)):
+    if api_token(request):
+        return await authenticate(request, db)
+    tag = query(request, 'tag', '')
+    match = re.fullmatch(r'pcimg\.([a-f0-9]{32})\.([a-f0-9]{32})\.([0-9]{10})\.([a-f0-9]{64})', tag)
+    if not match:
+        raise HTTPException(401, 'Private artwork requires authorization')
+    uid, sid, expires, signature = match.groups()
+    record = await media.read(account_key(uid)) or {}
+    session = next((s for s in record.get('sessions', []) if s['id'] == sid and s['expires'] > time.time()), None)
+    item = request.path_params['uid'].replace('-', '').lower()
+    payload = f"{uid}.{sid}.{expires}"
+    expected = hmac.new(SECRET_KEY.encode(), (item + '.Primary.' + payload + '.' + session['hash']).encode(), hashlib.sha256).hexdigest() if session else ''
+    user = find_user(db, record['pubkey']) if session else None
+    if int(expires) <= time.time() or not hmac.compare_digest(signature, expected) or not native.media_allowed(user):
+        raise HTTPException(401, 'Private artwork authorization expired or revoked')
+    return SimpleNamespace(user=user, uid=uid, token='', session=session)
+
+
 @account_router.get('')
 async def account_status(user=Depends(native.get_media_user)):
     record = await media.read(account_key(account_id(user))) or {}
@@ -177,7 +207,7 @@ def user_dto(user):
                        'EnableVideoPlaybackTranscoding': True, 'EnablePlaybackRemuxing': False,
                        'EnableContentDownloading': False, 'EnableContentDeletion': False,
                        'EnableRemoteAccess': True, 'EnableAllDevices': True, 'EnableAllFolders': False,
-                       'EnableLiveTvAccess': False, 'EnableUserPreferenceAccess': False,
+                       'EnableLiveTvAccess': False, 'EnableUserPreferenceAccess': True,
                        'EnableRemoteControlOfOtherUsers': False, 'EnableSharedDeviceControl': False,
                        'AuthenticationProviderId': 'Posterchan.MediaCenter',
                        'PasswordResetProviderId': 'Posterchan.MediaCenter',
@@ -367,7 +397,7 @@ async def redeem_quick(body: QuickSecret, db=Depends(get_db)):
         record['sessions'] = [s for s in record.get('sessions', []) if s['expires'] > time.time()][-15:] + [session]
         await media.write(account_key(uid), record)
         _quick.pop(key, None)  # Consume only after the encrypted token record is acknowledged.
-    return {'User': user_dto(user), 'AccessToken': token, 'ServerId': SERVER_ID,
+    return {'User': await hydrated_user(user), 'AccessToken': token, 'ServerId': SERVER_ID,
             'SessionInfo': session_dto(session, user)}
 
 
@@ -383,7 +413,61 @@ async def logout(auth=Depends(authenticate)):
 @router.get('/Users/{user_id}')
 @router.get('/Users/Me')
 async def me(auth=Depends(authenticate)):
-    return user_dto(auth.user)
+    return await hydrated_user(auth.user)
+
+
+async def hydrated_user(user):
+    result = user_dto(user)
+    saved = await media.read('jellyfin-preferences:' + account_id(user)) or {}
+    result['Configuration'].update(saved.get('configuration', {}))
+    return result
+
+
+async def save_preferences(uid, key, value):
+    # One bounded, encrypted local document per identity, independent of app tokens.
+    async with _account_lock:
+        storage = 'jellyfin-preferences:' + uid
+        saved = await media.read(storage) or {}
+        saved[key] = value
+        if sum(k.startswith('display:') for k in saved) > 32 or len(json.dumps(saved).encode()) > 48000:
+            raise HTTPException(400, 'Too many or oversized client preferences')
+        await media.write(storage, saved)
+
+
+@router.post('/Users/{user_id}/Configuration', status_code=204)
+async def save_user_configuration(body: dict = Body(...), auth=Depends(authenticate)):
+    defaults = user_dto(auth.user)['Configuration']
+    defaults.update(AudioLanguagePreference='', SubtitleLanguagePreference='', SubtitleMode='None')
+    allowed = {key.casefold(): key for key in defaults}
+    update = {}
+    for key, value in body.items():
+        canonical = allowed.get(key.casefold())
+        if canonical is None:
+            continue
+        expected = defaults[canonical]
+        if type(value) is not type(expected):
+            raise HTTPException(400, 'Invalid preference type')
+        if isinstance(value, list) and (len(value) > 100 or any(not isinstance(v, str) or len(v) > 128 for v in value)):
+            raise HTTPException(400, 'Invalid preference list')
+        if isinstance(value, list):
+            try:
+                value = [UUID(v).hex for v in value]
+            except ValueError:
+                raise HTTPException(400, 'Preference lists must contain item UUIDs')
+        if isinstance(value, str) and len(value) > 128:
+            raise HTTPException(400, 'Preference is too long')
+        if canonical == 'SubtitleMode' and value not in ('Default', 'Always', 'OnlyForced', 'None', 'Smart'):
+            raise HTTPException(400, 'Invalid subtitle mode')
+        update[canonical] = value
+    # Merge while holding the same lock as concurrent device preference changes.
+    async with _account_lock:
+        storage = 'jellyfin-preferences:' + auth.uid
+        saved = await media.read(storage) or {}
+        saved['configuration'] = {**saved.get('configuration', {}), **update}
+        if len(saved) > 33 or len(json.dumps(saved).encode()) > 48000:
+            raise HTTPException(400, 'Preferences are too large')
+        await media.write(storage, saved)
+    return Response(status_code=204)
 
 
 async def media_call(request, auth, db, path='', method='GET', body=None):
@@ -417,6 +501,8 @@ async def media_call(request, auth, db, path='', method='GET', body=None):
         return await native.artwork(parts[0], parts[2], auth.user)
     if len(parts) == 3 and parts[1] == 'progress':
         return await native.save_playback_progress(parts[0], parts[2], native.PlaybackProgress(**body), auth.user)
+    if len(parts) == 3 and parts[1] == 'user-data':
+        return await native.save_user_media_data(parts[0], parts[2], native.UserMediaData(**body), auth.user)
     if len(parts) == 3 and parts[1] == 'tracks':
         return await native.tracks(parts[0], parts[2], auth.user)
     if len(parts) == 3 and parts[1] == 'play':
@@ -447,7 +533,7 @@ def remember(lib, item):
 
 
 def library_dto(lib):
-    return {'Id': library_id(lib), 'ServerId': SERVER_ID, 'Name': lib['name'], 'Type': 'CollectionFolder',
+    return {'Id': library_id(lib), 'DisplayPreferencesId': library_id(lib), 'ServerId': SERVER_ID, 'Name': lib['name'], 'Type': 'CollectionFolder',
             'IsFolder': True, 'CollectionType': 'homevideos', 'ChildCount': lib.get('count', 0),
             'RecursiveItemCount': lib.get('count', 0), 'ImageTags': {}, 'LocationType': 'FileSystem'}
 
@@ -470,7 +556,7 @@ def catalog_folders(entries):
 
 
 def folder_dto(lib, path, count=0):
-    return {'Id': folder_id(lib, path), 'ServerId': SERVER_ID, 'Name': Path(path).name,
+    return {'Id': folder_id(lib, path), 'DisplayPreferencesId': folder_id(lib, path), 'ServerId': SERVER_ID, 'Name': Path(path).name,
             'SortName': Path(path).name, 'ParentId': folder_id(lib, Path(path).parent.as_posix()),
             'Type': 'Folder', 'IsFolder': True, 'RecursiveItemCount': count,
             'ChildCount': count, 'LocationType': 'FileSystem',
@@ -490,7 +576,7 @@ def item_dto(lib, item):
             'PlayAccess': 'Full', 'LocationType': 'FileSystem', 'VideoType': 'VideoFile',
             'ImageTags': {'Primary': digest(str(item))[:32]}, 'MediaSources': [],
             'UserData': {'PlaybackPositionTicks': int(saved.get('position', 0) * 10000000),
-                         'PlayCount': int(saved.get('played', False)), 'IsFavorite': False,
+                         'PlayCount': int(saved.get('played', False)), 'IsFavorite': saved.get('favorite', False),
                          'Played': saved.get('played', False),
                          'LastPlayedDate': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(saved.get('updated', 0))),
                          'Key': uid, 'ItemId': uid}}
@@ -529,12 +615,12 @@ def envelope(items, start=0, total=None):
 @router.get('/Users/{user_id}/Views')
 @router.get('/UserViews')
 async def views(request: Request, auth=Depends(authenticate), db=Depends(get_db)):
-    return envelope([library_dto(lib) for lib in await libraries(request, auth, db)])
+    return envelope([with_image_ticket(library_dto(lib), auth) for lib in await libraries(request, auth, db)])
 
 
 @router.get('/Users/{user_id}/Items/Root')
 async def root_item(auth=Depends(authenticate)):
-    return {'Id': SERVER_ID, 'Name': 'Media Center', 'Type': 'Folder', 'IsFolder': True}
+    return {'Id': SERVER_ID, 'DisplayPreferencesId': SERVER_ID, 'Name': 'Media Center', 'Type': 'Folder', 'IsFolder': True}
 
 
 @router.get('/Items')
@@ -546,6 +632,8 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
     recursive = query(request, 'Recursive', 'false').lower() == 'true'
     latest = request.url.path.endswith('/Latest')
     search = query(request, 'SearchTerm', '').casefold()
+    filters = set(query(request, 'Filters', '').lower().split(','))
+    favorites = query(request, 'IsFavorite', '').lower() == 'true' or 'isfavorite' in filters
     ids = set(query(request, 'Ids', '').replace('-', '').lower().split(',')) - {''}
     types = set(query(request, 'IncludeItemTypes', '').split(',')) - {''}
     try:
@@ -555,7 +643,7 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
         raise HTTPException(400, 'Invalid pagination')
     result = []
     for lib in await libraries(request, auth, db):
-        if not parent and not recursive and not latest and not search and not ids:
+        if not parent and not recursive and not latest and not search and not ids and not favorites and not (filters & {'isplayed', 'isunplayed'}):
             result.append(library_dto(lib))
             continue
         entries = (await media_call(request, auth, db, '/' + lib['id'] + '/items'))['items']
@@ -565,7 +653,7 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
             target = next((path for path in folders if folder_id(lib, path) == parent), None)
             if target is None:
                 continue
-        flat = recursive or latest or bool(search) or bool(ids)
+        flat = recursive or latest or bool(search) or bool(ids) or favorites or bool(filters & {'isplayed', 'isunplayed'})
         if not flat:
             result.extend(folder_dto(lib, path, count) for path, count in folders.items()
                           if Path(path).parent.as_posix() == target)
@@ -580,9 +668,29 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
     result.sort(key=lambda entry: (not entry['IsFolder'], media.natural(entry['Name'])))
     if types:
         result = [item for item in result if item['Type'] in types]
+    if favorites:
+        result = [item for item in result if item.get('UserData', {}).get('IsFavorite')]
+    if 'isplayed' in filters:
+        result = [item for item in result if item.get('UserData', {}).get('Played')]
+    if 'isunplayed' in filters:
+        result = [item for item in result if not item.get('UserData', {}).get('Played')]
     # Native catalogs already preserve natural folder/filename order.
-    page = result[start:start + limit]
+    page = [with_image_ticket(dto, auth) for dto in result[start:start + limit]]
     return page if latest else envelope(page, start, len(result))
+
+
+@router.api_route('/Users/{user_id}/PlayedItems/{uid}', methods=['POST', 'DELETE'])
+@router.api_route('/UserPlayedItems/{uid}', methods=['POST', 'DELETE'])
+@router.api_route('/Users/{user_id}/FavoriteItems/{uid}', methods=['POST', 'DELETE'])
+@router.api_route('/UserFavoriteItems/{uid}', methods=['POST', 'DELETE'])
+async def change_user_data(uid: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
+    lib, item = await resolve(request, auth, db, uid)
+    if not item or '_folder' in item:
+        raise HTTPException(400, 'Select a playable item')
+    field = 'favorite' if 'favoriteitems' in request.url.path.lower() else 'played'
+    saved = await media_call(request, auth, db, f"/{lib['id']}/user-data/{item['id']}",
+                             'POST', {field: request.method == 'POST'})
+    return item_dto(lib, {**item, 'progress': saved})['UserData']
 
 
 @router.get('/UserItems/Resume')
@@ -600,7 +708,35 @@ async def resume(request: Request, auth=Depends(authenticate), db=Depends(get_db
         limit = min(200, max(0, int(query(request, 'Limit', '100'))))
     except ValueError:
         raise HTTPException(400, 'Invalid pagination')
-    return envelope([entry[1] for entry in result[start:start + limit]], start, len(result))
+    return envelope([with_image_ticket(entry[1], auth) for entry in result[start:start + limit]], start, len(result))
+
+
+@router.get('/Items/Filters')
+@router.get('/Items/Filters2')
+async def item_filters(auth=Depends(authenticate)):
+    return {'Genres': [], 'Tags': [], 'Years': [], 'OfficialRatings': []}
+
+
+@router.get('/Persons')
+@router.get('/Artists')
+@router.get('/Artists/AlbumArtists')
+@router.get('/LiveTv/Programs/Recommended')
+async def unmodeled_collections(auth=Depends(authenticate)):
+    return envelope([])
+
+
+@router.get('/MediaSegments/{uid}')
+@router.get('/Videos/{uid}/AdditionalParts')
+async def extra_parts(uid: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
+    await resolve(request, auth, db, uid)
+    return envelope([])
+
+
+@router.get('/Items/{uid}/Images')
+async def image_list(uid: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
+    await resolve(request, auth, db, uid)
+    tag = with_image_ticket({'Id': uid.replace('-', '').lower()}, auth)['ImageTags']['Primary']
+    return [{'ImageType': 'Primary', 'ImageIndex': 0, 'ImageTag': tag, 'Size': 0}]
 
 
 @router.get('/Items/{uid}')
@@ -608,13 +744,13 @@ async def resume(request: Request, auth=Depends(authenticate), db=Depends(get_db
 async def item_details(uid: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
     lib, item = await resolve(request, auth, db, uid)
     if item and '_folder' in item:
-        return folder_dto(lib, item['_folder'], item['count'])
-    return item_dto(lib, item) if item else library_dto(lib)
+        return with_image_ticket(folder_dto(lib, item['_folder'], item['count']), auth)
+    return with_image_ticket(item_dto(lib, item) if item else library_dto(lib), auth)
 
 
 @router.get('/Items/{uid}/Images/Primary')
 @router.get('/Items/{uid}/Images/Primary/{index}')
-async def image(uid: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
+async def image(uid: str, request: Request, auth=Depends(authenticate_image), db=Depends(get_db)):
     lib, item = await resolve(request, auth, db, uid)
     if not item or '_folder' in item:
         path = item['_folder'] if item else '.'
@@ -648,16 +784,47 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
         return {'MediaSources': [], 'ErrorCode': 'NoCompatibleStream'}
     track_data = await media_call(request, auth, db, f"/{lib['id']}/tracks/{item['id']}")
     tracks = track_data['tracks']
+    preferences = (await media.read('jellyfin-preferences:' + auth.uid) or {}).get('configuration', {})
+    audio_choice = body_value(body, 'AudioStreamIndex', query(request, 'AudioStreamIndex'))
+    subtitle_choice = body_value(body, 'SubtitleStreamIndex', query(request, 'SubtitleStreamIndex'))
+    if audio_choice is None:
+        preferred = preferences.get('AudioLanguagePreference')
+        audio_choice = next((t['index'] for t in tracks if t['type'] == 'audio' and t['language'] == preferred), -1) if not preferences.get('PlayDefaultAudioTrack', True) else -1
+    if subtitle_choice is None:
+        mode = preferences.get('SubtitleMode', 'None')
+        subtitles = [t for t in tracks if t['type'] == 'subtitle']
+        preferred = preferences.get('SubtitleLanguagePreference')
+        matches = [t for t in subtitles if t['language'] == preferred]
+        if mode == 'OnlyForced':
+            matches = [t for t in subtitles if t.get('forced') and (not preferred or t['language'] == preferred)]
+        elif mode == 'Default':
+            matches = [t for t in subtitles if t['default']]
+        elif mode == 'Always':
+            matches = matches or subtitles
+        elif mode == 'Smart':
+            selected_audio = next((t for t in tracks if t['type'] == 'audio' and str(t['index']) == str(audio_choice)),
+                                  next((t for t in tracks if t['type'] == 'audio' and t['default']), {}))
+            if selected_audio.get('language') == preferred:
+                matches = [t for t in matches if t.get('forced')]
+        else:
+            matches = []
+        subtitle_choice = matches[0]['index'] if matches else -1
     try:
-        audio_index = int(body_value(body, 'AudioStreamIndex', query(request, 'AudioStreamIndex', '-1')))
-        subtitle_index = int(body_value(body, 'SubtitleStreamIndex', query(request, 'SubtitleStreamIndex', '-1')))
+        audio_index = int(audio_choice)
+        subtitle_index = int(subtitle_choice)
     except (ValueError, TypeError):
+        raise HTTPException(400, 'Invalid media track')
+    if audio_index < -1 or subtitle_index < -1:
         raise HTTPException(400, 'Invalid media track')
     if audio_index >= 0 and not any(t['type'] == 'audio' and t['index'] == audio_index for t in tracks):
         raise HTTPException(400, 'Unavailable audio track')
     selected_subtitle = next((t for t in tracks if t['type'] == 'subtitle' and t['index'] == subtitle_index), None)
     if subtitle_index >= 0 and not selected_subtitle:
         raise HTTPException(400, 'Unavailable subtitle track')
+    used_indices = {t['index'] for t in tracks}
+    if any(not isinstance(index, int) or index < 0 or index > 1024 for index in used_indices):
+        raise HTTPException(400, 'Unsupported media stream index')
+    video_index = next(index for index in range(1026) if index not in used_indices)
     playback = await media_call(request, auth, db, f"/{lib['id']}/play/{item['id']}", 'POST')
     playback['url'] += '&' + urlencode({'audio': audio_index,
                                         'subtitle': subtitle_index if selected_subtitle and not selected_subtitle['text'] else -1})
@@ -671,12 +838,12 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
         _plays.popitem(last=False)
     video = item.get('video', True)
     params = urlencode({'api_key': auth.token, 'PlaySessionId': play_id})
-    streams = ([{'Type': 'Video', 'Codec': 'h264', 'Index': 0, 'IsDefault': True}] if video else [])
+    streams = ([{'Type': 'Video', 'Codec': 'h264', 'Index': video_index, 'IsDefault': True}] if video else [])
     for track in tracks:
         stream = {'Type': track['type'].title(), 'Codec': 'aac' if track['type'] == 'audio' else track['codec'],
                   'Index': track['index'], 'Language': track['language'], 'Title': track['title'],
                   'DisplayTitle': ' · '.join(filter(None, [track['language'], track['title'], track['codec']])),
-                  'IsDefault': track['default'], 'IsExternal': False}
+                  'IsDefault': track['default'], 'IsForced': track.get('forced', False), 'IsExternal': False}
         if track['type'] == 'audio':
             stream.update(Channels=2, SampleRate=48000)
         else:
@@ -684,8 +851,13 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
                           DeliveryMethod='External' if track['text'] else 'Encode')
             if track['text']:
                 stream['Codec'] = 'webvtt'
-                stream['DeliveryUrl'] = f"/jellyfin/Videos/{uid}/{uid}/Subtitles/{track['index']}/Stream.vtt?{params}"
+                stream['DeliveryUrl'] = f"Videos/{uid}/{uid}/Subtitles/{track['index']}/Stream.vtt?{params}"
         streams.append(stream)
+    # Legacy TV StreamInfo indexes this list directly by the FFmpeg stream index.
+    # Preserve gaps left by attachments/data rather than shifting subtitle tracks.
+    indexed = {stream['Index']: stream for stream in streams}
+    streams = [indexed.get(index, {'Type': 'Data', 'Codec': 'bin_data', 'Index': index, 'IsDefault': False})
+               for index in range(max(indexed, default=-1) + 1)]
     for stream in streams:
         for key in ('IsInterlaced', 'IsForced', 'IsHearingImpaired', 'IsOriginal',
                     'IsExternal', 'IsTextSubtitleStream', 'SupportsExternalStream'):
@@ -702,7 +874,7 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
               'DefaultSubtitleStreamIndex': subtitle_index, 'RequiresOpening': False, 'RequiresClosing': False}
     source.update(IsRemote=False, ReadAtNativeFramerate=False, IgnoreDts=False, IgnoreIndex=False,
                   GenPtsInput=False, IsInfiniteStream=False, RequiresLooping=False,
-                  SupportsProbing=False, HasSegments=True)
+                  SupportsProbing=False, HasSegments=False)
     return {'MediaSources': [source], 'PlaySessionId': play_id}
 
 
@@ -815,12 +987,50 @@ async def sessions(auth=Depends(authenticate)):
     return [session_dto(auth.session, auth.user)]
 
 
-@router.get('/DisplayPreferences/{preference_id}')
-async def display_preferences(preference_id: str, request: Request, auth=Depends(authenticate)):
+def display_defaults(preference_id, client):
     return {'Id': preference_id, 'ViewType': 'Poster', 'SortBy': 'SortName', 'SortOrder': 'Ascending',
             'IndexBy': 'None', 'RememberIndexing': False, 'RememberSorting': False, 'CustomPrefs': {},
             'PrimaryImageHeight': 250, 'PrimaryImageWidth': 250, 'ScrollDirection': 'Horizontal',
-            'ShowBackdrop': True, 'ShowSidebar': False, 'Client': query(request, 'client', 'emby')}
+            'ShowBackdrop': True, 'ShowSidebar': False, 'Client': client}
+
+
+def display_key(preference_id, request):
+    client = query(request, 'client', 'emby')
+    if len(preference_id) > 128 or len(client) > 128:
+        raise HTTPException(400, 'Invalid preference identifier')
+    return 'display:' + digest(json.dumps([preference_id, client])), client
+
+
+@router.get('/DisplayPreferences/{preference_id}')
+async def display_preferences(preference_id: str, request: Request, auth=Depends(authenticate)):
+    key, client = display_key(preference_id, request)
+    saved = await media.read('jellyfin-preferences:' + auth.uid) or {}
+    return {**display_defaults(preference_id, client), **saved.get(key, {})}
+
+
+@router.post('/DisplayPreferences/{preference_id}', status_code=204)
+async def update_display_preferences(preference_id: str, request: Request, body: dict = Body(...), auth=Depends(authenticate)):
+    key, client = display_key(preference_id, request)
+    defaults = display_defaults(preference_id, client)
+    allowed = {key.casefold(): key for key in defaults if key not in ('Id', 'Client')}
+    update = {}
+    for name, value in body.items():
+        canonical = allowed.get(name.casefold())
+        if canonical is None:
+            continue
+        if type(value) is not type(defaults[canonical]):
+            raise HTTPException(400, 'Invalid display preference type')
+        if canonical == 'CustomPrefs' and any(not isinstance(v, str) for v in value.values()):
+            raise HTTPException(400, 'Custom preferences must be strings')
+        if canonical == 'SortOrder' and value not in ('Ascending', 'Descending'):
+            raise HTTPException(400, 'Invalid sort order')
+        if canonical == 'ScrollDirection' and value not in ('Horizontal', 'Vertical'):
+            raise HTTPException(400, 'Invalid scroll direction')
+        update[canonical] = value
+    if len(json.dumps(update).encode()) > 8192:
+        raise HTTPException(400, 'Display preferences are too large')
+    await save_preferences(auth.uid, key, update)
+    return Response(status_code=204)
 
 
 @router.get('/Items/{uid}/Similar')

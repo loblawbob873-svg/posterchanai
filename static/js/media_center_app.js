@@ -108,7 +108,7 @@
     const timeout=setTimeout(()=>controller.abort(),120000);
     $('subtitle-status').textContent='Loading subtitles…';
     try {
-      const response=await fetch(track.DeliveryUrl,{signal:controller.signal,cache:'no-store'});
+      const response=await fetch(new URL(track.DeliveryUrl,location.origin+base),{signal:controller.signal,cache:'no-store'});
       if(!response.ok)throw new Error('Subtitles could not be loaded ('+response.status+').');
       const text=await response.text();if(controller.signal.aborted)return;
       if(!text.startsWith('WEBVTT'))throw new Error('Invalid subtitle response.');

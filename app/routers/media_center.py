@@ -499,6 +499,22 @@ async def save_playback_progress(library_id: str, item_id: str, body: PlaybackPr
     return await media.save_progress(library_id, media.identity(user), item_id, body.position, item['duration'])
 
 
+class UserMediaData(BaseModel):
+    played: bool | None = None
+    favorite: bool | None = None
+
+
+@router.post('/{library_id}/user-data/{item_id}')
+async def save_user_media_data(library_id: str, item_id: str, body: UserMediaData, user=Depends(get_media_user)):
+    library = await library_for(library_id, media.identity(user))
+    if not any(entry['id'] == item_id for entry in await available_catalog(library)):
+        raise HTTPException(404, 'Media not found')
+    update = body.model_dump(exclude_none=True)
+    if body.played is not None:
+        update['position'] = 0
+    return await media.save_user_data(library_id, media.identity(user), item_id, update)
+
+
 @router.get('/{library_id}/tracks/{item_id}')
 async def tracks(library_id: str, item_id: str, user=Depends(get_media_user)):
     library = await library_for(library_id, media.identity(user))

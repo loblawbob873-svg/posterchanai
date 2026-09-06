@@ -366,6 +366,9 @@ def test_playback_info_audio_and_subtitle_contract(api):
     text=next(s for s in source['MediaStreams'] if s['Index']==3)
     assert text['IsTextSubtitleStream'] and text['DeliveryMethod']=='External'
     assert '/Subtitles/3/Stream.vtt?' in text['DeliveryUrl']
+    # Kotlin UrlBuilder appends both slash-prefixed and relative paths to /jellyfin.
+    assert ('/jellyfin/' + text['DeliveryUrl'].lstrip('/')).count('/jellyfin/') == 1
+    assert text['DeliveryUrl'].startswith('Videos/')
     bitmap=next(s for s in source['MediaStreams'] if s['Index']==4)
     assert not bitmap['IsTextSubtitleStream'] and bitmap['DeliveryMethod']=='Encode'
     record=jf._plays[info['PlaySessionId']]
@@ -473,6 +476,8 @@ def test_kotlin_tv_startup_and_playback_contract(api):
     item, playback = playable(api, login)
     validate(item, 'BaseItemDto')
     validate(playback, 'PlaybackInfoResponse')
+    for image in c.get('/jellyfin/Items/'+item['Id']+'/Images', headers=h).json():
+        validate(image, 'ImageInfo')
     assert c.get('/jellyfin/System/Configuration/encoding').status_code == 401
     assert c.get('/jellyfin/System/Configuration/network', headers=h).status_code == 404
     assert c.post('/jellyfin/System/Configuration/encoding', headers=h, json={}).status_code == 405
@@ -791,3 +796,158 @@ def test_connected_devices_metadata_and_individual_revocation(api):
     assert c.get('/jellyfin/UserViews', headers=headers(login)).status_code == 401
     assert c.get('/jellyfin/UserViews', headers=headers(second)).status_code == 200
     assert c.get('/api/media-center/jellyfin-account').json()['sessions'] == 1
+
+
+def test_tv_folder_open_preferences_and_private_image_ticket(api, monkeypatch):
+    monkeypatch.setenv('POSTERCHANAI_MEDIA_ROOTS', api.library['folder'])
+    login = connect(api)
+    c, h = api.client, headers(login)
+    view = c.get('/jellyfin/UserViews', headers=h).json()['Items'][0]
+    folder = c.get('/jellyfin/Items', params={'ParentId':view['Id']}, headers=h).json()['Items'][0]
+    for dto in (view, folder):
+        # BrowseGridFragment.onCreate calls Objects.requireNonNull on this field.
+        assert dto['DisplayPreferencesId'] and dto['DisplayPreferencesId'] == dto['Id']
+        detail = c.get('/jellyfin/Items/'+dto['Id'], headers=h).json()
+        assert detail['DisplayPreferencesId'] == dto['DisplayPreferencesId']
+        prefs = '/jellyfin/DisplayPreferences/'+dto['DisplayPreferencesId']+'?client=android'
+        assert c.get(prefs, headers=h).status_code == 200
+        assert c.post(prefs, headers=h, json={'CustomPrefs':{'gridDirection':'VERTICAL'}}).status_code == 204
+        assert c.get(prefs, headers=h).json()['CustomPrefs']['gridDirection'] == 'VERTICAL'
+    url = '/jellyfin/Items/'+folder['Id']+'/Images/Primary'
+    tag = folder['ImageTags']['Primary']
+    # Image endpoint's normal source validation requires real fixture artwork.
+    from PIL import Image
+    root = __import__('pathlib').Path(api.library['folder']) / 'Season 2'
+    root.mkdir(exist_ok=True)
+    Image.new('RGB',(16,16),'blue').save(root/'folder.png')
+    assert c.get(url).status_code == 401
+    response = c.get(url, params={'tag':tag})
+    assert response.status_code == 200, response.text
+    assert 'no-store' in response.headers['cache-control']
+    assert login['AccessToken'] not in tag
+    assert c.get(url, params={'tag':tag[:-1]+('0' if tag[-1]!='0' else '1')}).status_code == 401
+    assert c.get('/jellyfin/Items/'+view['Id']+'/Images/Primary', params={'tag':tag}).status_code == 401
+    assert c.get('/jellyfin/Items', params={'tag':tag}).status_code == 401
+    # A valid picture ticket cannot bypass a sharing change.
+    api.catalog['library:'+api.library['id']]['shared_with'] = []
+    assert c.get(url, params={'tag':tag}).status_code == 404
+    api.catalog['library:'+api.library['id']]['shared_with'] = [VIEWER]
+    assert c.get(url, params={'tag':tag}).status_code == 200
+    with Session(api.engine) as db:
+        viewer = db.query(User).filter(User.nostr_npub == VIEWER).one()
+        viewer.can_media = False
+        db.commit()
+    assert c.get(url, params={'tag':tag}).status_code == 401
+    with Session(api.engine) as db:
+        db.query(User).filter(User.nostr_npub == VIEWER).one().can_media = True
+        db.commit()
+    real_time = jf.time.time
+    with monkeypatch.context() as patch:
+        patch.setattr(jf.time, 'time', lambda: real_time()+7201)
+        assert c.get(url, params={'tag':tag}).status_code == 401
+    assert c.post('/jellyfin/Sessions/Logout', headers=h).status_code == 204
+    assert c.get(url, params={'tag':tag}).status_code == 401
+
+
+def test_client_preferences_persist_without_account_privilege_escalation(api):
+    c = api.client
+    login = connect(api)
+    h = headers(login)
+    path = '/jellyfin/Users/'+login['User']['Id']+'/Configuration'
+    assert c.post(path, headers=h, json={'audioLanguagePreference':'jpn','subtitleLanguagePreference':'eng',
+                                       'subtitleMode':'Always','IsAdministrator':True}).status_code == 204
+    second = connect(api)
+    jf._quick.clear(); jf._locators.clear()
+    hydrated = c.get('/jellyfin/Users/Me', headers=headers(second)).json()
+    assert hydrated['Configuration']['AudioLanguagePreference'] == 'jpn'
+    assert hydrated['Configuration']['SubtitleMode'] == 'Always'
+    assert not hydrated['Policy']['IsAdministrator']
+    assert 'IsAdministrator' not in hydrated['Configuration']
+    assert c.post(path, headers=h, json={'SubtitleMode':'broken'}).status_code == 400
+    assert c.post(path, headers=h, json={'OrderedViews':['not-a-uuid']}).status_code == 400
+    assert c.post(path, headers=h, json={'RememberAudioSelections':'yes'}).status_code == 400
+    prefs = '/jellyfin/DisplayPreferences/usersettings?client=android'
+    assert c.post(prefs, headers=h, json={'CustomPrefs':{'posterSize':'LARGE'},'ShowBackdrop':False}).status_code == 204
+    assert c.get(prefs, headers=headers(second)).json()['CustomPrefs'] == {'posterSize':'LARGE'}
+    assert c.get(prefs.replace('android','other'), headers=h).json()['CustomPrefs'] == {}
+    assert c.post(prefs, headers=h, json={'CustomPrefs':{'oversized':'x'*9000}}).status_code == 400
+    assert c.post(prefs, headers=h, json={'CustomPrefs':{'bad':False}}).status_code == 400
+    api.state['user'] = OWNER
+    owner = connect(api)
+    assert c.get(prefs, headers=headers(owner)).json()['CustomPrefs'] == {}
+    assert c.post(path, headers=headers(owner), json={}).status_code == 403
+
+
+def test_favorites_and_manual_played_state_use_private_shared_history(api):
+    c = api.client
+    login = connect(api)
+    h = headers(login)
+    item, info = playable(api, login)
+    favorite = '/jellyfin/Users/'+login['User']['Id']+'/FavoriteItems/'+item['Id']
+    played = '/jellyfin/Users/'+login['User']['Id']+'/PlayedItems/'+item['Id']
+    assert c.post(favorite, headers=h).json()['IsFavorite']
+    progress = {'PlaySessionId':info['PlaySessionId'], 'PositionTicks':50000000}
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=progress).status_code == 204
+    state = c.get('/jellyfin/Items/'+item['Id'], headers=h).json()['UserData']
+    assert state['IsFavorite'] and state['PlaybackPositionTicks'] == 50000000
+    assert c.get('/jellyfin/Items', headers=h, params={'Filters':'IsFavorite'}).json()['Items'][0]['Id'] == item['Id']
+    assert c.post(played, headers=h).json()['Played']
+    assert c.get('/jellyfin/UserItems/Resume', headers=h).json()['Items'] == []
+    assert c.get('/jellyfin/Items', headers=h, params={'Filters':'IsPlayed'}).json()['TotalRecordCount'] == 1
+    assert not c.delete(played, headers=h).json()['Played']
+    assert c.get('/jellyfin/Items', headers=h, params={'Filters':'IsUnplayed'}).json()['TotalRecordCount'] == 2
+    second = connect(api)
+    assert c.get('/jellyfin/Items/'+item['Id'], headers=headers(second)).json()['UserData']['IsFavorite']
+    api.state['user'] = OWNER
+    owner = connect(api)
+    assert not c.get('/jellyfin/Items/'+item['Id'], headers=headers(owner)).json()['UserData']['IsFavorite']
+    api.catalog['library:'+api.library['id']]['shared_with'] = []
+    assert c.delete(favorite, headers=h).status_code == 404
+
+
+def test_tv_optional_collections_and_item_extras_are_scoped(api):
+    c = api.client
+    login = connect(api)
+    h = headers(login)
+    item, _ = playable(api, login)
+    for path in ('/Persons','/Artists','/LiveTv/Programs/Recommended','/Videos/'+item['Id']+'/AdditionalParts',
+                 '/MediaSegments/'+item['Id']):
+        assert c.get('/jellyfin'+path).status_code == 401
+        assert c.get('/jellyfin'+path, headers=h).json()['Items'] == []
+    assert c.get('/jellyfin/Items/Filters', headers=h).json()['Genres'] == []
+    assert c.get('/jellyfin/Items/'+item['Id']+'/Images', headers=h).json()[0]['ImageType'] == 'Primary'
+    assert c.get('/jellyfin/Videos/'+'f'*32+'/AdditionalParts', headers=h).status_code == 404
+
+
+def test_tv_sparse_stream_indices_do_not_index_past_subtitle_array(api):
+    for item in api.entries:
+        item['tracks'] = [
+            {'index':0,'type':'audio','codec':'aac','language':'jpn','title':'','default':True,'text':False},
+            {'index':7,'type':'subtitle','codec':'ass','language':'eng','title':'','default':True,'text':True}]
+    login = connect(api)
+    item, _ = playable(api, login)
+    info = api.client.post('/jellyfin/Items/'+item['Id']+'/PlaybackInfo', headers=headers(login),
+                           json={'SubtitleStreamIndex':7}).json()
+    source = info['MediaSources'][0]
+    assert source['MediaStreams'][source['DefaultSubtitleStreamIndex']]['DeliveryMethod'] == 'External'
+    assert source['MediaStreams'][source['DefaultAudioStreamIndex']]['Type'] == 'Audio'
+    assert len({s['Index'] for s in source['MediaStreams']}) == len(source['MediaStreams'])
+    assert any(s['Type'] == 'Video' for s in source['MediaStreams'])
+
+
+def test_saved_language_defaults_apply_but_explicit_subtitles_off_wins(api):
+    for entry in api.entries:
+        entry['tracks'] += [
+            {'index':2,'type':'audio','codec':'aac','language':'jpn','title':'','default':False,'text':False},
+            {'index':3,'type':'subtitle','codec':'ass','language':'eng','title':'','default':False,'text':True}]
+    login = connect(api)
+    c, h = api.client, headers(login)
+    path = '/jellyfin/Users/'+login['User']['Id']+'/Configuration'
+    assert c.post(path, headers=h, json={'AudioLanguagePreference':'jpn','PlayDefaultAudioTrack':False,
+                                       'SubtitleLanguagePreference':'eng','SubtitleMode':'Always'}).status_code == 204
+    item, info = playable(api, login)
+    source = info['MediaSources'][0]
+    assert source['DefaultAudioStreamIndex'] == 2 and source['DefaultSubtitleStreamIndex'] == 3
+    off = c.post('/jellyfin/Items/'+item['Id']+'/PlaybackInfo', headers=h,
+                 json={'AudioStreamIndex':1,'SubtitleStreamIndex':-1}).json()['MediaSources'][0]
+    assert off['DefaultAudioStreamIndex'] == 1 and off['DefaultSubtitleStreamIndex'] == -1

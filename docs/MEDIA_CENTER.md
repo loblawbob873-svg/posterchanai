@@ -159,9 +159,8 @@ is committed only after every page is saved. Previous changed pages remain in th
 relay as snapshots; they are not copied upstream. Restarting during a scan leaves the
 previous committed catalog intact; rescan to complete the interrupted work.
 
-Current bounds: 100 libraries and 10,000 playable items per library. This initial feature
-does not include subtitle selection, watch-history synchronization, metadata/poster
-scraping, scheduled scanning, or direct-play/remux optimization.
+Current bounds: 100 libraries and 10,000 playable items per library. Subtitle/audio selection and private watch history are supported. Metadata/poster
+scraping, scheduled scanning, and direct-play/remux optimization are not implemented.
 
 ## Jellyfin apps and Quick Connect
 
@@ -175,6 +174,24 @@ transcoders. It does not install a second media server or maintain a second cata
 3. Return to the Jellyfin app to finish connecting. It sees the same shared libraries
    available to that Nostr identity. An administrator must first grant Media Center
    access and share the library, as described above.
+
+Sharing is authorized by Nostr identity on the connected Posterchan server. The
+recipient must sign in there, receive Media Center permission, and approve the app
+under their own identity. The app then sees owned and explicitly shared libraries,
+including the configured NAS proxy. No media catalog is federated to public relays.
+Separate Posterchan servers require separate Jellyfin server connections; this does
+not discover or merge remote libraries across unrelated servers automatically.
+
+TV folder DTOs include stable display-preference IDs. Display preferences (32 client/folder
+records plus user configuration, at most 48 KB per identity) and audio/subtitle defaults
+are encrypted local events that survive reconnects. Explicit playback track choices
+still override defaults. Favorites, played state, and progress share the latest-200-items
+history bound per user/library.
+
+TV artwork loaders can use a signed image tag without the full app token. A tag expires
+within two hours, grants only that item's primary artwork, and is rechecked against
+current device approval, Media Center permission, and library sharing on every request.
+It cannot authorize browsing or streaming; image responses remain private and no-store.
 
 This uses Jellyfin's [Quick Connect protocol](https://kotlin-sdk.jellyfin.org/guide/authentication.html#quick-connect).
 There are no separate passwords. Codes expire after five minutes and are single-use.
@@ -206,8 +223,8 @@ Text extraction is cached and serialized, and playback continues while captions 
 Jellyfin apps receive track metadata and subtitle delivery URLs using the
 [MediaStream API](https://typescript-sdk.jellyfin.org/interfaces/generated-client.MediaStream.html).
 
-Jellyfin administration, plugins, Live TV, remote control, favorites and
-manual watched-state changes are not implemented. Playback progress is saved privately per user and library, with the latest 200 items retained. Android and the web player offer Resume or Start from beginning, and Jellyfin clients receive the saved position through UserData and Resume. There is no bundled Jellyfin web UI.
+Jellyfin administration, plugins, Live TV, and remote control are not implemented.
+Favorites and manual watched/unwatched changes use the same private user history. Playback progress is saved privately per user and library, with the latest 200 items retained. Android and the web player offer Resume or Start from beginning, and Jellyfin clients receive the saved position through UserData and Resume. There is no bundled Jellyfin web UI.
 The official Android phone app receives a small Posterchan host page at `/jellyfin/`
 when requesting HTML. It implements Android's deferred-script readiness handoff,
 Quick Connect, saved media-only app login, library search, HLS playback, audio and

@@ -228,6 +228,7 @@ def probe(path):
                        'codec': stream.get('codec_name', ''), 'language': tags.get('language', 'und'),
                        'title': tags.get('title', '')[:150],
                        'default': bool(stream.get('disposition', {}).get('default')),
+                       'forced': bool(stream.get('disposition', {}).get('forced')),
                        'text': stream.get('codec_name') in ('subrip', 'ass', 'ssa', 'webvtt', 'mov_text', 'text')})
     return {"duration": duration, "video": bool(video), 'tracks': tracks}
 
@@ -400,9 +401,14 @@ async def playback_history(library_id, viewer):
 async def save_progress(library_id, viewer, item_id, position, duration):
     position = min(max(0.0, position), max(0.0, duration))
     played = duration > 0 and position >= duration - min(30, duration * .05)
-    record = {'position': 0 if played else round(position, 3), 'played': played, 'updated': time.time()}
+    return await save_user_data(library_id, viewer, item_id,
+                                {'position': 0 if played else round(position, 3), 'played': played})
+
+
+async def save_user_data(library_id, viewer, item_id, update):
     async with _progress_lock:
         history = await playback_history(library_id, viewer)
+        record = {**history.get(item_id, {'position': 0, 'played': False}), **update, 'updated': time.time()}
         history[item_id] = record
         # One bounded encrypted document per viewer/library, independent of app tokens.
         history = dict(sorted(history.items(), key=lambda entry: entry[1]['updated'], reverse=True)[:200])
