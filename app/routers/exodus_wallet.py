@@ -174,7 +174,12 @@ async def addresses(user: CurrentUser, db: Session = Depends(get_db)):
     _library()
     doc, phrase = await _open(db, user)
     index = int(doc.get("addressIndex") or 0)
-    return {"ok": True, "index": index, "addresses": W.addresses(phrase, index)}
+    addrs = W.addresses(phrase, index)
+    # The Monero address comes from the node's own wallet, never from this seed.
+    row = await _monero_row(user)
+    if row.get("address"):
+        addrs["XMR"] = row["address"]
+    return {"ok": True, "index": index, "addresses": addrs}
 
 
 @router.get("/balances")
@@ -190,8 +195,9 @@ async def balances(user: CurrentUser, db: Session = Depends(get_db)):
     doc, phrase = await _open(db, user)
     addrs = W.addresses(phrase, int(doc.get("addressIndex") or 0))
     from app.services import exodus_chain_service as C
-    return {"ok": True, "index": int(doc.get("addressIndex") or 0),
-            "balances": await C.balances(addrs, _settings(db))}
+    out = await C.balances(addrs, _settings(db))
+    out["XMR"] = await _monero_row(user)
+    return {"ok": True, "index": int(doc.get("addressIndex") or 0), "balances": out}
 
 
 @router.post("/reveal")
@@ -208,6 +214,38 @@ async def reveal(user: CurrentUser, db: Session = Depends(get_db)):
         await V.update(db, user, backedUpAt=int(datetime.utcnow().timestamp()))
     return {"ok": True, "mnemonic": phrase,
             "warning": "Anyone with these words can spend this wallet. Write them down offline."}
+
+
+async def _monero_row(user: User) -> dict:
+    """Monero, read from the wallet this node ALREADY runs for this user.
+
+    Not derived from the BIP-39 seed, and that is the whole point: a second XMR key would give one
+    person two unrelated balances and two addresses, and the one they saw last is the one they would
+    publish. So the screen shows the real wallet — same address, same coins, same daemon — and every
+    failure here is `known: false`, never a zero, for the same reason as every other chain.
+    """
+    key = str(getattr(user, "nostr_npub", "") or "").strip().lower()
+    if not key:
+        return {"address": "", "known": False, "units": None, "amount": None,
+                "note": "sign in with a Nostr account to use the Monero wallet"}
+    try:
+        from app.services.monero_user_wallets import user_wallets
+        wallets = user_wallets()
+        if not wallets:
+            return {"address": "", "known": False, "units": None, "amount": None,
+                    "note": "this node's Monero wallet is switched off"}
+        got = await wallets.balance(key)
+        return {"address": str(got.get("address") or ""), "known": True, "units": None,
+                "amount": str(got.get("balance")),
+                "spendable": str(got.get("unlocked_balance")),
+                # Monero locks change for ~20 minutes after a send. A screen that shows only the
+                # total tells somebody they have money they cannot move yet.
+                "note": "" if got.get("balance") == got.get("unlocked_balance")
+                        else "some of this is still locked after a recent send"}
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[exodus] Monero balance unavailable: %s", exc)
+        return {"address": "", "known": False, "units": None, "amount": None,
+                "note": "the Monero wallet could not be reached"}
 
 
 class SendReq(BaseModel):
@@ -228,9 +266,15 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db)):
     from app.services import exodus_send_service as S
     symbol = str(req.symbol or "").upper().strip()
     spec = W.CHAINS.get(symbol)
-    if not spec:
+    if not spec and symbol != "XMR":
         raise HTTPException(status_code=400, detail=f"unsupported chain {symbol!r}")
-    if spec["kind"] != "evm":
+    if symbol == "XMR":
+        # Monero has its own screen, its own caps and its own spend ledger. Duplicating the spend
+        # path here would mean two places that can move the same coins with different limits.
+        raise HTTPException(status_code=409, detail=(
+            "Send Monero from the Monero Wallet screen — it holds these coins, and it has the "
+            "spend limits and the transfer history this screen does not."))
+    if not spec or spec["kind"] != "evm":
         raise HTTPException(status_code=501, detail=(
             f"sending {symbol} is not supported yet. Receiving works; a {symbol} spend needs "
             f"transaction building this wallet does not do, and a half-built one loses coins."))

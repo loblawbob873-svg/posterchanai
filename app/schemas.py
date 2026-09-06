@@ -116,6 +116,7 @@ class SettingsResponse(BaseModel):
     exodus_rpc_bnb: str = ""
     exodus_rpc_avax: str = ""
     exodus_rpc_sol: str = ""
+    exodus_rpc_xrp: str = ""
     # PER-TRANSFER CAPS, IN THE CHAIN'S OWN UNITS. The node can sign anything the seed can spend, so
     # a ceiling is the whole containment against a bug or a stolen session — which means it has to
     # be enforceable when everything else is broken. A cap denominated in dollars is not: it needs a

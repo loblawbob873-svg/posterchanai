@@ -84,6 +84,23 @@
   const canSend = (sym) => SENDABLE.has(String(sym || '').toUpperCase());
 
   function row(sym, name, cell){
+    /* MONERO IS NOT ONE OF THE DERIVED CHAINS, and the row says so. Its coins live in the wallet
+       this node already runs — same address, same daemon, same spend limits — so the amount comes
+       from there and the Send button points at that screen rather than moving the same coins from
+       two places with different caps. */
+    if(String(sym).toUpperCase() === 'XMR'){
+      const known = !!(cell && cell.known);
+      const note = String((cell && cell.note) || '');
+      return `<li class="ex-coin">
+        <div class="ex-coin-id"><b>XMR</b><small>${esc(name)}</small></div>
+        <div class="ex-coin-amt">${known
+          ? `<b>${esc(String(cell.amount == null ? '0' : cell.amount))}</b> <em>XMR</em>`
+          : `<span class="ex-unknown" title="The Monero wallet could not be reached. This is not a zero balance.">unavailable</span>`}
+          ${note ? `<small class="ex-hint">${esc(note)}</small>` : ''}</div>
+        <button class="btn small ex-receive" data-sym="XMR">Receive</button>
+        <button class="btn small" id="ex-xmr-open">Open Monero Wallet</button>
+      </li>`;
+    }
     /* THREE STATES, NOT TWO. A chain that answered, a chain that answered nothing, and a chain
        nobody could reach — the last one must never borrow the second one's zero. */
     const known = !!(cell && cell.known);
@@ -211,6 +228,8 @@
   function wireWallet(){
     const $ = (s) => document.querySelector(s);
     const refresh = $('#ex-refresh'); if(refresh) refresh.onclick = () => render();
+    const xmr = $('#ex-xmr-open');
+    if(xmr) xmr.onclick = () => { if(PC.switchView) PC.switchView('wallet'); };
     const panel = $('#ex-panel');
     document.querySelectorAll('.ex-receive').forEach(b => b.onclick = async () => {
       const sym = b.dataset.sym;

@@ -152,8 +152,10 @@ def test_status_answers_even_with_no_wallet_and_says_who_holds_the_keys(client):
     body = client.get("/api/wallet/exodus/status").json()
     assert body["ok"] is True and body["exists"] is False
     assert "node holds the keys" in body["custody"].lower()
-    assert {c["symbol"] for c in body["chains"]}
-    assert "XMR" in body["excluded"]
+    symbols = {c["symbol"] for c in body["chains"]}
+    # Monero is offered now, read from the node's own wallet rather than derived from this seed.
+    assert {"BTC", "ETH", "XRP", "XMR"} <= symbols, symbols
+    assert next(c for c in body["chains"] if c["symbol"] == "XMR")["kind"] == "node-wallet"
 
 
 def test_no_route_takes_a_user_or_wallet_id(client):
@@ -236,3 +238,55 @@ def test_an_uncertain_broadcast_is_202_and_never_an_error(client, monkeypatch):
 
 def test_a_send_with_no_wallet_is_404(client):
     assert _send(client).status_code == 404
+
+
+# ── Monero: the wallet that already exists, not a second one ──────────────────────────────────
+
+def test_sending_monero_points_at_the_wallet_that_owns_the_coins(client):
+    """Duplicating the spend path would mean two places moving the same coins under different
+    limits — the Monero screen has caps and a spend ledger this one does not."""
+    _created(client)
+    r = client.post("/api/wallet/exodus/send",
+                    json={"symbol": "XMR", "to": "4" + "a" * 94, "amount": "0.1"})
+    assert r.status_code == 409, r.text
+    assert "Monero Wallet screen" in r.text
+
+
+def test_an_unreachable_monero_wallet_is_unknown_not_zero(client, monkeypatch):
+    """Same rule as every other chain: 0.00 XMR to somebody who holds Monero is a lie about their
+    money, and the daemon being down is not a balance."""
+    _created(client)
+    def boom():
+        raise RuntimeError("wallet rpc down")
+    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets", boom, raising=False)
+    row = client.get("/api/wallet/exodus/balances").json()["balances"]["XMR"]
+    assert row["known"] is False and row["amount"] is None
+    assert row["note"]
+
+
+def test_the_monero_row_reports_what_the_node_wallet_says(client, monkeypatch):
+    _created(client)
+    class _W:
+        async def balance(self, _pk):
+            return {"address": "4" + "b" * 94, "balance": "1.5", "unlocked_balance": "0.5"}
+    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets",
+                        lambda: _W(), raising=False)
+    row = client.get("/api/wallet/exodus/balances").json()["balances"]["XMR"]
+    assert row["known"] is True and row["amount"] == "1.5"
+    assert row["spendable"] == "0.5"
+    # Monero locks change for ~20 minutes after a send; a screen showing only the total tells
+    # somebody they have money they cannot move yet.
+    assert "locked" in row["note"]
+
+
+def test_the_monero_address_is_the_node_wallets_not_one_derived_here(client, monkeypatch):
+    _created(client)
+    class _W:
+        async def balance(self, _pk):
+            return {"address": "4" + "c" * 94, "balance": "0", "unlocked_balance": "0"}
+    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets",
+                        lambda: _W(), raising=False)
+    addrs = client.get("/api/wallet/exodus/addresses").json()["addresses"]
+    assert addrs["XMR"] == "4" + "c" * 94
+    # And the seed's own chains are still there and unchanged.
+    assert addrs["XRP"].startswith("r") and addrs["BTC"].startswith("1")

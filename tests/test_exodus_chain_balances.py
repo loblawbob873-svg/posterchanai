@@ -136,3 +136,45 @@ def test_an_unsupported_chain_is_refused():
     from app.services.exodus_wallet_service import WalletError
     with pytest.raises(WalletError):
         _run(C.balance("NOPE", "x"))
+
+
+# ── XRP ───────────────────────────────────────────────────────────────────────────────────────
+#
+# XRP breaks the pattern once, and it is the break that matters: an account does not EXIST on the
+# XRP ledger until it has been funded past the reserve, and a lookup for one answers `actNotFound`.
+# That is a real zero. Treating it as "could not ask" would show `unavailable` to exactly the person
+# most likely to think the app is broken — somebody who has just made a wallet and received nothing.
+
+def test_an_unfunded_xrp_account_is_a_real_zero_not_unknown():
+    _with(lambda r: httpx.Response(200, json={"result": {"error": "actNotFound",
+                                                         "status": "error"}}))
+    assert _run(C.balance("XRP", "rNobody")) == 0
+
+
+def test_a_funded_xrp_account_is_read_in_drops():
+    _with(lambda r: httpx.Response(200, json={"result": {"account_data": {"Balance": "25000000"},
+                                                         "status": "success"}}))
+    assert _run(C.balance("XRP", "rSomebody")) == 25_000_000
+    from app.services.exodus_wallet_service import from_base_units
+    assert from_base_units(25_000_000, "XRP") == "25"
+
+
+def test_any_other_xrp_error_is_still_unknown():
+    """`actNotFound` is the ONLY error that means zero. Everything else is a ledger that could not
+    answer, and a zero there would be a lie about somebody's money."""
+    for err in ("amendmentBlocked", "noNetwork", "tooBusy", "invalidParams"):
+        _with(lambda r, e=err: httpx.Response(200, json={"result": {"error": e}}))
+        assert _run(C.balance("XRP", "rSomebody")) is None, err
+
+
+def test_an_xrp_reply_with_no_balance_field_is_unknown():
+    _with(lambda r: httpx.Response(200, json={"result": {"account_data": {}}}))
+    assert _run(C.balance("XRP", "rSomebody")) is None
+    _with(lambda r: httpx.Response(200, json={"unexpected": True}))
+    assert _run(C.balance("XRP", "rSomebody")) is None
+
+
+def test_xrp_joins_the_all_chains_sweep():
+    _with(lambda r: httpx.Response(200, json={"result": {"account_data": {"Balance": "1000000"}}}))
+    got = _run(C.balances({"XRP": "rSomebody"}))
+    assert got["XRP"]["known"] is True and got["XRP"]["amount"] == "1"

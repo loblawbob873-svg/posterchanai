@@ -44,6 +44,7 @@ DEFAULT_ENDPOINTS: dict[str, str] = {
     "BNB": "https://bsc-rpc.publicnode.com",
     "AVAX": "https://avalanche-c-chain-rpc.publicnode.com",
     "SOL": "https://api.mainnet-beta.solana.com",
+    "XRP": "https://xrplcluster.com",
 }
 
 #: Long enough for a slow explorer, short enough that nine chains in parallel cannot hold a request
@@ -125,7 +126,44 @@ async def _sol_balance(client: httpx.AsyncClient, base: str, address: str, symbo
         return None
 
 
-_READERS = {"utxo": _utxo_balance, "evm": _evm_balance, "sol": _sol_balance}
+async def _xrp_balance(client: httpx.AsyncClient, base: str, address: str, symbol: str) -> int | None:
+    """Drops held, or None.
+
+    TWO THINGS HERE THAT ARE NOT LIKE THE OTHER CHAINS:
+
+    `actNotFound` IS A REAL ZERO, NOT A FAILURE. An XRP account does not exist until it has been
+    funded past the reserve, and the ledger answers a lookup for one with that error. Treating it as
+    "could not ask" would show `unavailable` to everybody who has generated a wallet and not yet
+    received anything — which is exactly the person most likely to think the app is broken. Every
+    OTHER error is still unknown.
+
+    THE BALANCE IS NOT ALL SPENDABLE. XRPL holds a base reserve (1 XRP at the time of writing, and
+    the ledger says so rather than this file) which can never be sent. Reporting the raw balance is
+    honest about what is held; the send path is where the reserve has to be subtracted, and until
+    XRP sending exists it is better to show what the ledger shows than to invent a second number.
+    """
+    try:
+        r = await client.post(base, json={"method": "account_info",
+                                          "params": [{"account": address, "ledger_index": "validated"}]})
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        result = (d or {}).get("result") or {}
+        if result.get("error") == "actNotFound":
+            return 0
+        if result.get("error"):
+            return None
+        data = result.get("account_data")
+        if not isinstance(data, dict) or "Balance" not in data:
+            return None
+        got = int(str(data["Balance"]))
+        return got if got >= 0 else None
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[exodus] %s balance unavailable: %s", symbol, exc)
+        return None
+
+
+_READERS = {"utxo": _utxo_balance, "evm": _evm_balance, "sol": _sol_balance, "xrp": _xrp_balance}
 
 
 async def balance(symbol: str, address: str, settings: dict[str, Any] | None = None) -> int | None:

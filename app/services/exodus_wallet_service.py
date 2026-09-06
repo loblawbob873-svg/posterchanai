@@ -68,19 +68,36 @@ CHAINS: dict[str, dict[str, Any]] = {
     "BNB":  {"name": "BNB Chain",    "coin": "BINANCE_SMART_CHAIN",  "decimals": 18, "kind": "evm"},
     "AVAX": {"name": "Avalanche",    "coin": "AVAX_C_CHAIN",         "decimals": 18, "kind": "evm"},
     "SOL":  {"name": "Solana",       "coin": "SOLANA",               "decimals": 9,  "kind": "sol"},
+    # XRP's smallest unit is a "drop", 1e-6 XRP — six decimals, not eight and not eighteen. Getting
+    # that wrong by two places is a hundredfold error in an amount somebody is sending.
+    "XRP":  {"name": "XRP",          "coin": "RIPPLE",               "decimals": 6,  "kind": "xrp"},
 }
 
-#: Monero is deliberately absent. This node already runs a real Monero wallet with its own daemon,
-#: outputs and caps (`monero_user_wallets.py`); deriving a second XMR key here would give one person
-#: two unrelated balances and two addresses, and the one they were shown last would be the one they
-#: published. Exodus lists it; we already have it, and one wallet per coin is the point.
-EXCLUDED = {"XMR": "PosterChan already gives you a Monero wallet — see Discover → Monero Wallet"}
+#: Monero is here, and it is NOT one of the derived chains above. This node already runs a real
+#: per-user Monero wallet — its own daemon, its own outputs, its own caps and spend ledger
+#: (`monero_user_wallets.py`). Deriving a second XMR key from this seed would give one person TWO
+#: unrelated balances and TWO addresses, and the one they were shown last is the one they would
+#: publish; money sent to the other would look like a loss. So the wallet screen shows the wallet
+#: that already exists, reading its real address and balance, rather than inventing a second.
+MONERO = {"symbol": "XMR", "name": "Monero", "decimals": 12, "kind": "node-wallet"}
+
+#: Nothing is excluded any more: Monero is shown, backed by the node's existing wallet rather than by
+#: a key derived here. Kept as an empty map because `/status` publishes it and a client that has not
+#: been redeployed still reads the field.
+EXCLUDED: dict[str, str] = {}
 
 
 def supported() -> list[dict[str, Any]]:
-    """The catalogue, safe to hand to a client. Contains no key material and no user data."""
-    return [{"symbol": s, "name": c["name"], "decimals": c["decimals"], "kind": c["kind"]}
+    """The catalogue, safe to hand to a client. Contains no key material and no user data.
+
+    Monero is appended rather than living in CHAINS, because everything in CHAINS is derived from
+    the seed and Monero is not — see the note on MONERO. Its `kind` says so, so the screen can label
+    it and the send path can route it to the wallet that owns it.
+    """
+    rows = [{"symbol": s, "name": c["name"], "decimals": c["decimals"], "kind": c["kind"]}
             for s, c in CHAINS.items()]
+    rows.append(dict(MONERO))
+    return rows
 
 
 # ---------------------------------------------------------------- the seed, and what guards it

@@ -37,6 +37,7 @@
     <label>BNB Chain (JSON-RPC) <input id="exodus_rpc_bnb" name="exodus_rpc_bnb" placeholder="https://bsc-rpc.publicnode.com" autocomplete="off"></label>
     <label>Avalanche C-Chain (JSON-RPC) <input id="exodus_rpc_avax" name="exodus_rpc_avax" placeholder="https://avalanche-c-chain-rpc.publicnode.com" autocomplete="off"></label>
     <label>Solana (JSON-RPC) <input id="exodus_rpc_sol" name="exodus_rpc_sol" placeholder="https://api.mainnet-beta.solana.com" autocomplete="off"></label>
+    <label>XRP Ledger (JSON-RPC) <input id="exodus_rpc_xrp" name="exodus_rpc_xrp" placeholder="https://xrplcluster.com" autocomplete="off"></label>
     <p class="settings-help"><strong>Per-transfer ceiling, in the coin's own units.</strong> This
       node can sign anything the seed can spend, so a ceiling is the only thing bounding a bug or a
       stolen session. It is denominated in the coin rather than in dollars on purpose: a dollar cap
@@ -44,7 +45,9 @@
       send. Leave a field blank for no ceiling. Only these four chains can send today — Bitcoin,
       Litecoin, Dogecoin, Bitcoin Cash and Solana are refused with a sentence rather than
       half-built. There is no daily cap: enforcing one needs a spend ledger, and a cap that cannot
-      be enforced is worse than none.</p>
+      be enforced is worse than none. <strong>Monero needs no endpoint here</strong> — the wallet
+      screen reads the local tipping wallet configured above, so there is one XMR balance and one
+      XMR address per person rather than two that disagree.</p>
     <label>Max per transfer — ETH <input id="exodus_cap_eth" name="exodus_cap_eth" placeholder="e.g. 0.05" inputmode="decimal" autocomplete="off"></label>
     <label>Max per transfer — POL (Polygon) <input id="exodus_cap_matic" name="exodus_cap_matic" placeholder="e.g. 50" inputmode="decimal" autocomplete="off"></label>
     <label>Max per transfer — BNB <input id="exodus_cap_bnb" name="exodus_cap_bnb" placeholder="e.g. 0.2" inputmode="decimal" autocomplete="off"></label>

@@ -174,19 +174,60 @@ def test_an_unknown_chain_is_refused_everywhere():
             call()
 
 
-def test_monero_is_deliberately_not_one_of_these():
-    """This node already runs a real Monero wallet with its own daemon and caps. A second XMR key
-    here would give one person two balances and two addresses."""
-    assert "XMR" not in W.CHAINS
-    assert "XMR" in W.EXCLUDED
+def test_monero_is_shown_but_never_derived_here():
+    """It IS offered now — backed by the wallet this node already runs, with its own daemon, caps
+    and spend ledger. What must never happen is a second XMR key derived from this seed: that gives
+    one person two unrelated balances and two addresses, and the one they saw last is the one they
+    would publish."""
+    assert "XMR" not in W.CHAINS, "Monero must not be a derived chain"
+    assert W.MONERO["kind"] == "node-wallet"
 
 
 def test_the_catalogue_carries_no_secrets():
     rows = W.supported()
-    assert {c["symbol"] for c in rows} == set(W.CHAINS)
+    # The derived chains plus Monero, which is read from the node's own wallet.
+    assert {c["symbol"] for c in rows} == set(W.CHAINS) | {"XMR"}
     # The internal bip_utils enum name and anything seed-shaped stay on this side of the wire.
     for row in rows:
         assert set(row) == {"symbol", "name", "decimals", "kind"}, row
     blob = repr(rows)
     for leak in ("BITCOIN_CASH", "BINANCE_SMART_CHAIN", "AVAX_C_CHAIN", "seed", "mnemonic"):
         assert leak not in blob, f"{leak} leaked into the catalogue"
+
+
+# ── XRP and Monero ────────────────────────────────────────────────────────────────────────────
+def test_xrp_derivation_agrees_with_a_raw_derivation_of_the_same_path():
+    """Cross-derived, not quoted -- the same discipline LTC needed after a remembered constant
+    turned out to be wrong and the library right."""
+    from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator, XrpAddrEncoder
+    seed = Bip39SeedGenerator(VECTOR).Generate()
+    raw = Bip32Slip10Secp256k1.FromSeedAndPath(seed, "m/44'/144'/0'/0/0")
+    assert W.address_for(VECTOR, "XRP") == XrpAddrEncoder.EncodeKey(raw.PublicKey().KeyObject())
+    assert W._account(seed, "XRP", 0).PublicKey().RawCompressed().ToHex() == \
+        raw.PublicKey().RawCompressed().ToHex()
+
+
+def test_xrp_has_six_decimals_not_eight():
+    """XRP's smallest unit is a drop, 1e-6. Two places out is a hundredfold error in a send."""
+    assert W.to_base_units("1", "XRP") == 1_000_000
+    assert W.to_base_units("0.000001", "XRP") == 1
+    assert W.from_base_units(1_500_000, "XRP") == "1.5"
+    with pytest.raises(W.WalletError):
+        W.to_base_units("0.0000001", "XRP")     # seven decimals
+
+
+def test_monero_is_offered_but_never_derived_from_this_seed():
+    """A second XMR key would give one person two unrelated balances and two addresses, and the one
+    they saw last is the one they would publish. The node's existing wallet owns these coins."""
+    assert "XMR" not in W.CHAINS, "Monero must not be a derived chain"
+    assert "XMR" not in W.addresses(VECTOR)
+    with pytest.raises(W.WalletError):
+        W.address_for(VECTOR, "XMR")
+
+
+def test_the_catalogue_lists_monero_and_says_it_is_a_node_wallet():
+    rows = {r["symbol"]: r for r in W.supported()}
+    assert "XMR" in rows and rows["XMR"]["kind"] == "node-wallet"
+    assert rows["XRP"]["kind"] == "xrp" and rows["XRP"]["decimals"] == 6
+    # Every derived chain still declares a kind a reader can route on.
+    assert all(r["kind"] for r in rows.values())
