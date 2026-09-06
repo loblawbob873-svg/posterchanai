@@ -3773,6 +3773,18 @@
     }, {title:'📁 Attach from Files'});
     if(blossomLaunch){blossomLaunch=false;setTimeout(fromBlossom,0);}
     const fromDevice = async () => {
+      // Chromium's file handle stays disk-backed, so large videos never cross desktop IPC as one
+      // giant buffer. The app already grants File System Access after an explicit picker choice.
+      if(window.pcHost && window.showOpenFilePicker){
+        try{
+          const handles = await window.showOpenFilePicker({multiple:false});
+          if(!handles.length) return false;
+          return acceptFile(await handles[0].getFile());
+        }catch(e){
+          if(e && e.name==='AbortError') return false;
+          // Older Chromium builds may expose the API on an unsupported origin.
+        }
+      }
       /* Electron's hidden file input is not reliable when the Texts window has just changed focus
        * between compositor surfaces. Use the desktop's native, explicitly user-confirmed picker;
        * browsers and Android keep the ordinary input. Bytes are bounded in the main process before
