@@ -138,7 +138,7 @@ def test_quick_connect_requires_signed_approval_and_single_use_secret(api):
 def test_browse_scoped_ids_sorting_no_paths_or_other_users(api):
     login = connect(api)
     item, info = playable(api, login)
-    assert len(item['Id']) == 32 and item['Name'] == 'Season 2 / Episode 1'
+    assert len(item['Id']) == 32 and item['Name'] == 'Episode 1'
     assert 'secret' not in json.dumps(item) and 'path' not in item
     c, h = api.client, headers(login)
     other_uid = jf.digest('jellyfin-user:' + OWNER)[:32]
@@ -604,3 +604,35 @@ def test_android_tv_accepts_file_source_and_can_release_transcode(api):
     assert api.client.delete(url, headers=headers(first)).status_code == 204
     assert info['PlaySessionId'] not in jf._plays
     assert api.client.delete(url, headers=headers(first)).status_code == 204
+
+
+def test_folder_hierarchy_artwork_search_and_acl(api, tmp_path):
+    from PIL import Image
+    entries = api.catalog['page:movies']
+    entries[0]['folder'] = 'Anime/Season 2'
+    entries[1]['folder'] = 'Anime/Season 10'
+    directory = tmp_path / 'Anime'
+    directory.mkdir()
+    Image.new('RGB', (400, 250), '#274975').save(directory / 'folder.png')
+    login = connect(api)
+    c, h = api.client, headers(login)
+    lib = c.get('/jellyfin/UserViews', headers=h).json()['Items'][0]
+    rows = c.get('/jellyfin/items/', params={'ParentId':lib['Id']}, headers=h).json()['Items']
+    assert [(row['Name'], row['Type']) for row in rows] == [('Anime', 'Folder')]
+    anime = rows[0]
+    children = c.get('/jellyfin/Items', params={'ParentId':anime['Id']}, headers=h).json()['Items']
+    assert [row['Name'] for row in children] == ['Season 2', 'Season 10']
+    assert all(row['ParentId'] == anime['Id'] for row in children)
+    row = c.get('/jellyfin/Items', params={'ParentId':children[0]['Id']}, headers=h).json()['Items'][0]
+    assert row['Name'] == 'Episode 1' and row['ParentId'] == children[0]['Id']
+    jf._locators.clear()  # Folder identities survive cache eviction/restart.
+    assert c.get('/jellyfin/Items/'+anime['Id'], headers=h).json()['Name'] == 'Anime'
+    artwork = c.get('/jellyfin/Items/'+anime['Id']+'/Images/Primary', headers=h)
+    assert artwork.status_code == 200 and artwork.headers['content-type'].startswith('image/')
+    assert c.post('/jellyfin/Items/'+anime['Id']+'/PlaybackInfo', json={}, headers=h).status_code == 400
+    search = c.get('/jellyfin/Items', params={'ParentId':anime['Id'], 'SearchTerm':'Season 10'}, headers=h).json()['Items']
+    assert [row['Name'] for row in search] == ['Episode 2']
+    assert c.get('/jellyfin/useritems/resume', headers=h).json()['Items'] == []
+    api.catalog['library:'+api.library['id']]['shared_with'] = []
+    assert c.get('/jellyfin/Items/'+anime['Id'], headers=h).status_code == 404
+    assert c.get('/jellyfin/Items/'+anime['Id']+'/Images/Primary', headers=h).status_code == 404

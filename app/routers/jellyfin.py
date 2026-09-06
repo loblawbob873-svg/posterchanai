@@ -52,7 +52,7 @@ class ClientCORS:
         is_api = path.lower() == '/jellyfin' or path.lower().startswith('/jellyfin/')
         if is_api:
             for pattern, parts in self.paths:
-                match = pattern.fullmatch(path)
+                match = pattern.fullmatch(path) or pattern.fullmatch(path.rstrip('/'))
                 if match:
                     values = iter(match.groups())
                     canonical = ''.join(next(values) if part.startswith('{') else part for part in parts)
@@ -435,6 +435,8 @@ def catalog_folders(entries):
     folders = {}
     for entry in entries:
         path = Path(entry.get('folder', '.'))
+        if path.is_absolute() or '..' in path.parts:
+            continue
         while path.as_posix() != '.':
             name = path.as_posix()
             folders[name] = folders.get(name, 0) + 1
@@ -554,6 +556,7 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
     return page if latest else envelope(page, start, len(result))
 
 
+@router.get('/UserItems/Resume')
 @router.get('/Items/Resume')
 @router.get('/Users/{user_id}/Items/Resume')
 async def resume(auth=Depends(authenticate)):
