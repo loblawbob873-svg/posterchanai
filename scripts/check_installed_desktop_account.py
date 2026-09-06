@@ -254,9 +254,24 @@ FILES_CHECK = r"""(async()=>{
           PCSync.docs.state(key), pcFs.scan(f.id,{excludes:f.excludes||[]})
         ]);
         const state=(got&&got.state)||{};
+        /* A DEVICE IS NOT SUPPOSED TO HOLD WHAT IT EXCLUDES, so `local` was never comparable to the
+           account total. This asserted server == manifest == local, which cannot hold on any pair
+           with an exclude — and it read as data loss. Measured on the laptop: Documents 11955
+           records against 3196 files, which looks like 8759 missing files and is in fact
+           dos(5473) + ROMS(3256) + win(30) = 8759, to the file. Pictures: 5804 - old(2659) = 3145,
+           to the file. Nothing was missing; the gate was comparing the wrong two numbers and would
+           have gone on reporting a healthy device as broken for as long as an exclude existed.
+
+           `expected` is the account's records MINUS what this device excludes — which is the
+           property actually worth guarding: this device holds every file it is supposed to hold. */
+        const live=Object.entries(state).filter(([,x])=>x&&typeof x==='object'&&!x.deletedAt);
+        const ex=f.excludes||[];
+        const excluded=live.filter(([p])=>ex.some(e=>p===e||String(p).startsWith(e+'/'))).length;
         syncAudit.push({
           server:Number.isFinite(row.n)?row.n:null,
-          manifest:Object.values(state).filter(x=>x&&typeof x==='object'&&!x.deletedAt).length,
+          manifest:live.length,
+          excluded,
+          expected:live.length-excluded,
           local:Object.keys((scan&&scan.files)||{}).length,
           skipped:((scan&&scan.skipped)||[]).length});
       }catch(e){ syncAudit.push({error:String(e&&e.message||e)}); }
@@ -284,9 +299,25 @@ def native_files_check(directory):
     """
     path = json.dumps(str(directory))
     return r"""(async()=>{
-      const out={path:false,rows:0,confChoices:[],preview:false,errors:[]};
+      const out={path:false,onHost:null,rows:0,confChoices:[],preview:false,errors:[]};
       const onerr=e=>out.errors.push(String(e.message||e.reason||e));
       addEventListener('error',onerr);addEventListener('unhandledrejection',onerr);
+      /* IS THE FIXTURE ON THIS RENDERER'S DISK AT ALL?
+       *
+       * The gate makes a temp directory on the machine RUNNING it and asks the packaged renderer to
+       * list it — which is a different machine whenever this is pointed at an installed build over
+       * a tunnel, and that is the documented way the PosterChanOS laptop is gated. `out.path` only
+       * compares the string PCHostFiles navigated to, so it says true for a directory that does not
+       * exist, and the listing then shows something else entirely (measured: 5 rows from a path
+       * that was never created). A missing fixture and a broken listing looked identical.
+       *
+       * `pcHost.list` answers the question directly. A refusal is "could not run here", which is a
+       * SKIP; a directory that IS here and lists wrong is a real failure. */
+      try{
+        const seen=await pcHost.list(PATH);
+        const names=((seen&&seen.entries)||seen||[]).map(e=>String((e&&(e.name||e.path))||e));
+        out.onHost=names.some(n=>n.indexOf('posterchan-installed.conf')>=0);
+      }catch(_){ out.onHost=false; }
       try{
         await __PC.switchView('blossom');
         await new Promise(r=>setTimeout(r,1000));
@@ -439,11 +470,33 @@ async def main():
         # directories. Audit only local mappings; requiring one for every account root made a fresh
         # laptop fail despite its complete 5,992-entry account index being present and correct.
           assert len(files["syncAudit"]) == files["localFolders"], files
-          assert all(not row.get("error") and row["server"] == row["manifest"] == row["local"]
+          # The account and this client must agree about the RECORD SET; the DISK must match what
+          # this device is configured to hold. Comparing the disk to the account total makes every
+          # excluded folder look like a missing one.
+          assert all(not row.get("error") and row["server"] == row["manifest"]
+                     and row["expected"] == row["local"]
                      and row["skipped"] == 0 for row in files["syncAudit"]), files
           assert not files["overflow"] and not files["errors"], files
 
           native_files = await cdp.eval(native_files_check(fixture))
+          # THE FIXTURE HAS TO BE ON THE RENDERER'S OWN DISK.
+          #
+          # This gate makes a temp directory HERE and asks the packaged renderer to list it. Pointed
+          # at a remote installed build (PC_CHECK_PORT tunnelled to a laptop, which is how the
+          # PosterChanOS machine is actually gated), that directory does not exist over there — so
+          # the renderer correctly reports it cannot open the path, and the gate called a healthy
+          # build broken. "Could not run" is a SKIP here, the same rule every other check follows.
+          if not native_files["onHost"]:
+              # Say what DID pass on the way here. A remote run still verifies the account, the
+              # drive index and the per-pair sync audit, and reporting only the skip throws that
+              # away — which is how a real folder-sync answer would go unnoticed.
+              print("SKIP installed native Files: the fixture directory is not on the renderer's "
+                    "filesystem — run this gate on the machine the build is installed on")
+              print(json.dumps({"verified": {
+                  "folders": files["folderTiles"], "syncedRoots": files["syncedRoots"],
+                  "serverFiles": files["serverFiles"], "clientFiles": files["clientFiles"],
+                  "syncAudit": files["syncAudit"]}}))
+              return 2
           assert native_files["path"] and native_files["rows"] == 2, native_files
           assert "code" in native_files["confChoices"], native_files
           assert "host" in native_files["confChoices"], native_files
@@ -554,7 +607,9 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        # main() answers 2 for "could not run here" — a SKIP, which the suite reports as a skip and
+        # never as a pass. Discarding it made every such answer exit 0, i.e. a PASS.
+        sys.exit(asyncio.run(main()) or 0)
     except (urllib.error.URLError, ConnectionRefusedError) as exc:
         print("SKIP installed Electron is not attached on the loopback CDP port; "
               "run this gate on the target desktop (" + str(exc.reason if hasattr(exc, "reason") else exc) + ")")
