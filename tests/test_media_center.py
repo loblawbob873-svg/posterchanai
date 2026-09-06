@@ -549,3 +549,39 @@ def test_folder_rejections_are_actionable_and_do_not_create_libraries(api):
         assert response.status_code == 400
         assert expected in response.json()['detail']
         assert 'index' not in docs
+
+
+def test_discovered_media_is_playable_before_scan_finishes(api, monkeypatch):
+    import threading
+    client, docs, user, folder = api
+    library = seed(docs, folder)
+    library['count'] = 0
+    docs['page:abc:1:0'] = []
+    release = threading.Event()
+    item = {'id': 'early', 'name': 'Early movie', 'path': 'early.mp4', 'folder': '.', 'duration': 13, 'video': True}
+    def scan(root, previous, on_item):
+        on_item(item)
+        assert release.wait(10)
+        return [item], 0
+    monkeypatch.setattr(media, 'scan', scan)
+    async def exercise():
+        task = asyncio.create_task(routes.run_scan(library))
+        try:
+            for _ in range(100):
+                if routes._scan_previews.get('abc'):
+                    break
+                await asyncio.sleep(.01)
+            result = await routes.items('abc', user)
+            assert result['scan']['state'] == 'running'
+            assert result['items'][0]['id'] == 'early'
+            assert 'path' not in result['items'][0]
+            assert (await routes.playback('abc', 'early', user))['url']
+            secret = docs['library:abc']['playback_secret']
+        finally:
+            release.set()
+            await task
+        assert routes._scans['abc']['state'] == 'complete'
+        assert 'abc' not in routes._scan_previews
+        assert docs['library:abc']['playback_secret'] == secret
+        assert (await routes.items('abc', user))['items'][0]['id'] == 'early'
+    asyncio.run(exercise())

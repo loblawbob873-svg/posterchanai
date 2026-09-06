@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -94,6 +95,18 @@ async def main():
         async def write(key, value):
             documents[key] = copy.deepcopy(value)
         media.read, media.write = read, write
+        # Hold the first scan after one real item: browsing/playback must work
+        # while the remaining catalog is still being discovered.
+        scan_release = threading.Event()
+        def staged_scan(folder, previous=None, on_item=None):
+            if on_item:on_item(scanned[0])
+            if not scan_release.wait(45):raise RuntimeError('Browser did not release staged scan')
+            for item in scanned[1:]:
+                if on_item:on_item(item)
+            return scanned, 0
+        media.scan = staged_scan
+        documents['page:test:fixture'] = []
+        library['count'] = 0
         # Two isolated nodes with different local proxy topology. ContextVar keeps
         # their settings separate while both test servers run in this process.
         backend = ContextVar("media_backend", default="")
@@ -161,6 +174,7 @@ async def main():
                     except Exception:
                         pass
                     await asyncio.sleep(.1)
+                assert (await client.post('http://127.0.0.1:19438/api/media-center/test/scan')).status_code == 200
                 async with websockets.connect(browser_page["webSocketDebuggerUrl"], max_size=32 * 1024 * 1024) as ws:
                     browser = Browser(ws)
                     await browser.call("Page.enable")
@@ -184,6 +198,17 @@ async def main():
                         print(name, 'PASS: Jellyfin Quick Connect approval and disconnect UI', flush=True)
 
                         await browser.until("document.querySelector('.mc-tile img')?.complete")
+                        if name=='phone':
+                            assert (await client.get('http://127.0.0.1:19438/api/media-center/test/scan')).json()['state']=='running'
+                            await browser.js("window.scanFirstCard=document.querySelector('.mc-tile');window.scanFirstImage=scanFirstCard.querySelector('img');document.querySelector('.mc-tile button').click()",gesture=True)
+                            await browser.until("document.querySelector('video').currentTime>1")
+                            scan_release.set()
+                            await browser.until("document.querySelectorAll('.mc-tile').length===2")
+                            assert await browser.js("window.scanFirstCard===document.querySelector('.mc-tile')&&window.scanFirstImage===document.querySelector('.mc-tile img')")
+                            assert await browser.js("document.querySelector('video').currentTime>1&&!document.querySelector('video').paused")
+                            await browser.js("document.querySelector('#mc-close-player').click()",gesture=True)
+                            print('PASS: playable preview during scan; new titles append without replacing covers or stopping playback',flush=True)
+
                         assert not await browser.js("document.documentElement.scrollWidth>innerWidth")
                         if name == "phone":
                             assert await browser.js("getComputedStyle(document.querySelector('.xdc-grid')).gridTemplateColumns.split(' ').length") == 2
