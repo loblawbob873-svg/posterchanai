@@ -137,11 +137,23 @@ async def account_disable(user=Depends(native.get_media_user)):
     return Response(status_code=204)
 
 
+def session_dto(session, user):
+    now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    return {'Id': session['id'], 'UserId': account_id(user), 'UserName': user.username,
+            'ServerId': SERVER_ID, 'SupportsMediaControl': False, 'SupportsRemoteControl': False,
+            'PlayableMediaTypes': ['Video', 'Audio'], 'SupportedCommands': [],
+            'LastActivityDate': now, 'LastPlaybackCheckIn': now, 'IsActive': True,
+            'HasCustomDeviceName': False}
+
+
 def user_dto(user):
     return {'Id': account_id(user), 'Name': user.username, 'ServerId': SERVER_ID,
             'HasPassword': False, 'HasConfiguredPassword': False, 'EnableAutoLogin': False,
             'Configuration': {'PlayDefaultAudioTrack': True, 'SubtitleMode': 'None',
-                              'EnableNextEpisodeAutoPlay': True, 'OrderedViews': [], 'MyMediaExcludes': []},
+                              'EnableNextEpisodeAutoPlay': True, 'OrderedViews': [], 'MyMediaExcludes': [],
+                              'DisplayMissingEpisodes': False, 'GroupedFolders': [], 'DisplayCollectionsView': False,
+                              'EnableLocalPassword': False, 'LatestItemsExcludes': [], 'HidePlayedInLatest': False,
+                              'RememberAudioSelections': True, 'RememberSubtitleSelections': True},
             'Policy': {'IsAdministrator': False, 'IsHidden': True, 'IsDisabled': False,
                        'EnableMediaPlayback': True, 'EnableAudioPlaybackTranscoding': True,
                        'EnableVideoPlaybackTranscoding': True, 'EnablePlaybackRemuxing': False,
@@ -150,7 +162,13 @@ def user_dto(user):
                        'EnableLiveTvAccess': False, 'EnableUserPreferenceAccess': False,
                        'EnableRemoteControlOfOtherUsers': False, 'EnableSharedDeviceControl': False,
                        'AuthenticationProviderId': 'Posterchan.MediaCenter',
-                       'PasswordResetProviderId': 'Posterchan.MediaCenter'}}
+                       'PasswordResetProviderId': 'Posterchan.MediaCenter',
+                       'EnableLiveTvManagement': False, 'ForceRemoteSourceTranscoding': True,
+                       'EnableSyncTranscoding': False, 'EnableMediaConversion': False,
+                       'EnableAllChannels': False, 'InvalidLoginAttemptCount': 0,
+                       'LoginAttemptsBeforeLockout': 0, 'MaxActiveSessions': 0,
+                       'EnablePublicSharing': False, 'RemoteClientBitrateLimit': 0,
+                       'SyncPlayAccess': 'None'}}
 
 
 @router.api_route('', methods=['GET', 'HEAD'])
@@ -169,6 +187,28 @@ async def public_info(request: Request):
 @router.get('/System/Info')
 async def system_info(request: Request, auth=Depends(authenticate)):
     return await public_info(request)
+
+
+@router.get('/System/Configuration/encoding')
+async def encoding_configuration(auth=Depends(authenticate)):
+    # Client capability hints only. Native Media Center owns encoder selection,
+    # filesystem paths and enforced limits; app tokens cannot change settings.
+    return {'EncodingThreadCount': 1, 'EnableFallbackFont': False, 'EnableAudioVbr': False,
+            'DownMixAudioBoost': 1.0, 'DownMixStereoAlgorithm': 'None', 'MaxMuxingQueueSize': 2048,
+            'EnableThrottling': True, 'ThrottleDelaySeconds': 0, 'EnableSegmentDeletion': True,
+            'SegmentKeepSeconds': 6, 'HardwareAccelerationType': 'none',
+            'EnableTonemapping': False, 'EnableVppTonemapping': False,
+            'EnableVideoToolboxTonemapping': False, 'TonemappingAlgorithm': 'none',
+            'TonemappingMode': 'auto', 'TonemappingRange': 'auto', 'TonemappingDesat': 0.0,
+            'TonemappingPeak': 0.0, 'TonemappingParam': 0.0, 'VppTonemappingBrightness': 0.0,
+            'VppTonemappingContrast': 1.0, 'H264Crf': 23, 'H265Crf': 28, 'EncoderPreset': 'auto',
+            'DeinterlaceDoubleRate': False, 'DeinterlaceMethod': 'yadif',
+            'EnableDecodingColorDepth10Hevc': False, 'EnableDecodingColorDepth10Vp9': False,
+            'EnableDecodingColorDepth10HevcRext': False, 'EnableDecodingColorDepth12HevcRext': False,
+            'EnableEnhancedNvdecDecoder': False, 'PreferSystemNativeHwDecoder': False,
+            'EnableIntelLowPowerH264HwEncoder': False, 'EnableIntelLowPowerHevcHwEncoder': False,
+            'EnableHardwareEncoding': False, 'AllowHevcEncoding': False, 'AllowAv1Encoding': False,
+            'EnableSubtitleExtraction': True, 'SubtitleExtractionTimeoutMinutes': 2}
 
 
 @router.api_route('/System/Ping', methods=['GET', 'POST'])
@@ -293,8 +333,7 @@ async def redeem_quick(body: QuickSecret, db=Depends(get_db)):
         await media.write(account_key(uid), record)
         _quick.pop(key, None)  # Consume only after the encrypted token record is acknowledged.
     return {'User': user_dto(user), 'AccessToken': token, 'ServerId': SERVER_ID,
-            'SessionInfo': {'Id': session['id'], 'UserId': uid, 'UserName': user.username,
-                            'ServerId': SERVER_ID, 'SupportsMediaControl': False}}
+            'SessionInfo': session_dto(session, user)}
 
 
 @router.post('/Sessions/Logout', status_code=204)
@@ -385,7 +424,8 @@ def item_dto(lib, item):
             'RunTimeTicks': int(item['duration'] * 10000000), 'CanDownload': False, 'CanDelete': False,
             'PlayAccess': 'Full', 'LocationType': 'FileSystem', 'VideoType': 'VideoFile',
             'ImageTags': {'Primary': digest(str(item))[:32]}, 'MediaSources': [],
-            'UserData': {'PlaybackPositionTicks': 0, 'PlayCount': 0, 'IsFavorite': False, 'Played': False}}
+            'UserData': {'PlaybackPositionTicks': 0, 'PlayCount': 0, 'IsFavorite': False, 'Played': False,
+                         'Key': uid, 'ItemId': uid}}
 
 
 async def libraries(request, auth, db):
@@ -544,6 +584,10 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
                 stream['Codec'] = 'webvtt'
                 stream['DeliveryUrl'] = f"/jellyfin/Videos/{uid}/{uid}/Subtitles/{track['index']}/Stream.vtt?{params}"
         streams.append(stream)
+    for stream in streams:
+        for key in ('IsInterlaced', 'IsForced', 'IsHearingImpaired', 'IsOriginal',
+                    'IsExternal', 'IsTextSubtitleStream', 'SupportsExternalStream'):
+            stream.setdefault(key, False)
     default_audio = next((t['index'] for t in tracks if t['type'] == 'audio' and t['default']),
                          next((t['index'] for t in tracks if t['type'] == 'audio'), -1))
     source = {'Id': uid, 'Name': item['name'], 'Protocol': 'Http', 'Container': 'ts', 'Type': 'Default',
@@ -552,6 +596,9 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
               'TranscodingUrl': f'Videos/{uid}/master.m3u8?{params}', 'TranscodingSubProtocol': 'hls',
               'TranscodingContainer': 'ts', 'DefaultAudioStreamIndex': audio_index if audio_index >= 0 else default_audio,
               'DefaultSubtitleStreamIndex': subtitle_index, 'RequiresOpening': False, 'RequiresClosing': False}
+    source.update(IsRemote=True, ReadAtNativeFramerate=False, IgnoreDts=False, IgnoreIndex=False,
+                  GenPtsInput=False, IsInfiniteStream=False, RequiresLooping=False,
+                  SupportsProbing=False, HasSegments=True)
     return {'MediaSources': [source], 'PlaySessionId': play_id}
 
 
@@ -633,14 +680,15 @@ async def capabilities(auth=Depends(authenticate)):
 
 @router.get('/Sessions')
 async def sessions(auth=Depends(authenticate)):
-    return [{'Id': auth.session['id'], 'UserId': auth.uid, 'UserName': auth.user.username,
-             'ServerId': SERVER_ID, 'SupportsMediaControl': False}]
+    return [session_dto(auth.session, auth.user)]
 
 
 @router.get('/DisplayPreferences/{preference_id}')
-async def display_preferences(preference_id: str, auth=Depends(authenticate)):
+async def display_preferences(preference_id: str, request: Request, auth=Depends(authenticate)):
     return {'Id': preference_id, 'ViewType': 'Poster', 'SortBy': 'SortName', 'SortOrder': 'Ascending',
-            'IndexBy': 'None', 'RememberIndexing': False, 'RememberSorting': False, 'CustomPrefs': {}}
+            'IndexBy': 'None', 'RememberIndexing': False, 'RememberSorting': False, 'CustomPrefs': {},
+            'PrimaryImageHeight': 250, 'PrimaryImageWidth': 250, 'ScrollDirection': 'Horizontal',
+            'ShowBackdrop': True, 'ShowSidebar': False, 'Client': query(request, 'client', 'emby')}
 
 
 @router.get('/Items/{uid}/Similar')

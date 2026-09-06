@@ -413,3 +413,63 @@ def test_tv_camel_case_quick_connect_and_playback_requests(api):
     assert c.post('/jellyfin/Sessions/Playing',headers=headers(login),json={'playSessionId':play_id}).status_code==204
     assert c.post('/jellyfin/Sessions/Playing/Stopped',headers=headers(login),json={'playSessionId':play_id}).status_code==204
     assert c.post('/jellyfin/Users/AuthenticateWithQuickConnect',json={'secret':pending['Secret']}).status_code==401
+
+
+def test_kotlin_tv_startup_and_playback_contract(api):
+    """Kotlin deserialization requires fields that the JavaScript SDK tolerates omitting."""
+    from pathlib import Path
+    from uuid import UUID
+    from datetime import datetime
+    contract = json.loads((Path(__file__).parent / 'jellyfin/kotlin_contract.json').read_text())['models']
+
+    def validate(value, kind, path='$'):
+        if kind.endswith('?'):
+            if value is None:
+                return
+            kind = kind[:-1]
+        if kind.startswith('List<'):
+            assert isinstance(value, list), path
+            for i, entry in enumerate(value):
+                validate(entry, kind[5:-1], f'{path}[{i}]')
+        elif kind.startswith('Map<'):
+            assert isinstance(value, dict), path
+        elif kind == 'UUID':
+            UUID(value)
+        elif kind == 'DateTime':
+            datetime.fromisoformat(value.replace('Z', '+00:00'))
+        elif kind in ('Boolean', 'String', 'Int', 'Long', 'Float', 'Double'):
+            expected = {'Boolean': bool, 'String': str, 'Int': int, 'Long': int,
+                        'Float': (float, int), 'Double': (float, int)}[kind]
+            assert isinstance(value, expected), (path, kind)
+        elif kind in contract:
+            schema = contract[kind]
+            if 'enum' in schema:
+                assert value in schema['enum'], (path, value)
+            else:
+                assert isinstance(value, dict), path
+                for key, field in schema['fields'].items():
+                    assert not field['required'] or key in value, f'{path}.{key} required by Kotlin SDK'
+                    if key in value:
+                        validate(value[key], field['type'], f'{path}.{key}')
+        else:
+            raise AssertionError(f'Unhandled SDK type: {kind}')
+
+    login = connect(api)
+    validate(login, 'AuthenticationResult')
+    c, h = api.client, headers(login)
+    for path, kind in [('/System/Info/Public', 'PublicSystemInfo'),
+                       ('/Users/Me', 'UserDto'),
+                       ('/DisplayPreferences/usersettings?client=android', 'DisplayPreferencesDto'),
+                       ('/system/configuration/encoding', 'EncodingOptions'),
+                       ('/userviews', 'BaseItemDtoQueryResult')]:
+        response = c.get('/jellyfin' + path, headers=h)
+        assert response.status_code == 200, response.text
+        validate(response.json(), kind)
+    for session in c.get('/jellyfin/Sessions', headers=h).json():
+        validate(session, 'SessionInfoDto')
+    item, playback = playable(api, login)
+    validate(item, 'BaseItemDto')
+    validate(playback, 'PlaybackInfoResponse')
+    assert c.get('/jellyfin/System/Configuration/encoding').status_code == 401
+    assert c.get('/jellyfin/System/Configuration/network', headers=h).status_code == 404
+    assert c.post('/jellyfin/System/Configuration/encoding', headers=h, json={}).status_code == 405
