@@ -288,8 +288,8 @@ def test_default_chunk_is_bounded():
 
 def test_calendars_and_contacts_survive_every_cleaner(store_factory):
     """EVERY app document — calendars, contacts, notes, the vault, the budget, the desktop
-    arrangement, this node's own settings — is kind 30078 written by the app itself, so it lands
-    with `origin = 'direct'`.
+    arrangement, the multi-chain WALLET SEED, the media centre's catalogue, this node's own
+    settings — is kind 30078 written by the app itself, so it lands with `origin = 'direct'`.
 
     That combination is the one worth pinning by name. Everything a person publishes normally is
     protected by the kind allowlist, but PAY-TO-STAY's tiered rules are the only rules in this file
@@ -331,6 +331,17 @@ def test_calendars_and_contacts_survive_every_cleaner(store_factory):
             "pcai:setting:ssh_hosts",          # the node's own settings live here too
             "pcai:files-index", "pcai:sync:Documents",
             "pcai:kv:uptime", "pcai:kv:paid_retention",
+            # THE MULTI-CHAIN WALLET'S SEED. The only document on this list whose loss is
+            # irreversible in money: nothing anywhere can reconstruct a BIP-39 phrase, so an
+            # auto-clean that reached it would take every coin behind it with no way back. Named
+            # here so a future edit to _PRUNABLE_KINDS fails with the word "wallet" in the output
+            # rather than being discovered by somebody's empty balance.
+            "pcai:exodus:wallet",
+            # THE MEDIA CENTER'S CATALOGUE, written under the operator key. Losing it does not lose
+            # the films — they are on the NAS — but it loses every library, resume position and
+            # device pairing, which reads as "the media center forgot everything" and is nobody's
+            # idea of a cache miss.
+            "pcai:media-center:libraries", "pcai:media-center:resume",
         ]
         cal = []
         for i, d in enumerate(dtags, start=1):          # events, their metadata, and a vCard
