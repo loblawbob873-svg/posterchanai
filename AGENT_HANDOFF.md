@@ -58,3 +58,9 @@ cached failed decryptions every minute, and release the history latch on query
 failure. Actual shipped-function tests cover liveness, retry, and operator self-DMs.
 Wallet stylesheet commit e6d184789 is preserved and will be included in deployment.
 User explicitly requests committing all completed work and deploying both agents.
+
+Completed integration: 4a7e7a7d3 committed all reviewed continuation files, preserving
+e6d184789 and earlier wallet work. Full suite 10,736 passed + 630 subtests, 25 skips;
+later DM/UI/wallet selection 132 passed. Deployed server1/NAS/router, verified
+matching public assets and healthy services. Desktop CI published 1.0.1491 for all
+platforms; continuation updating the Gentoo pin and final deployment records.

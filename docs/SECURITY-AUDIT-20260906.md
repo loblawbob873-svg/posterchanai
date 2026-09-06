@@ -163,5 +163,23 @@ used. The independent wallet stylesheet and wallet commits remain in the ancestr
   detection; `--drift-only` is the weekly CI source-drift check. `--record` explicitly
   accepts reviewed changes. Baseline drift is tested and never silently accepted.
 
-Full suite passed: 10,736 tests, 630 subtests, 25 skipped. Deployment verification
-is pending the authorized release.
+Full suite passed: 10,736 tests, 630 subtests, 25 skipped.
+
+## Deployment
+
+Code commit `4a7e7a7d3114c8b70acfe1314e6a068bfb41b5ed` deployed successfully to
+server1, NAS and router; origin/master and github/main matched. Both application
+nodes' app/worker/media services were active after restart. Server1 reported no
+startup traceback or import error. Public and local `/client` and Jellyfin server
+info returned 200; malformed welcome proofs returned 422. Public app.js, welcome,
+wallet stylesheet and service-worker bytes matched the checkout.
+
+[Desktop 1.0.1491](https://github.com/loblawbob873-svg/posterchanai/releases/tag/desktop-v1.0.1491)
+was built from that commit and published successfully for Windows, macOS and Linux.
+The Windows update feed advertises 1.0.1491. The Gentoo desktop pin was updated to
+1.0.1491 after verifying the Linux payload's published SHA512 checksum. Hardware
+Windows/Roku behavior remains unobserved as described above.
+
+Task-owned scanner environment, upstream scratch checkouts and recovery snapshot
+were removed after preserving this report and committing the recovered files.
+Other agents' working files and live application caches were left alone.

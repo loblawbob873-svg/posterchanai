@@ -35,4 +35,8 @@ and delivery on the user's physical Windows app remain unobserved; automated
 reproductions do not substitute for that evidence.
 
 Final full suite: **10,736 passed, 630 subtests passed, 25 skipped**. The later
-Windows DM/UI/wallet selection passed 132 tests. Deployment verification is next.
+Windows DM/UI/wallet selection passed 132 tests. Code `4a7e7a7d3` deployed to
+server1, NAS and router, with matching public assets and healthy restarted services.
+Desktop **1.0.1491** published successfully for Windows/macOS/Linux; its Windows
+update feed is current, and the OS package pin was updated to the verified release.
+Task-owned scanner tools, upstream scratch checkout and recovery snapshot removed.
