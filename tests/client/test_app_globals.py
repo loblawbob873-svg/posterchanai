@@ -336,7 +336,7 @@ def test_the_more_sheet_offers_every_view_the_sidebar_does():
     i = app.index("function moreMenu(")
     m = re.search(r"const items=\[(.*?)\n\s*\.filter\(", app[i:], re.S)
     assert m, "the More sheet's item list moved — re-point this test"
-    sheet = set(re.findall(r"\['([a-z0-9_]+)'", m.group(1)))
+    sheet = set(re.findall(r"\['([a-z0-9_-]+)'", m.group(1)))
 
     # DESKTOP-ONLY BY DECISION, and it has to be written down somewhere or this test is simply
     # wrong about them. A view here is one whose absence from the phone is deliberate — not an
