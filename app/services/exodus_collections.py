@@ -135,10 +135,13 @@ async def list_wallets(db, user):
         raise legacy.VaultUnavailable('the wallet list could not be read') from error
 
 
-async def create(db, user, phrase, label, *, default=False, imported=False, monero_recovery=None):
+async def create(db, user, phrase, label, *, default=False, imported=False, monero_recovery=None,
+                 derivation='exodus-v1'):
     # The server generates a new identity for every new wallet. No caller-selected identifier
     # can turn this endpoint into a write over an existing wallet's seed.
     wallet_id = 'default' if default else uuid.uuid4().hex
+    from app.services.exodus_derivation import profile
+    profile({'derivation': derivation})
     if default and await load(db, user, wallet_id) is not None:
         raise wallet.WalletError('this account already has a wallet')
     if monero_recovery:
@@ -148,7 +151,7 @@ async def create(db, user, phrase, label, *, default=False, imported=False, mone
     doc = {'seed': wallet.seal(phrase, _key(db, user)).hex(), 'label': label or 'Wallet',
            'addressIndex': 0, 'backedUpAt': 0, 'createdAt': int(time.time()),
            'portfolios': [{'id': 0, 'name': 'Main portfolio'}],
-           'derivation': 'exodus-v1', 'imported': bool(imported), 'moneroHeight': monero_height}
+           'derivation': derivation, 'imported': bool(imported), 'moneroHeight': monero_height}
     if monero_recovery:
         doc['moneroRecovery'] = wallet.seal(monero_recovery, _key(db, user)).hex()
     # Keep a discoverable encrypted backup even if publication fails after key generation.

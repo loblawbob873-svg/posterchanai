@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -113,6 +113,7 @@ class CreateReq(BaseModel):
     mnemonic: str | None = Field(default=None, max_length=1024)
     label: str | None = Field(default=None, max_length=80)
     moneroMnemonic: str | None = Field(default=None, max_length=1024)
+    derivation: Literal['exodus-v1', 'cloudos-v1'] = 'exodus-v1'
 
 
 class LabelReq(BaseModel):
@@ -164,7 +165,8 @@ async def create(req: CreateReq, user: CurrentUser, db: Session = Depends(get_db
         phrase = W.new_mnemonic()
     try:
         await Collections.create(db, user, phrase, (req.label or "").strip()[:80] or None,
-                                 default=True, imported=bool(req.mnemonic), monero_recovery=(req.moneroMnemonic or "").strip() or None)
+                                 default=True, imported=bool(req.mnemonic), monero_recovery=(req.moneroMnemonic or "").strip() or None,
+                                 derivation=req.derivation)
     except V.VaultUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except W.WalletError as exc:
@@ -329,7 +331,9 @@ async def create_wallet(req: CreateReq, user: CurrentUser, db: Session = Depends
     if phrase and not W.validate_mnemonic(phrase):
         raise HTTPException(400, 'Invalid recovery phrase; check its words and order')
     try:
-        return await Collections.create(db, user, phrase or W.new_mnemonic(), (req.label or '').strip()[:80], imported=bool(phrase), monero_recovery=(req.moneroMnemonic or "").strip() or None)
+        return await Collections.create(db, user, phrase or W.new_mnemonic(), (req.label or '').strip()[:80],
+                                        imported=bool(phrase), monero_recovery=(req.moneroMnemonic or "").strip() or None,
+                                        derivation=req.derivation)
     except W.WalletError as error:
         raise HTTPException(503, str(error)) from error
 

@@ -138,3 +138,21 @@ document.querySelector('#ex-add-form').dispatchEvent(new Event('submit',{cancela
 setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({before,imported,wallet:document.querySelector('#ex-wallet').value});},50);
 ''')
     assert result == {'before':None,'imported':{'label':'Imported','mnemonic':'public-bip39-fixture','moneroMnemonic':'public-monero-fixture'},'wallet':'1'*32}
+
+
+def test_legacy_recovery_format_is_explicitly_sent_when_restoring_a_wallet(tmp_path):
+    result = page(tmp_path, '''
+let imported=null;
+const fetchBefore=__PC.authFetch;
+__PC.authFetch=async(path,opts)=>{
+ if(path.endsWith('/wallets')&&opts?.method==='POST'){imported=JSON.parse(opts.body);return reply({id:SECOND});}
+ return fetchBefore(path,opts);
+};
+document.querySelector('#ex-add-wallet').click();
+document.querySelector('#ex-new-name').value='Legacy wallet';
+document.querySelector('#ex-new-phrase').value='public-legacy-fixture';
+document.querySelector('#ex-new-format').value='cloudos-v1';
+document.querySelector('#ex-add-form').dispatchEvent(new Event('submit',{cancelable:true}));
+setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify(imported);},50);
+''')
+    assert result == {'label':'Legacy wallet','mnemonic':'public-legacy-fixture','derivation':'cloudos-v1'}

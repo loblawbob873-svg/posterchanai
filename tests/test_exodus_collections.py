@@ -102,6 +102,27 @@ def test_wallet_id_never_selects_another_users_wallet(world):
     assert world.client.get('/api/wallet/exodus/addresses?wallet=../../other').status_code == 422
 
 
+@pytest.mark.parametrize('endpoint', ['create', 'wallets'])
+def test_legacy_backup_restore_keeps_its_original_receive_paths(world, endpoint):
+    response = world.client.post('/api/wallet/exodus/' + endpoint,
+        json={'mnemonic': VECTOR, 'derivation': 'cloudos-v1'})
+    assert response.status_code == 200, response.text
+    wallet_id = response.json().get('id', 'default')
+    params = {'wallet': wallet_id}
+    addresses = world.client.get('/api/wallet/exodus/addresses', params=params).json()['addresses']
+    for symbol in ['BTC', 'SOL', 'XRP']:
+        assert addresses[symbol] == W.address_for(VECTOR, symbol)
+    backup = world.client.post('/api/wallet/exodus/reveal', params=params).json()
+    assert backup['derivation'] == 'cloudos-v1' and backup['mnemonic'] == VECTOR
+
+
+def test_unknown_recovery_format_cannot_create_a_wallet(world):
+    response = world.client.post('/api/wallet/exodus/create',
+        json={'mnemonic': VECTOR, 'derivation': 'unsupported'})
+    assert response.status_code == 422
+    assert world.db.query(ExodusWalletRecord).count() == 0
+
+
 def test_strict_read_failure_does_not_rewrite_wallet_or_offer_an_empty_list(world):
     world.client.post('/api/wallet/exodus/wallets', json={'mnemonic': VECTOR})
     before = copy.deepcopy(world.docs)

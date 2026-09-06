@@ -13,7 +13,8 @@ Solana and XRP derivations. The fixture README records their origin and reproduc
 Existing documents without a profile retain `cloudos-v1`; their previously issued
 addresses must not change. Such legacy Bitcoin, Solana and XRP addresses do not match
 an ordinary Exodus phrase restore. The recovery UI and downloadable backup retain
-that distinction.
+that distinction. The restore form's Recovery format option accepts a legacy CloudOS
+backup explicitly, preserving those original addresses; unknown formats are refused.
 
 Historical Exodus twelve-word Monero recovery has not been verified. Importing an
 existing Monero wallet therefore takes its separate twenty-five-word recovery phrase.
@@ -66,9 +67,9 @@ claimed by this review document.
 
 ## Validation evidence
 
-* Complete final Exodus core run: 218 passed, including actual offline
+* Complete final Exodus core and browser run: 248 passed (221 core, 27 browser), including actual offline
   Monero wallet creation, reopening and matching recovery words.
-* Actual Chrome wallet dashboard and recovery actions: 26 passed, including all
+* Actual Chrome wallet dashboard and recovery actions: 27 passed, including all
   configured themes at phone/desktop widths, stale responses, duplicate send clicks,
   downloading both phrases and clearing the revealed words.
 * Cleanup-after-relay regressions: two failed before the production fix and two
@@ -76,6 +77,9 @@ claimed by this review document.
 * The initial browser run failed to start Chrome because sandbox socket access was
   denied. The unchanged tests passed outside that sandbox; this was not an application
   failure. A sandboxed core run was interrupted before test output and is not a pass.
+
+Desktop and phone screenshots were visually reviewed at `/tmp/pc-wallet-desktop.png`
+and `/tmp/pc-wallet-phone.png`, using deterministic public fixture balances.
 
 Logs are preserved under `/tmp/pc-wallet-*-review.log` and
 `/tmp/pc-wallet-backup-browser-rerun.log`. Integration and the complete repository

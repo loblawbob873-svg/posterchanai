@@ -103,6 +103,7 @@
         const generation=_seq;
         panel.innerHTML=`<form class="ex-panel" id="ex-add-form"><h3>Add a ${kind}</h3><label>Name<input id="ex-new-name" maxlength="80" required placeholder="${kind==='wallet'?'Savings wallet':'Long-term holdings'}"></label>
           ${kind==='wallet'?'<label>Recovery phrase (optional)<textarea id="ex-new-phrase" rows="3" autocomplete="off" spellcheck="false" placeholder="Leave blank to create a new wallet"></textarea></label><details><summary>Import an existing Monero wallet</summary><label>Monero recovery words<textarea id="ex-new-monero" rows="3" autocomplete="off" spellcheck="false" placeholder="The separate 25-word Monero backup"></textarea></label></details><p class="ex-hint">Each wallet has its own backup. Keep both recovery phrases when importing a separate Monero wallet.</p>':'<p class="ex-hint">A separate set of addresses under this wallet’s existing recovery phrase. The current portfolio stays available.</p>'}
+          ${kind==='wallet'?recoveryFormat('ex-new-format'):''}
           <div class="ex-actions"><button class="btn btn-cyan" type="submit">Add ${kind}</button><button class="btn" type="button" id="ex-add-cancel">Cancel</button></div><p id="ex-add-error" role="status"></p></form>`;
         document.getElementById('ex-add-cancel').onclick=()=>{if(!_busy)panel.replaceChildren();};
         document.getElementById('ex-add-form').onsubmit=async event=>{
@@ -110,9 +111,10 @@
           const name=document.getElementById('ex-new-name').value.trim();if(!name)return;
           const phrase=document.getElementById('ex-new-phrase'), mnemonic=phrase?.value.trim()||'';
           const moneroPhrase=document.getElementById('ex-new-monero'),moneroMnemonic=moneroPhrase?.value.trim()||'';
+          const derivation=document.getElementById('ex-new-format')?.value;
           const submit=event.currentTarget.querySelector('[type=submit]');submit.disabled=true;_busy=true;
           try{
-            const result=await request('/api/wallet/exodus/'+(kind==='wallet'?'wallets':'portfolios'),J(kind==='wallet'?{label:name,...(mnemonic?{mnemonic}:{}),...(moneroMnemonic?{moneroMnemonic}:{})}:{name}));
+            const result=await request('/api/wallet/exodus/'+(kind==='wallet'?'wallets':'portfolios'),J(kind==='wallet'?{label:name,...(mnemonic?{mnemonic}:{}),...(moneroMnemonic?{moneroMnemonic}:{}),...(derivation==='cloudos-v1'?{derivation}:{})}:{name}));
             if(phrase)phrase.value='';if(moneroPhrase)moneroPhrase.value='';
             if(!current(generation))return;
             _selected=kind==='wallet'?{wallet:result.id,portfolio:0}:{..._selected,portfolio:result.portfolios.at(-1).id};
@@ -125,6 +127,13 @@
   }
 
   /* ---------------------------------------------------------------- drawing */
+  function recoveryFormat(id){
+    return `<details><summary>Recovery format</summary><label>Format from your backup
+      <select id="${id}"><option value="exodus-v1">Exodus / current CloudOS</option>
+      <option value="cloudos-v1">Legacy CloudOS (cloudos-v1)</option></select></label>
+      <p class="ex-hint">Choose Legacy only when your CloudOS backup says cloudos-v1. It preserves the original Bitcoin, Solana and XRP addresses.</p></details>`;
+  }
+
   function custodyNote(){
     return `<details class="ex-custody"><summary>Server-managed wallet · Back up your recovery phrase</summary>
       <p>Your recovery phrase is encrypted on this server. The server can unlock it to sign
@@ -155,6 +164,7 @@
                      placeholder="The separate 25-word Monero backup"></textarea></label></details>
                  <p class="ex-hint">Use the exact recovery words from your backup. Existing Monero wallets
                    use a separate 25-word phrase; do not assume the 12 words restore historical Exodus XMR.</p>
+                 ${recoveryFormat('ex-restore-format')}
                  <button class="btn btn-cyan" id="ex-restore-go">Restore</button>
                </div>`}
       ${status && status.excluded && status.excluded.XMR
@@ -321,7 +331,7 @@
       const phrase = String(($('#ex-phrase') || {}).value || '').trim();
       if(!phrase) return PC.toast && PC.toast('paste the recovery phrase first');
       _busy = true; go.disabled = true;
-      try{ await request('/api/wallet/exodus/create', J({ mnemonic: phrase, moneroMnemonic: String(($('#ex-monero-phrase')||{}).value||'').trim()||null })); if(current(generation))await render(); }
+      try{ await request('/api/wallet/exodus/create', J({ mnemonic: phrase, moneroMnemonic: String(($('#ex-monero-phrase')||{}).value||'').trim()||null, derivation: $('#ex-restore-format').value })); if(current(generation))await render(); }
       catch(e){ PC.toast && PC.toast(e.message); go.disabled = false; }
       finally{ _busy = false; }
     };
@@ -420,7 +430,7 @@
           <div class="ex-note ex-warn">${esc(got.warning || '')}</div>
           <code class="ex-phrase">${esc(got.mnemonic || '')}</code>
           ${got.moneroMnemonic?`<h4>Separate Monero recovery phrase</h4><code class="ex-phrase">${esc(got.moneroMnemonic)}</code><p>Keep both phrases to recover all assets.</p>`:''}
-          ${got.derivation==='cloudos-v1'?'<p>This legacy CloudOS wallet uses different Bitcoin, Solana and XRP paths. Keep this backup format when restoring those assets.</p>':''}
+          ${got.derivation==='cloudos-v1'?'<p>This legacy CloudOS wallet uses different Bitcoin, Solana and XRP paths. When restoring in CloudOS, choose Legacy CloudOS under Recovery format. An ordinary Exodus phrase restore uses different addresses for these assets.</p>':''}
           <div class="ex-actions">
             <button class="btn small" id="ex-backup-download">Download backup</button>
             <button class="btn small" id="ex-panel-close">Hide</button>
