@@ -222,8 +222,19 @@ def test_lost_lock_between_supervisor_spawn_and_claim_never_runs_child(tmp_path)
                          cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     lock = state / "liveusb-job.lock"
     deadline = time.time() + 8
-    while not lock.exists() and time.time() < deadline: time.sleep(.01)
-    assert lock.exists(), "the supervisor never took its lock, so this test proved nothing"
+    children = Path(f"/proc/{p.pid}/task/{p.pid}/children")
+    spawned = False
+    while time.time() < deadline and p.poll() is None:
+        try:
+            spawned = bool(children.read_text().strip())
+        except FileNotFoundError:
+            spawned = False
+        if spawned and lock.exists():
+            break
+        time.sleep(.01)
+    # Lock creation precedes the launcher's first ownership check. Replacing it that early tests
+    # a different guard and intermittently produces the wrong error. Observe the actual spawn.
+    assert spawned and lock.exists(), "the supervisor never spawned, so this test proved nothing"
     lock.write_text("new-owner")
     _, err = p.communicate(timeout=20)
     assert p.returncode != 0 and "ownership changed before claim" in err
