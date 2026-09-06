@@ -968,6 +968,17 @@
              * pushed event wins the race, its cumulative sequence makes the later snapshot old;
              * discard that snapshot instead of drawing the prompt/echo twice. */
             if(typeof m.seq === 'number' && m.seq <= cursor) return;
+            // A newer frame may still START before the last snapshot ended. Drop the overlapping
+            // prefix too. Local IPC counts JS string units; SSH counts UTF-8 bytes.
+            let output = m.d;
+            if(typeof m.seq === 'number' && typeof output === 'string'){
+              const remaining = m.seq - cursor;
+              if(link && link.kind === 'local') output = output.slice(-remaining);
+              else {
+                const bytes = new TextEncoder().encode(output);
+                if(bytes.length > remaining) output = new TextDecoder().decode(bytes.slice(-remaining));
+              }
+            }
             /* xterm itself emits onScroll while a large replay grows baseY. That is layout, not the
              * person scrolling, but the old guard began only INSIDE this callback—after xterm had
              * already emitted and changed followBottom to false. Capture the choice and suppress
@@ -975,11 +986,11 @@
              * land at the live prompt exactly once; a later real swipe still disables following. */
             const followThisWrite=followBottom;
             if(followThisWrite) scrollingByUs=true;
-            term.write(m.d, function(){
+            term.write(output, function(){
               if(handoffScroll) _restoreHandoffScroll();
               else if(followThisWrite) _pinBottomAfterLayout();
             });
-            _histSaw(m.d);
+            _histSaw(output);
             // The CURSOR is what a reconnect resumes from, so it advances only for bytes that reached
             // the screen. Trusting a locally counted length instead would drift the first time a
             // multi-byte character straddled a frame.

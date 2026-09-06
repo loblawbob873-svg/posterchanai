@@ -408,6 +408,7 @@ async def websocket_ssh(websocket: WebSocket):
             nonlocal cursor
             while not stop:
                 if cursor < sess.seq:
+                    cursor = max(cursor, sess.seq - len(sess.buf))
                     data = sess.since(cursor)
                     # Hold back a character split across the buffer boundary — see utf8_take. A TUI
                     # is mostly multi-byte glyphs, and a replacement character written once is there

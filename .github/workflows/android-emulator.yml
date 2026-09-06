@@ -92,6 +92,7 @@ jobs:
           node ../tests/client/extension_interactive_priority_runtime.mjs www/static/js/client/app.js
           node ../tests/client/vault_background_sync_runtime.mjs www/static/js/client/vault.js
           node ../tests/client/concord_social_emoji_runtime.mjs www/static/js/client/app.js
+          node ../tests/client/terminal_partial_replay_runtime.mjs www/static/js/client/term.js
           node ../tests/client/terminal_hosts_runtime.mjs www/static/js/client/term.js
 
       - name: Capacitor sync

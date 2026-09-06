@@ -91,6 +91,10 @@ function start(opts) {
     if (s.buf.length > MAX_BUF) s.buf = s.buf.slice(-MAX_BUF);
     for (const fn of s.subs) { try { fn({ t: 'out', d: text, seq: s.seq }); } catch (_) {} }
   };
+  // PTY output may split a UTF-8 glyph at any pipe boundary. Node's stream decoder retains
+  // partial bytes; decoding each Buffer independently corrupts glyphs and terminal cell widths.
+  proc.stdout.setEncoding('utf8');
+  proc.stderr.setEncoding('utf8');
   proc.stdout.on('data', push);
   proc.stderr.on('data', push);
   proc.on('exit', (code) => {

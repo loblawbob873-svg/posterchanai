@@ -26,6 +26,7 @@ Two things that DO have to be true of the packaging, and both fail silently:
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -124,13 +125,26 @@ def test_a_container_can_reach_a_wallet_on_the_operators_own_network():
             MoneroWallet(cfg(refused))
 
 
-def test_the_bare_metal_run_scripts_still_pick_up_the_operators_env():
-    """The PosterChanOS helper writes MONERO_* into data/secrets.env; that only reaches the app
-    because the run scripts source it. Docker deliberately does not — there is nothing to write it
-    there, and the admin panel is the configured path on every deployment."""
-    for script in ("run-intel.sh", "run-nvidia.sh"):
-        text = (ROOT / script).read_text(encoding="utf-8")
-        assert "data/secrets.env" in text, f"{script} no longer sources data/secrets.env"
+@pytest.mark.parametrize("backend", ["intel", "nvidia", "amd", "default"])
+def test_generated_launchers_load_operator_env_and_forward_arguments(tmp_path, backend):
+    """Generate launchers in an empty install; local operator copies are not release evidence."""
+    launcher = tmp_path / ("run-" + backend + ".sh")
+    generated = subprocess.run(
+        ["bash", "-c", 'source "$1"; rocminfo(){ return 1; }; "create_${3}_run_script" "$2"',
+         "generate-launcher", str(ROOT / "scripts/install/systemd.sh"), str(launcher), backend],
+        capture_output=True, text=True, timeout=15)
+    assert generated.returncode == 0, generated.stderr
+    (tmp_path / "data").mkdir(exist_ok=True)
+    (tmp_path / "data/secrets.env").write_text("export PC_WALLET_ENV_FIXTURE=loaded-from-fixture\n")
+    for venv in ("venv", "venv-unified"):
+        python = tmp_path / venv / "bin/python"
+        python.parent.mkdir(parents=True)
+        python.write_text('#!/bin/bash\nprintf "%s\\n" "$PC_WALLET_ENV_FIXTURE" "$@"\n')
+        python.chmod(0o755)
+    ran = subprocess.run(["bash", str(launcher), "--role", "worker"], capture_output=True,
+                         text=True, timeout=15, cwd=tmp_path)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.splitlines() == ["loaded-from-fixture", "run.py", "--role", "worker"]
 
 
 def test_the_wallet_is_off_until_somebody_turns_it_on():

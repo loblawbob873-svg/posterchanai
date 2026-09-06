@@ -117,6 +117,9 @@ async def _stream(sess, w: asyncio.StreamWriter, cursor: int, stop: asyncio.Even
         if cursor < sess.seq:
             # Truncating here is safe: `utf8_take` holds back a trailing partial character, and the
             # `continue` below comes straight back for the rest.
+            # The PTY keeps draining while a network write waits. Its retained buffer may have
+            # advanced since attach or the previous frame; count from its actual start.
+            cursor = max(cursor, sess.seq - len(sess.buf))
             data = sess.since(cursor)[:OUT_CHUNK]
             take = ssh_service.utf8_take(data)
             if take:

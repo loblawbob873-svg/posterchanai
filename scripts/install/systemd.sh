@@ -144,6 +144,7 @@ export ZES_ENABLE_SYSMAN=1
 export SYCL_CACHE_PERSISTENT=1
 
 cd "$SCRIPT_DIR"
+[ -f "$SCRIPT_DIR/data/secrets.env" ] && . "$SCRIPT_DIR/data/secrets.env"
 exec "$SCRIPT_DIR/venv-unified/bin/python" run.py "$@"
 SCRIPT
 }
@@ -155,6 +156,7 @@ create_nvidia_run_script() {
 # NVIDIA CUDA wrapper script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+[ -f "$SCRIPT_DIR/data/secrets.env" ] && . "$SCRIPT_DIR/data/secrets.env"
 
 # Help with CUDA memory fragmentation
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -183,6 +185,7 @@ create_amd_run_script() {
 # AMD ROCm wrapper script
 SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 cd "\$SCRIPT_DIR"
+[ -f "\$SCRIPT_DIR/data/secrets.env" ] && . "\$SCRIPT_DIR/data/secrets.env"
 
 # ROCm environment
 export ROCM_PATH=/opt/rocm
