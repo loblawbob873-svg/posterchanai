@@ -394,3 +394,22 @@ def test_server_url_and_case_insensitive_discovery(api):
     assert c.get('/jellyfin/web/index.html').status_code == 404
     login = connect(api)
     assert c.get('/jellyfin/users/me', headers=headers(login)).json()['Id'] == login['User']['Id']
+
+
+def test_tv_camel_case_quick_connect_and_playback_requests(api):
+    c=api.client
+    pending=c.post('/jellyfin/QuickConnect/Initiate').json()
+    assert c.post('/api/media-center/jellyfin-account/authorize',json={'code':pending['Code']}).status_code==200
+    assert c.get('/jellyfin/QuickConnect/Connect',params={'secret':pending['Secret']}).json()['Authenticated']
+    result=c.post('/jellyfin/Users/AuthenticateWithQuickConnect',json={'secret':pending['Secret']})
+    assert result.status_code==200, result.text
+    login=result.json()
+    item, _=playable(api,login)
+    info=c.post('/jellyfin/Items/'+item['Id']+'/PlaybackInfo',headers=headers(login),
+                json={'audioStreamIndex':None,'subtitleStreamIndex':None,'maxStreamingBitrate':700000})
+    assert info.status_code==200, info.text
+    play_id=info.json()['PlaySessionId']
+    assert jf._plays[play_id]['profiles']==['360p']
+    assert c.post('/jellyfin/Sessions/Playing',headers=headers(login),json={'playSessionId':play_id}).status_code==204
+    assert c.post('/jellyfin/Sessions/Playing/Stopped',headers=headers(login),json={'playSessionId':play_id}).status_code==204
+    assert c.post('/jellyfin/Users/AuthenticateWithQuickConnect',json={'secret':pending['Secret']}).status_code==401

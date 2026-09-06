@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from starlette.requests import Request as InternalRequest
 
 from app.auth import SECRET_KEY
@@ -266,7 +266,13 @@ async def approve_from_jellyfin(request: Request, auth=Depends(authenticate)):
 
 
 class QuickSecret(BaseModel):
-    Secret: str = Field(min_length=20, max_length=128)
+    Secret: str = Field(min_length=20, max_length=128, validation_alias=AliasChoices('Secret', 'secret'))
+
+
+def body_value(body, key, default=None):
+    """ASP.NET-style JSON field matching for native clients using camelCase."""
+    value = next((value for name, value in body.items() if name.casefold() == key.casefold()), None)
+    return default if value is None else value
 
 
 @router.post('/Users/AuthenticateWithQuickConnect')
@@ -492,7 +498,7 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
         raise HTTPException(400, 'Select a playable item')
     listing = await media_call(request, auth, db)
     try:
-        cap = int(body.get('MaxStreamingBitrate') or query(request, 'MaxStreamingBitrate', '1000000000'))
+        cap = int(body_value(body, 'MaxStreamingBitrate') or query(request, 'MaxStreamingBitrate', '1000000000'))
     except (ValueError, TypeError):
         raise HTTPException(400, 'Invalid streaming bitrate')
     profiles = [p for p in listing['profiles'] if sum(media.PROFILES[p][2:]) * 1200 <= cap]
@@ -501,8 +507,8 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
     track_data = await media_call(request, auth, db, f"/{lib['id']}/tracks/{item['id']}")
     tracks = track_data['tracks']
     try:
-        audio_index = int(body.get('AudioStreamIndex', query(request, 'AudioStreamIndex', '-1')))
-        subtitle_index = int(body.get('SubtitleStreamIndex', query(request, 'SubtitleStreamIndex', '-1')))
+        audio_index = int(body_value(body, 'AudioStreamIndex', query(request, 'AudioStreamIndex', '-1')))
+        subtitle_index = int(body_value(body, 'SubtitleStreamIndex', query(request, 'SubtitleStreamIndex', '-1')))
     except (ValueError, TypeError):
         raise HTTPException(400, 'Invalid media track')
     if audio_index >= 0 and not any(t['type'] == 'audio' and t['index'] == audio_index for t in tracks):
@@ -605,13 +611,13 @@ async def subtitles(uid: str, source_id: str, index: int, request: Request,
 @router.post('/Sessions/Playing', status_code=204)
 @router.post('/Sessions/Playing/Progress', status_code=204)
 async def progress(body: dict = Body(default={}), auth=Depends(authenticate)):
-    play_record(auth, body.get('PlaySessionId', ''))
+    play_record(auth, body_value(body, 'PlaySessionId', ''))
     return Response(status_code=204)
 
 
 @router.post('/Sessions/Playing/Stopped', status_code=204)
 async def stopped(request: Request, body: dict = Body(default={}), auth=Depends(authenticate), db=Depends(get_db)):
-    play_id = body.get('PlaySessionId', '')
+    play_id = body_value(body, 'PlaySessionId', '')
     record = play_record(auth, play_id)
     ticket = parse_qs(urlsplit(record['url']).query)['ticket'][0]
     await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
