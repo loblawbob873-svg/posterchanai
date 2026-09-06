@@ -106,6 +106,8 @@ def playable(api, login):
     result = c.get('/jellyfin/Items', params={'ParentId': views[0]['Id']}, headers=h)
     assert result.status_code == 200, result.text
     item = result.json()['Items'][0]
+    while item['IsFolder']:
+        item = c.get('/jellyfin/Items', params={'ParentId': item['Id']}, headers=h).json()['Items'][0]
     info = c.post('/jellyfin/Items/' + item['Id'] + '/PlaybackInfo', headers=h, json={})
     assert info.status_code == 200, info.text
     return item, info.json()

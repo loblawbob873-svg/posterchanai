@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id), base = '/jellyfin/';
-  let account, pending, timer, generation=0, parent='', offset=0, searchTimer, hls, play, item, audio=-1, subtitle=-1, playerGeneration=0;
+  let account, pending, timer, generation=0, parent='', trail=[], offset=0, searchTimer, hls, play, item, audio=-1, subtitle=-1, playerGeneration=0;
   try { account=JSON.parse(localStorage.getItem('pc_media_app')||'null'); } catch (_) {}
   const status = text => { $('status').textContent=text; };
   async function api(path, body, anonymous=false) {
@@ -44,7 +44,7 @@
     await api('Users/Me');
     await api('Sessions/Capabilities/Full',{PlayableMediaTypes:['Video','Audio'],SupportsMediaControl:false});
     $('connect').hidden=true;$('library').hidden=false;$('logout').hidden=false;
-    parent='';$('search').value='';await browse();
+    parent='';trail=[];$('search').value='';await browse();
   }
   async function browse(append=false) {
     const current=++generation;const term=$('search').value.trim();if(!append){offset=0;$('cards').replaceChildren();}
@@ -60,7 +60,7 @@
         else {const art=document.createElement('div');art.className='art';art.textContent=entry.IsFolder?'▣':'▶';card.append(art);}
         const title=document.createElement('span');title.textContent=entry.Name;
         if(entry.IsFolder){const count=document.createElement('small');count.textContent=(entry.ChildCount||0)+' titles';title.append(count);}
-        card.append(title);card.onclick=()=>{if(entry.IsFolder){parent=entry.Id;$('heading').textContent=entry.Name;browse();}else{item=entry;audio=-1;subtitle=-1;start(0);}};$('cards').append(card);
+        card.append(title);card.onclick=()=>{if(entry.IsFolder){trail.push({id:parent,name:$('heading').textContent});parent=entry.Id;$('heading').textContent=entry.Name;browse();}else{item=entry;audio=-1;subtitle=-1;start(0);}};$('cards').append(card);
       }
       offset+=result.Items.length;$('more').hidden=offset>=result.TotalRecordCount;status(result.TotalRecordCount?result.TotalRecordCount+' available':'No media found.');
     } catch(error){if(current===generation)status(error.message);}
@@ -90,7 +90,7 @@
       await api('Sessions/Playing',{PlaySessionId:info.PlaySessionId,ItemId:item.Id});status('');$('player').scrollIntoView({behavior:'smooth'});
     } catch(error){if(current===playerGeneration){stop();status(error.message);}}
   }
-  $('new-code').onclick=connect;$('back').onclick=()=>{stop();parent='';$('search').value='';$('heading').textContent='Your libraries';if(account)browse();};
+  $('new-code').onclick=connect;$('back').onclick=()=>{stop();const previous=trail.pop()||{id:'',name:'Your libraries'};parent=previous.id;$('search').value='';$('heading').textContent=previous.name;if(account)browse();};
   $('logout').onclick=async()=>{stop();try{await api('Sessions/Logout',{});}catch(_){}connect();};
   $('more').onclick=()=>browse(true);$('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>browse(),300);};
   $('audio').onchange=()=>{audio=Number($('audio').value);start(document.querySelector('video').currentTime);};

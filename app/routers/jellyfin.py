@@ -386,6 +386,8 @@ async def media_call(request, auth, db, path='', method='GET', body=None):
         return await native.list_libraries(auth.user)
     if parts == ['sessions', 'stop']:
         return await native.stop_session(native.StopSession(**body), auth.user)
+    if len(parts) == 2 and parts[1] == 'folder-art':
+        return await native.folder_artwork(parts[0], parse_qs(parsed.query).get('path', ['.'])[0], auth.user)
     if len(parts) == 2 and parts[1] == 'items':
         return await native.items(parts[0], auth.user)
     if len(parts) == 3 and parts[1] == 'art':
@@ -425,13 +427,36 @@ def library_dto(lib):
             'RecursiveItemCount': lib.get('count', 0), 'ImageTags': {}, 'LocationType': 'FileSystem'}
 
 
+def folder_id(lib, path):
+    return library_id(lib) if path == '.' else digest('jellyfin-folder:' + lib['id'] + ':' + path)[:32]
+
+
+def catalog_folders(entries):
+    folders = {}
+    for entry in entries:
+        path = Path(entry.get('folder', '.'))
+        while path.as_posix() != '.':
+            name = path.as_posix()
+            folders[name] = folders.get(name, 0) + 1
+            path = path.parent
+    return folders
+
+
+def folder_dto(lib, path, count=0):
+    return {'Id': folder_id(lib, path), 'ServerId': SERVER_ID, 'Name': Path(path).name,
+            'SortName': Path(path).name, 'ParentId': folder_id(lib, Path(path).parent.as_posix()),
+            'Type': 'Folder', 'IsFolder': True, 'RecursiveItemCount': count,
+            'ChildCount': count, 'LocationType': 'FileSystem',
+            'ImageTags': {'Primary': folder_id(lib, path)}}
+
+
 def item_dto(lib, item):
     uid = remember(lib, item)
     folder = item.get('folder', '.')
-    name = item['name'] if folder == '.' else folder + ' / ' + item['name']
+    name = item['name']
     video = item.get('video', True)
     return {'Id': uid, 'ServerId': SERVER_ID, 'Name': name, 'SortName': name,
-            'ParentId': library_id(lib), 'Type': 'Video' if video else 'Audio',
+            'ParentId': folder_id(lib, folder), 'Type': 'Video' if video else 'Audio',
             'MediaType': 'Video' if video else 'Audio', 'IsFolder': False,
             'RunTimeTicks': int(item['duration'] * 10000000), 'CanDownload': False, 'CanDelete': False,
             'PlayAccess': 'Full', 'LocationType': 'FileSystem', 'VideoType': 'VideoFile',
@@ -454,7 +479,12 @@ async def resolve(request, auth, db, uid):
     for lib in libs:
         if locator and lib['id'] != locator[0]:
             continue
-        for item in (await media_call(request, auth, db, '/' + lib['id'] + '/items'))['items']:
+        entries = (await media_call(request, auth, db, '/' + lib['id'] + '/items'))['items']
+        if not locator:
+            for path, count in catalog_folders(entries).items():
+                if folder_id(lib, path) == uid:
+                    return lib, {'_folder': path, 'count': count}
+        for item in entries:
             if item_id(lib, item) == uid:
                 remember(lib, item)
                 return lib, item
@@ -494,15 +524,29 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
         raise HTTPException(400, 'Invalid pagination')
     result = []
     for lib in await libraries(request, auth, db):
-        if parent and parent not in (SERVER_ID, library_id(lib)):
-            continue
         if not parent and not recursive and not latest and not search and not ids:
             result.append(library_dto(lib))
             continue
-        for item in (await media_call(request, auth, db, '/' + lib['id'] + '/items'))['items']:
+        entries = (await media_call(request, auth, db, '/' + lib['id'] + '/items'))['items']
+        folders = catalog_folders(entries)
+        target = '.'
+        if parent and parent not in (SERVER_ID, library_id(lib)):
+            target = next((path for path in folders if folder_id(lib, path) == parent), None)
+            if target is None:
+                continue
+        flat = recursive or latest or bool(search) or bool(ids)
+        if not flat:
+            result.extend(folder_dto(lib, path, count) for path, count in folders.items()
+                          if Path(path).parent.as_posix() == target)
+        for item in entries:
+            folder = item.get('folder', '.')
+            if (not flat and folder != target) or (flat and target != '.' and folder != target and not folder.startswith(target + '/')):
+                continue
             dto = item_dto(lib, item)
-            if (not ids or dto['Id'] in ids) and (not search or search in dto['Name'].casefold()):
+            searchable = folder + '/' + dto['Name']
+            if (not ids or dto['Id'] in ids) and (not search or search in searchable.casefold()):
                 result.append(dto)
+    result.sort(key=lambda entry: (not entry['IsFolder'], media.natural(entry['Name'])))
     if types:
         result = [item for item in result if item['Type'] in types]
     # Native catalogs already preserve natural folder/filename order.
@@ -520,6 +564,8 @@ async def resume(auth=Depends(authenticate)):
 @router.get('/Users/{user_id}/Items/{uid}')
 async def item_details(uid: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
     lib, item = await resolve(request, auth, db, uid)
+    if item and '_folder' in item:
+        return folder_dto(lib, item['_folder'], item['count'])
     return item_dto(lib, item) if item else library_dto(lib)
 
 
@@ -527,8 +573,9 @@ async def item_details(uid: str, request: Request, auth=Depends(authenticate), d
 @router.get('/Items/{uid}/Images/Primary/{index}')
 async def image(uid: str, request: Request, auth=Depends(authenticate), db=Depends(get_db)):
     lib, item = await resolve(request, auth, db, uid)
-    if not item:
-        raise HTTPException(404, 'No library artwork')
+    if not item or '_folder' in item:
+        path = item['_folder'] if item else '.'
+        return await media_call(request, auth, db, f"/{lib['id']}/folder-art?" + urlencode({'path': path}))
     return await media_call(request, auth, db, f"/{lib['id']}/art/{item['id']}")
 
 
@@ -546,7 +593,7 @@ def play_record(auth, play_id, uid=None):
 async def playback_info(uid: str, request: Request, body: dict = Body(default={}),
                         auth=Depends(authenticate), db=Depends(get_db)):
     lib, item = await resolve(request, auth, db, uid)
-    if not item:
+    if not item or '_folder' in item:
         raise HTTPException(400, 'Select a playable item')
     listing = await media_call(request, auth, db)
     try:
