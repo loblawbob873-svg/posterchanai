@@ -52,7 +52,7 @@ def test_the_tombstone_names_the_invite_it_retired():
     only thing that can put the room back."""
     leave = SRC.split("async function leaveArmadaMembership", 1)[1].split("async function ", 1)[0]
     assert "invite_ref:leftRef" in leave and "naddr:leftNaddr" in leave, leave[:400]
-    assert "entries.delete(room.communityId)" in leave, (
+    assert "entries.delete(cid)" in leave, (
         "leaving must drop the entry as well as add the tombstone; keeping it is correct only "
         "because removed_at happens to outrank added_at"
     )

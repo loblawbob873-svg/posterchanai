@@ -102,7 +102,20 @@ class AuthConnectionRowOnTheWeb(unittest.TestCase):
         port = cls.httpd.server_address[1]
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
 
-        cdp = 9336
+        # A PORT NOBODY ELSE IS HOLDING, ASKED FOR THE SAME WAY THE HTTP SERVER ABOVE ASKS.
+        #
+        # This was the literal 9336. Anything else on that port -- another check, a debugging
+        # tunnel, a browser somebody left open -- makes chrome fail to bind, and the only thing this
+        # test can then say is "could not start chrome", which reads as a broken browser or a broken
+        # feature rather than a busy socket. It cost a real diagnosis. `PC_CHECK_PORT` is honoured
+        # first because that is the repo's convention for a check that must be pinned; otherwise the
+        # kernel picks, which cannot collide with anything.
+        cdp = int(os.environ.get("PC_CHECK_PORT") or 0)
+        if not cdp:
+            with socketserver.TCPServer(("127.0.0.1", 0), None, bind_and_activate=False) as probe:
+                probe.allow_reuse_address = True
+                probe.server_bind()
+                cdp = probe.server_address[1]
         profile = os.path.join(cls.tmp, "chrome")
         subprocess.run(["pkill", "-f", f"remote-debugging-port={cdp}"], capture_output=True)
         cls.proc = subprocess.Popen(

@@ -33,8 +33,18 @@ def test_non_overlapping_dom_app_does_not_park_telegram():
 
 
 def test_every_dom_app_shape_uses_the_same_central_stacking_path():
+    """One path for every in-page window, and the desktop asks for the front BEFORE it takes it.
+
+    The `else` on this branch was load-bearing only as prose: the branch above it requires
+    `w.native != null`, so the two are mutually exclusive either way. What IS load-bearing is the
+    order -- `_publishShellFront()` has to reach main before the focus event does, or main's
+    sink-on-focus wins the race and `send-to-back state:false` cannot undo it. See
+    tests/client/test_the_desktop_says_it_wants_the_front_before_it_takes_it.py.
+    """
     focus=OS[OS.index("function focusWin(w, render)"):OS.index("function minimise",OS.index("function focusWin(w, render)"))]
-    assert "else if(w.native == null) _stackDomAboveNative(w,focusToken)" in focus
+    assert "if(w.native == null) _stackDomAboveNative(w,focusToken)" in focus
+    assert "_publishShellFront();" in focus
+    assert focus.index("_publishShellFront();") < focus.index("_stackDomAboveNative(w,focusToken)")
     for view in ("global","messages","concord","monero","office","drafts","settings","terminal"):
         assert view in OS
 

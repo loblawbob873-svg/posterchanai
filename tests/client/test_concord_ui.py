@@ -234,7 +234,11 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     assert 'async function leaveArmadaMembership(p,room)' in CONCORD
     # The tombstone names the INVITE too — a tombstone keyed only on community_id is unmatchable
     # by the owner's own announcement, which is the only thing that can put the room back.
-    assert "tombs.set(room.communityId,{community_id:room.communityId,removed_at:removedAt," in CONCORD
+    # `cid` is roomIdentity(room): community id, else naddr, else url. A room joined by a plain
+    # invite link has no community_id at all, and keying its tombstone on one wrote no tombstone —
+    # leaving succeeded silently and the vault could put the room straight back.
+    assert "tombs.set(cid,{community_id:cid,removed_at:removedAt," in CONCORD
+    assert "const cid=roomIdentity(room);" in CONCORD
     assert "...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});" in CONCORD
     assert "rememberLeftCommunity(viewer.pubkey,room,removedAt)" in CONCORD
     assert "forgetLeftCommunity(viewer.pubkey,room)" in CONCORD
@@ -524,9 +528,17 @@ def test_direct_invite_route_opens_concord_with_the_fragment_intact():
 
 
 def test_concord_controls_are_phone_sized_and_single_column():
-    phone = re.search(r"@media\(max-width:600px\)\{(.*?)\n\}", CSS, re.S)
-    assert phone, "missing phone breakpoint"
-    rules = phone.group(1)
+    """EVERY 600px block, not the first one that happens to be in the file.
+
+    This read `re.search`, i.e. the FIRST `@media(max-width:600px)` in client.css, and asserted
+    Concord's rules were inside it. That held only for as long as Concord's block stayed first: an
+    unrelated feature adding its own phone breakpoint earlier in the stylesheet turned this red
+    while every rule it checks was still present and correct. A stylesheet may have as many
+    breakpoints as it likes and the cascade does not care which is first, so neither should this.
+    """
+    phones = re.findall(r"@media\(max-width:600px\)\{(.*?)\n\}", CSS, re.S)
+    assert phones, "missing phone breakpoint"
+    rules = "\n".join(phones)
     assert ".concord-hub" in rules
     assert "flex-wrap:wrap" in rules
     assert ".concord-hub .btn{width:100%;min-height:44px}" in rules

@@ -1381,6 +1381,29 @@
         save(rooms);
         if(state.community==null)localStorage.removeItem('pc.concord.active');else localStorage.setItem('pc.concord.active',String(state.community));
       }
+      /* A ROOM THIS DEVICE IS IN AND THE VAULT HAS NEVER HEARD OF GETS WRITTEN INTO IT.
+       *
+       * `persistArmadaMembership` is called on create, on join and on discover -- so a room joined
+       * before the vault existed, or by a path that skipped it, is known to ONE device for ever.
+       * Measured on a real account: three joined rooms, one of them absent from the vault entirely,
+       * and it was the one the person could see on their laptop and nowhere else.
+       *
+       * `recovered` is what makes this safe, and it is the only guard that could be. It means a
+       * membership document was DECODED this pass -- so `entries` and `tombs` describe the account,
+       * rather than being the empty pair a dead relay also produces. Republishing on that empty
+       * pair would put back every community the person has ever left, which is the wipe this file
+       * has paid for more than once. A tombstoned room is skipped too: `dead` is about to remove it
+       * locally and re-adding it would be a resurrection loop between two devices.
+       *
+       * Only rooms with an invite `url` can go: that url carries the `#fragment` another device
+       * needs to decrypt the room, and persist refuses without one. A purely local room stays local,
+       * which is what it is. */
+      if(recovered) for(const room of rooms){
+        const rid=roomIdentity(room);
+        if(!rid||!room.url||entries.has(rid)||tombs.has(rid))continue;
+        if(wasLocallyLeft(viewer.pubkey,room))continue;
+        try{ await persistArmadaMembership(p,room); }catch(_){ /* next pass tries again */ }
+      }
       if(!live.length){if(changed)backgroundRender();return;}
       for(const e of live){
         if(state.community!=null&&!localOnly)return;
@@ -1438,9 +1461,30 @@
       clearTimeout(membershipRetryTimer); if(state.community==null)membershipRetryTimer=setTimeout(()=>syncArmadaMemberships(p,p.viewer?p.viewer():viewer),recovered?60000:120000);
     }
   }
+  /* A COMMUNITY THIS ACCOUNT IS IN BELONGS IN THE VAULT, WHETHER OR NOT IT HAS A community_id.
+   *
+   * This refused any room without one, silently -- so such a room lived in ONE device's
+   * localStorage and no other device could ever learn about it. Reported as "my room for posterchan
+   * is still not appearing", then narrowed to "I see posterchan on laptop in concord but that is
+   * the only place". Measured on that laptop: three joined rooms, and the one that was missing
+   * everywhere else was the only one with `communityId: (none)` and `cord.armadaList: false` -- a
+   * room joined through a plain invite link rather than rebuilt from the vault. Its two neighbours
+   * carried hex ids, were in the vault, and appeared on every device.
+   *
+   * `roomIdentity` is this file's own notion of what a room IS -- community id, else naddr, else
+   * url -- and it is what every other identity comparison here already uses (removeCommunityByIdentity,
+   * hydrateRoomStreams, the active-room restore). Using it as the vault key is therefore not a new
+   * concept, it is the existing one applied to the one place that had its own rule.
+   *
+   * Safe against the reader: `cordListHex` converts only 43-character base64url keys and passes
+   * everything else through untouched, so a naddr survives decode unchanged, and `decodeMembershipLists`
+   * asks only that `community_id` be non-empty. `invite_ref` still carries the FULL url including its
+   * `#fragment`, which is the decryption key -- without it another device can list the room and never
+   * open it. */
   async function persistArmadaMembership(p,room){
     const viewer=p.viewer?p.viewer():{};
-    if(!viewer.pubkey||!p.nip44enc||!room||!room.communityId||!room.url)return false;
+    const cid=roomIdentity(room);
+    if(!viewer.pubkey||!p.nip44enc||!room||!cid||!room.url)return false;
     let list={entries:[],tombstones:[]};
     try{
       const prior=(await membershipEvents(p,viewer.pubkey))[0];
@@ -1449,19 +1493,24 @@
     if(!Array.isArray(list.entries))list.entries=[];
     if(!Array.isArray(list.tombstones))list.tombstones=[];
     const now=Date.now(),current={...(room.cord&&room.cord.bundle||{}),name:room.name,invite_ref:room.url};
-    const entry={community_id:room.communityId,seed:current,added_at:now,current,invite_ref:room.url};
-    const i=list.entries.findIndex(e=>e&&e.community_id===room.communityId);
+    const entry={community_id:cid,seed:current,added_at:now,current,invite_ref:room.url};
+    const i=list.entries.findIndex(e=>e&&e.community_id===cid);
     if(i<0)list.entries.push(entry); else list.entries[i]={...list.entries[i],...entry};
-    list.tombstones=list.tombstones.filter(t=>t&&t.community_id!==room.communityId);
+    list.tombstones=list.tombstones.filter(t=>t&&t.community_id!==cid);
     const content=await p.nip44enc(viewer.pubkey,JSON.stringify(list));
     const made=await p.publish(13302,content,[]);
     if(made&&made.ev&&p.relayPublishTo)await p.relayPublishTo(CORD_RELAYS,made.ev);
     forgetLeftCommunity(viewer.pubkey,room);
     return true;
   }
+  /* LEAVING USES THE SAME IDENTITY AS JOINING, or a room the vault knows by its naddr could be
+   * left on one device and come straight back from the vault on the next -- the exact standoff the
+   * tombstone/entry pair exists to settle. This used to return true for any room without a
+   * community_id: a silent success that wrote no tombstone at all. */
   async function leaveArmadaMembership(p,room){
     const viewer=p.viewer?p.viewer():{};
-    if(!room||!room.communityId)return true;
+    const cid=roomIdentity(room);
+    if(!room||!cid)return true;
     if(!viewer.pubkey||!p.nip44enc||!p.nip44dec)throw new Error('sign in before leaving this community');
     const candidates=await membershipEvents(p,viewer.pubkey),entries=new Map(),tombs=new Map();
     for(const event of candidates){
@@ -1480,8 +1529,8 @@
      * its `added_at`) is one arithmetic accident away from a resurrection, and a client that folds
      * entries without folding tombstones sees a membership. */
     const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=String(room.naddr||'');
-    entries.delete(room.communityId);
-    tombs.set(room.communityId,{community_id:room.communityId,removed_at:removedAt,
+    entries.delete(cid);
+    tombs.set(cid,{community_id:cid,removed_at:removedAt,
       ...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});
     const content=await p.nip44enc(viewer.pubkey,JSON.stringify({entries:[...entries.values()],tombstones:[...tombs.values()]})),made=await p.publish(13302,content,[]);
     if(made&&made.ev&&p.relayPublishTo){const accepted=await p.relayPublishTo(CORD_RELAYS,made.ev);if(!accepted)throw new Error('membership relays rejected the leave update');}
