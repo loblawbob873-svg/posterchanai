@@ -243,7 +243,11 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     assert "rememberLeftCommunity(viewer.pubkey,room,removedAt)" in CONCORD
     assert "forgetLeftCommunity(viewer.pubkey,room)" in CONCORD
     assert "wasLocallyLeft(viewer.pubkey,item)" in CONCORD
-    assert "kept=rooms.filter(room=>!dead.has(room.communityId)&&!wasLocallyLeft(viewer.pubkey,room))" in CONCORD
+    # BOTH key forms. A tombstone written by this build names roomIdentity (community id, else
+    # naddr, else url) because an invite-link room has no community id; an older one names only
+    # the community id. Removing on one alone leaves the other kind of leave un-applied.
+    assert ("kept=rooms.filter(room=>!dead.has(room.communityId)&&!dead.has(roomIdentity(room))"
+            "&&!wasLocallyLeft(viewer.pubkey,room))") in CONCORD
     assert "await p.publish(13302,content,[])" in CONCORD
     handler = CONCORD.split("const leave=$('#cc-leave-community')", 1)[1].split("const leaveByHeader", 1)[0]
     assert handler.index('await leaveArmadaMembership(p,room)') < handler.index('const latest=saved()')

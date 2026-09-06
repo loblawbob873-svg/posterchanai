@@ -1506,7 +1506,21 @@
      * Published here the set is populated before the focus event exists, so the sink skips the
      * surface instead of racing it. `_publishShellFront` is idempotent and only calls out on a
      * change, so the drawBar below still costs nothing. */
-    _publishShellFront();
+    /* SAY IT OUTRIGHT, DO NOT DERIVE IT FROM A STALE FLAG.
+     *
+     * `_publishShellFront` computes the wish as `!_foreignFocused && a frame is focused`, and
+     * `_foreignFocused` is only cleared LATER, from the adopt pass, which needs a compositor event
+     * plus a snapshot round trip. So with Firefox focused, clicking a System Settings frame drawn
+     * inside the desktop published NOTHING -- want was still false, equal to what was last sent --
+     * and the focus below then raced main's sink exactly as before. The reordering above only ever
+     * helped the transition from one of OUR windows.
+     *
+     * Focusing an in-page window IS the desktop needing the front; that is not an inference from
+     * anything, it is the thing that just happened. `_shellFrontWish(true)` states it, and the
+     * ordinary recomputation from drawBar still governs every later frame -- including sinking the
+     * surface again the moment a foreign application really does take the keyboard. */
+    if(w.native == null) _shellFrontWish(true);
+    else _publishShellFront();
     if(w.native == null) _stackDomAboveNative(w,focusToken).catch(()=>{});
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
@@ -7425,6 +7439,16 @@
    * surface with the keyboard -- see the block that maintains _shellHasKeyboard. */
   const _webTaskActive = (w) => !!(w && w.el && w.el.classList.contains('focused')
                                    && !w.min && _shellHasKeyboard);
+  /* Publish a decided answer, bypassing the derivation. Used when focusing a window the desktop
+   * DRAWS: that is the front being needed, and no flag has to be consulted to know it. */
+  function _shellFrontWish(want){
+    if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
+    want = !!want;
+    if(want === _shellFrontSent) return;
+    _shellFrontSent = want;
+    try{ Promise.resolve(pcWM.shellFront(want)).catch(()=>{ _shellFrontSent = null; }); }
+    catch(_){ _shellFrontSent = null; }
+  }
   function _publishShellFront(){
     if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
     let want = false;

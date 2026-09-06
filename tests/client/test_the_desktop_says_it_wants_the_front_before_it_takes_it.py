@@ -51,24 +51,44 @@ class TestFocusWinOrder(unittest.TestCase):
         self.body = _decls(_fn(OS_JS, "  function focusWin(w, render){"))
 
     def test_it_both_publishes_the_wish_and_focuses_the_shell(self):
-        self.assertIn("_publishShellFront()", self.body,
+        self.assertIn("_shellFrontWish(true)", self.body,
                       "focusWin never tells main the desktop has a window of its own on screen")
         self.assertIn("_stackDomAboveNative(", self.body,
                       "focusWin no longer raises the shell for an in-page window")
 
     def test_the_wish_is_published_first(self):
-        wish = self.body.index("_publishShellFront()")
+        wish = self.body.index("_shellFrontWish(true)")
         focus = self.body.index("_stackDomAboveNative(")
         self.assertLess(wish, focus,
                         "the shell is focused before main knows it must not be sunk; the sink wins "
                         "and `send-to-back state:false` cannot undo it")
 
+    def test_it_is_stated_not_derived(self):
+        """`_publishShellFront` computes the wish from `_foreignFocused`, which is cleared LATER --
+        from the adopt pass, after a compositor event and a snapshot round trip. So with a foreign
+        app focused, clicking an in-page window published nothing at all: `want` was still false and
+        equal to what was last sent. Focusing a window the desktop DRAWS is the front being needed;
+        that is the thing that just happened, not an inference from a flag."""
+        self.assertIn("_shellFrontWish(true)", self.body)
+        at = self.body.index("_shellFrontWish(true)")
+        self.assertNotIn("_publishShellFront()", self.body[:at],
+                         "the derived form must not run first and latch _shellFrontSent to false")
+
     def test_the_wish_is_not_only_sent_from_the_repaint(self):
         """drawBar's call is a repaint's -- it cannot be the one that beats the focus event."""
         draw = _decls(_fn(OS_JS, "  function drawBar(){"))
         self.assertIn("_publishShellFront()", draw)          # still there, still cheap
-        self.assertIn("_publishShellFront()", self.body,
+        self.assertIn("_shellFrontWish(true)", self.body,
                       "only drawBar publishes, so the wish is always late")
+
+    def test_both_forms_share_one_sender(self):
+        """Two places that write `_shellFrontSent` must agree about it, or one can latch the other
+        out of ever sending."""
+        wish = _decls(_fn(OS_JS, "  function _shellFrontWish(want){"))
+        self.assertIn("_shellFrontSent", wish)
+        self.assertIn("pcWM.shellFront(want)", wish)
+        self.assertIn("_shellFrontSent = null", wish,
+                      "a failed IPC must clear the latch or the wish is never retried")
 
 
 class TestMainHonoursTheWish(unittest.TestCase):

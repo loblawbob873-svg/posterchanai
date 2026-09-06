@@ -221,10 +221,9 @@ def rendered(outputs, shells):
         #
         # So an output the compositor has powered down is SKIPPED, loudly, and everything else is
         # judged exactly as before. The gate still fails when a powered output shows no marker, and
-        # still fails when two show the same one. It also still fails if NOTHING could be measured
-        # AND there were outputs to measure -- see the check after the loop -- because "every screen
-        # is off" is not evidence that a desktop rendered, it is simply no evidence at all, and the
-        # caller uses this answer to decide whether to keep retrying.
+        # still fails when two show the same one. When EVERY output is off it ALLOWS, deliberately --
+        # see the block after the loop, which is where that trade is argued. Do not read this
+        # paragraph as the contract for that case; it is not.
         seen, skipped = {}, []
         for name, target, capture in captures:
             output = next(row for row in outputs if str(row.get("name")) == name)

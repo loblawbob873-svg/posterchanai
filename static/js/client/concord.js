@@ -1277,7 +1277,18 @@
     }
     const docs=[...ordinary,...[...coordinates.values()].map(x=>x.doc)],entries=[],tombstones=[];
     for(const doc of docs){
-      for(const e of Array.isArray(doc.entries)?doc.entries:[]){const cid=cordListHex(e.community_id),source=e.current||e.seed;if(!source)continue;const current=cordListMaterial(source,cid),seed=cordListMaterial(e.seed||source,cid);entries.push({...e,community_id:cid,current,seed});}
+      /* THE VAULT KEY IS NOT ALWAYS A COMMUNITY ID, AND IT MUST NEVER BE WRITTEN INTO THE BUNDLE.
+       *
+       * A room joined by a plain invite link has no community_id, so its vault entry is keyed on
+       * `roomIdentity` -- the naddr. `cordListMaterial` injects whatever key it is handed as the
+       * material's `community_id`, which for such an entry OVERWRITES the real 32-byte id inside
+       * the join bundle with a naddr. The room then lists fine and every read of it throws
+       * "invalid Concord join material" from inspectControl -- on the OTHER device, never on the
+       * one that published it, because there the local row is kept as-is.
+       *
+       * So the key is used as material only when it IS one. Otherwise the bundle keeps its own id,
+       * which is the value the reader has always needed. */
+      for(const e of Array.isArray(doc.entries)?doc.entries:[]){const cid=cordListHex(e.community_id),source=e.current||e.seed;if(!source)continue;const real=/^[0-9a-f]{64}$/i.test(String(cid||''))?cid:null,seedSrc=e.seed||source;const current=cordListMaterial(source,real||(source||{}).community_id),seed=cordListMaterial(seedSrc,real||(seedSrc||{}).community_id);entries.push({...e,community_id:cid,current,seed});}
       for(const t of Array.isArray(doc.tombstones)?doc.tombstones:[])tombstones.push({...t,community_id:cordListHex(t.community_id)});
     }
     return {entries,tombstones};
@@ -1374,7 +1385,12 @@
         if(wasLocallyLeft(viewer.pubkey,{communityId:id,naddr,url}))
           forgetLeftCommunity(viewer.pubkey,{communityId:id,naddr,url});
       }
-      const activeId=state.community==null?'':roomIdentity(rooms[state.community]),kept=rooms.filter(room=>!dead.has(room.communityId)&&!wasLocallyLeft(viewer.pubkey,room));
+      /* MATCH THE WAY THE TOMBSTONE WAS KEYED. A leave writes its tombstone under `roomIdentity`,
+       * so removing on `room.communityId` alone never fires for an invite-link room -- the room the
+       * key change was made for. Leave it on the phone, and the laptop keeps showing it for ever
+       * while the backfill correctly declines to re-add it, so nothing ever reconciles. Both forms
+       * are checked because an older tombstone names only the community id. */
+      const activeId=state.community==null?'':roomIdentity(rooms[state.community]),kept=rooms.filter(room=>!dead.has(room.communityId)&&!dead.has(roomIdentity(room))&&!wasLocallyLeft(viewer.pubkey,room));
       if(kept.length!==rooms.length){
         rooms=kept;changed=true;
         if(activeId){const at=rooms.findIndex(room=>roomIdentity(room)===activeId);state.community=at>=0?at:(rooms.length?0:null);state.channel=state.community==null?null:'general';}
