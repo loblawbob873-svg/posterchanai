@@ -341,3 +341,41 @@ def test_stream_publication_is_blocked_in_private_mode(world,kind):
     result=asyncio.run(world.send(event(kind)))
     assert result['route']=='fediverse' and not result['ok']
     assert not world.calls
+
+
+def test_the_client_knows_exactly_what_the_bridge_can_deliver():
+    """A post the mode APPLIES to but the bridge cannot CARRY goes nowhere at all.
+
+    Marking an event fedi-only means it is never published to a relay -- that is the mode's promise.
+    But `route()` only delivers SUPPORTED_KINDS, so a poll (1068), a poll response (1018), a comment
+    (1111), a live chat message (1311), an article (30023) or a live event (30311) was signed, sent,
+    refused, and dropped: not on Nostr because it was marked, not on the fediverse because the route
+    said no.
+
+    Reported as "Drafts don't work either ... for fediverse bridge" -- a reply to an article or a
+    comment is kind 1111 (`replyKindFor`), which is exactly one of these.
+
+    The client now refuses those before signing, from its own copy of the list. Two hand-kept copies
+    of a kind set is precisely how `MEDIA_TOOL_COMMANDS` drifted, so this asserts they match.
+    """
+    import re
+    from pathlib import Path
+    app = (Path(__file__).resolve().parents[1] / "static/js/client/app.js").read_text(encoding="utf-8")
+    m = re.search(r"_FEDI_DELIVERABLE_KINDS = new Set\(\[([^\]]*)\]\)", app)
+    assert m, "the client no longer knows which kinds the bridge can deliver"
+    client = {int(x) for x in re.findall(r"\d+", m.group(1))}
+    assert client == set(mode.SUPPORTED_KINDS), (
+        f"client {sorted(client)} != server {sorted(mode.SUPPORTED_KINDS)}")
+
+    # And the refusal must come BEFORE the marker is attached, or the event is stranded anyway.
+    at = app.index("_FEDI_DELIVERABLE_KINDS.has(kind)")
+    marker = app.index("tags=[...(tags||[]),['client-mode','fedi-only']];", at)
+    assert at < marker, "the kind is checked after the event has already been marked"
+
+
+def test_an_unsupported_kind_is_refused_with_its_reason(world):
+    """The server half of the same fact, so the client's copy is not the only thing asserting it."""
+    result = asyncio.run(world.send(event(1068)))
+    assert result["route"] == "fediverse" and result["ok"] is False
+    assert "not supported" in (result.get("msg") or "").lower(), result
+    assert not world.calls, "an unsupported kind must not reach the fediverse API"

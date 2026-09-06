@@ -11,14 +11,34 @@ import json
 import os
 import socket
 import struct
+import glob
 import subprocess
 import sys
+
+
+def _wayfire_socket():
+    """The compositor's IPC socket.
+
+    `WAYFIRE_SOCKET` is set for anything Wayfire launches, which is the normal case: these snaps are
+    fired from key bindings. Anything else -- a helper, an update script, somebody testing the
+    binding over ssh -- has no such variable, and `os.environ["WAYFIRE_SOCKET"]` answered that with a
+    KeyError traceback into a stderr nobody reads. From the person's side the key simply does
+    nothing. The socket is discoverable, so discover it.
+    """
+    live = os.environ.get("WAYFIRE_SOCKET")
+    if live:
+        return live
+    run = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    found = sorted(glob.glob(os.path.join(run, "wayfire-wayland-*.socket")))
+    if not found:
+        raise RuntimeError("no Wayfire IPC socket (WAYFIRE_SOCKET unset and none found in %s)" % run)
+    return found[0]
 
 
 def wayfire(method, data=None):
     body = json.dumps({"method": method, "data": data or {}}).encode()
     with socket.socket(socket.AF_UNIX) as client:
-        client.connect(os.environ["WAYFIRE_SOCKET"])
+        client.connect(_wayfire_socket())
         client.sendall(struct.pack("<I", len(body)) + body)
         head = client.recv(4)
         if len(head) != 4:

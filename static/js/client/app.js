@@ -1418,6 +1418,13 @@
   }
   // A signed routing marker keeps Fediverse-only actions private across retries and cache syncs.
   const _FEDI_SOCIAL_KINDS = new Set([1,5,6,7,16,1068,1018,1111,1311,30023,30311]);
+  /* What the BRIDGE can actually deliver in Fediverse-only mode -- a mirror of
+   * `fedi_only_service.SUPPORTED_KINDS`. It is deliberately SMALLER than the set above: that one
+   * decides which kinds the mode APPLIES to (and so must never reach a relay), this one decides
+   * which of them can be carried to the fediverse. A kind in the first and not the second has
+   * nowhere to go, which is why publish() refuses it out loud instead of signing it.
+   * `tests/test_fedi_only_mode.py` fails if the two copies drift. */
+  const _FEDI_DELIVERABLE_KINDS = new Set([1,5,6,7,16]);
   let _fediModeSupported=null;
   function _fediOnlyEvent(ev){ return !!(ev && (ev.tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only')); }
   function _fediOnly(){ return !!(ME && ClientSettings.get('fediOnly:'+ME.pubkey,false)); }
@@ -1541,8 +1548,29 @@
     }
     if(_FEDI_SOCIAL_KINDS.has(kind)){
       try{
-        if(await _refreshFediOnly() && !(kind===5 && opts && opts.publicDeletion) && !(tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only'))
+        if(await _refreshFediOnly() && !(kind===5 && opts && opts.publicDeletion) && !(tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only')){
+          /* REFUSE BEFORE SIGNING WHAT THE BRIDGE CANNOT DELIVER.
+           *
+           * Marking an event fedi-only means it is NEVER published to a relay -- that is the mode's
+           * whole promise. But the server only delivers a subset (fedi_only_service.SUPPORTED_KINDS),
+           * so for a poll, a comment, a live chat message, an article or a live event the post went
+           * nowhere at all: not to Nostr, because it was marked; not to the fediverse, because the
+           * route refused it. Signed, sent, and dropped.
+           *
+           * Reported as "Drafts don't work either ... for fediverse bridge": a reply to an article
+           * or a comment is kind 1111 (see replyKindFor), which is exactly one of these.
+           *
+           * Saying so HERE, before the signature and the round trip, is the difference between a
+           * sentence naming the post type and a silent failure. The draft is kept either way -- the
+           * caller only removes it on ok -- so nothing is lost, and the person can post it with
+           * Fediverse-only mode off. */
+          if(!_FEDI_DELIVERABLE_KINDS.has(kind)){
+            const msg='Fediverse-only mode cannot send this post type (kind '+kind+') — '
+                      +'turn the mode off to post it to Nostr.';
+            toast(msg); return {ok:false,noQueue:true,msg};
+          }
           tags=[...(tags||[]),['client-mode','fedi-only']];
+        }
       }catch(e){
         if(_fediOnly() || !ME || ME.pubkey!==postingAuthor){ toast(e.message); return {ok:false,noQueue:true,msg:e.message}; }
         // Normal-mode drafts may still enter the offline outbox. Relay.socialRoute
@@ -9335,11 +9363,12 @@
         while(folderArtActive<2&&folderArtQueue.length){
           const {card,id}=folderArtQueue.shift();if(!card.isConnected||VIEW!=='media-center')continue;
           folderArtActive++;
-          _mediaCenterFetch('/api/media-center/'+card.dataset.library+'/art/'+id).then(r=>r.ok?r.blob():null).then(blob=>{
+          _mediaCenterFetch('/api/media-center/'+card.dataset.library+(id==='folder-art'?'/folder-art?path='+encodeURIComponent(card.dataset.path):'/art/'+id)).then(r=>r.ok?r.blob():null).then(blob=>{
             if(!blob||!card.isConnected||VIEW!=='media-center')return;
             const url=URL.createObjectURL(blob);folderArtUrls.push(url);
             const img=document.createElement('img');img.alt='';img.decoding='async';img.src=url;
-            card.querySelector('.mc-directory-art').append(img);card.classList.add('has-art');
+            if(id==='folder-art')card.querySelector('.mc-directory-art').querySelectorAll('img').forEach(image=>image.remove());
+            if(id==='folder-art'||!card.dataset.folderPng)card.querySelector('.mc-directory-art').append(img);card.classList.add('has-art');
           }).catch(()=>{}).finally(()=>{folderArtActive--;drainFolderArt();});
         }
       };
@@ -9367,7 +9396,8 @@
           button.innerHTML='<span class="mc-directory-art"><span class="mc-directory-initial" aria-hidden="true"></span></span><span class="mc-directory-label"><b></b><small><svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg> Browse folder <span aria-hidden="true">›</span></small></span>';
           button.querySelector('b').textContent=folder.name;
           button.querySelector('.mc-directory-initial').textContent=folder.name.slice(0,2).toLocaleUpperCase();
-          fillFolderArt(button,folder.art);
+          if(folder.has_folder_art)button.dataset.folderPng='true';
+          fillFolderArt(button,folder.has_folder_art?['folder-art']:folder.art);
           button.onclick=()=>act(button,()=>browseFolder(lib,folder.path));grid.append(button);
         }
         const search=$('#mc-search');search.value='';search.oninput?.();
@@ -9428,6 +9458,13 @@
           const list=$('#mc-items'),refresh=list.dataset.library===lib.id;
           if(!refresh){clearMediaCenterArt();list.replaceChildren();}
           else if(_mediaCenterArtObserver)_mediaCenterArtObserver.disconnect();
+          if(refresh&&$('#mc-folder-nav .mc-directory:not([data-folder-png])')){
+            const folderResult=await api('/'+lib.id+'/folders?path='+encodeURIComponent(currentFolder));
+            for(const folder of folderResult.folders)if(folder.has_folder_art){
+              const card=Array.from($('#mc-folder-nav').querySelectorAll('.mc-directory')).find(card=>card.dataset.path===folder.path);
+              if(card&&!card.dataset.folderPng){card.dataset.folderPng='true';delete card.dataset.artReady;fillFolderArt(card,['folder-art']);}
+            }
+          }
           for(const card of $('#mc-folder-nav').querySelectorAll('.mc-directory'))fillFolderArt(card,result.items.filter(item=>item.folder===card.dataset.path||item.folder?.startsWith(card.dataset.path+'/')).slice(0,3).map(item=>item.id));
           list.dataset.library=lib.id;list.dataset.revision=result.revision||lib.revision||'';
           if(refresh&&list.firstChild?.nodeType===Node.TEXT_NODE)list.replaceChildren();

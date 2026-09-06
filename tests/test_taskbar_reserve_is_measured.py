@@ -120,3 +120,47 @@ class TestMainPublishesIt(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_the_snap_helper_can_find_its_own_socket():
+    """A key binding always has WAYFIRE_SOCKET. Nothing else does.
+
+    `os.environ["WAYFIRE_SOCKET"]` answered its absence with a KeyError traceback into a stderr
+    nobody reads -- so from the person's side the key simply did nothing. Hit while verifying the
+    snap geometry over ssh, which is exactly the "anything else" case. The socket is discoverable,
+    so it is discovered, and a genuine absence says what it looked for.
+    """
+    import os
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    snap = (Path(__file__).resolve().parents[1]
+            / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap")
+    import re as _re
+    body = snap.read_text(encoding="utf-8")
+    # Strip docstrings and comments first: the explanation quotes the very expression being
+    # forbidden, so a raw search matches the reason it was removed. (Third time tonight.)
+    code = _re.sub(r'"""[\s\S]*?"""', "", body)
+    code = _re.sub(r"(?m)^\s*#.*$", "", code)
+    assert 'os.environ["WAYFIRE_SOCKET"]' not in code, "still fatal on a missing variable"
+    assert "_wayfire_socket()" in code
+
+    with tempfile.TemporaryDirectory() as run:
+        # No variable and no socket: a clear message, not a KeyError.
+        env = dict(os.environ, XDG_RUNTIME_DIR=run)
+        env.pop("WAYFIRE_SOCKET", None)
+        done = subprocess.run([sys.executable, str(snap), "left"], env=env,
+                              text=True, capture_output=True, timeout=30)
+        assert done.returncode != 0
+        assert "no Wayfire IPC socket" in (done.stderr + done.stdout), done.stderr
+
+        # A socket present in the runtime dir is found without the variable being set. It refuses
+        # the connection (nothing is listening), which is a DIFFERENT failure -- and that is the
+        # point: the lookup got far enough to try.
+        Path(run, "wayfire-wayland-1-.socket").touch()
+        done = subprocess.run([sys.executable, str(snap), "left"], env=env,
+                              text=True, capture_output=True, timeout=30)
+        assert "no Wayfire IPC socket" not in (done.stderr + done.stdout), (
+            "the socket in XDG_RUNTIME_DIR was not discovered")
