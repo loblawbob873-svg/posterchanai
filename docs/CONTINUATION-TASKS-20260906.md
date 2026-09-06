@@ -71,3 +71,30 @@ wallet/Concord history is preserved; session coordination is in AGENT_HANDOFF.md
 
 New regression stage still needs the full suite, native emulator run, final review and deployment.
 Do not commit gentoo.sh or the other agent's unfinished installer/overlay edits.
+
+
+## Current release status (September 6, evening)
+
+The later regression release supersedes the pending status above. Signer priority,
+background autofill sync, SMS permission/readiness, DRC emoji rendering and terminal
+replay/UTF-8 corrections are deployed in 1297393e6. Review and full-suite evidence,
+including retained intermittent-test limitations, is in REGRESSION-RELEASE-20260906.md.
+Desktop 1494 packaged checks passed. Android 2212 release succeeded; its public APK
+matches the mirrored release SHA-256
+`8f82d4f648882b367684bd3d06169d7d28f31674ffb805df7ab5f7453e8e0077`.
+The final Android emulator report contains 88 tests, zero failures/errors/skips.
+These do not claim physical handset or Roku verification.
+
+Monero pooled output replenishment and the worker restart mapping are deployed in
+188348034. The separate operator spending-cap outage was caused by five mocked test
+charges in the live ledger. They were backed up and individually removed; production
+limits were retained and live payment preparation succeeds without sending funds.
+Hard test-ledger isolation is deployed in e85ef3cb2; all 386 Monero/deployment tests
+pass. See MONERO-ZAP-REGRESSION-20260906.md for the incident evidence.
+
+Wallet expansion remains isolated with the wallet agent. Its integrated full backend
+suite has passed; remaining client/browser checks and imported-address discovery
+review are ongoing. Independent Monero runtime configuration is staged on both
+application nodes, without activating the new wallet code. Non-EVM/non-XMR sending
+remains unfinished; do not describe the isolated wallet as complete Exodus parity.
+Other agent installer changes remain preserved and excluded from these deployments.
