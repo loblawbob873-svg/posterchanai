@@ -16,8 +16,11 @@ from fastapi import FastAPI
 from unittest.mock import AsyncMock
 
 import app.main as main
-from app.database import get_db
-from app.models import ExodusWallet
+from app.database import get_db, Base
+from app.models import ExodusWallet, ExodusWalletRecord, User
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 from app.routers import auth
 
 
@@ -27,24 +30,14 @@ class _User:
     email = "wallet-test@example.invalid"
 
 
-class _Query:
-    def __init__(self, store): self._store = store
-    def filter(self, *_a, **_k): return self
-    def first(self): return self._store.get("row")
-
-
-class _DB:
-    """Just enough Session for these routes: one row, in memory."""
-    def __init__(self): self.store = {}
-    def query(self, *_a, **_k): return _Query(self.store)
-    def add(self, row): self.store["row"] = row
-    def commit(self): pass
-    def rollback(self): pass
-
-
 @pytest.fixture
-def client(monkeypatch):
-    db = _DB()
+def client(monkeypatch, tmp_path):
+    monkeypatch.setenv("EXODUS_TRANSFER_DIR", str(tmp_path / "transfers"))
+    engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine, tables=[User.__table__, ExodusWallet.__table__, ExodusWalletRecord.__table__])
+    db = Session(engine)
+    db.add(User(id=4242, username='wallet-fixture', password_hash='unused')); db.commit()
+    db.store = {}
     # A fixed storage key: these tests are about the routes, not about key management.
     monkeypatch.setattr("app.services.nostr_store.user_storage_seckey",
                         lambda _db, _u: bytes(range(32)), raising=False)
@@ -62,6 +55,7 @@ def client(monkeypatch):
     monkeypatch.setattr("app.services.nostr_store.get_doc", _get_doc, raising=False)
     monkeypatch.setattr("app.services.nostr_store.put_doc", _put_doc, raising=False)
     db.store["doc"] = doc_store
+    monkeypatch.setattr('app.services.exodus_bitcoin_discovery.balance', AsyncMock(return_value={'known':False,'amount':None,'note':'Discovering'}))
     app = FastAPI()
     from app.routers.exodus_wallet import router
     app.include_router(router)
@@ -72,6 +66,7 @@ def client(monkeypatch):
         c._db = db
         yield c
     app.dependency_overrides.clear()
+    db.close(); engine.dispose()
 
 
 def _created(client):
@@ -83,10 +78,10 @@ def _created(client):
 def test_a_second_create_never_replaces_the_first_seed(client):
     """The expensive one. An overwrite here loses every coin behind the old seed, permanently."""
     _created(client)
-    before = client._db.store["doc"]["pcai:exodus:wallet"]["seed"]
+    before = client._db.store["doc"]["pcai:exodus:collection:default"]["seed"]
     again = client.post("/api/wallet/exodus/create", json={})
     assert again.status_code == 409, again.text
-    assert client._db.store["doc"]["pcai:exodus:wallet"]["seed"] == before, "the seed was replaced"
+    assert client._db.store["doc"]["pcai:exodus:collection:default"]["seed"] == before, "the seed was replaced"
 
 
 def test_create_does_not_return_the_phrase(client):
@@ -133,7 +128,7 @@ def test_importing_a_phrase_with_a_wrong_word_is_refused(client):
     bad = ("abandon " * 11 + "zoo").strip()
     r = client.post("/api/wallet/exodus/create", json={"mnemonic": bad})
     assert r.status_code == 400, r.text
-    assert "pcai:exodus:wallet" not in client._db.store["doc"], "a bad phrase was stored anyway"
+    assert "pcai:exodus:collection:default" not in client._db.store["doc"], "a bad phrase was stored anyway"
 
 
 def test_importing_a_valid_phrase_restores_that_exact_wallet(client):
@@ -141,7 +136,7 @@ def test_importing_a_valid_phrase_restores_that_exact_wallet(client):
               "abandon abandon abandon abandon abandon about")
     assert client.post("/api/wallet/exodus/create", json={"mnemonic": vector}).status_code == 200
     got = client.get("/api/wallet/exodus/addresses").json()["addresses"]
-    assert got["BTC"] == "1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA"
+    assert got["BTC"] == "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu"
     assert client.post("/api/wallet/exodus/reveal").json()["mnemonic"] == vector
 
 
@@ -150,18 +145,19 @@ def test_revealing_marks_the_wallet_backed_up(client):
     _created(client)
     assert client.get("/api/wallet/exodus/status").json()["backedUp"] is False
     client.post("/api/wallet/exodus/reveal")
-    assert client._db.store["doc"]["pcai:exodus:wallet"]["backedUpAt"] > 0
+    assert client._db.store["doc"]["pcai:exodus:collection:default"]["backedUpAt"] > 0
     assert client.get("/api/wallet/exodus/status").json()["backedUp"] is True
 
 
 def test_status_answers_even_with_no_wallet_and_says_who_holds_the_keys(client):
     body = client.get("/api/wallet/exodus/status").json()
     assert body["ok"] is True and body["exists"] is False
-    assert "node holds the keys" in body["custody"].lower()
+    assert "server-managed" in body["custody"].lower()
+    assert "recovery backup" in body["custody"].lower()
     symbols = {c["symbol"] for c in body["chains"]}
-    # Monero is offered now, read from the node's own wallet rather than derived from this seed.
+    # Monero is independently derived from this wallet, without the built-in tipping wallet.
     assert {"BTC", "ETH", "XRP", "XMR"} <= symbols, symbols
-    assert next(c for c in body["chains"] if c["symbol"] == "XMR")["kind"] == "node-wallet"
+    assert next(c for c in body["chains"] if c["symbol"] == "XMR")["kind"] == "monero"
 
 
 def test_no_route_takes_a_user_or_wallet_id(client):
@@ -183,7 +179,7 @@ def test_no_route_takes_a_user_or_wallet_id(client):
 #        "payment not sent".
 
 def _send(client, **kw):
-    body = {"symbol": "ETH", "to": "0x" + "11" * 20, "amount": "0.01"}
+    body = {"requestId": "01"*16, "symbol": "ETH", "to": "0x" + "11" * 20, "amount": "0.01"}
     body.update(kw)
     return client.post("/api/wallet/exodus/send", json=body)
 
@@ -193,7 +189,7 @@ def test_a_chain_that_cannot_send_says_so_instead_of_half_trying(client):
     for sym in ("BTC", "LTC", "DOGE", "BCH", "SOL"):
         r = _send(client, symbol=sym, to="1" + "a" * 33)
         assert r.status_code == 501, (sym, r.status_code, r.text)
-        assert "not supported yet" in r.text
+        assert "not available" in r.text
 
 
 def test_an_amount_with_too_much_precision_is_refused_before_signing(client):
@@ -248,51 +244,31 @@ def test_a_send_with_no_wallet_is_404(client):
 
 # ── Monero: the wallet that already exists, not a second one ──────────────────────────────────
 
-def test_sending_monero_points_at_the_wallet_that_owns_the_coins(client):
-    """Duplicating the spend path would mean two places moving the same coins under different
-    limits — the Monero screen has caps and a spend ledger this one does not."""
+def test_monero_address_belongs_to_this_seed_and_never_calls_the_builtin_wallet(client, monkeypatch):
+    from app.services import exodus_wallet_service as W
+    from app.services.monero_user_wallets import user_wallets
+    forbidden = AsyncMock(side_effect=AssertionError('built-in wallet must not be used'))
+    monkeypatch.setattr(user_wallets, 'rpc', forbidden)
     _created(client)
-    r = client.post("/api/wallet/exodus/send",
-                    json={"symbol": "XMR", "to": "4" + "a" * 94, "amount": "0.1"})
-    assert r.status_code == 409, r.text
-    assert "Monero Wallet screen" in r.text
+    phrase = client.post('/api/wallet/exodus/reveal').json()['mnemonic']
+    addresses = client.get('/api/wallet/exodus/addresses').json()['addresses']
+    assert addresses['XMR'] == W.monero_keys(phrase).PrimaryAddress()
+    assert not forbidden.called
 
 
-def test_an_unreachable_monero_wallet_is_unknown_not_zero(client, monkeypatch):
-    """Same rule as every other chain: 0.00 XMR to somebody who holds Monero is a lie about their
-    money, and the daemon being down is not a balance."""
+def test_independent_monero_is_unknown_when_unconfigured(client, monkeypatch):
+    monkeypatch.delenv('EXODUS_MONERO_DAEMON', raising=False)
     _created(client)
-    def boom():
-        raise RuntimeError("wallet rpc down")
-    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets", boom, raising=False)
-    row = client.get("/api/wallet/exodus/balances").json()["balances"]["XMR"]
-    assert row["known"] is False and row["amount"] is None
-    assert row["note"]
+    row = client.get('/api/wallet/exodus/balances').json()['balances']['XMR']
+    assert row['known'] is False and row['amount'] is None and row['note']
+    assert row['address'] == client.get('/api/wallet/exodus/addresses').json()['addresses']['XMR']
 
 
-def test_the_monero_row_reports_what_the_node_wallet_says(client, monkeypatch):
+def test_monero_recovery_exports_only_on_explicit_post(client):
+    from bip_utils import MoneroMnemonicDecoder, Monero
     _created(client)
-    class _W:
-        async def balance(self, _pk):
-            return {"address": "4" + "b" * 94, "balance": "1.5", "unlocked_balance": "0.5"}
-    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets",
-                        lambda: _W(), raising=False)
-    row = client.get("/api/wallet/exodus/balances").json()["balances"]["XMR"]
-    assert row["known"] is True and row["amount"] == "1.5"
-    assert row["spendable"] == "0.5"
-    # Monero locks change for ~20 minutes after a send; a screen showing only the total tells
-    # somebody they have money they cannot move yet.
-    assert "locked" in row["note"]
-
-
-def test_the_monero_address_is_the_node_wallets_not_one_derived_here(client, monkeypatch):
-    _created(client)
-    class _W:
-        async def balance(self, _pk):
-            return {"address": "4" + "c" * 94, "balance": "0", "unlocked_balance": "0"}
-    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets",
-                        lambda: _W(), raising=False)
-    addrs = client.get("/api/wallet/exodus/addresses").json()["addresses"]
-    assert addrs["XMR"] == "4" + "c" * 94
-    # And the seed's own chains are still there and unchanged.
-    assert addrs["XRP"].startswith("r") and addrs["BTC"].startswith("1")
+    assert client.get('/api/wallet/exodus/reveal-monero').status_code == 405
+    words = client.post('/api/wallet/exodus/reveal-monero').json()['mnemonic']
+    assert len(words.split()) == 25
+    keys = Monero.FromPrivateSpendKey(MoneroMnemonicDecoder().Decode(words))
+    assert keys.PrimaryAddress() == client.get('/api/wallet/exodus/addresses').json()['addresses']['XMR']

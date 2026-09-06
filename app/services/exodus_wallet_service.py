@@ -1,31 +1,8 @@
-"""A MULTI-CHAIN WALLET, MIRRORING WHAT THE EXODUS DESKTOP APP DOES: hold several coins, show what
-you have, receive, and send.
+"""Versioned recovery keys and exact coin amounts for the CloudOS wallet.
 
-WHOSE KEYS THESE ARE, PLAINLY: THIS NODE'S. One BIP-39 mnemonic per user, generated here, encrypted
-at rest here, and used here to sign. That is what custodial means and no part of this design removes
-it -- the same statement `monero_user_wallets.py` opens with, for the same reason. It is said in the
-UI too, not only in a docstring.
-
-WHY NOT IN THE BROWSER, which would have been self-custody and is what Exodus itself does. The
-client is a bundle served under a CSP that forbids third-party script origins, so every byte of
-crypto would have to be vendored -- and it is not one library: BIP-39, BIP-32, secp256k1 point
-arithmetic, ripemd160, keccak256, bech32 and base58check, and then the part that actually moves
-money, which is UTXO selection with segwit sighashes for Bitcoin and RLP with EIP-1559 for Ethereum.
-The vendored nostr bundle contains noble's curves and hashes but exports only nostr-shaped helpers,
-so none of it is reachable. Hand-writing that stack is the way people lose money, and a wallet whose
-correctness nobody can vouch for is worse than one whose custody is stated. `bip_utils` is a
-maintained implementation with published test vectors; this module is a thin, auditable layer over
-it.
-
-WHAT THE SEED IS ENCRYPTED WITH, AND WHY IT IS NOT IN A RELAY DOC. Every other private thing here is
-a replaceable kind-30078 document, and this file deliberately breaks that pattern once. A
-replaceable doc is REPLACED by whatever is written next, and this codebase has recorded the same
-accident more than once: an unreachable relay answers an empty read, the empty read is written back,
-and the document is gone. For a mute list that costs a re-follow. For a wallet seed it costs every
-coin behind it, permanently, with no way to reconstruct it from anything. So the ciphertext lives in
-a row, which is transactional and backed up, and the KEY that opens it is the per-user storage key
-from `keystore` -- a file, not a database column -- so a stolen database dump alone decrypts
-nothing.
+Recovery phrases are encrypted with the account's server-held storage key. The server
+signs transactions, and users can export backups. Existing CloudOS address formats
+remain readable; exodus_derivation implements the independently tested Exodus paths.
 """
 from __future__ import annotations
 
@@ -73,31 +50,16 @@ CHAINS: dict[str, dict[str, Any]] = {
     "XRP":  {"name": "XRP",          "coin": "RIPPLE",               "decimals": 6,  "kind": "xrp"},
 }
 
-#: Monero is here, and it is NOT one of the derived chains above. This node already runs a real
-#: per-user Monero wallet — its own daemon, its own outputs, its own caps and spend ledger
-#: (`monero_user_wallets.py`). Deriving a second XMR key from this seed would give one person TWO
-#: unrelated balances and TWO addresses, and the one they were shown last is the one they would
-#: publish; money sent to the other would look like a loss. So the wallet screen shows the wallet
-#: that already exists, reading its real address and balance, rather than inventing a second.
-MONERO = {"symbol": "XMR", "name": "Monero", "decimals": 12, "kind": "node-wallet"}
-
-#: Nothing is excluded any more: Monero is shown, backed by the node's existing wallet rather than by
-#: a key derived here. Kept as an empty map because `/status` publishes it and a client that has not
-#: been redeployed still reads the field.
+# Monero uses its own spend/view keys derived from THIS wallet's BIP-39 seed.
+# It never shares keys, accounts, RPC sessions, or balances with the built-in tipping wallet.
+MONERO = {"symbol": "XMR", "name": "Monero", "decimals": 12, "kind": "monero"}
 EXCLUDED: dict[str, str] = {}
 
 
 def supported() -> list[dict[str, Any]]:
-    """The catalogue, safe to hand to a client. Contains no key material and no user data.
-
-    Monero is appended rather than living in CHAINS, because everything in CHAINS is derived from
-    the seed and Monero is not — see the note on MONERO. Its `kind` says so, so the screen can label
-    it and the send path can route it to the wallet that owns it.
-    """
-    rows = [{"symbol": s, "name": c["name"], "decimals": c["decimals"], "kind": c["kind"]}
-            for s, c in CHAINS.items()]
-    rows.append(dict(MONERO))
-    return rows
+    """Public asset catalogue, without internal derivation parameters or keys."""
+    return [{"symbol": s, "name": c["name"], "decimals": c["decimals"], "kind": c["kind"]}
+            for s, c in CHAINS.items()] + [dict(MONERO)]
 
 
 # ---------------------------------------------------------------- the seed, and what guards it
@@ -187,6 +149,23 @@ def _account(seed: bytes, symbol: str, index: int = 0, account: int = 0):
             .Account(account).Change(Bip44Changes.CHAIN_EXT).AddressIndex(int(index)))
 
 
+def monero_keys(mnemonic: str, account: int = 0, recovery: str | None = None):
+    """Version-one XMR derivation: secp256k1 BIP-44 m/44'/128'/account'/0/0,
+    followed by Monero's Keccak/scalar conversion. No built-in-wallet state is consulted.
+    """
+    if type(account) is not int or not 0 <= account < 16:
+        raise WalletError("invalid portfolio index")
+    from bip_utils import Bip44, Bip44Coins, Bip44Changes, Monero, MoneroMnemonicDecoder
+    if recovery:
+        try:
+            return Monero.FromPrivateSpendKey(MoneroMnemonicDecoder().Decode(recovery))
+        except Exception as error:
+            raise WalletError("Invalid Monero recovery words; check the words and checksum") from error
+    key = (Bip44.FromSeed(_seed_bytes(mnemonic), Bip44Coins.MONERO_SECP256K1)
+           .Purpose().Coin().Account(account).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0))
+    return Monero.FromBip44PrivateKey(key.PrivateKey().Raw().ToBytes())
+
+
 def address_for(mnemonic: str, symbol: str, index: int = 0, account: int = 0) -> str:
     """The receive address for one chain."""
     return _account(_seed_bytes(mnemonic), symbol, index, account).PublicKey().ToAddress()
@@ -217,44 +196,32 @@ def private_key_for(mnemonic: str, symbol: str, index: int = 0, account: int = 0
 
 # ---------------------------------------------------------------- amounts
 def to_base_units(amount: str, symbol: str) -> int:
-    """A decimal string to the chain's smallest integer, EXACTLY.
-
-    Decimal, never float: 0.1 + 0.2 is not 0.3 in binary floating point, and a wallet that rounds
-    a send is a wallet that sends the wrong number. Rejects more precision than the chain has rather
-    than silently truncating it — somebody who typed nine decimals of BTC meant something, and
-    quietly dropping the ninth is a different amount than they asked for.
-    """
-    from decimal import Decimal, InvalidOperation
-    spec = CHAINS.get(symbol)
+    """Parse decimal text without the process-wide Decimal precision or binary floats."""
+    spec = MONERO if symbol == 'XMR' else CHAINS.get(symbol)
     if not spec:
         raise WalletError(f"unsupported chain {symbol!r}")
     text = str(amount).strip()
-    # PLAIN DECIMAL ONLY. `Decimal` is happy to read "1e9", and so a slipped keystroke in an amount
-    # box becomes a billion units — a number nobody typed and the chain will honour. Exponent
-    # notation is not something a person enters when they mean an amount of money, so it is refused
-    # rather than interpreted.
-    if not _PLAIN_DECIMAL.fullmatch(text):
+    if len(text) > 256 or not _PLAIN_DECIMAL.fullmatch(text):
         raise WalletError("that is not an amount")
-    try:
-        value = Decimal(text)
-    except (InvalidOperation, ValueError) as exc:
-        raise WalletError("that is not an amount") from exc
-    if value <= 0:
+    whole, _, fractional = text.partition('.')
+    fractional = fractional.rstrip('0')
+    decimals = spec['decimals']
+    if len(fractional) > decimals:
+        raise WalletError(f"{symbol} has {decimals} decimal places")
+    units = int(whole) * 10**decimals + int(fractional.ljust(decimals, '0') or '0')
+    if units <= 0:
         raise WalletError("amount must be greater than zero")
-    scaled = value * (Decimal(10) ** spec["decimals"])
-    if scaled != scaled.to_integral_value():
-        raise WalletError(f"{symbol} has {spec['decimals']} decimal places")
-    return int(scaled)
+    return units
 
 
 def from_base_units(units: int, symbol: str) -> str:
-    """The chain's integer back to a decimal string, with no exponent and no trailing noise."""
-    from decimal import Decimal
-    spec = CHAINS.get(symbol)
+    """Format integer units exactly, even beyond Decimal's default 28-digit precision."""
+    spec = MONERO if symbol == 'XMR' else CHAINS.get(symbol)
     if not spec:
         raise WalletError(f"unsupported chain {symbol!r}")
-    value = Decimal(int(units)) / (Decimal(10) ** spec["decimals"])
-    text = format(value, "f")
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return text or "0"
+    if type(units) is not int or units < 0:
+        raise WalletError('invalid balance')
+    decimals = spec['decimals']
+    whole, fraction = divmod(units, 10**decimals)
+    tail = str(fraction).zfill(decimals).rstrip('0')
+    return str(whole) + ('.' + tail if tail else '')

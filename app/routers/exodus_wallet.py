@@ -1,14 +1,8 @@
-"""Multi-chain wallet routes — the wallet belonging to the person signed in.
+"""Multi-chain wallets scoped to the authenticated account's encrypted namespace.
 
-Every route here is scoped to the CALLER'S OWN account, taken from their session. No route accepts a user id or pubkey. A wallet identifier is resolved only within
-the authenticated account's encrypted namespace. That is the same rule `monero_user_wallet.py` opens with, and it is the only
-rule in this file that cannot be relaxed for convenience.
-
-THE SEED NEVER LEAVES EXCEPT WHEN SOMEBODY ASKS FOR IT, ONCE, DELIBERATELY. `/reveal` is the single
-route that returns a mnemonic, it is a POST so it cannot be linked or prefetched, and it is not part
-of `/status` — a screen that shows the phrase as a side effect of loading is a phrase shoulder-surfed
-by whoever walks past. Nothing here logs it, and the log lines that exist name chains and amounts,
-never keys.
+No route accepts another user's identifier. Recovery words are returned only by the
+explicit POST /reveal and /reveal-monero actions, never ordinary status/balance reads.
+Logs record assets and transfer amounts, never keys or recovery words.
 """
 from __future__ import annotations
 
@@ -27,6 +21,7 @@ from app.routers import auth
 from app.services import exodus_vault as V
 from app.services import exodus_collections as Collections
 from app.services import exodus_wallet_service as W
+from app.services import exodus_derivation as D
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +98,7 @@ async def _open(db: Session, user: User, wallet_id="default", portfolio=0) -> tu
         raise HTTPException(status_code=404, detail="no wallet on this account yet")
     try:
         Collections.require_portfolio(doc, portfolio)
+        D.profile(doc)
         return doc, V.mnemonic_of(db, user, doc)
     except W.WalletLocked as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -116,6 +112,7 @@ class CreateReq(BaseModel):
     # not enough — the BIP-39 checksum is the test.
     mnemonic: str | None = Field(default=None, max_length=1024)
     label: str | None = Field(default=None, max_length=80)
+    moneroMnemonic: str | None = Field(default=None, max_length=1024)
 
 
 class LabelReq(BaseModel):
@@ -140,10 +137,12 @@ async def status(user: CurrentUser, db: Session = Depends(get_db), wallet_id: Wa
         "walletId": wallet_id,
         "portfolioId": portfolio,
         "portfolios": Collections.portfolios(doc) if doc else [],
-        "chains": [c for c in W.supported() if c["symbol"] != "XMR" or (wallet_id == "default" and portfolio == 0)],
+        "chains": W.supported(),
         "excluded": W.EXCLUDED,
         # Said here as well as in the UI copy, so an API consumer cannot miss it.
-        "custody": "This node holds the keys for this wallet.",
+        "custody": "Server-managed wallet. Export and keep your recovery backup.",
+        "derivation": D.profile(doc) if doc else D.EXODUS,
+        "separateMoneroBackup": bool(doc and doc.get('moneroRecovery')),
     }
 
 
@@ -164,7 +163,8 @@ async def create(req: CreateReq, user: CurrentUser, db: Session = Depends(get_db
     else:
         phrase = W.new_mnemonic()
     try:
-        await V.save_new(db, user, phrase, (req.label or "").strip()[:80] or None)
+        await Collections.create(db, user, phrase, (req.label or "").strip()[:80] or None,
+                                 default=True, imported=bool(req.mnemonic), monero_recovery=(req.moneroMnemonic or "").strip() or None)
     except V.VaultUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except W.WalletError as exc:
@@ -182,11 +182,8 @@ async def addresses(user: CurrentUser, db: Session = Depends(get_db), wallet_id:
     _library()
     doc, phrase = await _open(db, user, wallet_id, portfolio)
     index = int(doc.get("addressIndex") or 0)
-    addrs = W.addresses(phrase, index, account=portfolio)
-    # The Monero address comes from the node's own wallet, never from this seed.
-    row = await _monero_row(user) if wallet_id == "default" and portfolio == 0 else {}
-    if row.get("address"):
-        addrs["XMR"] = row["address"]
+    addrs = D.addresses(doc, phrase, account=portfolio)
+    addrs['XMR'] = W.monero_keys(phrase, portfolio, Collections.monero_recovery(doc, _seckey(db, user), portfolio)).PrimaryAddress()
     return {"ok": True, "index": index, "addresses": addrs}
 
 
@@ -196,20 +193,22 @@ async def balances(user: CurrentUser, db: Session = Depends(get_db), wallet_id: 
 
     Every row carries `known`. A client that reads `amount` without it prints "0" for a chain whose
     provider was down, which is the difference between "you have nothing" and "I could not find
-    out". Deliberately not cached: a stale balance shown as current is the same lie one refresh
-    later.
+    out". Background Bitcoin discovery and Monero synchronization expose a timestamp and
+    treat expired or incomplete results as unknown.
     """
     _library()
     doc, phrase = await _open(db, user, wallet_id, portfolio)
-    addrs = W.addresses(phrase, int(doc.get("addressIndex") or 0), account=portfolio)
+    addrs = D.addresses(doc, phrase, account=portfolio)
     from app.services import exodus_chain_service as C
-    out = await C.balances(addrs, _settings(db))
-    if wallet_id == "default" and portfolio == 0:
-        out["XMR"] = await _monero_row(user)
+    out = await C.balances({symbol: address for symbol, address in addrs.items() if symbol != 'BTC'}, _settings(db))
+    from app.services import exodus_bitcoin_discovery as B
+    out['BTC'] = await B.balance(user.id, doc, phrase, portfolio, _seckey(db, user), _settings(db))
+    from app.services import exodus_monero as M
+    out['XMR'] = await M.balance(user.id, wallet_id, portfolio, phrase, _seckey(db, user), doc.get('moneroHeight', 0), Collections.monero_recovery(doc, _seckey(db, user), portfolio))
     result = {"ok": True, "index": int(doc.get("addressIndex") or 0), "balances": out}
     if valuation:
         from app.services import exodus_portfolio as pricing
-        expected = [c['symbol'] for c in W.supported() if c['symbol'] != 'XMR' or (wallet_id == 'default' and portfolio == 0)]
+        expected = [c['symbol'] for c in W.supported()]
         result['valuation'] = pricing.value({symbol: out.get(symbol, {'known': False}) for symbol in expected}, await pricing.prices())
         result['history'] = await pricing.history(db, user, wallet_id, portfolio, result['valuation'])
     return result
@@ -226,47 +225,15 @@ async def reveal(user: CurrentUser, db: Session = Depends(get_db), wallet_id: Wa
     _library()
     doc, phrase = await _open(db, user, wallet_id, portfolio)
     if not doc.get("backedUpAt"):
-        if wallet_id == "default":
-            await V.update(db, user, backedUpAt=int(datetime.utcnow().timestamp()))
-        else:
-            await Collections.update(db, user, wallet_id, backed_up_at=int(datetime.utcnow().timestamp()))
+        await Collections.update(db, user, wallet_id, backed_up_at=int(datetime.utcnow().timestamp()))
     return {"ok": True, "mnemonic": phrase,
+            "moneroMnemonic": Collections.monero_recovery(doc, _seckey(db, user)),
+            "derivation": D.profile(doc),
             "warning": "Anyone with these words can spend this wallet. Write them down offline."}
 
 
-async def _monero_row(user: User) -> dict:
-    """Monero, read from the wallet this node ALREADY runs for this user.
-
-    Not derived from the BIP-39 seed, and that is the whole point: a second XMR key would give one
-    person two unrelated balances and two addresses, and the one they saw last is the one they would
-    publish. So the screen shows the real wallet — same address, same coins, same daemon — and every
-    failure here is `known: false`, never a zero, for the same reason as every other chain.
-    """
-    key = str(getattr(user, "nostr_npub", "") or "").strip().lower()
-    if not key:
-        return {"address": "", "known": False, "units": None, "amount": None,
-                "note": "sign in with a Nostr account to use the Monero wallet"}
-    try:
-        from app.services.monero_user_wallets import user_wallets
-        wallets = user_wallets()
-        if not wallets:
-            return {"address": "", "known": False, "units": None, "amount": None,
-                    "note": "this node's Monero wallet is switched off"}
-        got = await wallets.balance(key)
-        return {"address": str(got.get("address") or ""), "known": True, "units": None,
-                "amount": str(got.get("balance")),
-                "spendable": str(got.get("unlocked_balance")),
-                # Monero locks change for ~20 minutes after a send. A screen that shows only the
-                # total tells somebody they have money they cannot move yet.
-                "note": "" if got.get("balance") == got.get("unlocked_balance")
-                        else "some of this is still locked after a recent send"}
-    except Exception as exc:  # noqa: BLE001
-        logger.info("[exodus] Monero balance unavailable: %s", exc)
-        return {"address": "", "known": False, "units": None, "amount": None,
-                "note": "the Monero wallet could not be reached"}
-
-
 class SendReq(BaseModel):
+    requestId: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     symbol: str = Field(min_length=2, max_length=8)
     to: str = Field(min_length=4, max_length=128)
     amount: str = Field(min_length=1, max_length=64)
@@ -274,7 +241,7 @@ class SendReq(BaseModel):
 
 @router.post("/send")
 async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), wallet_id: WalletId = "default", portfolio: Portfolio = 0):
-    """Move money. Every refusal below happens BEFORE anything is signed.
+    """Move money, preserving uncertain broadcast outcomes across retries.
 
     The one answer this route will not give is "it failed" when it does not know. A broadcast that
     timed out comes back as `unsure` with the nonce to look for, because the alternative invites a
@@ -286,16 +253,8 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), w
     spec = W.CHAINS.get(symbol)
     if not spec and symbol != "XMR":
         raise HTTPException(status_code=400, detail=f"unsupported chain {symbol!r}")
-    if symbol == "XMR":
-        # Monero has its own screen, its own caps and its own spend ledger. Duplicating the spend
-        # path here would mean two places that can move the same coins with different limits.
-        raise HTTPException(status_code=409, detail=(
-            "Send Monero from the Monero Wallet screen — it holds these coins, and it has the "
-            "spend limits and the transfer history this screen does not."))
-    if not spec or spec["kind"] != "evm":
-        raise HTTPException(status_code=501, detail=(
-            f"sending {symbol} is not supported yet. Receiving works; a {symbol} spend needs "
-            f"transaction building this wallet does not do, and a half-built one loses coins."))
+    if symbol != 'XMR' and (not spec or spec['kind'] != 'evm'):
+        raise HTTPException(501, f'Sending {symbol} is not available in this build')
 
     doc, phrase = await _open(db, user, wallet_id, portfolio)
     index = int(doc.get("addressIndex") or 0)
@@ -321,10 +280,20 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), w
 
     from app.services import exodus_chain_service as C
     try:
-        got = await S.send_evm(symbol=symbol, private_key=W.private_key_for(phrase, symbol, index, account=portfolio),
-                               to=req.to, units=units,
-                               endpoint=C.endpoint_for(symbol, _settings()),
-                               from_address=W.address_for(phrase, symbol, index, account=portfolio))
+        if symbol == 'XMR':
+            from app.services import exodus_monero as M
+            got = await M.send(user.id, wallet_id, portfolio, phrase, _seckey(db, user),
+                               req.requestId, req.to, units, doc.get('moneroHeight', 0), Collections.monero_recovery(doc, _seckey(db, user), portfolio))
+        else:
+            from app.services import exodus_transfers as T
+            source = D.address(phrase, symbol, index=index, account=portfolio, format=D.profile(doc))
+            async def execute(before_broadcast):
+                return await S.send_evm(symbol=symbol,
+                    private_key=D.private_key(phrase, symbol, index=index, account=portfolio, format=D.profile(doc)),
+                    to=req.to, units=units, endpoint=C.endpoint_for(symbol, _settings()),
+                    from_address=source, before_broadcast=before_broadcast)
+            got = await T.send(T.scope(user.id, symbol, source), _seckey(db, user),
+                               req.requestId, req.to, units, execute)
     except S.SendUnsure as exc:
         # 202: taken, outcome unknown. NOT an error status — a client that sees 4xx/5xx offers a
         # retry, and a retry here is a second real payment.
@@ -341,8 +310,7 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), w
 async def label(req: LabelReq, user: CurrentUser, db: Session = Depends(get_db), wallet_id: WalletId = "default"):
     if not await _doc(db, user, wallet_id):
         raise HTTPException(status_code=404, detail="no wallet on this account yet")
-    doc = await (V.update(db, user, label=req.label.strip()[:80] or None) if wallet_id == "default"
-                 else Collections.update(db, user, wallet_id, label=req.label.strip()[:80]))
+    doc = await Collections.update(db, user, wallet_id, label=req.label.strip()[:80])
     return {"ok": True, "label": doc.get("label")}
 
 
@@ -361,7 +329,7 @@ async def create_wallet(req: CreateReq, user: CurrentUser, db: Session = Depends
     if phrase and not W.validate_mnemonic(phrase):
         raise HTTPException(400, 'Invalid recovery phrase; check its words and order')
     try:
-        return await Collections.create(db, user, phrase or W.new_mnemonic(), (req.label or '').strip()[:80])
+        return await Collections.create(db, user, phrase or W.new_mnemonic(), (req.label or '').strip()[:80], imported=bool(phrase), monero_recovery=(req.moneroMnemonic or "").strip() or None)
     except W.WalletError as error:
         raise HTTPException(503, str(error)) from error
 
@@ -383,3 +351,40 @@ async def create_portfolio(req: PortfolioReq, user: CurrentUser, db: Session = D
         raise HTTPException(503, str(error)) from error
     except W.WalletError as error:
         raise HTTPException(400, str(error)) from error
+
+
+@router.post('/reveal-monero')
+async def reveal_monero(user: CurrentUser, db: Session = Depends(get_db),
+                        wallet_id: WalletId = 'default', portfolio: Portfolio = 0):
+    _library()
+    doc, phrase = await _open(db, user, wallet_id, portfolio)
+    from app.services import exodus_monero as M
+    return {'mnemonic': M.recovery_phrase(phrase, portfolio, Collections.monero_recovery(doc, _seckey(db, user), portfolio)),
+            'warning': 'Anyone with these words can spend this Monero wallet.'}
+
+
+class SendStatusReq(BaseModel):
+    symbol: str = Field(min_length=2, max_length=8)
+
+
+@router.post('/send-status')
+async def send_status(req: SendStatusReq, user: CurrentUser, db: Session = Depends(get_db),
+                      wallet_id: WalletId = 'default', portfolio: Portfolio = 0):
+    _library()
+    doc, phrase = await _open(db, user, wallet_id, portfolio)
+    symbol = req.symbol.upper().strip()
+    from app.services import exodus_chain_service as C, exodus_transfers as T, exodus_monero as M
+    try:
+        if symbol == 'XMR':
+            keys = W.monero_keys(phrase, portfolio, Collections.monero_recovery(doc, _seckey(db, user), portfolio))
+            return await M.send_status(M.identity(user.id, wallet_id, portfolio, keys.PrimaryAddress()), _seckey(db, user))
+        if W.CHAINS.get(symbol, {}).get('kind') != 'evm':
+            raise HTTPException(400, 'Unsupported transfer status asset')
+        source = D.address(phrase, symbol, account=portfolio, index=int(doc.get('addressIndex') or 0), format=D.profile(doc))
+        return await T.status(T.scope(user.id, symbol, source), _seckey(db, user), symbol, C.endpoint_for(symbol, _settings()))
+    except W.WalletError as error:
+        raise HTTPException(503, str(error)) from error
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(503, 'Transfer status could not be confirmed') from error

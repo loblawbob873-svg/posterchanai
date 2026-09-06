@@ -1,16 +1,5 @@
-/* The multi-chain wallet screen: what you hold, where to receive it, and the phrase behind it.
- *
- * THE SCREEN SAYS WHOSE KEYS THESE ARE, FIRST AND WITHOUT BEING ASKED. This wallet is custodial —
- * the node generates the seed, stores it and signs with it. A person who believes they hold their
- * own keys and does not is one server failure away from a loss they never agreed to risk, so the
- * custody line is above the balances, not in a help page, and the create button repeats it.
- *
- * "COULD NOT ASK" IS NEVER "ZERO", AND THAT DISTINCTION IS THE WHOLE UI. A balance nobody could
- * fetch and a balance of nothing look identical as digits and mean opposite things: one says a
- * provider is down, the other says your coins are gone. The server answers `known` per chain and
- * this file renders the two differently — a number, or the word unavailable. It never falls back
- * to 0, and it never hides a chain it could not read, because a missing row reads as "you don't
- * have that coin".
+/* CloudOS multi-chain wallets: scoped balances, recovery backups and transfer status.
+ * Unknown balances stay distinct from zero. Wallet/account changes invalidate late responses.
  */
 (function(){
   const root = typeof window !== 'undefined' ? window : globalThis;
@@ -113,17 +102,18 @@
         if(!panel){panel=document.createElement('div');panel.id='ex-panel';document.querySelector('.ex-wrap').append(panel);}
         const generation=_seq;
         panel.innerHTML=`<form class="ex-panel" id="ex-add-form"><h3>Add a ${kind}</h3><label>Name<input id="ex-new-name" maxlength="80" required placeholder="${kind==='wallet'?'Savings wallet':'Long-term holdings'}"></label>
-          ${kind==='wallet'?'<label>Recovery phrase (optional)<textarea id="ex-new-phrase" rows="3" autocomplete="off" spellcheck="false" placeholder="Leave blank to create a new wallet"></textarea></label><p class="ex-hint">Each wallet has its own recovery phrase. This node holds its keys.</p>':'<p class="ex-hint">A separate set of addresses under this wallet’s existing recovery phrase. The current portfolio stays available.</p>'}
+          ${kind==='wallet'?'<label>Recovery phrase (optional)<textarea id="ex-new-phrase" rows="3" autocomplete="off" spellcheck="false" placeholder="Leave blank to create a new wallet"></textarea></label><details><summary>Import an existing Monero wallet</summary><label>Monero recovery words<textarea id="ex-new-monero" rows="3" autocomplete="off" spellcheck="false" placeholder="The separate 25-word Monero backup"></textarea></label></details><p class="ex-hint">Each wallet has its own backup. Keep both recovery phrases when importing a separate Monero wallet.</p>':'<p class="ex-hint">A separate set of addresses under this wallet’s existing recovery phrase. The current portfolio stays available.</p>'}
           <div class="ex-actions"><button class="btn btn-cyan" type="submit">Add ${kind}</button><button class="btn" type="button" id="ex-add-cancel">Cancel</button></div><p id="ex-add-error" role="status"></p></form>`;
         document.getElementById('ex-add-cancel').onclick=()=>{if(!_busy)panel.replaceChildren();};
         document.getElementById('ex-add-form').onsubmit=async event=>{
           event.preventDefault();if(_busy||!current(generation))return;
           const name=document.getElementById('ex-new-name').value.trim();if(!name)return;
           const phrase=document.getElementById('ex-new-phrase'), mnemonic=phrase?.value.trim()||'';
+          const moneroPhrase=document.getElementById('ex-new-monero'),moneroMnemonic=moneroPhrase?.value.trim()||'';
           const submit=event.currentTarget.querySelector('[type=submit]');submit.disabled=true;_busy=true;
           try{
-            const result=await request('/api/wallet/exodus/'+(kind==='wallet'?'wallets':'portfolios'),J(kind==='wallet'?{label:name,...(mnemonic?{mnemonic}:{})}:{name}));
-            if(phrase)phrase.value='';
+            const result=await request('/api/wallet/exodus/'+(kind==='wallet'?'wallets':'portfolios'),J(kind==='wallet'?{label:name,...(mnemonic?{mnemonic}:{}),...(moneroMnemonic?{moneroMnemonic}:{})}:{name}));
+            if(phrase)phrase.value='';if(moneroPhrase)moneroPhrase.value='';
             if(!current(generation))return;
             _selected=kind==='wallet'?{wallet:result.id,portfolio:0}:{..._selected,portfolio:result.portfolios.at(-1).id};
             select();
@@ -136,10 +126,10 @@
 
   /* ---------------------------------------------------------------- drawing */
   function custodyNote(){
-    return `<div class="ex-custody" role="note"><b>This node holds the keys.</b> The server makes
-      your recovery phrase, keeps it, and signs with it — so whoever runs this server can spend this
-      wallet. Write the phrase down and treat this as a hot wallet: small amounts, nothing you
-      cannot afford to lose.</div>`;
+    return `<details class="ex-custody"><summary>Server-managed wallet · Back up your recovery phrase</summary>
+      <p>Your recovery phrase is encrypted on this server. The server can unlock it to sign
+      transactions, so its operator can access the wallet keys. You can export your phrase and
+      restore supported assets in a compatible wallet. Keep an offline backup.</p></details>`;
   }
 
   function emptyView(status){
@@ -160,9 +150,11 @@
                  <label>Recovery phrase
                    <textarea id="ex-phrase" rows="3" spellcheck="false" autocomplete="off"
                      placeholder="the twelve words, in order"></textarea></label>
-                 <p class="ex-hint">Checked before anything is stored: one wrong word is a valid
-                   phrase for a different wallet, and it would show you somebody else's empty
-                   balance with nothing to say why.</p>
+                 <details><summary>Import an existing Monero wallet</summary>
+                   <label>Monero recovery words<textarea id="ex-monero-phrase" rows="3" autocomplete="off" spellcheck="false"
+                     placeholder="The separate 25-word Monero backup"></textarea></label></details>
+                 <p class="ex-hint">Use the exact recovery words from your backup. Existing Monero wallets
+                   use a separate 25-word phrase; do not assume the 12 words restore historical Exodus XMR.</p>
                  <button class="btn btn-cyan" id="ex-restore-go">Restore</button>
                </div>`}
       ${status && status.excluded && status.excluded.XMR
@@ -174,14 +166,11 @@
      EVM chains only, and the button is absent rather than present-and-refusing — a control that
      always says no is a worse answer than no control. The server refuses these too, because a
      button the page hides is not a rule. */
-  const SENDABLE = new Set(['ETH', 'MATIC', 'BNB', 'AVAX']);
+  const SENDABLE = new Set(['ETH', 'MATIC', 'BNB', 'AVAX', 'XMR']);
   const canSend = (sym) => SENDABLE.has(String(sym || '').toUpperCase());
 
   function row(sym, name, cell, quote){
-    /* MONERO IS NOT ONE OF THE DERIVED CHAINS, and the row says so. Its coins live in the wallet
-       this node already runs — same address, same daemon, same spend limits — so the amount comes
-       from there and the Send button points at that screen rather than moving the same coins from
-       two places with different caps. */
+    // Monero belongs to this selected recovery phrase and portfolio.
     if(String(sym).toUpperCase() === 'XMR'){
       const known = cell?.known === true && cell.amount != null && /^\d+(?:\.\d+)?$/.test(String(cell.amount));
       const note = String((cell && cell.note) || '');
@@ -192,7 +181,7 @@
           : `<span class="ex-unknown" title="The Monero wallet could not be reached. This is not a zero balance.">unavailable</span>`}
           ${quote ? `<small class="ex-fiat">${quote.usd == null ? 'Value unavailable' : money(quote.usd)}</small>` : ''}${note ? `<small class="ex-hint">${esc(note)}</small>` : ''}</div>
         <button class="btn small ex-receive" data-sym="XMR">Receive</button>
-        <button class="btn small" id="ex-xmr-open">Open Monero Wallet</button>
+        <button class="btn small ex-send" data-sym="XMR">Send</button><button class="btn small" id="ex-xmr-backup">Back up Monero</button>
       </li>`;
     }
     /* THREE STATES, NOT TWO. A chain that answered, a chain that answered nothing, and a chain
@@ -203,7 +192,7 @@
       <div class="ex-coin-id">${coinLogo(sym)}<b>${esc(sym)}</b><small>${esc(name)}</small></div>
       <div class="ex-coin-amt">${known
         ? `<b>${esc(amount)}</b> <em>${esc(sym)}</em>`
-        : `<span class="ex-unknown" title="This chain's provider could not be reached. This is not a zero balance.">unavailable</span>`}${quote ? `<small class="ex-fiat">${quote.usd == null ? 'Value unavailable' : money(quote.usd)}</small>` : ''}</div>
+        : `<span class="ex-unknown" title="This chain's provider could not be reached. This is not a zero balance.">unavailable</span>`}${quote ? `<small class="ex-fiat">${quote.usd == null ? 'Value unavailable' : money(quote.usd)}</small>` : ''}${cell?.note ? `<small class="ex-hint">${esc(cell.note)}</small>` : ''}</div>
       <button class="btn small ex-receive" data-sym="${esc(sym)}">Receive</button>
       ${canSend(sym) ? `<button class="btn small ex-send" data-sym="${esc(sym)}">Send</button>` : ''}
     </li>`;
@@ -261,7 +250,7 @@
         <button class="btn btn-cyan" id="ex-send-go">Send</button>
         <button class="btn small" id="ex-panel-close">Cancel</button>
       </div>
-      <div id="ex-send-out"></div>
+      <div id="ex-send-out"></div><button class="btn small" id="ex-send-status">Check transfer status</button>
     </div>`;
   }
 
@@ -332,7 +321,7 @@
       const phrase = String(($('#ex-phrase') || {}).value || '').trim();
       if(!phrase) return PC.toast && PC.toast('paste the recovery phrase first');
       _busy = true; go.disabled = true;
-      try{ await request('/api/wallet/exodus/create', J({ mnemonic: phrase })); if(current(generation))await render(); }
+      try{ await request('/api/wallet/exodus/create', J({ mnemonic: phrase, moneroMnemonic: String(($('#ex-monero-phrase')||{}).value||'').trim()||null })); if(current(generation))await render(); }
       catch(e){ PC.toast && PC.toast(e.message); go.disabled = false; }
       finally{ _busy = false; }
     };
@@ -344,8 +333,6 @@
     const generation=_seq;
     const $ = (s) => document.querySelector(s);
     const refresh = $('#ex-refresh'); if(refresh) refresh.onclick = () => render();
-    const xmr = $('#ex-xmr-open');
-    if(xmr) xmr.onclick = () => { if(PC.switchView) PC.switchView('wallet'); };
     const panel = $('#ex-panel');
     document.querySelectorAll('.ex-receive').forEach(b => b.onclick = async () => {
       const sym = b.dataset.sym;
@@ -374,6 +361,20 @@
       panel.innerHTML = sendPanel(sym, from);
       const close = $('#ex-panel-close'); if(close) close.onclick = () => { panel.innerHTML = ''; };
       const go = $('#ex-send-go');
+      const requestId=root.crypto.randomUUID().replaceAll('-', '');
+      const checkStatus=async()=>{
+        if(go)go.disabled=true;
+        try{
+          const result=await request('/api/wallet/exodus/send-status',J({symbol:sym}));
+          if(!current(generation)||!panel.isConnected||!go.isConnected)return;
+          const out=$('#ex-send-out');
+          if(result.state==='idle'||result.state==='not_sent'){
+            go.disabled=false;if(out)out.textContent=result.state==='not_sent'?'The previous attempt did not reach the network.':'';
+          }else if(out){out.textContent=(result.state==='accepted'?'Sent. Transaction ':'Transfer remains unconfirmed. Transaction ')+(result.hash||'');}
+        }catch(error){if(current(generation)&&go.isConnected){const out=$('#ex-send-out');if(out)out.textContent='Transfer status could not be confirmed. Check again before sending.';}}
+      };
+      const statusButton=$('#ex-send-status');if(statusButton)statusButton.onclick=checkStatus;
+      checkStatus();
       if(go) go.onclick = async () => {
         if(_busy) return;
         const to = String(($('#ex-to') || {}).value || '').trim();
@@ -388,7 +389,7 @@
             { ok: 'Send', danger: true })) return;
           if(!current(generation))return;
           submitted=true;
-          const res = await request('/api/wallet/exodus/send', J({ symbol: sym, to, amount }));
+          const res = await request('/api/wallet/exodus/send', J({ symbol: sym, to, amount, requestId }));
           /* THE 202. A send whose outcome is unknown is not a failure, and must never be offered a
              retry button: a retry is a second real payment. Say so, and stop. */
           if(res && res.unsure){
@@ -405,27 +406,40 @@
         }finally{ _busy = false; if(!submitted && go.isConnected)go.disabled=false; }
       };
     });
-    const reveal = async () => {
+    const reveal = async (monero=false) => {
       if(PC.uiConfirm && !await PC.uiConfirm(
         'Show the recovery phrase?\n\nAnyone who reads it can spend this wallet. Make sure nobody '
         + 'is looking at your screen.', { ok: 'Show it', danger: true })) return;
       if(!current(generation))return;
       try{
-        const got = await request('/api/wallet/exodus/reveal', J({}));
+        const got = await request('/api/wallet/exodus/'+(monero?'reveal-monero':'reveal'), J({}));
         if(!current(generation))return;
         const panelEl = $('#ex-panel');
         if(panelEl) panelEl.innerHTML = `<div class="ex-panel">
-          <h3>Recovery phrase</h3>
+          <h3>${monero?'Monero recovery phrase':'Wallet recovery backup'}</h3>
           <div class="ex-note ex-warn">${esc(got.warning || '')}</div>
           <code class="ex-phrase">${esc(got.mnemonic || '')}</code>
+          ${got.moneroMnemonic?`<h4>Separate Monero recovery phrase</h4><code class="ex-phrase">${esc(got.moneroMnemonic)}</code><p>Keep both phrases to recover all assets.</p>`:''}
+          ${got.derivation==='cloudos-v1'?'<p>This legacy CloudOS wallet uses different Bitcoin, Solana and XRP paths. Keep this backup format when restoring those assets.</p>':''}
           <div class="ex-actions">
+            <button class="btn small" id="ex-backup-download">Download backup</button>
             <button class="btn small" id="ex-panel-close">Hide</button>
           </div></div>`;
+        const download = $('#ex-backup-download');
+        if(download)download.onclick=async()=>{
+          if(!current(generation))return;
+          try{
+            if(!PC.saveBlobAs)throw new Error('File saving is unavailable in this app build');
+            const backup={format:'cloudos-wallet-backup-v1',...(monero?{moneroMnemonic:got.mnemonic}:{mnemonic:got.mnemonic,derivation:got.derivation,...(got.moneroMnemonic?{moneroMnemonic:got.moneroMnemonic}:{})})};
+            await PC.saveBlobAs(new Blob([JSON.stringify(backup,null,2)],{type:'application/json'}),'wallet-recovery.json');
+          }catch(error){PC.toast&&PC.toast(error.message);}
+        };
         const close = $('#ex-panel-close'); if(close) close.onclick = () => { panelEl.innerHTML = ''; };
       }catch(e){ PC.toast && PC.toast(e.message); }
     };
-    const rv = $('#ex-reveal'); if(rv) rv.onclick = reveal;
-    const rn = $('#ex-reveal-now'); if(rn) rn.onclick = reveal;
+    const rv = $('#ex-reveal'); if(rv) rv.onclick = () => reveal();
+    const rn = $('#ex-reveal-now'); if(rn) rn.onclick = () => reveal();
+    const xm = $('#ex-xmr-backup'); if(xm)xm.onclick = () => reveal(true);
   }
 
   function boot(){

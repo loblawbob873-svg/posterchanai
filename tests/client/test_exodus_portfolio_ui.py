@@ -27,6 +27,7 @@ if(url.pathname.endsWith('/wallets'))return reply({{wallets}});
 if(url.pathname.endsWith('/status'))return reply({{exists:true,label:wallet==='default'?'Main wallet':'Savings',backedUp:true,portfolios:[{{id:0,name:'Main'}},{{id:1,name:'Long term'}}],chains:[{{symbol:'BTC',name:'Bitcoin'}},{{symbol:'ETH',name:'Ethereum'}}]}});
 if(url.pathname.endsWith('/balances')){{if(mode==='balance'&&wallet==='default')return new Promise(r=>releaseBalance=()=>r(reply(dataFor(wallet))));return reply(dataFor(wallet));}}
 if(url.pathname.endsWith('/addresses')){{if(mode==='address')return new Promise(r=>releaseAddress=()=>r(reply({{addresses:{{BTC:'OLD-WALLET-ADDRESS'}}}})));return reply({{addresses:{{BTC:'address-'+wallet,ETH:'0x123'}}}});}}
+if(url.pathname.endsWith('/send-status'))return reply({{state:'idle'}});
 if(url.pathname.endsWith('/reveal'))return reply({{mnemonic:'SHOULD-NOT-APPEAR'}});
 return reply({{}});}}}};
 '''
@@ -93,9 +94,47 @@ document.querySelector('.ex-send').click();
 setTimeout(()=>{
 document.querySelector('#ex-to').value='0x'+'11'.repeat(20);document.querySelector('#ex-amt').value='0.1';
 const go=document.querySelector('#ex-send-go');go.onclick();go.onclick();releaseConfirm(CONFIRM);
-setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({sends:calls.filter(p=>p.startsWith('/api/wallet/exodus/send')).length,disabled:go.disabled});},60);
+setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({sends:calls.filter(p=>p.startsWith('/api/wallet/exodus/send?')).length,disabled:go.disabled});},60);
 },30);
 """.replace('CONFIRM', json.dumps(confirm))
     result = page(tmp_path, action, mode='confirm')
     assert result['sends'] == int(confirm)
     assert result['disabled'] == confirm
+
+
+def test_downloaded_recovery_backup_keeps_separate_monero_words_and_hides_them(tmp_path):
+    result = page(tmp_path, '''
+let saved=null;
+const fetchBefore=__PC.authFetch;
+__PC.authFetch=async(path,opts)=>path.includes('/reveal?')?reply({mnemonic:'public-bip39-fixture',moneroMnemonic:'public-monero-fixture',derivation:'exodus-v1'}):fetchBefore(path,opts);
+__PC.saveBlobAs=async(blob,name)=>{saved={name,data:JSON.parse(await blob.text())};};
+const before=!!document.querySelector('#ex-backup-download');
+document.querySelector('#ex-reveal').click();
+setTimeout(async()=>{
+await document.querySelector('#ex-backup-download').onclick();
+document.querySelector('#ex-panel-close').click();
+document.querySelector('#result').textContent=JSON.stringify({before,saved,hidden:!document.querySelector('#feed').textContent.includes('public-monero-fixture')});
+},40);
+''')
+    assert result == {'before':False,'saved':{'name':'wallet-recovery.json','data':{
+        'format':'cloudos-wallet-backup-v1','mnemonic':'public-bip39-fixture',
+        'moneroMnemonic':'public-monero-fixture','derivation':'exodus-v1'}},'hidden':True}
+
+
+def test_add_wallet_sends_both_recovery_phrases_only_after_submit(tmp_path):
+    result = page(tmp_path, '''
+let imported=null;
+const fetchBefore=__PC.authFetch;
+__PC.authFetch=async(path,opts)=>{
+ if(path.endsWith('/wallets')&&opts?.method==='POST'){imported=JSON.parse(opts.body);return reply({id:SECOND});}
+ return fetchBefore(path,opts);
+};
+document.querySelector('#ex-add-wallet').click();
+document.querySelector('#ex-new-name').value='Imported';
+document.querySelector('#ex-new-phrase').value='public-bip39-fixture';
+document.querySelector('#ex-new-monero').value='public-monero-fixture';
+const before=imported;
+document.querySelector('#ex-add-form').dispatchEvent(new Event('submit',{cancelable:true}));
+setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({before,imported,wallet:document.querySelector('#ex-wallet').value});},50);
+''')
+    assert result == {'before':None,'imported':{'label':'Imported','mnemonic':'public-bip39-fixture','moneroMnemonic':'public-monero-fixture'},'wallet':'1'*32}

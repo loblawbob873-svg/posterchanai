@@ -1,0 +1,456 @@
+{
+  "source": "@exodus/keychain 12.0.0; official derivation path table retrieved 2026-09-06",
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+  "vectors": [
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "path": "m/44'/0'/0'/0/0",
+      "privateKey": "e284129cc0922579a535bbf4d1a3b25773090d28c909bc0fed73b5e0222cc372",
+      "publicKey": "03aaeb52dd7494c361049de67cc680e83ebcbbbdbeb13637d92cd845f70308af5e"
+    },
+    {
+      "symbol": "ETH",
+      "account": 0,
+      "path": "m/44'/60'/0'/0/0",
+      "privateKey": "1ab42cc412b618bdea3a599e3c9bae199ebf030895b039e9db1e30dafb12b727",
+      "publicKey": "0237b0bb7a8288d38ed49a524b5dc98cff3eb5ca824c9f9dc0dfdb3d9cd600f299"
+    },
+    {
+      "symbol": "LTC",
+      "account": 0,
+      "path": "m/44'/2'/0'/0/0",
+      "privateKey": "4baa38b7623a40da63836cd9ee8c51d0b6273e766c88adde156fd5fec6e19008",
+      "publicKey": "030fe9d8d0e15d432d1ae9b3c52f4cb6e37e3c7a41af0139783da09eab85a182dc"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 0,
+      "path": "m/44'/3'/0'/0/0",
+      "privateKey": "21f5e16d57b9b70a1625020b59a85fa9342de9c103af3dd9f7b94393a4ac2f46",
+      "publicKey": "02cc6b0dc33aabcf3a23643e5e2919a80c50fb3dd2129ce409bbc5f0d4643d05e0"
+    },
+    {
+      "symbol": "BCH",
+      "account": 0,
+      "path": "m/44'/145'/0'/0/0",
+      "privateKey": "28e9c4f61f735a059af93e0d9aca0b640126c827975841ad83723ccef295e659",
+      "publicKey": "02bbe7dbcdf8b2261530a867df7180b17a90b482f74f2736b8a30d3f756e42e217"
+    },
+    {
+      "symbol": "MATIC",
+      "account": 0,
+      "path": "m/44'/60'/0'/0/0",
+      "privateKey": "1ab42cc412b618bdea3a599e3c9bae199ebf030895b039e9db1e30dafb12b727",
+      "publicKey": "0237b0bb7a8288d38ed49a524b5dc98cff3eb5ca824c9f9dc0dfdb3d9cd600f299"
+    },
+    {
+      "symbol": "BNB",
+      "account": 0,
+      "path": "m/44'/60'/0'/0/0",
+      "privateKey": "1ab42cc412b618bdea3a599e3c9bae199ebf030895b039e9db1e30dafb12b727",
+      "publicKey": "0237b0bb7a8288d38ed49a524b5dc98cff3eb5ca824c9f9dc0dfdb3d9cd600f299"
+    },
+    {
+      "symbol": "AVAX",
+      "account": 0,
+      "path": "m/44'/60'/0'/0/0",
+      "privateKey": "1ab42cc412b618bdea3a599e3c9bae199ebf030895b039e9db1e30dafb12b727",
+      "publicKey": "0237b0bb7a8288d38ed49a524b5dc98cff3eb5ca824c9f9dc0dfdb3d9cd600f299"
+    },
+    {
+      "symbol": "SOL",
+      "account": 0,
+      "path": "m/44'/501'/0'/0/0",
+      "privateKey": "fe61a56e8d9de8184699959ebad7479698d6c26176d5b73ebdc7565699664030",
+      "publicKey": "301b420b1a27a36180b4cbcef450111c490f6a9acfdf53bbc55f4a78d519e9b7"
+    },
+    {
+      "symbol": "XRP",
+      "account": 0,
+      "path": "m/44'/144'/0'/0'/0'",
+      "privateKey": "284eee3b91ca58ba19d5e38039aca41f8a2284ac53f3149bc4e7025d0170590f",
+      "publicKey": "02a6298ef91e98cb95e892104590f833231cd0ee2fc1c048ccd6d3eb27669d3bf7"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "path": "m/44'/0'/1'/0/0",
+      "privateKey": "5fa6b9ea573e9ccae299c38193a5e61e4f9cc31e2f0ef45ae38e2487bcc215b4",
+      "publicKey": "02eca7fb7808c6c9d701c12392311bb923653ec63aee8d5871b13b412733c8ef2d"
+    },
+    {
+      "symbol": "ETH",
+      "account": 1,
+      "path": "m/44'/60'/1'/0/0",
+      "privateKey": "318470c858f622e48a80120a1fc3c8460d67a7bf31b3273a6d27d4c013f2f8d3",
+      "publicKey": "038ccc8186e5933e845afd096cc6d3f2fdb25fbe4db4864b944619afa8e4e8bd5e"
+    },
+    {
+      "symbol": "LTC",
+      "account": 1,
+      "path": "m/44'/2'/1'/0/0",
+      "privateKey": "643851c14fd0accc0ef560248b05201540d84e38a4361abdefad16276754202a",
+      "publicKey": "02f30a297e5222d7953f1d1cb68b7d6e46960eaa649886ab91dd36e373335442ed"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 1,
+      "path": "m/44'/3'/1'/0/0",
+      "privateKey": "c209a99226c31c4c29e3546b133fddf3f41a2eb1ad7098f77a8ff8e42d349e55",
+      "publicKey": "031c2d0c31468c97dc9dbbc69f9905eba2b321c3b21b995463d578f905df5bc3c4"
+    },
+    {
+      "symbol": "BCH",
+      "account": 1,
+      "path": "m/44'/145'/1'/0/0",
+      "privateKey": "e24dfd20c8eedf041a1a9168d8e37872ec4cef68b96b3d57e7ed1ab3c09b9cd1",
+      "publicKey": "03fde4d8c8eb41b7816e42d38dde89bccc60bef303316d17e419f49046fcdfbe58"
+    },
+    {
+      "symbol": "MATIC",
+      "account": 1,
+      "path": "m/44'/60'/1'/0/0",
+      "privateKey": "318470c858f622e48a80120a1fc3c8460d67a7bf31b3273a6d27d4c013f2f8d3",
+      "publicKey": "038ccc8186e5933e845afd096cc6d3f2fdb25fbe4db4864b944619afa8e4e8bd5e"
+    },
+    {
+      "symbol": "BNB",
+      "account": 1,
+      "path": "m/44'/60'/1'/0/0",
+      "privateKey": "318470c858f622e48a80120a1fc3c8460d67a7bf31b3273a6d27d4c013f2f8d3",
+      "publicKey": "038ccc8186e5933e845afd096cc6d3f2fdb25fbe4db4864b944619afa8e4e8bd5e"
+    },
+    {
+      "symbol": "AVAX",
+      "account": 1,
+      "path": "m/44'/60'/1'/0/0",
+      "privateKey": "318470c858f622e48a80120a1fc3c8460d67a7bf31b3273a6d27d4c013f2f8d3",
+      "publicKey": "038ccc8186e5933e845afd096cc6d3f2fdb25fbe4db4864b944619afa8e4e8bd5e"
+    },
+    {
+      "symbol": "SOL",
+      "account": 1,
+      "path": "m/44'/501'/1'/0/0",
+      "privateKey": "275517decc1856246d6a2ce793a274ccac1c566fafc7886b778e8295d04470cf",
+      "publicKey": "4fea58a427e2b4381a421898a8adc75a1fc261acc253b02a53ab75b5d1228308"
+    },
+    {
+      "symbol": "XRP",
+      "account": 1,
+      "path": "m/44'/144'/1'/0'/0'",
+      "privateKey": "aa7adf9f2eb2e7316ee439bf974be520e589eeb773d099077f1917f344e4a2a2",
+      "publicKey": "025af21c3b6083bb58bb6997b2cef2dea56bf9ff34098acd3eb6b47692bbc8f4dc"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "path": "m/44'/0'/15'/0/0",
+      "privateKey": "745bf5c702f733f65bad7c4f9a850f6b2c85039034992594567c6468a9357e08",
+      "publicKey": "035b7a841c7a7745374ac0b57b9953c49f4867d5f2847cd998cf1ac9936cdd542d"
+    },
+    {
+      "symbol": "ETH",
+      "account": 15,
+      "path": "m/44'/60'/15'/0/0",
+      "privateKey": "201dfad6043c84b9d364bdfa702866b7c12d209437279027fcb5e81eff762c78",
+      "publicKey": "02b7f42cf54d2079b21ab9171b3c87b2db617371bcef632950604b5374824540a8"
+    },
+    {
+      "symbol": "LTC",
+      "account": 15,
+      "path": "m/44'/2'/15'/0/0",
+      "privateKey": "3260007d36b597cce58336dfa56e5834ad841ef98655180567bc0786ede42b15",
+      "publicKey": "02f08d982537ec2ec42f55a609741f02e981f1a51a253c6fdbebd3d90f0f375009"
+    },
+    {
+      "symbol": "DOGE",
+      "account": 15,
+      "path": "m/44'/3'/15'/0/0",
+      "privateKey": "2eab23098d07c0baae889cf49f51585f4d8c56509ae70f1e667e374c8be6fe9a",
+      "publicKey": "022010a403441d11c8add83ff04ea57fa621470894efeadc497f4270732cd4a46f"
+    },
+    {
+      "symbol": "BCH",
+      "account": 15,
+      "path": "m/44'/145'/15'/0/0",
+      "privateKey": "4655d5f01bff92382df53ffc55915dab176450f36830c8679a481f5c6a03c5ff",
+      "publicKey": "03404f77f869bc25d0fff292f9f8478de86d4ab99ba9169495ea8196ef4794f422"
+    },
+    {
+      "symbol": "MATIC",
+      "account": 15,
+      "path": "m/44'/60'/15'/0/0",
+      "privateKey": "201dfad6043c84b9d364bdfa702866b7c12d209437279027fcb5e81eff762c78",
+      "publicKey": "02b7f42cf54d2079b21ab9171b3c87b2db617371bcef632950604b5374824540a8"
+    },
+    {
+      "symbol": "BNB",
+      "account": 15,
+      "path": "m/44'/60'/15'/0/0",
+      "privateKey": "201dfad6043c84b9d364bdfa702866b7c12d209437279027fcb5e81eff762c78",
+      "publicKey": "02b7f42cf54d2079b21ab9171b3c87b2db617371bcef632950604b5374824540a8"
+    },
+    {
+      "symbol": "AVAX",
+      "account": 15,
+      "path": "m/44'/60'/15'/0/0",
+      "privateKey": "201dfad6043c84b9d364bdfa702866b7c12d209437279027fcb5e81eff762c78",
+      "publicKey": "02b7f42cf54d2079b21ab9171b3c87b2db617371bcef632950604b5374824540a8"
+    },
+    {
+      "symbol": "SOL",
+      "account": 15,
+      "path": "m/44'/501'/15'/0/0",
+      "privateKey": "251b00ccb854101b7d7214b8a27033ab18352ae84f186b5563fddee8200c3903",
+      "publicKey": "0f69c484c3ccc00001a43f485fc60d38b7a5b9ca97d81c03c439900631e83264"
+    },
+    {
+      "symbol": "XRP",
+      "account": 15,
+      "path": "m/44'/144'/15'/0'/0'",
+      "privateKey": "7e105b14de6e8724cea3597071a9ca33225bdc5261eadee6e904c6ffee40ade2",
+      "publicKey": "03489813a8ba524f663f1345546f7e52cbbba344839ca5509f8f8a21176b01b89f"
+    },
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "purpose": 84,
+      "change": 0,
+      "index": 0,
+      "path": "m/84'/0'/0'/0/0",
+      "privateKey": "4604b4b710fe91f584fff084e1a9159fe4f8408fff380596a604948474ce4fa3",
+      "publicKey": "0330d54fd0dd420a6e5f8d3624f5f3482cae350f79d5f0753bf5beef9c2d91af3c"
+    },
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "purpose": 84,
+      "change": 0,
+      "index": 1,
+      "path": "m/84'/0'/0'/0/1",
+      "privateKey": "2fd0affa51529f940a358ec0c50de81267d0bf5158ca61887347676946362c5b",
+      "publicKey": "03e775fd51f0dfb8cd865d9ff1cca2a158cf651fe997fdc9fee9c1d3b5e995ea77"
+    },
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "purpose": 84,
+      "change": 1,
+      "index": 0,
+      "path": "m/84'/0'/0'/1/0",
+      "privateKey": "3277578a56b721e4c9f071f1e24aa0f94c4ff72e7967fea03b134f605f07c8fd",
+      "publicKey": "03025324888e429ab8e3dbaf1f7802648b9cd01e9b418485c5fa4c1b9b5700e1a6"
+    },
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "purpose": 84,
+      "change": 1,
+      "index": 1,
+      "path": "m/84'/0'/0'/1/1",
+      "privateKey": "3b78e4757b2c4ae2bca054b059cb84b3da7e3440edc7b5782dbc04fbec93d310",
+      "publicKey": "03dcf71df71c755b3af46f7e84b4182e6291cec5a8c630f775638a739da29adcb6"
+    },
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "purpose": 86,
+      "change": 0,
+      "index": 0,
+      "path": "m/86'/0'/0'/0/0",
+      "privateKey": "41f41d69260df4cf277826a9b65a3717e4eeddbeedf637f212ca096576479361",
+      "publicKey": "03cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115"
+    },
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "purpose": 86,
+      "change": 0,
+      "index": 1,
+      "path": "m/86'/0'/0'/0/1",
+      "privateKey": "86c68ac0ed7df88cbdd08a847c6d639f87d1234d40503abf3ac178ef7ddc05dd",
+      "publicKey": "0283dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b313145"
+    },
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "purpose": 86,
+      "change": 1,
+      "index": 0,
+      "path": "m/86'/0'/0'/1/0",
+      "privateKey": "6ccbca4a02ac648702dde463d9c1b0d328a4df1e068ef9dc2bc788b33a4f0412",
+      "publicKey": "02399f1b2f4393f29a18c937859c5dd8a77350103157eb880f02e8c08214277cef"
+    },
+    {
+      "symbol": "BTC",
+      "account": 0,
+      "purpose": 86,
+      "change": 1,
+      "index": 1,
+      "path": "m/86'/0'/0'/1/1",
+      "privateKey": "c8d522210e3bc028586dcb7cf7dce3937440ad8132765ecdfa2ff78d0e9a5d32",
+      "publicKey": "02da01548c72c04619d079ec0118a48bda801cc9391b00de5c846bfdc9807905bd"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "purpose": 84,
+      "change": 0,
+      "index": 0,
+      "path": "m/84'/0'/1'/0/0",
+      "privateKey": "e273877916c811fb0e9ed54fa61732ba0ecdb70fa9b6281579c8d2947c94cec1",
+      "publicKey": "035ce17d6438a499e0c7fef59b43fd7b2cb6e4a31b598f6a4c20ca94854eac9d36"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "purpose": 84,
+      "change": 0,
+      "index": 1,
+      "path": "m/84'/0'/1'/0/1",
+      "privateKey": "f266c0464f96db6dba284cb2ba2ce11cd6071d882919aba399710bfa4dd9b38b",
+      "publicKey": "0366dc739a33f2c600b99927735bd2feea5c1d78142d2d0d3917623c4af09e8bbc"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "purpose": 84,
+      "change": 1,
+      "index": 0,
+      "path": "m/84'/0'/1'/1/0",
+      "privateKey": "b21cbd25c0ca80e1c9606e7bc1427ffdd34d5110b2383c150822bebff70218b0",
+      "publicKey": "025695996d13031c54896990e6e38db5849f5a64fa81142b452d6e23c36fd83880"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "purpose": 84,
+      "change": 1,
+      "index": 1,
+      "path": "m/84'/0'/1'/1/1",
+      "privateKey": "305f6c497296f135e73ef970f799aa9c550820dec3f90d83f9f54c7744c6a77f",
+      "publicKey": "026c91ef2bebab59bb67f9d5b6cf67fd903f583f6b6a1b5c6a4f5343e32bacdcd9"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "purpose": 86,
+      "change": 0,
+      "index": 0,
+      "path": "m/86'/0'/1'/0/0",
+      "privateKey": "b4b4350abde37d39368e59583200909a38c5df163788d6461e0f2fcf55158f86",
+      "publicKey": "0244becfe627731a2ad296f83d6a4e8ab44b7a98baf48217de8d77ad9fb8c9cb80"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "purpose": 86,
+      "change": 0,
+      "index": 1,
+      "path": "m/86'/0'/1'/0/1",
+      "privateKey": "8973e1d8a55e49a28114d6d79a0305a829f3d7de174888d988de0de23659b9f0",
+      "publicKey": "032cc0342037c172617ed5ab2d6512c51451174ecf266d506120d97b3207443f88"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "purpose": 86,
+      "change": 1,
+      "index": 0,
+      "path": "m/86'/0'/1'/1/0",
+      "privateKey": "38c9662c78f5a171336e874218517203de13655691ee6ed1081e26968c22832f",
+      "publicKey": "0211c8eb726ff64f29b7353500a42b3ffc1b8fc64d81e83aa03815501ac97ea93f"
+    },
+    {
+      "symbol": "BTC",
+      "account": 1,
+      "purpose": 86,
+      "change": 1,
+      "index": 1,
+      "path": "m/86'/0'/1'/1/1",
+      "privateKey": "cf28b340fd7a183baa77f420931df394cd99df14c1e61e3d73a5e29b7cb0f46f",
+      "publicKey": "022dfb93a381f5d1d0ea3ac1cdb740712a2b6e2d4cbd1d9989e992425423a01663"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "purpose": 84,
+      "change": 0,
+      "index": 0,
+      "path": "m/84'/0'/15'/0/0",
+      "privateKey": "fc7cc7e7791ebd70bb043bc422a3432fcd429351610cd11fdf4a96c17cf04d26",
+      "publicKey": "03e6f93009b1a24527555d59d4bc18dcd1b71b3e5b3d3203403cc6b497f458af0e"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "purpose": 84,
+      "change": 0,
+      "index": 1,
+      "path": "m/84'/0'/15'/0/1",
+      "privateKey": "60f9351d5517d8f904d4ab79a3c78904661cf2b35ccc3e7b42aac8b6f36b35c7",
+      "publicKey": "0231ef10e41efc1adcb95fd5f2d3ba706b168dce550d445191681efcdb4849ad53"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "purpose": 84,
+      "change": 1,
+      "index": 0,
+      "path": "m/84'/0'/15'/1/0",
+      "privateKey": "7e9454b582dbfb0fdadbd9e66096a94688d54da9c7b7c9ee770a4b3e0cf81372",
+      "publicKey": "02032f1311b9dc46ee92d0b3dc9d4d28ec45bcac606ae19c9deb32076b913c4853"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "purpose": 84,
+      "change": 1,
+      "index": 1,
+      "path": "m/84'/0'/15'/1/1",
+      "privateKey": "fa98e23213e3d7573a626724e139da0862a5dfa89c3b5340ea583119b79cb9ed",
+      "publicKey": "03f9695da110cbfb630678a102292d43b5b2e3e672863c6bb48e70b2418fd2e496"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "purpose": 86,
+      "change": 0,
+      "index": 0,
+      "path": "m/86'/0'/15'/0/0",
+      "privateKey": "b5af19de46e2395584d467a3cc4a646886c7eb62278758f8c9c8e583cac3ff27",
+      "publicKey": "02e3f2bbac7f94abe5e1e815ac237e401c370d5427b957a75f4af83bb2b28c1d96"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "purpose": 86,
+      "change": 0,
+      "index": 1,
+      "path": "m/86'/0'/15'/0/1",
+      "privateKey": "f0db79ea0371f7030b7777eb5df26b047a544865a6357453c811a1d97192a435",
+      "publicKey": "025a1db02090909d390ebb8323cde24399ec8540fd27bbd97282e80825b8726e24"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "purpose": 86,
+      "change": 1,
+      "index": 0,
+      "path": "m/86'/0'/15'/1/0",
+      "privateKey": "15df5989a718b89b465fdaeb10fc49705085537da5ea3f94e31deb752cf17745",
+      "publicKey": "0320f20af830d81f2a5fb6021a4df7c9103e8610144a39e8a32b2c5321c3d95625"
+    },
+    {
+      "symbol": "BTC",
+      "account": 15,
+      "purpose": 86,
+      "change": 1,
+      "index": 1,
+      "path": "m/86'/0'/15'/1/1",
+      "privateKey": "447d720453ab903a543c0b8420432ef4c5387efc89ff5c08680280d91e397b8d",
+      "publicKey": "03fac7b9a6eabd67dde1d464f1efac8cca4e35268977d72a20a86d14ac44a7c31d"
+    }
+  ]
+}

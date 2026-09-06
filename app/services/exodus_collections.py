@@ -61,7 +61,7 @@ async def load(db, user, wallet_id='default'):
             backup = _row(db, user, wallet_id)
             if getattr(backup, 'document_enc', None):
                 saved = _validate(json.loads(wallet.unseal(bytes(backup.document_enc), _key(db, user))))
-                if saved['seed'] != doc['seed']:
+                if any(saved.get(field) != doc.get(field) for field in ('seed', 'derivation', 'moneroRecovery')):
                     raise legacy.VaultUnavailable('the wallet seed does not match its encrypted backup')
         else:
             row = _row(db, user, wallet_id)
@@ -135,15 +135,32 @@ async def list_wallets(db, user):
         raise legacy.VaultUnavailable('the wallet list could not be read') from error
 
 
-async def create(db, user, phrase, label):
+async def create(db, user, phrase, label, *, default=False, imported=False, monero_recovery=None):
     # The server generates a new identity for every new wallet. No caller-selected identifier
     # can turn this endpoint into a write over an existing wallet's seed.
-    wallet_id = uuid.uuid4().hex
+    wallet_id = 'default' if default else uuid.uuid4().hex
+    if default and await load(db, user, wallet_id) is not None:
+        raise wallet.WalletError('this account already has a wallet')
+    if monero_recovery:
+        wallet.monero_keys(phrase, recovery=monero_recovery)
+    from app.services import exodus_monero
+    monero_height = await exodus_monero.birth_height(imported or bool(monero_recovery))
     doc = {'seed': wallet.seal(phrase, _key(db, user)).hex(), 'label': label or 'Wallet',
            'addressIndex': 0, 'backedUpAt': 0, 'createdAt': int(time.time()),
-           'portfolios': [{'id': 0, 'name': 'Main portfolio'}]}
+           'portfolios': [{'id': 0, 'name': 'Main portfolio'}],
+           'derivation': 'exodus-v1', 'imported': bool(imported), 'moneroHeight': monero_height}
+    if monero_recovery:
+        doc['moneroRecovery'] = wallet.seal(monero_recovery, _key(db, user)).hex()
     # Keep a discoverable encrypted backup even if publication fails after key generation.
-    _mirror(db, user, wallet_id, doc)
+    # INSERT, never upsert: the unique constraint arbitrates concurrent default creation.
+    from sqlalchemy.exc import IntegrityError
+    db.add(ExodusWalletRecord(user_id=user.id, wallet_id=wallet_id,
+                             document_enc=wallet.seal(json.dumps(doc), _key(db, user))))
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise wallet.WalletError('this wallet already exists') from error
     await _publish(db, user, wallet_id, doc)
     return summary(wallet_id, doc)
 
@@ -171,7 +188,7 @@ async def update(db, user, wallet_id='default', *, label=None, backed_up_at=None
             doc['portfolios'] = entries + [{'id': number, 'name': new_portfolio}]
         await _publish(db, user, wallet_id, doc)
         _mirror(db, user, wallet_id, doc)
-        if wallet_id == 'default' and (label is not None or backed_up_at is not None):
+        if wallet_id == 'default' and (label is not None or backed_up_at is not None) and await legacy.load(db, user):
             fields = {}
             if label is not None:
                 fields['label'] = label
@@ -179,3 +196,13 @@ async def update(db, user, wallet_id='default', *, label=None, backed_up_at=None
                 fields['backedUpAt'] = backed_up_at
             await legacy.update(db, user, **fields)
         return doc
+
+
+def monero_recovery(doc, storage_key, portfolio=0):
+    """An explicitly imported Monero backup belongs to the original portfolio only."""
+    if portfolio != 0 or not doc.get('moneroRecovery'):
+        return None
+    try:
+        return wallet.unseal(bytes.fromhex(doc['moneroRecovery']), storage_key)
+    except Exception as error:
+        raise wallet.WalletLocked('The imported Monero recovery backup could not be read') from error

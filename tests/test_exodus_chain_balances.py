@@ -178,3 +178,48 @@ def test_xrp_joins_the_all_chains_sweep():
     _with(lambda r: httpx.Response(200, json={"result": {"account_data": {"Balance": "1000000"}}}))
     got = _run(C.balances({"XRP": "rSomebody"}))
     assert got["XRP"]["known"] is True and got["XRP"]["amount"] == "1"
+
+
+@pytest.mark.parametrize('value', [True, False, -1, 0.5, '4', None])
+def test_solana_invalid_quantities_never_look_like_money(value):
+    _with(lambda r: httpx.Response(200, json={'result': {'value': value}}))
+    assert _run(C.balance('SOL', 'fixture')) is None
+
+
+@pytest.mark.parametrize('value', ['-0x1', '1', '0x', '0x01', True, 1])
+def test_evm_invalid_quantities_are_unknown(value):
+    _with(lambda r: httpx.Response(200, json={'result': value}))
+    assert _run(C.balance('ETH', 'fixture')) is None
+
+
+def test_dogecoin_uses_blockcypher_balance_contract():
+    def handler(request):
+        assert str(request.url).endswith('/doge/main/addrs/Dfixture/balance')
+        return httpx.Response(200, json={'address':'Dfixture', 'final_balance':123456789})
+    _with(handler)
+    assert _run(C.balance('DOGE','Dfixture')) == 123456789
+
+
+def test_bch_uses_current_consumer_balance_and_includes_pending_spends():
+    def handler(request):
+        assert str(request.url) == 'https://free-bch.fullstack.cash/bch/balance'
+        assert request.method == 'POST'
+        assert __import__('json').loads(request.content) == {'addresses':['bitcoincash:fixture']}
+        return httpx.Response(200, json={'success':True, 'balances':[{'address':'bitcoincash:fixture', 'balance':{'confirmed':1200,'unconfirmed':-200}}]})
+    _with(handler)
+    assert _run(C.balance('BCH','bitcoincash:fixture')) == 1000
+
+
+def test_existing_custom_esplora_provider_is_preserved():
+    def handler(request):
+        assert str(request.url) == 'https://own.invalid/address/Dfixture'
+        return httpx.Response(200, json={'chain_stats':{'funded_txo_sum':5,'spent_txo_sum':2},
+                                        'mempool_stats':{'funded_txo_sum':0,'spent_txo_sum':0}})
+    _with(handler)
+    assert _run(C.balance('DOGE','Dfixture',{'exodus_rpc_doge':'https://own.invalid'})) == 3
+
+
+def test_bch_response_for_another_address_is_unknown():
+    _with(lambda request: httpx.Response(200, json={'success':True, 'balances':[
+        {'address':'bitcoincash:someone-else', 'balance':{'confirmed':0,'unconfirmed':0}}]}))
+    assert _run(C.balance('BCH','bitcoincash:fixture')) is None

@@ -174,13 +174,10 @@ def test_an_unknown_chain_is_refused_everywhere():
             call()
 
 
-def test_monero_is_shown_but_never_derived_here():
-    """It IS offered now — backed by the wallet this node already runs, with its own daemon, caps
-    and spend ledger. What must never happen is a second XMR key derived from this seed: that gives
-    one person two unrelated balances and two addresses, and the one they saw last is the one they
-    would publish."""
-    assert "XMR" not in W.CHAINS, "Monero must not be a derived chain"
-    assert W.MONERO["kind"] == "node-wallet"
+def test_monero_is_separate_and_portfolio_specific():
+    assert W.MONERO['kind'] == 'monero'
+    phrase = 'abandon ' * 11 + 'about'
+    assert W.monero_keys(phrase, 0).PrimaryAddress() != W.monero_keys(phrase, 1).PrimaryAddress()
 
 
 def test_the_catalogue_carries_no_secrets():
@@ -225,9 +222,15 @@ def test_monero_is_offered_but_never_derived_from_this_seed():
         W.address_for(VECTOR, "XMR")
 
 
-def test_the_catalogue_lists_monero_and_says_it_is_a_node_wallet():
+def test_the_catalogue_lists_the_independent_monero_wallet():
     rows = {r["symbol"]: r for r in W.supported()}
-    assert "XMR" in rows and rows["XMR"]["kind"] == "node-wallet"
+    assert "XMR" in rows and rows["XMR"]["kind"] == "monero"
     assert rows["XRP"]["kind"] == "xrp" and rows["XRP"]["decimals"] == 6
     # Every derived chain still declares a kind a reader can route on.
     assert all(r["kind"] for r in rows.values())
+
+
+@pytest.mark.parametrize('symbol', ['ETH', 'BTC', 'XMR', 'SOL'])
+def test_integer_amounts_preserve_precision_beyond_decimal_context(symbol):
+    units = 123456789012345678901234567890123456789
+    assert W.to_base_units(W.from_base_units(units, symbol), symbol) == units

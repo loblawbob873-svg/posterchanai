@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -37,8 +38,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_ENDPOINTS: dict[str, str] = {
     "BTC": "https://blockstream.info/api",
     "LTC": "https://litecoinspace.org/api",
-    "DOGE": "https://dogechain.info/api/v1",
-    "BCH": "https://api.fullstack.cash/v5",
+    "DOGE": "https://api.blockcypher.com/v1/doge/main",
+    "BCH": "https://free-bch.fullstack.cash",
     "ETH": "https://ethereum-rpc.publicnode.com",
     "MATIC": "https://polygon-bor-rpc.publicnode.com",
     "BNB": "https://bsc-rpc.publicnode.com",
@@ -83,11 +84,13 @@ async def _utxo_balance(client: httpx.AsyncClient, base: str, address: str, symb
         if not isinstance(d, dict) or not isinstance(d.get("chain_stats"), dict):
             return None
         chain = d["chain_stats"]
-        mem = d.get("mempool_stats") if isinstance(d.get("mempool_stats"), dict) else {}
-        if "funded_txo_sum" not in chain or "spent_txo_sum" not in chain:
+        mem = d.get('mempool_stats')
+        if not isinstance(mem, dict):
             return None
-        funded = int(chain.get("funded_txo_sum", 0)) + int(mem.get("funded_txo_sum", 0))
-        spent = int(chain.get("spent_txo_sum", 0)) + int(mem.get("spent_txo_sum", 0))
+        fields = [part.get(name) for part in (chain, mem) for name in ('funded_txo_sum', 'spent_txo_sum')]
+        if any(type(value) is not int or value < 0 for value in fields):
+            return None
+        funded, spent = fields[0] + fields[2], fields[1] + fields[3]
         got = funded - spent
         # A negative balance is not a balance. It means the shape was misread, and reporting it as a
         # number would put a minus sign in front of somebody's money.
@@ -106,7 +109,10 @@ async def _evm_balance(client: httpx.AsyncClient, base: str, address: str, symbo
         d = r.json()
         if not isinstance(d, dict) or "result" not in d or d.get("error"):
             return None
-        return int(str(d["result"]), 16)
+        value = d['result']
+        if not isinstance(value, str) or not re.fullmatch(r'0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)', value):
+            return None
+        return int(value, 16)
     except Exception as exc:  # noqa: BLE001
         logger.info("[exodus] %s balance unavailable: %s", symbol, exc)
         return None
@@ -120,7 +126,7 @@ async def _sol_balance(client: httpx.AsyncClient, base: str, address: str, symbo
             return None
         d = r.json()
         value = ((d or {}).get("result") or {}).get("value")
-        return int(value) if isinstance(value, int) else None
+        return value if not d.get("error") and type(value) is int and value >= 0 else None
     except Exception as exc:  # noqa: BLE001
         logger.info("[exodus] %s balance unavailable: %s", symbol, exc)
         return None
@@ -163,6 +169,50 @@ async def _xrp_balance(client: httpx.AsyncClient, base: str, address: str, symbo
         return None
 
 
+
+async def _doge_balance(client, base, address, symbol):
+    try:
+        response = await client.get(base.rstrip('/') + '/addrs/' + address + '/balance')
+        response.raise_for_status()
+        data = response.json()
+        value = data.get('final_balance')
+        return value if data.get('address') == address and type(value) is int and value >= 0 else None
+    except Exception:
+        return None
+
+
+async def _bch_balance(client, base, address, symbol):
+    try:
+        response = await client.post(base.rstrip('/') + '/bch/balance', json={'addresses': [address]})
+        response.raise_for_status()
+        data = response.json()
+        rows = data.get('balances')
+        if data.get('success') is not True or not isinstance(rows, list) or len(rows) != 1:
+            return None
+        row = rows[0]
+        if not isinstance(row, dict) or row.get('address') != address:
+            return None
+        balance = row.get('balance')
+        if not isinstance(balance, dict):
+            return None
+        confirmed, unconfirmed = balance.get('confirmed'), balance.get('unconfirmed')
+        if type(confirmed) is not int or type(unconfirmed) is not int or confirmed < 0:
+            return None
+        value = confirmed + unconfirmed
+        return value if value >= 0 else None
+    except Exception:
+        return None
+
+
+def _reader_for(symbol, settings):
+    # Preserve existing custom Esplora integrations unless the operator explicitly chooses the
+    # native public-provider protocol. Defaults now use each provider's actual response format.
+    custom = str((settings or {}).get(f'exodus_rpc_{symbol.lower()}') or '').strip()
+    api = str((settings or {}).get(f'exodus_api_{symbol.lower()}') or '').strip()
+    if symbol in ('DOGE', 'BCH') and api != 'esplora' and (not custom or custom == DEFAULT_ENDPOINTS[symbol] or api in ('blockcypher', 'fullstack')):
+        return _doge_balance if symbol == 'DOGE' else _bch_balance
+    return _READERS.get(CHAINS[symbol]['kind'])
+
 _READERS = {"utxo": _utxo_balance, "evm": _evm_balance, "sol": _sol_balance, "xrp": _xrp_balance}
 
 
@@ -173,7 +223,7 @@ async def balance(symbol: str, address: str, settings: dict[str, Any] | None = N
     base = endpoint_for(symbol, settings)
     if not base or not address:
         return None
-    reader = _READERS.get(spec["kind"])
+    reader = _reader_for(symbol, settings)
     if not reader:
         return None
     async with _client() as client:
@@ -194,7 +244,7 @@ async def balances(addresses: dict[str, str],
     async with _client() as client:
         async def one(sym: str):
             spec, base = CHAINS[sym], endpoint_for(sym, settings)
-            reader = _READERS.get(spec["kind"])
+            reader = _reader_for(sym, settings)
             if not base or not reader:
                 return None
             return await reader(client, base, addresses[sym], sym)

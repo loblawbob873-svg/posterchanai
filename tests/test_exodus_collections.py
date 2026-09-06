@@ -19,7 +19,8 @@ VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abando
 
 
 @pytest.fixture
-def world(monkeypatch):
+def world(monkeypatch, tmp_path):
+    monkeypatch.setenv("EXODUS_TRANSFER_DIR", str(tmp_path / "transfers"))
     engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
     Base.metadata.create_all(engine, tables=[User.__table__, ExodusWallet.__table__, ExodusWalletRecord.__table__])
     db = Session(engine)
@@ -54,8 +55,9 @@ def world(monkeypatch):
     monkeypatch.setattr(C.nostr_store, 'put_doc', put)
     monkeypatch.setattr(C.nostr_store, 'list_docs', listing)
     monkeypatch.setattr(C.nostr_store, 'user_storage_seckey', lambda db, user: bytes([user.id])*32)
-    monkeypatch.setattr(routes, '_monero_row', AsyncMock(return_value={'known': True, 'amount': '1', 'address': 'node-monero'}))
+    monkeypatch.setattr('app.services.exodus_monero.balance', AsyncMock(return_value={'known': True, 'amount': '1'}))
     monkeypatch.setattr('app.services.exodus_chain_service.balances', AsyncMock(return_value={'ETH': {'known': True, 'amount': '2'}}))
+    monkeypatch.setattr('app.services.exodus_bitcoin_discovery.balance', AsyncMock(return_value={'known':False,'amount':None,'note':'Discovering'}))
     app = FastAPI(); app.include_router(routes.router)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[auth.get_current_user] = lambda: state.user
@@ -69,19 +71,19 @@ def test_new_wallet_and_portfolio_preserve_original_addresses_and_seed(world):
     client = world.client
     assert client.post('/api/wallet/exodus/create', json={'mnemonic': VECTOR}).status_code == 200
     original = client.get('/api/wallet/exodus/addresses').json()['addresses']
-    assert original['BTC'] == '1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA'
+    assert original['BTC'] == 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu'
     response = client.post('/api/wallet/exodus/portfolios', json={'name': 'Savings'})
     assert response.status_code == 200, response.text
     assert response.json()['portfolios'][-1] == {'id': 1, 'name': 'Savings'}
     separate = client.get('/api/wallet/exodus/addresses?portfolio=1').json()['addresses']
     assert separate['BTC'] != original['BTC'] and separate['ETH'] != original['ETH']
-    assert 'XMR' not in separate
+    assert separate['XMR'] != original['XMR']
     assert client.get('/api/wallet/exodus/addresses').json()['addresses'] == original
     made = client.post('/api/wallet/exodus/wallets', json={'label': 'Travel'})
     assert made.status_code == 200, made.text
     wallet_id = made.json()['id']
     addresses = client.get('/api/wallet/exodus/addresses', params={'wallet': wallet_id}).json()['addresses']
-    assert addresses['BTC'] != original['BTC'] and 'XMR' not in addresses
+    assert addresses['BTC'] != original['BTC'] and addresses['XMR'] != original['XMR']
     listed = client.get('/api/wallet/exodus/wallets').json()['wallets']
     assert {w['id'] for w in listed} == {'default', wallet_id}
     assert VECTOR not in str(listed)
@@ -150,7 +152,7 @@ def test_send_uses_the_selected_wallet_and_portfolio_key(world, monkeypatch):
     send = AsyncMock(return_value={'hash': 'fixture-tx', 'nonce': 0})
     monkeypatch.setattr(exodus_send_service, 'send_evm', send)
     result = world.client.post('/api/wallet/exodus/send', params={'wallet': made['id'], 'portfolio': 1},
-                               json={'symbol': 'ETH', 'to': '0x'+'11'*20, 'amount': '0.01'})
+                               json={'requestId':'01'*16, 'symbol': 'ETH', 'to': '0x'+'11'*20, 'amount': '0.01'})
     assert result.status_code == 200, result.text
     assert send.call_args.kwargs['private_key'] == W.private_key_for(VECTOR, 'ETH', account=1)
     assert send.call_args.kwargs['from_address'] == W.address_for(VECTOR, 'ETH', account=1)
@@ -181,3 +183,70 @@ def test_wallet_discovery_pages_equal_timestamps_and_ignores_other_documents(wor
     listed = asyncio.run(C.list_wallets(world.db, world.user))
     assert len(listed) == 1001
     assert {entry['id'] for entry in listed} == {f'{i:032x}' for i in range(1001)}
+
+
+def test_existing_legacy_wallet_does_not_change_any_issued_address(world):
+    asyncio.run(V.save_new(world.db, world.user, VECTOR, 'Original'))
+    original = world.client.get('/api/wallet/exodus/addresses').json()['addresses']
+    assert original['BTC'] == '1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA'
+    assert original['SOL'] == W.address_for(VECTOR, 'SOL')
+    assert original['XRP'] == W.address_for(VECTOR, 'XRP')
+    world.client.post('/api/wallet/exodus/label', json={'label': 'Renamed'})
+    world.client.post('/api/wallet/exodus/portfolios', json={'name': 'Second'})
+    assert world.client.get('/api/wallet/exodus/addresses').json()['addresses'] == original
+    assert world.client.post('/api/wallet/exodus/create', json={}).status_code == 409
+
+
+def test_lost_relay_document_restores_exact_key_format_and_addresses(world):
+    assert world.client.post('/api/wallet/exodus/create', json={'mnemonic': VECTOR}).status_code == 200
+    before = world.client.get('/api/wallet/exodus/addresses').json()['addresses']
+    world.docs.clear()
+    assert world.client.get('/api/wallet/exodus/addresses').json()['addresses'] == before
+    assert world.client.post('/api/wallet/exodus/reveal').json()['mnemonic'] == VECTOR
+    doc = asyncio.run(C.load(world.db, world.user))
+    assert doc['derivation'] == 'exodus-v1' and doc['imported'] is True
+
+
+def test_imported_monero_backup_is_independent_and_survives_relay_recovery(world):
+    from bip_utils import Monero, MoneroMnemonicEncoder
+    spend = bytes.fromhex('03' + '00' * 31)
+    words = MoneroMnemonicEncoder().EncodeWithChecksum(spend).ToStr()
+    expected = Monero.FromPrivateSpendKey(spend).PrimaryAddress()
+    made = world.client.post('/api/wallet/exodus/wallets', json={
+        'label':'Recovered XMR', 'mnemonic':VECTOR, 'moneroMnemonic':words})
+    assert made.status_code == 200, made.text
+    wallet_id = made.json()['id']; params = {'wallet':wallet_id}
+    addresses = world.client.get('/api/wallet/exodus/addresses', params=params).json()['addresses']
+    assert addresses['XMR'] == expected
+    assert addresses['BTC'] == 'bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu'
+    assert words not in str(world.docs)
+    assert words.encode() not in world.db.query(ExodusWalletRecord).one().document_enc
+    world.docs.clear()
+    restored = world.client.get('/api/wallet/exodus/addresses', params=params)
+    assert restored.json()['addresses'] == addresses
+    assert world.client.post('/api/wallet/exodus/reveal-monero', params=params).json()['mnemonic'] == words
+    backup = world.client.post('/api/wallet/exodus/reveal', params=params).json()
+    assert backup['mnemonic'] == VECTOR and backup['moneroMnemonic'] == words
+    assert world.client.get('/api/wallet/exodus/status', params=params).json()['separateMoneroBackup']
+    world.client.post('/api/wallet/exodus/portfolios', params=params, json={'name':'Separate'})
+    assert world.client.get('/api/wallet/exodus/addresses', params={**params,'portfolio':1}).json()['addresses']['XMR'] != expected
+
+
+def test_invalid_monero_backup_does_not_create_any_wallet(world):
+    response = world.client.post('/api/wallet/exodus/wallets', json={
+        'mnemonic':VECTOR, 'moneroMnemonic':'not valid recovery words'})
+    assert response.status_code >= 400
+    assert world.db.query(ExodusWalletRecord).count() == 0
+    assert not world.docs
+
+
+@pytest.mark.parametrize('field', ['derivation','moneroRecovery'])
+def test_relay_cannot_silently_change_recovery_key_format(world, field):
+    from bip_utils import MoneroMnemonicEncoder
+    words = MoneroMnemonicEncoder().EncodeWithChecksum(bytes.fromhex('03'+'00'*31)).ToStr()
+    made = world.client.post('/api/wallet/exodus/wallets', json={'mnemonic':VECTOR,'moneroMnemonic':words})
+    wallet_id = made.json()['id']
+    document = next(doc for (_, _, tag), doc in world.docs.items() if tag.endswith(wallet_id))
+    document.pop(field)
+    response = world.client.get('/api/wallet/exodus/addresses',params={'wallet':wallet_id})
+    assert response.status_code == 503

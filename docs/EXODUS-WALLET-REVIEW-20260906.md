@@ -1,0 +1,82 @@
+# Wallet expansion review
+
+This change is isolated from the built-in Monero wallet and its zap output pool.
+Wallets and portfolios retain separate addresses, recovery information and display state.
+The dashboard includes asset logos, available portfolio value and recorded value history;
+an unavailable chain does not silently become a zero balance.
+
+## Recovery compatibility
+
+New BIP-39 wallets use the versioned `exodus-v1` derivation profile. Checked-in public
+vectors from `@exodus/keychain` version 12 cover Bitcoin receive/change paths and the
+Solana and XRP derivations. The fixture README records their origin and reproduction.
+Existing documents without a profile retain `cloudos-v1`; their previously issued
+addresses must not change. Such legacy Bitcoin, Solana and XRP addresses do not match
+an ordinary Exodus phrase restore. The recovery UI and downloadable backup retain
+that distinction.
+
+Historical Exodus twelve-word Monero recovery has not been verified. Importing an
+existing Monero wallet therefore takes its separate twenty-five-word recovery phrase.
+It applies to the main portfolio only and remains separately exportable. Other
+portfolios derive their own independent Monero keys. Exported JSON includes the profile
+and both phrases when applicable; restoration currently uses the phrase fields rather
+than a JSON file upload.
+
+Native sends are implemented for ETH, MATIC, BNB, AVAX and independent XMR. Sending
+BTC, LTC, DOGE, BCH, SOL and XRP remains unavailable; those buttons are not shown.
+This is not full Exodus asset or token support. No real funds were sent during testing.
+
+## Transfer review
+
+EVM sends verify the selected network and sender, calculate fees before broadcast,
+and persist the locally signed transaction identity before sending. Request identities
+and wallet locks are shared by this node's workers. Duplicate imports of the same key
+share the spend lock. Lost acknowledgements remain uncertain until the recorded hash
+can be found; neither a new request ID nor a worker restart silently repeats a payment.
+
+Independent Monero sends prepare without relaying and persist encrypted transaction
+metadata before relay. A review regression covered process cleanup failing after a
+successful relay or a lost relay acknowledgement: both previously reported that no
+transaction had been relayed. Both now retain the uncertain outcome and transaction
+hash, with retries still deduplicated.
+
+The durable journals are local to one application node. Independently writable nodes
+must not concurrently serve the same wallet without a shared spend coordinator.
+
+## Monero deployment prerequisites
+
+Provision these only with the wallet release, on every application node serving its
+wallet endpoints:
+
+* Install a verified `monero-wallet-rpc` executable and set
+  `EXODUS_MONERO_RPC_BINARY` to its absolute path. The test executable was version
+  0.18.5.1 with SHA-256
+  `c1e3aff7c72837e6f29045c439b772a82b5cd7324c8b831fa825a6ce2019a656`.
+* Set `EXODUS_MONERO_DAEMON` to a synchronized mainnet blockchain daemon. The reviewed
+  internal read endpoint was `http://nas.lan:18089`. This is a blockchain endpoint,
+  never either built-in wallet-RPC endpoint.
+* Keep `EXODUS_MONERO_DIR`, `EXODUS_TRANSFER_DIR` and `EXODUS_DISCOVERY_DIR` on durable
+  storage writable only by the application user. Defaults live below `data/`.
+  Include encrypted wallet files and transfer journals in private backups.
+
+The wallet process uses private temporary configuration, localhost authenticated RPC,
+a bounded lifetime and per-wallet locks. Imported wallets may require a full blockchain
+scan before their balances are known. No provisioning or production deployment is
+claimed by this review document.
+
+## Validation evidence
+
+* Complete final Exodus core run: 218 passed, including actual offline
+  Monero wallet creation, reopening and matching recovery words.
+* Actual Chrome wallet dashboard and recovery actions: 26 passed, including all
+  configured themes at phone/desktop widths, stale responses, duplicate send clicks,
+  downloading both phrases and clearing the revealed words.
+* Cleanup-after-relay regressions: two failed before the production fix and two
+  passed after it. The final core run includes these new cases.
+* The initial browser run failed to start Chrome because sandbox socket access was
+  denied. The unchanged tests passed outside that sandbox; this was not an application
+  failure. A sandboxed core run was interrupted before test output and is not a pass.
+
+Logs are preserved under `/tmp/pc-wallet-*-review.log` and
+`/tmp/pc-wallet-backup-browser-rerun.log`. Integration and the complete repository
+suite are separate release gates.

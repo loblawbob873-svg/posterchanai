@@ -97,7 +97,7 @@ def validate_recipient(symbol: str, address: str) -> str:
 
 
 async def send_evm(*, symbol: str, private_key: bytes, to: str, units: int,
-                   endpoint: str, from_address: str) -> dict[str, Any]:
+                   endpoint: str, from_address: str, before_broadcast=None) -> dict[str, Any]:
     """Sign and broadcast one native-currency transfer. Returns the hash, or raises."""
     spec = CHAINS.get(symbol)
     if not spec or spec["kind"] != "evm":
@@ -169,6 +169,8 @@ async def send_evm(*, symbol: str, private_key: bytes, to: str, units: int,
 
     from eth_utils import keccak
     local_hash = "0x" + keccak(raw).hex()
+    if before_broadcast is not None:
+        await before_broadcast(local_hash, nonce)
     try:
         async with _client(BROADCAST_TIMEOUT) as client:
             tx_hash = await _rpc(client, endpoint, "eth_sendRawTransaction", ["0x" + raw.hex()])
