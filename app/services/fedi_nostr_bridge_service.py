@@ -208,6 +208,9 @@ class _PublishFailed(Exception):
 # actual content, so those are kept (the p-tags still notify everyone regardless).
 _MENTION_TOKEN = r'(?:nostr:npub1[0-9a-z]{58}|@[A-Za-z0-9_](?:[A-Za-z0-9_.\-]*[A-Za-z0-9_])?(?:@[A-Za-z0-9.\-]+)?)'
 _LEADING_MENTIONS_RE = re.compile(r'^(?:' + _MENTION_TOKEN + r'\s+){3,}', re.I)
+# A bare fediverse handle still sitting in mirrored text -- see the tail of _rewrite_mentions. Kept
+# deliberately narrow (it must not match an email address or a `user@host` inside a URL).
+_PLAIN_HANDLE_RE = re.compile(r'(?<![\w/@.])@[A-Za-z0-9_][A-Za-z0-9_.\-]{0,40}(?:@[A-Za-z0-9.\-]+)?')
 
 
 def _build_content(post: dict, quote_bech: str | None = None, q_raw: dict | None = None) -> str:
@@ -422,9 +425,18 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
             p = await ident.ensure_puppet(
                 db, port, {"url": url, "acct": acct, "username": username, "display_name": username},
                 instance_host, profile_refresh=False)   # synthetic mention account → don't touch the kind-0
-        except Exception:
+        except Exception as e:
+            # SAY SO. This was a bare `p = None`, and a mention that cannot be provisioned is not a
+            # small thing: the @handle stays as dead text in a mirrored note for ever (the note is
+            # delivered and its dedup row written, so nothing retries it) and the person is not
+            # p-tagged, so they are never notified. Reported as "fedi bridge broken, usernames are
+            # not displaying like nostr", and it took a long time to investigate precisely because
+            # the failure left no trace anywhere.
+            logger.info("[fedi-bridge] mention %s could not be provisioned: %s: %s",
+                        acct, type(e).__name__, e)
             p = None
         if not p:
+            logger.info("[fedi-bridge] mention %s has no puppet — left as plain text", acct)
             continue
         ptags.append(["p", p["pubkey_hex"]])
         # A linked local user → ALSO p-tag their REAL key so the note notifies them. Match on the actor
@@ -460,6 +472,18 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
         _unique = _uname_n.get(username.lower(), 0) <= 1
         if username and (_unique or not _mhost2 or _mhost2 == (instance_host or "").lower()):
             content = re.sub(r"@" + re.escape(username) + r"(?![A-Za-z0-9_.\-@])", ref, content)
+    # A HANDLE STILL IN THE TEXT AFTER ALL THAT IS THE SYMPTOM PEOPLE ACTUALLY SEE.
+    #
+    # It has two very different causes and the log has to separate them, because one is ours and one
+    # is the source instance's: either the status arrived with NO mention list (nothing to resolve
+    # against, so the text is all we ever had), or it had one and a handle in the body was not among
+    # them / did not match the replacement. Measured at 19% of bridged notes carrying at least one
+    # literal handle, which is why this is worth one INFO line rather than a debug nobody reads.
+    leftover = _PLAIN_HANDLE_RE.findall(content or "")
+    if leftover:
+        logger.info("[fedi-bridge] %d handle(s) left unresolved in a mirrored note (%s); "
+                    "source supplied %d mention(s)",
+                    len(leftover), ", ".join(leftover[:4]), len(mentions or []))
     return content, ptags
 
 
