@@ -1970,7 +1970,7 @@
     const urls=nip29?[room.relay]:roomRelays(room&&room.cord&&room.cord.bundle),
       filters=nip29?[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],since}]:[{kinds:[1059],authors,since}];
     try{
-      const pooled=R.subscribe(filters,{onEvent,live:true}),external=R.subscribeFrom(urls,filters,{onEvent,timeout:0});
+      const pooled=R.subscribe(filters,{onEvent,live:true}),external=R.subscribeFrom(urls,filters,{onEvent,timeout:0,live:true});
       const close=()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
       chatSub={close,pooled,external};
       const gates=[];

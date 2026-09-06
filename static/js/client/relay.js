@@ -772,7 +772,24 @@
      * invite there is only half a signaling path; answers and ICE must be heard there too. External
      * events are signature-verified before delivery and sockets are closed with the returned
      * function, so discovering an IP never silently changes the user's saved relay list. */
-    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4 } = {}){
+    /* `live` MAKES A DROPPED SOCKET COME BACK, AND WITHOUT IT A ROOM GOES DEAF FOR EVER.
+     *
+     * These are raw sockets to relays the managed pool deliberately does NOT own — a Concord room's
+     * own relays, a webxdc channel's. There was no `onclose` and no redial: when the far end went
+     * away (a relay restart, an idle timeout, a laptop sleep, any blip) the socket was simply gone,
+     * `closed` stayed false, and the caller's handle still looked alive. Concord's `startChatLive`
+     * then short-circuits on `chatSubKey===key` and never rebuilds it, so the open room stopped
+     * receiving messages permanently while every other part of the app kept working. Reported as
+     * "i had to change concord rooms and click on my room again to see new message in there" —
+     * switching rooms changes the key, which is the only thing that ever tore the dead one down.
+     *
+     * OPT-IN, because most callers here are one-shot reads with a `timeout` that is supposed to end
+     * them. Redialling only happens while the caller has not stopped and the timeout has not fired,
+     * and it backs off, so a relay that is genuinely gone costs one socket every 30s rather than a
+     * reconnect storm. The REQ is re-sent verbatim: the filter's `since` is then older than it needs
+     * to be, which costs a few duplicate events the store already dedupes and is the safe direction
+     * — a recomputed `since` would open a hole exactly the width of the outage. */
+    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false } = {}){
       const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>!this._conns.has(u)).slice(0,max);
       const sockets=[]; let closed=false,tm=null,readyDone=false,readyResolve;
       /* Callers that bridge a realtime protocol must not report "joined" before an external
@@ -781,20 +798,47 @@
        * function is still returned for compatibility, with a readiness promise attached. */
       const ready=new Promise(resolve=>{readyResolve=resolve;});
       const markReady=ok=>{if(!readyDone){readyDone=true;readyResolve(!!ok);}};
-      const stop=()=>{ if(closed)return;closed=true;if(tm)clearTimeout(tm);sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
+      const redials=[];
+      const stop=()=>{ if(closed)return;closed=true;if(tm)clearTimeout(tm);
+        // Cancel a pending redial BEFORE closing, or the close we are about to do schedules another.
+        redials.forEach(cancel=>{try{cancel();}catch(_){}});
+        sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
       stop.ready=ready;
       stop.hasTargets=targets.length>0;
       stop.publish=event=>{if(_SOCIAL_KINDS.has(event.kind) || _fediPrivate(event))return 0;let sent=0;for(const ws of sockets){try{if(!closed&&ws.readyState===1){ws.send(JSON.stringify(['EVENT',event]));sent++;}}catch(_){}}return sent;};
       if(!targets.length)markReady(true); // every requested URL is already in the managed pool
       if(timeout>0) tm=setTimeout(stop,timeout);
       targets.forEach((u,n)=>{
-        let ws; const id='xf'+Math.random().toString(36).slice(2,9)+n;
-        try{ws=new WebSocket(u);sockets.push(ws);}catch(_){return;}
-        ws.onopen=()=>{try{ws.send(JSON.stringify(['REQ',id,...filters]));markReady(true);}catch(_){}};
-        ws.onmessage=async e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
-          if(closed||m[0]!=='EVENT'||m[1]!==id||!m[2])return;
-          try{const rs=await worker.call('verifyBatch',{events:[m[2]]});
-            if(!closed&&rs&&rs[0]&&rs[0].valid&&onEvent)onEvent(this._normTags(m[2]));}catch(_){} };
+        const id='xf'+Math.random().toString(36).slice(2,9)+n;
+        let backoff=1000,retry=null,cur=null;
+        /* ONE entry per target, registered once. Pushing a canceller per RETRY would grow a list
+           for as long as a relay stays down, and pushing every redialled socket onto `sockets`
+           would do the same — the handle must not accumulate over a subscription that is meant to
+           outlive many outages. `cur` is the socket `stop()` closes. */
+        redials.push(()=>{ if(retry){clearTimeout(retry);retry=null;} if(cur){try{cur.close();}catch(_){}} });
+        const schedule=()=>{
+          if(!live||closed||retry)return;
+          retry=setTimeout(()=>{retry=null;dial();},backoff);
+          backoff=Math.min(backoff*2,30000);
+        };
+        const dial=()=>{
+          if(closed)return;
+          let ws;
+          try{ws=new WebSocket(u);}catch(_){ return schedule(); }
+          cur=ws; if(!live)sockets.push(ws);
+          ws.onopen=()=>{backoff=1000;try{ws.send(JSON.stringify(['REQ',id,...filters]));markReady(true);}catch(_){}};
+          ws.onmessage=async e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
+            if(closed||m[0]!=='EVENT'||m[1]!==id||!m[2])return;
+            try{const rs=await worker.call('verifyBatch',{events:[m[2]]});
+              if(!closed&&rs&&rs[0]&&rs[0].valid&&onEvent)onEvent(this._normTags(m[2]));}catch(_){} };
+          if(live){
+            /* Both events land here and `retry` makes the pair idempotent: a refused connection
+               fires error THEN close, while a clean far-end close fires only close. */
+            ws.onclose=schedule;
+            ws.onerror=()=>{try{ws.close();}catch(_){}};
+          }
+        };
+        dial();
       });
       /* Do not let a failed external relay leave a realtime join pending for a full minute. */
       if(targets.length)setTimeout(()=>markReady(false),8000);
