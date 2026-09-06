@@ -617,6 +617,13 @@ def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monke
                 await browser.js("document.querySelector('#fullscreen').click()", True)
                 assert await browser.js("document.body.classList.contains('mc-fullscreen') && fullscreenCalls.at(-1)==='enter'")
                 assert await browser.js("Math.abs(document.querySelector('#player').getBoundingClientRect().height-innerHeight)<2")
+                # Verify the video itself fills the viewport, not just its wrapper.
+                for width, height in [(390,844),(844,390)]:
+                    await browser.call('Emulation.setDeviceMetricsOverride', {'width':width,'height':height,'deviceScaleFactor':1,'mobile':True})
+                    assert await browser.js("(()=>{const r=document.querySelector('video').getBoundingClientRect();return Math.abs(r.width-innerWidth)<2 && Math.abs(r.height-innerHeight)<2 && Math.abs(r.top)<2 && Math.abs(r.left)<2;})()")
+                await browser.until("document.querySelector('#player').classList.contains('mc-controls-hidden')")
+                await browser.js("document.querySelector('video').dispatchEvent(new Event('pointerdown',{bubbles:true}))")
+                assert await browser.js("!document.querySelector('#player').classList.contains('mc-controls-hidden')")
                 await browser.js("history.back()")
                 await browser.until("!document.body.classList.contains('mc-fullscreen') && fullscreenCalls.at(-1)==='exit'")
                 await browser.js("delete window.NativeInterface")

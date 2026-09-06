@@ -113,16 +113,26 @@
       const text=await response.text();if(controller.signal.aborted)return;
       if(!text.startsWith('WEBVTT'))throw new Error('Invalid subtitle response.');
       subtitleBlob=URL.createObjectURL(new Blob([text],{type:'text/vtt'}));
-      const node=document.createElement('track');node.kind='subtitles';node.label=track.DisplayTitle||'Subtitles';node.srclang=track.Language||'en';node.src=subtitleBlob, progressTimer, lastProgress=0;node.default=true;
+      const node=document.createElement('track');node.kind='subtitles';node.label=track.DisplayTitle||'Subtitles';node.srclang=track.Language||'en';node.src=subtitleBlob;node.default=true;
       node.onload=()=>{if(!controller.signal.aborted&&node.isConnected){node.track.mode='showing';$('subtitle-status').textContent='';}};
       node.onerror=()=>{$('subtitle-status').textContent='This device could not display the subtitles.';};
       document.querySelector('video').append(node);node.track.mode='showing';
     } catch(error) {if(subtitleAbort===controller)$('subtitle-status').textContent=controller.signal.aborted?'Subtitle loading timed out. Select the track to retry.':error.message;}
     finally {clearTimeout(timeout);}
   }
-  let fullscreen=false;
+  let fullscreen=false, fullscreenControlsTimer;
+  function showFullscreenControls() {
+    clearTimeout(fullscreenControlsTimer);
+    $('player').classList.remove('mc-controls-hidden');
+    if(fullscreen)fullscreenControlsTimer=setTimeout(()=>{
+      if($('player').querySelector('.controls').contains(document.activeElement))return;
+      $('player').classList.add('mc-controls-hidden');
+    },3000);
+  }
+  for(const event of ['pointermove','pointerdown','keydown','focusout'])$('player').addEventListener(event,showFullscreenControls);
+
   function leaveFullscreen() {
-    fullscreen=false;document.body.classList.remove('mc-fullscreen');$('fullscreen').textContent='Full screen';
+    fullscreen=false;showFullscreenControls();document.body.classList.remove('mc-fullscreen');$('fullscreen').textContent='Full screen';
     try {window.NativeInterface?.disableFullscreen();} catch (_) {}
     if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
   }
@@ -134,6 +144,8 @@
   async function enterFullscreen() {
     if(fullscreen){closeFullscreen();return;}
     fullscreen=true;document.body.classList.add('mc-fullscreen');$('fullscreen').textContent='Exit full screen';
+    showFullscreenControls();
+    document.activeElement?.blur();
     history.pushState({pcMediaFullscreen:true}, '', location.href);
     // Android WebView has no custom-view fullscreen handler. Its native bridge
     // hides system bars; our player fills the viewport without replacing playback.
