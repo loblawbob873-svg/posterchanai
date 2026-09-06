@@ -9247,7 +9247,7 @@
           <p><label>Transcoding <select name="encoder"><option value="auto">Automatic GPU / CPU</option><option value="cpu">CPU</option><option value="nvidia">NVIDIA</option><option value="amd">AMD</option><option value="vaapi">VA-API GPU</option></select></label></p>
           <button type="submit" class="btn btn-neon">Add to library</button><p class="muted small">Scanning continues in the background. Titles appear as they are found.</p></form></details>`:''}
         ${data.can_create?`<details class="mc-tool-card"><summary><span class="mc-tool-icon"><svg class="ic"><use href="#i-bars"></use></svg></span><span><b>Bandwidth &amp; resources</b><small id="mc-limit-summary">200 KB/s per user · GPU / CPU transcoding</small></span><span class="mc-tool-expand">+</span></summary><form id="mc-limits" class="mc-tool-body">
-          <p class="muted">Bandwidth is in kbps (1,000 kbps = 1 Mbps). The per-user cap is shared across their tabs. The server cap covers all viewers.</p>
+          <p class="muted">Hard limits, enforced by the server in kbps (1,000 kbps = 1 Mbps). The per-user cap is shared across their tabs. The server cap covers all viewers.</p>
           <p><label>Total bandwidth <input name="server_kbps" type="number" min="650" max="1000000" required></label></p>
           <p><label>Bandwidth per user <input name="viewer_kbps" type="number" min="650" max="1000000" required></label></p>
           <p><label>Simultaneous streams <input name="max_streams" type="number" min="1" max="100" required></label></p>
@@ -9263,11 +9263,11 @@
         </div></details>
         </div><p id="mc-status" class="mc-status muted" role="status"></p><div id="mc-libraries" class="mc-libraries"></div>
         <div id="mc-playback" class="mc-playback" hidden><div class="mc-player-toolbar"><h3 id="mc-playing"></h3><button id="mc-fullscreen" class="btn btn-ghost" type="button" aria-label="Enter full screen">Full screen</button><button id="mc-close-player" class="btn btn-ghost" type="button">Close player</button>
-          <label>Quality <select id="mc-quality"><option value="auto">Auto bandwidth</option>
+          <label>Quality <select id="mc-quality"><option value="auto">Best quality within limit</option>
             <option value="360p">360p · ~0.6 Mbps</option><option value="480p">480p · ~1.2 Mbps</option>
             <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label></div>
           <video id="mc-player" controls playsinline tabindex="0" aria-label="Media player" preload="metadata" style="width:100%;max-height:65vh"></video>
-        </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><div id="mc-items"></div></div>`;
+        </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><nav id="mc-folder-nav" aria-label="Media folders"></nav><div id="mc-items"></div></div>`;
       for(const card of feed.querySelectorAll('.mc-tool-card'))card.ontoggle=()=>{
         if(card.open)for(const other of feed.querySelectorAll('.mc-tool-card'))if(other!==card)other.open=false;
       };
@@ -9322,6 +9322,26 @@
       }
       for(const option of Array.from($('#mc-quality').options)){if(option.value!=='auto'&&!data.profiles.includes(option.value))option.remove();}
       const libraryRows=new Map();
+      let currentFolder='.', folderLibrary=null, folderRequest=0;
+      const browseFolder=async(lib,path)=>{
+        const request=++folderRequest;
+        const result=await api('/'+lib.id+'/folders?path='+encodeURIComponent(path));
+        if(request!==folderRequest||VIEW!=='media-center')return;
+        currentFolder=result.path;folderLibrary=lib.id;
+        const nav=$('#mc-folder-nav');nav.replaceChildren();
+        const trail=document.createElement('div');trail.className='mc-folder-trail';nav.append(trail);
+        const crumb=(label,path)=>{const button=document.createElement('button');button.type='button';button.className='btn btn-ghost';button.textContent=label;button.onclick=()=>act(button,()=>browseFolder(lib,path));trail.append(button);};
+        crumb(lib.name,'.');
+        if(currentFolder!=='.'){let prefix='';for(const part of currentFolder.split('/')){prefix=prefix?prefix+'/'+part:part;crumb(part,prefix);}}
+        const grid=document.createElement('div');grid.className='mc-directory-grid';nav.append(grid);
+        for(const folder of result.folders){
+          const button=document.createElement('button');button.type='button';button.className='mc-directory';
+          button.innerHTML='<svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg><span></span><span aria-hidden="true">›</span>';
+          button.querySelector('span').textContent=folder.name;
+          button.onclick=()=>act(button,()=>browseFolder(lib,folder.path));grid.append(button);
+        }
+        const search=$('#mc-search');search.value='';search.oninput?.();
+      };
       const schedulePoll=(delay=3000)=>{
         clearTimeout(_mediaCenterPollTimer);
         _mediaCenterPollTimer=setTimeout(async()=>{
@@ -9373,6 +9393,7 @@
           });row.append(share);
         }
         open.onclick=()=>act(open,async()=>{
+          if(folderLibrary!==lib.id)await browseFolder(lib,'.');
           const result=await api('/'+lib.id+'/items');if(VIEW!=='media-center')return;
           const list=$('#mc-items'),refresh=list.dataset.library===lib.id;
           if(!refresh){clearMediaCenterArt();list.replaceChildren();}
@@ -9403,7 +9424,7 @@
           const search=$('#mc-search');if(!refresh)search.value='';search.parentElement.hidden=false;
           search.oninput=()=>{
             const query=search.value.trim().toLocaleLowerCase();
-            for(const section of list.children){let visible=0;for(const card of section.querySelectorAll('.mc-tile')){card.hidden=!card.dataset.search.includes(query);if(!card.hidden)visible++;}section.hidden=!visible;}
+            for(const section of list.children){let visible=0;for(const card of section.querySelectorAll('.mc-tile')){card.hidden=query?!card.dataset.search.includes(query):section.dataset.folder!==currentFolder;if(!card.hidden)visible++;}section.hidden=!visible;}
           };
           for(const button of libs.querySelectorAll('.mc-library-open'))button.classList.toggle('active',button===open);
           for(const item of result.items){

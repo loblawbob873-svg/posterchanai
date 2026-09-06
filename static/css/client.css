@@ -10140,3 +10140,10 @@ html.pc-popup-boot body > *:not(#os-popup-host):not(#modal-root){display:none!im
    Transitions go too: they are the other per-frame cost, and nobody is watching one behind a game. */
 html.os-idle #os-root,
 html.os-idle #os-root *{animation:none!important;transition:none!important}
+
+/* Media Center directory navigation, available before catalog scanning completes. */
+#mc-folder-nav{padding:0 18px 16px}.mc-folder-trail{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.mc-directory-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr));gap:12px}
+.mc-directory{display:flex;align-items:center;gap:12px;min-height:76px;padding:16px;text-align:left;border:1px solid var(--line);border-radius:14px;background:var(--panel2);color:var(--text);cursor:pointer;font:inherit}
+.mc-directory:hover{border-color:var(--neon)}.mc-directory:focus-visible{outline:2px solid var(--neon);outline-offset:2px}
+.mc-directory .ic{flex:none;width:30px;height:30px;color:var(--neon)}.mc-directory span:first-of-type{flex:1;overflow-wrap:anywhere}.mc-directory span:last-child{color:var(--muted)}

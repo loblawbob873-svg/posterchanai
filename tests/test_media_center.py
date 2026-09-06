@@ -32,6 +32,7 @@ def api(monkeypatch, tmp_path):
     monkeypatch.setattr(media, "mutation_lock", asyncio.Lock())
     monkeypatch.setattr(media, "_job_condition", asyncio.Condition())
     routes._scans.clear()
+    routes._scan_previews.clear()
     monkeypatch.setattr(routes.settings_store, "get", lambda *args: "")
     media._sessions.clear()
     media._catalog_cache.clear()

@@ -5,6 +5,8 @@ import hmac
 import json
 import logging
 import math
+import os
+from pathlib import Path
 import secrets
 import time
 from typing import Literal
@@ -345,6 +347,32 @@ async def items(library_id: str, user=Depends(get_media_user)):
     return {"items": [{k: v for k, v in item.items() if k not in ("path", "mtime_ns")}
                       for item in await available_catalog(library)],
             "scan": _scans.get(library_id, {"state": "idle"}), "revision": scan_revision(library)}
+
+
+@router.get("/{library_id}/folders")
+async def folders(library_id: str, path: str = ".", user=Depends(get_media_user)):
+    library = await library_for(library_id, media.identity(user))
+    def listing():
+        root = media.safe_root(library['folder'])
+        relative = Path(path)
+        if relative.is_absolute() or '..' in relative.parts:
+            raise ValueError('Folder must be inside this library')
+        target = root
+        for part in relative.parts:
+            target = target / part
+            if target.is_symlink():
+                raise ValueError('Linked folders are not available')
+        target.resolve().relative_to(root.resolve())
+        result = []
+        with os.scandir(target) as entries:
+            for entry in entries:
+                if not entry.name.startswith('.') and entry.is_dir(follow_symlinks=False):
+                    result.append({'name': entry.name, 'path': (relative / entry.name).as_posix()})
+        return {'path': relative.as_posix(), 'folders': sorted(result, key=lambda entry: media.natural(entry['name']))}
+    try:
+        return await asyncio.to_thread(listing)
+    except (ValueError, OSError) as error:
+        raise HTTPException(400, 'Folder is unavailable or outside this library') from error
 
 
 @router.get("/{library_id}/art/{item_id}")

@@ -138,7 +138,7 @@ async def main():
             return SimpleNamespace(nostr_npub=key, is_admin=key == OWNER, can_media=True)
         app.dependency_overrides[routes.media_user_optional] = user
         javascript = (ROOT / "static/js/client/app.js").read_text()
-        functions = javascript[javascript.index("  let _mediaCenterSession="):javascript.index("  // ---------- torrents (NIP-35")]
+        functions = javascript[javascript.index("  let _mediaCenterPollTimer="):javascript.index("  // ---------- torrents (NIP-35")]
         bootstrap = """
           const $=s=>document.querySelector(s);let VIEW='media-center';const _instanceBase=()=>location.origin;
           const enc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
@@ -252,6 +252,7 @@ async def main():
         finally:
             process.terminate()
             process.wait(timeout=10)
+            scan_release.set()
             server.should_exit = True
             nas_server.should_exit = True
             await server_task
