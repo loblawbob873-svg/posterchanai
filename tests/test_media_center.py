@@ -484,29 +484,41 @@ def test_browser_auth_recovery_executes_real_helper():
     helper = source[source.index('  async function _mediaCenterFetch('):source.index('  function clearMediaCenterArt(')]
     script = """
 const assert = require('node:assert/strict');
-let _aiToken='', _aiAuth=null, fail=false, statuses=[], calls=[], logins=0;
+const realSetTimeout=setTimeout;global.setTimeout=(fn,ms)=>realSetTimeout(fn,Math.min(ms,20));
+let _aiToken='', _aiAuth=null, fail=false, pending=false, statuses=[], calls=[], logins=0, forced=false;
 function _setAiToken(token){_aiToken=token;}
-async function ensureAiSession(){
+async function ensureAiSession(opts){
+ forced=opts.force;
+ if(pending)return new Promise(()=>{});
  if(fail)throw new Error('signer unavailable');
  if(!_aiToken){_aiToken='token'+(++logins);_aiAuth={};}
 }
-async function _streamFetch(url,opts){calls.push({url,opts,token:_aiToken});return {status:statuses.shift()};}
+async function fetch(url,opts){calls.push({url,opts,token:_aiToken});return {status:statuses.shift()};}
 """ + helper + """
 (async()=>{
- fail=true;
- await assert.rejects(_mediaCenterFetch('/api/media-center'),/signer unavailable/);
- assert.equal(calls.length,0);
- fail=false;statuses=[401,200];
+ fail=true;statuses=[200];
  assert.equal((await _mediaCenterFetch('/api/media-center')).status,200);
- assert.equal(logins,2);assert.equal(calls.length,2);
+ assert.equal(logins,0); // A valid cookie must not wait on a signer.
+ statuses=[401];calls=[];
+ await assert.rejects(_mediaCenterFetch('/api/media-center'),/signer unavailable/);
+ assert.equal(calls.length,1);
+ fail=false;statuses=[401,200];calls=[];
+ assert.equal((await _mediaCenterFetch('/api/media-center')).status,200);
+ assert.equal(logins,1);assert.equal(calls.length,2);
  assert.notEqual(calls[0].token,calls[1].token);
  assert.equal(calls[0].opts.credentials,'include');
+ assert.equal(calls[1].opts.headers.get('Authorization'),'Bearer token1');
  statuses=[403];calls=[];
  assert.equal((await _mediaCenterFetch('/api/media-center')).status,403);
- assert.equal(calls.length,1);assert.equal(logins,2);
+ assert.equal(calls.length,1);assert.equal(logins,1);
  statuses=[401,401];calls=[];
  assert.equal((await _mediaCenterFetch('/api/media-center')).status,401);
  assert.equal(calls.length,2); // never loop indefinitely
+ pending=true;statuses=[401];
+ await assert.rejects(_mediaCenterFetch('/api/media-center'),/Sign-in timed out/);
+ pending=false;statuses=[401,200];
+ assert.equal((await _mediaCenterFetch('/api/media-center')).status,200);
+ assert.equal(forced,true); // Retry escapes the stale shared login promise.
 })().catch(e=>{console.error(e);process.exit(1)});
 """
     result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=15)

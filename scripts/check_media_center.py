@@ -147,7 +147,7 @@ async def main():
         bootstrap = """
           const $=s=>document.querySelector(s);let VIEW='media-center';const _instanceBase=()=>location.origin;
           const enc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
-          const _streamFetch=(url,opts={})=>fetch(url,{...opts,headers:{...opts.headers,
+          const nativeFetch=window.fetch.bind(window);const fetch=(url,opts={})=>nativeFetch(url,{...opts,headers:{...Object.fromEntries(new Headers(opts.headers||{})),
             'X-Test-Viewer':new URLSearchParams(location.search).get('viewer')||'OWNER'}});
           let _aiToken='fixture',_aiAuth={};const _setAiToken=t=>{_aiToken=t;};const ensureAiSession=async()=>({});
           const loadHls=async()=>{};const toast=s=>{window.lastToast=s;};

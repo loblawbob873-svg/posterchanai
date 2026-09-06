@@ -9269,13 +9269,34 @@
   let _mediaCenterPollTimer=null;
   let _mediaCenterSession=null, _mediaCenterPlayGeneration=0, _mediaCenterHls=null, _mediaCenterArtObserver=null, _mediaCenterArtUrls=[], _mediaCenterArtGeneration=0;
   async function _mediaCenterFetch(url, opts={}){
-    await ensureAiSession();
+    const request=async()=>{
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),url.includes('subtitle-')?120000:20000);
+      const abort=()=>controller.abort();opts.signal?.addEventListener('abort',abort,{once:true});
+      if(opts.signal?.aborted)controller.abort();
+      try{
+        const headers=new Headers(opts.headers||{});
+        if(_aiToken)headers.set('Authorization','Bearer '+_aiToken);
+        return await fetch(url,{credentials:'include',...opts,headers,signal:controller.signal});
+      }catch(error){
+        if(error.name==='AbortError')throw new Error('The media server took too long to respond. Try again.');
+        throw error;
+      }finally{clearTimeout(timeout);opts.signal?.removeEventListener('abort',abort);}
+    };
     const sentToken=_aiToken;
-    let response=await _streamFetch(url,{credentials:'include',...opts});
+    let response=await request();
     if(response.status===401){
       if(_aiToken===sentToken){_aiAuth=null;_setAiToken('');}
-      await ensureAiSession();
-      response=await _streamFetch(url,{credentials:'include',...opts});
+      const loading=typeof document==='undefined'?null:document.getElementById('mc-loading');
+      if(loading)loading.textContent='Signing in to Media Center… Check your signer if it asks for approval.';
+      const force=Boolean(_mediaCenterFetch.retryAuth);_mediaCenterFetch.retryAuth=false;
+      let timer;
+      try{
+        await Promise.race([ensureAiSession({force}),new Promise((_,reject)=>{
+          timer=setTimeout(()=>{_mediaCenterFetch.retryAuth=true;reject(new Error('Sign-in timed out. Check your signer, then press Retry.'));},30000);
+        })]);
+      }finally{clearTimeout(timer);}
+      response=await request();
     }
     return response;
   }
@@ -9305,7 +9326,7 @@
     const renderGeneration=++_mediaCenterRenderGeneration;
     stopMediaCenter();
     const feed=$('#feed');
-    feed.innerHTML='<div class="empty">Loading Media Center…</div>';
+    feed.innerHTML='<div class="empty" id="mc-loading" role="status">Loading Media Center…</div>';
     const api=async(path='',method='GET',body)=>{
       const r=await _mediaCenterFetch('/api/media-center'+path,{method,headers:{'Content-Type':'application/json'},
         ...(body===undefined?{}:{body:JSON.stringify(body)})});
