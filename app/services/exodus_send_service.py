@@ -1,37 +1,14 @@
-"""Moving money. Read the whole file before changing anything in it.
+"""Native EVM transfers with network validation and conservative broadcast outcomes.
 
-WHAT IS IMPLEMENTED AND WHAT IS NOT, SAID FIRST SO NOBODY DISCOVERS IT WITH A TRANSACTION. Sending
-works on the EVM chains — Ethereum, Polygon, BNB Chain and Avalanche C-Chain — because one correct
-implementation covers all four and the signing is done by `eth-account`, which is audited, widely
-used and has published test vectors. The UTXO chains (BTC, LTC, DOGE, BCH) and Solana are REFUSED
-with a sentence, not half-built: a Bitcoin spend is UTXO selection plus segwit sighashes, and a
-wrong sighash is a signature over a transaction nobody meant to make. A refusal costs somebody a
-disappointment; a bad spend costs them the coins.
-
-FIVE THINGS THAT MUST BE RIGHT, and every one of them is read from the chain rather than assumed:
-
-  * CHAIN ID — asked for with `eth_chainId` and never hardcoded from the symbol. A wrong one makes
-    the transaction invalid, or worse, valid on a DIFFERENT chain, which is how a Polygon send
-    becomes replayable on Ethereum.
-  * NONCE — `pending`, so a second send while the first is unconfirmed does not collide. It is also
-    the natural idempotency key: a retry at the same nonce REPLACES rather than duplicates, which is
-    the property Monero's `/me/pay` lacks and why that path once charged twice.
-  * GAS — estimated, then floored at 21000. An estimate that comes back low for a plain transfer is
-    a provider being wrong, and an underpriced transaction is stuck rather than cheap.
-  * THE BALANCE — checked against value PLUS the maximum fee, because a transaction that cannot pay
-    its own worst case is rejected after it has been signed and broadcast.
-  * THE RECIPIENT — checksum-validated. An address one character wrong is a valid-looking address
-    nobody holds the key to, and the coins are simply gone.
-
-AND THE RULE THAT OUTLIVES ALL OF THEM: A BROADCAST THAT TIMED OUT IS NOT A FAILED BROADCAST. This
-codebase has already paid for that lesson once, on Monero: the client gave up at 20s over a live
-transfer, reported "payment not sent", and invited a retry that would have been a second real
-payment. So an uncertain send answers `unsure`, says the transaction may be on the chain, and names
-the nonce to look for — never "it failed".
+Reads may fail before signing. Once broadcast starts, only the matching locally computed
+transaction hash confirms acceptance; every other outcome is uncertain and must not invite
+another payment. The pending nonce prevents replacement collisions, but is not a substitute
+for a durable request ledger across retries or server workers.
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -51,6 +28,16 @@ class SendUnsure(WalletError):
 
 #: A plain native-currency transfer. Contract calls are not something this wallet does.
 TRANSFER_GAS = 21_000
+NETWORKS = {"ETH": 1, "MATIC": 137, "BNB": 56, "AVAX": 43114}
+
+
+def _quantity(value):
+    if not isinstance(value, str) or not re.fullmatch(r"0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)", value):
+        raise SendRefused("the network returned an invalid quantity")
+    result = int(value, 16)
+    if result >= 2**256:
+        raise SendRefused("the network returned an oversized quantity")
+    return result
 #: Long enough for a busy RPC to answer, short enough not to hold a worker. Exceeding it on the
 #: BROADCAST leg is `SendUnsure`, never a failure.
 RPC_TIMEOUT = 20.0
@@ -115,7 +102,7 @@ async def send_evm(*, symbol: str, private_key: bytes, to: str, units: int,
     spec = CHAINS.get(symbol)
     if not spec or spec["kind"] != "evm":
         raise SendRefused(f"sending {symbol} is not supported yet")
-    if units <= 0:
+    if type(units) is not int or not 0 < units < 2**256:
         raise SendRefused("amount must be greater than zero")
     if not endpoint:
         raise SendRefused(f"this node has no RPC endpoint configured for {symbol}")
@@ -126,35 +113,33 @@ async def send_evm(*, symbol: str, private_key: bytes, to: str, units: int,
     except Exception as exc:  # noqa: BLE001
         raise SendRefused("this node has not installed the Ethereum library") from exc
 
+    if Account.from_key(private_key).address.lower() != str(from_address).lower():
+        raise SendRefused("the sender address does not match the selected wallet")
+
     async with _client(RPC_TIMEOUT) as client:
-        chain_id = int(str(await _rpc(client, endpoint, "eth_chainId", [])), 16)
-        nonce = int(str(await _rpc(client, endpoint, "eth_getTransactionCount",
-                                   [from_address, "pending"])), 16)
-        balance = int(str(await _rpc(client, endpoint, "eth_getBalance", [from_address, "latest"])), 16)
+        chain_id = _quantity(await _rpc(client, endpoint, "eth_chainId", []))
+        if chain_id != NETWORKS.get(symbol):
+            raise SendRefused(f"the RPC network does not match {symbol}")
+        nonce = _quantity(await _rpc(client, endpoint, "eth_getTransactionCount",
+                                   [from_address, "pending"]))
+        balance = _quantity(await _rpc(client, endpoint, "eth_getBalance", [from_address, "pending"]))
 
         # Fees. EIP-1559 where the chain offers it, and a legacy gas price where it does not —
         # asked for rather than decided from the symbol, because an L2 or a fork can be either.
         try:
-            tip = int(str(await _rpc(client, endpoint, "eth_maxPriorityFeePerGas", [])), 16)
+            tip = _quantity(await _rpc(client, endpoint, "eth_maxPriorityFeePerGas", []))
         except WalletError:
             tip = None
         base_fee = None
         try:
             head = await _rpc(client, endpoint, "eth_getBlockByNumber", ["latest", False])
             if isinstance(head, dict) and head.get("baseFeePerGas"):
-                base_fee = int(str(head["baseFeePerGas"]), 16)
+                base_fee = _quantity(head["baseFeePerGas"])
         except WalletError:
             base_fee = None
 
-        gas = TRANSFER_GAS
-        try:
-            est = int(str(await _rpc(client, endpoint, "eth_estimateGas",
-                                     [{"from": from_address, "to": to, "value": hex(units)}])), 16)
-            # A plain transfer cannot cost less than 21000. An estimate below it is a provider being
-            # wrong, and honouring it produces a transaction the chain will not accept.
-            gas = max(est, TRANSFER_GAS)
-        except WalletError:
-            gas = TRANSFER_GAS
+        gas = max(TRANSFER_GAS, _quantity(await _rpc(client, endpoint, "eth_estimateGas",
+                  [{"from": from_address, "to": to, "value": hex(units)}])))
 
         if base_fee is not None and tip is not None:
             # Room for the base fee to rise while the transaction is pending. Doubling is the
@@ -165,7 +150,7 @@ async def send_evm(*, symbol: str, private_key: bytes, to: str, units: int,
                   "maxPriorityFeePerGas": tip, "nonce": nonce, "chainId": chain_id, "type": 2}
             worst = gas * max_fee
         else:
-            price = int(str(await _rpc(client, endpoint, "eth_gasPrice", [])), 16)
+            price = _quantity(await _rpc(client, endpoint, "eth_gasPrice", []))
             tx = {"to": to, "value": units, "gas": gas, "gasPrice": price,
                   "nonce": nonce, "chainId": chain_id}
             worst = gas * price
@@ -182,19 +167,18 @@ async def send_evm(*, symbol: str, private_key: bytes, to: str, units: int,
         signed = Account.from_key(private_key).sign_transaction(tx)
         raw = signed.raw_transaction if hasattr(signed, "raw_transaction") else signed.rawTransaction
 
-    # BROADCAST ON ITS OWN CLIENT AND ITS OWN CLOCK. Everything above is a read and may be retried
-    # freely; this one leg may not, and a timeout here is `unsure`, never a failure.
+    from eth_utils import keccak
+    local_hash = "0x" + keccak(raw).hex()
     try:
         async with _client(BROADCAST_TIMEOUT) as client:
             tx_hash = await _rpc(client, endpoint, "eth_sendRawTransaction", ["0x" + raw.hex()])
-    except SendRefused:
-        # The node said no, explicitly. Nothing was accepted, so this really is a failure.
-        raise
-    except Exception as exc:  # noqa: BLE001
+        if not isinstance(tx_hash, str) or tx_hash.lower() != local_hash:
+            raise ValueError("unconfirmed transaction hash")
+    except Exception as exc:
+        # HTTP errors, malformed replies and 'already known' can all follow acceptance.
         raise SendUnsure(
-            f"the transaction was signed and sent, and this node did not hear back in time. It MAY "
-            f"be on the chain — check for nonce {nonce} from your address before sending again, "
-            f"because a second send at a different nonce would pay twice.") from exc
+            f"Transaction {local_hash} may be on the network. Check this hash and nonce {nonce} "
+            f"before sending again; another payment could pay twice.") from exc
 
-    return {"hash": str(tx_hash), "nonce": nonce, "chainId": chain_id,
+    return {"hash": local_hash, "nonce": nonce, "chainId": chain_id,
             "gas": gas, "to": to, "units": units}
