@@ -1,0 +1,101 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from app.schemas import CLIENT_THEMES
+from tests.client.test_followup_regressions import browser
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def page(tmp_path, action='', width=1280, theme='professional', mode='normal'):
+    code = (ROOT / 'static/js/client/exodus.js').read_text().replace('"/static/vendor/', '"' + ROOT.as_uri() + '/static/vendor/')
+    css = (ROOT / 'static/css/client.css').read_text() + (ROOT / 'static/css/exodus.css').read_text()
+    css += 'body{display:block!important;margin:0;padding:12px}#feed{width:100%;max-width:1100px;margin:auto;overflow:visible}'
+    setup = f'''
+document.documentElement.dataset.theme={json.dumps(theme)};
+const SECOND='1'.repeat(32), mode={json.dumps(mode)};let releaseBalance,releaseAddress,releaseConfirm,calls=[];
+const wallets=[{{id:'default',name:'Main wallet'}},{{id:SECOND,name:'Savings'}}];
+const reply=data=>({{ok:true,status:200,json:async()=>data}});
+const dataFor=wallet=>({{balances:{{BTC:{{known:true,amount:'1'}},ETH:{{known:true,amount:'2'}}}},valuation:{{complete:true,total:wallet==='default'?'900.00':'200.00',known_total:wallet==='default'?'900.00':'200.00',missing:[],assets:{{BTC:{{usd:wallet==='default'?'700.00':'100.00'}},ETH:{{usd:wallet==='default'?'200.00':'100.00'}}}},prices_at:Math.floor(Date.now()/1000)}},history:{{available:true,points:[{{at:Math.floor(Date.now()/1000)-3600,usd:'100'}},{{at:Math.floor(Date.now()/1000),usd:'200'}}]}}}});
+window.__PC_API_BASE__='https://instance.example';
+window.__PC={{$:s=>document.querySelector(s),enc:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),viewer:()=>({{pubkey:'account'}}),isView:()=>true,toast:()=>{{}},ensureAiSession:async()=>{{}},
+uiConfirm:()=>mode==='confirm'?new Promise(r=>releaseConfirm=r):Promise.resolve(true),
+authFetch:async(path,opts)=>{{const url=new URL(path,'https://instance.example'),wallet=url.searchParams.get('wallet')||'default';calls.push(url.pathname+'?'+url.searchParams);
+if(url.pathname.endsWith('/wallets'))return reply({{wallets}});
+if(url.pathname.endsWith('/status'))return reply({{exists:true,label:wallet==='default'?'Main wallet':'Savings',backedUp:true,portfolios:[{{id:0,name:'Main'}},{{id:1,name:'Long term'}}],chains:[{{symbol:'BTC',name:'Bitcoin'}},{{symbol:'ETH',name:'Ethereum'}}]}});
+if(url.pathname.endsWith('/balances')){{if(mode==='balance'&&wallet==='default')return new Promise(r=>releaseBalance=()=>r(reply(dataFor(wallet))));return reply(dataFor(wallet));}}
+if(url.pathname.endsWith('/addresses')){{if(mode==='address')return new Promise(r=>releaseAddress=()=>r(reply({{addresses:{{BTC:'OLD-WALLET-ADDRESS'}}}})));return reply({{addresses:{{BTC:'address-'+wallet,ETH:'0x123'}}}});}}
+if(url.pathname.endsWith('/reveal'))return reply({{mnemonic:'SHOULD-NOT-APPEAR'}});
+return reply({{}});}}}};
+'''
+    return browser(tmp_path, '<main id="feed"></main>', setup + code + f'''
+PCExodus.render();
+setTimeout(async()=>{{
+{action}
+}},180);
+''', width, css)
+
+
+@pytest.mark.parametrize('theme', CLIENT_THEMES)
+@pytest.mark.parametrize('width', [390, 1280])
+def test_portfolio_dashboard_has_working_logos_charts_and_no_overflow(tmp_path, theme, width):
+    result = page(tmp_path, '''
+const svg=document.querySelector('.ex-value-chart'),images=[...document.querySelectorAll('.ex-asset-logo')];
+document.querySelector('#result').textContent=JSON.stringify({total:document.querySelector('.ex-total').textContent,
+fits:document.documentElement.scrollWidth<=innerWidth+1,logos:images.length===2&&images.every(i=>i.complete&&i.naturalWidth>0),
+chart:!!svg&&!svg.innerHTML.includes('NaN'),wallets:document.querySelector('#ex-wallet').options.length});
+''', width, theme)
+    assert result == {'total': '$900.00', 'fits': True, 'logos': True, 'chart': True, 'wallets': 2}, result
+
+
+def test_late_balance_from_previous_wallet_cannot_replace_current_total(tmp_path):
+    result = page(tmp_path, '''
+const select=document.querySelector('#ex-wallet');select.value=SECOND;select.onchange();
+setTimeout(()=>{releaseBalance();setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({
+wallet:document.querySelector('#ex-wallet').value,total:document.querySelector('.ex-total').textContent});},50);},50);
+''', mode='balance')
+    assert result == {'wallet': '1'*32, 'total': '$200.00'}
+
+
+def test_late_receive_address_does_not_appear_in_the_next_wallet(tmp_path):
+    result = page(tmp_path, '''
+document.querySelector('.ex-receive').click();
+setTimeout(()=>{const select=document.querySelector('#ex-wallet');select.value=SECOND;select.onchange();
+setTimeout(()=>{releaseAddress();setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({
+wallet:document.querySelector('#ex-wallet').value,leaked:document.querySelector('#feed').textContent.includes('OLD-WALLET-ADDRESS')});},50);},50);},20);
+''', mode='address')
+    assert result == {'wallet': '1'*32, 'leaked': False}
+
+
+def test_recovery_confirmation_for_previous_wallet_cannot_reveal_current_wallet(tmp_path):
+    result = page(tmp_path, '''
+document.querySelector('#ex-reveal').click();const select=document.querySelector('#ex-wallet');select.value=SECOND;select.onchange();
+setTimeout(()=>{releaseConfirm(true);setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({
+revealed:calls.some(p=>p.startsWith('/api/wallet/exodus/reveal')),leaked:document.querySelector('#feed').textContent.includes('SHOULD-NOT-APPEAR')});},50);},50);
+''', mode='confirm')
+    assert result == {'revealed': False, 'leaked': False}
+
+
+def test_incomplete_total_and_empty_history_do_not_invent_zero_or_a_graph(tmp_path):
+    result = page(tmp_path, '''
+document.querySelector('#feed').innerHTML=PCExodus._dashboard({valuation:{complete:false,total:null,known_total:'0.00',missing:['BTC'],assets:{}},history:{available:true,points:[]}});
+document.querySelector('#result').textContent=JSON.stringify({partial:document.querySelector('#feed').textContent.includes('incomplete total'),graph:!!document.querySelector('.ex-value-chart'),nan:document.querySelector('#feed').innerHTML.includes('NaN')});
+''')
+    assert result == {'partial': True, 'graph': False, 'nan': False}
+
+
+@pytest.mark.parametrize('confirm', [False, True])
+def test_double_clicking_send_opens_one_confirmation_and_submits_at_most_once(tmp_path, confirm):
+    action = """
+document.querySelector('.ex-send').click();
+setTimeout(()=>{
+document.querySelector('#ex-to').value='0x'+'11'.repeat(20);document.querySelector('#ex-amt').value='0.1';
+const go=document.querySelector('#ex-send-go');go.onclick();go.onclick();releaseConfirm(CONFIRM);
+setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({sends:calls.filter(p=>p.startsWith('/api/wallet/exodus/send')).length,disabled:go.disabled});},60);
+},30);
+""".replace('CONFIRM', json.dumps(confirm))
+    result = page(tmp_path, action, mode='confirm')
+    assert result['sends'] == int(confirm)
+    assert result['disabled'] == confirm

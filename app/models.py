@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table, BigInteger, LargeBinary
+from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, Index, Table, BigInteger, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -666,3 +666,13 @@ class ExodusWallet(Base):
     # "did you write it down?" is not a question the app can infer.
     backed_up_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ExodusWalletRecord(Base):
+    """Encrypted backup of an additional wallet or portfolio metadata document."""
+    __tablename__ = 'exodus_wallet_records'
+    __table_args__ = (UniqueConstraint('user_id', 'wallet_id', name='uq_exodus_wallet_record'),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    wallet_id = Column(String(40), nullable=False)
+    document_enc = Column(LargeBinary, nullable=False)

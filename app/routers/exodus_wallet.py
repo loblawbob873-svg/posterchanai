@@ -1,8 +1,7 @@
 """Multi-chain wallet routes — the wallet belonging to the person signed in.
 
-Every route here is scoped to the CALLER'S OWN account, taken from their session. No route accepts a
-user id, a pubkey or a wallet id: a pubkey parameter is an invitation to spend another person's
-money by typing theirs. That is the same rule `monero_user_wallet.py` opens with, and it is the only
+Every route here is scoped to the CALLER'S OWN account, taken from their session. No route accepts a user id or pubkey. A wallet identifier is resolved only within
+the authenticated account's encrypted namespace. That is the same rule `monero_user_wallet.py` opens with, and it is the only
 rule in this file that cannot be relaxed for convenience.
 
 THE SEED NEVER LEAVES EXCEPT WHEN SOMEBODY ASKS FOR IT, ONCE, DELIBERATELY. `/reveal` is the single
@@ -17,7 +16,7 @@ import logging
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -26,12 +25,15 @@ from app.database import get_db
 from app.models import User
 from app.routers import auth
 from app.services import exodus_vault as V
+from app.services import exodus_collections as Collections
 from app.services import exodus_wallet_service as W
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/wallet/exodus", tags=["exodus-wallet"])
 CurrentUser = Annotated[User, Depends(auth.get_current_user)]
+WalletId = Annotated[str, Query(alias="wallet", pattern=r"^(default|[0-9a-f]{32})$")]
+Portfolio = Annotated[int, Query(ge=0, le=15)]
 
 
 def _have_library() -> bool:
@@ -79,7 +81,7 @@ def _settings(_db: Session | None = None) -> dict:
         return {}
 
 
-async def _doc(db: Session, user: User):
+async def _doc(db: Session, user: User, wallet_id="default"):
     """The account's wallet document, or None. Raises 503 when the relay could not be asked.
 
     THREE ANSWERS, NOT TWO, and this is the only place they are separated. "There is no wallet",
@@ -88,21 +90,24 @@ async def _doc(db: Session, user: User):
     over the top of somebody's first.
     """
     try:
-        return await V.load(db, user)
+        return await Collections.load(db, user, wallet_id)
     except V.VaultUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except W.WalletLocked as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-async def _open(db: Session, user: User) -> tuple[dict, str]:
-    doc = await _doc(db, user)
+async def _open(db: Session, user: User, wallet_id="default", portfolio=0) -> tuple[dict, str]:
+    doc = await _doc(db, user, wallet_id)
     if not doc:
         raise HTTPException(status_code=404, detail="no wallet on this account yet")
     try:
+        Collections.require_portfolio(doc, portfolio)
         return doc, V.mnemonic_of(db, user, doc)
     except W.WalletLocked as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except W.WalletError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 class CreateReq(BaseModel):
@@ -118,13 +123,13 @@ class LabelReq(BaseModel):
 
 
 @router.get("/status")
-async def status(user: CurrentUser, db: Session = Depends(get_db)):
+async def status(user: CurrentUser, db: Session = Depends(get_db), wallet_id: WalletId = "default", portfolio: Portfolio = 0):
     """Enough to draw the screen, and nothing secret.
 
     Deliberately answers even when the library is missing, so the client can say why the wallet is
     unavailable instead of showing an empty page.
     """
-    doc = await _doc(db, user)
+    doc = await _doc(db, user, wallet_id)
     return {
         "ok": True,
         "library": _have_library(),
@@ -132,7 +137,10 @@ async def status(user: CurrentUser, db: Session = Depends(get_db)):
         "label": (doc.get("label") if doc else None),
         "addressIndex": (int(doc.get("addressIndex") or 0) if doc else 0),
         "backedUp": bool(doc and doc.get("backedUpAt")),
-        "chains": W.supported(),
+        "walletId": wallet_id,
+        "portfolioId": portfolio,
+        "portfolios": Collections.portfolios(doc) if doc else [],
+        "chains": [c for c in W.supported() if c["symbol"] != "XMR" or (wallet_id == "default" and portfolio == 0)],
         "excluded": W.EXCLUDED,
         # Said here as well as in the UI copy, so an API consumer cannot miss it.
         "custody": "This node holds the keys for this wallet.",
@@ -169,21 +177,21 @@ async def create(req: CreateReq, user: CurrentUser, db: Session = Depends(get_db
 
 
 @router.get("/addresses")
-async def addresses(user: CurrentUser, db: Session = Depends(get_db)):
+async def addresses(user: CurrentUser, db: Session = Depends(get_db), wallet_id: WalletId = "default", portfolio: Portfolio = 0):
     """Receive addresses for every supported chain, at the wallet's current index."""
     _library()
-    doc, phrase = await _open(db, user)
+    doc, phrase = await _open(db, user, wallet_id, portfolio)
     index = int(doc.get("addressIndex") or 0)
-    addrs = W.addresses(phrase, index)
+    addrs = W.addresses(phrase, index, account=portfolio)
     # The Monero address comes from the node's own wallet, never from this seed.
-    row = await _monero_row(user)
+    row = await _monero_row(user) if wallet_id == "default" and portfolio == 0 else {}
     if row.get("address"):
         addrs["XMR"] = row["address"]
     return {"ok": True, "index": index, "addresses": addrs}
 
 
 @router.get("/balances")
-async def balances(user: CurrentUser, db: Session = Depends(get_db)):
+async def balances(user: CurrentUser, db: Session = Depends(get_db), wallet_id: WalletId = "default", portfolio: Portfolio = 0, valuation: bool = False):
     """What the wallet holds, per chain — and which chains could not be asked.
 
     Every row carries `known`. A client that reads `amount` without it prints "0" for a chain whose
@@ -192,16 +200,23 @@ async def balances(user: CurrentUser, db: Session = Depends(get_db)):
     later.
     """
     _library()
-    doc, phrase = await _open(db, user)
-    addrs = W.addresses(phrase, int(doc.get("addressIndex") or 0))
+    doc, phrase = await _open(db, user, wallet_id, portfolio)
+    addrs = W.addresses(phrase, int(doc.get("addressIndex") or 0), account=portfolio)
     from app.services import exodus_chain_service as C
     out = await C.balances(addrs, _settings(db))
-    out["XMR"] = await _monero_row(user)
-    return {"ok": True, "index": int(doc.get("addressIndex") or 0), "balances": out}
+    if wallet_id == "default" and portfolio == 0:
+        out["XMR"] = await _monero_row(user)
+    result = {"ok": True, "index": int(doc.get("addressIndex") or 0), "balances": out}
+    if valuation:
+        from app.services import exodus_portfolio as pricing
+        expected = [c['symbol'] for c in W.supported() if c['symbol'] != 'XMR' or (wallet_id == 'default' and portfolio == 0)]
+        result['valuation'] = pricing.value({symbol: out.get(symbol, {'known': False}) for symbol in expected}, await pricing.prices())
+        result['history'] = await pricing.history(db, user, wallet_id, portfolio, result['valuation'])
+    return result
 
 
 @router.post("/reveal")
-async def reveal(user: CurrentUser, db: Session = Depends(get_db)):
+async def reveal(user: CurrentUser, db: Session = Depends(get_db), wallet_id: WalletId = "default", portfolio: Portfolio = 0):
     """The recovery phrase, because somebody asked for it.
 
     A POST on purpose: a GET is linkable, prefetchable and lands in history. Asking also marks the
@@ -209,9 +224,12 @@ async def reveal(user: CurrentUser, db: Session = Depends(get_db)):
     has written down is one node failure away from gone.
     """
     _library()
-    doc, phrase = await _open(db, user)
+    doc, phrase = await _open(db, user, wallet_id, portfolio)
     if not doc.get("backedUpAt"):
-        await V.update(db, user, backedUpAt=int(datetime.utcnow().timestamp()))
+        if wallet_id == "default":
+            await V.update(db, user, backedUpAt=int(datetime.utcnow().timestamp()))
+        else:
+            await Collections.update(db, user, wallet_id, backed_up_at=int(datetime.utcnow().timestamp()))
     return {"ok": True, "mnemonic": phrase,
             "warning": "Anyone with these words can spend this wallet. Write them down offline."}
 
@@ -255,7 +273,7 @@ class SendReq(BaseModel):
 
 
 @router.post("/send")
-async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db)):
+async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), wallet_id: WalletId = "default", portfolio: Portfolio = 0):
     """Move money. Every refusal below happens BEFORE anything is signed.
 
     The one answer this route will not give is "it failed" when it does not know. A broadcast that
@@ -279,7 +297,7 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db)):
             f"sending {symbol} is not supported yet. Receiving works; a {symbol} spend needs "
             f"transaction building this wallet does not do, and a half-built one loses coins."))
 
-    doc, phrase = await _open(db, user)
+    doc, phrase = await _open(db, user, wallet_id, portfolio)
     index = int(doc.get("addressIndex") or 0)
     try:
         units = W.to_base_units(req.amount, symbol)
@@ -303,10 +321,10 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db)):
 
     from app.services import exodus_chain_service as C
     try:
-        got = await S.send_evm(symbol=symbol, private_key=W.private_key_for(phrase, symbol, index),
+        got = await S.send_evm(symbol=symbol, private_key=W.private_key_for(phrase, symbol, index, account=portfolio),
                                to=req.to, units=units,
                                endpoint=C.endpoint_for(symbol, _settings()),
-                               from_address=W.address_for(phrase, symbol, index))
+                               from_address=W.address_for(phrase, symbol, index, account=portfolio))
     except S.SendUnsure as exc:
         # 202: taken, outcome unknown. NOT an error status — a client that sees 4xx/5xx offers a
         # retry, and a retry here is a second real payment.
@@ -320,8 +338,48 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db)):
 
 
 @router.post("/label")
-async def label(req: LabelReq, user: CurrentUser, db: Session = Depends(get_db)):
-    if not await _doc(db, user):
+async def label(req: LabelReq, user: CurrentUser, db: Session = Depends(get_db), wallet_id: WalletId = "default"):
+    if not await _doc(db, user, wallet_id):
         raise HTTPException(status_code=404, detail="no wallet on this account yet")
-    doc = await V.update(db, user, label=req.label.strip()[:80] or None)
+    doc = await (V.update(db, user, label=req.label.strip()[:80] or None) if wallet_id == "default"
+                 else Collections.update(db, user, wallet_id, label=req.label.strip()[:80]))
     return {"ok": True, "label": doc.get("label")}
+
+
+@router.get('/wallets')
+async def list_wallets(user: CurrentUser, db: Session = Depends(get_db)):
+    try:
+        return {'wallets': await Collections.list_wallets(db, user)}
+    except W.WalletError as error:
+        raise HTTPException(503, str(error)) from error
+
+
+@router.post('/wallets')
+async def create_wallet(req: CreateReq, user: CurrentUser, db: Session = Depends(get_db)):
+    _library()
+    phrase = (req.mnemonic or '').strip()
+    if phrase and not W.validate_mnemonic(phrase):
+        raise HTTPException(400, 'Invalid recovery phrase; check its words and order')
+    try:
+        return await Collections.create(db, user, phrase or W.new_mnemonic(), (req.label or '').strip()[:80])
+    except W.WalletError as error:
+        raise HTTPException(503, str(error)) from error
+
+
+class PortfolioReq(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+@router.post('/portfolios')
+async def create_portfolio(req: PortfolioReq, user: CurrentUser, db: Session = Depends(get_db),
+                           wallet_id: WalletId = 'default'):
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, 'Enter a portfolio name')
+    try:
+        doc = await Collections.update(db, user, wallet_id, new_portfolio=name)
+        return {'portfolios': Collections.portfolios(doc)}
+    except V.VaultUnavailable as error:
+        raise HTTPException(503, str(error)) from error
+    except W.WalletError as error:
+        raise HTTPException(400, str(error)) from error

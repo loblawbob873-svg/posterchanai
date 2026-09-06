@@ -173,7 +173,9 @@ def _seed_bytes(mnemonic: str) -> bytes:
     return Bip39SeedGenerator(mnemonic).Generate()
 
 
-def _account(seed: bytes, symbol: str, index: int = 0):
+def _account(seed: bytes, symbol: str, index: int = 0, account: int = 0):
+    if type(account) is not int or not 0 <= account < 16:
+        raise WalletError("invalid portfolio index")
     from bip_utils import Bip44, Bip44Changes, Bip44Coins
     spec = CHAINS.get(symbol)
     if not spec:
@@ -182,15 +184,15 @@ def _account(seed: bytes, symbol: str, index: int = 0):
     if coin is None:
         raise WalletError(f"this build of bip_utils does not know {symbol}")
     return (Bip44.FromSeed(seed, coin).Purpose().Coin()
-            .Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(int(index)))
+            .Account(account).Change(Bip44Changes.CHAIN_EXT).AddressIndex(int(index)))
 
 
-def address_for(mnemonic: str, symbol: str, index: int = 0) -> str:
+def address_for(mnemonic: str, symbol: str, index: int = 0, account: int = 0) -> str:
     """The receive address for one chain."""
-    return _account(_seed_bytes(mnemonic), symbol, index).PublicKey().ToAddress()
+    return _account(_seed_bytes(mnemonic), symbol, index, account).PublicKey().ToAddress()
 
 
-def addresses(mnemonic: str, index: int = 0) -> dict[str, str]:
+def addresses(mnemonic: str, index: int = 0, account: int = 0) -> dict[str, str]:
     """Every supported chain's receive address, derived once from one seed.
 
     The seed is expanded ONCE and reused across chains: `Bip39SeedGenerator` is PBKDF2 with 2048
@@ -201,16 +203,16 @@ def addresses(mnemonic: str, index: int = 0) -> dict[str, str]:
     out: dict[str, str] = {}
     for symbol in CHAINS:
         try:
-            out[symbol] = _account(seed, symbol, index).PublicKey().ToAddress()
+            out[symbol] = _account(seed, symbol, index, account).PublicKey().ToAddress()
         except Exception as exc:                              # noqa: BLE001
             # One chain the installed bip_utils cannot do must not cost the other eight.
             logger.warning("[exodus] %s address derivation failed: %s", symbol, exc)
     return out
 
 
-def private_key_for(mnemonic: str, symbol: str, index: int = 0) -> bytes:
+def private_key_for(mnemonic: str, symbol: str, index: int = 0, account: int = 0) -> bytes:
     """The signing key for one address. Callers must not log, return or persist this."""
-    return _account(_seed_bytes(mnemonic), symbol, index).PrivateKey().Raw().ToBytes()
+    return _account(_seed_bytes(mnemonic), symbol, index, account).PrivateKey().Raw().ToBytes()
 
 
 # ---------------------------------------------------------------- amounts
