@@ -27,7 +27,7 @@ EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".ts", ".mpg", ".
               ".mp3", ".flac", ".m4a", ".ogg", ".wav", ".opus"}
 SEGMENT = 6
 mutation_lock = asyncio.Lock()
-DEFAULT_LIMITS = {"server_kbps": 20000, "viewer_kbps": 6000, "max_streams": 8,
+DEFAULT_LIMITS = {"server_kbps": 20000, "viewer_kbps": 1600, "max_streams": 8,
                   "max_transcodes": 2, "cache_mb": 2048}
 _sessions = {}
 _active_transcodes = 0
@@ -109,15 +109,20 @@ async def paced_bytes(data, viewer, config):
     """
     for offset in range(0, len(data), 16384):
         chunk = data[offset:offset + 16384]
-        async with _rate_lock:
-            now = time.monotonic()
-            for key, due in list(_rate_due.items()):
-                if due < now - 120:
-                    _rate_due.pop(key, None)
-            start = max(now, _rate_due.get("server", now), _rate_due.get(viewer, now))
-            _rate_due["server"] = start + len(chunk) * 8 / (config["server_kbps"] * 1000)
-            _rate_due[viewer] = start + len(chunk) * 8 / (config["viewer_kbps"] * 1000)
-        await asyncio.sleep(max(0, start - time.monotonic()))
+        while True:
+            async with _rate_lock:
+                now = time.monotonic()
+                for key, due in list(_rate_due.items()):
+                    if due < now - 120:
+                        _rate_due.pop(key, None)
+                delay = max(0, _rate_due.get("server", now) - now, _rate_due.get(viewer, now) - now)
+                if delay <= 0:
+                    _rate_due["server"] = now + len(chunk) * 8 / (config["server_kbps"] * 1000)
+                    _rate_due[viewer] = now + len(chunk) * 8 / (config["viewer_kbps"] * 1000)
+                    break
+            # A viewer waiting on their own cap reserves no global bandwidth.
+            # Other users can keep streaming, and disconnects leave no queued debt.
+            await asyncio.sleep(delay)
         yield chunk
 
 
@@ -266,7 +271,7 @@ def encoder_candidates(mode):
 
 def command(path, item, profile, number, encoder, output):
     width, height, bitrate, audio = PROFILES[profile]
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-filter_threads", "2", "-threads", "2"]
     if encoder == "h264_vaapi" and item["video"]:
         cmd += ["-vaapi_device", os.environ.get("POSTERCHANAI_MEDIA_VAAPI_DEVICE", "/dev/dri/renderD128")]
     cmd += ["-ss", str(number * SEGMENT), "-protocol_whitelist", "file,pipe", "-i", str(path),
@@ -309,7 +314,9 @@ async def segment(library, item, profile, number, config):
 def transcode(library, item, profile, number, config=None):
     import fcntl
     path = source_path(library, item)
-    cache = Path(os.environ.get("POSTERCHANAI_MEDIA_CACHE", "/tmp/posterchan-media-center"))
+    cache = Path(os.environ.get("POSTERCHANAI_MEDIA_CACHE", "/tmp/posterchan-media-center")).resolve()
+    if Path("/tmp") not in cache.parents:
+        raise ValueError("Media Center transcode cache must be a directory under /tmp")
     cache.mkdir(mode=0o700, parents=True, exist_ok=True)
     key = hashlib.sha256(json.dumps([str(path), item, profile, number, library["encoder"], 1], sort_keys=True).encode()).hexdigest()
     target = cache / (key + ".ts")

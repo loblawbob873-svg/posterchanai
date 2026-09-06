@@ -9296,7 +9296,7 @@
       for(const lib of data.libraries){
         const row=document.createElement('div');row.className='mc-library';
         const open=document.createElement('button');open.className='btn btn-ghost mc-library-open';open.textContent=lib.name+' · '+(lib.count||0);row.append(open);
-        if(lib.shared_with){
+        if(lib.can_manage){
           const scan=document.createElement('button');scan.className='btn btn-ghost small';scan.textContent='Rescan';row.append(' ',scan);
           scan.onclick=()=>act(scan,async()=>{await api('/'+lib.id+'/scan','POST');await waitScan(lib.id);if(VIEW==='media-center')await renderMediaCenter();});
           const share=document.createElement('details');share.className='mc-share';

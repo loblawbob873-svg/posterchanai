@@ -227,6 +227,7 @@ app.include_router(effects_api.router)
 app.include_router(media_api.router)
 from app.routers import media_center
 app.include_router(media_center.router)
+app.add_event_handler("shutdown", media_center.close_proxy)
 app.include_router(news.router)
 app.include_router(websearch.router)  # /api/websearch/* (Web Search screen: SearXNG proxy, reader, AI overview)
 app.include_router(code_router.router)  # /api/code/* (PosterChan Code: jailed workspace tree + black/beautysh)

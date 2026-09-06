@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 _PLUMBING_KEYS = frozenset({
     "nostr_relay_port", "nostr_relay_enabled", "nostr_relay_bind", "nostr_relay_pg_dsn",
     "git_server_enabled", "git_server_bind", "git_server_port", "git_server_proxy_url",
-    "git_server_public_base",
+    "git_server_public_base", "media_center_server_url",
 })
 
 # Per-node RUNTIME-STATE settings (sync cursors / seen-sets) are advanced directly in SQLite by the

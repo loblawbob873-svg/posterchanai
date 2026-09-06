@@ -2,8 +2,11 @@
 
 Media Center scans server video and audio folders into a private library, sorted naturally
 by folder and filename (Season 2 before Season 10). Open **Media Center** in the sidebar or
-desktop launcher. A Nostr-signed-in administrator can add a folder; the owner can rescan
-and grant or revoke access using npubs or hex public keys. Shared users sign in on the
+desktop launcher. A Nostr-signed-in administrator can add a folder; the owning administrator
+can rescan and grant or revoke access using npubs or hex public keys. All configuration
+requires a current admin role, including for an owner whose admin role was removed.
+Authorized ordinary users can browse and play, but cannot scan, change sharing or limits,
+or see server folder paths and sharing controls. Shared users sign in on the
 hosting Posterchan instance. No social messages or invitations are sent automatically.
 
 The source files stay on disk. Catalog pages, library ownership, sharing lists and limits
@@ -11,6 +14,28 @@ are NIP-44-encrypted, operator-signed kind-30078 events under `pcai:media-center
 local relay. This namespace is excluded from public federation, disaster-recovery config
 fan-out, and private mirror fan-out. Other Nostr clients do not independently discover or
 decrypt this server-mediated library. Back up the local relay and operator storage key.
+
+## NAS proxy and persistence
+
+On the public node, open **Admin → Storage → Media Center Server URL** and set the
+NAS origin, for example `http://nas.lan:3051` (use the NAS's actual Posterchan port).
+Set the same **Node-to-node shared secret** on both servers. Media Center requires
+this secret and does not accept legacy header-only peer authentication.
+
+On `nas.lan`, leave **Media Center Server URL** empty. Run Posterchan with its local
+relay, FFmpeg, and access to the media mount. The public node streams responses through
+without buffering complete files, while the NAS performs scans, stores catalog events,
+checks sharing permissions, and enforces one set of bandwidth/concurrency limits across
+proxied and direct viewers. A loop or unavailable NAS produces an error; there is no
+fallback to a different node's local library.
+
+`media_center_server_url` persists in the node's local settings file and loads at
+startup. It is included in the admin settings schema so saving, clearing and reopening
+the field work. It never hydrates onto a different node from relay settings. Library
+folders, encoder choice, sharing lists, catalog pages and bandwidth/resource limits
+persist as encrypted events on the NAS and read back after a cold restart. Environment
+variables for allowed roots, the cache directory and VA-API device belong in the NAS's
+persistent service configuration.
 
 ## Server setup
 
@@ -21,13 +46,16 @@ set this environment variable in the service configuration and restart it:
 
 ```ini
 POSTERCHANAI_MEDIA_ROOTS=/srv/media:/mnt/movies
-POSTERCHANAI_MEDIA_CACHE=/var/cache/posterchanai/media-center
+POSTERCHANAI_MEDIA_CACHE=/tmp/posterchan-media-center
 POSTERCHANAI_MEDIA_VAAPI_DEVICE=/dev/dri/renderD128
 ```
 
 Only folders inside allowed roots can be added, and symbolic-link media entries are
 excluded. The cache directory must be writable by the service; it defaults to
-`/tmp/posterchan-media-center` with owner-only directory permissions. Cache segments are
+`/tmp/posterchan-media-center` with owner-only directory permissions. Overrides must also
+remain under `/tmp`. To avoid SSD writes, mount `/tmp` as tmpfs on the NAS; the directory
+name alone does not imply RAM-backed storage. Keep the cache budget below the available
+tmpfs capacity, leaving room for concurrent temporary segments. Cache segments are
 ordinary playable bytes protected by the filesystem and API access checks, not encrypted
 media blobs. Source media is not encrypted or uploaded by scanning.
 
@@ -44,7 +72,7 @@ Administrators open **Bandwidth and resource limits** inside Media Center:
 | Setting | Default | Meaning |
 | --- | ---: | --- |
 | Total bandwidth | 20,000 kbps | Combined video response-byte budget for all viewers |
-| Bandwidth per user | 6,000 kbps | Combined budget for one Nostr identity, including multiple tabs |
+| Bandwidth per user | 1,600 kbps (200 KB/s) | Combined budget for one Nostr identity, including multiple tabs |
 | Simultaneous streams | 8 | Maximum active playback sessions; idle slots expire after 90 seconds |
 | Concurrent transcodes | 2 | Maximum simultaneous segment-generation jobs |
 | Segment cache | 2,048 MB | Disk budget, with least-recently-used segment eviction |
@@ -56,6 +84,18 @@ The per-user limit must not exceed the total limit. These are media payload rate
 NIC-level limits on all Posterchan traffic or TLS overhead. Pacing uses 16 KiB chunks,
 so a small initial burst is possible. A lower setting takes effect on subsequent segment
 requests; already-running responses retain their current rate.
+
+The default 200 KB/s per viewer permits the 360p and 480p profiles. Raise this limit
+to enable 720p or 1080p. The independent default server cap remains 20 Mbps. Saved
+custom limits take precedence over defaults after restart.
+
+The library uses Webxdc's responsive cover-card grid, with two columns on phones,
+larger controls on large screens, search, keyboard focus indicators, and a Full screen
+button. Press F while focused in the player to toggle full screen; native video controls
+remain available. Local artwork can be a matching media basename with `.jpg`, `.png`
+or `.webp`, or `poster.jpg`, `cover.jpg`, `folder.jpg`, or `cover.png` in its folder.
+Only visible covers are fetched; the server strips and downsizes them and caches up to
+128 thumbnails. There is no poster scraping or background video-frame extraction.
 
 The HLS player automatically selects among 360p, 480p, 720p and 1080p, and offers manual
 quality selection. Profiles exceeding the configured user limit are omitted and rejected
@@ -104,9 +144,19 @@ The Cloudflare rule must be configured in the zone; source changes do not create
 .venv/bin/pytest -q tests/test_media_center.py
 node --check static/js/client/app.js
 node --check static/js/client/sw.js
+.venv/bin/python scripts/check_media_center.py
 ```
 
 The tests use an isolated in-memory document store and temporary generated media. They
 check sharing/revocation, no federation, path confinement, bandwidth filtering and actual
 byte pacing, stream admission, failure-safe scans, and real FFmpeg segments/cache reuse.
-Hardware playback still needs validation on each target GPU and driver installation.
+The browser check runs separate loopback public-proxy and NAS servers, real HLS playback,
+phone/TV layouts, cover loading, seeking, full screen, two concurrent Nostr identities,
+revocation and stream-slot release. It writes screenshots to `/tmp/pc-media-check`.
+
+Validation on 2026-09-05: 52 focused API/privacy/admin-schema tests passed. The browser
+check passed at the 200 KB/s per-viewer default. One-second tests of the actual Media
+Center FFmpeg command on `nas.lan` passed with CPU libx264, NVIDIA NVENC and AMD VA-API.
+AMF did not initialize on that host; AMD mode uses the working VA-API path first and
+retains CPU fallback. Automatic mode selects NVIDIA first. The NAS's `/tmp` was verified
+as a 32 GiB tmpfs. Retest hardware paths after driver or FFmpeg changes.

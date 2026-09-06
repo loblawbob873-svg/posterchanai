@@ -610,6 +610,7 @@ When asked to write or modify code or files:
             "bt_enabled": os.environ.get("POSTERCHANAI_BT_ENABLED", "true"),
             "bt_server_url": "",              # Remote torrent server URL (empty = local)
             "storage_server_url": "",         # Remote storage server URL (empty = local)
+            "media_center_server_url": "",    # Per-node Media Center NAS proxy (empty = local)
             "file_cache_enabled": "true",     # Enable file listing cache
             "file_cache_ttl": "300",          # File cache TTL in seconds (5 minutes)
             "file_cache_max_size": "1000",    # Maximum cached directory listings

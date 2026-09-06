@@ -8,31 +8,130 @@ import math
 import secrets
 import time
 from typing import Literal
-from urllib.parse import urlencode
+from types import SimpleNamespace
+from urllib.parse import urlencode, urlsplit
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
-from app.auth import get_admin_user, get_current_user
+from app.auth import get_current_user_optional
 from app.services import media_center as media
+from app.services import settings_store
+from app.utils import lb_auth
 
 PRIVATE = {"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"}
+_proxy_client = None
+
+
+async def close_proxy():
+    global _proxy_client
+    if _proxy_client:
+        await _proxy_client.aclose()
+        _proxy_client = None
+
+
+async def media_user_optional(request: Request, user=Depends(get_current_user_optional)):
+    assertion = request.headers.get("X-PC-Media-Viewer")
+    if assertion is not None:
+        # Media identity delegation never uses lb_auth's legacy header-only mode.
+        if not lb_auth.shared_secret() or not lb_auth.is_internal(request):
+            raise HTTPException(403, "Untrusted media proxy")
+        try:
+            key = media.normalize_pubkey(assertion)
+        except ValueError as error:
+            raise HTTPException(403, "Invalid media proxy identity") from error
+        return SimpleNamespace(nostr_npub=key, is_admin=request.headers.get("X-PC-Media-Admin") == "true")
+    return user
+
+
+async def get_media_user(user=Depends(media_user_optional)):
+    if user is None:
+        raise HTTPException(401, "Sign in to use Media Center")
+    return user
+
+
+async def get_media_admin(user=Depends(get_media_user)):
+    if not user.is_admin:
+        raise HTTPException(403, "Administrator access required")
+    return user
+
+
+class ProxiedResponse(Exception):
+    def __init__(self, response):
+        self.response = response
+
+
+async def proxy_request(request: Request, user=Depends(media_user_optional)):
+    global _proxy_client
+    base = (settings_store.get("media_center_server_url", "") or "").strip().rstrip("/")
+    if not base:
+        return
+    if request.headers.get("X-PC-Media-Hop"):
+        raise HTTPException(508, "Media Center proxy loop; leave the backend URL empty on the NAS")
+    parsed = urlsplit(base)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.query or parsed.fragment or parsed.path:
+        raise HTTPException(503, "Media Center Server URL must be an HTTP(S) origin")
+    if not lb_auth.shared_secret():
+        raise HTTPException(503, "Set the node-to-node shared secret on both Media Center nodes")
+    headers = lb_auth.headers({"X-PC-Media-Hop": "1", "Accept-Encoding": "identity"})
+    if "/hls/" not in request.url.path:
+        if user is None:
+            raise HTTPException(401, "Sign in to use Media Center")
+        pubkey = media.identity(user)
+        if not pubkey:
+            raise HTTPException(403, "Sign in with Nostr to use remote Media Center")
+        headers.update({"X-PC-Media-Viewer": pubkey, "X-PC-Media-Admin": "true" if user.is_admin else "false"})
+    if request.headers.get("content-type"):
+        headers["Content-Type"] = request.headers["content-type"]
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 65536:
+            raise HTTPException(413, "Media Center request too large")
+    if _proxy_client is None:
+        _proxy_client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=8, pool=10),
+                                         limits=httpx.Limits(max_connections=200, max_keepalive_connections=20),
+                                         follow_redirects=False, trust_env=False)
+    url = base + request.url.path
+    if request.url.query:
+        url += "?" + request.url.query
+    try:
+        upstream = await _proxy_client.send(_proxy_client.build_request(request.method, url, headers=headers, content=bytes(body)), stream=True)
+    except httpx.HTTPError as error:
+        raise HTTPException(502, "Media Center NAS is unavailable") from error
+    async def chunks():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+    # Relative playlist/segment URLs keep every byte on the public proxy path.
+    response_headers = {key: value for key, value in upstream.headers.items()
+                        if key.lower() in ("content-type", "content-length", "retry-after")}
+    raise ProxiedResponse(StreamingResponse(chunks(), status_code=upstream.status_code, headers=response_headers))
 
 
 class PrivateRoute(APIRoute):
     def get_route_handler(self):
         handler = super().get_route_handler()
         async def private(request: Request):
-            response = await handler(request)
+            try:
+                response = await handler(request)
+            except ProxiedResponse as proxied:
+                response = proxied.response
+            except HTTPException as error:
+                response = JSONResponse({"detail": error.detail}, status_code=error.status_code, headers=error.headers)
             response.headers.update(PRIVATE)
             response.headers["X-Accel-Buffering"] = "no"
             return response
         return private
 
 
-router = APIRouter(prefix="/api/media-center", tags=["media-center"], route_class=PrivateRoute)
+router = APIRouter(prefix="/api/media-center", tags=["media-center"], route_class=PrivateRoute,
+                   dependencies=[Depends(proxy_request)])
 _scans = {}
 
 
@@ -51,7 +150,7 @@ class StopSession(BaseModel):
 
 
 @router.post("/sessions/stop")
-async def stop_session(body: StopSession, user=Depends(get_current_user)):
+async def stop_session(body: StopSession, user=Depends(get_media_user)):
     session = media._sessions.get(body.ticket)
     if session and session[0] == media.identity(user):
         media._sessions.pop(body.ticket, None)
@@ -60,19 +159,19 @@ async def stop_session(body: StopSession, user=Depends(get_current_user)):
 
 class Limits(BaseModel):
     server_kbps: int = Field(default=20000, ge=650, le=1000000)
-    viewer_kbps: int = Field(default=6000, ge=650, le=1000000)
+    viewer_kbps: int = Field(default=1600, ge=650, le=1000000)
     max_streams: int = Field(default=8, ge=1, le=100)
     max_transcodes: int = Field(default=2, ge=1, le=16)
     cache_mb: int = Field(default=2048, ge=32, le=1048576)
 
 
 @router.get("/limits")
-async def get_limits(user=Depends(get_admin_user)):
+async def get_limits(user=Depends(get_media_admin)):
     return await media.limits()
 
 
 @router.put("/limits")
-async def set_limits(body: Limits, user=Depends(get_admin_user)):
+async def set_limits(body: Limits, user=Depends(get_media_admin)):
     if body.viewer_kbps > body.server_kbps:
         raise HTTPException(400, "Per-user bandwidth cannot exceed the server limit")
     async with media.mutation_lock:
@@ -89,10 +188,11 @@ async def library_for(library_id, pubkey, owner=False):
     return library
 
 
-def public_library(library, pubkey):
+def public_library(library, pubkey, *, admin=False):
     fields = ("id", "name", "owner", "count", "scanned_at", "skipped", "encoder")
     result = {key: library.get(key) for key in fields}
-    if library["owner"] == pubkey:
+    result["can_manage"] = bool(admin and library["owner"] == pubkey)
+    if result["can_manage"]:
         result.update(folder=library["folder"], shared_with=library["shared_with"])
     return result
 
@@ -143,15 +243,15 @@ def queue_scan(library, background):
 
 
 @router.get("")
-async def list_libraries(user=Depends(get_current_user)):
+async def list_libraries(user=Depends(get_media_user)):
     pubkey = media.identity(user)
     config = await media.limits()
-    return {"libraries": [public_library(lib, pubkey) for lib in await media.libraries() if media.can_read(lib, pubkey)],
+    return {"libraries": [public_library(lib, pubkey, admin=user.is_admin) for lib in await media.libraries() if media.can_read(lib, pubkey)],
             "can_create": bool(user.is_admin and pubkey), "profiles": media.allowed_profiles(config)}
 
 
 @router.post("", status_code=201)
-async def create_library(body: CreateLibrary, background: BackgroundTasks, user=Depends(get_admin_user)):
+async def create_library(body: CreateLibrary, background: BackgroundTasks, user=Depends(get_media_admin)):
     pubkey = media.identity(user)
     if not pubkey:
         raise HTTPException(400, "Sign in with Nostr to own a library")
@@ -170,20 +270,20 @@ async def create_library(body: CreateLibrary, background: BackgroundTasks, user=
             await media.write("library:" + library["id"], library)
             await media.write("index", {"ids": index["ids"] + [library["id"]]})
             queue_scan(library, background)
-        return public_library(library, pubkey)
+        return public_library(library, pubkey, admin=True)
     except (ValueError, OSError) as error:
         raise HTTPException(400, str(error)) from error
 
 
 @router.get("/{library_id}/items")
-async def items(library_id: str, user=Depends(get_current_user)):
+async def items(library_id: str, user=Depends(get_media_user)):
     library = await library_for(library_id, media.identity(user))
     return {"items": [{k: v for k, v in item.items() if k not in ("path", "mtime_ns")}
                       for item in await media.catalog(library)]}
 
 
 @router.get("/{library_id}/art/{item_id}")
-async def artwork(library_id: str, item_id: str, user=Depends(get_current_user)):
+async def artwork(library_id: str, item_id: str, user=Depends(get_media_user)):
     library = await library_for(library_id, media.identity(user))
     item = next((item for item in await media.catalog(library) if item["id"] == item_id), None)
     if not item:
@@ -201,7 +301,7 @@ async def artwork(library_id: str, item_id: str, user=Depends(get_current_user))
 
 
 @router.post("/{library_id}/scan")
-async def rescan(library_id: str, background: BackgroundTasks, user=Depends(get_current_user)):
+async def rescan(library_id: str, background: BackgroundTasks, user=Depends(get_media_admin)):
     async with media.mutation_lock:
         library = await library_for(library_id, media.identity(user), owner=True)
         queue_scan(library, background)
@@ -209,13 +309,13 @@ async def rescan(library_id: str, background: BackgroundTasks, user=Depends(get_
 
 
 @router.get("/{library_id}/scan")
-async def scan_status(library_id: str, user=Depends(get_current_user)):
+async def scan_status(library_id: str, user=Depends(get_media_admin)):
     await library_for(library_id, media.identity(user), owner=True)
     return _scans.get(library_id, {"state": "idle"})
 
 
 @router.put("/{library_id}/sharing")
-async def share(library_id: str, body: Sharing, user=Depends(get_current_user)):
+async def share(library_id: str, body: Sharing, user=Depends(get_media_admin)):
     async with media.mutation_lock:
         library = await library_for(library_id, media.identity(user), owner=True)
         try:
@@ -223,7 +323,7 @@ async def share(library_id: str, body: Sharing, user=Depends(get_current_user)):
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         await media.write("library:" + library_id, library)
-        return public_library(library, media.identity(user))
+        return public_library(library, media.identity(user), admin=True)
 
 
 def sign_ticket(library, item_id, pubkey, expires):
@@ -232,7 +332,7 @@ def sign_ticket(library, item_id, pubkey, expires):
 
 
 @router.post("/{library_id}/play/{item_id}")
-async def playback(library_id: str, item_id: str, user=Depends(get_current_user)):
+async def playback(library_id: str, item_id: str, user=Depends(get_media_user)):
     pubkey = media.identity(user)
     async with media.mutation_lock:
         library = await library_for(library_id, pubkey)

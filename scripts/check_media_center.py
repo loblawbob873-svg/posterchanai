@@ -9,6 +9,7 @@ and browser rendering use the real implementation.
 import asyncio
 import base64
 import copy
+from contextvars import ContextVar
 import json
 import os
 import shutil
@@ -29,7 +30,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from app.auth import get_admin_user, get_current_user
 from app.routers import media_center as routes
 from app.services import media_center as media
 
@@ -94,14 +94,34 @@ async def main():
         async def write(key, value):
             documents[key] = copy.deepcopy(value)
         media.read, media.write = read, write
+        # Two isolated nodes with different local proxy topology. ContextVar keeps
+        # their settings separate while both test servers run in this process.
+        backend = ContextVar("media_backend", default="")
+        routes.settings_store.get = lambda key, default=None: backend.get() if key == "media_center_server_url" else default
+        routes.lb_auth.shared_secret = lambda: "isolated-media-test-peer-secret"
+        nas = FastAPI()
+        nas.include_router(routes.router)
+        @nas.middleware("http")
+        async def nas_config(request, next_handler):
+            token = backend.set("")
+            try:
+                return await next_handler(request)
+            finally:
+                backend.reset(token)
         app = FastAPI()
         app.include_router(routes.router)
+        @app.middleware("http")
+        async def edge_config(request, next_handler):
+            token = backend.set("http://127.0.0.1:19440")
+            try:
+                return await next_handler(request)
+            finally:
+                backend.reset(token)
         app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
         def user(request: Request):
             key = request.headers.get("X-Test-Viewer", OWNER)
             return SimpleNamespace(nostr_npub=key, is_admin=key == OWNER)
-        app.dependency_overrides[get_current_user] = user
-        app.dependency_overrides[get_admin_user] = user
+        app.dependency_overrides[routes.media_user_optional] = user
         javascript = (ROOT / "static/js/client/app.js").read_text()
         functions = javascript[javascript.index("  let _mediaCenterSession="):javascript.index("  // ---------- torrents (NIP-35")]
         bootstrap = """
@@ -119,6 +139,8 @@ async def main():
                     "<main id='feed'></main><script src='/static/vendor/hls/hls.min.js'></script><script>" + bootstrap + functions +
                     "renderMediaCenter().then(async()=>{await document.querySelector('.mc-library-open').onclick();document.title='READY';});</script>")
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=19438, log_level="error"))
+        nas_server = uvicorn.Server(uvicorn.Config(nas, host="127.0.0.1", port=19440, log_level="error"))
+        nas_task = asyncio.create_task(nas_server.serve())
         server_task = asyncio.create_task(server.serve())
         process = subprocess.Popen([chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
                                     "--disable-dev-shm-usage", "--autoplay-policy=no-user-gesture-required",
@@ -131,7 +153,7 @@ async def main():
                     try:
                         pages = (await client.get("http://127.0.0.1:19439/json/list")).json()
                         browser_page = next(p for p in pages if p["type"] == "page")
-                        if server.started:
+                        if server.started and nas_server.started:
                             break
                     except Exception:
                         pass
@@ -189,7 +211,10 @@ async def main():
             process.terminate()
             process.wait(timeout=10)
             server.should_exit = True
+            nas_server.should_exit = True
             await server_task
+            await nas_task
+            await routes.close_proxy()
 
 
 if __name__ == "__main__":

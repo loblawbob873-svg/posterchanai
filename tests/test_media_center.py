@@ -10,7 +10,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.auth import get_admin_user, get_current_user
 from app.routers import media_center as routes
 from app.services import media_center as media
 
@@ -33,14 +32,14 @@ def api(monkeypatch, tmp_path):
     monkeypatch.setattr(media, "mutation_lock", asyncio.Lock())
     monkeypatch.setattr(media, "_job_condition", asyncio.Condition())
     routes._scans.clear()
+    monkeypatch.setattr(routes.settings_store, "get", lambda *args: "")
     media._sessions.clear()
     media._catalog_cache.clear()
     media._rate_due.clear()
     media._failed_encoders.clear()
     app = FastAPI()
     app.include_router(routes.router)
-    app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_admin_user] = lambda: user
+    app.dependency_overrides[routes.media_user_optional] = lambda: user
     with TestClient(app) as client:
         yield client, documents, user, tmp_path
 
@@ -58,6 +57,7 @@ def test_shared_user_playback_and_immediate_revocation(api):
     client, docs, user, folder = api
     seed(docs, folder)
     user.nostr_npub = VIEWER
+    user.is_admin = False
     result = client.get("/api/media-center")
     assert result.headers["cache-control"] == "private, no-store"
     assert "folder" not in result.json()["libraries"][0]
@@ -70,6 +70,27 @@ def test_shared_user_playback_and_immediate_revocation(api):
     docs["library:abc"]["shared_with"] = []
     assert client.get(url).status_code == 404
     assert client.get("/api/media-center").json()["libraries"] == []
+
+
+@pytest.mark.parametrize("pubkey", [OWNER, VIEWER])
+def test_non_admins_are_read_only_even_if_they_own_the_library(api, pubkey):
+    client, docs, user, folder = api
+    seed(docs, folder)
+    user.nostr_npub, user.is_admin = pubkey, False
+    listing = client.get("/api/media-center").json()
+    assert listing["can_create"] is False
+    library = listing["libraries"][0]
+    assert library["can_manage"] is False
+    assert "folder" not in library and "shared_with" not in library
+    assert client.get("/api/media-center/abc/items").status_code == 200
+    assert client.post("/api/media-center/abc/play/movie").status_code == 200
+    assert client.post("/api/media-center", json={"name": "More", "folder": str(folder)}).status_code == 403
+    assert client.get("/api/media-center/limits").status_code == 403
+    assert client.put("/api/media-center/limits", json=media.DEFAULT_LIMITS).status_code == 403
+    assert client.post("/api/media-center/abc/scan").status_code == 403
+    assert client.get("/api/media-center/abc/scan").status_code == 403
+    assert client.put("/api/media-center/abc/sharing", json={"shared_with": []}).status_code == 403
+    assert docs["library:abc"]["shared_with"] == [VIEWER]
 
 
 def test_bandwidth_caps_filter_and_reject_high_profiles(api):
@@ -88,6 +109,13 @@ def test_bandwidth_caps_filter_and_reject_high_profiles(api):
     assert client.put("/api/media-center/limits", json={**config, "viewer_kbps": 50000}).status_code == 400
 
 
+def test_default_is_200_kilobytes_per_second(api):
+    client, docs, user, folder = api
+    assert client.get("/api/media-center/limits").json()["viewer_kbps"] * 1000 / 8 == 200000
+    assert client.get("/api/media-center").json()["profiles"] == ["360p", "480p"]
+    assert routes.Limits().viewer_kbps == media.DEFAULT_LIMITS["viewer_kbps"]
+
+
 def test_stream_slots_and_expiry(api, monkeypatch):
     client, docs, user, folder = api
     seed(docs, folder)
@@ -98,6 +126,90 @@ def test_stream_slots_and_expiry(api, monkeypatch):
     for key, (viewer, seen) in list(media._sessions.items()):
         media._sessions[key] = (viewer, seen - 91)
     assert client.post("/api/media-center/abc/play/movie").status_code == 200
+
+
+def test_stopping_releases_slot_for_another_viewer(api):
+    from urllib.parse import parse_qs, urlsplit
+    client, docs, user, folder = api
+    seed(docs, folder)
+    docs["limits"] = {**media.DEFAULT_LIMITS, "max_streams": 1}
+    url = client.post("/api/media-center/abc/play/movie").json()["url"]
+    ticket = parse_qs(urlsplit(url).query)["ticket"][0]
+    user.nostr_npub = VIEWER
+    client.post("/api/media-center/sessions/stop", json={"ticket": ticket})
+    assert client.post("/api/media-center/abc/play/movie").status_code == 429
+    user.nostr_npub = OWNER
+    client.post("/api/media-center/sessions/stop", json={"ticket": ticket})
+    user.nostr_npub = VIEWER
+    assert client.post("/api/media-center/abc/play/movie").status_code == 200
+
+
+def test_proxy_identity_requires_secret_and_keeps_acl(api, monkeypatch):
+    from app.auth import get_current_user_optional
+    from app.utils import lb_auth
+    client, docs, user, folder = api
+    seed(docs, folder)
+    client.app.dependency_overrides.pop(routes.media_user_optional)
+    client.app.dependency_overrides[get_current_user_optional] = lambda: None
+    headers = {"X-PC-Media-Viewer": VIEWER, "X-PC-Media-Admin": "false", lb_auth.FLAG_HEADER_NAME: "true"}
+    assert client.get("/api/media-center", headers=headers).status_code == 403
+    monkeypatch.setattr(lb_auth, "shared_secret", lambda: "test-secret")
+    assert client.get("/api/media-center", headers=headers).status_code == 403
+    headers[lb_auth.AUTH_HEADER_NAME] = "test-secret"
+    assert len(client.get("/api/media-center", headers=headers).json()["libraries"]) == 1
+    assert client.get("/api/media-center/limits", headers=headers).status_code == 403
+    docs["library:abc"]["shared_with"] = []
+    assert client.get("/api/media-center/abc/items", headers=headers).status_code == 404
+
+
+def test_proxy_failure_never_falls_back_to_local_library(api, monkeypatch):
+    import httpx
+    client, docs, user, folder = api
+    seed(docs, folder)
+    monkeypatch.setattr(routes.settings_store, "get", lambda *args: "http://nas.lan:3051")
+    monkeypatch.setattr(routes.lb_auth, "shared_secret", lambda: "test-secret")
+    class Unreachable:
+        def build_request(self, *args, **kwargs):
+            return httpx.Request(*args, **kwargs)
+        async def send(self, request, **kwargs):
+            assert request.headers["X-PC-Media-Viewer"] == OWNER
+            assert "authorization" not in request.headers and "cookie" not in request.headers
+            raise httpx.ConnectError("offline")
+    monkeypatch.setattr(routes, "_proxy_client", Unreachable())
+    response = client.get("/api/media-center")
+    assert response.status_code == 502 and "libraries" not in response.json()
+    assert response.headers["cache-control"] == "private, no-store"
+    assert client.get("/api/media-center", headers={"X-PC-Media-Hop": "1"}).status_code == 508
+
+
+def test_proxy_topology_persists_on_its_node(tmp_path, monkeypatch):
+    from app.services import settings_store as settings
+    monkeypatch.setattr(settings, "_LOCAL_PATH", str(tmp_path / "local_settings.json"))
+    monkeypatch.setattr(settings, "_CACHE", {})
+    monkeypatch.setattr(settings, "_LOCAL_DIRTY", set())
+    monkeypatch.setattr(settings, "_LOCAL_KEYS", set())
+    monkeypatch.setattr(settings, "_loaded", False)
+    settings.put("media_center_server_url", "http://nas.lan:3051")
+    assert json.loads((tmp_path / "local_settings.json").read_text())["media_center_server_url"] == "http://nas.lan:3051"
+    settings._CACHE.clear()
+    settings._loaded = False
+    settings.load_local()
+    assert settings.get("media_center_server_url") == "http://nas.lan:3051"
+    assert settings._is_local_only("media_center_server_url")
+
+
+def test_cold_reads_restore_library_sharing_encoder_and_limits(api):
+    client, docs, user, folder = api
+    seed(docs, folder)["encoder"] = "amd"
+    config = {**media.DEFAULT_LIMITS, "viewer_kbps": 650, "max_streams": 3}
+    assert client.put("/api/media-center/limits", json=config).status_code == 200
+    media._catalog_cache.clear()
+    media._sessions.clear()
+    assert client.get("/api/media-center/limits").json() == config
+    user.nostr_npub = VIEWER
+    library = client.get("/api/media-center").json()["libraries"][0]
+    assert library["encoder"] == "amd"
+    assert client.get("/api/media-center/abc/items").json()["items"][0]["id"] == "movie"
 
 
 def test_failed_scan_preserves_catalog(api, monkeypatch):
@@ -180,6 +292,13 @@ def test_real_ffmpeg_segments_cache_and_gpu_fallback(tmp_path, monkeypatch):
     assert decoded.returncode == 0, decoded.stderr.decode()
 
 
+def test_transcodes_cannot_be_redirected_outside_tmp(tmp_path, monkeypatch):
+    monkeypatch.setattr(media, "source_path", lambda *args: tmp_path / "media.mp4")
+    monkeypatch.setenv("POSTERCHANAI_MEDIA_CACHE", "/var/cache/media-center")
+    with pytest.raises(ValueError, match="under /tmp"):
+        media.transcode({"encoder": "cpu"}, {}, "360p", 0)
+
+
 def test_shared_work_and_transcode_concurrency(monkeypatch):
     import threading
     import time
@@ -239,4 +358,21 @@ def test_actual_byte_pacing_shared_between_users(monkeypatch):
         elapsed = asyncio.get_running_loop().time() - start
         assert len(first) == len(second) == 65536
         assert elapsed >= 1.35  # 8 chunks at 650 kbps, allowing one initial chunk burst.
+    asyncio.run(exercise())
+
+
+def test_slow_viewer_does_not_reserve_other_users_bandwidth(monkeypatch):
+    async def exercise():
+        media._rate_due.clear()
+        monkeypatch.setattr(media, "_rate_lock", asyncio.Lock())
+        config = {**media.DEFAULT_LIMITS, "server_kbps": 20000, "viewer_kbps": 650}
+        async def consume(viewer):
+            return [chunk async for chunk in media.paced_bytes(b"x" * 32768, viewer, config)]
+        first = asyncio.create_task(consume(OWNER))
+        await asyncio.sleep(.03)
+        start = asyncio.get_running_loop().time()
+        stream = media.paced_bytes(b"y" * 16384, VIEWER, config)
+        assert await anext(stream) == b"y" * 16384
+        assert asyncio.get_running_loop().time() - start < .1
+        await first
     asyncio.run(exercise())

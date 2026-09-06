@@ -20,6 +20,11 @@
             <small><b>Set the same value on every node.</b> Nodes forward work to each other (image/music/video/voice generation, torrents, remote storage) with no user session, and used to prove they were a node by setting a header any caller can set — so anyone could use those endpoints, and read other users' files, without an account. With a secret set, peers must prove it. <b>Leave empty and the old header-only trust still applies</b>, so filling this in on every node is what actually closes it.</small>
         </div>
         <div class="form-group">
+            <label for="media_center_server_url">Media Center Server URL</label>
+            <input type="url" id="media_center_server_url" name="media_center_server_url" placeholder="http://nas.lan:3051">
+            <small>Proxy Media Center scanning, libraries, artwork and streams to this server. Leave empty on the NAS to serve its local media. Set the same node-to-node shared secret on both servers. This address is saved only on this node; libraries and playback limits live on the NAS. Public streaming stays under <code>/api/media-center/</code>.</small>
+        </div>
+        <div class="form-group">
             <label for="ytdl_cookies_path">yt-dlp cookies path (optional)</label>
             <input type="text" id="ytdl_cookies_path" name="ytdl_cookies_path" placeholder="/path/to/cookies.txt">
             <small>Path to a Netscape-format cookies file exported from your browser. Use if YouTube returns 403 Forbidden (e.g. export with &quot;Get cookies.txt&quot; extension). Leave empty to try without cookies.</small>
