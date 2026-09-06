@@ -26,6 +26,11 @@ than a JSON file upload.
 Native sends are implemented for ETH, MATIC, BNB, AVAX and independent XMR. Sending
 BTC, LTC, DOGE, BCH, SOL and XRP remains unavailable; those buttons are not shown.
 This is not full Exodus asset or token support. No real funds were sent during testing.
+Bitcoin discovery scans receive and change branches. LTC, DOGE and BCH currently read
+only the selected derived address; balances held at other historical receive/change
+addresses are not discovered. Their displayed address balance is not proof that an
+imported wallet has no additional funds. Complete imported-portfolio discovery remains
+unfinished for those assets.
 
 ## Transfer review
 
