@@ -9193,6 +9193,7 @@
     catch(e){ toast('publish failed: '+e.message); }
   }
 
+  let _mediaCenterFolderCleanup=()=>{};
   let _mediaCenterPollTimer=null;
   let _mediaCenterSession=null, _mediaCenterPlayGeneration=0, _mediaCenterHls=null, _mediaCenterArtObserver=null, _mediaCenterArtUrls=[], _mediaCenterArtGeneration=0;
   async function _mediaCenterFetch(url, opts={}){
@@ -9220,7 +9221,7 @@
   function stopMediaCenter(clearArt=true){
     _mediaCenterPlayGeneration++;
     const session=_mediaCenterSession;_mediaCenterSession=null;
-    if(clearArt){clearTimeout(_mediaCenterPollTimer);_mediaCenterPollTimer=null;clearMediaCenterArt();}
+    if(clearArt){_mediaCenterFolderCleanup();clearTimeout(_mediaCenterPollTimer);_mediaCenterPollTimer=null;clearMediaCenterArt();}
     if(_mediaCenterHls){ _mediaCenterHls.destroy(); _mediaCenterHls=null; }
     const video=document.getElementById('mc-player');
     if(video){ video.pause(); video.removeAttribute('src'); video.load(); }
@@ -9322,12 +9323,37 @@
       }
       for(const option of Array.from($('#mc-quality').options)){if(option.value!=='auto'&&!data.profiles.includes(option.value))option.remove();}
       const libraryRows=new Map();
+      let folderArtObserver=null, folderArtQueue=[], folderArtActive=0;
+      const folderArtUrls=[];
+      const clearFolderArt=()=>{folderArtObserver?.disconnect();folderArtObserver=null;folderArtQueue=[];for(const url of folderArtUrls)URL.revokeObjectURL(url);folderArtUrls.length=0;};
+      _mediaCenterFolderCleanup=clearFolderArt;
+      const fillFolderArt=(card,ids)=>{
+        if(card.dataset.artReady||!ids?.length)return;
+        card.dataset.artReady='true';card._artIds=ids.slice(0,3);folderArtObserver?.observe(card);
+      };
+      const drainFolderArt=()=>{
+        while(folderArtActive<2&&folderArtQueue.length){
+          const {card,id}=folderArtQueue.shift();if(!card.isConnected||VIEW!=='media-center')continue;
+          folderArtActive++;
+          _mediaCenterFetch('/api/media-center/'+card.dataset.library+'/art/'+id).then(r=>r.ok?r.blob():null).then(blob=>{
+            if(!blob||!card.isConnected||VIEW!=='media-center')return;
+            const url=URL.createObjectURL(blob);folderArtUrls.push(url);
+            const img=document.createElement('img');img.alt='';img.decoding='async';img.src=url;
+            card.querySelector('.mc-directory-art').append(img);card.classList.add('has-art');
+          }).catch(()=>{}).finally(()=>{folderArtActive--;drainFolderArt();});
+        }
+      };
       let currentFolder='.', folderLibrary=null, folderRequest=0;
       const browseFolder=async(lib,path)=>{
         const request=++folderRequest;
         const result=await api('/'+lib.id+'/folders?path='+encodeURIComponent(path));
         if(request!==folderRequest||VIEW!=='media-center')return;
         currentFolder=result.path;folderLibrary=lib.id;
+        clearFolderArt();
+        folderArtObserver=new IntersectionObserver(entries=>{
+          for(const entry of entries)if(entry.isIntersecting){folderArtObserver.unobserve(entry.target);for(const id of entry.target._artIds||[])folderArtQueue.push({card:entry.target,id});}
+          drainFolderArt();
+        },{rootMargin:'150px'});
         const nav=$('#mc-folder-nav');nav.replaceChildren();
         const trail=document.createElement('div');trail.className='mc-folder-trail';nav.append(trail);
         const crumb=(label,path)=>{const button=document.createElement('button');button.type='button';button.className='btn btn-ghost';button.textContent=label;button.onclick=()=>act(button,()=>browseFolder(lib,path));trail.append(button);};
@@ -9336,8 +9362,12 @@
         const grid=document.createElement('div');grid.className='mc-directory-grid';nav.append(grid);
         for(const folder of result.folders){
           const button=document.createElement('button');button.type='button';button.className='mc-directory';
-          button.innerHTML='<svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg><span></span><span aria-hidden="true">›</span>';
-          button.querySelector('span').textContent=folder.name;
+          button.dataset.path=folder.path;button.dataset.library=lib.id;
+          let hue=0;for(const character of folder.name)hue=(hue*31+character.codePointAt(0))%360;button.style.setProperty('--folder-hue',hue);
+          button.innerHTML='<span class="mc-directory-art"><span class="mc-directory-initial" aria-hidden="true"></span></span><span class="mc-directory-label"><b></b><small><svg class="ic" aria-hidden="true"><use href="#i-folder"></use></svg> Browse folder <span aria-hidden="true">›</span></small></span>';
+          button.querySelector('b').textContent=folder.name;
+          button.querySelector('.mc-directory-initial').textContent=folder.name.slice(0,2).toLocaleUpperCase();
+          fillFolderArt(button,folder.art);
           button.onclick=()=>act(button,()=>browseFolder(lib,folder.path));grid.append(button);
         }
         const search=$('#mc-search');search.value='';search.oninput?.();
@@ -9398,6 +9428,7 @@
           const list=$('#mc-items'),refresh=list.dataset.library===lib.id;
           if(!refresh){clearMediaCenterArt();list.replaceChildren();}
           else if(_mediaCenterArtObserver)_mediaCenterArtObserver.disconnect();
+          for(const card of $('#mc-folder-nav').querySelectorAll('.mc-directory'))fillFolderArt(card,result.items.filter(item=>item.folder===card.dataset.path||item.folder?.startsWith(card.dataset.path+'/')).slice(0,3).map(item=>item.id));
           list.dataset.library=lib.id;list.dataset.revision=result.revision||lib.revision||'';
           if(refresh&&list.firstChild?.nodeType===Node.TEXT_NODE)list.replaceChildren();
           const artGeneration=_mediaCenterArtGeneration, artQueue=[];let artActive=0;

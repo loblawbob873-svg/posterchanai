@@ -364,18 +364,24 @@ async def folders(library_id: str, path: str = ".", user=Depends(get_media_user)
             if target.is_symlink():
                 raise ValueError('Linked folders are not available')
         target.resolve().relative_to(root.resolve())
+        cover_map = {}
+        prefix = '' if relative.as_posix() == '.' else relative.as_posix() + '/'
+        for item in catalog:
+            item_path = item.get('path', '')
+            if not item_path.startswith(prefix):
+                continue
+            child, separator, _ = item_path[len(prefix):].partition('/')
+            if separator:
+                covers = cover_map.setdefault(child, [])
+                if len(covers) < 3:
+                    covers.append(item['id'])
         result = []
         with os.scandir(target) as entries:
             for entry in entries:
                 if not entry.name.startswith('.') and entry.is_dir(follow_symlinks=False):
                     folder_path = (relative / entry.name).as_posix()
                     folder = {'name': entry.name, 'path': folder_path}
-                    covers = []
-                    for item in catalog:
-                        if item.get('path', '').startswith(folder_path + '/'):
-                            covers.append(item['id'])
-                            if len(covers) == 3:
-                                break
+                    covers = cover_map.get(entry.name, [])
                     if covers:
                         folder['art'] = covers
                     result.append(folder)

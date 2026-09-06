@@ -138,7 +138,7 @@ async def main():
             return SimpleNamespace(nostr_npub=key, is_admin=key == OWNER, can_media=True)
         app.dependency_overrides[routes.media_user_optional] = user
         javascript = (ROOT / "static/js/client/app.js").read_text()
-        functions = javascript[javascript.index("  let _mediaCenterPollTimer="):javascript.index("  // ---------- torrents (NIP-35")]
+        functions = javascript[javascript.index("  let _mediaCenterFolderCleanup="):javascript.index("  // ---------- torrents (NIP-35")]
         bootstrap = """
           const $=s=>document.querySelector(s);let VIEW='media-center';const _instanceBase=()=>location.origin;
           const enc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
@@ -184,6 +184,7 @@ async def main():
                         await browser.call("Page.navigate", {"url": "http://127.0.0.1:19438/"})
                         await browser.until("document.title==='READY'")
                         await browser.until("document.querySelector('.mc-directory')?.textContent.includes('Adventure')")
+                        await browser.until("document.querySelector('.mc-directory img')?.naturalWidth>0")
                         await browser.screenshot(name + '-folders.png')
                         await browser.js("document.querySelector('.mc-directory').click()", gesture=True)
                         await browser.until("document.querySelectorAll('.mc-folder-trail button').length===2")
