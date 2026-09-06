@@ -13,10 +13,11 @@ import re
 import secrets
 import time
 from types import SimpleNamespace
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import AliasChoices, BaseModel, Field
 from starlette.requests import Request as InternalRequest
 
@@ -43,7 +44,7 @@ class ClientCORS:
             pattern = ''.join('([^/]+)' if part.startswith('{') else re.escape(part) for part in parts)
             self.paths.append((re.compile('^' + pattern + '$', re.IGNORECASE), parts))
         self.cors = CORSMiddleware(app, allow_origins=['*'], allow_credentials=False,
-                                   allow_methods=['GET', 'HEAD', 'POST', 'OPTIONS'], allow_headers=['*'],
+                                   allow_methods=['GET', 'HEAD', 'POST', 'DELETE', 'OPTIONS'], allow_headers=['*'],
                                    expose_headers=['Content-Length', 'Content-Type'])
 
     async def __call__(self, scope, receive, send):
@@ -175,6 +176,9 @@ def user_dto(user):
 @router.api_route('/', methods=['GET', 'HEAD'])
 @router.api_route('/System/Info/Public', methods=['GET', 'HEAD'])
 async def public_info(request: Request):
+    if request.url.path.rstrip('/').lower() == '/jellyfin' and 'text/html' in request.headers.get('accept', '').lower():
+        return FileResponse(Path(__file__).resolve().parents[2] / 'templates/media_center_app.html',
+                            headers={'Vary': 'Accept'}, media_type='text/html')
     scheme = request.headers.get('x-forwarded-proto', '').split(',')[0].strip().lower()
     base = request.base_url.replace(scheme=scheme) if scheme in ('http', 'https') else request.base_url
     return {'Id': SERVER_ID, 'ServerName': 'Posterchan Media Center',
@@ -182,6 +186,14 @@ async def public_info(request: Request):
             'ProductName': 'Jellyfin Server', 'Version': '10.11.11',
             'LocalAddress': str(base).rstrip('/') + '/jellyfin',
             'StartupWizardCompleted': True}
+
+
+@router.get('/main.posterchan.bundle.js')
+async def android_host_bundle():
+    # Android intercepts this filename to inject its native bridge and signal readiness,
+    # then fetches our script again with ?deferred=true. Both requests use the same asset.
+    return FileResponse(Path(__file__).resolve().parents[2] / 'static/js/media_center_app.js',
+                        media_type='application/javascript')
 
 
 @router.get('/System/Info')
@@ -590,13 +602,15 @@ async def playback_info(uid: str, request: Request, body: dict = Body(default={}
             stream.setdefault(key, False)
     default_audio = next((t['index'] for t in tracks if t['type'] == 'audio' and t['default']),
                          next((t['index'] for t in tracks if t['type'] == 'audio'), -1))
-    source = {'Id': uid, 'Name': item['name'], 'Protocol': 'Http', 'Container': 'ts', 'Type': 'Default',
+    # Describe the backing file, not the HTTP transport of the separate HLS URL.
+    # Android TV rejects remote sources before it considers SupportsTranscoding.
+    source = {'Id': uid, 'Name': item['name'], 'Protocol': 'File', 'Container': 'ts', 'Type': 'Default',
               'RunTimeTicks': int(item['duration'] * 10000000), 'MediaStreams': streams,
               'SupportsDirectPlay': False, 'SupportsDirectStream': False, 'SupportsTranscoding': True,
               'TranscodingUrl': f'Videos/{uid}/master.m3u8?{params}', 'TranscodingSubProtocol': 'hls',
               'TranscodingContainer': 'ts', 'DefaultAudioStreamIndex': audio_index if audio_index >= 0 else default_audio,
               'DefaultSubtitleStreamIndex': subtitle_index, 'RequiresOpening': False, 'RequiresClosing': False}
-    source.update(IsRemote=True, ReadAtNativeFramerate=False, IgnoreDts=False, IgnoreIndex=False,
+    source.update(IsRemote=False, ReadAtNativeFramerate=False, IgnoreDts=False, IgnoreIndex=False,
                   GenPtsInput=False, IsInfiniteStream=False, RequiresLooping=False,
                   SupportsProbing=False, HasSegments=True)
     return {'MediaSources': [source], 'PlaySessionId': play_id}
@@ -669,6 +683,19 @@ async def stopped(request: Request, body: dict = Body(default={}), auth=Depends(
     ticket = parse_qs(urlsplit(record['url']).query)['ticket'][0]
     await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
     _plays.pop(play_id, None)
+    return Response(status_code=204)
+
+
+@router.delete('/Videos/ActiveEncodings', status_code=204)
+async def stop_encoding(request: Request, auth=Depends(authenticate), db=Depends(get_db)):
+    play_id = query(request, 'PlaySessionId', '')
+    record = _plays.get(play_id)
+    # Native clients can send cleanup twice, or after Stopped. Never release a
+    # different app token's session, even when it belongs to the same Nostr user.
+    if record and record['token'] == digest(auth.token):
+        ticket = parse_qs(urlsplit(record['url']).query)['ticket'][0]
+        await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
+        _plays.pop(play_id, None)
     return Response(status_code=204)
 
 

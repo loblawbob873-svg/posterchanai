@@ -208,14 +208,22 @@ Jellyfin apps receive track metadata and subtitle delivery URLs using the
 
 Jellyfin administration, plugins, Live TV, remote control, favorites and
 saved watch/resume history are not implemented. There is no bundled Jellyfin web UI.
-Clients that require the server-hosted Jellyfin web interface are outside this API-only adapter.
+The official Android phone app receives a small Posterchan host page at `/jellyfin/`
+when requesting HTML. It implements Android's deferred-script readiness handoff,
+Quick Connect, saved media-only app login, library search, HLS playback, audio and
+subtitle selection, and fullscreen. API discovery remains JSON. This page uses the
+same Jellyfin adapter and enforced Media Center limits; no Jellyfin server or web
+bundle is installed. Other clients that require the full Jellyfin web interface
+remain outside the adapter's scope.
 The API advertises the Jellyfin 10.11 playback protocol for client discovery while
 identifying the server as **Posterchan Media Center**.
 
 Validation uses the official `@jellyfin/sdk` 0.13.0 for discovery, Quick Connect,
 browsing, cover retrieval, playback URL construction and stopping, with real FFmpeg
 HLS decoding against both local and NAS-proxied libraries. The approval/disconnect UI
-is exercised in Chrome at phone and TV sizes. Individual Android TV, iOS and other
+is exercised in Chrome at phone and TV sizes. The Android host additionally has a
+phone-width browser regression covering its deferred handoff, approval, HLS playback,
+saved-login reload and disconnect against local and NAS-proxied media. Individual Android phone, Android TV, iOS and other
 packaged clients still need device testing; this is not a claim that every Jellyfin
 client or feature works.
 

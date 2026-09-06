@@ -473,3 +473,132 @@ def test_kotlin_tv_startup_and_playback_contract(api):
     assert c.get('/jellyfin/System/Configuration/encoding').status_code == 401
     assert c.get('/jellyfin/System/Configuration/network', headers=h).status_code == 404
     assert c.post('/jellyfin/System/Configuration/encoding', headers=h, json={}).status_code == 405
+
+
+def test_android_phone_host_negotiates_html_without_changing_api_discovery(api):
+    c = api.client
+    for path in ['/jellyfin', '/jellyfin/']:
+        response = c.get(path, headers={'Accept': 'text/html,application/xhtml+xml'})
+        assert response.status_code == 200
+        assert response.headers['content-type'].startswith('text/html')
+        assert 'main.posterchan.bundle.js' in response.text
+        assert 'no-store' in response.headers['cache-control']
+        assert response.headers['vary'] == 'Accept'
+        assert c.get(path).json()['ProductName'] == 'Jellyfin Server'
+    # The native discovery request stays JSON even if a client sends a browser Accept header.
+    assert c.get('/jellyfin/System/Info/Public', headers={'Accept': 'text/html'}).json()['Id']
+    script = c.get('/jellyfin/main.posterchan.bundle.js?deferred=true&ts=123')
+    assert script.status_code == 200
+    assert script.headers['content-type'].startswith('application/javascript')
+    assert 'jellyfin_credentials' in script.text
+    assert c.get('/jellyfin/Users/Me').status_code == 401
+
+
+def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monkeypatch, tmp_path):
+    """Real phone-width browser, native-style deferred script handoff, API and FFmpeg HLS."""
+    import os
+    from pathlib import Path
+    import shutil
+    import socket
+    import subprocess
+    import threading
+    import time
+    import uvicorn
+    import websockets
+    from fastapi.staticfiles import StaticFiles
+    from scripts.check_media_center import Browser
+    chrome = shutil.which('google-chrome') or shutil.which('chromium') or '/opt/google/chrome/chrome'
+    if not Path(chrome).exists() or not shutil.which('ffmpeg'):
+        pytest.skip('Chrome and FFmpeg required for Android host browser test')
+    source = tmp_path / 'movie.mp4'
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=24',
+                    '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '13', '-c:v', 'libx264',
+                    '-threads', '1', '-c:a', 'aac', str(source)], check=True, timeout=20)
+    monkeypatch.setenv('POSTERCHANAI_MEDIA_ROOTS', str(tmp_path))
+    monkeypatch.setenv('POSTERCHANAI_MEDIA_CACHE', str(tmp_path / 'cache'))
+    api.catalog['page:movies'] = media.scan(str(tmp_path))[0]
+    monkeypatch.setattr(media, '_job_condition', asyncio.Condition())
+    monkeypatch.setattr(media, '_rate_lock', asyncio.Lock())
+    media._segment_jobs.clear()
+    media._rate_due.clear()
+    root = Path(__file__).resolve().parents[1]
+    api.client.app.mount('/static', StaticFiles(directory=root / 'static'))
+    observed = []
+    browser_app = FastAPI()
+    browser_app.mount('/', api.client.app)
+    @browser_app.middleware('http')
+    async def android_handoff(request, call_next):
+        if request.url.path.endswith('/main.posterchan.bundle.js'):
+            observed.append('deferred' in request.query_params)
+            if 'deferred' not in request.query_params:
+                # Android intercepts this request, signals readiness and reloads it deferred.
+                return jf.Response("const s=document.createElement('script');s.src=document.currentScript.src+'?deferred=true';document.body.append(s);", media_type='application/javascript')
+        return await call_next(request)
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(browser_app, log_level='error'))
+    thread = threading.Thread(target=lambda: server.run(sockets=[sock]), daemon=True)
+    thread.start()
+    profile = tmp_path / 'chrome'
+    process = subprocess.Popen([chrome, '--headless=new', '--no-sandbox', '--disable-gpu',
+                                '--autoplay-policy=no-user-gesture-required', '--remote-debugging-port=0',
+                                '--user-data-dir='+str(profile), 'about:blank'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    async def exercise():
+        async with httpx.AsyncClient() as client:
+            for _ in range(100):
+                if server.started and (profile / 'DevToolsActivePort').exists():
+                    break
+                await asyncio.sleep(.1)
+            debug_port = (profile / 'DevToolsActivePort').read_text().splitlines()[0]
+            pages = (await client.get('http://127.0.0.1:'+debug_port+'/json/list')).json()
+            page = next(p for p in pages if p['type'] == 'page')
+            async with websockets.connect(page['webSocketDebuggerUrl'], max_size=32*1024*1024) as ws:
+                browser = Browser(ws)
+                await browser.call('Emulation.setDeviceMetricsOverride', {'width':390, 'height':844, 'deviceScaleFactor':1, 'mobile':False})
+                await browser.call('Page.navigate', {'url':f'http://127.0.0.1:{port}/jellyfin/'})
+                await browser.until("/^\\d{6}$/.test(document.querySelector('#code')?.textContent)")
+                code = await browser.js("document.querySelector('#code').textContent")
+                result = await client.post(f'http://127.0.0.1:{port}/api/media-center/jellyfin-account/authorize', json={'code':code})
+                assert result.status_code == 200
+                await browser.until("!!document.querySelector('.card')")
+                assert observed[:2] == [False, True]
+                assert await browser.js("!!JSON.parse(localStorage.jellyfin_credentials).Servers[0].AccessToken")
+                assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
+                await browser.js("document.querySelector('.card').click()", True)
+                await browser.until("document.querySelector('#heading').textContent==='Movies' && document.querySelector('.card')?.textContent.includes('movie')")
+                await browser.js("document.querySelector('.card').click()", True)
+                await browser.until("document.querySelector('video').currentTime>1")
+                assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
+                await browser.js("document.querySelector('#stop').click()", True)
+                await browser.until("document.querySelector('#player').hidden")
+                await browser.call('Page.reload')
+                await browser.until("!!document.querySelector('.card') && document.querySelector('#connect').hidden")
+                await browser.js("document.querySelector('#logout').click()", True)
+                await browser.until("/^\\d{6}$/.test(document.querySelector('#code')?.textContent) && !localStorage.getItem('pc_media_app')")
+    try:
+        asyncio.run(exercise())
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+        server.should_exit = True
+        thread.join(timeout=10)
+        sock.close()
+
+
+def test_android_tv_accepts_file_source_and_can_release_transcode(api):
+    first, second = connect(api), connect(api)
+    item, info = playable(api, first)
+    source = info['MediaSources'][0]
+    # JellyfinMediaStreamResolver filters these fields before checking transcode support.
+    assert source['Protocol'] == 'File' and source['IsRemote'] is False
+    assert source['SupportsTranscoding'] and not source['SupportsDirectPlay']
+    assert 'Path' not in source  # The device never receives NAS filesystem paths.
+    url = '/jellyfin/Videos/ActiveEncodings?playSessionId=' + info['PlaySessionId']
+    assert api.client.delete(url).status_code == 401
+    assert api.client.delete(url, headers=headers(second)).status_code == 204
+    assert info['PlaySessionId'] in jf._plays
+    assert api.client.delete(url, headers=headers(first)).status_code == 204
+    assert info['PlaySessionId'] not in jf._plays
+    assert api.client.delete(url, headers=headers(first)).status_code == 204
