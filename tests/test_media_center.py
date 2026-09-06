@@ -761,3 +761,22 @@ def test_audio_language_and_subtitle_endpoints_with_real_media(api):
     assert client.get(url.replace('master.m3u8','1080p-0.ts')+'&audio=2').status_code == 404
     (root/'.ignore').touch()
     assert client.get(url.replace('master.m3u8','subtitle-3.vtt')).status_code == 404
+
+
+def test_shared_with_me_distinguishes_ownership_and_revocation(api):
+    client, docs, user, root = api
+    seed(docs, root)
+    shared = {**docs['library:abc'], 'id':'shared', 'owner':VIEWER, 'shared_with':[OWNER]}
+    docs['library:shared'] = shared
+    docs['index']['ids'].append('shared')
+    result={lib['id']:lib for lib in client.get('/api/media-center').json()['libraries']}
+    assert not result['abc']['shared_with_me'] and result['abc']['can_manage']
+    assert result['shared']['shared_with_me'] and not result['shared']['can_manage']
+    assert 'folder' not in result['shared'] and 'shared_with' not in result['shared']
+    user.nostr_npub = VIEWER
+    user.is_admin = False
+    result={lib['id']:lib for lib in client.get('/api/media-center').json()['libraries']}
+    assert result['abc']['shared_with_me'] and not result['shared']['shared_with_me']
+    assert not any(lib['can_manage'] for lib in result.values())
+    docs['library:abc']['shared_with'] = []
+    assert [lib['id'] for lib in client.get('/api/media-center').json()['libraries']] == ['shared']

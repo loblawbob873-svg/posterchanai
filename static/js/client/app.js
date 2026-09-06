@@ -9221,6 +9221,8 @@
     catch(e){ toast('publish failed: '+e.message); }
   }
 
+  let _mediaCenterLibraryTab=null;
+  let _mediaCenterRenderGeneration=0;
   let _mediaCenterSubtitleUrl=null;
   let _mediaCenterFolderCleanup=()=>{};
   let _mediaCenterPollTimer=null;
@@ -9259,6 +9261,7 @@
     return releaseMediaCenterSession(session);
   }
   async function renderMediaCenter(openLibraryId=null){
+    const renderGeneration=++_mediaCenterRenderGeneration;
     stopMediaCenter();
     const feed=$('#feed');
     feed.innerHTML='<div class="empty">Loading Media Center…</div>';
@@ -9270,8 +9273,13 @@
     };
     try{
       const data=await api();
-      if(VIEW!=='media-center')return;
-      feed.innerHTML=`<div class="mc-gallery"><div class="xdc-gal-top"><div class="muted"><h2>Media Center</h2>Your movies, shows and music. Pick a library and press play.</div><span class="mc-private">Private · Server library</span></div><div class="mc-tools">
+      if(VIEW!=='media-center'||renderGeneration!==_mediaCenterRenderGeneration)return;
+      const ownCount=data.libraries.filter(lib=>!lib.shared_with_me).length,sharedCount=data.libraries.length-ownCount;
+      if(openLibraryId){const requested=data.libraries.find(lib=>lib.id===openLibraryId);if(requested)_mediaCenterLibraryTab=requested.shared_with_me?'shared':'mine';}
+      if(!_mediaCenterLibraryTab)_mediaCenterLibraryTab=ownCount||!sharedCount?'mine':'shared';
+      const visibleLibraries=data.libraries.filter(lib=>Boolean(lib.shared_with_me)===(_mediaCenterLibraryTab==='shared'));
+
+      feed.innerHTML=`<div class="mc-gallery"><div class="xdc-gal-top"><div class="muted"><h2>Media Center</h2>Your movies, shows and music. Pick a library and press play.</div><span class="mc-private">Private · Server library</span></div><div class="mc-library-tabs" role="tablist" aria-label="Media libraries"><button id="mc-tab-mine" type="button" role="tab" aria-controls="mc-library-panel" aria-selected="${_mediaCenterLibraryTab==='mine'}" tabindex="${_mediaCenterLibraryTab==='mine'?0:-1}">My libraries <span>${ownCount}</span></button><button id="mc-tab-shared" type="button" role="tab" aria-controls="mc-library-panel" aria-selected="${_mediaCenterLibraryTab==='shared'}" tabindex="${_mediaCenterLibraryTab==='shared'?0:-1}">Shared with me <span>${sharedCount}</span></button></div><div id="mc-library-panel" role="tabpanel" aria-labelledby="mc-tab-${_mediaCenterLibraryTab}"><div class="mc-tools">
         ${data.can_create?`<details class="mc-tool-card"><summary><span class="mc-tool-icon"><svg class="ic"><use href="#i-folder"></use></svg></span><span><b>Add a server folder</b><small>Bring your movies and music into the library</small></span><span class="mc-tool-expand">+</span></summary><form id="mc-add" class="mc-tool-body">
           <p><label>Library name <input name="name" required maxlength="150" placeholder="Movies"></label></p>
           <p id="mc-roots" class="mc-config-note muted small">Checking allowed folders on the media server…</p>
@@ -9299,7 +9307,11 @@
             <option value="360p">360p · ~0.6 Mbps</option><option value="480p">480p · ~1.2 Mbps</option>
             <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label><label>Audio <select id="mc-audio"><option value="-1">Default</option></select></label><label>Subtitles <select id="mc-subtitles"><option value="-1">Off</option></select></label></div>
           <video id="mc-player" controls playsinline tabindex="0" aria-label="Media player" preload="metadata" style="width:100%;max-height:65vh"></video>
-        </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><nav id="mc-folder-nav" aria-label="Media folders"></nav><div id="mc-items"></div></div>`;
+        </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><nav id="mc-folder-nav" aria-label="Media folders"></nav><div id="mc-items"></div></div></div>`;
+      for(const tab of feed.querySelectorAll('[role=tab]')){
+        tab.onclick=async()=>{_mediaCenterLibraryTab=tab.id==='mc-tab-shared'?'shared':'mine';await renderMediaCenter();document.getElementById(tab.id)?.focus({preventScroll:true});};
+        tab.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?'mine':e.key==='End'?'shared':tab.id==='mc-tab-mine'?'shared':'mine';document.getElementById('mc-tab-'+next).click();}};
+      }
       for(const card of feed.querySelectorAll('.mc-tool-card'))card.ontoggle=()=>{
         if(card.open)for(const other of feed.querySelectorAll('.mc-tool-card'))if(other!==card)other.open=false;
       };
@@ -9336,7 +9348,7 @@
       const rootsNote=$('#mc-roots');
       if(rootsNote){
         try{
-          const config=await api('/roots');if(VIEW!=='media-center')return;
+          const config=await api('/roots');if(VIEW!=='media-center'||renderGeneration!==_mediaCenterRenderGeneration)return;
           rootsNote.textContent='Media server: '+config.host+'. Allowed folders: '+
             (config.roots.map(root=>root.path+(!root.exists?' (missing)':!root.readable?' (not readable)':'')).join(', ')||'none configured')+
             '. Use a folder inside one of these paths. Change POSTERCHANAI_MEDIA_ROOTS on that server to allow another folder.';
@@ -9344,7 +9356,7 @@
       }
       const limitsForm=$('#mc-limits');
       if(limitsForm){
-        const limits=await api('/limits');if(VIEW!=='media-center')return;
+        const limits=await api('/limits');if(VIEW!=='media-center'||renderGeneration!==_mediaCenterRenderGeneration)return;
         $('#mc-limit-summary').textContent=Math.round(limits.viewer_kbps/8)+' KB/s per user · '+limits.max_streams+' simultaneous streams';
         for(const [key,value] of Object.entries(limits)){if(limitsForm.elements[key])limitsForm.elements[key].value=value;}
         limitsForm.onsubmit=e=>{e.preventDefault();act(limitsForm.querySelector('button'),async()=>{
@@ -9433,8 +9445,8 @@
         if(VIEW==='media-center')await renderMediaCenter(library.id);
       });};
       const libs=$('#mc-libraries');
-      if(!data.libraries.length)libs.textContent='No libraries yet. An owner can share a library with your npub.';
-      for(const lib of data.libraries){
+      if(!visibleLibraries.length){libs.textContent=_mediaCenterLibraryTab==='shared'?'No libraries have been shared with you yet. Ask the owner to share with your Nostr public key.':'No libraries of your own yet.';$('#mc-folder-nav').hidden=true;}
+      for(const lib of visibleLibraries){
         const row=document.createElement('div');row.className='mc-library';
         const open=document.createElement('button');open.className='btn btn-ghost mc-library-open';row.append(open);
         const progress=document.createElement('span');progress.className='muted small';progress.setAttribute('role','status');row.append(progress);
@@ -9457,7 +9469,7 @@
         }
         open.onclick=()=>act(open,async()=>{
           if(folderLibrary!==lib.id)await browseFolder(lib,'.');
-          const result=await api('/'+lib.id+'/items');if(VIEW!=='media-center')return;
+          const result=await api('/'+lib.id+'/items');if(VIEW!=='media-center'||renderGeneration!==_mediaCenterRenderGeneration)return;
           const list=$('#mc-items'),refresh=list.dataset.library===lib.id;
           if(!refresh){clearMediaCenterArt();list.replaceChildren();}
           else if(_mediaCenterArtObserver)_mediaCenterArtObserver.disconnect();
@@ -9583,8 +9595,8 @@
       }
       const selected=libraryRows.get(openLibraryId)||libraryRows.values().next().value;
       if(selected)await selected.open.onclick();
-      if(data.libraries.some(lib=>lib.scan?.state==='running'))schedulePoll();
-    }catch(e){if(VIEW==='media-center'){feed.innerHTML='<div class="empty">'+enc(e.message)+'<p><button class="btn btn-ghost" id="mc-retry">Retry</button></p></div>';$('#mc-retry').onclick=renderMediaCenter;}}
+      if(visibleLibraries.some(lib=>lib.scan?.state==='running'))schedulePoll();
+    }catch(e){if(VIEW==='media-center'&&renderGeneration===_mediaCenterRenderGeneration){feed.innerHTML='<div class="empty">'+enc(e.message)+'<p><button class="btn btn-ghost" id="mc-retry">Retry</button></p></div>';$('#mc-retry').onclick=renderMediaCenter;}}
   }
 
   // ---------- torrents (NIP-35, kind 2003) ----------

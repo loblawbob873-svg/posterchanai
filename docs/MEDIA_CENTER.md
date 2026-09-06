@@ -11,6 +11,9 @@ Authorized ordinary users can browse and play, but cannot scan, change sharing o
 or see server folder paths and sharing controls. Shared users sign in on the
 hosting Posterchan instance. No social messages or invitations are sent automatically.
 
+**My libraries** lists libraries you own; **Shared with me** lists libraries explicitly
+shared with your Nostr account. Viewers with only shared libraries open that tab by default.
+Removing sharing access removes the library from that tab and revokes playback access.
 Opening a library shows its server folders immediately, without waiting for media probing.
 Select folder cards and use the breadcrumb buttons to go back; search finds scanned titles
 throughout the library. Scanning runs in the background and playable titles appear as they

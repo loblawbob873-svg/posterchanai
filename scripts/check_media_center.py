@@ -143,7 +143,7 @@ async def main():
             return SimpleNamespace(nostr_npub=key, is_admin=key == OWNER, can_media=True)
         app.dependency_overrides[routes.media_user_optional] = user
         javascript = (ROOT / "static/js/client/app.js").read_text()
-        functions = javascript[javascript.index("  let _mediaCenterSubtitleUrl="):javascript.index("  // ---------- torrents (NIP-35")]
+        functions = javascript[javascript.index("  let _mediaCenterLibraryTab="):javascript.index("  // ---------- torrents (NIP-35")]
         bootstrap = """
           const $=s=>document.querySelector(s);let VIEW='media-center';const _instanceBase=()=>location.origin;
           const enc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
@@ -188,6 +188,10 @@ async def main():
                                                                                   "deviceScaleFactor": 1, "mobile": False})
                         await browser.call("Page.navigate", {"url": "http://127.0.0.1:19438/"})
                         await browser.until("document.title==='READY'")
+                        assert await browser.js("document.querySelector('#mc-tab-mine').getAttribute('aria-selected')==='true'")
+                        await browser.js("document.querySelector('#mc-tab-shared').click()", True)
+                        await browser.until("document.querySelector('#mc-libraries')?.textContent.includes('No libraries have been shared')")
+                        await browser.js("document.querySelector('#mc-tab-mine').click()", True)
                         await browser.until("document.querySelector('.mc-directory')?.textContent.includes('Adventure')")
                         await browser.until("document.querySelector('.mc-directory img')?.naturalWidth>0")
                         await browser.screenshot(name + '-folders.png')
@@ -261,6 +265,11 @@ async def main():
                     async with websockets.connect(second_page["webSocketDebuggerUrl"], max_size=32 * 1024 * 1024) as second_ws:
                         second = Browser(second_ws)
                         await second.until("document.title==='READY'")
+                        assert await second.js("document.querySelector('#mc-tab-shared').getAttribute('aria-selected')==='true'")
+                        assert await second.js("!document.querySelector('#mc-add')&&!document.querySelector('#mc-limits')&&!document.querySelector('.mc-share')")
+                        await second.js("document.querySelector('.mc-directory').click()", True)
+                        await second.until("document.querySelectorAll('.mc-folder-trail button').length===2")
+                        print('PASS: shared viewer opens Shared with me, browses folders, and has no admin controls', flush=True)
                         await asyncio.gather(browser.js("document.querySelector('.mc-tile button').onclick()", True),
                                              second.js("document.querySelector('.mc-tile button').onclick()", True))
                         await asyncio.gather(browser.until("document.querySelector('video').currentTime>2"),

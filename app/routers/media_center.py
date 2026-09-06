@@ -248,6 +248,7 @@ def public_library(library, pubkey, *, admin=False):
     fields = ("id", "name", "owner", "count", "scanned_at", "skipped", "encoder")
     result = {key: library.get(key) for key in fields}
     result["can_manage"] = bool(admin and library["owner"] == pubkey)
+    result['shared_with_me'] = library['owner'] != pubkey
     result["scan"] = _scans.get(library['id'], {'state': 'interrupted' if library.get('scan_incomplete') else 'idle'})
     result["revision"] = scan_revision(library)
     result["count"] = max(library.get('count', 0), len(_scan_previews.get(library['id'], {})))
