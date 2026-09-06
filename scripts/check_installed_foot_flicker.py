@@ -32,6 +32,16 @@ def skip(why: str) -> int:
     return 2
 
 
+class ScreenAsleep(Exception):
+    """The panel is powered down, so nothing can be photographed.
+
+    grim answers a DPMS-off output with "failed to copy output <name>", which is indistinguishable
+    from a broken capture unless it is asked about separately. Reported as a FAILING flicker gate on
+    a machine whose screen had simply blanked -- the same confusion that cost pc-wayfire-health a
+    desktop earlier: "could not look" is not "looked and it was wrong".
+    """
+
+
 def leaves():
     """Wayfire answers a FLAT list of views. Sway answered a tree and this walked it."""
     return [v for v in wf.views() if v.get("mapped", True)]
@@ -94,7 +104,11 @@ def capture(node: dict, target: Path, label: str) -> tuple[float, int]:
         raise AssertionError(f"{label}: grim timed out: {stderr.strip()}")
     got = subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
     if got.returncode:
-        raise AssertionError(f"{label}: grim failed: {got.stderr.strip()}")
+        err = got.stderr.strip()
+        # A screen that is switched off cannot be captured, and that is not a flicker.
+        if "failed to copy output" in err.lower() and _output_is_off():
+            raise ScreenAsleep(err)
+        raise AssertionError(f"{label}: grim failed: {err}")
     with Image.open(target) as image:
         grey = image.convert("L")
         stat = ImageStat.Stat(grey)
@@ -106,11 +120,38 @@ def capture(node: dict, target: Path, label: str) -> tuple[float, int]:
     return deviation, hi - lo
 
 
+def _output_is_off() -> bool:
+    """Is any output powered down right now? Asked only when a capture has already failed."""
+    try:
+        run = subprocess.run(["wlr-randr"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if run.returncode:
+        return False
+    for line in (run.stdout or "").splitlines():
+        if line.strip().lower().startswith("enabled:"):
+            if line.split(":", 1)[1].strip().lower() in ("no", "false", "0"):
+                return True
+    return False
+
+
 def settle(marker: str, timeout: float = 12.0):
+    """Wait for Foot's window to map AT A REAL SIZE.
+
+    `wf.rect_of` exists because Wayfire calls this `geometry` and Sway called it `rect` -- and this
+    function was reading `node["rect"]` directly, which a Wayfire view never has. The width was
+    therefore always 0, never > 100, and the gate answered "Foot never mapped a window" on every
+    run: a release gate that could not pass, so it was testing nothing.
+
+    Confirmed on the real desktop: Foot mapped fine (view 75, geometry 702x530, title carrying the
+    marker) while this said it never appeared. The same shape as the compositor-socket demand
+    described at the top of this file -- a leftover from the old session that turned the gate into a
+    permanent, silent no.
+    """
     until = time.monotonic() + timeout
     while time.monotonic() < until:
         node = foot_node(marker)
-        if node and (node.get("rect") or {}).get("width", 0) > 100:
+        if node and wf.rect_of(node).get("width", 0) > 100:
             return node
         time.sleep(0.15)
     return None
@@ -217,6 +258,10 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except ScreenAsleep as exc:
+        # Exit 2, the suite's "could not run", so this reads as a SKIP with its reason rather than
+        # as a flickering terminal on a machine whose screen had merely blanked.
+        raise SystemExit(skip("the screen is powered off, so nothing can be captured (" + str(exc) + ")"))
     except (AssertionError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         print("FAIL installed Foot flicker gate: " + str(exc), file=sys.stderr)
         raise SystemExit(1)

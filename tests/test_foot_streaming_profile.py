@@ -67,3 +67,35 @@ def test_the_flicker_gate_can_actually_run_on_this_desktop():
     # offset -- the bug the shell already paid for once in wm-wayfire.js.
     assert "output_id" in body
     assert 'int(rect["x"]) - base["x"]' in body
+
+
+def test_the_flicker_gate_reads_geometry_the_way_wayfire_reports_it():
+    """A gate that cannot pass is testing nothing, and this one could not.
+
+    `settle()` waited for `node["rect"]["width"] > 100`. Wayfire views carry `geometry`, not `rect`
+    -- which is precisely why `wayfire_ipc.rect_of` exists and says so in its own docstring. The
+    width was therefore always 0, the wait always timed out, and the gate answered "Foot never
+    mapped a window" on every run.
+
+    Measured on the real desktop: Foot mapped at 702x530 with the marker in its title while the gate
+    said it never appeared. With the normaliser in place the gate runs to completion and passes
+    ("stayed nonblank across sustained output/focus/resize; 8 captures; DRM=amdgpu").
+    """
+    body = (ROOT / "scripts" / "check_installed_foot_flicker.py").read_text(encoding="utf-8")
+    code = re.sub(r'"""[\s\S]*?"""', "", body)          # the explanation names what it replaced
+    code = re.sub(r"(?m)^\s*#.*$", "", code)
+    assert 'get("rect")' not in code and '["rect"]' not in code, \
+        "the gate reads a key Wayfire does not publish; use wf.rect_of"
+    assert "wf.rect_of(node)" in code
+
+
+def test_a_blanked_screen_is_a_skip_not_a_flicker():
+    """grim answers a DPMS-off output with "failed to copy output", which is not a flickering
+    terminal. Hit on the real laptop, whose screen had simply blanked mid-run."""
+    body = (ROOT / "scripts" / "check_installed_foot_flicker.py").read_text(encoding="utf-8")
+    assert "class ScreenAsleep" in body
+    assert "_output_is_off()" in body
+    assert "except ScreenAsleep" in body, "the asleep case still reports as a FAIL"
+    tail = body[body.index('if __name__ == "__main__":'):]
+    assert tail.index("except ScreenAsleep") < tail.index("except (AssertionError"), \
+        "AssertionError is caught first, so the asleep case can never reach its own handler"
