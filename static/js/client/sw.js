@@ -72,6 +72,7 @@ const SHELL = [
   '/static/js/client/urlclean.js',
   '/static/js/client/app.js',
   '/static/js/client/monero-wallet.js',
+  '/static/js/client/exodus.js',
   '/static/js/client/concord.js',
   '/static/js/client/cord-protocol.js',
   '/static/js/client/cord-reader.js',

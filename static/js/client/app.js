@@ -334,6 +334,9 @@
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
   const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', 'media-center',
+                                  /* The multi-chain wallet is held BY the node: with no instance there is
+                                     no seed, no balance lookup and nothing to show. */
+                                  'exodus',
                                   'stats', 'meme', 'admin', 'websearch', 'terminal', 'calendar', 'contacts', 'office',
                                   /* PosterChan Code edits files on a NODE, through /api/code, gated by
                                    * the same allowlist as the terminal. With no instance there is no
@@ -407,6 +410,7 @@
     { view:'media-center', after:'repos', topLevel:true, icon:'#i-tv', label:'Media Center' },
     { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
     { view:'wallet', after:'vault', icon:'#i-coin', label:'Monero Wallet' },
+    { view:'exodus', after:'wallet', icon:'#i-coin', label:'Wallet' },
   ];
   function ensureNavItems(){
     for(const it of _NAV_REQUIRED){
@@ -7044,7 +7048,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v || (v==='concord'&&b.dataset.view==='messages')));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='blossom') $('#view-title').textContent='File Manager';
     if(v==='office') $('#view-title').textContent='PosterChan Office';
     if(v==='concord') $('#view-title').textContent='Messages';
@@ -7235,6 +7239,7 @@
     if(renderModuleView('sync','sync.js','PCSync','paint')) return;
     if(renderModuleView('vault','vault.js','PCVault','render')) return;
     if(renderModuleView('wallet','monero-wallet.js','PCMoneroWallet','render')) return;
+    if(renderModuleView('exodus','exodus.js','PCExodus','render')) return;
     if(VIEW==='xdc' && renderModuleView('xdc','webxdc.js','PCWebxdc','gallery')) return;
     if (window.PCGames && window.PCGames[VIEW]) return window.PCGames[VIEW]();   // game modules (chess.js/ttt.js/hangman.js)
     if (VIEW==='office') return renderOfficeHome();

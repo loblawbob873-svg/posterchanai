@@ -99,6 +99,23 @@ class SettingsResponse(BaseModel):
     monero_wallet_transfer_cap_xmr: str = ""
     monero_wallet_daily_cap_xmr: str = ""
     monero_wallet_rpc_timeout: str = ""
+    # ---- multi-chain wallet (Discover → Exodus Wallet) ----------------------------------------
+    # OFF by default: it is custodial (this node holds the seeds), so an operator turns it on
+    # deliberately rather than discovering they are holding somebody's Bitcoin.
+    exodus_wallet_enabled: str = ""
+    # Where each chain is read from. Empty falls back to a public endpoint, which is a fallback and
+    # not a plan — a node that matters points at its own. Declared one per chain rather than as a
+    # JSON blob so Admin can hydrate and save them with no per-field JS, the way every other
+    # setting here works.
+    exodus_rpc_btc: str = ""
+    exodus_rpc_eth: str = ""
+    exodus_rpc_ltc: str = ""
+    exodus_rpc_doge: str = ""
+    exodus_rpc_bch: str = ""
+    exodus_rpc_matic: str = ""
+    exodus_rpc_bnb: str = ""
+    exodus_rpc_avax: str = ""
+    exodus_rpc_sol: str = ""
     monero_wallet_spend_ledger: str = ""
     #: The operator's cut of each CUSTODIAL zap, as a percentage. Only the path where this
     #: node executes the transfer can be charged — the URI/QR flow is non-custodial and the

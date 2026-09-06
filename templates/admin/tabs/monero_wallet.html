@@ -15,6 +15,30 @@
     <label>Durable spend ledger <input id="monero_wallet_spend_ledger" name="monero_wallet_spend_ledger" value="data/monero_wallet_spend.sqlite3" autocomplete="off"></label>
   </fieldset>
   <fieldset>
+    <legend>Multi-chain wallet (Exodus)</legend>
+    <p class="settings-help"><strong>This node holds the keys.</strong> Turning this on means the
+      server generates and stores a BIP-39 seed for every user who opens the wallet, encrypted at
+      rest with their storage key. That is custody: their Bitcoin, Ethereum and the rest are
+      recoverable only from this machine's keystore and database. Leave it off unless you intend to
+      be responsible for that. Monero is deliberately excluded — this node already runs a real
+      Monero wallet above, and a second XMR key would give one person two balances.</p>
+    <label><input type="checkbox" id="exodus_wallet_enabled" name="exodus_wallet_enabled"> Enable the multi-chain wallet</label>
+    <p class="settings-help">Where each chain is read from. Leave a field blank to use a public
+      endpoint — a fallback, not a plan: those rate-limit, they see every address you look up, and
+      they can disagree with the chain. A node that matters points at its own. Balances are read
+      through this server's outgoing proxy, so a lookup does not announce your users' addresses from
+      the app server directly. Nothing here can move money; sending is a separate path.</p>
+    <label>Bitcoin (Esplora API) <input id="exodus_rpc_btc" name="exodus_rpc_btc" placeholder="https://blockstream.info/api" autocomplete="off"></label>
+    <label>Litecoin (Esplora API) <input id="exodus_rpc_ltc" name="exodus_rpc_ltc" placeholder="https://litecoinspace.org/api" autocomplete="off"></label>
+    <label>Dogecoin <input id="exodus_rpc_doge" name="exodus_rpc_doge" placeholder="https://dogechain.info/api/v1" autocomplete="off"></label>
+    <label>Bitcoin Cash <input id="exodus_rpc_bch" name="exodus_rpc_bch" placeholder="https://api.fullstack.cash/v5" autocomplete="off"></label>
+    <label>Ethereum (JSON-RPC) <input id="exodus_rpc_eth" name="exodus_rpc_eth" placeholder="https://ethereum-rpc.publicnode.com" autocomplete="off"></label>
+    <label>Polygon (JSON-RPC) <input id="exodus_rpc_matic" name="exodus_rpc_matic" placeholder="https://polygon-bor-rpc.publicnode.com" autocomplete="off"></label>
+    <label>BNB Chain (JSON-RPC) <input id="exodus_rpc_bnb" name="exodus_rpc_bnb" placeholder="https://bsc-rpc.publicnode.com" autocomplete="off"></label>
+    <label>Avalanche C-Chain (JSON-RPC) <input id="exodus_rpc_avax" name="exodus_rpc_avax" placeholder="https://avalanche-c-chain-rpc.publicnode.com" autocomplete="off"></label>
+    <label>Solana (JSON-RPC) <input id="exodus_rpc_sol" name="exodus_rpc_sol" placeholder="https://api.mainnet-beta.solana.com" autocomplete="off"></label>
+  </fieldset>
+  <fieldset>
     <legend>Zap service fee</legend>
     <p class="hint">A cut of each zap sent through a wallet this node holds, paid to you. It applies
       ONLY where this node executes the transfer — a zap paid from the user's own wallet through the

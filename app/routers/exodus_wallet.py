@@ -61,6 +61,19 @@ def _seckey(db: Session, user: User) -> bytes:
         raise HTTPException(status_code=503, detail="this account's storage key is unavailable") from exc
 
 
+def _settings(_db: Session | None = None) -> dict:
+    """The operator's per-chain endpoint overrides, read once per request.
+
+    Missing settings are not an error: every chain falls back to a public endpoint, which is a
+    fallback and not a plan — a node that matters should point at its own.
+    """
+    try:
+        from app.services.settings_store import all_settings
+        return dict(all_settings() or {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _row(db: Session, user: User) -> ExodusWallet | None:
     return db.query(ExodusWallet).filter(ExodusWallet.user_id == user.id).first()
 
@@ -149,6 +162,23 @@ def addresses(user: CurrentUser, db: Session = Depends(get_db)):
     row, phrase = _open(db, user)
     return {"ok": True, "index": row.address_index,
             "addresses": W.addresses(phrase, row.address_index)}
+
+
+@router.get("/balances")
+async def balances(user: CurrentUser, db: Session = Depends(get_db)):
+    """What the wallet holds, per chain — and which chains could not be asked.
+
+    Every row carries `known`. A client that reads `amount` without it prints "0" for a chain whose
+    provider was down, which is the difference between "you have nothing" and "I could not find
+    out". Deliberately not cached: a stale balance shown as current is the same lie one refresh
+    later.
+    """
+    _library()
+    row, phrase = _open(db, user)
+    addrs = W.addresses(phrase, row.address_index)
+    from app.services import exodus_chain_service as C
+    return {"ok": True, "index": row.address_index,
+            "balances": await C.balances(addrs, _settings(db))}
 
 
 @router.post("/reveal")
