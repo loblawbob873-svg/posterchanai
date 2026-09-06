@@ -116,12 +116,10 @@ _OWNED = (
     ("app/services/mail_notify_service.py", (WORKER,)),   # the poller runs in the worker only
     ("app/services/mail_store.py", (APP,)),
     ("app/services/mail_sync.py", (APP,)),
-    # Both Monero wallet implementations are API services, imported only by their routers. Leaving
-    # them unmapped hit the conservative ALL fallback: a fee arithmetic fix restarted the relay,
-    # Tor, proxy, media, git and search on both nodes and left desktop clients recovering for
-    # minutes even though none of those processes imports wallet code.
-    ("app/services/monero_wallet_service.py", (APP,)),
-    ("app/services/monero_user_wallets.py", (APP,)),
+    # Pooled output maintenance runs in the worker, which also imports the shared wallet helpers.
+    # Restart both consumers so output fixes reach the scheduler without disconnecting relays.
+    ("app/services/monero_wallet_service.py", (APP, WORKER)),
+    ("app/services/monero_user_wallets.py", (APP, WORKER)),
     # The bundled metasearch: its own module, and the settings file it reads at import.
     ("app/services/searxng_native.py", (APP, SEARXNG)),   # the APP serves the /searxng mount too
     ("searxng/settings.yml", (SEARXNG,)),

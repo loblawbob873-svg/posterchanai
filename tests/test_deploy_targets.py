@@ -104,11 +104,14 @@ class Mapping(unittest.TestCase):
         for spared in (dt.RELAY, dt.MEDIA):
             self.assertNotIn(spared, got, f"a router change must not restart {spared}")
 
-    def test_a_monero_wallet_change_restarts_only_the_api(self):
-        """Wallet code is reached only through the API routers; fee fixes must not disconnect Nostr."""
+    def test_monero_changes_restart_api_and_output_scheduler_without_disconnecting_relays(self):
+        """The worker imports pooled maintenance and shared RPC errors/amount helpers."""
         for path in ("app/services/monero_wallet_service.py",
                      "app/services/monero_user_wallets.py"):
-            self.assertEqual(dt.units_for([path]), [dt.APP], path)
+            got = dt.units_for([path])
+            self.assertEqual(set(got), {dt.APP, dt.WORKER}, path)
+            self.assertNotIn(dt.RELAY, got)
+            self.assertNotIn(dt.MEDIA, got)
 
     def test_bot_code_restarts_the_app_because_that_is_where_bots_run(self):
         """If BOTS ever stops aliasing APP without a bots unit existing, bot code changes would
