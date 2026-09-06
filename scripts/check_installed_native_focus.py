@@ -101,6 +101,10 @@ CLEANUP = r"""(async info=>{
 })"""
 
 
+class NothingToTest(Exception):
+    """A precondition this gate cannot create for itself is absent — report it as a SKIP."""
+
+
 async def choose_native_page(wanted):
     pages = [p for p in json.load(urllib.request.urlopen(BASE + "/json/list", timeout=5))
              if p.get("type") == "page" and p.get("url", "").startswith("app://posterchan/")]
@@ -115,7 +119,16 @@ async def choose_native_page(wanted):
             })""" + "(" + json.dumps(wanted) + ")")
             if usable:
                 return page
-    raise RuntimeError("no installed PosterChan surface owns a native frame")
+    # NOT A FAILURE: THERE IS NOTHING HERE TO TEST.
+    #
+    # This gate needs a native application (Firefox, Telegram) adopted into a PosterChan frame. A
+    # desktop with none open is not a broken desktop -- it is a desktop with nothing for this gate
+    # to look at, which is the suite's exit-2 "could not run". Its sibling
+    # check_installed_native_snap already SKIPs on exactly this precondition ("no Firefox or
+    # Telegram frame is available"); this one raised and reported FAIL, so the same machine in the
+    # same state produced a red gate and a skipped gate side by side. Measured on the laptop.
+    raise NothingToTest("no installed PosterChan surface owns a native frame — "
+                        "open Firefox or Telegram in a PosterChan window to exercise this")
 
 
 async def main():
@@ -233,6 +246,9 @@ async def main():
 if __name__ == "__main__":
     try:
         raise SystemExit(asyncio.run(main()))
+    except NothingToTest as exc:
+        print("SKIP installed focus test: " + str(exc))
+        raise SystemExit(2)
     except (urllib.error.URLError, ConnectionRefusedError) as exc:
         print("SKIP installed Electron is not attached on the loopback CDP port: " + str(exc))
         raise SystemExit(2)

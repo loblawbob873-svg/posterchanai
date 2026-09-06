@@ -81,3 +81,28 @@ def test_a_socket_path_that_no_longer_exists_is_missing_not_present(monkeypatch,
     monkeypatch.setenv("WAYFIRE_SOCKET", str(tmp_path / "gone.sock"))
     with pytest.raises(GATE.PrerequisiteMissing):
         GATE.wf.socket_path()
+
+
+def test_a_missing_native_frame_is_a_skip_not_a_failure():
+    """The same desktop, in the same state, must not make one gate red and its sibling grey.
+
+    `check_installed_native_focus` needs a native application ADOPTED INTO a PosterChan frame --
+    native hosting, which is off by default. On an ordinary desktop there is nothing for it to look
+    at, which is the suite's exit-2 "could not run", and `check_installed_native_snap` already said
+    so ("no Firefox or Telegram frame is available"). The focus gate raised instead and reported
+    FAIL.
+
+    Measured on the real laptop: with Firefox open -- launched, sized to the work area, its own
+    title bar, its icon in the taskbar -- both gates correctly skip, because hosting is off. Before
+    this, that same machine produced one FAIL and one SKIP for one condition.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1]
+           / "scripts/check_installed_native_focus.py").read_text(encoding="utf-8")
+    assert "class NothingToTest" in src
+    assert "raise NothingToTest(" in src, "the missing precondition still raises RuntimeError"
+    assert "except NothingToTest" in src and "SystemExit(2)" in src
+    # It must be caught BEFORE the generic handlers, or it can never reach its own.
+    tail = src[src.index('if __name__ == "__main__":'):]
+    assert tail.index("except NothingToTest") < tail.index("except (urllib.error.URLError"), \
+        "the generic handler catches it first"
