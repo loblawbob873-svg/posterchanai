@@ -79,6 +79,12 @@ def run_guest(args, boot_iso: str | None, disk: str | None, seconds: int):
                "-drive", f"if=pflash,format=raw,file={nvram}",
                "-display", "none", "-vga", "virtio",
                "-serial", f"file:{serial}"]
+        # A MACHINE NOBODY HAS SET UP HAS NO NETWORK, and QEMU hands every guest a working NAT
+        # unless told otherwise. So this gate's own premise -- "the radio is asked first" -- was
+        # false for the guest it booted: the wizard correctly SKIPPED the network step, because the
+        # machine was already online, and the gate called that a failure. `-nic none` is what makes
+        # the question real; the networked pass below asks the opposite question.
+        cmd += ["-nic", "user"] if networked else ["-nic", "none"]
         if disk:
             cmd += ["-drive", f"file={disk},if=virtio,format=qcow2"]
         if boot_iso:
@@ -108,7 +114,7 @@ def run_guest(args, boot_iso: str | None, disk: str | None, seconds: int):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def judge(console: str, what: str) -> int:
+def judge(console: str, what: str, expect: str = "network") -> int:
     if console is None:
         return 2
     m = VERDICT.search(console or "")
@@ -124,16 +130,24 @@ def judge(console: str, what: str) -> int:
         print(f"FAIL  {what}: booted past the welcome screen (verdict={verdict}, step={step}) — a "
               f"machine nobody has set up must open on the wizard, not on a desktop it cannot use")
         return 1
-    if step != "network":
-        print(f"FAIL  {what}: the wizard opened on {step!r}, not 'network'. The radio is asked for "
-              f"first because every later question needs it; asked fourth, somebody types an "
-              f"instance URL at a machine that cannot reach one")
+    if step != expect:
+        if expect == "network":
+            print(f"FAIL  {what}: the wizard opened on {step!r}, not 'network'. The radio is asked "
+                  f"for first because every later question needs it; asked fourth, somebody types "
+                  f"an instance URL at a machine that cannot reach one")
+        else:
+            # The networked pass. `tor` here is the specific regression that shipped: a build whose
+            # instance was answered by a BUILT-IN DEFAULT rather than by the person, so every disc
+            # came up pointed at the developer's server and never asked.
+            extra = (" — an instance nobody chose was treated as an answer"
+                     if step in ("tor", "signin", "account") else "")
+            print(f"FAIL  {what}: online, the wizard opened on {step!r}, not {expect!r}{extra}")
         return 1
     if blocked != "0":
-        print(f"FAIL  {what}: the wizard opened on 'network' already blocked — the first screen of "
+        print(f"FAIL  {what}: the wizard opened on {expect!r} already blocked — the first screen of "
               f"a new machine is a dead end")
         return 1
-    print(f"OK    {what}: comes up at the welcome screen (step=network)")
+    print(f"OK    {what}: comes up at the welcome screen (step={expect})")
     return 0
 
 
@@ -143,6 +157,8 @@ def main():
     ap.add_argument("--disk", help="an installed virtual disk to boot instead (no ISO attached)")
     ap.add_argument("--memory", type=int, default=4096)
     ap.add_argument("--cpus", type=int, default=2)
+    ap.add_argument("--offline-only", action="store_true",
+                    help="only the no-network pass (skip the online instance-question pass)")
     ap.add_argument("--seconds", type=int, default=420,
                     help="how long to wait for the session to report")
     args = ap.parse_args()
@@ -156,8 +172,23 @@ def main():
         return 2
 
     what = "installed disk" if args.disk else Path(args.iso).name
-    console = run_guest(args, None if args.disk else args.iso, args.disk, args.seconds)
-    return judge(console, what)
+
+    # TWO GUESTS, BECAUSE THERE ARE TWO QUESTIONS AND ONE BOOT CANNOT ANSWER BOTH.
+    #
+    #   offline — a machine nobody has set up: the wizard must open on the radio.
+    #   online  — the same image with a working link: the machine must NOTICE (so `network` is
+    #             answered and skipped) and then ask the FIRST thing it does not know, which is
+    #             which instance to talk to. That half is what caught a build shipping the
+    #             developer's instance as a silent default.
+    rc = judge(run_guest(args, None if args.disk else args.iso, args.disk, args.seconds),
+               what + " (no network)", "network")
+    if rc != 0:
+        return rc
+    if args.offline_only:
+        return 0
+    return judge(run_guest(args, None if args.disk else args.iso, args.disk, args.seconds,
+                           networked=True),
+                 what + " (online)", "instance")
 
 
 if __name__ == "__main__":

@@ -92,8 +92,25 @@
         }
       }
     }
-    try{ w.instance = !!(PC() && PC().apiBase && PC().apiBase()); }catch(_){ w.instance = false; }
-    if(!w.instance){ try{ w.instance = !!(root.__PC_API_BASE__); }catch(_){} }
+    /* A DEFAULT NOBODY CHOSE IS NOT AN ANSWER, and reading one as an answer skipped this question
+     * on every disc ever built. `main.js` falls back to DEFAULT_INSTANCE whenever nothing is
+     * configured -- right for a downloaded desktop build, wrong for a machine booting for the first
+     * time -- so `apiBase()` and `__PC_API_BASE__` both come back full on a completely fresh
+     * install. Measured on a freshly built LiveISO: the wizard opened on `tor` with
+     * state={"network":"done","instance":"done",...}, i.e. every new machine silently adopted the
+     * developer's instance and was never offered the choice.
+     *
+     * `pcShell.instanceChosen` is the honest answer where the shell can give one. Everywhere else
+     * -- the web client served BY an instance, the APK -- a base that is present IS a real choice,
+     * so the old test stands. */
+    let _chosen = null;
+    try{ if(root.pcShell && typeof root.pcShell.instanceChosen === 'boolean') _chosen = root.pcShell.instanceChosen; }catch(_){ }
+    if(_chosen !== null){
+      w.instance = _chosen;
+    }else{
+      try{ w.instance = !!(PC() && PC().apiBase && PC().apiBase()); }catch(_){ w.instance = false; }
+      if(!w.instance){ try{ w.instance = !!(root.__PC_API_BASE__); }catch(_){} }
+    }
     w.instanceSkipped = get(KEY_INSTANCE_SKIP) === '1';
     const tor = get(KEY_TOR);
     w.torChosen = tor === 'on';

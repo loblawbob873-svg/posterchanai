@@ -193,6 +193,23 @@ function instance() {
   if (cfg.instance == null) return DEFAULT_INSTANCE;
   return String(cfg.instance).replace(/\/+$/, '');
 }
+/* HAS ANYBODY ACTUALLY CHOSEN ONE? A DEFAULT IS NOT AN ANSWER.
+ *
+ * `instance()` falls back to DEFAULT_INSTANCE, which is right for a downloaded Windows/macOS build:
+ * somebody who installed the app wants it to work without being interrogated first. It is wrong for
+ * a machine booting PosterChanOS for the first time, where "which instance?" is a question the
+ * first-run wizard exists to ask — and it could not, because the fallback made the question look
+ * already answered.
+ *
+ * Measured on a freshly built LiveISO: the wizard came up on `tor` with
+ * state={"network":"done","instance":"done",...}. Every disc shipped pointed at the DEVELOPER'S
+ * instance, and nobody was ever offered the choice — on an image whose whole clean-out exists so a
+ * disc carries nothing of the machine that built it.
+ *
+ * So the fallback stays and the wizard asks a different question: was this CONFIGURED, or defaulted?
+ * A separate reader rather than a changed return value, because `instance()` has many callers and
+ * every one of them wants the resolved URL. */
+function instanceChosen() { return cfg.instance != null && String(cfg.instance).trim() !== ''; }
 // origin.js, NOT `new URL(u).origin` — that is the string "null" for app:// and every other
 // non-special scheme, which made isOurs() false for our OWN pages. Read the header there before
 // touching this; it is the difference between a working app and one that hands its own URLs to
@@ -1489,6 +1506,7 @@ function fromOurPage(e) {
 }
 
 ipcMain.on('pc:instance:sync', (e) => { e.returnValue = instance(); });
+ipcMain.on('pc:instance:chosen', (e) => { e.returnValue = instanceChosen(); });
 ipcMain.handle('pc:instance:get', () => instance());
 ipcMain.handle('pc:instance:set', (e, url) => fromOurPage(e) ? setInstance(url) : false);
 ipcMain.on('pc:retry', (e) => {

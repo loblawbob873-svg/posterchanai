@@ -207,7 +207,11 @@ if (isOurPage) {
   // fetch and the first WebSocket to resolve against the wrong base. sendSync is the only thing that
   // can answer that early, and it is one tiny string once per page load.
   let instanceSync = '';
+  let instanceChosenSync = false;
   try { instanceSync = ipcRenderer.sendSync('pc:instance:sync') || ''; } catch (_) {}
+  /* Whether an instance was CHOSEN, as opposed to defaulted — the first-run wizard's question. See
+   * instanceChosen() in main.js. */
+  try { instanceChosenSync = !!ipcRenderer.sendSync('pc:instance:chosen'); } catch (_) {}
 
   /* READ is OUR PAGE'S ONLY -- see pcClip above, which is write-only on purpose and exposed to any
    * page the app loads. Reading somebody's clipboard is a different power and it stays behind the
@@ -218,6 +222,9 @@ if (isOurPage) {
 
   contextBridge.exposeInMainWorld('pcShell', {
     instanceSync,
+    /* Was an instance CHOSEN, or is `instanceSync` the built-in default? Only the first-run wizard
+     * cares: every other reader wants a URL that works. */
+    instanceChosen: instanceChosenSync,
     /* Multi-monitor PosterChanOS has one renderer per output. Only the primary may run unattended
      * services such as folder sync; otherwise every extra monitor becomes another filesystem
      * writer with the same device identity. */
