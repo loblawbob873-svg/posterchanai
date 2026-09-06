@@ -247,8 +247,12 @@ class UserWallets:
         got = await self.rpc("incoming_transfers", {
             "transfer_type": "available", "account_index": index,
         })
-        transfers = [t for t in (got.get("transfers") or [])
-                     if t.get("unlocked", True) and int(t.get("amount") or 0) > 0]
+        # Wallet RPC's "available" means UNSPENT, not unlocked. "unavailable" means
+        # already SPENT; historical zaps must never masquerade as a split still unlocking.
+        unspent = [t for t in (got.get("transfers") or [])
+                   if isinstance(t, dict) and not t.get("spent") and not t.get("frozen")
+                   and type(t.get("amount")) is int and t["amount"] > 0]
+        transfers = [t for t in unspent if t.get("unlocked") is True]
         count = len(transfers)
         if count >= OUTPUT_LOW_WATER:
             return {"account_index": index, "action": "healthy", "spendable_outputs": count}
@@ -259,14 +263,17 @@ class UserWallets:
         # 3 -> 2 -> 1 -> 0 spendable outputs. Locked outputs are an on-wallet, restart-safe witness
         # that replenishment is already in flight. Wait for them before paying another transaction
         # fee or consuming another source.
-        unavailable = await self.rpc("incoming_transfers", {
-            "transfer_type": "unavailable", "account_index": index,
-        })
-        locked = [t for t in (unavailable.get("transfers") or [])
-                  if int(t.get("amount") or 0) > 0]
+        locked = [t for t in unspent if t.get("unlocked") is not True]
         if locked:
             return {"account_index": index, "action": "waiting", "spendable_outputs": count,
                     "locked_outputs": len(locked), "reason": "output split is still unlocking"}
+
+        # Before a split is mined, its new outputs may not appear in incoming_transfers yet.
+        # Pending outgoing transactions are wallet-backed evidence too, surviving worker restarts.
+        pending = await self.rpc("get_transfers", {"pending": True, "account_index": index})
+        if pending.get("pending"):
+            return {"account_index": index, "action": "waiting", "spendable_outputs": count,
+                    "reason": "an outgoing transaction is still confirming"}
 
         # sweep_single is deliberately fail-closed: without a key image we cannot preserve the
         # account's other outputs, so waiting is safer than turning maintenance into a lockout.

@@ -66,3 +66,18 @@ def _generated_artifacts():
         shutil.copy2(src, dest)
         print(f"[conftest] generated {dest.relative_to(ROOT)} from "
               f"{src.relative_to(ROOT)} — {why}")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_monero_spend_ledger(monkeypatch, tmp_path):
+    """Fail before opening a host ledger, even if a test hydrates live settings."""
+    from app.services.monero_wallet_service import TransferGate
+    connect = TransferGate._connect
+
+    def isolated_connect(path):
+        assert Path(path).resolve().is_relative_to(tmp_path.resolve()), (
+            "Monero spending ledger is outside the test temporary directory"
+        )
+        return connect(path)
+
+    monkeypatch.setattr(TransferGate, '_connect', staticmethod(isolated_connect))
