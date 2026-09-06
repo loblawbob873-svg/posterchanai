@@ -555,6 +555,107 @@ function quitApp() {
   app.quit();
 }
 
+/* WHAT THE RENDERER WAS HOLDING WHEN IT DIED.
+ *
+ * `render-process-gone` reports a reason and an exit code and nothing else, so an `oom` is a dead
+ * end: it says the renderer ran out of memory and not what had been allocated, whether the JS heap
+ * was against its ceiling, or whether it climbed steadily or spiked. Reported as "posterchan ran
+ * out of memory" at start on Windows, with the SAME bundle running fine on Linux — there was
+ * nothing in that report anyone could act on, and guessing at a cause from here is how a boot path
+ * gets changed to fix a symptom nobody has reproduced.
+ *
+ * So the page reports its own memory while it is alive and this keeps the last few samples; when
+ * the process dies the dialog carries the curve that led up to it. The three numbers answer three
+ * different failures that all surface as one word: a JS heap against `jsHeapSizeLimit` is a
+ * document or a cache or a leak; a small heap under a dead process is a working set full of pixels;
+ * a node count in the hundreds of thousands is a runaway document, which is invisible in both.
+ *
+ * It is a POLL, not a hook — an allocation that dies has no chance to report itself. */
+const _memSamples = new Map();
+const _childDeaths = [];
+ipcMain.on('pc:mem:sample', (e, s) => {
+  const id = e.sender.id;
+  const arr = _memSamples.get(id) || [];
+  arr.push(s && typeof s === 'object' ? s : {});
+  while (arr.length > 20) arr.shift();
+  _memSamples.set(id, arr);
+});
+/* A GPU process that keeps dying drops Chromium to software compositing, and those bitmaps are
+ * charged to the renderer — so a run of these immediately above an `oom` IS the explanation. They
+ * were previously not recorded anywhere at all, in any log, on any platform. */
+app.on('child-process-gone', (_e, d) => {
+  const row = { at: Date.now(), type: String((d && d.type) || '?'),
+                reason: String((d && d.reason) || '?'), code: d && d.exitCode };
+  if (row.reason === 'clean-exit') return;
+  _childDeaths.push(row);
+  while (_childDeaths.length > 20) _childDeaths.shift();
+  console.warn('[child] gone:', row.type, row.reason, row.code);
+});
+
+/* The one line worth reading aloud. Everything else goes in the file. */
+function memoryLine(samples) {
+  const s = samples || [];
+  if (!s.length) return 'No memory reading was taken before it died.';
+  const last = s[s.length - 1];
+  const trail = s.slice(-6).map(x => (x.used == null ? '?' : x.used) + 'MB').join(' → ');
+  return 'JS heap ' + trail + ' of a ' + (last.cap == null ? '?' : last.cap) + 'MB ceiling, '
+    + (last.nodes == null ? '?' : last.nodes) + ' DOM nodes, '
+    + (last.up == null ? '?' : last.up) + 's after that page loaded.';
+}
+
+function crashReport(reason, code, samples) {
+  const lines = [];
+  lines.push('PosterChan renderer stopped: ' + reason
+             + (Number.isInteger(code) ? ' (exit ' + code + ')' : ''));
+  lines.push('when: ' + new Date().toISOString());
+  try { lines.push('app: ' + app.getVersion() + '  electron: ' + process.versions.electron
+                   + '  ' + process.platform + '/' + process.arch); } catch (_) {}
+  try {
+    const m = process.getSystemMemoryInfo();
+    lines.push('system memory: ' + Math.round((m.total || 0) / 1024) + 'MB total, '
+               + Math.round((m.free || 0) / 1024) + 'MB free');
+  } catch (_) {}
+  lines.push('');
+  lines.push('renderer samples (newest last):');
+  for (const s of samples || []) {
+    lines.push('  +' + (s.up == null ? '?' : s.up) + 's  heap ' + s.used + '/' + s.heap
+               + ' of ' + s.cap + 'MB  nodes ' + s.nodes + '  ' + (s.url || ''));
+  }
+  if (!(samples || []).length) lines.push('  (none — it died before the first reading)');
+  lines.push('');
+  lines.push('other child processes that died this run:');
+  for (const c of _childDeaths) {
+    lines.push('  ' + new Date(c.at).toISOString() + '  ' + c.type + ' ' + c.reason
+               + (Number.isInteger(c.code) ? ' (exit ' + c.code + ')' : ''));
+  }
+  if (!_childDeaths.length) lines.push('  (none)');
+  lines.push('');
+  lines.push('process table at the time of the report:');
+  try {
+    for (const p of app.getAppMetrics()) {
+      lines.push('  pid ' + p.pid + '  ' + p.type + '  working set '
+                 + Math.round(((p.memory && p.memory.workingSetSize) || 0) / 1024) + 'MB');
+    }
+  } catch (_) { lines.push('  (unavailable)'); }
+  return lines.join('\n') + '\n';
+}
+
+/* Appended to ONE file, not a new one per crash: a person who is asked for "the crash report" can
+ * find one file, and the interesting case is a repeat, which a folder of near-identical files hides
+ * as effectively as no file at all. Trimmed from the front so it cannot grow without bound. */
+function writeCrashReport(text) {
+  let file = '';
+  try { file = path.join(app.getPath('userData'), 'crash-report.txt'); } catch (_) { return ''; }
+  try {
+    let prev = '';
+    try { prev = fs.readFileSync(file, 'utf8'); } catch (_) {}
+    let out = prev + (prev ? '\n' + '-'.repeat(60) + '\n\n' : '') + text;
+    if (out.length > 200000) out = out.slice(out.length - 200000);
+    fs.writeFileSync(file, out);
+    return file;
+  } catch (_) { return ''; }
+}
+
 /* THE HEALTH MARKER IS A STARTUP CONTRACT, AND IT USED TO OUTLIVE IT FOR EVER.
  *
  * The preload paints a deterministic 8x8 four-colour square in the corner of each shell surface so
@@ -955,25 +1056,30 @@ function createWindow(assignment) {
     const code = details && details.exitCode;
     console.warn('[renderer] gone:', reason, code);
     if (reason === 'clean-exit') return;
+    const samples = _memSamples.get(created.webContents.id) || [];
+    _memSamples.delete(created.webContents.id);
     const now = Date.now();
     _rendererDeaths = _rendererDeaths.filter(t => now - t < 60000);
     _rendererDeaths.push(now);
     const looping = _rendererDeaths.length >= 3;
     const detail = ' (' + reason + (Number.isInteger(code) ? ', exit ' + code : '') + ')';
+    /* MEASURED, NOT GUESSED. This used to tell an `oom` reader "this usually means a very large
+     * file was being synced", which was a guess written from here, printed to somebody who could
+     * check and repeated back to us as if it were a finding. The heap line is a reading the page
+     * took of itself; the file behind it carries the rest. */
+    const mem = memoryLine(samples);
+    const file = writeCrashReport(crashReport(reason, code, samples));
+    const where = file ? '\n\nThe full report is at:\n' + file : '';
     if (looping) {
       dialog.showErrorBox('PosterChan keeps stopping',
         'The window has stopped three times in a minute' + detail + ', so it will not be reloaded '
-        + 'again.\n\nNothing is lost — everything is on the relay or on disk. Quit and reopen the '
-        + 'app; if it keeps happening, this reason is the thing to report.');
+        + 'again.\n\n' + mem + '\n\nNothing is lost — everything is on the relay or on disk. Quit '
+        + 'and reopen the app; if it keeps happening, THIS is the thing to report.' + where);
       return;
     }
     dialog.showErrorBox(
       reason === 'oom' ? 'PosterChan ran out of memory' : 'PosterChan stopped unexpectedly',
-      reason === 'oom'
-        ? 'The window was closed by the system because it ran out of memory. This usually means a '
-          + 'very large file was being synced.\n\nThe app will reload. Files already synced are '
-          + 'safe, and the next check resumes where it stopped.'
-        : 'The window stopped' + detail + '.\n\nThe app will reload.');
+      'The window stopped' + detail + '.\n\n' + mem + '\n\nThe app will reload.' + where);
     try { created.webContents.reloadIgnoringCache(); }
     catch (_) { try { loadApp(created); } catch (_e) {} }
   });

@@ -14,6 +14,46 @@
  */
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
+/* THE PAGE REPORTS ITS OWN MEMORY, BECAUSE THE CORPSE CANNOT.
+ *
+ * `render-process-gone` hands main.js a reason and an exit code, and for `oom` that is the whole
+ * answer: the renderer ran out of memory, and nothing about what it had allocated. See the long
+ * note in main.js — this is the half that takes the reading, while the renderer is still alive to
+ * take one.
+ *
+ * `performance.memory` is Chromium-only and non-standard, which costs nothing here: this bundle
+ * only ever runs on Chromium, and it is the ONE number that separates a JS heap against its ceiling
+ * (a document, a cache, a leak) from a working set full of pixels. It is also a lie on some builds
+ * — it can be bucketed or absent under site isolation — so a missing reading stops the sampler
+ * rather than reporting zeroes that would read as "the heap was empty".
+ *
+ * Every 2 seconds, not every 10: a death during BOOT is the case being chased, and a sampler whose
+ * first reading lands after the crash measures nothing. Two seconds of a live HTMLCollection length
+ * and three integer reads is not a cost this page can notice. */
+(() => {
+  const read = () => { try { return performance.memory || null; } catch (_) { return null; } };
+  if (!read()) return;
+  const mb = (n) => (typeof n === 'number' ? Math.round(n / 1048576) : null);
+  const send = () => {
+    const m = read();
+    if (!m) return;
+    let nodes = null;
+    try { nodes = document.getElementsByTagName('*').length; } catch (_) {}
+    try {
+      ipcRenderer.send('pc:mem:sample', {
+        up: Math.round(performance.now() / 1000),
+        used: mb(m.usedJSHeapSize), heap: mb(m.totalJSHeapSize), cap: mb(m.jsHeapSizeLimit),
+        nodes,
+        /* The PATH, never the full URL: a query string here can carry an instance and a popup's
+         * arguments, and this string is written to a file somebody is asked to send us. */
+        url: String(location.pathname || '').slice(0, 120),
+      });
+    } catch (_) {}
+  };
+  send();
+  setInterval(send, 2000);
+})();
+
 /* Surface metadata only proves that Wayfire accepted a buffer; it does not prove that a physical
  * output is displaying the renderer.  The session watchdog captures every output and looks for
  * this tiny, deterministic 8x8 marker before declaring the desktop ready.  It is intentionally

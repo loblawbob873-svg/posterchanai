@@ -321,6 +321,114 @@
   }
   // Keep the on-disk event store bounded too (otherwise it balloons over weeks → slow reloads).
   const IDB_CAP = 8000, IDB_KEEP = 5000;
+  /* THE PROFILE STORE HAD NO CEILING, AND NOTHING ANYWHERE DELETED FROM IT.
+   *
+   * `saveProfile` writes a record for EVERY author whose kind-0 arrives — which, on a client that
+   * reads the global feed, is every author on the network the socket has ever mentioned. `_pruneIDB`
+   * trims `events` and has never touched `profiles`, so that store was append-only for the life of
+   * an install, and `init()` reads ALL of it into memory with `getAll()` before the app paints a
+   * pixel. It is the one allocation here that grows with USE rather than with the user's own data,
+   * which is exactly the shape of "this was working perfectly fine before".
+   *
+   * That is a renderer that dies at BOOT, and dies harder every time: the prune runs 8 seconds after
+   * the hydrate, so a hydrate that never finishes is a store that is never trimmed. Reported from
+   * Windows as "posterchan ran out of memory" at start, while the same bundle ran fine on a laptop
+   * that had read less.
+   *
+   * A PROFILE IS THE ONE THING HERE THAT IS SAFE TO EVICT, and the reasoning is `_isPinned` exactly
+   * inverted. Every pin on that list is a document only its author can decrypt, where dropping it
+   * means it is GONE until a relay hands it back. A kind-0 is public, on every relay, and this client
+   * re-queries one the moment `haveProfile` says no — so evicting one costs a cache miss and nothing
+   * else. Profiles are the population the newest-N rule is RIGHT for.
+   *
+   * The key is `at` — when THIS device last saw the profile — never the kind-0's own `created_at`,
+   * which is when that person last edited their bio. Ranked by `created_at`, somebody you read every
+   * day who has not touched their profile since 2023 evicts before a spam account that rewrote its
+   * bio yesterday. */
+  const PROF_CAP = 12000, PROF_KEEP = 8000;
+  /* Records written before `at` existed carry only `created_at`. That ranks an old install's whole
+     store below anything seen since, which is the right way round: those are the ones nothing has
+     confirmed is still worth holding. */
+  const _profOrd = (r) => Number((r && (r.at || r.created_at)) || 0);
+  /* Which profiles this device keeps. Shared by the memory cap and the disk prune so they cannot
+     drift on what "oldest" means — and the viewer's OWN profile is never a candidate, at any size:
+     evicting it turns the header into "anon" and hands an edit a half-loaded record to publish
+     over. */
+  function _profVictims(rows, keep){
+    const me = _pinnedViewer();
+    const cand = rows.filter(r => r && r.pubkey !== me);
+    if (cand.length <= keep) return [];
+    cand.sort((a, b) => _profOrd(b) - _profOrd(a));
+    return cand.slice(keep);
+  }
+
+  function _evictProfiles(){
+    if (mem.profiles.size <= PROF_CAP) return;
+    for (const r of _profVictims([...mem.profiles.values()], PROF_KEEP)) mem.profiles.delete(r.pubkey);
+  }
+
+  /* NEVER `getAll()`. This runs on a store that may already hold hundreds of thousands of records —
+     that is the state this prune exists to end — so materialising it to measure it would be the
+     same allocation, once more, on the boot that was supposed to fix it. A cursor hands values over
+     one at a time and only the key and the rank are retained. */
+  async function _pruneProfiles(){
+    if (!db) return;
+    try {
+      const n = await pr(tx('profiles','readonly').count());
+      if (n <= PROF_CAP) return;
+      const rank = [];
+      await new Promise((res, rej) => {
+        const q = tx('profiles','readonly').openCursor();
+        q.onsuccess = () => {
+          const c = q.result;
+          if (!c){ res(); return; }
+          rank.push({ pubkey: c.value && c.value.pubkey, at: _profOrd(c.value) });
+          c.continue();
+        };
+        q.onerror = () => rej(q.error);
+      });
+      const del = _profVictims(rank, PROF_KEEP);
+      const st = tx('profiles','readwrite');
+      for (const r of del) if (r.pubkey) st.delete(r.pubkey);
+    } catch(e){ console.warn('profile prune failed', e); }
+  }
+
+  /* THE HYDRATE HAS TO SURVIVE THE STORE IT INHERITS, which is the whole point: every install that
+     has this bug already has the oversized store on disk, and a fix that only takes effect after one
+     successful boot at the old size fixes nobody. So this is a cursor with a BOUNDED selection —
+     peak memory is 2x PROF_KEEP records however many are on disk — rather than `getAll()` plus a
+     trim, which pays the full cost first and trims the copy. */
+  async function _hydrateProfiles(){
+    const pick = [];
+    /* Read ONCE, not per record: this walk is the hot loop of boot, and on the store this exists to
+       bound it runs hundreds of thousands of times. Boot usually does not know the viewer yet —
+       sign-in happens after init() — and that is survivable here in a way it is not in the prune:
+       an own-profile missing from MEMORY is a refetch, where one missing from DISK is gone. The
+       prune runs 8 seconds later, by which time it does know. */
+    const me = _pinnedViewer();
+    let mine = null;
+    const trim = () => {
+      pick.sort((a, b) => _profOrd(b) - _profOrd(a));
+      pick.length = PROF_KEEP;
+    };
+    await new Promise((res, rej) => {
+      const q = tx('profiles','readonly').openCursor();
+      q.onsuccess = () => {
+        const c = q.result;
+        if (!c){ res(); return; }
+        if (c.value && c.value.pubkey){
+          if (me && c.value.pubkey === me) mine = c.value; else pick.push(c.value);
+        }
+        if (pick.length >= PROF_KEEP * 2) trim();
+        c.continue();
+      };
+      q.onerror = () => rej(q.error);
+    });
+    if (pick.length > PROF_KEEP) trim();
+    for (const p of pick) mem.profiles.set(p.pubkey, p);
+    if (mine) mem.profiles.set(mine.pubkey, mine);
+  }
+
   async function _pruneIDB(){
     if (!db) return;
     try {
@@ -351,10 +459,9 @@
         for (const ev of pin) mem.events.set(ev.id, _normEvent(ev));
         for (const ev of rest.slice(0, 2000)) mem.events.set(ev.id, _normEvent(ev));
         _reindex();   // build the local query indexes over the hydrated events
-        const profs = await pr(tx('profiles','readonly').getAll());
-        for (const p of profs) mem.profiles.set(p.pubkey, p);
+        await _hydrateProfiles();
       } catch(e){ console.warn('hydrate failed', e); }
-      setTimeout(_pruneIDB, 8000);   // trim the on-disk store after startup (non-blocking)
+      setTimeout(() => { _pruneIDB(); _pruneProfiles(); }, 8000);   // trim the on-disk stores after startup (non-blocking)
     },
     has(id){ return mem.events.has(id); },
     get(id){ return mem.events.get(id); },
@@ -437,19 +544,32 @@
         // account. Kept on the RECORD (like emojis), never on meta, so it can't pollute the user's own
         // publishable kind-0. Powers "follow the bridged account on Pleroma too".
         const proxy = (ev.tags||[]).find(t => t[0]==='proxy' && t[1] && (t[2]||'').toLowerCase()==='activitypub');
+        const now = Math.floor(Date.now() / 1000);
         if (cur && cur.created_at >= ev.created_at) {
           // Not newer — but BACKFILL emoji/proxy if this profile was cached before they were stored
           // (so re-fetching the same kind-0 still surfaces them) instead of returning blind.
           let ch = false;
           if (Object.keys(em).length && !cur.emojis) { cur.emojis = em; ch = true; }
           if (proxy && !cur._proxy) { cur._proxy = proxy[1]; ch = true; }
-          if (ch && db) try { tx('profiles','readwrite').put(cur); } catch(_){}
+          /* SEEN AGAIN, WHICH IS WHAT THE PRUNE NEEDS TO KNOW — and this is the branch it happens
+             in. For anybody you already have, every kind-0 that arrives lands right here and used
+             to return without recording that it had. Ranked on the create path alone, a contact
+             whose profile you cached a year ago and have received a thousand times since would be
+             the FIRST thing evicted.
+             Stamped in memory unconditionally (free, and it is what the memory cap reads) and
+             written to disk at most once a day per profile: a write per firehose profile event is
+             a cost this path cannot carry, and a day of lag against an 8000-record keep decides
+             nothing. */
+          const seen = Number(cur.at) || 0;
+          cur.at = now;
+          if ((ch || seen < now - 86400) && db) try { tx('profiles','readwrite').put(cur); } catch(_){}
           return;
         }
-        const rec = { pubkey: ev.pubkey, created_at: ev.created_at, meta };
+        const rec = { pubkey: ev.pubkey, created_at: ev.created_at, meta, at: now };
         if (Object.keys(em).length) rec.emojis = em;
         if (proxy) rec._proxy = proxy[1];
         mem.profiles.set(ev.pubkey, rec);
+        if (mem.profiles.size > PROF_CAP) _evictProfiles();
         if (db) try { tx('profiles','readwrite').put(rec); } catch(_){}
       } catch(_){}
     },
