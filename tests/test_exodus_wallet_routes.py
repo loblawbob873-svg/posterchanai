@@ -258,41 +258,58 @@ def test_sending_monero_points_at_the_wallet_that_owns_the_coins(client):
     assert "Monero Wallet screen" in r.text
 
 
+def _monero_transport(monkeypatch, balance=1500000000000, unlocked=500000000000, failed=False):
+    # Keep the actual exported singleton and its account lookup / balance conversion. Only the
+    # wallet RPC boundary is stubbed: replacing the singleton with a factory hid a real outage.
+    from app.services.monero_user_wallets import user_wallets
+    from app.services.monero_wallet_service import WalletError
+    calls = []
+    async def rpc(method, params=None):
+        calls.append((method, params))
+        if failed:
+            raise WalletError('The wallet service is unavailable')
+        if method == 'get_accounts':
+            return {'subaddress_accounts': [
+                {'label': 'pc:' + 'a' * 64, 'account_index': 3, 'base_address': 'OTHER-USER'},
+                {'label': 'pc:' + _User.nostr_npub, 'account_index': 7, 'base_address': '4' + 'b' * 94}]}
+        assert method == 'get_balance' and params == {'account_index': 7}
+        return {'balance': balance, 'unlocked_balance': unlocked}
+    monkeypatch.setattr(user_wallets, 'enabled', lambda: True)
+    monkeypatch.setattr(user_wallets, 'rpc', rpc)
+    return calls
+
+
 def test_an_unreachable_monero_wallet_is_unknown_not_zero(client, monkeypatch):
-    """Same rule as every other chain: 0.00 XMR to somebody who holds Monero is a lie about their
-    money, and the daemon being down is not a balance."""
     _created(client)
-    def boom():
-        raise RuntimeError("wallet rpc down")
-    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets", boom, raising=False)
-    row = client.get("/api/wallet/exodus/balances").json()["balances"]["XMR"]
-    assert row["known"] is False and row["amount"] is None
-    assert row["note"]
+    calls = _monero_transport(monkeypatch, failed=True)
+    row = client.get('/api/wallet/exodus/balances').json()['balances']['XMR']
+    assert calls == [('get_accounts', None)]
+    assert row['known'] is False and row['amount'] is None and row['note']
 
 
 def test_the_monero_row_reports_what_the_node_wallet_says(client, monkeypatch):
     _created(client)
-    class _W:
-        async def balance(self, _pk):
-            return {"address": "4" + "b" * 94, "balance": "1.5", "unlocked_balance": "0.5"}
-    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets",
-                        lambda: _W(), raising=False)
-    row = client.get("/api/wallet/exodus/balances").json()["balances"]["XMR"]
-    assert row["known"] is True and row["amount"] == "1.5"
-    assert row["spendable"] == "0.5"
-    # Monero locks change for ~20 minutes after a send; a screen showing only the total tells
-    # somebody they have money they cannot move yet.
-    assert "locked" in row["note"]
+    calls = _monero_transport(monkeypatch)
+    row = client.get('/api/wallet/exodus/balances').json()['balances']['XMR']
+    assert row['known'] is True and float(row['amount']) == 1.5
+    assert float(row['spendable']) == 0.5 and 'locked' in row['note']
+    assert calls[-1] == ('get_balance', {'account_index': 7})
 
 
 def test_the_monero_address_is_the_node_wallets_not_one_derived_here(client, monkeypatch):
     _created(client)
-    class _W:
-        async def balance(self, _pk):
-            return {"address": "4" + "c" * 94, "balance": "0", "unlocked_balance": "0"}
-    monkeypatch.setattr("app.services.monero_user_wallets.user_wallets",
-                        lambda: _W(), raising=False)
-    addrs = client.get("/api/wallet/exodus/addresses").json()["addresses"]
-    assert addrs["XMR"] == "4" + "c" * 94
-    # And the seed's own chains are still there and unchanged.
-    assert addrs["XRP"].startswith("r") and addrs["BTC"].startswith("1")
+    _monero_transport(monkeypatch, balance=0, unlocked=0)
+    addrs = client.get('/api/wallet/exodus/addresses').json()['addresses']
+    assert addrs['XMR'] == '4' + 'b' * 94
+    assert addrs['XRP'].startswith('r') and addrs['BTC'].startswith('1')
+
+
+def test_disabled_monero_is_reported_without_trying_the_network(client, monkeypatch):
+    from app.services.monero_user_wallets import user_wallets
+    _created(client)
+    monkeypatch.setattr(user_wallets, 'enabled', lambda: False)
+    rpc = AsyncMock(side_effect=AssertionError('disabled wallet must not connect'))
+    monkeypatch.setattr(user_wallets, 'rpc', rpc)
+    row = client.get('/api/wallet/exodus/balances').json()['balances']['XMR']
+    assert not row['known'] and 'switched off' in row['note']
+    rpc.assert_not_called()
