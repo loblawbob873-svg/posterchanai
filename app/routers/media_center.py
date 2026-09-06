@@ -352,6 +352,7 @@ async def items(library_id: str, user=Depends(get_media_user)):
 @router.get("/{library_id}/folders")
 async def folders(library_id: str, path: str = ".", user=Depends(get_media_user)):
     library = await library_for(library_id, media.identity(user))
+    catalog = await available_catalog(library)
     def listing():
         root = media.safe_root(library['folder'])
         relative = Path(path)
@@ -367,7 +368,17 @@ async def folders(library_id: str, path: str = ".", user=Depends(get_media_user)
         with os.scandir(target) as entries:
             for entry in entries:
                 if not entry.name.startswith('.') and entry.is_dir(follow_symlinks=False):
-                    result.append({'name': entry.name, 'path': (relative / entry.name).as_posix()})
+                    folder_path = (relative / entry.name).as_posix()
+                    folder = {'name': entry.name, 'path': folder_path}
+                    covers = []
+                    for item in catalog:
+                        if item.get('path', '').startswith(folder_path + '/'):
+                            covers.append(item['id'])
+                            if len(covers) == 3:
+                                break
+                    if covers:
+                        folder['art'] = covers
+                    result.append(folder)
         return {'path': relative.as_posix(), 'folders': sorted(result, key=lambda entry: media.natural(entry['name']))}
     try:
         return await asyncio.to_thread(listing)
