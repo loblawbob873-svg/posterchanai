@@ -28,10 +28,34 @@
     return Number.isFinite(n) && n > 0 ? n : 0;
   }
   function dedupe(items){ const seen=new Set(); return (items||[]).filter(x=>x&&x.id&&!seen.has(x.id)&&seen.add(x.id)); }
-  function compute(posts, events, now, days){
+  /* A TIP THAT NAMES NO POST OF YOURS IN THE WINDOW WAS WORTH NOTHING AND SHOWED AS NOTHING.
+     Every number here is attributed to one of your posts, and the events are fetched by `#e` over
+     the post ids in the range — so two real tips are invisible at ANY range: one sent to your
+     PROFILE (`_postXmrTipNote` makes the `e` tag optional, so a tip with no post is a shape that
+     exists), and one sent this week on a post you wrote last year. Both are money somebody
+     actually sent you, and "0 XMR in the last 30 days" is what they looked like.
+     They are counted as TOTALS and not against any post, because there is no post to credit — a
+     profile tip belongs to the person, not to a note. */
+  function tipNames(ev, me){
+    if(!me) return false;
+    for(const t of ((ev && ev.tags) || [])) if(t && t[0] === 'p' && t[1] === me) return true;
+    return false;
+  }
+  function compute(posts, events, now, days, me){
     posts=dedupe(posts).sort((a,b)=>b.created_at-a.created_at); events=dedupe(events); now=now||Math.floor(Date.now()/1000);
     const byId=new Map(posts.map(p=>[p.id,{post:p,replies:0,reactions:0,reposts:0,zaps:0,xmr:0,bch:0,tips:0,score:0}]));
-    events.forEach(e=>{ const row=byId.get(target(e)); if(!row)return;
+    const loose={xmr:0,bch:0,tips:0},looseIds=new Set();
+    events.forEach(e=>{ const row=byId.get(target(e));
+      if(!row){
+        /* Only a TIP, and only one addressed to this account. Anything else with no row is an
+           event about somebody else's post that came back in the same batch. */
+        const tk=e.kind===1?tipOf(e):'';
+        if(tk&&tipNames(e,me)){
+          if(tk==='xmr')loose.xmr+=tagAmount(e,'amount_xmr'); else loose.bch+=tagAmount(e,'amount_bch');
+          loose.tips++; looseIds.add(e.id);
+        }
+        return;
+      }
       if(e.kind===1){
         /* A tip note is a kind 1 too — count it as support, never as a reply. */
         const tk=tipOf(e);
@@ -46,9 +70,10 @@
     days=Math.max(1,Math.min(90,Number(days)||30));
     const daily=Array.from({length:days},()=>({posts:0,engagement:0}));
     posts.forEach(p=>{ const i=days-1-Math.floor((now-p.created_at)/DAY); if(i>=0&&i<days)daily[i].posts++; });
-    events.forEach(e=>{ const i=days-1-Math.floor((now-e.created_at)/DAY); if(i>=0&&i<days&&byId.has(target(e)))daily[i].engagement++; });
+    events.forEach(e=>{ const i=days-1-Math.floor((now-e.created_at)/DAY); if(i>=0&&i<days&&(byId.has(target(e))||looseIds.has(e.id)))daily[i].engagement++; });
     const rows=[...byId.values()], totals=rows.reduce((a,r)=>({posts:a.posts+1,replies:a.replies+r.replies,reactions:a.reactions+r.reactions,reposts:a.reposts+r.reposts,zaps:a.zaps+r.zaps,xmr:a.xmr+r.xmr,bch:a.bch+r.bch,tips:a.tips+r.tips}),{posts:0,replies:0,reactions:0,reposts:0,zaps:0,xmr:0,bch:0,tips:0});
     /* Tips are engagement. They were invisible here because they were being tallied as replies. */
+    totals.xmr+=loose.xmr; totals.bch+=loose.bch; totals.tips+=loose.tips;
     totals.engagement=totals.replies+totals.reactions+totals.reposts+totals.tips; totals.rate=totals.posts?totals.engagement/totals.posts:0;
     return {totals,daily,top:rows.sort((a,b)=>b.score-a.score||b.post.created_at-a.post.created_at).slice(0,6)};
   }
@@ -86,7 +111,14 @@
       f.innerHTML='<div class="spinner"></div>'; const since=Math.floor(Date.now()/1000)-range*DAY;
       try{ const posts=(await PC.relayQuery([{kinds:[1],authors:[viewer.pubkey],since,limit:500}],9000)).filter(p=>!(p.tags||[]).some(t=>t[0]==='e')); if(mine!==serial||!PC.isView('analytics'))return;
         const ids=posts.map(p=>p.id), events=[]; for(let i=0;i<ids.length;i+=100){ const chunk=ids.slice(i,i+100); if(!chunk.length)continue; const got=await PC.relayQuery([{kinds:[1,6,7,9735],'#e':chunk,limit:1000}],9000); events.push(...got); }
-        if(mine===serial)paint(compute(posts,events,0,range));
+        /* ASKED FOR SEPARATELY, BECAUSE THE `#e` QUERY CANNOT REACH THEM. It is keyed on the posts
+           in the range, so a tip to your profile (no `e` tag at all) and a tip sent this week on a
+           post from last year are both outside it — see the note on `compute`. Same window, so it
+           answers the same question the rest of the screen does. Deduped by id in compute(), so a
+           tip that both queries return is counted once. */
+        try{ const tips=await PC.relayQuery([{kinds:[1],'#p':[viewer.pubkey],'#t':['monerotip','bchtip'],since,limit:500}],9000); events.push(...tips); }catch(_){ }
+        if(mine!==serial||!PC.isView('analytics'))return;
+        if(mine===serial)paint(compute(posts,events,0,range,viewer.pubkey));
       }catch(e){ if(mine===serial&&PC.isView('analytics'))f.innerHTML=`<div class="empty">Couldn’t load analytics from your relays.<br><button class="btn btn-cyan small" id="ua-retry">Try again</button></div>`,PC.$('#ua-retry').onclick=load; }
     }
     window.PCUserAnalytics={render:load,_compute:compute,_target:target};

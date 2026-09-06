@@ -52,12 +52,12 @@ def test_analytics_mobile_layout_and_accessible_chart_label_ship():
 # same `#e` query as a reply. Before this, every Monero tip anybody sent inflated the reply count
 # and appeared nowhere as support received.
 
-def compute(posts, events, now, days):
+def compute(posts, events, now, days, me=None):
     """Run the SHIPPED module under node, the way the rest of this file does."""
     js = ("global.window={__PC:{enc:String,isView:()=>false}};global.document={};"
           "require('./static/js/client/user-analytics.js');"
           f"process.stdout.write(JSON.stringify(window.PCUserAnalytics._compute("
-          f"{json.dumps(posts)},{json.dumps(events)},{now},{days})));")
+          f"{json.dumps(posts)},{json.dumps(events)},{now},{days},{json.dumps(me)})));")
     proc = subprocess.run(["node", "-e", js], cwd=ROOT, text=True, capture_output=True, check=True)
     return json.loads(proc.stdout)
 
@@ -127,3 +127,84 @@ def test_the_view_shows_a_monero_card():
            / "static/js/client/user-analytics.js").read_text(encoding="utf-8")
     assert "Monero tips" in src and "XMR</em>" in src.replace(" ", "")or "XMR" in src
     assert "coin(t.xmr)" in src, "the card does not render the XMR total"
+
+
+# ── A tip that names no post of yours in the window ──────────────────────────────────────────────
+#
+# Reported as: "your analytics is wrong. It says I got 0 XMR tips in the last 30 days. But that is
+# obviously wrong because YOU sent me one this week."
+#
+# Every number on this screen is attributed to one of your posts, and the events behind it are
+# fetched with `#e` over the post ids in the range. Two real tips fall outside that at ANY range: a
+# tip sent to your PROFILE (`_postXmrTipNote` makes the `e` tag optional, so a tip with no post is a
+# shape the app produces), and a tip sent this week on a post you wrote last year. Both are money
+# somebody actually sent, and "0 XMR" is what both looked like.
+#
+# (Measured for the account that reported it: the reason THEIR number was 0 is that no monerotip
+# note naming them exists on the relay at all — the receipt was never published. This closes the
+# blind spot; it does not invent a receipt.)
+
+ME = "5e" * 32
+
+
+def test_a_profile_tip_with_no_post_is_counted():
+    now = 2000000000
+    post = {"id": "a", "kind": 1, "created_at": now - 100, "content": "A", "tags": []}
+    tip = {"id": "t1", "kind": 1, "created_at": now - 50, "content": "tip",
+           "tags": [["p", ME], ["t", "monerotip"], ["amount_xmr", "0.25"]]}
+    out = compute([post], [tip], now, 30, ME)
+    assert out["totals"]["xmr"] == 0.25, out["totals"]
+    assert out["totals"]["tips"] == 1, out["totals"]
+
+
+def test_a_tip_on_an_older_post_still_counts_as_support_received():
+    """The post is outside the window, so there is no row to credit — but the tip arrived inside it."""
+    now = 2000000000
+    post = {"id": "a", "kind": 1, "created_at": now - 100, "content": "A", "tags": []}
+    tip = {"id": "t1", "kind": 1, "created_at": now - 50, "content": "tip",
+           "tags": [["e", "an-old-post-id"], ["p", ME], ["t", "monerotip"], ["amount_xmr", "1.5"]]}
+    out = compute([post], [tip], now, 30, ME)
+    assert out["totals"]["xmr"] == 1.5, out["totals"]
+
+
+def test_it_is_counted_once_when_both_queries_return_it():
+    """The `#e` pass and the `#p` pass overlap by design; a tip on a post IN the window comes back
+    from both, and counting it twice would be its own wrong number."""
+    now = 2000000000
+    post = {"id": "a", "kind": 1, "created_at": now - 100, "content": "A", "tags": []}
+    tip = {"id": "t1", "kind": 1, "created_at": now - 50, "content": "tip",
+           "tags": [["e", "a", "", "root"], ["p", ME], ["t", "monerotip"], ["amount_xmr", "0.75"]]}
+    out = compute([post], [tip, tip], now, 30, ME)
+    assert out["totals"]["xmr"] == 0.75, out["totals"]
+    assert out["totals"]["tips"] == 1, out["totals"]
+
+
+def test_somebody_elses_tip_is_never_counted_as_yours():
+    """The `#p` query is addressed, but a batch can carry anything. Without the check this screen
+    would report a stranger's tips as money you received."""
+    now = 2000000000
+    post = {"id": "a", "kind": 1, "created_at": now - 100, "content": "A", "tags": []}
+    theirs = {"id": "t9", "kind": 1, "created_at": now - 50, "content": "tip",
+              "tags": [["p", "ff" * 32], ["t", "monerotip"], ["amount_xmr", "9"]]}
+    out = compute([post], [theirs], now, 30, ME)
+    assert out["totals"]["xmr"] == 0, out["totals"]
+
+
+def test_a_plain_reply_that_names_no_post_is_still_not_a_tip():
+    """Only a `t:monerotip`/`t:bchtip` note is support. Everything else with no row is an event about
+    somebody else's post that came back in the same batch."""
+    now = 2000000000
+    post = {"id": "a", "kind": 1, "created_at": now - 100, "content": "A", "tags": []}
+    reply = {"id": "r9", "kind": 1, "created_at": now - 50, "content": "hi",
+             "tags": [["p", ME], ["e", "someone-elses-post"]]}
+    out = compute([post], [reply], now, 30, ME)
+    assert out["totals"]["tips"] == 0 and out["totals"]["replies"] == 0, out["totals"]
+
+
+def test_a_tip_counts_toward_the_day_it_arrived():
+    now = 2000000000
+    post = {"id": "a", "kind": 1, "created_at": now - 100, "content": "A", "tags": []}
+    tip = {"id": "t1", "kind": 1, "created_at": now - 50, "content": "tip",
+           "tags": [["p", ME], ["t", "monerotip"], ["amount_xmr", "0.25"]]}
+    out = compute([post], [tip], now, 30, ME)
+    assert sum(d["engagement"] for d in out["daily"]) == 1, out["daily"]
