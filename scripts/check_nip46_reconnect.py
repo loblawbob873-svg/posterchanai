@@ -220,10 +220,14 @@ async def drive(url):
             await call("Page.enable")
 
             async def load():
+                await call("Page.navigate", {"url": "about:blank"})
+                await call("Network.clearBrowserCookies")
                 await call("Page.navigate", {"url": url})
                 for _ in range(80):
                     await asyncio.sleep(0.25)
-                    if await js("!!document.querySelector('#btn-amber')"):
+                    if await js("window.__PC_BOOTED === true && "
+                                "typeof document.querySelector('#btn-amber')?.onclick==='function' && "
+                                "typeof document.querySelector('#btn-amber-connect')?.onclick==='function'"):
                         return True
                 return False
 
@@ -237,7 +241,7 @@ async def drive(url):
 
             uri = ("bunker://" + bunker.pk + "?relay="
                    + urllib.parse.quote(relay_url, safe="") + "&secret=s3cret")
-            r = await js(f"({sig.LOGIN})({json.dumps(uri)})", awaited=True) or {}
+            r = await js(f"({sig.LOGIN})({json.dumps(uri)}, {json.dumps(bunker.user_pk)})", awaited=True) or {}
             if not r.get("ok"):
                 print(f"SKIP  could not log in to set the case up ({r.get('err') or 'no answer'})")
                 return 2
@@ -357,10 +361,15 @@ async def drive(url):
                         return 2
                     uri2 = ("bunker://" + bunker.pk + "?relay="
                             + urllib.parse.quote(hole_url, safe="") + "&secret=s3cret")
-                    r2 = await js(f"({sig.LOGIN})({json.dumps(uri2)})", awaited=True) or {}
+                    r2 = await js(f"({sig.LOGIN})({json.dumps(uri2)}, {json.dumps(bunker.user_pk)})", awaited=True) or {}
                     if not r2.get("ok"):
                         print(f"SKIP  could not log in through the proxy ({r2.get('err')})")
                         return 2
+                    # LOGIN proves the paired identity before startup signatures finish.
+                    # Drain that legitimate traffic before cutting this case's socket.
+                    if not await bunker.wait_quiet():
+                        print("FAIL  login signer traffic never quiesced before proxy freeze")
+                        return 1
                     await js("window.__PC_MARK = 'alive';")
                     hole.freeze()
                     got = await signs(70000, "zombie-socket")
