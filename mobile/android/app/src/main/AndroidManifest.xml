@@ -302,6 +302,19 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity-alias
+            android:name=".shortcut.MediaCenter"
+            android:targetActivity=".shortcut.ViewActivity"
+            android:label="Media Center"
+            android:icon="@drawable/ic_pc_tv"
+            android:exported="true">
+            <meta-data android:name="pc.view" android:value="media-center" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
             android:name=".shortcut.Email"
             android:targetActivity=".shortcut.ViewActivity"
             android:label="@string/app_email_title"

@@ -526,3 +526,26 @@ def test_upgrade_adds_media_permission_default_denied(tmp_path, monkeypatch):
     with engine.connect() as conn:
         assert conn.execute(text('SELECT can_media FROM users')).scalar_one() == 0
     engine.dispose()
+
+
+def test_admin_can_inspect_allowed_roots_but_viewers_cannot(api):
+    client, docs, user, folder = api
+    config = client.get('/api/media-center/roots').json()
+    assert config['roots'] == [{'path': str(folder), 'exists': True, 'readable': True}]
+    assert config['host']
+    user.is_admin = False
+    assert client.get('/api/media-center/roots').status_code == 403
+
+
+def test_folder_rejections_are_actionable_and_do_not_create_libraries(api):
+    client, docs, user, folder = api
+    cases = [('relative/path', 'absolute folder'), (str(folder / 'missing'), 'does not exist'),
+             ('/etc', 'POSTERCHANAI_MEDIA_ROOTS')]
+    regular = folder / 'not-a-directory'
+    regular.write_text('test')
+    cases.append((str(regular), 'not a file'))
+    for path, expected in cases:
+        response = client.post('/api/media-center', json={'name': 'Videos', 'folder': path})
+        assert response.status_code == 400
+        assert expected in response.json()['detail']
+        assert 'index' not in docs

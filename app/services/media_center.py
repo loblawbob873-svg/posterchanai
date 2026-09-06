@@ -150,9 +150,20 @@ def roots():
 
 
 def safe_root(value):
-    path = Path(value).resolve(strict=True)
-    if not path.is_dir() or not any(path == root or root in path.parents for root in roots()):
-        raise ValueError("Folder must be inside a configured Media Center root")
+    value = value.strip()
+    if not value or not Path(value).is_absolute():
+        raise ValueError("Enter an absolute folder path on the media server")
+    try:
+        path = Path(value).resolve(strict=True)
+    except FileNotFoundError as error:
+        raise ValueError("This folder does not exist on the media server") from error
+    except PermissionError as error:
+        raise ValueError("The media server cannot access this folder") from error
+    if not path.is_dir():
+        raise ValueError("Select a folder, not a file")
+    if not any(path == root or root in path.parents for root in roots()):
+        raise ValueError("Folder is outside the allowed media roots shown in Add a server folder. "
+                         "Configure POSTERCHANAI_MEDIA_ROOTS on the media server and restart it")
     return path
 
 
@@ -192,7 +203,7 @@ def natural(value):
     return [int(p) if p.isdigit() else p.casefold() for p in re.split(r"(\d+)", value)]
 
 
-def scan(folder, previous=None):
+def scan(folder, previous=None, on_item=None):
     root = safe_root(folder)
     items, skipped = [], 0
     previous = {item["path"]: item for item in (previous or [])}
@@ -212,11 +223,15 @@ def scan(folder, previous=None):
                     items.append(old)
                     if len(items) > 10000:
                         raise ValueError("Library limit is 10,000 items; split this folder into libraries")
+                    if on_item:
+                        on_item(old)
                     continue
                 metadata = probe(path)
                 items.append({"id": hashlib.sha256(relative.encode()).hexdigest()[:32], "path": relative,
                               "name": path.stem, "folder": path.parent.relative_to(root).as_posix(),
                               "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, **metadata})
+                if on_item and len(items) <= 10000:
+                    on_item(items[-1])
             except (ValueError, OSError, subprocess.SubprocessError):
                 skipped += 1
             if len(items) > 10000:

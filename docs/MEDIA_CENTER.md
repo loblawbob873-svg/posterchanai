@@ -175,11 +175,12 @@ approval endpoints retain Posterchan's existing origin restrictions.
 
 Supported compatibility surface: server discovery, Quick Connect, current-user info,
 library views, paginated item browsing/search, cover images, playback information,
-HLS video/audio, playback session reporting and logout. Direct-play/download endpoints
+HLS video/audio, playback session reporting, client WebSocket keepalives and logout. Direct-play/download endpoints
 are not exposed because they would bypass Media Center's bandwidth controls.
 Jellyfin administration, plugins, Live TV, remote control, subtitles, favorites and
 saved watch/resume history are not implemented. There is no bundled Jellyfin web UI.
-The API advertises the Jellyfin 10.10 playback protocol for client discovery while
+Clients that require the server-hosted Jellyfin web interface are outside this API-only adapter.
+The API advertises the Jellyfin 10.11 playback protocol for client discovery while
 identifying the server as **Posterchan Media Center**.
 
 Validation uses the official `@jellyfin/sdk` 0.13.0 for discovery, Quick Connect,

@@ -404,6 +404,7 @@
   const _NAV_REQUIRED = [
     { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
     { view:'xdc', into:'#games-sub', icon:'#i-gamepad', label:'Webxdc' },
+    { view:'media-center', after:'streams', icon:'#i-tv', label:'Media Center' },
     { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
     { view:'wallet', after:'vault', icon:'#i-coin', label:'Monero Wallet' },
   ];
@@ -9192,6 +9193,7 @@
     catch(e){ toast('publish failed: '+e.message); }
   }
 
+  let _mediaCenterPollTimer=null;
   let _mediaCenterSession=null, _mediaCenterPlayGeneration=0, _mediaCenterHls=null, _mediaCenterArtObserver=null, _mediaCenterArtUrls=[], _mediaCenterArtGeneration=0;
   async function _mediaCenterFetch(url, opts={}){
     await ensureAiSession();
@@ -9218,13 +9220,13 @@
   function stopMediaCenter(clearArt=true){
     _mediaCenterPlayGeneration++;
     const session=_mediaCenterSession;_mediaCenterSession=null;
-    if(clearArt)clearMediaCenterArt();
+    if(clearArt){clearTimeout(_mediaCenterPollTimer);_mediaCenterPollTimer=null;clearMediaCenterArt();}
     if(_mediaCenterHls){ _mediaCenterHls.destroy(); _mediaCenterHls=null; }
     const video=document.getElementById('mc-player');
     if(video){ video.pause(); video.removeAttribute('src'); video.load(); }
     return releaseMediaCenterSession(session);
   }
-  async function renderMediaCenter(){
+  async function renderMediaCenter(openLibraryId=null){
     stopMediaCenter();
     const feed=$('#feed');
     feed.innerHTML='<div class="empty">Loading Media Center…</div>';
@@ -9238,26 +9240,27 @@
       const data=await api();
       if(VIEW!=='media-center')return;
       feed.innerHTML=`<div class="mc-gallery"><div class="xdc-gal-top"><div class="muted"><h2>Media Center</h2>Your movies, shows and music. Pick a library and press play.</div><span class="mc-private">Private · Server library</span></div><div class="mc-tools">
-        ${data.can_create?`<details><summary>Add a server folder</summary><form id="mc-add">
+        ${data.can_create?`<details class="mc-tool-card"><summary><span class="mc-tool-icon"><svg class="ic"><use href="#i-folder"></use></svg></span><span><b>Add a server folder</b><small>Bring your movies and music into the library</small></span><span class="mc-tool-expand">+</span></summary><form id="mc-add" class="mc-tool-body">
           <p><label>Library name <input name="name" required maxlength="150" placeholder="Movies"></label></p>
+          <p id="mc-roots" class="mc-config-note muted small">Checking allowed folders on the media server…</p>
           <p><label>Server folder <input name="folder" required placeholder="/var/lib/posterchanai/media/Movies"></label></p>
           <p><label>Transcoding <select name="encoder"><option value="auto">Automatic GPU / CPU</option><option value="cpu">CPU</option><option value="nvidia">NVIDIA</option><option value="amd">AMD</option><option value="vaapi">VA-API GPU</option></select></label></p>
-          <button type="submit">Scan and add library</button></form></details>`:''}
-        ${data.can_create?`<details><summary>Bandwidth and resource limits</summary><form id="mc-limits">
+          <button type="submit" class="btn btn-neon">Add to library</button><p class="muted small">Scanning continues in the background. Titles appear as they are found.</p></form></details>`:''}
+        ${data.can_create?`<details class="mc-tool-card"><summary><span class="mc-tool-icon"><svg class="ic"><use href="#i-bars"></use></svg></span><span><b>Bandwidth &amp; resources</b><small id="mc-limit-summary">200 KB/s per user · GPU / CPU transcoding</small></span><span class="mc-tool-expand">+</span></summary><form id="mc-limits" class="mc-tool-body">
           <p class="muted">Bandwidth is in kbps (1,000 kbps = 1 Mbps). The per-user cap is shared across their tabs. The server cap covers all viewers.</p>
           <p><label>Total bandwidth <input name="server_kbps" type="number" min="650" max="1000000" required></label></p>
           <p><label>Bandwidth per user <input name="viewer_kbps" type="number" min="650" max="1000000" required></label></p>
           <p><label>Simultaneous streams <input name="max_streams" type="number" min="1" max="100" required></label></p>
           <p><label>Concurrent transcodes <input name="max_transcodes" type="number" min="1" max="16" required></label></p>
           <p><label>Segment cache (MB) <input name="cache_mb" type="number" min="32" max="1048576" required></label></p>
-          <button type="submit">Save limits</button></form></details>`:''}
-        <details id="mc-jellyfin"><summary>Connect a Jellyfin app</summary>
-          <p>In your Jellyfin app, add <strong id="mc-jellyfin-server"></strong> as the server and choose Quick Connect.</p>
+          <button type="submit" class="btn btn-neon">Save limits</button></form></details>`:''}
+        <details id="mc-jellyfin" class="mc-tool-card"><summary><span class="mc-tool-icon"><svg class="ic"><use href="#i-tv"></use></svg></span><span><b>Connect an app</b><small>Pair a Jellyfin app with Quick Connect</small></span><span class="mc-tool-expand">+</span></summary><div class="mc-tool-body">
+          <p class="mc-step"><span>1</span> Add this server in your Jellyfin app</p><code id="mc-jellyfin-server" class="mc-server-address"></code><p class="mc-step"><span>2</span> Choose Quick Connect, then enter its code below</p>
           <form id="mc-jellyfin-approve"><label>Code shown in your app <input name="code" inputmode="numeric" autocomplete="off" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="123456"></label>
-            <p><button type="submit">Approve this app</button></p></form>
+            <p><button type="submit" class="btn btn-neon">Connect this app</button></p></form>
           <p class="muted">Only approve a code displayed by an app you are connecting. It gets access to your shared Media Center libraries.</p>
-          <button id="mc-jellyfin-revoke" type="button">Disconnect all Jellyfin apps</button>
-        </details>
+          <button id="mc-jellyfin-revoke" type="button" class="btn btn-ghost">Disconnect all apps</button>
+        </div></details>
         </div><p id="mc-status" class="mc-status muted" role="status"></p><div id="mc-libraries" class="mc-libraries"></div>
         <div id="mc-playback" class="mc-playback" hidden><div class="mc-player-toolbar"><h3 id="mc-playing"></h3><button id="mc-fullscreen" class="btn btn-ghost" type="button" aria-label="Enter full screen">Full screen</button><button id="mc-close-player" class="btn btn-ghost" type="button">Close player</button>
           <label>Quality <select id="mc-quality"><option value="auto">Auto bandwidth</option>
@@ -9265,6 +9268,9 @@
             <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label></div>
           <video id="mc-player" controls playsinline tabindex="0" aria-label="Media player" preload="metadata" style="width:100%;max-height:65vh"></video>
         </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><div id="mc-items"></div></div>`;
+      for(const card of feed.querySelectorAll('.mc-tool-card'))card.ontoggle=()=>{
+        if(card.open)for(const other of feed.querySelectorAll('.mc-tool-card'))if(other!==card)other.open=false;
+      };
       const status=$('#mc-status');
       const fullscreen=$('#mc-fullscreen'),playerBox=$('#mc-playback');
       fullscreen.onclick=async()=>{
@@ -9295,9 +9301,19 @@
         if(!response.ok)throw new Error('Could not disconnect Jellyfin apps');
         toast('All Jellyfin apps disconnected.');
       });
+      const rootsNote=$('#mc-roots');
+      if(rootsNote){
+        try{
+          const config=await api('/roots');if(VIEW!=='media-center')return;
+          rootsNote.textContent='Media server: '+config.host+'. Allowed folders: '+
+            (config.roots.map(root=>root.path+(!root.exists?' (missing)':!root.readable?' (not readable)':'')).join(', ')||'none configured')+
+            '. Use a folder inside one of these paths. Change POSTERCHANAI_MEDIA_ROOTS on that server to allow another folder.';
+        }catch(e){rootsNote.textContent=e.message;}
+      }
       const limitsForm=$('#mc-limits');
       if(limitsForm){
         const limits=await api('/limits');if(VIEW!=='media-center')return;
+        $('#mc-limit-summary').textContent=Math.round(limits.viewer_kbps/8)+' KB/s per user · '+limits.max_streams+' simultaneous streams';
         for(const [key,value] of Object.entries(limits)){if(limitsForm.elements[key])limitsForm.elements[key].value=value;}
         limitsForm.onsubmit=e=>{e.preventDefault();act(limitsForm.querySelector('button'),async()=>{
           await api('/limits','PUT',Object.fromEntries(Array.from(new FormData(limitsForm),([k,v])=>[k,Number(v)])));
@@ -9305,28 +9321,50 @@
         });};
       }
       for(const option of Array.from($('#mc-quality').options)){if(option.value!=='auto'&&!data.profiles.includes(option.value))option.remove();}
-      const waitScan=async(id)=>{
-        while(VIEW==='media-center'){
-          const scan=await api('/'+id+'/scan');
-          if(scan.state==='failed')throw new Error(scan.error);
-          if(scan.state!=='running')return;
-          status.textContent='Scanning media in the background…';
-          await new Promise(resolve=>setTimeout(resolve,2000));
-        }
+      const libraryRows=new Map();
+      const schedulePoll=(delay=3000)=>{
+        clearTimeout(_mediaCenterPollTimer);
+        _mediaCenterPollTimer=setTimeout(async()=>{
+          if(VIEW!=='media-center'||!libs.isConnected)return;
+          if(document.hidden){schedulePoll();return;}
+          try{
+            const latest=await api();if(VIEW!=='media-center'||!libs.isConnected)return;
+            let pending=false;
+            for(const fresh of latest.libraries){
+              const entry=libraryRows.get(fresh.id);if(!entry)continue;
+              Object.assign(entry.lib,fresh);entry.update();
+              const list=$('#mc-items');
+              if(list.dataset.library===fresh.id&&list.dataset.revision!==fresh.revision){
+                if(!entry.open.disabled)await entry.open.onclick();
+                else pending=true;
+              }
+              if(fresh.scan?.state==='running')pending=true;
+            }
+            if(pending)schedulePoll();
+          }catch(_){if(VIEW==='media-center'&&libs.isConnected)schedulePoll(6000);}
+        },delay);
       };
       const add=$('#mc-add');
       if(add)add.onsubmit=e=>{e.preventDefault();act(add.querySelector('button'),async()=>{
-        status.textContent='Scanning media. Large folders can take several minutes…';
-        const library=await api('','POST',Object.fromEntries(new FormData(add))); await waitScan(library.id); if(VIEW==='media-center')await renderMediaCenter();
+        const library=await api('','POST',Object.fromEntries(new FormData(add)));
+        if(VIEW==='media-center')await renderMediaCenter(library.id);
       });};
       const libs=$('#mc-libraries');
       if(!data.libraries.length)libs.textContent='No libraries yet. An owner can share a library with your npub.';
       for(const lib of data.libraries){
         const row=document.createElement('div');row.className='mc-library';
-        const open=document.createElement('button');open.className='btn btn-ghost mc-library-open';open.textContent=lib.name+' · '+(lib.count||0);row.append(open);
+        const open=document.createElement('button');open.className='btn btn-ghost mc-library-open';row.append(open);
+        const progress=document.createElement('span');progress.className='muted small';progress.setAttribute('role','status');row.append(progress);
+        let scanButton=null;
+        const update=()=>{
+          open.textContent=lib.name+' · '+(lib.count||0);
+          progress.textContent=lib.scan?.state==='running'?'Scanning · '+(lib.scan.count||0)+' found':lib.scan?.state==='failed'?lib.scan.error:'';
+          if(scanButton)scanButton.disabled=lib.scan?.state==='running';
+        };
+        libraryRows.set(lib.id,{lib,open,update});update();
         if(lib.can_manage){
-          const scan=document.createElement('button');scan.className='btn btn-ghost small';scan.textContent='Rescan';row.append(' ',scan);
-          scan.onclick=()=>act(scan,async()=>{await api('/'+lib.id+'/scan','POST');await waitScan(lib.id);if(VIEW==='media-center')await renderMediaCenter();});
+          const scan=document.createElement('button');scanButton=scan;scan.className='btn btn-ghost small';scan.textContent='Rescan';row.append(' ',scan);update();
+          scan.onclick=()=>act(scan,async()=>{await api('/'+lib.id+'/scan','POST');lib.scan={state:'running',count:0};update();schedulePoll(0);toast('Scan started. You can keep browsing.');});
           const share=document.createElement('details');share.className='mc-share';
           share.innerHTML='<summary>Share with Nostr users</summary><p class="muted">Enter npubs, separated by commas or newlines. Users sign in on this server. Remove a key to revoke access. Nothing is federated.</p><textarea aria-label="Nostr public keys" rows="3" style="width:100%"></textarea><button>Save sharing</button>';
           share.querySelector('textarea').value=lib.shared_with.join('\n');
@@ -9336,7 +9374,11 @@
         }
         open.onclick=()=>act(open,async()=>{
           const result=await api('/'+lib.id+'/items');if(VIEW!=='media-center')return;
-          clearMediaCenterArt();
+          const list=$('#mc-items'),refresh=list.dataset.library===lib.id;
+          if(!refresh){clearMediaCenterArt();list.replaceChildren();}
+          else if(_mediaCenterArtObserver)_mediaCenterArtObserver.disconnect();
+          list.dataset.library=lib.id;list.dataset.revision=result.revision||lib.revision||'';
+          if(refresh&&list.firstChild?.nodeType===Node.TEXT_NODE)list.replaceChildren();
           const artGeneration=_mediaCenterArtGeneration, artQueue=[];let artActive=0;
           const drainArt=()=>{
             while(artActive<2&&artQueue.length&&artGeneration===_mediaCenterArtGeneration){
@@ -9353,8 +9395,12 @@
             for(const entry of entries){if(entry.isIntersecting){_mediaCenterArtObserver.unobserve(entry.target);artQueue.push(entry.target);}}
             drainArt();
           },{rootMargin:'150px'});
-          const list=$('#mc-items');list.replaceChildren();let folder=null,grid=null;
-          const search=$('#mc-search');search.value='';search.parentElement.hidden=false;
+          let folder=null,grid=null;
+          const existing=new Map(Array.from(list.querySelectorAll('.mc-tile'),card=>[card.dataset.item,card]));
+          const sections=new Map(Array.from(list.querySelectorAll('.mc-folder'),section=>[section.dataset.folder,section]));
+          const remaining=new Set(result.items.map(item=>item.id));
+          for(const [id,card] of existing)if(!remaining.has(id))card.remove();
+          const search=$('#mc-search');if(!refresh)search.value='';search.parentElement.hidden=false;
           search.oninput=()=>{
             const query=search.value.trim().toLocaleLowerCase();
             for(const section of list.children){let visible=0;for(const card of section.querySelectorAll('.mc-tile')){card.hidden=!card.dataset.search.includes(query);if(!card.hidden)visible++;}section.hidden=!visible;}
@@ -9362,10 +9408,15 @@
           for(const button of libs.querySelectorAll('.mc-library-open'))button.classList.toggle('active',button===open);
           for(const item of result.items){
             if(folder!==item.folder){
-              folder=item.folder;const section=document.createElement('section');section.className='mc-folder';
-              const heading=document.createElement('h3');heading.textContent=folder==='.'?lib.name:folder;section.append(heading);
-              grid=document.createElement('div');grid.className='xdc-grid';section.append(grid);list.append(section);
+              folder=item.folder;let section=sections.get(folder);
+              if(!section){
+                section=document.createElement('section');section.className='mc-folder';section.dataset.folder=folder;
+                const heading=document.createElement('h3');heading.textContent=folder==='.'?lib.name:folder;section.append(heading);
+                grid=document.createElement('div');grid.className='xdc-grid';section.append(grid);sections.set(folder,section);
+              }else grid=section.querySelector('.xdc-grid');
+              list.append(section);
             }
+            if(existing.has(item.id)){const card=existing.get(item.id);grid.append(card);if(!card.querySelector('img'))_mediaCenterArtObserver.observe(card);continue;}
             const card=document.createElement('article');card.className='xdc-tile mc-tile';card.dataset.item=item.id;
             card.dataset.search=(item.name+' '+item.folder).toLocaleLowerCase();
             const duration=Math.max(1,Math.round(item.duration/60));
@@ -9398,10 +9449,15 @@
               }else{status.textContent='This browser does not support HLS playback.';}
             });
           }
-          if(!result.items.length)list.textContent='No playable media found. Check the folder and FFmpeg installation.';
+          for(const section of sections.values())if(!section.querySelector('.mc-tile'))section.remove();
+          search.oninput();
+          if(!result.items.length)list.textContent=result.scan?.state==='running'?'Looking for media… Titles will appear here as they are found. You can leave this page.':'No playable media found. Check the folder and FFmpeg installation.';
           if(lib.skipped)status.textContent=lib.skipped+' files could not be read during the last scan.';
         });libs.append(row);
       }
+      const selected=libraryRows.get(openLibraryId)||libraryRows.values().next().value;
+      if(selected)await selected.open.onclick();
+      if(data.libraries.some(lib=>lib.scan?.state==='running'))schedulePoll();
     }catch(e){if(VIEW==='media-center'){feed.innerHTML='<div class="empty">'+enc(e.message)+'<p><button class="btn btn-ghost" id="mc-retry">Retry</button></p></div>';$('#mc-retry').onclick=renderMediaCenter;}}
   }
 

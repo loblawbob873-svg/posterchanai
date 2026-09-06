@@ -84,6 +84,7 @@ public final class HomeTiles {
         new Tile("markets",       "Markets",       "chart",    false),
         new Tile("budget",        "Budget",        "bars",     false),
         new Tile("streams",       "Streams",       "tv",       false),
+        new Tile("media-center",  "Media Center",  "tv",       true),
         new Tile("meme",          "Meme Builder",  "tv",       false),
         new Tile("translate",     "Live Translate","translate",false),
         new Tile("torrents",      "Torrents",      "magnet",   false),

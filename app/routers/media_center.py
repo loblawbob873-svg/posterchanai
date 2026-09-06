@@ -160,6 +160,7 @@ class PrivateRoute(APIRoute):
 router = APIRouter(prefix="/api/media-center", tags=["media-center"], route_class=PrivateRoute,
                    dependencies=[Depends(proxy_request)])
 _scans = {}
+_scan_previews = {}
 
 
 class CreateLibrary(BaseModel):
@@ -192,6 +193,15 @@ class Limits(BaseModel):
     cache_mb: int = Field(default=2048, ge=32, le=1048576)
 
 
+@router.get("/roots")
+async def allowed_roots(user=Depends(get_media_admin)):
+    import os
+    import socket
+    return {"host": socket.gethostname(), "roots": [
+        {"path": str(root), "exists": root.is_dir(), "readable": os.access(root, os.R_OK | os.X_OK)}
+        for root in media.roots()]}
+
+
 @router.get("/limits")
 async def get_limits(user=Depends(get_media_admin)):
     return await media.limits()
@@ -215,17 +225,41 @@ async def library_for(library_id, pubkey, owner=False):
     return library
 
 
+async def available_catalog(library):
+    committed = await media.catalog(library)
+    preview = _scan_previews.get(library['id'])
+    if not preview:
+        return committed
+    merged = {item['id']: item for item in committed}
+    merged.update(preview)
+    return sorted(merged.values(), key=lambda item: (media.natural(item['folder']), media.natural(item['path'])))
+
+
+def scan_revision(library):
+    scan = _scans.get(library['id'], {})
+    return f"{library.get('scanned_at', 0)}:{scan.get('state', 'idle')}:{scan.get('count', 0)}"
+
+
 def public_library(library, pubkey, *, admin=False):
     fields = ("id", "name", "owner", "count", "scanned_at", "skipped", "encoder")
     result = {key: library.get(key) for key in fields}
     result["can_manage"] = bool(admin and library["owner"] == pubkey)
+    result["scan"] = _scans.get(library['id'], {'state': 'idle'})
+    result["revision"] = scan_revision(library)
+    result["count"] = max(library.get('count', 0), len(_scan_previews.get(library['id'], {})))
     if result["can_manage"]:
         result.update(folder=library["folder"], shared_with=library["shared_with"])
     return result
 
 
 async def save_scan(library):
-    items, skipped = await asyncio.to_thread(media.scan, library["folder"], await media.catalog(library))
+    loop = asyncio.get_running_loop()
+    preview = _scan_previews.setdefault(library['id'], {})
+    def found(item):
+        preview[item['id']] = item
+        _scans[library['id']] = {'state': 'running', 'count': len(preview)}
+    items, skipped = await asyncio.to_thread(media.scan, library["folder"], await media.catalog(library),
+                                             lambda item: loop.call_soon_threadsafe(found, item))
     pages = []
     # Small pages fit NIP-44's payload limit. Commit the manifest only after every
     # page is acknowledged, so readers retain the last complete scan on failure.
@@ -260,12 +294,15 @@ async def run_scan(library):
     except Exception:
         logging.getLogger(__name__).exception("Media Center scan failed")
         _scans[library["id"]] = {"state": "failed", "error": "Scan failed; check the folder, FFmpeg, and local relay"}
+    finally:
+        _scan_previews.pop(library['id'], None)
 
 
 def queue_scan(library, background):
     if any(job["state"] == "running" for job in _scans.values()):
         raise HTTPException(409, "A media scan is already running; wait for it to finish")
-    _scans[library["id"]] = {"state": "running"}
+    _scans[library["id"]] = {"state": "running", "count": 0}
+    _scan_previews[library['id']] = {}
     background.add_task(run_scan, library)
 
 
@@ -306,13 +343,14 @@ async def create_library(body: CreateLibrary, background: BackgroundTasks, user=
 async def items(library_id: str, user=Depends(get_media_user)):
     library = await library_for(library_id, media.identity(user))
     return {"items": [{k: v for k, v in item.items() if k not in ("path", "mtime_ns")}
-                      for item in await media.catalog(library)]}
+                      for item in await available_catalog(library)],
+            "scan": _scans.get(library_id, {"state": "idle"}), "revision": scan_revision(library)}
 
 
 @router.get("/{library_id}/art/{item_id}")
 async def artwork(library_id: str, item_id: str, user=Depends(get_media_user)):
     library = await library_for(library_id, media.identity(user))
-    item = next((item for item in await media.catalog(library) if item["id"] == item_id), None)
+    item = next((item for item in await available_catalog(library) if item["id"] == item_id), None)
     if not item:
         raise HTTPException(404, "Media not found")
     try:
@@ -363,7 +401,7 @@ async def playback(library_id: str, item_id: str, user=Depends(get_media_user)):
     pubkey = media.identity(user)
     async with media.mutation_lock:
         library = await library_for(library_id, pubkey)
-        if not any(item["id"] == item_id for item in await media.catalog(library)):
+        if not any(item["id"] == item_id for item in await available_catalog(library)):
             raise HTTPException(404, "Media not found")
         if not library.get("playback_secret"):
             library["playback_secret"] = secrets.token_hex(32)
@@ -400,7 +438,7 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
                 continue
             lines += [f"#EXT-X-STREAM-INF:BANDWIDTH={int((video + audio) * 1200)}", f"{profile}.m3u8?{query}"]
         return Response("\n".join(lines) + "\n", media_type="application/vnd.apple.mpegurl", headers=PRIVATE)
-    item = next((item for item in await media.catalog(library) if item["id"] == item_id), None)
+    item = next((item for item in await available_catalog(library) if item["id"] == item_id), None)
     if not item:
         raise HTTPException(404, "Media not found")
     count = math.ceil(item["duration"] / media.SEGMENT)

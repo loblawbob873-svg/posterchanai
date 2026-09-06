@@ -1977,11 +1977,28 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* Media Center shares Webxdc's stable cover grid and card controls. */
 .mc-gallery{min-width:0}.mc-gallery h2{margin:0 0 5px;color:var(--text)}
 .mc-private{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:6px 10px;white-space:nowrap}
-.mc-tools{display:flex;flex-wrap:wrap;gap:12px;padding:12px 18px 0}
-.mc-tools>details{flex:1;min-width:220px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--panel2)}
-.mc-tools summary,.mc-share summary{cursor:pointer;font-weight:600;font-size:13px}
-.mc-tools form label{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:13px}
-.mc-tools input,.mc-tools select{max-width:100%;min-width:0;padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text)}
+.mc-tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));align-items:start;gap:12px;padding:14px 18px}
+.mc-tools>.mc-tool-card{min-width:0;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,color-mix(in srgb,var(--neon) 5%,var(--panel2)),var(--panel2));overflow:hidden;transition:border-color .15s,box-shadow .15s}
+.mc-tool-card:hover,.mc-tool-card[open]{border-color:color-mix(in srgb,var(--neon) 45%,var(--line))}
+.mc-tools summary{display:flex;align-items:center;gap:12px;min-height:84px;padding:16px;cursor:pointer;list-style:none;box-sizing:border-box}
+.mc-tools summary::-webkit-details-marker{display:none}
+.mc-tools summary>b,.mc-tools summary>span:nth-child(2){flex:1;min-width:0}
+.mc-tools summary b{display:block;font-size:14px;color:var(--text);line-height:1.4}
+.mc-tools summary small{display:block;font-size:11px;line-height:1.5;color:var(--muted);font-weight:400;margin-top:3px}
+.mc-tool-icon{display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:12px;background:color-mix(in srgb,var(--neon) 12%,var(--panel));color:var(--neon)}
+.mc-tool-icon .ic{width:22px;height:22px}
+.mc-tool-expand{color:var(--muted);font-size:22px;font-weight:300;transition:transform .15s}
+.mc-tool-card[open] .mc-tool-expand{transform:rotate(45deg)}
+.mc-tool-body{padding:0 16px 16px;border-top:1px solid var(--line);font-size:13px;line-height:1.5}
+.mc-tool-body>p{margin:14px 0}.mc-tool-body .btn{min-height:44px;width:100%;justify-content:center}
+.mc-tools form label{display:flex;flex-direction:column;align-items:stretch;gap:7px;font-size:12px;font-weight:600;color:var(--muted)}
+.mc-tools input,.mc-tools select{box-sizing:border-box;width:100%;max-width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);font-size:14px}
+.mc-tools input:focus,.mc-tools select:focus{outline:2px solid var(--neon);outline-offset:1px}
+.mc-config-note{padding:10px 12px;border-radius:10px;background:var(--panel);overflow-wrap:anywhere;font-weight:400}
+.mc-server-address{display:block;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;color:var(--neon);font-size:12px}
+.mc-step{display:flex;align-items:center;gap:9px;font-size:12px}.mc-step>span{display:grid;place-items:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--panel);color:var(--neon);font-weight:700}
+#mc-jellyfin-approve input{font-size:23px;letter-spacing:.3em;text-align:center;font-variant-numeric:tabular-nums}
+.mc-share summary{cursor:pointer;font-weight:600;font-size:13px}
 .mc-status{margin:8px 18px;min-height:16px;font-size:13px}
 .mc-libraries{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px;padding:0 18px 12px;border-bottom:1px solid var(--line)}
 .mc-library{display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:100%}
