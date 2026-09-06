@@ -459,6 +459,28 @@ async def _rewrite_mentions(db: Session, port: int, instance_host: str, content:
         # nostr: reference no client can resolve.
         if acct:
             content = re.sub(r"@" + re.escape(acct) + r"(?![A-Za-z0-9_.\-@])", ref, content)
+        # THE QUALIFIED FORM OF A **LOCAL** ACCOUNT, which the line above can never match.
+        #
+        # Pleroma reports a LOCAL account's `acct` WITHOUT a host ("ChristiJunior"), while a note
+        # federated in from another instance renders the mention fully qualified
+        # ("@ChristiJunior@detroitriotcity.com"). The `acct` replacement therefore looks for the
+        # wrong string, and the BARE fallback below cannot help either: its negative lookahead --
+        # correctly there to stop "@ann" eating "@anna_x" -- also refuses "@ChristiJunior" when the
+        # next character is the "@" of the host. So the handle stayed dead text.
+        #
+        # Measured live: `@ChristiJunior@detroitriotcity.com` mirrored verbatim, while the same
+        # account written bare rewrote correctly. The p-tag was added either way, so the person was
+        # notified and only the LINK was missing -- which is exactly why this survived: nothing was
+        # obviously broken except the rendering.
+        #
+        # The host comes from the mention's own url as well as the read instance, because a note can
+        # reach us through an instance that is not the one the account lives on.
+        if acct and "@" not in acct:
+            for _h in {(instance_host or "").lower(), urlparse(url).netloc.lower()}:
+                if not _h:
+                    continue
+                content = re.sub(r"@" + re.escape(f"{acct}@{_h}") + r"(?![A-Za-z0-9_.\-@])",
+                                 ref, content)
         # The BARE "@username" form. Restricting it to LOCAL mentions (as this did) silently stopped
         # linkifying the COMMON case: a post federated in from another instance keeps its author's
         # rendering, so a mention of Appelmoesje@poa.st appears in the text as plain "@Appelmoesje"
