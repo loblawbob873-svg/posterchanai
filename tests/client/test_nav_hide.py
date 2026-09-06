@@ -618,3 +618,10 @@ class SidebarRecoveryTests(unittest.TestCase):
         self.assertIn("await setNavHidden(keep)", body)
         self.assertIn("!shown.has(k)", body,
                       "showing this device must preserve unavailable instance-only choices")
+
+
+def test_media_center_is_a_top_level_launcher_entry():
+    rows = [row for row in sidebar_spec() if row.get('view') == 'media-center']
+    assert len(rows) == 1
+    assert rows[0]['cls'] == 'nav-item'
+    assert rows[0]['label'] == 'Media Center'
