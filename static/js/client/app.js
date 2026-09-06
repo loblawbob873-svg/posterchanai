@@ -1153,9 +1153,43 @@
                e => { clearTimeout(to); settle(job.rej)(e); });
       }
     },
+    /* AN MV3 WORKER THAT IS ASLEEP IS NOT AN EXTENSION THAT IS GONE.
+     *
+     * The browser evicts an idle background service worker, and the FIRST message after that
+     * eviction fails with "Could not establish connection. Receiving end does not exist." -- while
+     * being the very thing that wakes it. Reported as "I can't fucking send any posts from webui",
+     * with the console showing exactly that under `signEvent failed`, and everything authenticated
+     * failing with it: the theme sync, the wallet, posting.
+     *
+     * The EXTENSION already retries this (see extension/content.js), but an installed copy is
+     * whatever the store last handed out, and this half is ours to fix today. Retrying here works
+     * against every version.
+     *
+     * ONLY this error, and it is safe precisely because of what it means: the message never
+     * arrived, so nothing was signed and nothing can be signed twice. A refusal, a timeout, or an
+     * orphaned content script ("context invalidated" -- the page must be reloaded) are all
+     * different answers and none of them is retried. */
+    _ASLEEP: /receiving end does not exist|could not establish connection|message port closed/i,
+    _ORPHAN: /context invalidated|extension context/i,
+    async _wake(run, attempts){
+      let last = null;
+      for(let i = 0; i < (attempts || 3); i++){
+        try{ return await run(); }
+        catch(err){
+          last = err;
+          const text = (err && err.message) || String(err || '');
+          if(this._ORPHAN.test(text))
+            throw new Error('the signer extension was updated — reload this page');
+          if(!this._ASLEEP.test(text)) throw err;
+          await new Promise(r => setTimeout(r, 140 * (i + 1)));
+        }
+      }
+      throw last || new Error('the signer extension is not available');
+    },
     call(key, run){
       if(key){ const hit = this._same.get(key); if(hit) return hit; }
-      let p = new Promise((res, rej) => { this._q.push({ run, res, rej }); this._pump(); });
+      const wake = () => this._wake(run);
+      let p = new Promise((res, rej) => { this._q.push({ run: wake, res, rej }); this._pump(); });
       // Widen on the first ANSWER, not on the first success: a remembered `deny` comes back as a
       // rejection and is just as good a proof that no window is being opened any more.
       p = p.then(v => { if(this._cap < 6) this._cap = 6; return v; },
