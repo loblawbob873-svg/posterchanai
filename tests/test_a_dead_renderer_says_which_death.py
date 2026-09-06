@@ -23,8 +23,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _run(reasons):
-    out = subprocess.run(["node", str(ROOT / "tests/renderer_gone_sim.mjs"), json.dumps(reasons)],
+def _run(reasons, answers=None):
+    out = subprocess.run(["node", str(ROOT / "tests/renderer_gone_sim.mjs"), json.dumps(reasons),
+                          json.dumps(answers or [])],
                          cwd=ROOT, text=True, capture_output=True, timeout=60)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
@@ -60,8 +61,9 @@ def test_it_stops_reloading_a_death_that_repeats():
     """Three in a minute is a boot loop, not a big file. Reloading again just shows the dialog again."""
     r = _run([["crashed", 1], ["crashed", 1], ["crashed", 1], ["crashed", 1]])
     assert r["reloads"] == 2, f"kept reloading into the same crash: {r['reloads']}"
-    assert r["dialogs"][-1]["title"] == "PosterChan keeps stopping", r["dialogs"][-1]
-    assert "not be reloaded" in r["dialogs"][-1]["body"]
+    assert r["boxes"][-1]["message"] == "PosterChan keeps stopping", r["boxes"][-1]
+    assert "not be\nreloaded" in r["boxes"][-1]["detail"].replace(" ", "\n") or \
+           "not be reloaded" in r["boxes"][-1]["detail"], r["boxes"][-1]
 
 
 # --- AND THEN "oom" WAS ALL WE HAD, WHICH IS NOT ENOUGH TO ACT ON. -----------------------------
@@ -102,8 +104,8 @@ def test_the_reading_reaches_a_repeat_too():
     numbers."""
     s = [{"up": 2, "used": 1500, "heap": 1600, "cap": 1536, "nodes": 4000, "url": "/index.html"}]
     r = _run([["crashed", 1, s], ["crashed", 1, s], ["crashed", 1, s]])
-    assert r["dialogs"][-1]["title"] == "PosterChan keeps stopping"
-    assert "1500MB" in r["dialogs"][-1]["body"], r["dialogs"][-1]["body"]
+    assert r["boxes"][-1]["message"] == "PosterChan keeps stopping"
+    assert "1500MB" in r["boxes"][-1]["detail"], r["boxes"][-1]["detail"]
 
 
 def test_a_file_is_written_and_the_person_is_told_where():
@@ -119,3 +121,53 @@ def test_the_file_keeps_every_crash_of_a_run():
     r = _run([["crashed", 1], ["oom", 2]])
     assert "renderer stopped: crashed" in r["report"], r["report"]
     assert "renderer stopped: oom" in r["report"], r["report"]
+
+
+# --- AND "QUIT AND REOPEN" WAS NOT A WAY OUT OF A BOOT LOOP. -----------------------------------
+#
+# Stopping the reload was the right half and it left the app unusable: a renderer that dies during
+# boot dies again on the next launch, so the advice amounted to "keep doing the thing that fails".
+# The third strike now offers the one lever that is generic -- this device's local cache, the only
+# part of a boot whose size depends on how long the app has been used.
+
+LOOP = [["crashed", 1], ["crashed", 1], ["crashed", 1]]
+
+
+def test_the_third_strike_offers_a_way_out_and_not_only_an_apology():
+    r = _run(LOOP)
+    assert r["boxes"], "the third strike still just prints and gives up"
+    assert any("Clear" in b for b in r["boxes"][-1]["buttons"]), r["boxes"][-1]["buttons"]
+
+
+def test_nothing_is_cleared_unless_it_is_asked_for_twice():
+    """Default answers are the cancel buttons. A cache wipe must never be what happens when somebody
+    dismisses a dialog they did not read."""
+    assert _run(LOOP)["cleared"] == []
+    assert _run(LOOP, answers=[2, 0])["cleared"] == [], "the confirm was not honoured"
+
+
+def test_clearing_the_cache_never_touches_the_key():
+    """`localStorage` holds the session, and for an nsec login that IS the user's secret key.
+    Clearing it to fix a crash would destroy the account of anybody who had not written it down."""
+    r = _run(LOOP, answers=[2, 1])
+    assert r["cleared"], "the confirmed clear did nothing"
+    for storages in r["cleared"]:
+        assert "localstorage" not in [s.lower() for s in storages], storages
+    assert set(r["cleared"][0]) <= {"indexdb", "cachestorage", "serviceworkers"}, r["cleared"][0]
+
+
+def test_the_second_dialog_says_what_it_costs():
+    r = _run(LOOP, answers=[2, 0])
+    detail = r["boxes"][-1]["detail"]
+    assert "ON THIS DEVICE" in detail, detail
+    assert "signed in" in detail, detail
+
+
+def test_one_more_reload_is_offered_and_resets_the_count():
+    """Somebody who thinks it was a one-off gets to say so, and must not be told 'three in a minute'
+    again on the very next death."""
+    r = _run(LOOP + [["crashed", 1]], answers=[1])
+    # Two automatic reloads, the one the person asked for, and then the next death treated as the
+    # one-off it now is -- rather than "three in a minute" a second later about the same minute.
+    assert r["reloads"] == 4, r["reloads"]
+    assert len(r["boxes"]) == 1, "it went straight back to giving up"

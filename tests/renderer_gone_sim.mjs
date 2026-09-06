@@ -19,10 +19,19 @@ function slice(from, toAfter) {
 /* The report builders, verbatim. */
 const builders = slice('function memoryLine(samples) {', '\n  } catch (_) { return \'\'; }\n}');
 
-const dialogs = [], childDeaths = [];
+const dialogs = [], childDeaths = [], boxes = [], cleared = [];
 let reloads = 0;
+/* What the person clicks, in order. Defaults to the cancel button, so a test that says nothing
+   asserts the SAFE answer. */
+const answers = JSON.parse(process.argv[3] || '[]');
 const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'pc-crash-'));
-const dialog = { showErrorBox: (title, body) => dialogs.push({ title, body }) };
+const dialog = {
+  showErrorBox: (title, body) => dialogs.push({ title, body }),
+  showMessageBoxSync: (_win, opts) => {
+    boxes.push({ message: opts.message, detail: opts.detail, buttons: opts.buttons });
+    return answers.length ? answers.shift() : (opts.cancelId || 0);
+  },
+};
 const appStub = {
   getPath: () => dir,
   getVersion: () => '1.0.0',
@@ -38,6 +47,7 @@ const created = {
     id: 7,
     on: (name, fn) => { events[name] = fn; },
     reloadIgnoringCache: () => { reloads++; },
+    session: { clearStorageData: (o) => { cleared.push(o.storages); return Promise.resolve(); } },
   },
 };
 const events = {};
@@ -60,4 +70,5 @@ for (const step of plan) {
 let report = '';
 try { report = fs.readFileSync(nodePath.join(dir, 'crash-report.txt'), 'utf8'); } catch (_) {}
 fs.rmSync(dir, { recursive: true, force: true });
-process.stdout.write(JSON.stringify({ dialogs, reloads, report }));
+await new Promise(r => setTimeout(r, 5));
+process.stdout.write(JSON.stringify({ dialogs, boxes, cleared, reloads, report }));

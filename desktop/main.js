@@ -1071,10 +1071,61 @@ function createWindow(assignment) {
     const file = writeCrashReport(crashReport(reason, code, samples));
     const where = file ? '\n\nThe full report is at:\n' + file : '';
     if (looping) {
-      dialog.showErrorBox('PosterChan keeps stopping',
-        'The window has stopped three times in a minute' + detail + ', so it will not be reloaded '
-        + 'again.\n\n' + mem + '\n\nNothing is lost — everything is on the relay or on disk. Quit '
-        + 'and reopen the app; if it keeps happening, THIS is the thing to report.' + where);
+      /* A WAY OUT OF A BOOT LOOP, BECAUSE "quit and reopen" IS NOT ONE.
+       *
+       * Stopping the reload was the right half of the earlier fix and it left the app unusable:
+       * a renderer that dies during boot dies again on the next launch, so the advice amounted to
+       * "keep doing the thing that fails". The one lever that is generic — no guess about which
+       * allocation, no change to a boot path nobody has reproduced — is this device's local cache,
+       * which is the only part of a boot whose size depends on how long the app has been used.
+       *
+       * `localStorage` IS NOT TOUCHED, and that is the load-bearing line: it holds the session, and
+       * for an nsec login that is the user's SECRET KEY. Clearing it to fix a crash would destroy
+       * the account of anybody who had not written the key down. `indexdb` and `cachestorage` are
+       * caches by construction — every document in them is on a relay, in Blossom, or on disk — so
+       * the cost is a slow first load and one folder-sync re-check, which is what the button says.
+       *
+       * It is a QUESTION, never something this code decides. Answering it also settles the
+       * diagnosis: if clearing the cache fixes the boot, the cause is in the local store. */
+      const choice = dialog.showMessageBoxSync(created, {
+        type: 'error',
+        title: 'PosterChan keeps stopping',
+        message: 'PosterChan keeps stopping',
+        detail: 'The window has stopped three times in a minute' + detail + ', so it will not be '
+          + 'reloaded again.\n\n' + mem + '\n\nNothing is lost — everything is on the relay or on '
+          + 'disk.' + where,
+        buttons: ['Quit', 'Reload once more', "Clear this device's cache and reload"],
+        defaultId: 2,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (choice === 1) {
+        _rendererDeaths = [];
+        try { created.webContents.reloadIgnoringCache(); } catch (_) { try { loadApp(created); } catch (_e) {} }
+        return;
+      }
+      if (choice === 2) {
+        const ok = dialog.showMessageBoxSync(created, {
+          type: 'warning',
+          title: 'Clear this device\'s cache?',
+          message: "Clear this device's cache and reload?",
+          detail: 'This deletes the offline copy of your posts, notes, messages and files ON THIS '
+            + 'DEVICE only. They are all on the relay, so they come back — the first load will just '
+            + 'be slow, and a synced folder will re-check itself once.\n\nYou stay signed in: your '
+            + 'key and your settings are not touched.',
+          buttons: ['Cancel', 'Clear and reload'],
+          defaultId: 1,
+          cancelId: 0,
+          noLink: true,
+        });
+        if (ok !== 1) return;
+        _rendererDeaths = [];
+        /* NEVER 'localstorage' — see above. */
+        Promise.resolve(created.webContents.session.clearStorageData(
+            { storages: ['indexdb', 'cachestorage', 'serviceworkers'] }))
+          .catch((err) => { console.warn('[renderer] cache clear failed:', err && err.message); })
+          .then(() => { try { loadApp(created); } catch (_e) {} });
+      }
       return;
     }
     dialog.showErrorBox(
