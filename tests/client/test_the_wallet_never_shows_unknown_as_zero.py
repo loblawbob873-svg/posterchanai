@@ -23,7 +23,7 @@ MOD = ROOT / "static/js/client/exodus.js"
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 
 
-def _render(cell):
+def _render(cell, sym='BTC', name='Bitcoin'):
     js = textwrap.dedent(f"""
         const fs=require('fs'), vm=require('vm');
         const ctx={{ window:{{}}, globalThis:{{}}, setTimeout, console, document:{{querySelector:()=>null,
@@ -33,7 +33,7 @@ def _render(cell):
                             '>':'&gt;','"':'&quot;'}})[c]) }};
         vm.createContext(ctx);
         vm.runInContext(fs.readFileSync({json.dumps(str(MOD))},'utf8'), ctx);
-        const html = ctx.PCExodus._row('BTC','Bitcoin', {json.dumps(cell)});
+        const html = ctx.PCExodus._row({json.dumps(sym)},{json.dumps(name)}, {json.dumps(cell)});
         process.stdout.write(JSON.stringify({{html}}));
     """)
     out = subprocess.run(["node", "-e", js], cwd=ROOT, text=True, capture_output=True, timeout=60)
@@ -86,3 +86,39 @@ def test_the_custody_line_is_not_hidden_in_a_help_page():
     assert "node holds the keys" in html
     assert "can spend this wallet" in html
     assert "hot wallet" in html
+
+
+# ── which chains offer a Send button ───────────────────────────────────────────────────────────
+#
+# Receiving works on every chain; spending is implemented for the EVM chains only. The button is
+# ABSENT on the others rather than present-and-refusing: a control that always says no is a worse
+# answer than no control. The server refuses them too — a button the page hides is not a rule.
+
+def _can_send(sym):
+    js = textwrap.dedent(f"""
+        const fs=require('fs'), vm=require('vm');
+        const ctx={{ window:{{}}, setTimeout, console, document:{{querySelector:()=>null}} }};
+        ctx.window=ctx; ctx.globalThis=ctx; ctx.window.__PC={{enc:(s)=>String(s)}};
+        vm.createContext(ctx);
+        vm.runInContext(fs.readFileSync({json.dumps(str(MOD))},'utf8'), ctx);
+        process.stdout.write(JSON.stringify({{can: ctx.PCExodus._canSend({json.dumps(sym)})}}));
+    """)
+    out = subprocess.run(["node", "-e", js], cwd=ROOT, text=True, capture_output=True, timeout=60)
+    assert out.returncode == 0, out.stderr[:2000]
+    return json.loads(out.stdout)["can"]
+
+
+def test_the_evm_chains_offer_send():
+    for sym in ("ETH", "MATIC", "BNB", "AVAX"):
+        assert _can_send(sym) is True, sym
+
+
+def test_the_chains_that_cannot_send_show_no_send_button():
+    for sym in ("BTC", "LTC", "DOGE", "BCH", "SOL"):
+        assert _can_send(sym) is False, sym
+
+
+def test_a_row_for_an_unsendable_chain_still_offers_receive():
+    """Not being able to spend BTC must not stop somebody being paid in it."""
+    html = _render({"known": True, "units": 1, "amount": "0.00000001", "address": "1abc"})
+    assert "ex-receive" in html

@@ -116,6 +116,17 @@ class SettingsResponse(BaseModel):
     exodus_rpc_bnb: str = ""
     exodus_rpc_avax: str = ""
     exodus_rpc_sol: str = ""
+    # PER-TRANSFER CAPS, IN THE CHAIN'S OWN UNITS. The node can sign anything the seed can spend, so
+    # a ceiling is the whole containment against a bug or a stolen session — which means it has to
+    # be enforceable when everything else is broken. A cap denominated in dollars is not: it needs a
+    # price feed, and `markets_service` deliberately never raises, so a dead feed would either stop
+    # capping silently or refuse every send. Native units need nothing and cannot be defeated by an
+    # API being down. One field per SENDABLE chain — the UTXO and Solana paths refuse anyway.
+    # Blank means no ceiling, and Admin says so rather than leaving it to be assumed.
+    exodus_cap_eth: str = ""
+    exodus_cap_matic: str = ""
+    exodus_cap_bnb: str = ""
+    exodus_cap_avax: str = ""
     monero_wallet_spend_ledger: str = ""
     #: The operator's cut of each CUSTODIAL zap, as a percentage. Only the path where this
     #: node executes the transfer can be charged — the URI/QR flow is non-custodial and the

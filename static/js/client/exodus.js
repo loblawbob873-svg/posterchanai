@@ -76,6 +76,13 @@
     </div>`;
   }
 
+  /* WHICH CHAINS CAN ACTUALLY SEND. Receiving works everywhere; spending is implemented for the
+     EVM chains only, and the button is absent rather than present-and-refusing — a control that
+     always says no is a worse answer than no control. The server refuses these too, because a
+     button the page hides is not a rule. */
+  const SENDABLE = new Set(['ETH', 'MATIC', 'BNB', 'AVAX']);
+  const canSend = (sym) => SENDABLE.has(String(sym || '').toUpperCase());
+
   function row(sym, name, cell){
     /* THREE STATES, NOT TWO. A chain that answered, a chain that answered nothing, and a chain
        nobody could reach — the last one must never borrow the second one's zero. */
@@ -87,6 +94,7 @@
         ? `<b>${esc(amount)}</b> <em>${esc(sym)}</em>`
         : `<span class="ex-unknown" title="This chain's provider could not be reached. This is not a zero balance.">unavailable</span>`}</div>
       <button class="btn small ex-receive" data-sym="${esc(sym)}">Receive</button>
+      ${canSend(sym) ? `<button class="btn small ex-send" data-sym="${esc(sym)}">Send</button>` : ''}
     </li>`;
   }
 
@@ -125,6 +133,23 @@
       </div>
       <p class="ex-hint">Send only ${esc(sym)} to this address. Coins sent on the wrong chain are
         usually unrecoverable.</p>
+    </div>`;
+  }
+
+  function sendPanel(sym, from){
+    return `<div class="ex-panel">
+      <h3>Send ${esc(sym)}</h3>
+      <p class="ex-hint">From <code>${esc(from)}</code></p>
+      <label>To <input id="ex-to" spellcheck="false" autocomplete="off" placeholder="0x…"></label>
+      <label>Amount (${esc(sym)}) <input id="ex-amt" inputmode="decimal" autocomplete="off" placeholder="0.01"></label>
+      <p class="ex-hint">Check the address character by character. An address one character wrong is
+        still a valid address — it is simply one nobody holds the key to, and the coins are gone
+        with no way back.</p>
+      <div class="ex-actions">
+        <button class="btn btn-cyan" id="ex-send-go">Send</button>
+        <button class="btn small" id="ex-panel-close">Cancel</button>
+      </div>
+      <div id="ex-send-out"></div>
     </div>`;
   }
 
@@ -205,6 +230,41 @@
         }
       }catch(e){ PC.toast && PC.toast('address unavailable: ' + e.message); }
     });
+    document.querySelectorAll('.ex-send').forEach(b => b.onclick = async () => {
+      const sym = b.dataset.sym;
+      let from = '';
+      try{ from = ((await request('/api/wallet/exodus/addresses')).addresses || {})[sym] || ''; }catch(_){ }
+      if(!panel) return;
+      panel.innerHTML = sendPanel(sym, from);
+      const close = $('#ex-panel-close'); if(close) close.onclick = () => { panel.innerHTML = ''; };
+      const go = $('#ex-send-go');
+      if(go) go.onclick = async () => {
+        if(_busy) return;
+        const to = String(($('#ex-to') || {}).value || '').trim();
+        const amount = String(($('#ex-amt') || {}).value || '').trim();
+        if(!to || !amount) return PC.toast && PC.toast('an address and an amount, please');
+        if(PC.uiConfirm && !await PC.uiConfirm(
+          'Send ' + amount + ' ' + sym + ' to\n' + to + '?\n\nThis cannot be undone.',
+          { ok: 'Send', danger: true })) return;
+        _busy = true; go.disabled = true;
+        const out = $('#ex-send-out');
+        try{
+          const res = await request('/api/wallet/exodus/send', J({ symbol: sym, to, amount }));
+          /* THE 202. A send whose outcome is unknown is not a failure, and must never be offered a
+             retry button: a retry is a second real payment. Say so, and stop. */
+          if(res && res.unsure){
+            if(out) out.innerHTML = `<div class="ex-note ex-warn">${esc(res.msg || '')}</div>`;
+            return;
+          }
+          if(out) out.innerHTML = `<div class="ex-note">Sent. Transaction
+            <code>${esc((res && res.hash) || '')}</code></div>`;
+          PC.toast && PC.toast('sent');
+        }catch(e){
+          if(out) out.innerHTML = `<div class="ex-note ex-bad">${esc(e.message)}</div>`;
+          go.disabled = false;
+        }finally{ _busy = false; }
+      };
+    });
     const reveal = async () => {
       if(PC.uiConfirm && !await PC.uiConfirm(
         'Show the recovery phrase?\n\nAnyone who reads it can spend this wallet. Make sure nobody '
@@ -232,5 +292,5 @@
     booted = true;
   }
   boot();
-  root.PCExodus = { render, _row: row, _custodyNote: custodyNote };
+  root.PCExodus = { render, _row: row, _custodyNote: custodyNote, _canSend: canSend };
 })();

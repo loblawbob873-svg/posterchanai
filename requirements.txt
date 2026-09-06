@@ -268,3 +268,9 @@ beautysh>=6.2
 # nostr-only build), so neither needed editing for this feature; check crcmod first if a slim image
 # without build tools ever fails here.
 bip_utils>=2.9.3
+# eth-account: EIP-1559 transaction signing for the multi-chain wallet's SEND path (Ethereum,
+# Polygon, BNB Chain, Avalanche C-Chain — one implementation covers all four). Same reasoning as
+# bip_utils: RLP encoding and a secp256k1 signature over a transaction are not things to hand-roll,
+# because a wrong byte spends the wrong amount to the wrong place. Without it the wallet still
+# receives and shows balances; only /send refuses, with a sentence rather than a traceback.
+eth-account>=0.13
