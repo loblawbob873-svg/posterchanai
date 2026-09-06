@@ -243,7 +243,7 @@ async def balances(addresses: dict[str, str],
     symbols = [s for s in addresses if s in CHAINS]
     async with _client() as client:
         async def one(sym: str):
-            spec, base = CHAINS[sym], endpoint_for(sym, settings)
+            base = endpoint_for(sym, settings)
             reader = _reader_for(sym, settings)
             if not base or not reader:
                 return None

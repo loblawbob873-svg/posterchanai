@@ -137,6 +137,23 @@ def test_duplicate_imports_share_the_same_spend_lock():
 
 
 @pytest.mark.parametrize('outcome', ['success', 'lost'])
+def test_relay_attempt_invalidates_the_pre_payment_balance(isolated, monkeypatch, outcome):
+    fixture = RpcFixture(outcome)
+    rpc(monkeypatch, fixture)
+    keys = W.monero_keys(PHRASE)
+    scope = M.identity(1, 'default', 0, keys.PrimaryAddress())
+    (isolated / scope).mkdir()
+    cache = isolated / scope / 'balance.json'
+    cache.write_text(json.dumps({'units': 2000, 'unlocked': 1900, 'checkedAt': 1}))
+    if outcome == 'lost':
+        with pytest.raises(SendUnsure):
+            M._send(scope, keys, STORAGE, '01' * 16, keys.PrimaryAddress(), 1000)
+    else:
+        M._send(scope, keys, STORAGE, '01' * 16, keys.PrimaryAddress(), 1000)
+    assert not cache.exists()
+
+
+@pytest.mark.parametrize('outcome', ['success', 'lost'])
 def test_rpc_shutdown_error_cannot_report_relayed_payment_as_unsent(isolated, monkeypatch, outcome):
     fixture = RpcFixture(outcome)
 

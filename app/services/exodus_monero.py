@@ -316,6 +316,13 @@ def _send(scope, keys, storage_key, request_id, to, units, restore_height=0):
                     return result
                 except Exception as error:
                     raise SendUnsure(entry['message']) from error
+                finally:
+                    # An acknowledged send and a lost acknowledgement can both change funds.
+                    # Do not display the old spendable balance as current for another five minutes.
+                    try:
+                        (folder / 'balance.json').unlink(missing_ok=True)
+                    except OSError:
+                        pass  # Cache cleanup cannot change the durable transfer outcome.
         except (SendRefused, SendUnsure):
             raise
         except Exception as error:

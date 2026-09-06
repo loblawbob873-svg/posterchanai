@@ -67,13 +67,15 @@ claimed by this review document.
 
 ## Validation evidence
 
-* Complete final Exodus core and browser run: 248 passed (221 core, 27 browser), including actual offline
+* Complete final Exodus core and browser run: 250 passed (223 core, 27 browser), including actual offline
   Monero wallet creation, reopening and matching recovery words.
 * Actual Chrome wallet dashboard and recovery actions: 27 passed, including all
   configured themes at phone/desktop widths, stale responses, duplicate send clicks,
   downloading both phrases and clearing the revealed words.
 * Cleanup-after-relay regressions: two failed before the production fix and two
   passed after it. The final core run includes these new cases.
+* Successful and uncertain relay attempts both invalidate the prior Monero balance
+  snapshot; two regression cases failed before the fix and pass afterward.
 * The initial browser run failed to start Chrome because sandbox socket access was
   denied. The unchanged tests passed outside that sandbox; this was not an application
   failure. A sandboxed core run was interrupted before test output and is not a pass.
