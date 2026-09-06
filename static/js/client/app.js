@@ -333,7 +333,7 @@
    * Hidden, not disabled. A greyed row still invites a click and still has to explain itself; a
    * standalone install is not a degraded PosterChan, it is a Nostr client, and it should read like
    * one. Anyone who wants the rest can name an instance in Settings and they all come back. */
-  const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents',
+  const INSTANCE_VIEWS = new Set(['ai', 'translate', 'markets', 'news', 'torrents', 'media-center',
                                   'stats', 'meme', 'admin', 'websearch', 'terminal', 'calendar', 'contacts', 'office',
                                   /* PosterChan Code edits files on a NODE, through /api/code, gated by
                                    * the same allowlist as the terminal. With no instance there is no
@@ -6952,7 +6952,7 @@
      *
      * Saved on the way OUT, while the old view's nodes are still on screen and its scrollTop is
      * still real — after `VIEW = v` there is nothing left to measure. */
-    if(VIEW !== v){ _rememberTlScroll(); try{Relay.abortQueries&&Relay.abortQueries();}catch(_){} if(VIEW==='streams')_stopStreamsReads(); }
+    if(VIEW !== v){ if(VIEW==='media-center')stopMediaCenter(); _rememberTlScroll(); try{Relay.abortQueries&&Relay.abortQueries();}catch(_){} if(VIEW==='streams')_stopStreamsReads(); }
     const concordReentry=VIEW!=='concord'&&v==='concord';
     _navView(v);    // top-level views have no address of their own — the entry names them in its state
     VIEW = v;
@@ -6973,7 +6973,7 @@
       _notifScrollTop = true; }
     $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v || (v==='concord'&&b.dataset.view==='messages')));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='blossom') $('#view-title').textContent='File Manager';
     if(v==='office') $('#view-title').textContent='PosterChan Office';
     if(v==='concord') $('#view-title').textContent='Messages';
@@ -7132,6 +7132,7 @@
     if (VIEW==='streams') return renderStreams();
     if (VIEW==='calls') return renderCalls();
     if (VIEW==='pics') return renderPics();
+    if (VIEW==='media-center') return renderMediaCenter();
     if (VIEW==='torrents') return renderTorrents();
     if (VIEW==='repos') return renderRepos();
     if(renderModuleView('news','news.js','PCNews','render')) return;
@@ -9191,6 +9192,191 @@
     catch(e){ toast('publish failed: '+e.message); }
   }
 
+  let _mediaCenterSession=null, _mediaCenterPlayGeneration=0, _mediaCenterHls=null, _mediaCenterArtObserver=null, _mediaCenterArtUrls=[], _mediaCenterArtGeneration=0;
+  function clearMediaCenterArt(){
+    _mediaCenterArtGeneration++;
+    if(_mediaCenterArtObserver){_mediaCenterArtObserver.disconnect();_mediaCenterArtObserver=null;}
+    for(const url of _mediaCenterArtUrls)URL.revokeObjectURL(url);
+    _mediaCenterArtUrls=[];
+  }
+  function releaseMediaCenterSession(url){
+    if(!url)return Promise.resolve();
+    const ticket=new URL(url,_instanceBase()||location.origin).searchParams.get('ticket');
+    return _streamFetch('/api/media-center/sessions/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket})}).catch(()=>{});
+  }
+  function stopMediaCenter(clearArt=true){
+    _mediaCenterPlayGeneration++;
+    const session=_mediaCenterSession;_mediaCenterSession=null;
+    if(clearArt)clearMediaCenterArt();
+    if(_mediaCenterHls){ _mediaCenterHls.destroy(); _mediaCenterHls=null; }
+    const video=document.getElementById('mc-player');
+    if(video){ video.pause(); video.removeAttribute('src'); video.load(); }
+    return releaseMediaCenterSession(session);
+  }
+  async function renderMediaCenter(){
+    stopMediaCenter();
+    const feed=$('#feed');
+    feed.innerHTML='<div class="empty">Loading Media Center…</div>';
+    const api=async(path='',method='GET',body)=>{
+      const r=await _streamFetch('/api/media-center'+path,{method,headers:{'Content-Type':'application/json'},
+        ...(body===undefined?{}:{body:JSON.stringify(body)})});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(typeof e.detail==='string'?e.detail:'Media Center request failed');}
+      return r.json();
+    };
+    try{
+      const data=await api();
+      if(VIEW!=='media-center')return;
+      feed.innerHTML=`<div class="mc-gallery"><div class="xdc-gal-top"><div class="muted"><h2>Media Center</h2>Your movies, shows and music. Pick a library and press play.</div><span class="mc-private">Private · Server library</span></div><div class="mc-tools">
+        ${data.can_create?`<details><summary>Add a server folder</summary><form id="mc-add">
+          <p><label>Library name <input name="name" required maxlength="150" placeholder="Movies"></label></p>
+          <p><label>Server folder <input name="folder" required placeholder="/var/lib/posterchanai/media/Movies"></label></p>
+          <p><label>Transcoding <select name="encoder"><option value="auto">Automatic GPU / CPU</option><option value="cpu">CPU</option><option value="nvidia">NVIDIA</option><option value="amd">AMD</option><option value="vaapi">VA-API GPU</option></select></label></p>
+          <button type="submit">Scan and add library</button></form></details>`:''}
+        ${data.can_create?`<details><summary>Bandwidth and resource limits</summary><form id="mc-limits">
+          <p class="muted">Bandwidth is in kbps (1,000 kbps = 1 Mbps). The per-user cap is shared across their tabs. The server cap covers all viewers.</p>
+          <p><label>Total bandwidth <input name="server_kbps" type="number" min="650" max="1000000" required></label></p>
+          <p><label>Bandwidth per user <input name="viewer_kbps" type="number" min="650" max="1000000" required></label></p>
+          <p><label>Simultaneous streams <input name="max_streams" type="number" min="1" max="100" required></label></p>
+          <p><label>Concurrent transcodes <input name="max_transcodes" type="number" min="1" max="16" required></label></p>
+          <p><label>Segment cache (MB) <input name="cache_mb" type="number" min="32" max="1048576" required></label></p>
+          <button type="submit">Save limits</button></form></details>`:''}
+        </div><p id="mc-status" class="mc-status muted" role="status"></p><div id="mc-libraries" class="mc-libraries"></div>
+        <div id="mc-playback" class="mc-playback" hidden><div class="mc-player-toolbar"><h3 id="mc-playing"></h3><button id="mc-fullscreen" class="btn btn-ghost" type="button" aria-label="Enter full screen">Full screen</button><button id="mc-close-player" class="btn btn-ghost" type="button">Close player</button>
+          <label>Quality <select id="mc-quality"><option value="auto">Auto bandwidth</option>
+            <option value="360p">360p · ~0.6 Mbps</option><option value="480p">480p · ~1.2 Mbps</option>
+            <option value="720p">720p · ~2.6 Mbps</option><option value="1080p">1080p · ~5.6 Mbps</option></select></label></div>
+          <video id="mc-player" controls playsinline tabindex="0" aria-label="Media player" preload="metadata" style="width:100%;max-height:65vh"></video>
+        </div><div class="mc-browse"><label class="mc-search" hidden>Search this library <input id="mc-search" type="search" class="input" placeholder="Find a title or folder…"></label></div><div id="mc-items"></div></div>`;
+      const status=$('#mc-status');
+      const fullscreen=$('#mc-fullscreen'),playerBox=$('#mc-playback');
+      fullscreen.onclick=async()=>{
+        try{
+          if(document.fullscreenElement){await document.exitFullscreen();return;}
+          if(playerBox.requestFullscreen)await playerBox.requestFullscreen();
+          else if($('#mc-player').webkitEnterFullscreen)$('#mc-player').webkitEnterFullscreen();
+          else status.textContent='Use your device’s video player full-screen control.';
+        }catch(_){status.textContent='Full screen is unavailable in this window. Use the video player controls.';}
+      };
+      playerBox.onfullscreenchange=()=>{const active=document.fullscreenElement===playerBox;fullscreen.textContent=active?'Exit full screen':'Full screen';fullscreen.setAttribute('aria-label',fullscreen.textContent);};
+      playerBox.onkeydown=e=>{
+        if(e.target.matches('input,select,textarea'))return;
+        if(e.key.toLowerCase()==='f'){e.preventDefault();fullscreen.click();}
+      };
+      $('#mc-close-player').onclick=async()=>{
+        if(document.fullscreenElement===playerBox)await document.exitFullscreen().catch(()=>{});
+        stopMediaCenter(false);playerBox.hidden=true;
+      };
+      const act=async(button,fn)=>{button.disabled=true;status.textContent='Working…';try{await fn();status.textContent='';}catch(e){status.textContent=e.message;}finally{button.disabled=false;}};
+      const limitsForm=$('#mc-limits');
+      if(limitsForm){
+        const limits=await api('/limits');if(VIEW!=='media-center')return;
+        for(const [key,value] of Object.entries(limits)){if(limitsForm.elements[key])limitsForm.elements[key].value=value;}
+        limitsForm.onsubmit=e=>{e.preventDefault();act(limitsForm.querySelector('button'),async()=>{
+          await api('/limits','PUT',Object.fromEntries(Array.from(new FormData(limitsForm),([k,v])=>[k,Number(v)])));
+          await renderMediaCenter();
+        });};
+      }
+      for(const option of Array.from($('#mc-quality').options)){if(option.value!=='auto'&&!data.profiles.includes(option.value))option.remove();}
+      const waitScan=async(id)=>{
+        while(VIEW==='media-center'){
+          const scan=await api('/'+id+'/scan');
+          if(scan.state==='failed')throw new Error(scan.error);
+          if(scan.state!=='running')return;
+          status.textContent='Scanning media in the background…';
+          await new Promise(resolve=>setTimeout(resolve,2000));
+        }
+      };
+      const add=$('#mc-add');
+      if(add)add.onsubmit=e=>{e.preventDefault();act(add.querySelector('button'),async()=>{
+        status.textContent='Scanning media. Large folders can take several minutes…';
+        const library=await api('','POST',Object.fromEntries(new FormData(add))); await waitScan(library.id); if(VIEW==='media-center')await renderMediaCenter();
+      });};
+      const libs=$('#mc-libraries');
+      if(!data.libraries.length)libs.textContent='No libraries yet. An owner can share a library with your npub.';
+      for(const lib of data.libraries){
+        const row=document.createElement('div');row.className='mc-library';
+        const open=document.createElement('button');open.className='btn btn-ghost mc-library-open';open.textContent=lib.name+' · '+(lib.count||0);row.append(open);
+        if(lib.shared_with){
+          const scan=document.createElement('button');scan.className='btn btn-ghost small';scan.textContent='Rescan';row.append(' ',scan);
+          scan.onclick=()=>act(scan,async()=>{await api('/'+lib.id+'/scan','POST');await waitScan(lib.id);if(VIEW==='media-center')await renderMediaCenter();});
+          const share=document.createElement('details');share.className='mc-share';
+          share.innerHTML='<summary>Share with Nostr users</summary><p class="muted">Enter npubs, separated by commas or newlines. Users sign in on this server. Remove a key to revoke access. Nothing is federated.</p><textarea aria-label="Nostr public keys" rows="3" style="width:100%"></textarea><button>Save sharing</button>';
+          share.querySelector('textarea').value=lib.shared_with.join('\n');
+          share.querySelector('button').onclick=()=>act(share.querySelector('button'),async()=>{
+            await api('/'+lib.id+'/sharing','PUT',{shared_with:share.querySelector('textarea').value.split(/[\s,]+/).filter(Boolean)});
+          });row.append(share);
+        }
+        open.onclick=()=>act(open,async()=>{
+          const result=await api('/'+lib.id+'/items');if(VIEW!=='media-center')return;
+          clearMediaCenterArt();
+          const artGeneration=_mediaCenterArtGeneration, artQueue=[];let artActive=0;
+          const drainArt=()=>{
+            while(artActive<2&&artQueue.length&&artGeneration===_mediaCenterArtGeneration){
+              const card=artQueue.shift();artActive++;
+              _streamFetch('/api/media-center/'+lib.id+'/art/'+card.dataset.item).then(r=>r.ok?r.blob():null).then(blob=>{
+                if(!blob||!card.isConnected||artGeneration!==_mediaCenterArtGeneration)return;
+                const url=URL.createObjectURL(blob);_mediaCenterArtUrls.push(url);
+                const image=document.createElement('img');image.alt='';image.decoding='async';image.src=url;
+                card.querySelector('.xdc-cover').replaceChildren(image);
+              }).catch(()=>{}).finally(()=>{artActive--;drainArt();});
+            }
+          };
+          _mediaCenterArtObserver=new IntersectionObserver(entries=>{
+            for(const entry of entries){if(entry.isIntersecting){_mediaCenterArtObserver.unobserve(entry.target);artQueue.push(entry.target);}}
+            drainArt();
+          },{rootMargin:'150px'});
+          const list=$('#mc-items');list.replaceChildren();let folder=null,grid=null;
+          const search=$('#mc-search');search.value='';search.parentElement.hidden=false;
+          search.oninput=()=>{
+            const query=search.value.trim().toLocaleLowerCase();
+            for(const section of list.children){let visible=0;for(const card of section.querySelectorAll('.mc-tile')){card.hidden=!card.dataset.search.includes(query);if(!card.hidden)visible++;}section.hidden=!visible;}
+          };
+          for(const button of libs.querySelectorAll('.mc-library-open'))button.classList.toggle('active',button===open);
+          for(const item of result.items){
+            if(folder!==item.folder){
+              folder=item.folder;const section=document.createElement('section');section.className='mc-folder';
+              const heading=document.createElement('h3');heading.textContent=folder==='.'?lib.name:folder;section.append(heading);
+              grid=document.createElement('div');grid.className='xdc-grid';section.append(grid);list.append(section);
+            }
+            const card=document.createElement('article');card.className='xdc-tile mc-tile';card.dataset.item=item.id;
+            card.dataset.search=(item.name+' '+item.folder).toLocaleLowerCase();
+            const duration=Math.max(1,Math.round(item.duration/60));
+            card.innerHTML=`<div class="xdc-cover xdc-cover-none"><svg class="ic" aria-hidden="true"><use href="#i-${item.video?'tv':'music'}"></use></svg></div>
+              <div class="xdc-tmeta"><b title="${enc(item.name)}">${enc(item.name)}</b><span class="muted small">${item.video?'Video':'Audio'} · ${duration} min</span>
+              <span class="muted small xdc-tfoot">${enc(item.folder==='.'?lib.name:item.folder)}</span></div>
+              <div class="xdc-tacts"><button class="btn btn-neon small">${item.video?'Play':'Listen'}</button></div>`;
+            grid.append(card);_mediaCenterArtObserver.observe(card);
+            const play=card.querySelector('button');
+            card.querySelector('.xdc-cover').onclick=()=>play.click();
+            play.onclick=()=>act(play,async()=>{
+              await stopMediaCenter(false);const playGeneration=_mediaCenterPlayGeneration;
+              const session=await api('/'+lib.id+'/play/'+item.id,'POST');
+              if(VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration){await releaseMediaCenterSession(session.url);return;}
+              _mediaCenterSession=session.url;
+              $('#mc-playback').hidden=false;$('#mc-playback').scrollIntoView({block:'nearest',behavior:'smooth'});$('#mc-playing').textContent=item.name;
+              const video=$('#mc-player'),quality=$('#mc-quality');quality.value='auto';
+              const source=new URL(session.url,_instanceBase()||location.origin).href;
+              video.onerror=()=>{status.textContent='Playback failed. Try a lower quality or rescan the library.';};
+              await loadHls();if(VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration)return;
+              if(window.Hls&&Hls.isSupported()){
+                const hls=new Hls({startLevel:0,maxBufferLength:18});_mediaCenterHls=hls;
+                hls.loadSource(source);hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED,()=>video.play().catch(()=>{}));
+                hls.on(Hls.Events.ERROR,(_,e)=>{if(e.fatal)status.textContent='Playback failed. Reopen the media or check server transcoding.';});
+                quality.onchange=()=>{hls.currentLevel=quality.value==='auto'?-1:data.profiles.indexOf(quality.value);};
+              }else if(video.canPlayType('application/vnd.apple.mpegurl')){
+                video.src=source;video.play().catch(()=>{});
+                quality.onchange=()=>{const at=video.currentTime;video.src=source.replace('master.m3u8',(quality.value==='auto'?'master':quality.value)+'.m3u8');video.onloadedmetadata=()=>{video.currentTime=at;video.play().catch(()=>{});};};
+              }else{status.textContent='This browser does not support HLS playback.';}
+            });
+          }
+          if(!result.items.length)list.textContent='No playable media found. Check the folder and FFmpeg installation.';
+          if(lib.skipped)status.textContent=lib.skipped+' files could not be read during the last scan.';
+        });libs.append(row);
+      }
+    }catch(e){if(VIEW==='media-center')feed.innerHTML='<div class="empty">'+enc(e.message)+'</div>';}
+  }
+
   // ---------- torrents (NIP-35, kind 2003) ----------
   // A magnet's infohash may be hex (40/64) OR RFC4648 base32 (32 chars) — older clients still emit base32,
   // and _magnet() only accepts hex, so a base32 one would publish an event whose magnet button is dead.
@@ -10141,7 +10327,27 @@
    * _copyFrom stays separate and is still the right call for an INPUT — it copies from the real,
    * visible field (a WebView refuses execCommand on an off-screen element) and unmasks a password
    * field for exactly the instant of the copy. This one is for a value the page merely holds. */
+  /* A PROMISE MUST NEVER REACH SOMEBODY'S CLIPBOARD.
+   *
+   * `String(aPromise)` is the string "[object Promise]", and this function stringifies whatever it
+   * is handed -- so one caller that forgets an `await` does not throw, does not log, and copies
+   * those sixteen characters over whatever the person had. They find out when they paste, into
+   * somebody else's chat window, and the thing they meant to send is gone as well.
+   *
+   * Reported exactly that way: a bug report arrived reading "fix this in new thread:[object
+   * Promise]". A thenable is now AWAITED (the caller's intent, just late), and any other non-string
+   * object is refused out loud instead of being pasted as "[object Object]". Strings, numbers and
+   * bigints are untouched, which is every correct call in the app. */
   function copyValue(text, okMsg, failLabel){
+    if(text && typeof text.then === 'function')
+      return Promise.resolve(text).then(v => copyValue(v, okMsg, failLabel),
+                                        () => { toast('nothing to copy'); return false; });
+    const t = typeof text;
+    if(text != null && t !== 'string' && t !== 'number' && t !== 'bigint' && t !== 'boolean'){
+      console.warn('copyValue was handed a', t, text);
+      toast('nothing to copy');
+      return Promise.resolve(false);
+    }
     const val = String(text == null ? '' : text);
     const ok = () => { toast(okMsg || 'copied'); return true; };
     // A temporary textarea, appended and focused for real — an off-screen one is refused by the same
@@ -32462,11 +32668,37 @@
       });
     });
   }
+  /* ONE EVENT OUT OF THIS ACCOUNT'S FEDIVERSE-ONLY HISTORY.
+   *
+   * A fedi-only note is signed, cross-posted and DELIBERATELY never published to a relay, so no
+   * amount of asking relays can find it. `_loadFediOnlyHistory` pulls the most recent page at boot,
+   * which covers the timeline; it does not cover a thread opened COLD -- from a notification, or
+   * from a pasted nevent link -- and that is exactly when somebody follows a fediverse reply back to
+   * the post it answers. Returns null for anything this cannot be: a guest, a bundle with no
+   * instance, an account not in fedi-only mode, or an id the archive does not hold. */
+  async function _fetchFediOnlyEvent(id){
+    if(_standalone() || GUEST || !ME || !id) return null;
+    if(!_fediOnly() && _fediModeSupported !== true) return null;
+    const pk=ME.pubkey;
+    try{
+      await ensureAiSession();
+      const r=await fetch('/api/pleroma/private-events?ids='+encodeURIComponent(id));
+      if(!r.ok) return null;
+      const d=await r.json(), events=Array.isArray(d.events)?d.events:[];
+      if(!ME || ME.pubkey!==pk) return null;           // the account switcher ran inside this fetch
+      const ev=events.find(x=>x && x.id===id && x.pubkey===pk && _fediOnlyEvent(x));
+      if(ev){ Store.saveEvent(ev); return ev; }
+    }catch(_){ }
+    return null;
+  }
   async function fetchEvent(id, hints){
     let r=await Relay.query([{ ids:[id] }]); if(r[0]) return r[0];
     const pub=await fetchFromPublicRelays([{ ids:[id] }], 4500, hints);
     for(const ev of pub){ try{ const v=await Relay.worker.call('verify',{event:ev}); if(v&&v.valid) return ev; }catch(_){} }
-    return null;
+    /* LAST, because it is the rare case and it costs a request to this node. Every relay has been
+     * asked by now, so nothing here can shadow a real answer -- and a fedi-only post is the one kind
+     * of event for which every one of those answers is correctly "no". */
+    return await _fetchFediOnlyEvent(id);
   }
   function openThread(id, relays){
     // A stray/empty id (e.g. a click that leaked from a closing modal backdrop, or a malformed

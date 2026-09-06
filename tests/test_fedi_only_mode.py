@@ -238,6 +238,41 @@ def test_private_history_is_owner_scoped_and_carries_deletions(world):
     asyncio.run(go())
 
 
+def test_one_private_event_can_be_looked_up_by_id(world):
+    """A fedi-only post is on NO relay, so a thread opened cold cannot fetch its parent.
+
+    When somebody replies on the fediverse the bridge mirrors that reply back with an `e` tag
+    pointing at the private parent (see test_fedi_bridge_replies_to_a_private_post). The client's
+    `fetchEvent` asks its relays and then the public pool, and every one of those answers is
+    correctly "no". Paging the whole archive to answer "what is event X" is the wrong shape: a thread
+    opened from a notification or a pasted link needs exactly one event, at once.
+
+    Owner scoping is asserted again HERE rather than assumed from the paging test above, because a
+    filter added to a query is exactly where a scope gets lost.
+    """
+    ev=event(); other_ev=event(content='not yours')
+    async def go():
+        assert (await world.send(ev))['ok']
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=world.app),base_url='http://app.test') as c:
+            got=(await c.get('/api/pleroma/private-events?ids='+ev['id'])).json()['events']
+            assert [e['id'] for e in got]==[ev['id']]
+            # An id this account does not hold answers with nothing, not with somebody else's post.
+            assert (await c.get('/api/pleroma/private-events?ids='+('f'*64))).json()['events']==[]
+            # Still owner-scoped: another session asking for a known id gets nothing.
+            other=User(username='other2',password_hash='unused',nostr_npub=npub_from_seckey((b'\x45'*32).hex()))
+            world.db.add(other);world.db.commit()
+            world.app.dependency_overrides[get_current_user]=lambda:other
+            assert (await c.get('/api/pleroma/private-events?ids='+ev['id'])).json()['events']==[]
+            world.app.dependency_overrides[get_current_user]=lambda:world.user
+            # A deletion hides it from the lookup exactly as it does from the listing.
+            assert (await world.send(event(5,'',[['e',ev['id']]])))['ok']
+            assert (await c.get('/api/pleroma/private-events?ids='+ev['id'])).json()['events']==[]
+            # An `ids` of nothing but separators must answer with nothing -- never fall through to
+            # "here is the whole archive", which is the shape this parameter could easily have had.
+            assert (await c.get('/api/pleroma/private-events?ids=,,,')).json()['events']==[]
+    asyncio.run(go())
+
+
 def test_setting_roundtrip_preserves_existing_bridge_switches(world,monkeypatch):
     from app.routers.auth import router as auth_router
     from app.services import users_store

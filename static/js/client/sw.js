@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1655';
+const CACHE = 'pc-nostr-v1656';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -518,6 +518,9 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method === 'POST' && url.pathname === '/client/share'){ e.respondWith(handleShare(e.request)); return; }
   if (e.request.method !== 'GET') return;
+  // Private server media is revocable. Never persist its catalog, playlists or
+  // segments in the browser's offline caches (including native-HLS video fetches).
+  if (url.pathname === '/api/media-center' || url.pathname.startsWith('/api/media-center/')) return;
 
   // APK: MEDIA-ONLY, and only CROSS-ORIGIN IMAGES (avatars + uploaded images from the server / other
   // hosts). Deliberately NOT: same-origin bundle assets (they must refresh on an APK update, so never

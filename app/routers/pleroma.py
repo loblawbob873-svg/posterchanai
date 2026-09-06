@@ -408,14 +408,29 @@ async def publish_social(data: SocialPublishReq, current_user: User = Depends(ge
 
 @router.get("/private-events")
 def private_social_history(before: int | None = None, before_id: str | None = None,
-                           limit: int = 200, current_user: User = Depends(get_current_user),
+                           limit: int = 200, ids: str | None = None,
+                           current_user: User = Depends(get_current_user),
                            db: Session = Depends(get_db)):
-    """Only this account's Fediverse-only history; timestamp+id cursor avoids burst truncation."""
+    """Only this account's Fediverse-only history; timestamp+id cursor avoids burst truncation.
+
+    `ids` LOOKS ONE UP, and it exists because a Fediverse-only note is on no relay. When somebody
+    replies to one on the fediverse the bridge mirrors that reply back with an `e` tag pointing at
+    it, and the client's `fetchEvent` -- which asks the relays and then the public pool -- can never
+    find it. Paging the whole history to answer "what is event X" is the wrong shape: a thread opened
+    from a link or a notification needs exactly one event, immediately.
+    """
     import json
     from sqlalchemy import or_, and_
     from app.models import FediOnlyEvent
     q = db.query(FediOnlyEvent).filter(FediOnlyEvent.user_id == current_user.id,
                                       FediOnlyEvent.deleted.is_(False))
+    if ids:
+        # Bounded and de-duplicated: this is a lookup, not a second way to page the archive.
+        wanted = [x for x in {i.strip() for i in ids.split(",")} if x][:50]
+        if not wanted:
+            return {"events": []}
+        rows = q.filter(FediOnlyEvent.id.in_(wanted)).limit(50).all()
+        return {"events": [json.loads(row.raw) for row in rows]}
     if before is not None:
         q = q.filter(or_(FediOnlyEvent.created_at < before,
                         and_(FediOnlyEvent.created_at == before, FediOnlyEvent.id < (before_id or ""))))

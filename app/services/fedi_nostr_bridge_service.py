@@ -26,7 +26,8 @@ import httpx
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError, InterfaceError   # CONNECTION-level (transient) DB errors — retry, don't skip
 
-from app.models import FediBridgeDelivered, FediBridgeSkipped, FediPuppet, FediReconcileState
+from app.models import (FediBridgeDelivered, FediBridgeSkipped, FediOnlyEvent, FediPuppet,
+                        FediReconcileState)
 from app.services import pleroma_service, settings_store
 from app.services import fedi_bridge_identity as ident
 from app.services.nostr import bech32
@@ -642,6 +643,33 @@ async def _deliver(db: Session, port: int, platform: str, instance_url: str, ins
                     from sqlalchemy import text
                     _exists = db.execute(text("SELECT 1 FROM events WHERE id=:id LIMIT 1"),
                                          {"id": parent.nostr_event_id}).first() is not None
+                    # A FEDIVERSE-ONLY PARENT IS NOT ON THE RELAY BY DESIGN, AND IT IS STILL A REAL
+                    # POST -- this is the one case where "not on the relay" is not "does not exist".
+                    #
+                    # In Fediverse-only mode a note is signed, cross-posted, and DELIBERATELY never
+                    # published to a Nostr relay (fedi_only_service.route); it lives in FediOnlyEvent
+                    # and reaches its author's client through /api/pleroma/private-events. So when
+                    # somebody replies to one on the fediverse and the bridge mirrors that reply
+                    # back, the map row for the parent is found, this existence check fails, and the
+                    # `e` tag is dropped -- leaving a reply with NO parent reference at all.
+                    #
+                    # Measured end to end on a real report: reply 3a953bb2 by echo@stereophonic.space
+                    # carried p-tags, an emoji tag, fedibridge and proxy tags AND NO `e` TAG; its
+                    # in_reply_to_id BA788JrJ4vIvPjg8Lg maps to 2c487ad7, which is absent from
+                    # `events` and present in FediOnlyEvent tagged ["client-mode","fedi-only"].
+                    # Reported as "User replying to my status and posterchan does not load the
+                    # status".
+                    #
+                    # The dangling-tag guard is still right in general: it asks "will this reference
+                    # resolve for the reader?" and a pruned or deleted parent will not. For a
+                    # fedi-only parent it resolves for the AUTHOR, who is exactly who the reply is
+                    # addressed to (their pubkey is p-tagged on it) and the only person who can see
+                    # that half of the thread at all. A reference that resolves for the person the
+                    # reply is for beats one that dangles for everybody, including them.
+                    if not _exists:
+                        _exists = db.query(FediOnlyEvent.id).filter(
+                            FediOnlyEvent.id == parent.nostr_event_id,
+                            FediOnlyEvent.deleted.is_(False)).first() is not None
                 except Exception:
                     try:
                         db.rollback()   # a failed SELECT aborts the PG txn — roll back so the later dedup-row commit isn't poisoned
