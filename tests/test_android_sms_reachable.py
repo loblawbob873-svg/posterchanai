@@ -279,7 +279,18 @@ class ANewTextCanActuallyBeANNOUNCED(unittest.TestCase):
     def test_a_muted_channel_counts_as_no(self):
         """Android granting it and the person switching it off are both "no notifications", and the
         screen must not report success for the second."""
-        self.assertIn("areNotificationsEnabled", method(self.src, "private boolean mayNotify"))
+        self.assertIn("SmsNotifier.canNotify", method(self.src, "private boolean mayNotify"))
+        notifier = strip_comments((SMS / "SmsNotifier.java").read_text())
+        self.assertIn("areNotificationsEnabled", method(notifier, "public static boolean canNotify"))
+        self.assertIn("IMPORTANCE_NONE", method(notifier, "public static boolean canNotify"))
+
+    def test_native_texts_requests_notifications_without_a_webview(self):
+        native = strip_comments((SMS / "ThreadListActivity.java").read_text())
+        body = method(native, "protected void onStart")
+        self.assertIn('ask.add("android.permission.POST_NOTIFICATIONS")', body)
+        self.assertIn('requestPermissions(ask.toArray', body)
+        self.assertIn('SmsNotifier.canNotify(this)', native)
+        self.assertIn('sms_notifications_disabled', native)
 
     def test_the_client_asks_and_reports(self):
         js = (ROOT / "static/js/client/sms.js").read_text()

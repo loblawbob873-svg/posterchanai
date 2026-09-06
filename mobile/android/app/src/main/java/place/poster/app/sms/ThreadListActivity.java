@@ -154,11 +154,15 @@ public class ThreadListActivity extends PcActivity {
     protected void onStart() {
         super.onStart();
         applySkin();
-        if (!mayReadTexts() || !mayReadContacts()) {
+        boolean askNotify = android.os.Build.VERSION.SDK_INT >= 33 && HasRole.sms(this)
+                && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED;
+        if (!mayReadTexts() || !mayReadContacts() || askNotify) {
             try {
                 java.util.ArrayList<String> ask = new java.util.ArrayList<String>();
                 if (!mayReadTexts()) ask.add(android.Manifest.permission.READ_SMS);
                 if (!mayReadContacts()) ask.add(android.Manifest.permission.READ_CONTACTS);
+                if (askNotify) ask.add("android.permission.POST_NOTIFICATIONS");
                 requestPermissions(ask.toArray(new String[ask.size()]), ASK_READ_SMS);
             } catch (Throwable ignored) { }
         }
@@ -340,6 +344,7 @@ public class ThreadListActivity extends PcActivity {
         // SAY WHY IT IS EMPTY. "PosterChan can read your texts but is not the messages app" and "you
         // have no texts" look identical, and the first one is fixable in two taps.
         boolean isDefault = HasRole.sms(this);
+        notice.setOnClickListener(null);
         if (cannotRead) {
             notice.setVisibility(View.VISIBLE);
             notice.setText(R.string.sms_no_permission);
@@ -363,6 +368,19 @@ public class ThreadListActivity extends PcActivity {
             // decides what is delivered, so the app cannot simply believe the role. Saying which
             // one says what is the only honest answer, and it is the one that can be acted on.
             if (!isDefault) notice.setText(whyNotDefault());
+            else if (!SmsNotifier.canNotify(this)) {
+                notice.setVisibility(View.VISIBLE);
+                notice.setText(R.string.sms_notifications_disabled);
+                notice.setOnClickListener(v -> {
+                    Intent settings = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
+                    if (android.os.Build.VERSION.SDK_INT >= 26) {
+                        settings.setAction(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, SmsNotifier.CHANNEL);
+                    }
+                    try { startActivity(settings); } catch (Throwable ignored) { }
+                });
+            }
         }
     }
 

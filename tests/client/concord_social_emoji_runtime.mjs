@@ -1,0 +1,40 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import {pathToFileURL} from 'node:url';
+import assert from 'node:assert/strict';
+const base=process.argv[2]?pathToFileURL(process.argv[2]):new URL('../../static/js/client/app.js',import.meta.url);
+const read=name=>fs.readFileSync(new URL(name,base),'utf8');
+const app=read('app.js'), src=read('concord.js');
+const noop=()=>{}, store=new Map();
+const localStorage={getItem:k=>store.get(k)||null,setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)};
+const document={querySelector:()=>null,createElement:()=>({dataset:{}}),querySelectorAll:()=>[],addEventListener:noop,
+  body:{classList:{contains:()=>false}},head:{appendChild:noop}};
+const window={document,addEventListener:noop};
+vm.runInNewContext(src,{window,document,localStorage,sessionStorage:localStorage,setTimeout:()=>0,clearTimeout:noop,URL,atob});
+const enc=s=>String(s).replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+const start=app.indexOf('  const InstEmoji = {'),end=app.indexOf('  // Display form of a kind-7',start);
+const bridge=new Function('enc','localStorage','fetch',app.slice(start,end)+`;
+ function emojiTagMap(ev){ const m={}; for(const t of ev?.tags||[])if(t[0]==='emoji')m[t[1]]=t[2];return m; }
+ return {InstEmoji,applyEmojis};`)(enc,localStorage,async()=>({json:async()=>({base:'https://poster.place/client/emoji',emojis:[{s:'0000',p:'DRC_emojo',f:'0000.png'}]})}));
+await bridge.InstEmoji.load();
+const bridgeStart=app.indexOf('    renderCustomEmojis:'),bridgeEnd=app.indexOf('    openEmojiPopover, instEmojiUrl:',bridgeStart);
+assert(bridgeStart>=0 && bridgeEnd>bridgeStart);
+const shared=new Function('InstEmoji','applyEmojis','return {'+app.slice(bridgeStart,bridgeEnd)+'};')(bridge.InstEmoji,bridge.applyEmojis);
+const p={enc,viewer:()=>({}),...shared};
+const msg={id:'m',text:'Hello :0000:',tags:[]};
+const html=window.PCConcord.messageContentHtml(p,msg,{},'general');
+assert(html.includes('class="emoji-inline"'),'Concord must render the social custom emoji');
+assert(html.includes('https://poster.place/client/emoji/DRC_emojo/0000.png'));
+msg.tags=[['emoji','0000','https://remote.example/original.png']];
+const remote=window.PCConcord.messageContentHtml(p,msg,{},'general');
+assert(remote.includes('https://remote.example/original.png'),'the event URL takes precedence over local packs');
+assert(!remote.includes('DRC_emojo'),'local shortcode collisions must not replace the sender image');
+const untouched=p.renderCustomEmojis('<a href="https://example.test/:0000:">:unknown:</a>',{tags:[]});
+assert.equal(untouched,'<a href="https://example.test/:0000:">:unknown:</a>');
+const pubStart=src.indexOf('  async function publishCordMessage('),pubEnd=src.indexOf('\n  }',pubStart)+4;
+let published;
+const send=new Function('publishNip29Message','publishCordNative',src.slice(pubStart,pubEnd)+';return publishCordMessage;')(
+  async(...args)=>{published=args;},async(...args)=>{published=args;});
+await send(shared,{protocol:'cord'},'general','Hi :0000:',[['p','recipient']]);
+assert.deepEqual(published[4],[['p','recipient'],['emoji','0000','https://poster.place/client/emoji/DRC_emojo/0000.png']]);
+console.log('PASS: DRC social emoji rendered in Concord, event URLs preserved, HTML untouched, emoji metadata published');

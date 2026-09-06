@@ -540,7 +540,8 @@
     const mini=webxdcOf(m,room,channelName),canPlayMini=!!(mini&&window.PCWebxdc&&PCWebxdc.cardHtml);
     if(canPlayMini)text=text.split(mini.url).join('').replace(/\s{2,}/g,' ').trim();
     const viewer=p.viewer?p.viewer():{};
-    const escaped=p.linkify?p.linkify(text):p.enc(text);
+    const linked=p.linkify?p.linkify(text):p.enc(text);
+    const escaped=p.renderCustomEmojis?p.renderCustomEmojis(linked,m):linked;
     /* No display-label fallback here: `me` is a LABEL ("You" when there is no profile) and feeding
        it in would paint "@you" as the reader's own mention in anybody's message. The identity
        handles — profile name, display name, npub, pubkey — are what a mention can actually be. */
@@ -1903,7 +1904,10 @@
     const viewer=p.viewer?p.viewer():{},tags=[['h',room.groupId],...nip29PreviousTags(testMessages(channelStoreId(room,channelName)),viewer.pubkey),...extraTags];
     const event=await p.publishNip29Authed(room.relay,{kind,created_at:Math.floor(Date.now()/1000),content:text,tags});return{...event,rumorId:event.id,ms:Number(event.created_at)*1000};
   }
-  async function publishCordMessage(p,room,channelName,text,extraTags=[],kind=9){return room&&room.protocol==='nip29'?publishNip29Message(p,room,channelName,text,extraTags,kind):publishCordNative(p,room,channelName,text,extraTags,kind);}
+  async function publishCordMessage(p,room,channelName,text,extraTags=[],kind=9){
+    if(p.customEmojiTags) extraTags=await p.customEmojiTags(text,extraTags);
+    return room&&room.protocol==='nip29'?publishNip29Message(p,room,channelName,text,extraTags,kind):publishCordNative(p,room,channelName,text,extraTags,kind);
+  }
   /* A CHANNEL THE CONTROL SET DOES NOT CONTAIN IS A STALE NAME, NOT A REFUSED MEMBERSHIP.
    *
    * `room.channels` is saved to localStorage and `applyControl` only replaces it when a control
@@ -2136,6 +2140,7 @@
     }catch(e){roomLoadWarning(p,identity,'could not refresh community: ',e);}
   }
   function wake(){resumeRequested=true;}
+  let socialEmojisWarmed = false;
   function render(){
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
     // the old workspace may still fire, but it observes false and cannot paint twice.
@@ -2148,6 +2153,10 @@
     if(window.PCOS && PCOS.isOn && PCOS.isOn() &&
        (!PCOS.ownsFeedView || !PCOS.ownsFeedView('concord'))) return;
     const feed=p.$('#feed'); if(!feed) return;
+    if(!socialEmojisWarmed && p.loadCustomEmojis){
+      socialEmojisWarmed = true;
+      p.loadCustomEmojis().then(rows => { if(rows?.length) backgroundRender(); }).catch(()=>{});
+    }
     captureComposer();
     startLiveSync(p);
     // Covers the stale-service-worker compatibility entry too, which does not run switchView().

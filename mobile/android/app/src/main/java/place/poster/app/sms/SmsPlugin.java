@@ -146,12 +146,7 @@ public class SmsPlugin extends Plugin {
      */
     private boolean mayNotify() {
         try {
-            if (android.os.Build.VERSION.SDK_INT >= 33
-                    && getContext().checkSelfPermission("android.permission.POST_NOTIFICATIONS")
-                       != android.content.pm.PackageManager.PERMISSION_GRANTED) return false;
-            android.app.NotificationManager nm = (android.app.NotificationManager)
-                    getContext().getSystemService(Context.NOTIFICATION_SERVICE);
-            return nm == null || nm.areNotificationsEnabled();
+            return SmsNotifier.canNotify(getContext());
         } catch (Throwable t) {
             return false;
         }

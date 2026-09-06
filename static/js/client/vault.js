@@ -105,9 +105,15 @@
       // Settings → Privacy owns the switch; this module owns what it means.
       stayUnlocked, setStayUnlocked,
       // Logout calls this: the decrypted autofill snapshot must not outlive the session.
-      forget: () => { try{ localStorage.removeItem(_lsRaw()); }catch(_){ } return _clearAndroid(); },
+      forget: () => {
+        _retired = true;
+        try{ localStorage.removeItem(_lsRaw()); }catch(_){ }
+        _key = null; _lib = null;
+        return _clearAndroid();
+      },
       // Android: push the decrypted set into the autofill service's own store. No-op elsewhere.
       syncAndroid: () => _syncAndroid(),
+      syncBackground,
       // The phone folder drawer is an overlay, so hardware Back has to close it before it walks the
       // view stack — the same hook Notes needed, for the same reason.
       drawerOpen: () => _drawerOpen,
@@ -117,7 +123,10 @@
        * one by hand is how a migration ships broken. */
       __seed: (obj) => { if(_lib) _lib.items.set(obj.id, obj); },
     };
-    window.addEventListener('online', () => { flushPending(); });
+    window.addEventListener('online', () => { flushPending(); syncBackground(); });
+    document.addEventListener('visibilitychange', () => {
+      if(document.visibilityState === 'visible') syncBackground();
+    });
     /* A BACKSTOP, and it must cost nothing when there is nothing to do.
      *
      * `pending()` reads localStorage and JSON.parses the queue. On the every-45-seconds timer that
@@ -131,7 +140,10 @@
      * every forty-five seconds. */
     // Seed it once: -1 means "never read", and the tick's `_pend > 0` would be false for ever.
     try{ pending(); }catch(_){}
-    setInterval(() => { if(_pend > 0 && navigator.onLine) flushPending(); }, 300000);
+    setInterval(() => {
+      if(_pend > 0 && navigator.onLine) flushPending();
+      if(navigator.onLine && document.visibilityState === 'visible') syncBackground();
+    }, 300000);
   }
 
   // ---------------------------------------------------------------- ids
@@ -144,6 +156,8 @@
 
   // ---------------------------------------------------------------- the vault key
 
+  let _retired = false, _owner = null;
+  const _sameOwner = () => !_retired && _owner === ME()?.pubkey;
   let _key = null;              // raw Uint8Array(32) — in memory
   let _keyWrapped = null;       // NIP-44 ciphertext, safe at rest
   let _keyLoading = null;
@@ -206,7 +220,9 @@
 
   /* Unwrap, or mint exactly once. Every branch here is about not producing a second key: a vault
    * with two keys is a vault half of which is unreadable, and nothing on screen would say so. */
-  async function ensureKey(){
+  async function ensureKey(create = true){
+    if(_retired || (_owner && !_sameOwner())) throw new Error('vault account changed');
+    _owner = ME()?.pubkey;
     if(_key) return _key;
     if(_keyLoading) return _keyLoading;
     _keyLoading = (async () => {
@@ -256,12 +272,14 @@
         catch(e){ throw new Error('couldn’t unlock your vault on this device — your signer refused ' +
                                   'to decrypt the vault key. Nothing has been changed.'); }
         if(!raw || raw.length !== 32) throw new Error('the stored vault key is malformed — refusing to replace it');
+        if(!_sameOwner()) throw new Error('vault account changed');
         _key = raw; _cacheWrapped(wrapped); _cacheRaw(raw);
         return _key;
       }
 
       if(!answered) throw new Error('couldn’t reach the relay to load your vault key. Try again when ' +
                                     'you’re back online — nothing has been created.');
+      if(!create) throw new Error('no existing vault key to sync');
       // Genuinely nothing there: first use on this account. Publish the key BEFORE anything is
       // sealed under it, or the first save would be unreadable forever.
       const k = V().newVaultKey();
@@ -282,22 +300,36 @@
 
   const FILTER = () => ({ kinds:[KIND], authors:[ME().pubkey], '#l':[L_TAG] });
 
-  async function load(force){
+  async function load(force, create = true){
     if(_lib && !force) return _lib;
-    if(!_loading) _loading = _loadCache().finally(()=>{ _loading=null; });
+    if(!_loading) _loading = _loadCache(create).finally(()=>{ _loading=null; });
     return _loading;
   }
 
-  async function _loadCache(){
-    await ensureKey();
+  async function _loadCache(create = true){
+    await ensureKey(create);
     const lib = { items:new Map(), folders:new Map() };
     let cached = [];
     try{ cached = Store().query([FILTER()]) || []; }catch(_){ cached = []; }
     await _absorb(lib, cached, true);
+    if(!_sameOwner()) throw new Error('vault account changed');
     _lib = lib;
     _repairUris();           // entries damaged by an older import, fixed in place
-    _syncAndroid();          // the autofill service's copy tracks the vault, not the screen
+    // A partial browser cache must not replace the last complete Android snapshot.
     return _lib;
+  }
+
+  let _backgroundSync = null, _snapshotReady = false;
+  function syncBackground(){
+    const plug = window.Capacitor?.Plugins?.VaultAutofill;
+    if(!plug || _retired || !ME()?.pubkey || !stayUnlocked()) return Promise.resolve(false);
+    if(_backgroundSync) return _backgroundSync;
+    // Load without creating a vault, then fetch all entries without opening the Passwords view.
+    _backgroundSync = (async () => {
+      await load(false, false);
+      return !!(await refresh());
+    })().catch(() => false).finally(() => { _backgroundSync = null; });
+    return _backgroundSync;
   }
 
   let _refreshing = false;
@@ -310,9 +342,14 @@
       await _absorb(_lib, evs || [], true);
       if(_stamp() !== before){
         _repairUris();                     // the vault may only now have arrived from the relay
-        _syncAndroid();                    // a change from ANOTHER device has to reach autofill too
         if(PC.VIEW === 'vault' && !_dirty) _paint();
       }
+      // Even unchanged entries must be written after a cold start. Incomplete reads are not a snapshot.
+      if(evs && evs.complete !== false && !_unreadable){
+        _snapshotReady = true;
+        return await _syncAndroid();
+      }
+      return false;
     }catch(_){ }
     finally{ _refreshing = false; }
   }
@@ -540,10 +577,11 @@
   /* Wipe the autofill service's copy. Called on logout and when the device is told not to stay
    * unlocked — without it, a shared or handed-down phone keeps offering the previous user's
    * passwords in every other app, indefinitely, with nothing on screen to say so. */
+  let _androidWrites = Promise.resolve();
   async function _clearAndroid(){
     try{
       const plug = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.VaultAutofill;
-      if(plug && plug.clear) await plug.clear();
+      if(plug && plug.clear) await (_androidWrites = _androidWrites.catch(()=>{}).then(() => plug.clear()));
     }catch(_){ }
   }
 
@@ -551,7 +589,7 @@
     try{
       const Cap = window.Capacitor;
       const plug = Cap && Cap.Plugins && Cap.Plugins.VaultAutofill;
-      if(!plug || !plug.put || !_lib) return false;
+      if(!plug || !plug.put || !_lib || !_snapshotReady || !_sameOwner() || !stayUnlocked()) return false;
       // The MATCH KEYS are computed HERE, by the shared core, and shipped alongside each item —
       // exact hosts and registrable domains, already normalised. The alternative is a second
       // implementation of hostOf/baseDomain in Java, including the multi-label-suffix table, which
@@ -588,8 +626,12 @@
                    totp:i.totp||'', uris, hosts,
                    domains: Array.from(new Set(wide.map(h => V().baseDomain(h)).filter(Boolean))) };
         });
-      await plug.put({ items: JSON.stringify(items) });
-      return true;
+      const owner = _owner;
+      return await (_androidWrites = _androidWrites.catch(()=>{}).then(async () => {
+        if(!_sameOwner() || _owner !== owner || !stayUnlocked()) return false;
+        const result = await plug.put({ items: JSON.stringify(items) });
+        return result?.ok !== false;
+      }));
     }catch(_){ return false; }
   }
 

@@ -33,6 +33,19 @@ public final class SmsNotifier {
 
     private SmsNotifier() { }
 
+    /** Report both the app permission and the text channel; either can silence delivery. */
+    public static boolean canNotify(Context ctx) {
+        if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) return false;
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null || !nm.areNotificationsEnabled()) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = nm.getNotificationChannel(CHANNEL);
+            if (channel != null && channel.getImportance() == NotificationManager.IMPORTANCE_NONE) return false;
+        }
+        return true;
+    }
+
     static void ensureChannel(Context ctx) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);

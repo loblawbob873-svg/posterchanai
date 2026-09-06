@@ -173,4 +173,5 @@
     <string name="tel_delete_entry">Remove from recents</string>
     <string name="tel_copy_number">Copy number</string>
     <string name="tel_text_number">Send a text</string>
+    <string name="sms_notifications_disabled">Text notifications are disabled. Tap to enable alerts.</string>
 </resources>

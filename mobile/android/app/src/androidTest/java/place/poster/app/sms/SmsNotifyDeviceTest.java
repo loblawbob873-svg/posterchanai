@@ -111,6 +111,23 @@ public class SmsNotifyDeviceTest {
                 + c.getImportance(), c.getImportance() >= NotificationManager.IMPORTANCE_DEFAULT);
     }
 
+    @Test
+    public void notificationReadinessDoesNotDependOnTheSignerOrWebView() {
+        org.junit.Assume.assumeTrue("could not take POST_NOTIFICATIONS", granted);
+        SmsNotifier.ensureChannel(ctx);
+        assertTrue("granted text notifications must be reported ready", SmsNotifier.canNotify(ctx));
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            android.content.Context denied = new android.content.ContextWrapper(ctx) {
+                @Override public int checkSelfPermission(String permission) {
+                    if (PERM.equals(permission)) return android.content.pm.PackageManager.PERMISSION_DENIED;
+                    return super.checkSelfPermission(permission);
+                }
+            };
+            org.junit.Assert.assertFalse("reading texts is not permission to notify",
+                    SmsNotifier.canNotify(denied));
+        }
+    }
+
     // ------------------------------------------------------------------ plumbing
 
     private StatusBarNotification waitForOurs(String body) throws Exception {

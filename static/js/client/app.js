@@ -1154,13 +1154,21 @@
    * catch. The bound sits ABOVE the extension's own 115s prompt timeout, so a human taking their
    * time still wins and only a genuinely dead extension trips it. */
   const _extGate = {
-    _cap: 1, _busy: 0, _q: [], _same: new Map(), _MS: 130000,
+    _cap: 1, _busy: 0, _background: 0, _q: [], _same: new Map(), _MS: 130000,
     _pump(){
       while(this._busy < this._cap && this._q.length){
-        const job = this._q.shift();
-        this._busy++;
+        // Authentication/posting must not sit behind a restore queue. After the initial
+        // permission answer, leave one slot for interactive work even during a large restore.
+        let at = this._q.findIndex(job => !job.background);
+        if(at < 0){
+          if(this._background >= Math.max(1, this._cap - 1)) break;
+          at = 0;
+        }
+        const job = this._q.splice(at, 1)[0];
+        this._busy++; if(job.background) this._background++;
         let done = false;
-        const settle = (fn) => (v) => { if(done) return; done = true; this._busy--; fn(v); this._pump(); };
+        const settle = (fn) => (v) => { if(done) return; done = true; this._busy--;
+          if(job.background) this._background--; fn(v); this._pump(); };
         const to = setTimeout(settle(job.rej), this._MS,
                               new Error('the signer extension did not answer'));
         let p; try{ p = Promise.resolve(job.run()); }catch(e){ p = Promise.reject(e); }
@@ -1204,7 +1212,7 @@
     call(key, run){
       if(key){ const hit = this._same.get(key); if(hit) return hit; }
       const wake = () => this._wake(run);
-      let p = new Promise((res, rej) => { this._q.push({ run: wake, res, rej }); this._pump(); });
+      let p = new Promise((res, rej) => { this._q.push({ run: wake, res, rej, background: !!key }); this._pump(); });
       // Widen on the first ANSWER, not on the first success: a remembered `deny` comes back as a
       // rejection and is just as good a proof that no window is being opened any more.
       p = p.then(v => { if(this._cap < 6) this._cap = 6; return v; },
@@ -4651,6 +4659,10 @@
 
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
+    setTimeout(_syncAutofillBackground, 0);
+    // Establish the shared app credential before background restore starts asking the signer.
+    // Do not await it: the shell paints immediately and protected views adopt this one request.
+    if(!GUEST && ME?.pubkey && !_standalone()) ensureAiSession().catch(()=>{});
     /* Pick the signer sessions back up. Every login path funnels through here, which is why the
      * resume lives here and not beside the four places that set mode 'local': a pairing that only
      * survives until the page reloads is not a pairing, it is a demo, and the app on the other end
@@ -5681,7 +5693,15 @@
    * The relay reaching 'ok' is the right signal and the one the comment in notes.js always named: it
    * fires on a cold start, on a reconnect, and on the resume path above — the three ways a phone
    * comes back. Cheap: each flush returns immediately when its queue is empty. */
+  function _syncAutofillBackground(){
+    if(GUEST || !ME?.pubkey || !window.Capacitor?.Plugins?.VaultAutofill) return;
+    _withModule('vault.js', 'PCVault', vault => {
+      if(vault.syncBackground) vault.syncBackground().catch(()=>{});
+    }).then(vault => { if(!vault) delete _lateLoad['vault.js']; }).catch(()=>{});
+  }
+
   function _flushPrivateQueues(){
+    _syncAutofillBackground();
     for(const m of ['PCNotes', 'PCVault']){
       try{ const M = window[m]; if(M && M.flush) M.flush(); }catch(_){}
     }
@@ -37458,6 +37478,12 @@
     // image-URL map behind it, so the Meme Builder can offer stickers WITHOUT a second picker that
     // would know nothing about this instance's custom emoji. onPick gets (value, close) where value is
     // either a unicode emoji or ":shortcode:"; instEmojiUrl resolves the latter to its image.
+    renderCustomEmojis: (html, event) => InstEmoji.render(applyEmojis(html, event)),
+    customEmojiTags: async (text, tags=[]) => {
+      if(InstEmoji.SC_RE.test(text||'')) await InstEmoji.load();
+      return InstEmoji.tagsFor(text, tags);
+    },
+    loadCustomEmojis: () => InstEmoji.load(),
     openEmojiPopover, instEmojiUrl: (sc) => InstEmoji.map[String(sc||'').replace(/:/g,'')] || '',
     // AI Chat's "Make something" sheet, borrowable with {over, onSubmit} — the Meme Builder opens the
     // IMAGE one to generate a layer, so the two prompt UIs can never drift apart (see openGenStudio).
