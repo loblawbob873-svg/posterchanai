@@ -143,7 +143,7 @@
 .ex-chart-labels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted)}.ex-chart-empty{min-height:145px;display:grid;place-content:center;text-align:center;color:var(--muted);font-size:12px;line-height:1.6;padding:20px}
 .ex-allocation-ring{display:block;width:180px;max-width:100%;margin:14px auto 10px;transform:rotate(-90deg)}
 .ex-ring-track,.ex-ring-part{fill:none;stroke-width:17}.ex-ring-track{stroke:var(--line)}.ex-ring-part{stroke:var(--asset-color,var(--neon))}
-[data-ex-color="0"]{--asset-color:var(--neon)}[data-ex-color="1"]{--asset-color:var(--cyan,var(--text))}[data-ex-color="2"]{--asset-color:var(--amber)}[data-ex-color="3"]{--asset-color:var(--pink,var(--neon))}[data-ex-color="4"]{--asset-color:var(--green,var(--text))}[data-ex-color="5"]{--asset-color:var(--purple,var(--muted))}
+[data-ex-color="0"]{--asset-color:var(--neon)}[data-ex-color="1"]{--asset-color:var(--amber)}[data-ex-color="2"]{--asset-color:var(--pink,var(--neon))}[data-ex-color="3"]{--asset-color:var(--green,var(--text))}[data-ex-color="4"]{--asset-color:var(--purple,var(--muted))}[data-ex-color="5"]{--asset-color:var(--cyan,var(--text))}
 .ex-allocation-count{text-align:center;font-size:28px;font-weight:700;margin-top:-120px;margin-bottom:85px;line-height:1;pointer-events:none}.ex-allocation-count small{display:block;font-size:9px;color:var(--muted);font-weight:400;margin-top:8px}
 .ex-allocation-list{list-style:none;margin:0;padding:0}.ex-allocation-list li{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px}.ex-allocation-list b{margin-left:auto;font-variant-numeric:tabular-nums}.ex-dot{width:7px;height:7px;border-radius:50%;background:var(--asset-color,var(--neon))}
 .ex-asset-logo{flex:none;width:34px;height:34px;object-fit:contain;filter:drop-shadow(0 3px 8px color-mix(in srgb,var(--bg) 20%,transparent))}
@@ -153,3 +153,36 @@
 .ex-wrap :is(button,select,input,textarea):focus-visible{outline:2px solid var(--neon);outline-offset:3px}
 @container ex (max-width:650px){.ex-dashboard{grid-template-columns:minmax(0,1fr)}.ex-allocation-card{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px;padding:18px}.ex-allocation-card h3{grid-column:1/-1}.ex-allocation-ring{width:100px;margin:0;grid-column:1;grid-row:2}.ex-allocation-list{grid-column:2;grid-row:2}.ex-allocation-count{display:none}.ex-allocation-card>.ex-hint{grid-column:1/-1}.ex-value-card{padding:20px}.ex-switches{width:100%}.ex-switches label{flex-basis:38%}.ex-switches select{max-width:none}.ex-total{font-size:38px}.ex-asset-logo{width:28px;height:28px}.ex-coin-id small{margin-left:0;margin-top:0}.ex-coin-id{gap:6px}.ex-holdings-title span{display:none}}
 @media(prefers-reduced-motion:reduce){.ex-wrap *{transition:none!important}}
+
+/* Expressive portfolio surfaces retain the active theme's palette and real data. */
+.ex-header{padding-block:8px}.ex-eyebrow{color:var(--neon);letter-spacing:.24em}
+.ex-title{font-size:clamp(28px,5cqi,40px);font-weight:800;letter-spacing:-.04em}
+.ex-title::after{width:96px;height:3px;background:linear-gradient(90deg,var(--neon),var(--pink,var(--neon)),transparent)}
+.ex-dashboard{gap:20px}
+.ex-value-card,.ex-allocation-card{border-color:color-mix(in srgb,var(--neon) 30%,var(--line));border-radius:24px;
+  box-shadow:0 16px 48px color-mix(in srgb,var(--neon) 9%,transparent),inset 0 1px 0 color-mix(in srgb,var(--text) 8%,transparent)}
+.ex-value-card{padding:32px;isolation:isolate;background:radial-gradient(ellipse at 100% 0,color-mix(in srgb,var(--neon) 23%,transparent),transparent 65%),
+  radial-gradient(ellipse at 0 100%,color-mix(in srgb,var(--pink,var(--neon)) 12%,transparent),transparent 65%),var(--panel)}
+.ex-value-card::before{width:260px;height:260px;border:1px solid color-mix(in srgb,var(--neon) 20%,transparent);border-radius:50%;filter:none;right:-120px;top:-100px;background:transparent;z-index:-1}
+.ex-value-card::after{content:"";position:absolute;width:340px;height:340px;right:-160px;top:-140px;border-radius:50%;border:1px solid color-mix(in srgb,var(--neon) 12%,transparent);pointer-events:none;z-index:-1}
+.ex-value-caption{font-size:13px;letter-spacing:.04em}.ex-total{font-size:clamp(40px,7cqi,72px);font-weight:800;letter-spacing:-.055em;text-shadow:0 0 32px color-mix(in srgb,var(--neon) 15%,transparent)}
+.ex-currency{padding:5px 10px;border:1px solid color-mix(in srgb,var(--neon) 25%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--panel) 70%,transparent);color:var(--text)}
+.ex-chart-heading{margin-top:32px}.ex-chart-heading h3{font-size:14px}.ex-ranges .btn{border-radius:999px;min-height:32px}
+.ex-value-chart{border-radius:12px;background:repeating-linear-gradient(0deg,transparent,transparent calc(25% - 1px),color-mix(in srgb,var(--text) 5%,transparent) 25%)}
+.ex-chart-line{stroke-width:3;filter:drop-shadow(0 0 5px color-mix(in srgb,var(--neon) 45%,transparent))}.ex-chart-fill{opacity:.13}
+.ex-allocation-card{background:radial-gradient(ellipse at 50% 40%,color-mix(in srgb,var(--neon) 12%,transparent),transparent 65%),var(--panel)}
+.ex-allocation-ring{filter:drop-shadow(0 0 12px color-mix(in srgb,var(--neon) 20%,transparent))}.ex-ring-part{stroke-width:20}
+.ex-allocation-list li{padding:8px 0;border-bottom:1px solid var(--line);margin-top:0}.ex-allocation-list li:last-child{border:0}
+.ex-coins{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;border:0;background:transparent;overflow:visible}
+.ex-coin,.ex-coin:first-child{position:relative;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:20px;border:1px solid var(--line);border-radius:20px;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--neon) 6%,var(--panel)),var(--panel));transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+.ex-coin:hover,.ex-coin:focus-within{border-color:color-mix(in srgb,var(--neon) 60%,var(--line));box-shadow:0 8px 24px color-mix(in srgb,var(--neon) 12%,transparent)}
+@media(hover:hover) and (prefers-reduced-motion:no-preference){.ex-coin:hover{transform:translateY(-3px)}}
+.ex-coin-id{grid-column:1/-1;display:grid;grid-template-columns:48px minmax(0,1fr);column-gap:12px;row-gap:4px}
+.ex-asset-logo{width:44px;height:44px;grid-row:1/3;grid-column:1;filter:drop-shadow(0 4px 8px color-mix(in srgb,var(--text) 15%,transparent))}
+.ex-coin-id b{grid-column:2;font-size:16px}.ex-coin-id small{grid-column:2;margin:0;font-size:12px;white-space:normal}
+.ex-coin-amt{grid-column:1/-1;grid-row:2;text-align:start}.ex-coin-amt b{font-size:26px;letter-spacing:-.03em}.ex-fiat{font-size:13px;margin-top:6px}
+.ex-coin .btn{grid-row:3;min-height:40px;border-radius:12px}.ex-coin .ex-send{background:color-mix(in srgb,var(--neon) 10%,var(--panel));color:var(--text)}
+.ex-holdings-title{margin-top:32px}.ex-holdings-title h3{font-size:20px;letter-spacing:-.02em}
+@container ex (max-width:900px){.ex-coins{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container ex (max-width:560px){.ex-coins{grid-template-columns:minmax(0,1fr)}.ex-value-card{padding:24px}.ex-total{font-size:clamp(36px,10cqi,52px)}.ex-coin{padding:20px}.ex-coin-amt{grid-column:1/-1}.ex-title{font-size:28px}}

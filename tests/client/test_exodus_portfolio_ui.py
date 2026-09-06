@@ -190,3 +190,36 @@ balancePoll();
 setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({noRequest:calls.length===before});},30);
 ''', mode='poll')
     assert result == {'noRequest':True}
+
+
+@pytest.mark.parametrize('container_width', [320, 390, 560, 900])
+def test_asset_cards_keep_controls_reachable_inside_desktop_windows(tmp_path, container_width):
+    result = page(tmp_path, '''
+const feed=document.querySelector('#feed');feed.style.width=''' + str(container_width) + '''+'px';
+setTimeout(()=>{
+  const cards=[...document.querySelectorAll('.ex-coin')];
+  const controls=cards.flatMap(card=>[...card.querySelectorAll('button')].map(button=>{
+    const a=card.getBoundingClientRect(),b=button.getBoundingClientRect();
+    button.scrollIntoView({block:'center'});const r=button.getBoundingClientRect();
+    const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+    return b.width>35&&b.height>25&&b.left>=a.left&&b.right<=a.right+1&&(hit===button||button.contains(hit));
+  }));
+  const a=cards[0].getBoundingClientRect(),b=cards[1].getBoundingClientRect();
+  document.querySelector('.ex-receive').click();
+  setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({
+    controls:controls.every(Boolean),overlap:!(a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top),
+    fits:feed.scrollWidth<=feed.clientWidth+1,receive:document.querySelector('#ex-panel').textContent.includes('address-default')});},50);
+},50);
+''')
+    assert result == {'controls': True, 'overlap': False, 'fits': True, 'receive': True}, result
+
+
+@pytest.mark.parametrize('theme', CLIENT_THEMES)
+def test_allocation_categories_have_distinct_visible_colors(tmp_path, theme):
+    result = page(tmp_path, '''
+const segments=[...document.querySelectorAll('.ex-ring-part')];
+document.querySelector('#result').textContent=JSON.stringify({
+  distinct:new Set(segments.map(node=>getComputedStyle(node).stroke)).size===segments.length,
+  labels:document.querySelector('.ex-allocation-list').textContent.includes('77.8%')});
+''', theme=theme)
+    assert result == {'distinct': True, 'labels': True}, result

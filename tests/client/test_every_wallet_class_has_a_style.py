@@ -72,7 +72,8 @@ def test_the_layout_is_queried_on_its_container():
     assert "@container ex" in css
     # @media is allowed ONLY for things that really are facts about the screen.
     for query in re.findall(r"@media\s*\(([^)]*)\)", css):
-        assert "prefers-reduced-motion" in query or "max-width:600px" in query.replace(" ", ""), query
+        assert ("prefers-reduced-motion" in query or query.replace(" ", "") == "hover:hover"
+                or "max-width:600px" in query.replace(" ", "")), query
 
 
 def test_an_unreachable_balance_is_not_styled_like_a_number():
