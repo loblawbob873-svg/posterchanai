@@ -108,6 +108,11 @@ TMP="$STAGE"
 # release repository.
 tar -C "$SRC" --exclude='__pycache__' --exclude='*.pyc' -cf - . | tar -C "$TMP" -xf -
 
+# The root session verifier uses the same audited crypto implementation as the server.
+for module in bip340 bech32; do
+  install -m 0644 "$(dirname "$SRC")/../app/services/nostr/$module.py" \
+    "$TMP/app-misc/posterchanos-shell/files/$module.py"
+done
 # ONE CANONICAL INSTALLER. Keeping a second 3,000-line gentoo.sh under FILESDIR guarantees drift;
 # instead inject the repository's os/gentoo.sh into the staging tree that becomes the real overlay.
 # The ebuild owns /usr/bin/gentoo.sh, so every ordinary update now refreshes the LiveUSB/repair tool.

@@ -25,7 +25,7 @@ def get_news_sources(db: Session) -> str:
 
 def _parse_rss_feed(raw: bytes, base_url: str) -> tuple:
     """Parse RSS or Atom feed XML from raw bytes. Returns (links, error_str)."""
-    import xml.etree.ElementTree as ET
+    from defusedxml import ElementTree as ET
     links = []
     try:
         # Strip UTF-8 BOM bytes if present — ET handles encoding declarations in bytes mode

@@ -808,6 +808,8 @@ def create_user(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user)
 ):
+    if user_data.is_admin:
+        raise HTTPException(status_code=400, detail="An administrator must first sign in with a Nostr identity")
     # Check if username already exists
     existing = db.query(User).filter(User.username == user_data.username).first()
     if existing:
@@ -928,6 +930,9 @@ def update_user_password(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="Administrators authenticate with Nostr, not passwords")
 
     user.password_hash = get_password_hash(data.password)
     db.commit()

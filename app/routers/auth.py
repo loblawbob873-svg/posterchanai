@@ -71,6 +71,8 @@ def _set_auth_cookie(response: Response, token: str, request: Request = None) ->
 @router.post("/login", response_model=Token)
 def login(user_data: UserLogin, response: Response, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == user_data.username).first()
+    if user and user.is_admin:
+        raise HTTPException(status_code=403, detail="Administrators must sign in with their Nostr identity")
     if not user or not verify_password(user_data.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -87,17 +89,10 @@ class NostrLogin(BaseModel):
     auth: str            # base64 of a recent Nostr event signed by that key (proves ownership)
 
 
-def _verify_nostr_auth(auth_b64: str, pubkey_hex: str) -> bool:
-    """A base64 signed Nostr event authored by `pubkey_hex`, within a 300s anti-replay window."""
-    import base64
-    import json
+def _verify_nostr_auth(auth_b64: str, pubkey_hex: str, purpose: str = "ai-login") -> bool:
+    """Accept an explicit authentication proof, never a replayed public post."""
     from app.services.nostr import event as nostr_event
-    try:
-        ev = json.loads(base64.b64decode(auth_b64))
-    except Exception:
-        return False
-    return (nostr_event.verify_event(ev) and ev.get("pubkey") == pubkey_hex
-            and abs(int(ev.get("created_at", 0)) - int(time.time())) <= 300)
+    return nostr_event.verify_self_auth(auth_b64, pubkey_hex, purpose)
 
 
 def _can_ssh(db, user) -> bool:
@@ -312,7 +307,7 @@ async def ai_request(data: NostrLogin, db: Session = Depends(get_db)):
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         raise HTTPException(status_code=400, detail="invalid pubkey")
-    if not _verify_nostr_auth(data.auth, pk):
+    if not _verify_nostr_auth(data.auth, pk, "ai-request"):
         raise HTTPException(status_code=403, detail="invalid or stale Nostr signature")
     npub = nostr_service.npub_of(pk)
     user = db.query(User).filter(User.nostr_npub == npub).first()
@@ -387,6 +382,9 @@ def verify_email(token: str, response: Response, db: Session = Depends(get_db)):
     user.email_verified = True
     db.delete(verification)  # Token is single-use
     db.commit()
+
+    if user.is_admin:
+        return {"message": "Email verified. Sign in with your Nostr identity to access your administrator account."}
 
     # Create token and set cookie - log them in
     access_token = create_access_token({"sub": str(user.id)})
@@ -1142,5 +1140,3 @@ def rrule_to_human(rrule: str) -> str:
         result = rrule  # Fallback to raw if unknown
 
     return result
-
-

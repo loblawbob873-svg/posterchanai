@@ -577,10 +577,11 @@ if (isOurPage) {
     /* A Unix account and a private home for whoever just signed in. The main process re-checks the
      * npub before it runs anything as root, and so does the script — the page is not trusted to
      * have validated it. */
-    provision: (npub) => ipcRenderer.invoke('pc:os:provision', String(npub || '')),
+    challenge: (npub, action) => ipcRenderer.invoke('pc:os:challenge', String(npub || ''), action),
+    provision: (npub, proof) => ipcRenderer.invoke('pc:os:provision', String(npub || ''), proof),
     provisioned: () => ipcRenderer.invoke('pc:os:provisioned'),
     identity: () => ipcRenderer.invoke('pc:os:identity'),
-    switch: (npub, handoff) => ipcRenderer.invoke('pc:os:switch', String(npub || ''), handoff || {}),
+    switch: (npub, proof) => ipcRenderer.invoke('pc:os:switch', String(npub || ''), proof || {}),
     logout: () => ipcRenderer.invoke('pc:os:logout'),
     bootstrap: () => ipcRenderer.sendSync('pc:os:bootstrap'),
   });

@@ -19,6 +19,7 @@ IUSE="monero gamescope"
 
 # Everything the session needs to be a desktop rather than a compositor with one window in it.
 RDEPEND="
+	>=dev-lang/python-3.10
 	app-misc/posterchan-desktop
 	dev-vcs/ngit
 	gui-wm/wayfire
@@ -41,10 +42,12 @@ RDEPEND="
 "
 
 src_install() {
+	insinto /usr/local/libexec/posterchanos/nostr
+	doins "${FILESDIR}/bip340.py" "${FILESDIR}/bech32.py"
 	# The helpers. pc-key must obey the same limits as the on-screen controls; the repo's
 	# tests/test_pc_key_limits.py is what keeps the two in step, and it runs before this is built.
 	exeinto /usr/local/bin
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		doexe "${FILESDIR}/${helper}"
 	done
 	insinto /usr/lib/systemd/user

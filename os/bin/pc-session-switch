@@ -36,9 +36,15 @@ if [ "${1:-}" = "--greeter" ]; then
   exit 0
 fi
 
+if [ "${1:-}" = "--challenge" ]; then
+  exec /usr/local/bin/pc-session-auth challenge "${2:-}" "${3:-}"
+fi
+
 NPUB="${1:-}"
 echo "$NPUB" | grep -qE '^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$' || die 'malformed npub'
-OUT=$(/usr/local/bin/pc-provision-user "$NPUB") || exit $?
+BOOTDATA=$(/usr/local/bin/pc-session-auth verify "$NPUB" switch) || exit $?
+# The root verifier above is the authority; the provisioner is now an internal root call.
+OUT=$(env -u SUDO_UID -u SUDO_USER /usr/local/bin/pc-provision-user "$NPUB") || exit $?
 USER_NAME=$(printf '%s\n' "$OUT" | sed -n 's/^user=//p' | head -1)
 HOME_DIR=$(printf '%s\n' "$OUT" | sed -n 's/^home=//p' | head -1)
 [ -n "$USER_NAME" ] && [ -d "$HOME_DIR" ] || die 'provisioner returned no account'
@@ -55,7 +61,7 @@ echo "$USER_NAME" | grep -qE '^pc-[0-9a-f]{16}$' || die 'provisioner returned an
 # reads. pc-compositor-session owns the compositor, its environment and its recovery; this only has
 # to hand the account to it.
 [ ! -L "$HOME_DIR/.bash_profile" ] || die 'unsafe profile link'
-cat >"$HOME_DIR/.bash_profile" <<'PROFILE'
+runuser -u "$USER_NAME" -- tee "$HOME_DIR/.bash_profile" >/dev/null <<'PROFILE'
 [[ -f ~/.bashrc ]] && . ~/.bashrc
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
   export XDG_SESSION_TYPE=wayland MOZ_ENABLE_WAYLAND=1
@@ -64,7 +70,7 @@ fi
 PROFILE
 # The display layout the Wayfire session actually reads. Created empty and owned by the identity so
 # System Settings -> Displays has somewhere to write on the first save.
-mkdir -p "$HOME_DIR/.config/posterchanos"
+runuser -u "$USER_NAME" -- mkdir -p "$HOME_DIR/.config/posterchanos"
 [ "$(realpath -m "$HOME_DIR/.config/posterchanos")" = "$HOME_DIR/.config/posterchanos" ] || die 'unsafe config path'
 [ ! -L "$HOME_DIR/.config/posterchanos/displays.json" ] || die 'unsafe displays link'
 
@@ -74,11 +80,10 @@ mkdir -p "$HOME_DIR/.config/posterchanos"
 BOOT="$HOME_DIR/.posterchan-session-bootstrap"
 umask 077
 [ ! -L "$BOOT" ] || die 'unsafe session handoff link'
-dd bs=65536 count=1 of="$BOOT" 2>/dev/null || die 'could not receive session handoff'
+printf '%s' "$BOOTDATA" | runuser -u "$USER_NAME" -- sh -c 'umask 077; cat > "$1"' sh "$BOOT" || die 'could not save session handoff'
 [ "$(stat -c %s "$BOOT")" -le 65536 ] || { rm -f "$BOOT"; die 'session handoff too large'; }
-chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR/.bash_profile" "$HOME_DIR/.config" "$BOOT"
-chmod 0700 "$HOME_DIR" "$HOME_DIR/.config" "$HOME_DIR/.config/posterchanos"
-chmod 0600 "$HOME_DIR/.bash_profile" "$BOOT"
+runuser -u "$USER_NAME" -- chmod 0700 "$HOME_DIR" "$HOME_DIR/.config" "$HOME_DIR/.config/posterchanos"
+runuser -u "$USER_NAME" -- chmod 0600 "$HOME_DIR/.bash_profile" "$BOOT"
 
 write_getty "$USER_NAME"
 printf '%s\n' "$NPUB" >"$STATE_ROOT/current-npub"

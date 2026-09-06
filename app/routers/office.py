@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
 from pathlib import Path
 
 import httpx

@@ -1,16 +1,14 @@
 # Core web framework
-fastapi>=0.109.0,<1.0.0
-# Pin Starlette to the 0.4x–0.50 line: Starlette 1.x dropped the legacy
-# TemplateResponse(name, context) signature this app uses everywhere, so an
-# unpinned fresh install (e.g. a fresh Docker build) pulls 1.x and every page
-# 500s with "unhashable type: 'dict'". 0.50.x is the proven production version.
-starlette>=0.40.0,<0.51.0
+fastapi>=0.141.1,<1.0.0
+# Security fixes for URL validation and form parsing; templates use request-first calls.
+starlette>=1.3.1,<2.0.0
 uvicorn[standard]>=0.27.0,<1.0.0
 python-multipart>=0.0.6
 # Office/WOPI uses the existing httpx client + multipart stack; kept explicit here because the
 # optional CODE editor's session endpoint cannot start without multipart parsing.
 python-jose[cryptography]>=3.3.0
-cryptography>=42.0.0          # NIP-44 (ChaCha20/HMAC/HKDF) for the Nostr-backed datastore
+pyasn1>=0.6.4  # Security floor for JOSE/ASN.1 decoding
+cryptography>=50.0.0          # NIP-44 (ChaCha20/HMAC/HKDF) for the Nostr-backed datastore
 bcrypt>=4.0.0,<5.0.0
 sqlalchemy>=2.0.25,<3.0.0
 aiosqlite>=0.19.0
@@ -24,7 +22,7 @@ aiosqlite>=0.19.0
 # >=0.28: the proxy routing passes `proxy="http://…"` (string) to AsyncClient — 0.26/0.27
 # used the now-removed `proxies=` dict, so the proxy kwarg fails on <0.28.
 httpx>=0.28.0
-aiohttp>=3.9.0
+aiohttp>=3.14.3
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=5.0.0
@@ -33,7 +31,7 @@ edge-tts>=6.1.10
 # read the Pleroma DB directly). See botframework/.
 psycopg2-binary>=2.9.0
 pydantic>=2.5.0,<3.0.0
-pydantic-settings>=2.1.0
+pydantic-settings>=2.14.2
 jinja2>=3.1.3
 apscheduler>=3.10.0
 # Nostr relay client (app/services/nostr/relay.py) connects to wss:// relays. >=14.0:
@@ -65,7 +63,7 @@ pytesseract>=0.3.10
 #           gay/blacked/kosher/barked — see app/services/effects_service.py).
 # >=10.1.0: needed for ImageFont.load_default(size=) — the text effects' font
 #           fallback when no system TTF is installed.
-Pillow>=10.1.0
+Pillow>=12.3.0
 pillow-heif>=0.16.0
 # python-chess: rules/legality/checkmate for the #chesstr chess-referee bot (botframework,
 # --chess). Pure-Python, no compiled deps — portable to the Arc/ROCm bot nodes. The cyberpunk
@@ -77,6 +75,7 @@ chess>=1.11.0
 insightface>=0.7.3
 opencv-python-headless>=4.8.0
 onnxruntime>=1.16.0
+onnx>=1.22.0  # Security fixes in model parsing (insightface dependency)
 # Used directly by parallax_service (depth post-processing / warp grids). Already a
 # transitive dep of opencv/onnxruntime/torch; listed explicitly since we import it.
 # Cap at <2.5: rembg→PyMatting→numba (0.66) needs NumPy<=2.4, but the torch-2.13 stack ships

@@ -308,7 +308,9 @@ class Shell(unittest.TestCase):
     def test_provisioning_reports_its_failure_rather_than_throwing(self):
         """Sign-in must not fail because the account step did — the person is signed in either way,
         and what they need is to be told the machine has nowhere to put their files."""
-        bridges = """{ pcOS: { provision: async () => { throw new Error('sudo refused'); } } }"""
+        bridges = """{ __PC: {sign: async () => ({})}, pcOS: {
+          challenge: async () => ({ok:false, why:'sudo refused'}),
+          provision: async () => { throw new Error('must not provision without proof'); } } }"""
         out = self.run_js("out.r = await S.ensureAccount('npub1xyz');", bridges)
         self.assertFalse(out["r"]["ok"])
         self.assertIn("sudo refused", out["r"]["why"])

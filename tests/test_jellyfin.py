@@ -40,7 +40,7 @@ def api(request, monkeypatch, tmp_path):
     monkeypatch.setattr(media, 'mutation_lock', asyncio.Lock())
     monkeypatch.setattr(media, '_progress_lock', asyncio.Lock())
     monkeypatch.setattr(jf, '_account_lock', asyncio.Lock())
-    for cache in (jf._quick, jf._approvals, jf._plays, jf._locators, media._sessions, media._catalog_cache):
+    for cache in (jf._quick, jf._approvals, jf._plays, jf._locators, jf._audio_art, media._sessions, media._catalog_cache):
         cache.clear()
     monkeypatch.setattr(native.settings_store, 'get', lambda key, default=None:
                         'http://nas.lan' if proxied and node.get() == 'edge' and key == 'media_center_server_url' else default)
@@ -586,11 +586,17 @@ def test_android_host_browser_quick_connect_browse_play_and_reconnect(api, monke
                 await browser.js("document.querySelector('.card').click()", True)
                 await browser.until("document.querySelector('#heading').textContent==='Anime' && document.querySelector('.card')?.textContent.includes('Season 2')")
                 await browser.js("document.querySelector('.card').click()", True)
-                await browser.until("document.querySelector('#heading').textContent==='Season 2' && document.querySelector('.card')?.textContent==='movie'")
+                await browser.until("document.querySelector('#heading').textContent==='Season 2' && document.querySelector('.card > span')?.textContent==='movie'")
+                assert await browser.js("document.querySelectorAll('#breadcrumbs button').length===3 && document.querySelector('#breadcrumbs [aria-current]').textContent==='Season 2'")
+                await browser.js("document.querySelectorAll('#breadcrumbs button')[1].click()", True)
+                await browser.until("document.querySelector('#heading').textContent==='Movies' && !!document.querySelector('.card')")
+                for label in ['Anime', 'Season 2']:
+                    await browser.js("document.querySelector('.card').click()", True)
+                    await browser.until("document.querySelector('#heading').textContent==="+json.dumps(label)+" && !!document.querySelector('.card')")
                 await browser.js("document.querySelector('#back').click()", True)
                 await browser.until("document.querySelector('#heading').textContent==='Anime' && document.querySelector('.card')?.textContent.includes('Season 2')")
                 await browser.js("document.querySelector('.card').click()", True)
-                await browser.until("document.querySelector('#heading').textContent==='Season 2' && document.querySelector('.card')?.textContent==='movie'")
+                await browser.until("document.querySelector('#heading').textContent==='Season 2' && document.querySelector('.card > span')?.textContent==='movie'")
                 await browser.js("document.querySelector('.card').click()", True)
                 await browser.until("document.querySelector('video').currentTime>1")
                 await browser.js("document.querySelector('#subtitles').value='3';document.querySelector('#subtitles').dispatchEvent(new Event('change'))", True)
@@ -1052,3 +1058,80 @@ def test_existing_device_reopens_saved_video_after_volatile_state_loss(api):
     assert reopened['Id'] == item['Id']
     assert fresh['PlaySessionId'] != info['PlaySessionId']
     assert c.get('/jellyfin/' + fresh['MediaSources'][0]['TranscodingUrl']).status_code == 200
+
+
+def test_roku_audio_metadata_artwork_and_item_only_playback_reports(api, monkeypatch, tmp_path):
+    from PIL import Image
+    art = tmp_path / 'cover.jpg'; Image.new('RGB', (40, 40), 'blue').save(art)
+    monkeypatch.setattr(media, 'cover_path', lambda lib, item: art)
+    for entry in api.entries:
+        entry['video'] = False
+        entry['tracks'][0]['index'] = 0
+    login = connect(api); item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    metadata = c.get('/jellyfin/Items/' + item['Id'], headers=h).json()
+    assert metadata['Artists'] == [] and metadata['ArtistItems'] == []
+    # Roku's music player omits BOTH headers and Tag when constructing this URL.
+    art_url = '/jellyfin/Items/' + item['Id'] + '/Images/Primary'
+    assert c.get(art_url).status_code == 200
+    assert c.get('/jellyfin/Items/' + item['Id']).status_code == 401
+    canonical = jf.item_id(api.library, api.entries[0])
+    assert canonical != item['Id']
+    assert c.get('/jellyfin/Items/' + canonical + '/Images/Primary').status_code == 401
+    assert c.get('/jellyfin/Items', headers=h, params={'Ids':item['Id']}).json()['Items'][0]['Id'] == item['Id']
+    for route in ['Playing', 'Playing/Progress']:
+        response = c.post('/jellyfin/Sessions/' + route, headers=h,
+                          json={'ItemId': item['Id'], 'PositionTicks': 20000000, 'IsPaused': False})
+        assert response.status_code == 204, response.text
+    other = connect(api)
+    assert c.post('/jellyfin/Sessions/Playing', headers=headers(other),
+                  json={'ItemId':item['Id']}).status_code == 404
+    assert c.post('/jellyfin/Sessions/Playing/Stopped', headers=h,
+                  json={'ItemId':item['Id'], 'PositionTicks':30000000}).status_code == 204
+    assert info['PlaySessionId'] not in jf._plays
+    # Clearing volatile caches does not prevent an authenticated saved item reopening.
+    jf._audio_art.clear(); jf._locators.clear()
+    assert c.get(art_url).status_code == 401
+    assert c.get('/jellyfin/Items/' + item['Id'], headers=h).status_code == 200
+    assert c.get(art_url).status_code == 200
+    api.catalog['library:'+api.library['id']]['shared_with'] = []
+    assert c.get(art_url).status_code == 404
+
+
+def test_roku_item_only_report_refuses_ambiguous_and_explicit_invalid_sessions(api):
+    login = connect(api); item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    assert c.post('/jellyfin/Sessions/Playing', headers=h,
+                  json={'ItemId':item['Id'],'PlaySessionId':'wrong'}).status_code == 404
+    c.post('/jellyfin/Items/'+item['Id']+'/PlaybackInfo', headers=h, json={})
+    assert c.post('/jellyfin/Sessions/Playing', headers=h, json={'ItemId':item['Id']}).status_code == 404
+
+
+def test_roku_miniplayer_artist_index_executes_with_audio_metadata(api, tmp_path):
+    import os
+    import subprocess
+    interpreter = os.environ.get('ROKU_TEST_BRS')
+    if not interpreter:
+        pytest.skip('Set ROKU_TEST_BRS to the BrightScript interpreter')
+    api.entries[0]['video'] = False
+    dto = jf.item_dto(api.library, api.entries[0])
+    # AudioMiniPlayer.setOnScreenTextValues indexes Artists before calling isValid.
+    # An absent optional array is a runtime error, even inside that guard.
+    def execute(data):
+        literal = json.dumps(data).replace('"','""')
+        path = tmp_path/'roku-audio.brs'
+        path.write_text('''function isValid(value)
+return value <> invalid
+end function
+sub main()
+json = ParseJson("'''+literal+'''")
+if isValid(json) and isValid(json.Artists[0]) then print "artist"
+print "PLAYER_ALIVE"
+end sub
+''')
+        return subprocess.run([interpreter,'-r',str(tmp_path),str(path)],capture_output=True,text=True,timeout=20)
+    result = execute(dto)
+    assert result.returncode == 0 and 'PLAYER_ALIVE' in result.stdout, result.stderr
+    del dto['Artists']
+    broken = execute(dto)
+    assert broken.returncode != 0 or 'PLAYER_ALIVE' not in broken.stdout

@@ -398,10 +398,23 @@
     return { list: [], active: '' };
   }
 
+  async function ownershipProof(npub, action, handoff){
+    const os = OS();
+    if(!os || !os.challenge || !APP().sign) throw new Error('Update the desktop app to verify your OS identity');
+    const challenge = await os.challenge(String(npub || ''), action);
+    if(!challenge || !challenge.ok || !challenge.challenge) throw new Error((challenge && challenge.why) || 'OS challenge unavailable');
+    const payload = JSON.stringify(handoff || {});
+    const digest = await root.crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
+    const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,'0')).join('');
+    const event = await APP().sign(27235, hash,
+      [['t','posterchanos'],['action',action],['challenge',challenge.challenge]]);
+    return {event, payload};
+  }
+
   /** Provision the Unix account for whoever just signed in. Idempotent; safe on every sign-in. */
   async function ensureAccount(npub){
     const os = OS(); if(!os) return { ok: false, why: 'not PosterChanOS' };
-    try{ return await os.provision(String(npub || '')); }
+    try{ return await os.provision(String(npub || ''), await ownershipProof(npub, 'provision', {})); }
     catch(e){ return { ok: false, why: String((e && e.message) || e) }; }
   }
 
@@ -421,7 +434,7 @@
     const os = OS(); if(!os || typeof os.switch !== 'function') return { ok:false, why:'not PosterChanOS' };
     const here = await identity();
     if(here === String(npub || '')) return { ok:true, current:true };
-    try{ return await os.switch(String(npub || ''), { sess: sess || null, meta: meta || {} }); }
+    try{ return await os.switch(String(npub || ''), await ownershipProof(npub, 'switch', { sess: sess || null, meta: meta || {} })); }
     catch(e){ return { ok:false, why:String((e && e.message) || e) }; }
   }
 

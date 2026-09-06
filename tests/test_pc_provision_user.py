@@ -29,6 +29,7 @@ NPUB_A = "npub1fdtthaqujtjcd6yfy7kt0zpkadyl9vvypq00s5nztnmche74d0tqv6uwwr"
 NPUB_B = "npub19q5ezl4qrhy4dt5cnfvsxpxc7qzqmkakqzp0ka2qy2j0nspq3fmqgxmzpr"
 
 STUBS = {
+    "runuser": '#!/bin/sh\nshift 3\nexec "$@"\n',
     # Records its argv, and pretends the account now exists by appending to a fake passwd.
     "useradd": '#!/bin/sh\necho "useradd $*" >> "$PC_LOG"\n'
                'for a in "$@"; do last="$a"; done\n'

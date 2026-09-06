@@ -1,0 +1,18 @@
+.instance-welcome{box-sizing:border-box;width:min(680px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:40px;border:1px solid var(--line);border-radius:var(--r-lg,20px);background:var(--bg2);color:var(--text);font:inherit;text-align:center;box-shadow:0 24px 80px #0006}
+.instance-welcome::backdrop{background:#0008;backdrop-filter:blur(6px)}
+.instance-welcome h2{font-size:clamp(24px,5vw,34px);line-height:1.15;margin:12px 0;overflow-wrap:anywhere}
+.instance-welcome p{line-height:1.6;color:var(--muted)}
+.instance-welcome .iw-logo{width:72px;height:72px;object-fit:contain;margin-top:8px}
+.instance-welcome .iw-eyebrow{font-size:11px;letter-spacing:.16em;margin:20px 0 0}
+.instance-welcome .iw-close{position:absolute;top:12px;right:12px;width:44px;height:44px;background:transparent;border:0;color:var(--text);font-size:26px;cursor:pointer}
+.instance-welcome .iw-benefits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:28px 0}
+.instance-welcome article{border:1px solid var(--line);border-radius:var(--r);padding:20px 10px;background:var(--panel)}
+.instance-welcome article span{font-size:26px;color:var(--neon)}
+.instance-welcome h3{font-size:15px;margin:12px 0 6px}
+.instance-welcome article p{font-size:13px;margin:0}
+.instance-welcome .iw-note{font-size:13px}
+.instance-welcome .iw-apply{min-height:48px;width:100%;white-space:normal}
+.instance-welcome .iw-status{font-size:13px;min-height:1.5em}
+.instance-welcome .iw-later{min-height:44px;background:none;border:0;color:var(--muted);font:inherit;cursor:pointer}
+.instance-welcome button:focus-visible{outline:2px solid var(--neon);outline-offset:3px}
+@media(max-width:520px){.instance-welcome{padding:28px 20px}.instance-welcome .iw-benefits{grid-template-columns:1fr;gap:8px;margin:20px 0}.instance-welcome article{padding:12px}.instance-welcome article span{float:left;margin:8px 12px}.instance-welcome h3{margin:0 0 4px}}

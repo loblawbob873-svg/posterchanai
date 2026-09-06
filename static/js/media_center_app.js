@@ -50,20 +50,33 @@
     await api('Users/Me');
     await api('Sessions/Capabilities/Full',{PlayableMediaTypes:['Video','Audio'],SupportsMediaControl:false});
     $('connect').hidden=true;$('library').hidden=false;$('logout').hidden=false;
-    parent='';trail=[];$('search').value='';await browse();
+    parent='';trail=[];$('heading').textContent='Your libraries';$('search').value='';await browse();
+  }
+  function breadcrumbs() {
+    const nav=$('breadcrumbs');nav.replaceChildren();
+    for(const [index,ancestor] of trail.entries()) {
+      const link=document.createElement('button');link.type='button';link.textContent=ancestor.name;
+      link.onclick=()=>{parent=ancestor.id;trail=trail.slice(0,index);$('heading').textContent=ancestor.name;$('search').value='';browse();};
+      nav.append(link);
+    }
+    const current=document.createElement('span');current.textContent=$('heading').textContent;current.setAttribute('aria-current','page');nav.append(current);
+  }
+  function fallbackArt(entry) {
+    const art=document.createElement('div');art.className='art';art.setAttribute('aria-hidden','true');
+    art.textContent=String(entry.Name||'').slice(0,2).toLocaleUpperCase();return art;
   }
   async function browse(append=false) {
     const current=++generation;const term=$('search').value.trim();if(!append){offset=0;$('cards').replaceChildren();}
-    $('more').hidden=true;status('Loading library…');
+    breadcrumbs();$('more').hidden=true;status('Loading library…');
     try {
       const params=new URLSearchParams({ParentId:parent,StartIndex:offset,Limit:60});
       if(term){params.set('SearchTerm',term);params.set('Recursive','true');}
       const result=await api(!parent&&!term?'UserViews':'Items?'+params);
       if(current!==generation)return;
       for(const entry of result.Items) {
-        const card=document.createElement('button');card.className='card';
-        if(entry.ImageTags?.Primary){const img=document.createElement('img');img.loading='lazy';img.alt='';img.src=base+'Items/'+encodeURIComponent(entry.Id)+'/Images/Primary?api_key='+encodeURIComponent(account.AccessToken);card.append(img);}
-        else {const art=document.createElement('div');art.className='art';art.textContent=entry.IsFolder?'▣':'▶';card.append(art);}
+        const card=document.createElement('button');card.className='card';card.classList.toggle('folder-card',!!entry.IsFolder);
+        if(entry.ImageTags?.Primary){const img=document.createElement('img');img.loading='lazy';img.alt='';img.src=base+'Items/'+encodeURIComponent(entry.Id)+'/Images/Primary?tag='+encodeURIComponent(entry.ImageTags.Primary);img.onerror=()=>img.replaceWith(fallbackArt(entry));card.append(img);}
+        else card.append(fallbackArt(entry));
         const title=document.createElement('span');title.textContent=entry.Name;
         if(entry.IsFolder){const count=document.createElement('small');count.textContent=(entry.ChildCount||0)+' titles';title.append(count);}
         card.append(title);card.onclick=()=>{if(entry.IsFolder){trail.push({id:parent,name:$('heading').textContent});parent=entry.Id;$('heading').textContent=entry.Name;browse();}else{chooseVideo(entry);}};$('cards').append(card);

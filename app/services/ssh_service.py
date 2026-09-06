@@ -362,11 +362,10 @@ class SshSession:
 
         def _open():
             cli = paramiko.SSHClient()
-            # Accept an unknown host key. This is a terminal the operator pointed at their own
-            # machines, and refusing to connect until someone hand-populates known_hosts ON THE
-            # SERVER would make the feature unusable — but say so, because it is a real trade and it
-            # belongs in the log rather than in nobody's head.
-            cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # Use the server account's verified known_hosts, including changed-key
+            # rejection. A configured hostname alone is not a host-key identity.
+            cli.load_system_host_keys()
+            cli.set_missing_host_key_policy(paramiko.RejectPolicy())
             kwargs = dict(hostname=h.host, port=h.port, username=h.user,
                           timeout=15, auth_timeout=20, banner_timeout=20,
                           allow_agent=False, look_for_keys=False)

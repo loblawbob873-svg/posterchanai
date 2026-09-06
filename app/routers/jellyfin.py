@@ -71,6 +71,7 @@ _quick = OrderedDict()
 _approvals = OrderedDict()
 _locators = OrderedDict()
 _plays = OrderedDict()
+_audio_art = OrderedDict()
 _socket_count = 0
 TOKEN_AGE = 90 * 86400
 SERVER_ID = hmac.new(SECRET_KEY.encode(), b'jellyfin-server-id', hashlib.sha256).hexdigest()[:32]
@@ -122,10 +123,31 @@ async def authenticate(request: Request, db=Depends(get_db)):
     return SimpleNamespace(user=user, uid=uid, token=token, session=session)
 
 
+def audio_item_alias(auth, canonical):
+    # Roku's music player constructs artwork URLs from Id without tags or headers.
+    # A session-scoped, unguessable ID grants artwork only; APIs still require login.
+    payload = 'audio-art:' + auth.uid + ':' + auth.session['hash'] + ':' + canonical
+    return hmac.new(SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+
+
 def with_image_ticket(dto, auth):
     # TV image loaders omit app auth but preserve ImageTags in the tag query.
     # This capability grants only this item's artwork, not API or video access.
     expires = min(int(auth.session['expires']), (int(time.time()) // 3600 + 2) * 3600)
+    if dto.get('Type') == 'Audio':
+        canonical = dto['Id']
+        dto['Id'] = audio_item_alias(auth, canonical)
+        # Recreated on every authenticated listing/detail read. No reusable app
+        # credential is put in a URL or returned to an unauthenticated image loader.
+        _audio_art[dto['Id']] = {'uid': auth.uid, 'sid': auth.session['id'],
+                                 'canonical': canonical, 'expires': expires}
+        _audio_art.move_to_end(dto['Id'])
+        while len(_audio_art) > 8192:
+            _audio_art.popitem(last=False)
+        if 'UserData' in dto:
+            dto['UserData']['ItemId'] = dto['Id']
+        for source in dto.get('MediaSources', []):
+            source['Id'] = dto['Id']
     payload = f"{auth.uid}.{auth.session['id']}.{expires}"
     signature = hmac.new(SECRET_KEY.encode(), (dto['Id'] + '.Primary.' + payload + '.' + auth.session['hash']).encode(), hashlib.sha256).hexdigest()
     dto['ImageTags'] = {'Primary': 'pcimg.' + payload + '.' + signature}
@@ -136,6 +158,15 @@ async def authenticate_image(request: Request, db=Depends(get_db)):
     if api_token(request):
         return await authenticate(request, db)
     tag = query(request, 'tag', '')
+    item = request.path_params['uid'].replace('-', '').lower()
+    grant = _audio_art.get(item) if not tag else None
+    if grant and grant['expires'] > time.time():
+        record = await media.read(account_key(grant['uid'])) or {}
+        session = next((s for s in record.get('sessions', [])
+                        if s['id'] == grant['sid'] and s['expires'] > time.time()), None)
+        user = find_user(db, record['pubkey']) if session else None
+        if session and native.media_allowed(user):
+            return SimpleNamespace(user=user, uid=grant['uid'], token='', session=session)
     match = re.fullmatch(r'pcimg\.([a-f0-9]{32})\.([a-f0-9]{32})\.([0-9]{10})\.([a-f0-9]{64})', tag)
     if not match:
         raise HTTPException(401, 'Private artwork requires authorization')
@@ -615,6 +646,8 @@ def item_dto(lib, item):
     video = item.get('video', True)
     saved = item.get('progress', {})
     return {'Id': uid, 'ServerId': SERVER_ID, 'Name': name, 'SortName': name,
+            'Artists': [], 'ArtistItems': [], 'AlbumArtists': [], 'Genres': [],
+            'People': [], 'Chapters': [], 'BackdropImageTags': [], 'Overview': '',
             'ParentId': folder_id(lib, folder), 'Type': 'Video' if video else 'Audio',
             'MediaType': 'Video' if video else 'Audio', 'IsFolder': False,
             'RunTimeTicks': int(item['duration'] * 10000000), 'CanDownload': False, 'CanDelete': False,
@@ -647,7 +680,8 @@ async def resolve(request, auth, db, uid):
                 if folder_id(lib, path) == uid:
                     return lib, {'_folder': path, 'count': count}
         for item in entries:
-            if item_id(lib, item) == uid:
+            canonical = item_id(lib, item)
+            if canonical == uid or (not item.get('video', True) and audio_item_alias(auth, canonical) == uid):
                 remember(lib, item)
                 return lib, item
     raise HTTPException(404, 'Media not found')
@@ -708,7 +742,8 @@ async def browse(request: Request, auth=Depends(authenticate), db=Depends(get_db
                 continue
             dto = item_dto(lib, item)
             searchable = folder + '/' + dto['Name']
-            if (not ids or dto['Id'] in ids) and (not search or search in searchable.casefold()):
+            matches_id = dto['Id'] in ids or (dto['Type'] == 'Audio' and audio_item_alias(auth, dto['Id']) in ids)
+            if (not ids or matches_id) and (not search or search in searchable.casefold()):
                 result.append(dto)
     result.sort(key=lambda entry: (not entry['IsFolder'], media.natural(entry['Name'])))
     if types:
@@ -828,9 +863,25 @@ def play_record(auth, play_id, uid=None):
     return record
 
 
+def reported_play(auth, body):
+    play_id = body_value(body, 'PlaySessionId', '')
+    if not play_id:
+        # Official Roku audio ReportPlayback sends ItemId and no PlaySessionId.
+        # Match only this device token and this exact item; never pick a different
+        # device's play or guess among simultaneous plays of the same item.
+        uid = str(body_value(body, 'ItemId', '')).replace('-', '').lower()
+        matches = [key for key, value in _plays.items() if value['item'] == uid
+                   and value['token'] == digest(auth.token) and time.monotonic() - value['seen'] <= 900]
+        if len(matches) != 1:
+            raise HTTPException(404, 'Playback session not found or ambiguous')
+        play_id = matches[0]
+    return play_id, play_record(auth, play_id)
+
+
 @router.api_route('/Items/{uid}/PlaybackInfo', methods=['GET', 'POST'])
 async def playback_info(uid: str, request: Request, body: dict = Body(default={}),
                         auth=Depends(authenticate), db=Depends(get_db)):
+    uid = uid.replace('-', '').lower()
     lib, item = await resolve(request, auth, db, uid)
     if not item or '_folder' in item:
         raise HTTPException(400, 'Select a playable item')
@@ -977,15 +1028,14 @@ async def persist_progress(request, auth, db, record, body):
 @router.post('/Sessions/Playing', status_code=204)
 @router.post('/Sessions/Playing/Progress', status_code=204)
 async def progress(request: Request, body: dict = Body(default={}), auth=Depends(authenticate), db=Depends(get_db)):
-    record = play_record(auth, body_value(body, 'PlaySessionId', ''))
+    _, record = reported_play(auth, body)
     await persist_progress(request, auth, db, record, body)
     return Response(status_code=204)
 
 
 @router.post('/Sessions/Playing/Stopped', status_code=204)
 async def stopped(request: Request, body: dict = Body(default={}), auth=Depends(authenticate), db=Depends(get_db)):
-    play_id = body_value(body, 'PlaySessionId', '')
-    record = play_record(auth, play_id)
+    play_id, record = reported_play(auth, body)
     await persist_progress(request, auth, db, record, body)
     ticket = parse_qs(urlsplit(record['url']).query)['ticket'][0]
     await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})

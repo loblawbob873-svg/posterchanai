@@ -42,7 +42,7 @@ ARG BASE_IMAGE=ubuntu:24.04
 ARG ROCM_VERSION=6.3.4
 
 # --- Go build stage: the built-in Pion TURN/STUN relay for voice/video calls (tiny static binary) ---
-FROM golang:1.23-alpine AS turnbuild
+FROM golang:1.26-alpine AS turnbuild
 WORKDIR /build
 COPY turnserver/go.mod turnserver/go.sum ./
 RUN go mod download

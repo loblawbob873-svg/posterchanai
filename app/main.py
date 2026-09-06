@@ -69,6 +69,9 @@ app = FastAPI(
 # https://localhost origin and calls this server cross-origin for data (relay, API, Blossom). Allow those
 # app origins (browsers on poster.place are same-origin and unaffected).
 from fastapi.middleware.cors import CORSMiddleware
+from app.middleware.untrusted_files import UntrustedFilesMiddleware
+from app.middleware.csrf import CookieOriginMiddleware
+from app.middleware.public_work import PublicWorkMiddleware
 
 
 class _ScopedCORS(CORSMiddleware):
@@ -107,6 +110,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(UntrustedFilesMiddleware)
+app.add_middleware(CookieOriginMiddleware)
+app.add_middleware(PublicWorkMiddleware)
 
 # Exception handler for NoHealthyServersError - prevent it from being shown to client
 @app.exception_handler(NoHealthyServersError)
@@ -233,7 +239,7 @@ from app.routers import jellyfin
 app.include_router(jellyfin.account_router)
 app.include_router(jellyfin.router)
 app.add_middleware(jellyfin.ClientCORS)
-app.add_event_handler("shutdown", media_center.close_proxy)
+app.router.add_event_handler("shutdown", media_center.close_proxy)
 app.include_router(news.router)
 app.include_router(websearch.router)  # /api/websearch/* (Web Search screen: SearXNG proxy, reader, AI overview)
 app.include_router(code_router.router)  # /api/code/* (PosterChan Code: jailed workspace tree + black/beautysh)
@@ -283,6 +289,8 @@ app.include_router(pleroma_router)
 app.include_router(social_login_router)   # /api/auth/{google,pleroma}/* — sign in with an account
 app.include_router(nostr_router)
 app.include_router(blossom_router)
+from app.routers import instance_welcome
+app.include_router(instance_welcome.router)
 app.include_router(client_router)
 
 # The bundled CalDAV server (Radicale), mounted INSIDE this app at /caldav — no second port, no
@@ -1288,7 +1296,7 @@ async def admin_page(
         return RedirectResponse(url="/", status_code=302)
     # No `user` in the context on purpose: nothing renders it any more, and leaving it available is an
     # invitation to put an identity back into a page that is now served to anyone.
-    resp = templates.TemplateResponse("admin.html", {
+    resp = templates.TemplateResponse(request, "admin.html", {
         "request": request,
         "cache_bust": int(datetime.now().timestamp())
     })
@@ -1465,7 +1473,7 @@ async def public_status_page(request: Request):
         logging.warning("[status] could not render monitors: %s", e)
         view = {"ok": False, "empty": True, "banner": "Status is temporarily unavailable",
                 "total": 0, "up": 0, "down": 0, "monitors": [], "updated": "just now"}
-    return templates.TemplateResponse("status.html", {
+    return templates.TemplateResponse(request, "status.html", {
         "request": request, "site": site, "logo": logo, "v": view,
     })
 
@@ -1549,6 +1557,8 @@ async def verify_email_page(
     db.commit()
 
     # Create access token and set cookie
+    if user.is_admin:
+        return RedirectResponse(url="/client", status_code=302)
     access_token = create_access_token({"sub": str(user.id)})
 
     # Redirect to home with cookie set

@@ -274,6 +274,7 @@ DEFAULT_SETTINGS: dict = {}
 
 
 def init_db():
+    from app.services.instance_welcome import InstanceApplication  # noqa: F401 - register durable applications
     from app.models import User, Conversation, Message, ProxyImageCache, SocialReplyMap, Bot, Reminder, SavedSearch, BlossomBlob, BlossomBlobOwner, StreamVOD  # noqa: F401 - registers tables for create_all
     logger.info("[INIT] Initializing database...")
     Base.metadata.create_all(bind=engine)

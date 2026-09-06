@@ -31,6 +31,17 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+@pytest.fixture(autouse=True)
+def _isolated_settings(monkeypatch, tmp_path):
+    """A settings update in one test must not reconfigure the next test or this host."""
+    from app.services import settings_store
+    monkeypatch.setattr(settings_store, '_CACHE', {})
+    monkeypatch.setattr(settings_store, '_LOCAL_DIRTY', set())
+    monkeypatch.setattr(settings_store, '_HYDRATED_KEYS', set())
+    monkeypatch.setattr(settings_store, '_loaded', False)
+    monkeypatch.setattr(settings_store, '_LOCAL_PATH', str(tmp_path / 'local_settings.json'))
+
 # (generated artifact, tracked source, what breaks without it)
 _ARTIFACTS = [
     (ROOT / "extension" / "vendor" / "nostr.bundle.js",

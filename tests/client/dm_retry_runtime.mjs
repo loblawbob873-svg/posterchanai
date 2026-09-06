@@ -28,7 +28,7 @@ function extract(decl){
 }
 
 const ME_PK = 'a'.repeat(64), PEER = 'b'.repeat(64);
-function harness({ failFirst }){
+function harness({ failFirst, selfNote=false }){
   const dmPeers = new Map(), _wrapTried = new Set();
   const calls = { unwraps: 0 };
   let failed = false;
@@ -40,7 +40,7 @@ function harness({ failFirst }){
     signer:{ nip17unwrap: async () => {
       calls.unwraps++;
       if(failFirst && !failed){ failed = true; throw new Error('signer timed out'); }
-      return { kind:14, pubkey:PEER, created_at:1000, content:'hi', tags:[['p',ME_PK]] };
+      return { kind:14, pubkey:selfNote?ME_PK:PEER, created_at:1000, content:selfNote?'NIP-05 application received':'hi', tags:[['p',ME_PK]] };
     }},
     ClientSettings:{ get:(k,d)=>d, set(){} }, MUTED:new Set(),
     _dmUnread:0, bumpDm(){}, _dmNotify(){}, dmNotify(){},
@@ -78,4 +78,15 @@ function harness({ failFirst }){
   if((dmPeers.get(PEER)||[]).length !== 1) throw new Error('the same message was filed twice');
 }
 
+// Server notices signed by the operator remain visible in the self conversation, including
+// historical delivery without a live notification and a retry after the signer was unavailable.
+{
+  const {ctx,dmPeers}=harness({failFirst:true,selfNote:true});
+  const wrap={id:'last-night-nip05-application'};
+  await ctx.ingest(wrap,false);await ctx.ingest(wrap,false);
+  const thread=dmPeers.get(ME_PK)||[];
+  if(thread.length!==1||thread[0].text!=='NIP-05 application received')throw Error('self notification missing');
+  if(ctx._dmUnread!==1)throw Error('historical self notification must remain unread');
+  await ctx.ingest(wrap,true);if(ctx._dmUnread!==1)throw Error('self notification counted twice');
+}
 console.log('ok');

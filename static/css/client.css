@@ -10162,6 +10162,6 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 /* Media Center is opt-in; keep it hidden until the signed-in permission hydrates. */
 .nav-item[data-view="media-center"]:not(.media-allowed){display:none!important}
 
-.mc-resume-dialog{max-width:min(520px,calc(100vw - 32px));background:var(--bg,#10131c);color:var(--fg,#eef6ff);border:1px solid var(--line,#536078);border-radius:16px;padding:24px}.mc-resume-dialog::backdrop{background:#000a}
+.mc-resume-dialog{max-width:min(520px,calc(100vw - 32px));background:var(--bg,#10131c);color:var(--text);border:1px solid var(--line,#536078);border-radius:16px;padding:24px}.mc-resume-dialog::backdrop{background:#000a}
 
 .mc-device-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line,#334)}.mc-device-row>div{flex:1;min-width:0;overflow-wrap:anywhere}.mc-device-row small{display:block;color:var(--muted,#aab);margin-top:4px}

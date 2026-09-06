@@ -418,8 +418,13 @@
         const existing=document.querySelector('.nav-item[data-view="' + it.view + '"]');
         if(existing){
           if(it.topLevel){
-            const anchor=document.querySelector('.nav-item[data-view="' + it.after + '"]');
-            if(anchor&&existing.parentNode!==anchor.parentNode){anchor.after(existing);existing.classList.remove('sub');}
+            const nav=document.querySelector('.sidebar .nav');
+            const anchor=nav&&nav.querySelector('.nav-item[data-view="' + it.after + '"]');
+            if(nav&&existing.parentNode!==nav){
+              if(anchor&&anchor.parentNode===nav) anchor.after(existing);
+              else nav.insertBefore(existing, nav.querySelector('#disc-toggle')?.closest('.nav-group') || null);
+            }
+            existing.classList.remove('sub');
           }
           continue;
         }
@@ -432,6 +437,10 @@
         else if(it.after){
           const sib = document.querySelector('.nav-item[data-view="' + it.after + '"]');
           if(sib){ host = sib.parentNode; before = sib.nextSibling; }
+        }
+        if(it.topLevel){
+          const nav=document.querySelector('.sidebar .nav');
+          if(host!==nav){ host=nav; before=nav&&nav.querySelector('#disc-toggle')?.closest('.nav-group'); }
         }
         if(!host) continue;
         const b = document.createElement('button');
@@ -6120,21 +6129,8 @@
   }
   function _accountSwitch(a){
     if(!a || !a.sess) return;
-    /* On PosterChanOS, accounts are Unix sessions. Hand the selected saved signer session to its
-     * 0700 home and let getty replace this whole compositor. The browser-only swap below remains
-     * the right implementation for phones, browsers, Windows and macOS. */
-    try{
-      if(window.PCOSShell){
-        PCOSShell.detect().then(yes => {
-          if(!yes) return _accountSwitchBrowser(a);
-          return PCOSShell.activateAccount(a.npub || (a.sess && a.sess.npub), a.sess, a).then(r => {
-            if(!r || r.ok === false){ toast((r && r.why) || 'could not switch OS user'); return; }
-            if(r.current) _accountSwitchBrowser(a);
-          });
-        }).catch(()=> _accountSwitchBrowser(a));
-        return;
-      }
-    }catch(_){}
+    // Load the selected signer before requesting a root-owned OS challenge.
+    // postLogin then proves that identity before entering its Unix session.
     _accountSwitchBrowser(a);
   }
   function _accountSwitchBrowser(a){
@@ -24928,74 +24924,28 @@
     if(!el){ el=document.createElement('div'); el.id='dm-progress'; el.className='muted small'; el.style.padding='8px 10px'; wrap.prepend(el); }
     el.textContent=_dmProg;
   }
-  async function ensureDMs(){
-    if(_dmLoaded) return; _dmLoaded=true;
-    const modern = !!(signer && signer.nip17unwrap);   // gift wraps need the local secret key
-    /* THE SHARED CACHE FIRST, and before a single wrap is handed to the signer. On a device that has
-     * never decrypted anything this turns the whole history into one relay read and one HTTP GET —
-     * where the alternative is two round trips per message at a phone that is already answering the
-     * other devices. It is awaited on purpose: starting 900 requests and THEN discovering they were
-     * all cached is the cost this exists to avoid. */
-    if(modern) try{ const n = await DmCache.pullShared();
-                    if(n) console.info('[dm] ' + n + ' messages from the shared cache'); }catch(_){}
-    Store.byKind(4).forEach(ingestDM);                 // show cached legacy DMs instantly
-    if(modern) Store.byKind(1059).forEach(w=>ingestWrap(w, false));   // unwrap cached gift wraps (async)
-    if(VIEW==='messages') renderMessages();
-    const filt=[{ kinds:[4], '#p':[ME.pubkey], limit:300 }, { kinds:[4], authors:[ME.pubkey], limit:300 }];
-    if(modern) filt.push({ kinds:[1059], '#p':[ME.pubkey], limit:400 });
-    const evs=await Relay.query(filt);
-    evs.forEach(e=>Store.saveEvent(e));
-    evs.filter(e=>e.kind!==1059).forEach(ingestDM);
-    // Unwrap the gift wraps NEWEST-FIRST and CONCURRENTLY. This loop used to `await` one wrap at a time,
-    // which is invisible with a local key (the worker decrypts instantly) but brutal with a remote signer:
-    // each wrap costs TWO round-trips to a phone, so a 500-message history was ~1000 serial round-trips —
-    // tens of minutes, during which you see only the handful it has got through ("still only the same 6 DMs").
-    // Fire them all and let the signer transport cap real concurrency; newest-first so the DMs you actually
-    // want appear first, and _scheduleDmRefresh paints them as they land.
-    /* NOT COUNTED HERE ANY MORE — ingestWrap counts itself, and it has to.
-     *
-     * This loop only ever knew about ONE of the three places wraps are decrypted. The cached pass
-     * above it (`Store.byKind(1059)`, fired and not awaited) and the backfill drain below it were
-     * both invisible to the number on screen, and they share the same six transport slots — so the
-     * counter could sit still for a minute while the signer was working flat out on wraps this
-     * loop had never heard of, or run to 400/400 while hundreds were still going. Once a wrap that
-     * another pass already took returns instantly (_wrapTried), the two came apart completely.
-     *
-     * A progress number that is not measuring the work is worse than none: "70/400, this is not
-     * moving" is then a true statement about the counter and says nothing about the restore. */
-    const wraps=evs.filter(e=>e.kind===1059).sort((a,b)=>b.created_at-a.created_at);
-    await Promise.all(wraps.map(w=>ingestWrap(w, false)));
-    /* …and publish what this device just worked out, so the next one does not repeat it. Fire and
-     * forget: it is a courtesy to the other devices, never something this screen waits for. */
-    if(modern) DmCache.pushShared().catch(()=>{});
-    // DRAIN THE REST OF THE HISTORY. The bulk query above caps at 400 wraps and the "unlimited" live
-    // sub below is not actually unlimited: a filter with NO limit is capped by the relay (ours
-    // defaults to 500), so a long history is silently truncated to the newest few hundred and older
-    // conversations arrive half-empty or not at all. Page BACKWARDS with `until` until a page comes
-    // back short. Runs in the background so the thread still opens instantly, and is bounded so a
-    // huge inbox can't spin.
-    if(modern) (async()=>{
-      let until = wraps.length ? Math.min(...wraps.map(w=>w.created_at)) - 1 : Math.floor(Date.now()/1000);
-      for(let page=0; page<40; page++){
-        let batch=[];
-        try{ batch = await Relay.query([{ kinds:[1059], '#p':[ME.pubkey], limit:500, until }]); }catch(_){ break; }
-        if(!batch || !batch.length) break;
-        const fresh = batch.filter(e=>Store.saveEvent(e));
-        if(fresh.length){ await Promise.all(fresh.map(w=>ingestWrap(w, false))); _scheduleDmRefresh(); }
-        const oldest = batch.reduce((a,e)=>Math.min(a, e.created_at||0), Infinity);
-        if(!isFinite(oldest) || oldest > until) break;   // relay ignored `until` → stop rather than loop
-        // INCLUSIVE cursor: several wraps can share a second, and `oldest - 1` skipped any that the
-        // page limit cut off at that exact timestamp. Re-fetching the boundary is free (Store dedups),
-        // and "no fresh events in a whole page" is the termination condition instead.
-        until = oldest;
-        if(!fresh.length) break;                         // nothing new → end of history (or a tie loop)
-        if(batch.length < 500) break;                    // short page = end of history
+  let _dmWatching=false, _dmHistoryDrain=null;
+  const _dmHistoryQueue=new Map();
+  function _queueDmHistory(wraps){
+    for(const ev of wraps) if(ev?.id && !_wrapTried.has(ev.id)) _dmHistoryQueue.set(ev.id,ev);
+    if(!_dmHistoryDrain) _dmHistoryDrain=(async()=>{
+      while(_dmHistoryQueue.size){
+        const batch=Array.from(_dmHistoryQueue.values()).slice(0,6);
+        batch.forEach(ev=>_dmHistoryQueue.delete(ev.id));
+        await Promise.allSettled(batch.map(ev=>ingestWrap(ev,false)));
       }
-    })();
-
-    // Persistent unread badge (like Notifications): count incoming DMs newer than the last time the
-    // Messages view was opened, so DMs received while away still alert — not just live ones.
-    recountDmUnread();
+    })().finally(()=>{_dmHistoryDrain=null; if(_dmHistoryQueue.size) _queueDmHistory([]);});
+    return _dmHistoryDrain;
+  }
+  function _watchDMs(modern){
+    if(_dmWatching) return;
+    _dmWatching=true;
+    // Relay subscriptions dedup even failed decryptions. Retry cached, unread wraps independently
+    // so a temporary signer failure cannot hide a server notification for the rest of the session.
+    setInterval(()=>{
+      if(modern) _queueDmHistory(Store.byKind(1059));
+      if(!_dmLoaded) ensureDMs();
+    },60000);
     // live sub for legacy DMs (since now is fine — kind-4 timestamps are real)
     const since=Math.floor(Date.now()/1000)-60;
     Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], since }, { kinds:[4], authors:[ME.pubkey], since }], {
@@ -25022,10 +24972,79 @@
          * already in flight or done — so nothing is decrypted twice — and it DELETES that entry
          * when the unwrap throws, precisely so a redelivery can retry. Gating it here overrode the
          * retry it was designed to allow. */
-        onEvent: async ev => { Store.saveEvent(ev); await ingestWrap(ev, _dmLive); },
+        onEvent: async ev => { if(!_dmLive){ Store.saveEvent(ev); _queueDmHistory([ev]); return; } Store.saveEvent(ev); await ingestWrap(ev, _dmLive); },
         onEose: () => { _dmLive = true; }
       });
     }
+  }
+  async function ensureDMs(){
+    if(_dmLoaded) return; _dmLoaded=true;
+    const modern = !!(signer && signer.nip17unwrap);   // gift wraps need the local secret key
+    _watchDMs(modern); // Live delivery must not wait for cache downloads or historical decryption.
+    /* Load the shared cache before queuing the bulk history. The live subscription is already
+     * active; its backlog uses at most six decryptions at once, leaving new arrivals able to
+     * enter the signer transport without waiting behind hundreds of historical requests. */
+    if(modern) try{ const n = await DmCache.pullShared();
+                    if(n) console.info('[dm] ' + n + ' messages from the shared cache'); }catch(_){}
+    Store.byKind(4).forEach(ingestDM);                 // show cached legacy DMs instantly
+    if(modern) _queueDmHistory(Store.byKind(1059));   // unwrap cached gift wraps (async)
+    if(VIEW==='messages') renderMessages();
+    const filt=[{ kinds:[4], '#p':[ME.pubkey], limit:300 }, { kinds:[4], authors:[ME.pubkey], limit:300 }];
+    if(modern) filt.push({ kinds:[1059], '#p':[ME.pubkey], limit:400 });
+    let evs;
+    try{ evs=await Relay.query(filt); }
+    catch(error){ _dmLoaded=false; console.warn('[dm] history read failed; live subscription remains active',error); return; }
+    evs.forEach(e=>Store.saveEvent(e));
+    evs.filter(e=>e.kind!==1059).forEach(ingestDM);
+    // Unwrap the gift wraps NEWEST-FIRST and CONCURRENTLY. This loop used to `await` one wrap at a time,
+    // which is invisible with a local key (the worker decrypts instantly) but brutal with a remote signer:
+    // each wrap costs TWO round-trips to a phone, so a 500-message history was ~1000 serial round-trips —
+    // tens of minutes, during which you see only the handful it has got through ("still only the same 6 DMs").
+    // Queue a bounded batch at a time, newest-first; _scheduleDmRefresh paints messages as they land.
+    /* NOT COUNTED HERE ANY MORE — ingestWrap counts itself, and it has to.
+     *
+     * This loop only ever knew about ONE of the three places wraps are decrypted. The cached pass
+     * above it (`Store.byKind(1059)`, fired and not awaited) and the backfill drain below it were
+     * both invisible to the number on screen, and they share the same six transport slots — so the
+     * counter could sit still for a minute while the signer was working flat out on wraps this
+     * loop had never heard of, or run to 400/400 while hundreds were still going. Once a wrap that
+     * another pass already took returns instantly (_wrapTried), the two came apart completely.
+     *
+     * A progress number that is not measuring the work is worse than none: "70/400, this is not
+     * moving" is then a true statement about the counter and says nothing about the restore. */
+    const wraps=evs.filter(e=>e.kind===1059).sort((a,b)=>b.created_at-a.created_at);
+    await _queueDmHistory(wraps);
+    /* …and publish what this device just worked out, so the next one does not repeat it. Fire and
+     * forget: it is a courtesy to the other devices, never something this screen waits for. */
+    if(modern) DmCache.pushShared().catch(()=>{});
+    // DRAIN THE REST OF THE HISTORY. The bulk query above caps at 400 wraps and the "unlimited" live
+    // sub below is not actually unlimited: a filter with NO limit is capped by the relay (ours
+    // defaults to 500), so a long history is silently truncated to the newest few hundred and older
+    // conversations arrive half-empty or not at all. Page BACKWARDS with `until` until a page comes
+    // back short. Runs in the background so the thread still opens instantly, and is bounded so a
+    // huge inbox can't spin.
+    if(modern) (async()=>{
+      let until = wraps.length ? Math.min(...wraps.map(w=>w.created_at)) - 1 : Math.floor(Date.now()/1000);
+      for(let page=0; page<40; page++){
+        let batch=[];
+        try{ batch = await Relay.query([{ kinds:[1059], '#p':[ME.pubkey], limit:500, until }]); }catch(_){ break; }
+        if(!batch || !batch.length) break;
+        const fresh = batch.filter(e=>Store.saveEvent(e));
+        if(fresh.length){ await _queueDmHistory(fresh); _scheduleDmRefresh(); }
+        const oldest = batch.reduce((a,e)=>Math.min(a, e.created_at||0), Infinity);
+        if(!isFinite(oldest) || oldest > until) break;   // relay ignored `until` → stop rather than loop
+        // INCLUSIVE cursor: several wraps can share a second, and `oldest - 1` skipped any that the
+        // page limit cut off at that exact timestamp. Re-fetching the boundary is free (Store dedups),
+        // and "no fresh events in a whole page" is the termination condition instead.
+        until = oldest;
+        if(!fresh.length) break;                         // nothing new → end of history (or a tie loop)
+        if(batch.length < 500) break;                    // short page = end of history
+      }
+    })();
+
+    // Persistent unread badge (like Notifications): count incoming DMs newer than the last time the
+    // Messages view was opened, so DMs received while away still alert — not just live ones.
+    recountDmUnread();
     if(VIEW==='messages') renderMessages();
   }
   // Unwrap a NIP-17 gift wrap (kind 1059) → its inner kind-14 chat rumor (already plaintext). `live`
@@ -33761,6 +33780,9 @@
     return bare.slice(0, _LINK_LABEL_MAX - 1) + '…';
   }
   function linkify(txt){
+    // Older instance-application DMs used a hex key. Keep those messages openable too.
+    txt=String(txt==null?'':txt).replace(/(^|\s)nostr:([a-f0-9]{64})(?=$|\s|[.,!?])/gi,
+      (match,space,pk)=>space+'nostr:'+NT().nip19.npubEncode(pk.toLowerCase()));
     /* A URL is lifted OUT of the text before anything else runs here, and put back at the very end.
      *
      * Every pass below rewrites PLAIN TEXT into HTML, and once the first pass has emitted an <a>,

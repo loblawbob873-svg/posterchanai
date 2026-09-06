@@ -3429,29 +3429,46 @@ ipcMain.handle('pc:net:radio', (e, on) => { fsGuard(e); return net.radio(!!on); 
 /* Provisioning a Unix account for whoever signed in — the one privileged thing the shell asks for,
  * and it is a fixed command with a validated argument (the script refuses anything that is not a
  * well-formed npub, because it runs as root and its input comes from a login screen). */
-ipcMain.handle('pc:os:provision', (e, npub) => {
-  fsGuard(e);
-  /* Installed-package diagnostics run in an isolated profile and nested compositor, but they are
-   * still the real packaged binary and therefore used to retain this privileged bridge. A UI test
-   * that signed in a throwaway identity consequently provisioned a real Unix account, rewrote
-   * tty1's autologin and restarted getty, terminating the operator's desktop. Diagnostic mode is
-   * evidence-gathering only: it must never mutate the host login/session. */
-  if (diagnostic) return { ok: false, why: 'OS account changes are disabled in diagnostics' };
-  const id = String(npub || '');
-  if (!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(id)) throw new Error('not an npub');
-  return new Promise((resolve) => {
-    const { execFile } = require('child_process');
-    execFile('sudo', ['-n', '/usr/local/bin/pc-provision-user', id], { timeout: 30000 },
-      (err, stdout, stderr) => {
-        if (err) return resolve({ ok: false, why: String(stderr || err.message || err).trim() });
-        const out = {};
-        for (const line of String(stdout).split('\n')) {
-          const i = line.indexOf('=');
-          if (i > 0) out[line.slice(0, i)] = line.slice(i + 1);
-        }
-        resolve(Object.assign({ ok: true }, out));
-      });
+function runOSHelper(args, body) {
+  return new Promise(resolve => {
+    const { spawn } = require('child_process');
+    const proc = spawn('sudo', ['-n', ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    const timer = setTimeout(() => proc.kill(), 30000);
+    proc.stdout.on('data', b => { if(out.length < 65536) out += b; });
+    proc.stderr.on('data', b => { if(err.length < 65536) err += b; });
+    proc.on('error', () => { clearTimeout(timer); resolve({ok:false, why:'OS helper unavailable'}); });
+    proc.on('close', code => { clearTimeout(timer); resolve(code === 0 ? {ok:true, output:out.trim()}
+      : {ok:false, why:err.trim() || 'OS identity verification failed'}); });
+    proc.stdin.on('error', () => {});
+    proc.stdin.end(body || '');
   });
+}
+ipcMain.handle('pc:os:challenge', async (e, npub, action) => {
+  fsGuard(e);
+  if (diagnostic) return {ok:false, why:'OS account changes are disabled in diagnostics'};
+  if(!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(String(npub || '')) ||
+     !['provision','switch'].includes(action)) return {ok:false, why:'invalid identity operation'};
+  const result = await runOSHelper(['/usr/local/bin/pc-session-switch', '--challenge', npub, action]);
+  if(!result.ok) return result;
+  try { return {ok:true, challenge:JSON.parse(result.output).challenge}; }
+  catch(_) { return {ok:false, why:'invalid OS challenge'}; }
+});
+ipcMain.handle('pc:os:provision', async (e, npub, proof) => {
+  fsGuard(e);
+  if (diagnostic) return {ok:false, why:'OS account changes are disabled in diagnostics'};
+  const id = String(npub || '');
+  if(!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(id)) return {ok:false, why:'not an npub'};
+  let body;
+  try { body = JSON.stringify(proof || {}); } catch(_) { return {ok:false, why:'bad proof'}; }
+  if(Buffer.byteLength(body) > 65536) return {ok:false, why:'proof too large'};
+  const result = await runOSHelper(['/usr/local/bin/pc-provision-user', id], body);
+  if(!result.ok) return result;
+  const out = {ok:true};
+  for(const line of result.output.split('\n')) {
+    const i = line.indexOf('='); if(i > 0) out[line.slice(0,i)] = line.slice(i+1);
+  }
+  return out;
 });
 /* Browser storage is not the authority for whether this MACHINE was provisioned. Chromium may
  * restore the renderer before its session store, a profile may be repaired, and either used to
@@ -3467,14 +3484,14 @@ ipcMain.handle('pc:os:identity', (e) => {
   try { return fs.readFileSync(path.join(app.getPath('home'), '.posterchan-npub'), 'utf8').trim(); }
   catch (_) { return ''; }
 });
-ipcMain.handle('pc:os:switch', (e, npub, handoff) => {
+ipcMain.handle('pc:os:switch', (e, npub, proof) => {
   fsGuard(e);
   if (diagnostic) return { ok: false, why: 'OS session changes are disabled in diagnostics' };
   const id = String(npub || '');
   if (!/^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(id))
     return { ok: false, why: 'not an npub' };
   let body = '';
-  try { body = JSON.stringify(handoff || {}); } catch (_) { return { ok: false, why: 'bad session' }; }
+  try { body = JSON.stringify(proof || {}); } catch (_) { return { ok: false, why: 'bad session' }; }
   if (Buffer.byteLength(body) > 65535) return { ok: false, why: 'session is too large' };
   return new Promise((resolve) => {
     const { spawn } = require('child_process');

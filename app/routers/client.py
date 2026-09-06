@@ -221,7 +221,7 @@ async def render_client_shell(request: Request, db, meta: dict | None = None):
     # Nostr-only deployments hide the AI tab + AI compose actions (POSTERCHANAI_NOSTR_ONLY=1).
     nostr_only = os.getenv("POSTERCHANAI_NOSTR_ONLY", "0").lower() in ("1", "true", "yes", "on")
     from app.services import registration_service
-    return _TEMPLATES.TemplateResponse("client.html",
+    return _TEMPLATES.TemplateResponse(request, "client.html",
         {"request": request, "ver": _static_version(), "build": _build_sha(),
          "secure": proto == "https", "meta": meta,
          "nostr_only": nostr_only, "default_theme": _default_theme(db),
@@ -701,15 +701,30 @@ async def _img_data_uri(url: str, base_domain: str) -> str:
         return ""
     try:
         import httpx
-        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as c:
-            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0 (posterchanai-card)"})
-        if r.status_code != 200:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=10.0) as c:
+            for hop in range(6):
+                async with c.stream("GET", url, headers={"User-Agent": "Mozilla/5.0 (posterchanai-card)"}) as r:
+                    if r.is_redirect:
+                        from urllib.parse import urljoin
+                        url = urljoin(url, r.headers.get("location", ""))
+                        # Every redirect crosses the trust boundary again. An
+                        # allowed public avatar must not redirect into the LAN.
+                        if not await asyncio.to_thread(_url_is_safe_to_fetch, url, []):
+                            return ""
+                        continue
+                    if r.status_code != 200:
+                        return ""
+                    ct = (r.headers.get("content-type") or "").split(";")[0].strip()
+                    if not ct.startswith("image/"):
+                        return ""
+                    data = bytearray()
+                    async for chunk in r.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > 8_000_000:
+                            return ""
+                    import base64 as _b64
+                    return f"data:{ct};base64,{_b64.b64encode(data).decode()}"
             return ""
-        ct = (r.headers.get("content-type") or "").split(";")[0].strip()
-        if not ct.startswith("image/") or len(r.content) > 8_000_000:
-            return ""
-        import base64 as _b64
-        return f"data:{ct};base64,{_b64.b64encode(r.content).decode()}"
     except Exception:
         return ""
 
@@ -738,8 +753,7 @@ async def client_screenshot(request: Request, db: Session = Depends(get_db)):
 
     # registrable domain of THIS instance → also trust its subdomains (e.g. a LAN media.<host>)
     site_host = (urlparse(settings_store.get("site_url") or "").hostname or "")
-    req_host = (request.headers.get("host") or "").split(":")[0]
-    base = (site_host or req_host or "")
+    base = site_host
     base_domain = ".".join(base.split(".")[-2:]).lower() if base else ""
     avatar_uri = await _img_data_uri(body.get("avatar_url") or "", base_domain)
     media_uri = await _img_data_uri(body.get("image_url") or "", base_domain)
@@ -3301,14 +3315,14 @@ async def claim_admin(data: ClaimAdmin, db: Session = Depends(get_db)):
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
-    if not _verify_self_auth(data.auth, pk):
+    if not _verify_self_auth(data.auth, pk, "claim-admin"):
         return JSONResponse({"ok": False, "error": "signature required (or stale request)"}, status_code=403)
     npub = nostr_service.npub_of(pk)
     # Re-check server-side: refuse only if a DIFFERENT key already claimed admin (so a configured
     # instance can't be taken over). IDEMPOTENT for the SAME key: on a turnkey node POSTERCHANAI_AUTO_ADMIN
     # already promoted this npub at login, so the client's (stale-config) first-run claim by that same key
     # must succeed — otherwise it 409s with the confusing "an admin already exists" right after first login.
-    admins = db.query(User).filter(User.is_admin == True, User.nostr_npub.isnot(None)).all()  # noqa: E712
+    admins = db.query(User).filter(User.is_admin == True).all()  # noqa: E712
     if admins and all(a.nostr_npub != npub for a in admins):
         return JSONResponse({"ok": False, "error": "an admin already exists"}, status_code=409)
     u = db.query(User).filter(User.nostr_npub == npub).first()
@@ -3356,7 +3370,7 @@ class BlockReq(BaseModel):
     auth: str            # base64 of a signed Nostr event proving the requester holds an admin key
 
 
-def _verify_admin_auth(db: Session, auth_b64: str, target_hex: str) -> str | None:
+def _verify_admin_auth(db: Session, auth_b64: str, target_hex: str, purpose: str | None = None) -> str | None:
     """Verify a base64 signed Nostr auth event and return the signer's hex pubkey IFF: the
     signature is valid, created_at is within a 300s anti-replay window, the event p-tags exactly
     `target_hex` (so the signature authorizes THIS block, not any replayed admin event), and the
@@ -3365,7 +3379,9 @@ def _verify_admin_auth(db: Session, auth_b64: str, target_hex: str) -> str | Non
         ev = json.loads(base64.b64decode(auth_b64))
     except Exception:
         return None
-    if not nostr_event.verify_event(ev):
+    if not isinstance(ev, dict) or ev.get("kind") != 27235 or not nostr_event.verify_event(ev):
+        return None
+    if purpose is not None and ev.get("content") != purpose:
         return None
     if abs(int(ev.get("created_at", 0)) - int(time.time())) > 300:
         return None
@@ -3389,7 +3405,7 @@ def _verify_admin_signer(db: Session, auth_b64: str, expect_content: str) -> str
         ev = json.loads(base64.b64decode(auth_b64))
     except Exception:
         return None
-    if not nostr_event.verify_event(ev):
+    if not isinstance(ev, dict) or ev.get("kind") != 27235 or not nostr_event.verify_event(ev):
         return None
     if abs(int(ev.get("created_at", 0)) - int(time.time())) > 300:
         return None
@@ -3409,7 +3425,7 @@ async def block_pubkey(data: BlockReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "block"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     # Never block the node's own operator/bot keys — that would reject the operator's signup-follow
     # events and break new-account admission, with no in-app way to recover.
@@ -3495,7 +3511,7 @@ async def blossom_access(data: BlossomAccessReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "blossom"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     # This is a read-modify-write of the SHARED replaceable whitelist. Refresh the cache from the relay's
     # own event store FIRST so `cur` reflects reality — otherwise a stale/empty cache (e.g. a grant on a
@@ -3543,7 +3559,7 @@ async def blossom_purge(data: BlossomPurgeReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "blossom-purge"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services import blossom_service
     blobs = blossom_service.list_for_pubkey(db, target)
@@ -3600,7 +3616,7 @@ async def relay_sync(data: RelaySyncReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "relay-sync"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     try:
         from app.services.nostr_relay.thread import trigger_backfill
@@ -3635,9 +3651,6 @@ async def stream_request(data: StreamRequestReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
-    if sum((data.index is not None, bool(data.history), data.restore is not None)) > 1:
-        return JSONResponse({"ok": False, "error": "choose load, save, history, or restore"},
-                            status_code=400)
     u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not u:
         return JSONResponse({"ok": False, "error": "sign in first"}, status_code=404)
@@ -3707,7 +3720,7 @@ async def bridge_access_grant(data: BridgeAccessGrantReq, db: Session = Depends(
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "bridge-access"):
         return JSONResponse({"ok": False, "error": "admin authorization required"}, status_code=403)
     npub = nostr_service.npub_of(target)
     u = db.query(User).filter(User.nostr_npub == npub).first()
@@ -3805,7 +3818,7 @@ async def user_caps_set(data: UserCapsReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "user-caps"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     u = await _find_or_create_user(db, target)
     for c in _USER_CAPS:
@@ -3844,7 +3857,7 @@ async def stream_access(data: StreamAccessReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "stream-access"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     u = await _find_or_create_user(db, target)
     _was = bool(getattr(u, "can_stream", False))
@@ -3880,7 +3893,7 @@ async def ai_access(data: AiAccessReq, db: Session = Depends(get_db)):
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "ai-access"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     u = await _find_or_create_user(db, target)   # pre-grant: create the account if it doesn't exist
     _was = bool(u.can_ai)
@@ -5099,6 +5112,8 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    if sum((data.index is not None, bool(data.history), data.restore is not None)) > 1:
+        return JSONResponse({"ok": False, "error": "choose load, save, history, or restore"}, status_code=400)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not user:
         # A READ from an unknown key is honestly empty. A WRITE from one must FAIL, loudly — the
@@ -5884,12 +5899,12 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
             pass
 
 
-def _verify_self_auth(auth_b64: str, pubkey_hex: str) -> bool:
+def _verify_self_auth(auth_b64: str, pubkey_hex: str, purpose: str | None = None) -> bool:
     """Verify a base64 signed Nostr event authored by `pubkey_hex` within the replay window.
 
     Lives in the service now — /api/push needs the identical check, and a second copy of an auth
     rule is how the two drift until one of them is the weaker one."""
-    return nostr_event.verify_self_auth(auth_b64, pubkey_hex)
+    return nostr_event.verify_self_auth(auth_b64, pubkey_hex, purpose)
 
 
 def _nip05_domain(request: Request, db: Session) -> str:
@@ -5976,7 +5991,7 @@ async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depen
     target = nostr_service.to_pubkey_hex(data.target)
     if not target:
         return JSONResponse({"ok": False, "error": "invalid target"}, status_code=400)
-    if not _verify_admin_auth(db, data.auth, target):
+    if not _verify_admin_auth(db, data.auth, target, "nip05"):
         return JSONResponse({"ok": False, "error": "admin signature required (or stale request)"}, status_code=403)
     from app.services.nostr_relay.thread import trigger_nip05_reload
     raw = settings_store.get("nostr_relay_nip05_names", "") or ""
@@ -6023,6 +6038,15 @@ async def admin_nip05(data: AdminNip05Req, request: Request, db: Session = Depen
     except Exception as e:
         logger.warning("[client] nip05 reload after admin grant/remove failed: %s", e)
     domain = _nip05_domain(request, db)
+    if granted_name:
+        from app.services.instance_welcome import notify_approval
+        await notify_approval(db, target, f"{granted_name}@{domain}")
+    elif data.remove:
+        from app.services.instance_welcome import application
+        pending = application(db, target)
+        if pending:
+            pending.approved_address = ''
+            db.commit()
     return JSONResponse({"ok": True, "granted": not data.remove, "name": granted_name,
                          "nip05": (f"{granted_name}@{domain}" if granted_name else None)})
 

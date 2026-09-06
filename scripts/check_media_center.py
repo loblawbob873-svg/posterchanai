@@ -36,6 +36,7 @@ from app.services import media_center as media
 
 OWNER, VIEWER = "11" * 32, "22" * 32
 ARTIFACTS = Path("/tmp/pc-media-check")
+CDP_PORT = int(os.environ.get("PC_CHECK_PORT", "19439"))
 
 
 class Browser:
@@ -132,7 +133,7 @@ async def main():
         app.include_router(jellyfin.router)
         @app.middleware("http")
         async def edge_config(request, next_handler):
-            token = backend.set("http://127.0.0.1:19440")
+            token = backend.set(nas_url)
             try:
                 return await next_handler(request)
             finally:
@@ -156,37 +157,40 @@ async def main():
         async def page():
             return ("<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
                     "<link rel='stylesheet' href='/static/css/client.css'>"
+                    "<link rel='stylesheet' href='/static/css/media-center-ui.css'>"
                     "<style>body{display:block!important;margin:0!important;padding:12px}#feed{width:100%;max-width:1500px;margin:auto}</style>"
                     "<main id='feed'></main><script src='/static/js/client/sprite.js'></script><script src='/static/vendor/hls/hls.min.js'></script><script>" + bootstrap + functions +
-                    "renderMediaCenter().then(async()=>{await document.querySelector('.mc-library-open').onclick();document.title='READY';});</script>")
-        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=19438, log_level="error"))
-        nas_server = uvicorn.Server(uvicorn.Config(nas, host="127.0.0.1", port=19440, log_level="error"))
+                    "renderMediaCenter().then(async()=>{await document.querySelector('.mc-library-open').onclick();document.title='READY';});</script><script src='/static/js/client/media-center-ui.js'></script>")
+        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error"))
+        nas_server = uvicorn.Server(uvicorn.Config(nas, host="127.0.0.1", port=0, log_level="error"))
         nas_task = asyncio.create_task(nas_server.serve())
         server_task = asyncio.create_task(server.serve())
         process = subprocess.Popen([chrome, "--headless=new", "--no-sandbox", "--disable-gpu",
                                     "--disable-dev-shm-usage", "--autoplay-policy=no-user-gesture-required",
-                                    "--remote-debugging-port=19439", "--remote-debugging-address=127.0.0.1",
+                                    f"--remote-debugging-port={CDP_PORT}", "--remote-debugging-address=127.0.0.1",
                                     "--user-data-dir=" + str(temp / "chrome"), "about:blank"],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             async with httpx.AsyncClient() as client:
                 for _ in range(100):
                     try:
-                        pages = (await client.get("http://127.0.0.1:19439/json/list")).json()
+                        pages = (await client.get(f"http://127.0.0.1:{CDP_PORT}/json/list")).json()
                         browser_page = next(p for p in pages if p["type"] == "page")
                         if server.started and nas_server.started:
                             break
                     except Exception:
                         pass
                     await asyncio.sleep(.1)
-                assert (await client.post('http://127.0.0.1:19438/api/media-center/test/scan')).status_code == 200
+                app_url = "http://127.0.0.1:" + str(server.servers[0].sockets[0].getsockname()[1])
+                nas_url = "http://127.0.0.1:" + str(nas_server.servers[0].sockets[0].getsockname()[1])
+                assert (await client.post(f'{app_url}/api/media-center/test/scan')).status_code == 200
                 async with websockets.connect(browser_page["webSocketDebuggerUrl"], max_size=32 * 1024 * 1024) as ws:
                     browser = Browser(ws)
                     await browser.call("Page.enable")
                     for name, width, height in (("phone", 390, 844), ("tv", 1920, 1080)):
                         await browser.call("Emulation.setDeviceMetricsOverride", {"width": width, "height": height,
                                                                                   "deviceScaleFactor": 1, "mobile": False})
-                        await browser.call("Page.navigate", {"url": "http://127.0.0.1:19438/"})
+                        await browser.call("Page.navigate", {"url": f"{app_url}/"})
                         await browser.until("document.title==='READY'")
                         assert await browser.js("document.querySelector('#mc-tab-mine').getAttribute('aria-selected')==='true'")
                         await browser.js("document.querySelector('#mc-tab-shared').click()", True)
@@ -197,18 +201,22 @@ async def main():
                         await browser.screenshot(name + '-folders.png')
                         await browser.js("document.querySelector('.mc-directory').click()", gesture=True)
                         await browser.until("document.querySelectorAll('.mc-folder-trail button').length===2")
+                        await browser.until("!!document.querySelector('.mc-actions-menu')")
+                        assert await browser.js("!document.querySelector('.mc-actions-menu').open")
+                        await browser.js("document.querySelector('.mc-actions-menu>summary').click()", gesture=True)
                         for index in range(3):
                             await browser.js("document.querySelectorAll('.mc-tool-card')["+str(index)+"].open=true")
                             await asyncio.sleep(.1)
                             assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
                             await browser.screenshot(name + '-control-' + str(index) + '.png')
                             await browser.js("document.querySelectorAll('.mc-tool-card')["+str(index)+"].open=false")
-                        pending = (await client.post('http://127.0.0.1:19438/jellyfin/QuickConnect/Initiate')).json()
+                        await browser.js("document.querySelector('.mc-actions-menu').open=false")
+                        pending = (await client.post(f'{app_url}/jellyfin/QuickConnect/Initiate')).json()
                         await browser.js("document.querySelector('#mc-jellyfin').open=true")
                         await browser.js("document.querySelector('#mc-jellyfin-approve input').value=" + json.dumps(pending['Code']) +
                                          ";document.querySelector('#mc-jellyfin-approve').requestSubmit()", gesture=True)
                         await browser.until("window.lastToast?.startsWith('Jellyfin app approved')")
-                        approved = await client.get('http://127.0.0.1:19438/jellyfin/QuickConnect/Connect', params={'Secret': pending['Secret']})
+                        approved = await client.get(f'{app_url}/jellyfin/QuickConnect/Connect', params={'Secret': pending['Secret']})
                         assert approved.json()['Authenticated'] is True
                         import time
                         device_key = jellyfin.account_key(jellyfin.account_id(SimpleNamespace(nostr_npub=OWNER)))
@@ -224,13 +232,13 @@ async def main():
                         assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
                         await browser.js("document.querySelector('#mc-jellyfin-revoke').click()", gesture=True)
                         await browser.until("window.lastToast==='All Jellyfin apps disconnected.'")
-                        assert (await client.get('http://127.0.0.1:19438/jellyfin/QuickConnect/Connect', params={'Secret': pending['Secret']})).status_code == 404
+                        assert (await client.get(f'{app_url}/jellyfin/QuickConnect/Connect', params={'Secret': pending['Secret']})).status_code == 404
                         await browser.js("document.querySelector('#mc-jellyfin').open=false")
                         print(name, 'PASS: Jellyfin Quick Connect approval and disconnect UI', flush=True)
 
                         await browser.until("document.querySelector('.mc-tile img')?.complete")
                         if name=='phone':
-                            assert (await client.get('http://127.0.0.1:19438/api/media-center/test/scan')).json()['state']=='running'
+                            assert (await client.get(f'{app_url}/api/media-center/test/scan')).json()['state']=='running'
                             await browser.js("window.scanFirstCard=document.querySelector('.mc-tile');window.scanFirstImage=scanFirstCard.querySelector('img');document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)",gesture=True)
                             await browser.until("document.querySelector('video').currentTime>1")
                             scan_release.set()
@@ -270,8 +278,8 @@ async def main():
                         await browser.until("document.querySelector('#mc-playback').hidden")
                         print(name, "PASS: artwork, grid, search, actual HLS playback, full screen, seek, close", flush=True)
                     # Two real browsers play the same cached media under separate Nostr identities.
-                    target = await browser.call("Target.createTarget", {"url": "http://127.0.0.1:19438/?viewer=" + VIEWER})
-                    pages = (await client.get("http://127.0.0.1:19439/json/list")).json()
+                    target = await browser.call("Target.createTarget", {"url": f"{app_url}/?viewer=" + VIEWER})
+                    pages = (await client.get(f"http://127.0.0.1:{CDP_PORT}/json/list")).json()
                     second_page = next(p for p in pages if p["id"] == target["targetId"])
                     async with websockets.connect(second_page["webSocketDebuggerUrl"], max_size=32 * 1024 * 1024) as second_ws:
                         second = Browser(second_ws)
@@ -288,7 +296,7 @@ async def main():
                         assert len(media._sessions) == 2, media._sessions
                         url = await second.js("_mediaCenterSession")
                         documents["library:test"]["shared_with"] = []
-                        assert (await client.get("http://127.0.0.1:19438" + url)).status_code == 404
+                        assert (await client.get(f"{app_url}" + url)).status_code == 404
                         print("two viewers PASS: concurrent HLS playback and existing-ticket revocation", flush=True)
                         await asyncio.gather(browser.js("document.querySelector('#mc-close-player').onclick()", True),
                                              second.js("document.querySelector('#mc-close-player').onclick()", True))

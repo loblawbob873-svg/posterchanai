@@ -23,6 +23,12 @@ die() { echo "pc-provision-user: $*" >&2; exit 1; }
 NPUB="${1:-}"
 [ -n "$NPUB" ] || die "usage: pc-provision-user <npub>"
 
+# A public key names an account; it never proves permission to create or claim it.
+if [ -n "${SUDO_UID:-}" ]; then
+  /usr/local/bin/pc-session-auth verify "$NPUB" provision >/dev/null || exit $?
+  unset PC_HOME_ROOT PC_STATE_ROOT PC_SUDOERS_ROOT
+fi
+
 # Refuse anything that is not a bech32 npub. This runs as root and its argument comes from a login
 # screen; a name built from unvalidated input is how a shell metacharacter becomes a root command.
 case "$NPUB" in
@@ -122,15 +128,14 @@ fi
 # the whole home.
 PROFILE_DIR="$HOME_DIR/.config/posterchan-desktop"
 if [ "$(stat -f -c %T "$HOME_DIR" 2>/dev/null)" = "btrfs" ]; then
-  mkdir -p "$PROFILE_DIR"
-  chattr +C "$PROFILE_DIR" 2>/dev/null || true
-  chown -R "$USERNAME:$USERNAME" "$HOME_DIR/.config"
+  runuser -u "$USERNAME" -- mkdir -p "$PROFILE_DIR"
+  runuser -u "$USERNAME" -- chattr +C "$PROFILE_DIR" 2>/dev/null || true
 fi
 
 # The identity, recorded where the session can read it back without asking the user again.
-printf '%s\n' "$NPUB" > "$HOME_DIR/.posterchan-npub"
-chown "$USERNAME:$USERNAME" "$HOME_DIR/.posterchan-npub"
-chmod 0600 "$HOME_DIR/.posterchan-npub"
+# Drop privileges before touching user-controlled descendants (including symlinks).
+runuser -u "$USERNAME" -- sh -c 'umask 077; printf "%s\n" "$2" > "$1/.posterchan-npub" && chmod 0600 "$1/.posterchan-npub"' sh "$HOME_DIR" "$NPUB" \
+  || die "could not save identity"
 
 # What the caller needs, on stdout, in a form a shell can read without parsing prose.
 echo "user=$USERNAME"

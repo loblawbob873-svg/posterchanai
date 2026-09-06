@@ -1,0 +1,90 @@
+#!/usr/bin/python3 -I
+"""Root-owned, single-use Nostr challenges for local identity provisioning/switching."""
+import fcntl
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import secrets
+import sys
+import time
+
+STATE = Path('/run/posterchanos-auth')
+CRYPTO = Path('/usr/local/libexec/posterchanos/nostr')
+
+
+def crypto_module(name):
+    spec = importlib.util.spec_from_file_location(name, CRYPTO / (name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def verify_event(event, npub, action, challenge, payload):
+    try:
+        if not isinstance(event, dict) or event.get('kind') != 27235:
+            return False
+        if abs(time.time() - event['created_at']) > 300:
+            return False
+        key = crypto_module('bech32').decode('npub', npub)
+        if not key or event['pubkey'] != key.hex():
+            return False
+        tags = event['tags']
+        for name, value in [('t', 'posterchanos'), ('action', action), ('challenge', challenge)]:
+            if [tag for tag in tags if isinstance(tag, list) and tag and tag[0] == name] != [[name, value]]:
+                return False
+        if event['content'] != hashlib.sha256(payload.encode()).hexdigest():
+            return False
+        encoded = json.dumps([0, event['pubkey'], event['created_at'], event['kind'], tags,
+                              event['content']], ensure_ascii=False, separators=(',', ':')).encode()
+        digest = hashlib.sha256(encoded).digest()
+        return event['id'] == digest.hex() and crypto_module('bip340').verify(
+            digest, key, bytes.fromhex(event['sig']))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+
+def main():
+    if os.geteuid() != 0:
+        raise ValueError('root helper required')
+    mode, npub, action = sys.argv[1:]
+    if mode not in {'challenge', 'verify'} or action not in {'provision', 'switch'}:
+        raise ValueError('invalid operation')
+    if not crypto_module('bech32').decode('npub', npub):
+        raise ValueError('invalid identity')
+    caller = int(os.environ.get('SUDO_UID', os.getuid()))
+    os.umask(0o077)
+    STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    record = STATE / (str(caller) + '.json')
+    with (STATE / 'lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if mode == 'challenge':
+            nonce = secrets.token_hex(32)
+            record.write_text(json.dumps({'npub': npub, 'action': action, 'challenge': nonce,
+                                          'expires': time.time() + 300}))
+            print(json.dumps({'challenge': nonce}))
+            return
+        body = sys.stdin.buffer.read(65537)
+        if len(body) > 65536:
+            raise ValueError('proof too large')
+        envelope = json.loads(body)
+        saved = json.loads(record.read_text())
+        payload = envelope.get('payload', '')
+        if not isinstance(payload, str) or saved['npub'] != npub or saved['action'] != action:
+            raise ValueError('identity or action mismatch')
+        if saved['expires'] < time.time() or not verify_event(
+                envelope.get('event'), npub, action, saved['challenge'], payload):
+            raise ValueError('invalid or expired ownership proof')
+        if not isinstance(json.loads(payload), dict):
+            raise ValueError('invalid session payload')
+        record.unlink()  # Consume only a valid proof; it cannot authorize a second operation.
+        print(payload)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception:
+        print('Nostr ownership proof required; sign in again', file=sys.stderr)
+        sys.exit(1)

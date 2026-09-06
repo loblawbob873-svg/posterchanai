@@ -43,11 +43,9 @@ x-common: &common
   # tag made `--profile nostr up` (no --build) reuse whatever image was built last — e.g. a
   # CUDA build — so the lean nostr image silently "pulled in cuda".
   restart: unless-stopped
-  # Let the entrypoint correct the system clock from NTP (date -s needs CAP_SYS_TIME). A wrong
-  # clock silently empties the Nostr relay (its post queries are time-windowed). NOTE: containers
-  # share the host kernel clock, so this sets the HOST's time too — fine for a dedicated node.
-  cap_add:
-    - SYS_TIME
+  # Containers share the host clock. Synchronize it on the host, not from the app.
+  cap_drop: [NET_RAW]
+  security_opt: ["no-new-privileges:true"]
   # One alias for every backend profile (cpu/cuda/rocm/intel/nostr), so the `proxy` service's nginx
   # config can say `posterchanai:3051` and work whichever one you brought up — without it the
   # upstream would have to name a specific profile's service. Only ever run ONE backend profile at
@@ -187,8 +185,8 @@ services:
     cap_add: [MKNOD]
     environment:
       - extra_params=--o:ssl.enable=false --o:ssl.termination=true --o:net.proxy_prefix=true --o:security.capabilities=false --o:security.seccomp=false --o:welcome.enable=false
-      - username=${POSTERCHANAI_CODE_ADMIN_USER:-admin}
-      - password=${POSTERCHANAI_CODE_ADMIN_PASSWORD:-posterchan}
+      - username=${POSTERCHANAI_CODE_ADMIN_USER:-}
+      - password=${POSTERCHANAI_CODE_ADMIN_PASSWORD:-}
     expose: ["9980"]
     ports:
       # Loopback publication lets a host nginx use the same sample config. Override if 9983 is taken.

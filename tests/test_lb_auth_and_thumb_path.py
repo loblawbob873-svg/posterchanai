@@ -64,11 +64,11 @@ def test_is_internal_requires_the_flag_header():
     assert lb_auth.is_internal(None) is False
 
 
-def test_is_internal_accepts_the_bare_flag_only_while_no_secret_is_configured():
-    """The compatibility path: an existing multi-node deployment keeps working across the deploy."""
+def test_is_internal_rejects_the_bare_flag_when_no_secret_is_configured():
+    """Unconfigured peer trust fails closed; configure all nodes before rollout."""
     from app.utils import lb_auth
     with _secret(""):
-        assert lb_auth.is_internal(_Req({"x-posterchanai-load-balanced": "true"})) is True
+        assert lb_auth.is_internal(_Req({"x-posterchanai-load-balanced": "true"})) is False
 
 
 def test_a_configured_secret_makes_the_bare_flag_worthless():

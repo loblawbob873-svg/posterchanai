@@ -72,7 +72,8 @@ def test_installed_account_gate_checks_real_blossom_render_without_reading_names
     assert "syncedRoots:q('.syncroot')" in SCRIPT
     assert "PCSync.docs.state(key)" in SCRIPT
     assert "pcFs.scan(f.id,{excludes:f.excludes||[]})" in SCRIPT
-    assert 'row["server"] == row["manifest"] == row["local"]' in SCRIPT
+    assert 'row["server"] == row["manifest"]' in SCRIPT
+    assert 'row["expected"] == row["local"]' in SCRIPT
     assert 'row["skipped"] == 0' in SCRIPT
     assert "syncAudit.push({key" not in SCRIPT
     assert "textContent" not in SCRIPT

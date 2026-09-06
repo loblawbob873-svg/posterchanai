@@ -82,14 +82,19 @@ class Bridge(unittest.TestCase):
         i = self.main.index("'pc:os:provision'")
         body = self.main[i:i + 900]
         self.assertIn("npub1", body, "an unvalidated string is passed to a root command")
-        self.assertIn("sudo", body)
-        self.assertIn("-n", body, "sudo may not be allowed to prompt — it would hang the shell")
+        self.assertIn("runOSHelper", body)
+        helper = self.main[self.main.index("function runOSHelper("):self.main.index("ipcMain.handle('pc:os:challenge'")]
+        self.assertIn("spawn('sudo', ['-n', ...args]", helper)
 
     def test_provision_runs_one_fixed_command(self):
         i = self.main.index("'pc:os:provision'")
         body = self.main[i:i + 900]
         self.assertIn("/usr/local/bin/pc-provision-user", body)
-        self.assertIn("execFile", body, "a shell would make the argument executable")
+        self.assertIn("runOSHelper(['/usr/local/bin/pc-provision-user', id], body)", body)
+        helper = self.main[self.main.index("function runOSHelper("):self.main.index("ipcMain.handle('pc:os:challenge'")]
+        self.assertIn("proc.stdin.end(body", helper)
+        self.assertNotIn("shell: true", helper)
+        self.assertNotIn("exec(", helper)
 
     def test_a_launch_that_never_appears_is_not_reported_as_launched(self):
         i = self.main.index("'pc:wm:launch'")
