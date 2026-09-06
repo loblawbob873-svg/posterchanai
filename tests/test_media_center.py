@@ -20,7 +20,7 @@ VIEWER = "22" * 32
 @pytest.fixture
 def api(monkeypatch, tmp_path):
     documents = {}
-    user = SimpleNamespace(nostr_npub=OWNER, is_admin=True)
+    user = SimpleNamespace(nostr_npub=OWNER, is_admin=True, can_media=True)
     async def read(key):
         return copy.deepcopy(documents.get(key))
     async def write(key, value):
@@ -151,7 +151,7 @@ def test_proxy_identity_requires_secret_and_keeps_acl(api, monkeypatch):
     seed(docs, folder)
     client.app.dependency_overrides.pop(routes.media_user_optional)
     client.app.dependency_overrides[get_current_user_optional] = lambda: None
-    headers = {"X-PC-Media-Viewer": VIEWER, "X-PC-Media-Admin": "false", lb_auth.FLAG_HEADER_NAME: "true"}
+    headers = {"X-PC-Media-Viewer": VIEWER, "X-PC-Media-Admin": "false", "X-PC-Media-Allowed": "true", lb_auth.FLAG_HEADER_NAME: "true"}
     assert client.get("/api/media-center", headers=headers).status_code == 403
     monkeypatch.setattr(lb_auth, "shared_secret", lambda: "test-secret")
     assert client.get("/api/media-center", headers=headers).status_code == 403
@@ -376,3 +376,153 @@ def test_slow_viewer_does_not_reserve_other_users_bandwidth(monkeypatch):
         assert asyncio.get_running_loop().time() - start < .1
         await first
     asyncio.run(exercise())
+
+
+def test_media_permission_required_and_revoked_on_existing_tickets(api):
+    client, docs, user, folder = api
+    seed(docs, folder)
+    user.nostr_npub, user.is_admin, user.can_media = VIEWER, False, False
+    assert client.get('/api/media-center').status_code == 403
+    assert client.post('/api/media-center/abc/play/movie').status_code == 403
+    user.can_media = True
+    url = client.post('/api/media-center/abc/play/movie').json()['url']
+    assert client.get(url).status_code == 200
+    user.can_media = False
+    assert client.get(url).status_code == 403
+    user.is_admin = True
+    assert client.get('/api/media-center').status_code == 200
+
+
+def test_missing_login_returns_private_401(api):
+    client, _, _, _ = api
+    client.app.dependency_overrides[routes.media_user_optional] = lambda: None
+    response = client.get('/api/media-center')
+    assert response.status_code == 401
+    assert response.headers['cache-control'] == 'private, no-store'
+
+
+def test_permission_revocation_blocks_proxy_before_network(api, monkeypatch):
+    client, docs, user, folder = api
+    seed(docs, folder)
+    user.nostr_npub, user.is_admin = VIEWER, False
+    url = client.post('/api/media-center/abc/play/movie').json()['url']
+    user.can_media = False
+    monkeypatch.setattr(routes.settings_store, 'get', lambda *args: 'http://nas.lan:3051')
+    monkeypatch.setattr(routes.lb_auth, 'shared_secret', lambda: 'test-secret')
+    class NoNetwork:
+        def build_request(self, *args, **kwargs):
+            pytest.fail('revoked permission reached NAS')
+    monkeypatch.setattr(routes, '_proxy_client', NoNetwork())
+    assert client.get(url).status_code == 403
+    assert client.get('/api/media-center').status_code == 403
+
+
+def test_cookie_free_ticket_checks_persisted_permission(api):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app.models import User
+    client, docs, user, folder = api
+    seed(docs, folder)
+    user.nostr_npub, user.is_admin = VIEWER, False
+    url = client.post('/api/media-center/abc/play/movie').json()['url']
+    engine = create_engine('sqlite:///' + str(folder / 'users.db'))
+    User.__table__.create(engine)
+    with Session(engine) as db:
+        account = User(username='viewer', password_hash='unused', nostr_npub=VIEWER, can_media=True)
+        db.add(account)
+        db.commit()
+        client.app.dependency_overrides[routes.media_user_optional] = lambda: None
+        client.app.dependency_overrides[routes.get_db] = lambda: db
+        assert client.get(url).status_code == 200
+        account.can_media = False
+        db.commit()
+        assert client.get(url).status_code == 403
+    engine.dispose()
+
+
+def test_media_permission_encrypted_roundtrip_and_cold_hydration(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app.models import User
+    from app.services import users_store, nostr_store
+    from app.services.nostr import nip44
+    key = bytes.fromhex('01' * 32)
+    events = []
+    async def publish(port, event, **kwargs):
+        events.append(event)
+        return True, ''
+    monkeypatch.setattr(nostr_store, '_ws_publish', publish)
+    monkeypatch.setattr(users_store._ss, '_operator_seckey', lambda db: key)
+    monkeypatch.setattr(users_store._ss, '_port', lambda db: 7777)
+    engine = create_engine('sqlite://')
+    User.__table__.create(engine)
+    with Session(engine) as db:
+        account = User(username='viewer', password_hash='unused', nostr_npub=VIEWER, can_media=True)
+        db.add(account)
+        db.commit()
+        assert asyncio.run(users_store.sync_user(db, account))
+        assert 'can_media' not in events[-1]['content']
+        record = json.loads(nip44.decrypt_self(key, events[-1]['content']))
+        async def list_docs(*args, **kwargs):
+            return {'user': record}
+        monkeypatch.setattr(users_store.store, 'list_docs', list_docs)
+        db.execute(User.__table__.delete())
+        db.commit()
+        db.expunge_all()
+        assert asyncio.run(users_store.hydrate(db)) == 1
+        restored = db.query(User).one()
+        assert restored.can_media is True
+        record['can_media'] = False
+        assert asyncio.run(users_store.hydrate(db)) == 1
+        assert restored.can_media is False
+    engine.dispose()
+
+
+def test_browser_auth_recovery_executes_real_helper():
+    source = Path('static/js/client/app.js').read_text()
+    helper = source[source.index('  async function _mediaCenterFetch('):source.index('  function clearMediaCenterArt(')]
+    script = """
+const assert = require('node:assert/strict');
+let _aiToken='', _aiAuth=null, fail=false, statuses=[], calls=[], logins=0;
+function _setAiToken(token){_aiToken=token;}
+async function ensureAiSession(){
+ if(fail)throw new Error('signer unavailable');
+ if(!_aiToken){_aiToken='token'+(++logins);_aiAuth={};}
+}
+async function _streamFetch(url,opts){calls.push({url,opts,token:_aiToken});return {status:statuses.shift()};}
+""" + helper + """
+(async()=>{
+ fail=true;
+ await assert.rejects(_mediaCenterFetch('/api/media-center'),/signer unavailable/);
+ assert.equal(calls.length,0);
+ fail=false;statuses=[401,200];
+ assert.equal((await _mediaCenterFetch('/api/media-center')).status,200);
+ assert.equal(logins,2);assert.equal(calls.length,2);
+ assert.notEqual(calls[0].token,calls[1].token);
+ assert.equal(calls[0].opts.credentials,'include');
+ statuses=[403];calls=[];
+ assert.equal((await _mediaCenterFetch('/api/media-center')).status,403);
+ assert.equal(calls.length,1);assert.equal(logins,2);
+ statuses=[401,401];calls=[];
+ assert.equal((await _mediaCenterFetch('/api/media-center')).status,401);
+ assert.equal(calls.length,2); // never loop indefinitely
+})().catch(e=>{console.error(e);process.exit(1)});
+"""
+    result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+
+
+def test_upgrade_adds_media_permission_default_denied(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, text
+    from app import database
+    engine = create_engine('sqlite:///' + str(tmp_path / 'upgrade.db'))
+    routes.User.__table__.create(engine)
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE users DROP COLUMN can_media'))
+        conn.execute(text("INSERT INTO users (username,password_hash,nostr_npub) VALUES ('old','unused',:key)"), {'key': VIEWER})
+    monkeypatch.setattr(database, 'engine', engine)
+    database._run_migrations()
+    database._run_migrations()  # upgrades remain idempotent
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT can_media FROM users')).scalar_one() == 0
+    engine.dispose()

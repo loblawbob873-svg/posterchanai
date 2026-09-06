@@ -18,6 +18,9 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user_optional
+from app.database import get_db
+from app.models import User
+from app.services.nostr.nostr_service import npub_of
 from app.services import media_center as media
 from app.services import settings_store
 from app.utils import lb_auth
@@ -43,13 +46,32 @@ async def media_user_optional(request: Request, user=Depends(get_current_user_op
             key = media.normalize_pubkey(assertion)
         except ValueError as error:
             raise HTTPException(403, "Invalid media proxy identity") from error
-        return SimpleNamespace(nostr_npub=key, is_admin=request.headers.get("X-PC-Media-Admin") == "true")
+        return SimpleNamespace(nostr_npub=key, is_admin=request.headers.get("X-PC-Media-Admin") == "true",
+                               can_media=request.headers.get("X-PC-Media-Allowed") == "true")
+    return user
+
+
+def media_allowed(user):
+    return bool(user and (user.is_admin or getattr(user, "can_media", False)))
+
+
+def ticket_user(viewer, user, db):
+    try:
+        viewer = media.normalize_pubkey(viewer)
+    except ValueError as error:
+        raise HTTPException(403, "Invalid viewer") from error
+    if not user or media.identity(user) != viewer:
+        user = db.query(User).filter(User.nostr_npub.in_([viewer, npub_of(viewer)])).first()
+    if not media_allowed(user):
+        raise HTTPException(403, "An admin must enable your Media Center permission")
     return user
 
 
 async def get_media_user(user=Depends(media_user_optional)):
     if user is None:
         raise HTTPException(401, "Sign in to use Media Center")
+    if not media_allowed(user):
+        raise HTTPException(403, "An admin must enable your Media Center permission")
     return user
 
 
@@ -64,7 +86,7 @@ class ProxiedResponse(Exception):
         self.response = response
 
 
-async def proxy_request(request: Request, user=Depends(media_user_optional)):
+async def proxy_request(request: Request, user=Depends(media_user_optional), db=Depends(get_db)):
     global _proxy_client
     base = (settings_store.get("media_center_server_url", "") or "").strip().rstrip("/")
     if not base:
@@ -77,13 +99,18 @@ async def proxy_request(request: Request, user=Depends(media_user_optional)):
     if not lb_auth.shared_secret():
         raise HTTPException(503, "Set the node-to-node shared secret on both Media Center nodes")
     headers = lb_auth.headers({"X-PC-Media-Hop": "1", "Accept-Encoding": "identity"})
-    if "/hls/" not in request.url.path:
+    if "/hls/" in request.url.path:
+        user = ticket_user(request.query_params.get("viewer", ""), user, db)
+    else:
         if user is None:
             raise HTTPException(401, "Sign in to use Media Center")
-        pubkey = media.identity(user)
-        if not pubkey:
-            raise HTTPException(403, "Sign in with Nostr to use remote Media Center")
-        headers.update({"X-PC-Media-Viewer": pubkey, "X-PC-Media-Admin": "true" if user.is_admin else "false"})
+        if not media_allowed(user):
+            raise HTTPException(403, "An admin must enable your Media Center permission")
+    pubkey = media.identity(user)
+    if not pubkey:
+        raise HTTPException(403, "Sign in with Nostr to use remote Media Center")
+    headers.update({"X-PC-Media-Viewer": pubkey, "X-PC-Media-Admin": "true" if user.is_admin else "false",
+                    "X-PC-Media-Allowed": "true" if getattr(user, "can_media", False) else "false"})
     if request.headers.get("content-type"):
         headers["Content-Type"] = request.headers["content-type"]
     body = bytearray()
@@ -352,7 +379,9 @@ async def playback(library_id: str, item_id: str, user=Depends(get_media_user)):
 
 @router.get("/{library_id}/hls/{item_id}/{asset}")
 async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max_length=64),
-              expires: int = Query(), ticket: str = Query(max_length=64)):
+              expires: int = Query(), ticket: str = Query(max_length=64),
+              user=Depends(media_user_optional), db=Depends(get_db)):
+    ticket_user(viewer, user, db)
     library = await library_for(library_id, viewer)
     if (expires < time.time() or not library.get("playback_secret") or
             not hmac.compare_digest(ticket, sign_ticket(library, item_id, viewer, expires))):

@@ -145,3 +145,6 @@ mobile/www/
 # track, and `git add -A` should not be trying.
 .run/
 RELEASE_NOTES.md
+
+# Per-node Media Center roots/device configuration
+/media-center.env

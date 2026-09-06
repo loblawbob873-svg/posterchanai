@@ -4,9 +4,11 @@
 
 # Poster-chan AI
 
-### A Nostr-powered personal cloud, and a self-hosted AI powerhouse — on your hardware, under your keys.
+### A Nostr-powered personal cloud, media streaming server, and self-hosted AI powerhouse — on your hardware, under your keys.
 
 **Replace the cloud, then put a GPU behind it.** Your notes, calendar, contacts, addressbook, files, photos, passwords, bookmarks, mail, music and folder sync — all of it living as **encrypted Nostr events on a relay you run**, reachable from a web client, a desktop app, an Android app, and from any CalDAV/CardDAV phone client you already own. No account with anybody, no per-seat billing, no vendor holding the keys.
+
+**Your own media streaming server:** [Media Center](docs/MEDIA_CENTER.md) turns server or NAS folders into private, folder-sorted libraries with cover cards, mobile/TV playback and full-screen video. Connect Jellyfin clients using Quick Connect (see the compatibility scope in the setup guide), share with approved Nostr users, stream through a NAS proxy, and transcode with NVIDIA, AMD/VA-API or CPU fallback. Catalogs stay as encrypted events on your local relay; media files stay on disk and are not federated. Bandwidth defaults to 200 KB/s per viewer, with bounded transcoding and a `/tmp` cache.
 
 **Then the part a cloud drive can't do:** the same box runs your own models. Chat, image, voice, video and music generation, a private metasearch engine, live streaming, and autonomous bots on **Telegram, Pleroma & Nostr** — driven by cloud LLMs or the built-in native `llama.cpp` (CPU / CUDA / ROCm / **Intel Arc**). One FastAPI backend, an OpenAI-compatible `/v1/`, and a web-of-trust relay on PostgreSQL that *is* the datastore.
 
@@ -98,6 +100,8 @@ Then, when you want more:
 ---
 
 ## Features
+
+- **Media streaming server / Media Center** — admin-managed video and music libraries, Nostr-user permissions and sharing, NAS proxy, adaptive HLS, mobile/TV cover grids, full-screen playback, and persistent bandwidth/resource limits. [Setup and Docker media mounts](docs/MEDIA_CENTER.md).
 
 ### Chat & AI
 

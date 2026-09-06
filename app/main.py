@@ -80,8 +80,9 @@ class _ScopedCORS(CORSMiddleware):
     over: it answers the preflight 400 for an origin not on the allowlist, and it appends
     Allow-Credentials: true, which a browser REJECTS when combined with Origin: * — so the route's own
     correct header was neutralised by this one. Skipping both prefixes hands the request to their own
-    OPTIONS handlers."""
-    _OWN_CORS = ("/blossom", "/git/")   # trailing slash: must not swallow a future /gitea-style route
+    OPTIONS handlers. Jellyfin uses its own token-only CORS middleware too; its
+    Nostr approval endpoint remains under the normal credentialed allowlist."""
+    _OWN_CORS = ("/blossom", "/git/", "/jellyfin/")   # trailing slash: must not swallow a future /gitea-style route
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http" and scope.get("path", "").startswith(self._OWN_CORS):
@@ -227,6 +228,10 @@ app.include_router(effects_api.router)
 app.include_router(media_api.router)
 from app.routers import media_center
 app.include_router(media_center.router)
+from app.routers import jellyfin
+app.include_router(jellyfin.account_router)
+app.include_router(jellyfin.router)
+app.add_middleware(jellyfin.ClientCORS)
 app.add_event_handler("shutdown", media_center.close_proxy)
 app.include_router(news.router)
 app.include_router(websearch.router)  # /api/websearch/* (Web Search screen: SearXNG proxy, reader, AI overview)

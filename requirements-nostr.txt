@@ -6,6 +6,9 @@
 # lazy); AI commands/endpoints are hidden in nostr-only mode (POSTERCHANAI_NOSTR_ONLY=1).
 #
 # Keep this in sync with the non-AI deps in requirements.txt.
+# Media Center works in this lean build too: httpx for NAS proxying, Pillow for
+# covers, and cryptography/websockets for encrypted local catalogs. FFmpeg/ffprobe
+# are installed by Docker or the host package manager; no torch stack is needed.
 
 # Core web framework
 fastapi>=0.109.0,<1.0.0

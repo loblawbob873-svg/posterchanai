@@ -3743,7 +3743,7 @@ async def bridge_access_grant(data: BridgeAccessGrantReq, db: Session = Depends(
     return JSONResponse({"ok": True})
 
 
-_USER_CAPS = ("can_image", "can_music", "can_video", "can_torrent")
+_USER_CAPS = ("can_image", "can_music", "can_video", "can_torrent", "can_media")
 
 
 class UserCapsReq(BaseModel):

@@ -313,6 +313,7 @@ async function loadUsers() {
                             <label class="cap-toggle"><input type="checkbox" id="cap_music_${u.id}" ${u.can_music ? 'checked' : ''}> 🎵 Music</label>
                             <label class="cap-toggle"><input type="checkbox" id="cap_video_${u.id}" ${u.can_video ? 'checked' : ''}> 🎬 Video</label>
                             <label class="cap-toggle"><input type="checkbox" id="cap_torrent_${u.id}" ${u.can_torrent ? 'checked' : ''}> 🧲 Torrent</label>
+                            <label class="cap-toggle"><input type="checkbox" id="cap_media_${u.id}" ${u.can_media ? 'checked' : ''}> 📺 Media Center</label>
                             <label class="cap-toggle"><input type="checkbox" id="cap_blossom_${u.id}" ${u.can_blossom ? 'checked' : ''}> 🌸 Blossom</label>
                             <label class="cap-toggle"><input type="checkbox" id="cap_stream_${u.id}" ${u.can_stream ? 'checked' : ''}> 🔴 Go Live</label>
                             <label class="cap-toggle"><input type="checkbox" id="cap_ai_${u.id}" ${u.can_ai ? 'checked' : ''}> 🤖 AI</label>
@@ -403,6 +404,7 @@ async function updateCapabilities(userId, username) {
         can_music: cap('music'),
         can_video: cap('video'),
         can_torrent: cap('torrent'),
+        can_media: cap('media'),
         can_blossom: cap('blossom'),
         can_stream: cap('stream'),
         can_ai: cap('ai'),

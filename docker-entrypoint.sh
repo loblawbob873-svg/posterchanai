@@ -8,7 +8,10 @@
 set -e
 
 DATA_HOME="${POSTERCHANAI_DATA:-/var/lib/posterchanai}"
-mkdir -p "$DATA_HOME"/{models,torrents,tor,tor2,hf,miopen,assets} /app/data
+mkdir -p "$DATA_HOME"/{models,torrents,tor,tor2,hf,miopen,assets,media} /app/data
+# Compose supplies this cache as tmpfs; a bare docker run should use --tmpfs
+# /tmp/posterchan-media-center:size=2560m,mode=0700. The service enforces /tmp paths.
+mkdir -p -m 700 /tmp/posterchan-media-center
 
 # --- Timezone, THEN clock sync, BEFORE the app/relay start ---------------------------------------
 # The Nostr relay's queries are time-windowed (backfill `since = now - 48h`, created_at sanity), so

@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # Account-authority fields mirrored to the relay (keyed by npub, which is stored alongside).
 ACCOUNT_FIELDS = (
     "username", "email", "email_verified", "is_admin",
-    "can_ai", "can_image", "can_music", "can_video", "can_torrent", "can_blossom", "can_stream",
+    "can_ai", "can_image", "can_music", "can_video", "can_torrent", "can_media", "can_blossom", "can_stream",
     "storage_quota", "access_revoked",
 )
 

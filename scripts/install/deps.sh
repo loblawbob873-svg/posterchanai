@@ -61,6 +61,17 @@ check_dependencies() {
         print_success "ffmpeg found (music transcoding + video compression + 'hava' video + live-stream clamp available)"
     fi
 
+    if ! command -v ffprobe &>/dev/null; then
+        print_warning "ffprobe not found - Media Center cannot scan local media folders"
+        echo "  Install your distro's FFmpeg package (ffmpeg and ffprobe)."
+    elif command -v ffmpeg &>/dev/null; then
+        if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'libx264'; then
+            print_success "Media Center: ffprobe + CPU H.264 transcoding available"
+        else
+            print_warning "Media Center CPU fallback requires an FFmpeg build with libx264"
+        fi
+    fi
+
     # tesseract OCR binary - pytesseract (in requirements.txt) is only a wrapper and
     # needs the system `tesseract` command to read text from images/scanned PDFs.
     if ! command -v tesseract &>/dev/null; then
@@ -210,6 +221,12 @@ show_install_instructions() {
             echo "  # See: https://rocm.docs.amd.com/projects/install-on-linux/en/latest/"
             ;;
     esac
+    echo "  Media Center: install FFmpeg (ffmpeg + ffprobe) with libx264 and AAC."
+    echo "  Debian/Ubuntu: apt install ffmpeg mesa-va-drivers"
+    echo "  Arch: pacman -S ffmpeg mesa"
+    echo "  Gentoo: emerge -av media-video/ffmpeg (enable x264, nvenc or vaapi USE flags)"
+    echo "  Fedora/openSUSE: use a full codec-enabled FFmpeg package for H.264 encoding."
+    echo "  GPU service users need access to the video/render devices. See docs/MEDIA_CENTER.md."
     echo ""
 }
 

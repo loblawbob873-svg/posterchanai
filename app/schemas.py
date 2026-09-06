@@ -26,6 +26,7 @@ class UserResponse(BaseModel):
     can_music: bool = True
     can_video: bool = True
     can_torrent: bool = True
+    can_media: bool = False
     can_blossom: bool = False
     can_stream: bool = False
     can_ai: bool = False

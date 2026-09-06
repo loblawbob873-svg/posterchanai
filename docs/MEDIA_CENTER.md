@@ -5,6 +5,8 @@ by folder and filename (Season 2 before Season 10). Open **Media Center** in the
 desktop launcher. A Nostr-signed-in administrator can add a folder; the owning administrator
 can rescan and grant or revoke access using npubs or hex public keys. All configuration
 requires a current admin role, including for an owner whose admin role was removed.
+Enable **Additional permissions → Media Center** on each viewer’s account, then share
+the library with that user. Administrators have access without this checkbox.
 Authorized ordinary users can browse and play, but cannot scan, change sharing or limits,
 or see server folder paths and sharing controls. Shared users sign in on the
 hosting Posterchan instance. No social messages or invitations are sent automatically.
@@ -65,6 +67,30 @@ before CPU. FFmpeg must include the encoder and the service must have access to 
 corresponding drivers/device. Failed hardware attempts are suppressed for five minutes,
 with CPU fallback. See [FFmpeg codec documentation](https://ffmpeg.org/ffmpeg-codecs.html).
 
+### Installer and Docker
+
+The bare-metal installer creates `media-center.env` beside `install.sh` only when
+absent. Its generated systemd service reads that file on startup, preserving your
+roots and device settings across installer updates. Edit it and restart the service.
+FFmpeg/ffprobe are operating-system dependencies; Media Center uses the existing
+Python dependencies in both `requirements.txt` and `requirements-nostr.txt`.
+
+Docker includes FFmpeg, CPU H.264 and Mesa VA-API drivers. To mount a NAS folder
+read-only and use NVIDIA on the NAS:
+
+```sh
+POSTERCHANAI_MEDIA_PATH=/mnt/media docker compose \
+  -f docker-compose.yml -f docker-compose.media.yml --profile cuda up -d --build
+```
+
+The host needs NVIDIA drivers and NVIDIA Container Toolkit. The image enables the
+`video` driver capability for NVENC. Use `--profile cpu` or `--profile nostr` for
+CPU transcoding; AMD/Intel profiles expose `/dev/dri`. All application profiles mount
+`/tmp/posterchan-media-center` as a 2560 MB tmpfs. Set
+`POSTERCHANAI_MEDIA_TMPFS_SIZE` to change its capacity; keep the Media Center cache
+limit below that capacity with room for concurrent temporary segments. The source
+mount must already exist. Catalogs remain in the persistent local relay.
+
 ## Bandwidth and resource controls
 
 Administrators open **Bandwidth and resource limits** inside Media Center:
@@ -116,13 +142,63 @@ Current bounds: 100 libraries and 10,000 playable items per library. This initia
 does not include subtitle selection, watch-history synchronization, metadata/poster
 scraping, scheduled scanning, or direct-play/remux optimization.
 
+## Jellyfin apps and Quick Connect
+
+The compatibility API lets Jellyfin clients use Media Center's existing libraries and
+transcoders. It does not install a second media server or maintain a second catalog.
+
+1. In the Jellyfin app, add `https://your-posterchan-host/jellyfin` as the server and
+   select **Quick Connect**. The app displays a six-digit code.
+2. Sign in to Posterchan with Nostr. Open **Media Center → Connect a Jellyfin app**,
+   enter that code, and select **Approve this app**.
+3. Return to the Jellyfin app to finish connecting. It sees the same shared libraries
+   available to that Nostr identity. An administrator must first grant Media Center
+   access and share the library, as described above.
+
+This uses Jellyfin's [Quick Connect protocol](https://kotlin-sdk.jellyfin.org/guide/authentication.html#quick-connect).
+There are no separate passwords. Codes expire after five minutes and are single-use.
+App tokens last 90 days, survive restarts as hashed values in encrypted local events,
+and grant only Media Center access. Up to 16 app sessions are retained per user.
+**Disconnect all Jellyfin apps** revokes those tokens and pending approvals. Removing
+Media Center permission or library sharing also blocks subsequent requests, including
+playback already opened by an app. Pending codes and active playback sessions are
+transient; after a server restart, request a new code or reopen playback as needed.
+
+On a public-node/NAS setup, clients connect to the public node's `/jellyfin` URL.
+The public node keeps app credentials locally and delegates media requests through
+**Media Center Server URL**. Both nodes need the Media Center code. Catalogs, app
+credentials and tokens are excluded from federation. Jellyfin clients use the same
+200 KB/s default, GPU/CPU transcoders, `/tmp` cache and concurrency controls as web
+viewers. Client bitrate requests can reduce available quality but cannot bypass server
+limits. Bundled web clients can use token-authenticated CORS on `/jellyfin/*`; Nostr
+approval endpoints retain Posterchan's existing origin restrictions.
+
+Supported compatibility surface: server discovery, Quick Connect, current-user info,
+library views, paginated item browsing/search, cover images, playback information,
+HLS video/audio, playback session reporting and logout. Direct-play/download endpoints
+are not exposed because they would bypass Media Center's bandwidth controls.
+Jellyfin administration, plugins, Live TV, remote control, subtitles, favorites and
+saved watch/resume history are not implemented. There is no bundled Jellyfin web UI.
+The API advertises the Jellyfin 10.10 playback protocol for client discovery while
+identifying the server as **Posterchan Media Center**.
+
+Validation uses the official `@jellyfin/sdk` 0.13.0 for discovery, Quick Connect,
+browsing, cover retrieval, playback URL construction and stopping, with real FFmpeg
+HLS decoding against both local and NAS-proxied libraries. The approval/disconnect UI
+is exercised in Chrome at phone and TV sizes. Individual Android TV, iOS and other
+packaged clients still need device testing; this is not a claim that every Jellyfin
+client or feature works.
+
 ## Cloudflare
 
-All API and streaming paths are under **`/api/media-center`**. Create a Cache Rule:
+The web UI uses **`/api/media-center`**; Jellyfin clients use **`/jellyfin`**.
+Bypass caching on both prefixes. Create a Cache Rule:
 
 ```text
 (http.request.uri.path eq "/api/media-center") or
-starts_with(http.request.uri.path, "/api/media-center/")
+starts_with(http.request.uri.path, "/api/media-center/") or
+(http.request.uri.path eq "/jellyfin") or
+starts_with(http.request.uri.path, "/jellyfin/")
 ```
 
 Set **Cache eligibility → Bypass cache**. Ensure later matching cache rules do not
@@ -132,7 +208,8 @@ excludes these paths from offline caches. Reverse proxies should honor the no-bu
 header so origin pacing reaches viewers. See
 [Cloudflare Cache Rules settings](https://developers.cloudflare.com/cache/how-to/cache-rules/settings/).
 
-Streaming URLs use expiring, media-scoped tickets instead of account tokens. Every
+Web-player URLs use expiring, media-scoped tickets. Jellyfin player URLs use
+media-only app tokens and playback-session IDs. Every
 playlist and segment request checks the current library ACL; revocation prevents future
 requests, including existing tickets. Already-buffered media cannot be withdrawn.
 Treat signed playback URLs as credentials and redact their query strings from access logs.
@@ -141,22 +218,47 @@ The Cloudflare rule must be configured in the zone; source changes do not create
 ## Validation
 
 ```sh
-.venv/bin/pytest -q tests/test_media_center.py
+.venv/bin/pytest -q tests/test_media_center.py tests/test_media_center_packaging.py
 node --check static/js/client/app.js
 node --check static/js/client/sw.js
 .venv/bin/python scripts/check_media_center.py
 ```
 
-The tests use an isolated in-memory document store and temporary generated media. They
-check sharing/revocation, no federation, path confinement, bandwidth filtering and actual
+The broader regression command used for this validation is:
+
+```sh
+.venv/bin/pytest -q tests/test_media_center.py tests/test_media_center_packaging.py \
+  tests/test_nip78_auth_privacy.py tests/test_admin_settings_coverage.py \
+  tests/test_install_defaults.py tests/test_docker_nostr_no_models.py \
+  tests/client/test_auth_signer_failure.py tests/client/test_nip78_auth.py
+```
+
+Compose tests require Docker Compose (or `MEDIA_TEST_COMPOSE=/path/to/docker-compose`).
+The tests use isolated document stores, temporary databases and generated media. They
+check login failure and stale-token recovery, Media Center permission grants/revocation,
+cookie-free playback, encrypted permission hydration, existing-user schema upgrades,
+installer preservation and Docker mounts, sharing/revocation, no federation, path confinement, bandwidth filtering and actual
 byte pacing, stream admission, failure-safe scans, and real FFmpeg segments/cache reuse.
 The browser check runs separate loopback public-proxy and NAS servers, real HLS playback,
 phone/TV layouts, cover loading, seeking, full screen, two concurrent Nostr identities,
 revocation and stream-slot release. It writes screenshots to `/tmp/pc-media-check`.
 
-Validation on 2026-09-05: 52 focused API/privacy/admin-schema tests passed. The browser
+Validation on 2026-09-05: 86 focused tests plus 12 subtests passed across Media Center,
+API/privacy/admin-schema, authentication, migration and packaging checks. The browser
 check passed at the 200 KB/s per-viewer default. One-second tests of the actual Media
 Center FFmpeg command on `nas.lan` passed with CPU libx264, NVIDIA NVENC and AMD VA-API.
 AMF did not initialize on that host; AMD mode uses the working VA-API path first and
 retains CPU fallback. Automatic mode selects NVIDIA first. The NAS's `/tmp` was verified
 as a 32 GiB tmpfs. Retest hardware paths after driver or FFmpeg changes.
+
+To include the official Jellyfin SDK integration cases (test-only dependency):
+
+```sh
+npm install --prefix /tmp/pc-jellyfin-sdk --no-audit --no-fund @jellyfin/sdk@0.13.0
+JELLYFIN_TEST_SDK=/tmp/pc-jellyfin-sdk/node_modules/@jellyfin/sdk \
+  .venv/bin/pytest -q tests/test_jellyfin.py
+```
+
+Without that environment variable, only the two SDK/FFmpeg cases are skipped; the
+local/proxy Quick Connect, permission, revocation, token isolation, CORS, pagination,
+bandwidth and relay-acknowledgement regression cases still run.

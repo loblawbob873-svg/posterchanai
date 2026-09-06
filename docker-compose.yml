@@ -34,6 +34,10 @@ x-logging: &logging
 
 x-common: &common
   logging: *logging
+  # Shared across all backend profiles. Never write transcode segments to the
+  # container's writable layer or the SSD-backed persistent data volume.
+  tmpfs:
+    - /tmp/posterchan-media-center:size=${POSTERCHANAI_MEDIA_TMPFS_SIZE:-2560m},mode=0700
   # NOTE: no shared `image:` here on purpose. Each backend service sets its OWN tag
   # (posterchanai:<tag>-<backend>) so the profiles can't alias one another. A single shared
   # tag made `--profile nostr up` (no --build) reuse whatever image was built last — e.g. a
@@ -76,6 +80,8 @@ x-common: &common
     - "${POSTERCHANAI_GIT_PORT:-3053}:3053"
   environment:
     - POSTERCHANAI_PORT=3051
+    - POSTERCHANAI_MEDIA_ROOTS=${POSTERCHANAI_MEDIA_ROOTS:-/var/lib/posterchanai/media}
+    - POSTERCHANAI_MEDIA_VAAPI_DEVICE=${POSTERCHANAI_MEDIA_VAAPI_DEVICE:-/dev/dri/renderD128}
     # Role of this container. `all` (default) is the single-container layout: app + relay + worker
     # + mediamtx/TURN + bots, exactly as before. Override to run one component per container —
     # app|relay|worker|media|bots|shell — so restarting the web app no longer drops every connected
@@ -246,6 +252,8 @@ services:
                                   # (adds ~Chrome to the image, but otherwise screenshots silently fail)
     environment:
       - POSTERCHANAI_PORT=3051
+      - POSTERCHANAI_MEDIA_ROOTS=${POSTERCHANAI_MEDIA_ROOTS:-/var/lib/posterchanai/media}
+      - POSTERCHANAI_MEDIA_VAAPI_DEVICE=${POSTERCHANAI_MEDIA_VAAPI_DEVICE:-/dev/dri/renderD128}
       - POSTERCHANAI_NOSTR_RELAY=1
       - POSTERCHANAI_NOSTR_ONLY=1
       # Blossom is part of the nostr-only pitch (relay + client + Blossom) — ON by default here.
@@ -320,6 +328,8 @@ services:
     environment:
       - POSTERCHANAI_PORT=3051
       - SOURCE_ONEAPI=0
+      - POSTERCHANAI_MEDIA_ROOTS=${POSTERCHANAI_MEDIA_ROOTS:-/var/lib/posterchanai/media}
+      - POSTERCHANAI_MEDIA_VAAPI_DEVICE=${POSTERCHANAI_MEDIA_VAAPI_DEVICE:-/dev/dri/renderD128}
       - POSTERCHANAI_MUSIC=${POSTERCHANAI_MUSIC:-0}
       - POSTERCHANAI_ACESTEP_URL=${POSTERCHANAI_ACESTEP_URL:-}
       - POSTERCHANAI_VIDEO=${POSTERCHANAI_VIDEO:-0}

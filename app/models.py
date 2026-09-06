@@ -30,6 +30,7 @@ class User(Base):
     can_music = Column(Boolean, default=True)    # music generation (musicgeni)
     can_video = Column(Boolean, default=True)    # video generation (videogeni)
     can_torrent = Column(Boolean, default=True)  # torrent search / download
+    can_media = Column(Boolean, default=False)  # Media Center browsing/playback (admin opt-in)
     # Blossom upload privilege. Default False (opt-in): granting it lets this user's linked
     # Nostr key (nostr_npub) upload blobs to the built-in Blossom server. See blossom_service.
     can_blossom = Column(Boolean, default=False)

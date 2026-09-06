@@ -252,6 +252,7 @@ After=network.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=$SCRIPT_DIR
+EnvironmentFile="-$SCRIPT_DIR/media-center.env"
 
 # Include venv so yt-dlp, ffmpeg and other pip-installed binaries are found
 Environment="PATH=$VENV_PATH/bin:/usr/local/bin:/usr/bin:/bin"
@@ -294,6 +295,7 @@ After=network.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=$SCRIPT_DIR
+EnvironmentFile="-$SCRIPT_DIR/media-center.env"
 Environment="PATH=$VENV_PATH/bin:/usr/local/bin:/usr/bin"
 Environment="VIRTUAL_ENV=$VENV_PATH"
 ExecStart=$RUN_SCRIPT

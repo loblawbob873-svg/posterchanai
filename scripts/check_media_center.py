@@ -30,7 +30,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from app.routers import media_center as routes
+from app.routers import media_center as routes, jellyfin
 from app.services import media_center as media
 
 OWNER, VIEWER = "11" * 32, "22" * 32
@@ -110,6 +110,8 @@ async def main():
                 backend.reset(token)
         app = FastAPI()
         app.include_router(routes.router)
+        app.include_router(jellyfin.account_router)
+        app.include_router(jellyfin.router)
         @app.middleware("http")
         async def edge_config(request, next_handler):
             token = backend.set("http://127.0.0.1:19440")
@@ -119,8 +121,8 @@ async def main():
                 backend.reset(token)
         app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
         def user(request: Request):
-            key = request.headers.get("X-Test-Viewer", OWNER)
-            return SimpleNamespace(nostr_npub=key, is_admin=key == OWNER)
+            key = request.headers.get("X-Test-Viewer") or request.query_params.get("viewer") or OWNER
+            return SimpleNamespace(nostr_npub=key, is_admin=key == OWNER, can_media=True)
         app.dependency_overrides[routes.media_user_optional] = user
         javascript = (ROOT / "static/js/client/app.js").read_text()
         functions = javascript[javascript.index("  let _mediaCenterSession="):javascript.index("  // ---------- torrents (NIP-35")]
@@ -129,7 +131,8 @@ async def main():
           const enc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
           const _streamFetch=(url,opts={})=>fetch(url,{...opts,headers:{...opts.headers,
             'X-Test-Viewer':new URLSearchParams(location.search).get('viewer')||'OWNER'}});
-          const loadHls=async()=>{};
+          let _aiToken='fixture',_aiAuth={};const _setAiToken=t=>{_aiToken=t;};const ensureAiSession=async()=>({});
+          const loadHls=async()=>{};const toast=s=>{window.lastToast=s;};
         """.replace("'OWNER'", json.dumps(OWNER))
         @app.get("/", response_class=HTMLResponse)
         async def page():
@@ -166,6 +169,20 @@ async def main():
                                                                                   "deviceScaleFactor": 1, "mobile": False})
                         await browser.call("Page.navigate", {"url": "http://127.0.0.1:19438/"})
                         await browser.until("document.title==='READY'")
+                        pending = (await client.post('http://127.0.0.1:19438/jellyfin/QuickConnect/Initiate')).json()
+                        await browser.js("document.querySelector('#mc-jellyfin').open=true")
+                        await browser.js("document.querySelector('#mc-jellyfin-approve input').value=" + json.dumps(pending['Code']) +
+                                         ";document.querySelector('#mc-jellyfin-approve').requestSubmit()", gesture=True)
+                        await browser.until("window.lastToast?.startsWith('Jellyfin app approved')")
+                        approved = await client.get('http://127.0.0.1:19438/jellyfin/QuickConnect/Connect', params={'Secret': pending['Secret']})
+                        assert approved.json()['Authenticated'] is True
+                        assert await browser.js('document.documentElement.scrollWidth<=innerWidth')
+                        await browser.js("document.querySelector('#mc-jellyfin-revoke').click()", gesture=True)
+                        await browser.until("window.lastToast==='All Jellyfin apps disconnected.'")
+                        assert (await client.get('http://127.0.0.1:19438/jellyfin/QuickConnect/Connect', params={'Secret': pending['Secret']})).status_code == 404
+                        await browser.js("document.querySelector('#mc-jellyfin').open=false")
+                        print(name, 'PASS: Jellyfin Quick Connect approval and disconnect UI', flush=True)
+
                         await browser.until("document.querySelector('.mc-tile img')?.complete")
                         assert not await browser.js("document.documentElement.scrollWidth>innerWidth")
                         if name == "phone":

@@ -129,7 +129,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-venv python3-dev python3-pip \
         build-essential cmake git pkg-config patchelf \
         ca-certificates curl gnupg \
-        ffmpeg tesseract-ocr \
+        ffmpeg mesa-va-drivers tesseract-ocr \
         tesseract-ocr-tha tesseract-ocr-chi-sim tesseract-ocr-chi-tra tesseract-ocr-jpn \
         tesseract-ocr-kor tesseract-ocr-ara tesseract-ocr-rus tesseract-ocr-hin \
         tesseract-ocr-spa tesseract-ocr-fra tesseract-ocr-deu \
@@ -137,6 +137,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu fonts-liberation fonts-noto-color-emoji fontconfig \
         tor tor-geoipdb \
     && rm -rf /var/lib/apt/lists/*
+
+# Media Center needs real FFmpeg/ffprobe binaries, including CPU fallback, even
+# in the lean Nostr image. Fail the build if the installed encoder cannot run.
+RUN ffprobe -version >/dev/null && \
+    ffmpeg -v error -f lavfi -i testsrc2=size=64x64:rate=10 -t 0.1 \
+      -c:v libx264 -threads 1 -f null -
 
 # --- headless Chrome for the screenshot command (optional, on by default) -----
 # The app probes for google-chrome-stable / chromium; Google's .deb is the most
@@ -367,6 +373,8 @@ ENV PC_ACCEL=${GPU}
 # is what lets you restart the web app without dropping every Nostr client or killing live streams.
 ENV POSTERCHANAI_ROLE=all
 ENV POSTERCHANAI_PORT=3051 \
+    POSTERCHANAI_MEDIA_CACHE=/tmp/posterchan-media-center \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
     HF_HOME=/var/lib/posterchanai/hf \
     MIOPEN_USER_DB_PATH=/var/lib/posterchanai/miopen \
     MIOPEN_CUSTOM_CACHE_DIR=/var/lib/posterchanai/miopen \

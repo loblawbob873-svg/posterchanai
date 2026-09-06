@@ -963,6 +963,7 @@ def update_user_capabilities(
     can_music: bool = Query(...),
     can_video: bool = Query(...),
     can_torrent: bool = Query(...),
+    can_media: Optional[bool] = Query(None),
     can_blossom: bool = Query(False),
     can_stream: bool = Query(False),
     can_ai: bool = Query(True),
@@ -978,6 +979,8 @@ def update_user_capabilities(
     user.can_music = can_music
     user.can_video = can_video
     user.can_torrent = can_torrent
+    if can_media is not None:
+        user.can_media = can_media
     _was_blossom, _was_ai, _was_stream = bool(user.can_blossom), bool(user.can_ai), bool(user.can_stream)
     user.can_blossom = can_blossom
     user.can_ai = can_ai

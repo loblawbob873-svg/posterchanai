@@ -29,6 +29,19 @@ setup_directories() {
         mkdir -p "$DATA_PATH"
         print_success "Created $DATA_PATH"
     fi
+
+    # Media Center source directory is durable; only derived transcodes use /tmp.
+    local MEDIA_PATH="${POSTERCHANAI_DATA:-$UPLOAD_PATH}/media"
+    if [ ! -d "$MEDIA_PATH" ]; then
+        sudo mkdir -p -m 750 "$MEDIA_PATH"
+        sudo chown "$(whoami)":"$(whoami)" "$MEDIA_PATH"
+    fi
+    if [ ! -e "$SCRIPT_DIR/media-center.env" ]; then
+        install -m 600 "$SCRIPT_DIR/media-center.env.example" "$SCRIPT_DIR/media-center.env"
+    fi
+    print_success "Media Center: $MEDIA_PATH (override roots in media-center.env)"
+    echo "  Configure the NAS proxy in Admin -> Storage; grant Media Center in Additional permissions."
+    echo "  Transcodes use /tmp/posterchan-media-center; mount /tmp as tmpfs to avoid SSD writes."
 }
 
 setup_python_env() {
@@ -275,4 +288,3 @@ download_model() {
     echo "  downloaded it (best), otherwise Qwen3.5-9B-Claude-Code. With a 12-16GB GPU the 30B"
     echo "  auto-fits context via partial CPU offload - leave ollama_num_ctx on 'auto'."
 }
-

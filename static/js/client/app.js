@@ -9193,6 +9193,17 @@
   }
 
   let _mediaCenterSession=null, _mediaCenterPlayGeneration=0, _mediaCenterHls=null, _mediaCenterArtObserver=null, _mediaCenterArtUrls=[], _mediaCenterArtGeneration=0;
+  async function _mediaCenterFetch(url, opts={}){
+    await ensureAiSession();
+    const sentToken=_aiToken;
+    let response=await _streamFetch(url,{credentials:'include',...opts});
+    if(response.status===401){
+      if(_aiToken===sentToken){_aiAuth=null;_setAiToken('');}
+      await ensureAiSession();
+      response=await _streamFetch(url,{credentials:'include',...opts});
+    }
+    return response;
+  }
   function clearMediaCenterArt(){
     _mediaCenterArtGeneration++;
     if(_mediaCenterArtObserver){_mediaCenterArtObserver.disconnect();_mediaCenterArtObserver=null;}
@@ -9202,7 +9213,7 @@
   function releaseMediaCenterSession(url){
     if(!url)return Promise.resolve();
     const ticket=new URL(url,_instanceBase()||location.origin).searchParams.get('ticket');
-    return _streamFetch('/api/media-center/sessions/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket})}).catch(()=>{});
+    return _mediaCenterFetch('/api/media-center/sessions/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket})}).catch(()=>{});
   }
   function stopMediaCenter(clearArt=true){
     _mediaCenterPlayGeneration++;
@@ -9218,7 +9229,7 @@
     const feed=$('#feed');
     feed.innerHTML='<div class="empty">Loading Media Center…</div>';
     const api=async(path='',method='GET',body)=>{
-      const r=await _streamFetch('/api/media-center'+path,{method,headers:{'Content-Type':'application/json'},
+      const r=await _mediaCenterFetch('/api/media-center'+path,{method,headers:{'Content-Type':'application/json'},
         ...(body===undefined?{}:{body:JSON.stringify(body)})});
       if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(typeof e.detail==='string'?e.detail:'Media Center request failed');}
       return r.json();
@@ -9240,6 +9251,13 @@
           <p><label>Concurrent transcodes <input name="max_transcodes" type="number" min="1" max="16" required></label></p>
           <p><label>Segment cache (MB) <input name="cache_mb" type="number" min="32" max="1048576" required></label></p>
           <button type="submit">Save limits</button></form></details>`:''}
+        <details id="mc-jellyfin"><summary>Connect a Jellyfin app</summary>
+          <p>In your Jellyfin app, add <strong id="mc-jellyfin-server"></strong> as the server and choose Quick Connect.</p>
+          <form id="mc-jellyfin-approve"><label>Code shown in your app <input name="code" inputmode="numeric" autocomplete="off" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="123456"></label>
+            <p><button type="submit">Approve this app</button></p></form>
+          <p class="muted">Only approve a code displayed by an app you are connecting. It gets access to your shared Media Center libraries.</p>
+          <button id="mc-jellyfin-revoke" type="button">Disconnect all Jellyfin apps</button>
+        </details>
         </div><p id="mc-status" class="mc-status muted" role="status"></p><div id="mc-libraries" class="mc-libraries"></div>
         <div id="mc-playback" class="mc-playback" hidden><div class="mc-player-toolbar"><h3 id="mc-playing"></h3><button id="mc-fullscreen" class="btn btn-ghost" type="button" aria-label="Enter full screen">Full screen</button><button id="mc-close-player" class="btn btn-ghost" type="button">Close player</button>
           <label>Quality <select id="mc-quality"><option value="auto">Auto bandwidth</option>
@@ -9267,6 +9285,16 @@
         stopMediaCenter(false);playerBox.hidden=true;
       };
       const act=async(button,fn)=>{button.disabled=true;status.textContent='Working…';try{await fn();status.textContent='';}catch(e){status.textContent=e.message;}finally{button.disabled=false;}};
+      $('#mc-jellyfin-server').textContent=(_instanceBase()||location.origin).replace(/\/$/,'')+'/jellyfin';
+      $('#mc-jellyfin-approve').onsubmit=e=>{e.preventDefault();const form=e.currentTarget;act(form.querySelector('button'),async()=>{
+        await api('/jellyfin-account/authorize','POST',{code:form.elements.code.value});
+        form.reset();toast('Jellyfin app approved. Return to the app to finish connecting.');
+      });};
+      $('#mc-jellyfin-revoke').onclick=e=>act(e.currentTarget,async()=>{
+        const response=await _mediaCenterFetch('/api/media-center/jellyfin-account',{method:'DELETE'});
+        if(!response.ok)throw new Error('Could not disconnect Jellyfin apps');
+        toast('All Jellyfin apps disconnected.');
+      });
       const limitsForm=$('#mc-limits');
       if(limitsForm){
         const limits=await api('/limits');if(VIEW!=='media-center')return;
@@ -9313,7 +9341,7 @@
           const drainArt=()=>{
             while(artActive<2&&artQueue.length&&artGeneration===_mediaCenterArtGeneration){
               const card=artQueue.shift();artActive++;
-              _streamFetch('/api/media-center/'+lib.id+'/art/'+card.dataset.item).then(r=>r.ok?r.blob():null).then(blob=>{
+              _mediaCenterFetch('/api/media-center/'+lib.id+'/art/'+card.dataset.item).then(r=>r.ok?r.blob():null).then(blob=>{
                 if(!blob||!card.isConnected||artGeneration!==_mediaCenterArtGeneration)return;
                 const url=URL.createObjectURL(blob);_mediaCenterArtUrls.push(url);
                 const image=document.createElement('img');image.alt='';image.decoding='async';image.src=url;
@@ -9374,7 +9402,7 @@
           if(lib.skipped)status.textContent=lib.skipped+' files could not be read during the last scan.';
         });libs.append(row);
       }
-    }catch(e){if(VIEW==='media-center')feed.innerHTML='<div class="empty">'+enc(e.message)+'</div>';}
+    }catch(e){if(VIEW==='media-center'){feed.innerHTML='<div class="empty">'+enc(e.message)+'<p><button class="btn btn-ghost" id="mc-retry">Retry</button></p></div>';$('#mc-retry').onclick=renderMediaCenter;}}
   }
 
   // ---------- torrents (NIP-35, kind 2003) ----------
@@ -28015,6 +28043,7 @@
     modal(`<h3><svg class="ic h-ic" aria-hidden="true"><use href="#i-key"></use></svg>Additional permissions</h3>
       ${row('id="perm-ai"', aiOn, '🤖 AI access')}
       ${row('id="perm-blossom"', blossomOn, '🌸 Blossom uploads')}
+      ${row('data-cap="can_media"', !!caps.can_media, '📺 Media Center <span class="muted small">(browse and play shared libraries)</span>')}
       ${row('id="perm-stream"', streamOn, '🔴 Live streaming <span class="muted small">(Go Live)</span>')}
       <label class="fld" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="perm-nip05" ${nipName?'checked':''}> 🪪 NIP-05 <span class="muted small">${enc((nipName||defNip||('user'+pk.slice(0,8)))+'@'+nipDomain)}</span></label>
       ${row('id="perm-bridge"', bridgeOn, '🌉 Bridge Access <span class="muted small">(create fedi account + enable bridge)</span>')}
