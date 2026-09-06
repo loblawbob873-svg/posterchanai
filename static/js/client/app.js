@@ -404,14 +404,21 @@
   const _NAV_REQUIRED = [
     { view:'sync', into:'#files-sub', icon:'#i-refresh', label:'Folder Sync' },
     { view:'xdc', into:'#games-sub', icon:'#i-gamepad', label:'Webxdc' },
-    { view:'media-center', after:'streams', icon:'#i-tv', label:'Media Center' },
+    { view:'media-center', after:'repos', topLevel:true, icon:'#i-tv', label:'Media Center' },
     { view:'signer', after:'settings', icon:'#i-key', label:'Signer' },
     { view:'wallet', after:'vault', icon:'#i-coin', label:'Monero Wallet' },
   ];
   function ensureNavItems(){
     for(const it of _NAV_REQUIRED){
       try{
-        if(document.querySelector('.nav-item[data-view="' + it.view + '"]')) continue;
+        const existing=document.querySelector('.nav-item[data-view="' + it.view + '"]');
+        if(existing){
+          if(it.topLevel){
+            const anchor=document.querySelector('.nav-item[data-view="' + it.after + '"]');
+            if(anchor&&existing.parentNode!==anchor.parentNode){anchor.after(existing);existing.classList.remove('sub');}
+          }
+          continue;
+        }
         /* Two ways to place a healed row, because not every nav item lives in a sub-list. `into` is a
            container to append to; `after` names an existing row to sit beside, which is how a
            TOP-LEVEL item is added — querySelector(null) throws, so a missing host used to mean the
