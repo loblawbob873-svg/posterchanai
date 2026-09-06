@@ -930,16 +930,50 @@ function createWindow(assignment) {
    * Reload rather than quit — everything this app holds is either on the relay or on disk, so a
    * reload is cheap and returns a usable window instead of a black one. Say what happened first, or
    * the reload just looks like the app blinked. */
+  /* SAY WHICH DEATH IT WAS, AND STOP RELOADING INTO ONE THAT REPEATS.
+   *
+   * Two things were wrong here, and together they produced a report this could not be diagnosed
+   * from: "windows app crashes at start: posterchan ran out of memory".
+   *
+   * The TITLE said "ran out of memory" for EVERY reason -- 'crashed', 'killed', 'launch-failed',
+   * 'integrity-failure' -- while only the body distinguished them. The title is what a person reads
+   * and repeats, so a renderer that failed to launch (antivirus, a GPU/sandbox refusal: the common
+   * Windows ones) was reported to us, in good faith, as a memory problem. That sent the
+   * investigation to the wrong place.
+   *
+   * And a death during BOOT was answered with a reload, which boots, which dies -- a dialog every
+   * few seconds and an app that never becomes usable. From the outside that IS "crashes at start".
+   * Reloading is right for the case this was written for (a renderer killed after hours of syncing
+   * a huge file) and wrong the moment it repeats, so it is now bounded: three deaths inside a
+   * minute and it stops, says so, and leaves the window alone rather than looping.
+   *
+   * The reason and exit code go in the message either way, because the next report should carry the
+   * fact instead of a guess. */
+  let _rendererDeaths = [];
   created.webContents.on('render-process-gone', (e, details) => {
     const reason = (details && details.reason) || 'unknown';
-    console.warn('[renderer] gone:', reason, details && details.exitCode);
+    const code = details && details.exitCode;
+    console.warn('[renderer] gone:', reason, code);
     if (reason === 'clean-exit') return;
-    dialog.showErrorBox('PosterChan ran out of memory',
+    const now = Date.now();
+    _rendererDeaths = _rendererDeaths.filter(t => now - t < 60000);
+    _rendererDeaths.push(now);
+    const looping = _rendererDeaths.length >= 3;
+    const detail = ' (' + reason + (Number.isInteger(code) ? ', exit ' + code : '') + ')';
+    if (looping) {
+      dialog.showErrorBox('PosterChan keeps stopping',
+        'The window has stopped three times in a minute' + detail + ', so it will not be reloaded '
+        + 'again.\n\nNothing is lost — everything is on the relay or on disk. Quit and reopen the '
+        + 'app; if it keeps happening, this reason is the thing to report.');
+      return;
+    }
+    dialog.showErrorBox(
+      reason === 'oom' ? 'PosterChan ran out of memory' : 'PosterChan stopped unexpectedly',
       reason === 'oom'
         ? 'The window was closed by the system because it ran out of memory. This usually means a '
           + 'very large file was being synced.\n\nThe app will reload. Files already synced are '
           + 'safe, and the next check resumes where it stopped.'
-        : 'The window stopped unexpectedly (' + reason + ').\n\nThe app will reload.');
+        : 'The window stopped' + detail + '.\n\nThe app will reload.');
     try { created.webContents.reloadIgnoringCache(); }
     catch (_) { try { loadApp(created); } catch (_e) {} }
   });
