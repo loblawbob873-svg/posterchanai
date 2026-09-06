@@ -106,13 +106,13 @@ window.__PC = {
   uiPrompt: async () => '', uiConfirm: async () => true,
   authFetch: async (u) => {
     if(u.indexOf('/api/ssh/hosts') === 0)
-      return { json: async () => ({ ok:true, available:true, hosts:[
+      return { ok:true, status:200, json: async () => ({ ok:true, available:true, hosts:[
         { name:'server1', label:'me@server1.lan', keyed:true },
         { name:'nas.lan', label:'me@nas.lan', keyed:true }]}) };
     if(u.indexOf('/api/ssh/sessions') === 0)
-      return { json: async () => ({ ok:true, keeper:true, sessions: SESS.map(s => ({
+      return { ok:true, status:200, json: async () => ({ ok:true, keeper:true, sessions: SESS.map(s => ({
         sid:s.sid, host:s.host, label:s.label, detached:false, age:s.age, idle:0, bytes:s.seq })) }) };
-    return { json: async () => ({}) };
+    return { ok:true, status:200, json: async () => ({}) };
   },
 };
 window.__PC.VIEW = 'terminal';
