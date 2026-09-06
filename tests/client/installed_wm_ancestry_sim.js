@@ -5,6 +5,7 @@ const path = require('path');
 const wmPath = process.env.PC_INSTALLED_WM_JS;
 if (!wmPath) throw new Error('PC_INSTALLED_WM_JS must name wm.js extracted from app.asar');
 const {WM} = require(path.resolve(wmPath));
+const {WayfireWM} = require(path.join(path.dirname(path.resolve(wmPath)), 'wm-wayfire.js'));
 const helper = "const {spawn}=require('child_process');" +
   "const c=spawn('sleep',['8'],{stdio:'ignore'});process.stdout.write(String(c.pid)+'\\n');" +
   "setTimeout(()=>{},8000)";
@@ -19,12 +20,13 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     for (let i = 0; i < 20 && !raw.includes('\n'); i++) await delay(25);
     const child = Number(raw.trim()) || 0;
     if (!child) throw new Error('disposable child process did not appear');
-    const wm = Object.create(WM.prototype);
+    for (const wm of [new WM('/tmp/pc-disposable-sway.sock'), new WayfireWM()]) {
     wm.windows = async () => [{id:77, pid:child, app:'firefox-disposable'}];
     const hit = await wm.waitForWindow(root.pid, 700, []);
     if (!hit || hit.pid !== child)
       throw new Error('packaged waitForWindow lost late-forked child ' + child);
-    console.log('installed native process ancestry holds');
+    }
+    console.log('installed Sway and Wayfire process ancestry holds');
   } finally {
     try { process.kill(-root.pid, 'SIGTERM'); } catch (_) { try { root.kill('SIGTERM'); } catch (__) {} }
   }
