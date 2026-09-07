@@ -492,6 +492,19 @@ class PosterChanOSProfile(unittest.TestCase):
         # synced perfectly forty minutes earlier, which makes the message misleading, not just thin.
         self.assertIn("pc-overlay-sync.log", body, "the sync failure leaves no evidence")
         self.assertIn("FETCHLOG", body, "a failed desktop download leaves no evidence")
+        # POSTER.PLACE IS ASKED FIRST. This download was the one thing in an install that reached a
+        # third party before us — api.github.com to name the asset, github.com to serve it, and
+        # poster.place only after both failed. On a machine that cannot reach GitHub that is the
+        # difference between a desktop and an empty compositor, discovered at the end of an
+        # hour-long install.
+        # Comments stripped: the paragraph explaining the old order names api.github.com, and a
+        # plain index() would find the explanation rather than the call.
+        code = self._code(body)
+        self.assertLess(code.index("$PP/PosterChan-linux-x64.tar.zst"), code.index("api.github.com"),
+                        "GitHub is still asked before poster.place")
+        self.assertLess(code.index('-o "$APPIMG" "$PP/PosterChan.AppImage"'),
+                        code.index('-o "$APPIMG" "$GH/PosterChan.AppImage"'),
+                        "the AppImage fallback still prefers GitHub")
 
     def test_overlay_success_is_checked_by_looking_not_by_exit_code(self):
         """A package that installs nothing useful exits 0."""

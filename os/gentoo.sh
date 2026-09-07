@@ -1897,7 +1897,19 @@ PROFILE
 	# The AppImage path stays as a FALLBACK, not as a preference: a release cut before the tarball
 	# existed has only the image, and an installer that refused it would fail on the last release
 	# rather than the next one.
+	# POSTER.PLACE FIRST, GITHUB AS THE FALLBACK -- it used to be the other way round.
+	#
+	# Every repository an install uses is ours; this download was the one thing that reached a third
+	# party FIRST, asking api.github.com to name the asset and then github.com to serve it, with
+	# poster.place tried only after both had failed. On a machine that cannot reach GitHub -- or
+	# whose CA bundle cannot verify it -- that is the difference between a desktop and an empty
+	# compositor, and it is reached at the very end of an hour-long install.
+	#
+	# https://poster.place/desktop/PosterChan-linux-x64.tar.zst is the same build, versionless, so it
+	# needs no release-listing call at all: one request instead of two, to the host this OS already
+	# depends on for its portage tree, its binary packages and its overlay.
 	echo -e "\033[1;33mInstalling the PosterChan desktop\033[0m"
+	PP="https://poster.place/desktop"
 	GH="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest"
 	APPTAR="/tmp/PosterChan-linux-x64.tar.zst"
 	APPIMG="/tmp/PosterChan.AppImage"
@@ -1914,6 +1926,10 @@ PROFILE
 		echo "curl is not installed here, so the desktop cannot be downloaded" >>"$FETCHLOG"
 	fi
 	if [ ! -s "$APPTAR" ]; then
+		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPTAR" "$PP/PosterChan-linux-x64.tar.zst" \
+			2>>"$FETCHLOG" || true
+	fi
+	if [ ! -s "$APPTAR" ]; then
 		TARURL="$(curl -sSfL --retry 2 --connect-timeout 20 \
 			https://api.github.com/repos/loblawbob873-svg/posterchanai/releases/tags/desktop-latest \
 			2>>"$FETCHLOG" | grep -o 'https://[^"]*linux-x64\.tar\.zst' | head -1)"
@@ -1922,9 +1938,8 @@ PROFILE
 			2>>"$FETCHLOG" || true; }
 	fi
 	if [ ! -s "$APPTAR" ] && [ ! -f "$APPIMG" ]; then
-		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$GH/PosterChan.AppImage" 2>>"$FETCHLOG" \
-			|| curl -sSfL --retry 2 -o "$APPIMG" https://poster.place/desktop/PosterChan.AppImage \
-				2>>"$FETCHLOG" || true
+		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$PP/PosterChan.AppImage" 2>>"$FETCHLOG" \
+			|| curl -sSfL --retry 2 -o "$APPIMG" "$GH/PosterChan.AppImage" 2>>"$FETCHLOG" || true
 	fi
 	# RUN IT WHERE THE FILES ARE. This function is called BOTH ways — from the installer on the live
 	# system with TARGET pointing at the new root, and from inside the chroot during finalize, where
