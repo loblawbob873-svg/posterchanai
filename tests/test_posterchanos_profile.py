@@ -723,6 +723,20 @@ class PosterChanOSProfile(unittest.TestCase):
                         "nothing re-copies the installer between the overlay install and the "
                         "version gate, so the overlay's copy is what gets checked")
 
+    def test_the_stage3s_own_binhost_is_removed_so_binaries_come_only_from_us(self):
+        """catalyst puts /etc/portage/binrepos.conf/gentoo.conf in every stage3.
+
+        It is [gentoo], priority 1, sync-uri distfiles.gentoo.org. Ours is a DIFFERENT file at
+        priority 9999, so ours wins whenever it has the package — and portage falls through to
+        Gentoo's the moment it does not, which is a third party serving executable code to a machine
+        whose rule is poster.place and nowhere else. Configuring our own file was never enough."""
+        repo = self._code(self._fn("gentooRepo"))
+        self.assertIn("rm -f \"$TARGET/etc/portage/binrepos.conf/gentoo.conf\"", repo,
+                      "the stage3's own binhost survives the install")
+        # Ours must still be written, and at a priority that wins.
+        self.assertIn("gentoo.poster.place/releases/amd64/binpackages", repo)
+        self.assertIn("priority = 9999", repo)
+
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""

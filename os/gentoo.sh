@@ -395,6 +395,20 @@ gentooRepo() {
 	echo "sync-type = webrsync" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 	echo "sync-uri = https://gentoo.poster.place/releases/amd64/binpackages/23.0/x86-64/" >>$TARGET/etc/portage/binrepos.conf/gentoobinhost.conf
 
+	# THE STAGE3 SHIPS ITS OWN BINHOST, AND IT IS NOT OURS. catalyst writes
+	# /etc/portage/binrepos.conf/gentoo.conf into every stage3 -- "[gentoo], priority = 1, sync-uri =
+	# https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64" -- so configuring only our
+	# OWN file leaves a SECOND binary host behind it. Ours is priority 9999 and wins whenever it has
+	# the package; the moment it does not, portage fetches binaries from distfiles.gentoo.org
+	# instead. That is a third party serving executable code to this machine, on a product whose
+	# stated rule is that an install talks to gentoo.poster.place and nowhere else -- and it was true
+	# of every install ever made, silently, until the release gate started reading the installed
+	# system's repository list back and refused it.
+	#
+	# No package owns that file (`equery b` finds nothing), so this removes configuration rather than
+	# breaking a package, and it is idempotent because this function is also `gentoo.sh repo`.
+	rm -f "$TARGET/etc/portage/binrepos.conf/gentoo.conf"
+
 	# https, not http: this is fetched by machines that are not on a trusted network, and a plain
 	# http mirror is one anybody in the path can rewrite.
 	# This function is also the installed-system repair command (`gentoo.sh repo`). Re-running it
