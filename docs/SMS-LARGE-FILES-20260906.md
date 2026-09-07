@@ -21,3 +21,5 @@ The release runner passed 54 additional checks, including signer transport, inte
 Android and desktop generated bundles each passed all 42 wallet presentation tests. The native Java and instrumentation sources compiled. The first Android emulator run (34067306678) lost the emulator before instrumentation executed and is not device-test evidence; a fresh runner retry is required before release. No real SMS was sent by these checks.
 
 The independently committed installer change cf9924391 is preserved by merge; its 113 tests and 52 subtests passed after integration.
+
+The fresh Android run [34068504014](https://github.com/loblawbob873-svg/posterchanai/actions/runs/34068504014) passed both lifecycle and instrumentation gates. Its downloaded XML report contains **90 tests, zero failures, errors or skips**, including large-video content-URI staging and interrupted-copy draft preservation. The APK web-asset provenance check passed. This resolves the device gate above; it does not claim physical handset/carrier verification.
