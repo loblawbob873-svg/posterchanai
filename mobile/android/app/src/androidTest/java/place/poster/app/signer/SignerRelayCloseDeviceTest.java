@@ -124,6 +124,9 @@ public class SignerRelayCloseDeviceTest {
             assertNotSame(old.get(),replacement.get());assertNotNull(replacement.get());
             // Deliberately delayed callbacks from the retired socket cannot evict the new one.
             oldListener.onClosing(old.get(),1001,"late close");
+            // Empty close frames surface as1005; echoing that reserved code makes real OkHttp
+            // throw even for an already retired socket. It must normalize to a legal reply.
+            oldListener.onClosing(old.get(),1005,"");
             oldListener.onClosed(old.get(),1001,"late closed");
             oldListener.onFailure(old.get(),new java.io.IOException("late failure"),null);
             owner(service,()->{try {assertSame(replacement.get(),((Map<?,?>)field(service,"socks")).get(url));}
