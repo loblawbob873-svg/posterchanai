@@ -253,7 +253,7 @@ net-print/cups \
 x11-misc/xdg-utils x11-apps/xrdb gnome-base/gsettings-desktop-schemas \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
-games-util/steam-launcher games-util/game-device-udev-rules \
+games-util/game-device-udev-rules \
 media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
@@ -782,6 +782,30 @@ buildGentoo() {
 	# finalization runs regardless; what changes is that the installer stops claiming it succeeded.
 	PACKAGES_OK=0
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh install-packages || PACKAGES_OK=$?
+
+	# STEAM IS INSTALLED LAST, AFTER THE BASE AND THE PACKAGE SET, AND THAT ORDER IS THE DESIGN.
+	#
+	# `games-util/steam-launcher` used to sit inside POSTERCHANOS_PACKAGES, which resolved its 32-bit
+	# USE dependencies as part of the ~200-package set -- and that is what opens the seam. The binary
+	# host serves 64-only copies of fontconfig, libglvnd, zstd, ncurses and libxcrypt while steam's
+	# chain wants cairo, mesa, harfbuzz, elfutils and llvm carrying abi_x86_32, so portage prints
+	# "WARNING: One or more updates/rebuilds have been SKIPPED due to a dependency conflict" through
+	# the middle of the desktop's own graph -- and the machine is then handed over in that state,
+	# where the owner's FIRST `emerge -uDN @world` meets the same wall. Resolved on its own at the
+	# end it buys the same 32-bit libraries and leaves the base set a clean binary install.
+	#
+	# THROUGH THE CHROOT, like install-packages above: installSteam runs `emerge` directly with no
+	# $TARGET, so calling it as a shell function from here would emerge Steam into the LIVE MEDIUM's
+	# tmpfs and report success.
+	#
+	# ITS FAILURE IS NOT THE INSTALL'S FAILURE, and that is the deliberate difference from the set
+	# above. That set IS the desktop; Steam is one application on top of it, installSteam already
+	# refuses a no-multilib profile with a sentence rather than half-installing it, and
+	# `gentoo.sh steam` re-runs it whenever the owner wants. So the verdict is SAID -- never silent,
+	# which is the failure this file keeps having to relearn -- and kept out of the exit status.
+	if ! chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh steam; then
+		echo -e "\033[1;31mSteam did not install — everything else did. Re-run it with: gentoo.sh steam\033[0m"
+	fi
 	echo
 	echo
 	echo -e "\033[1;36m[Configuring Accounts and post-setup tasks]\033[0m"
@@ -982,6 +1006,10 @@ installPackages() {
 	# `libudev[abi_x86_32]`, which wants `systemd[abi_x86_32]`, and each layer only becomes visible
 	# after the one above it has been accepted. Each pass answers what it can see; three of them is
 	# where the chains here settle, and a pass that changes nothing stops the loop early.
+	# steam-launcher itself is NO LONGER in this set -- it is emerged last, on its own (see
+	# buildGentoo) -- but it is kept as the example because it is the chain this was written from,
+	# and the loop still earns its place: mesa's vulkan USE and firefox-bin's licence both answer
+	# on a later pass than the one that asks.
 	# `-p`, SO THE PASSES RESOLVE AND DO NOT MERGE. Without it each pass is a real install of a
 	# 200-package set, and with its output silenced -- which the loop must do, or three resolutions
 	# of that set bury the log -- the install goes SILENT for its longest phase. Measured: 15 minutes
