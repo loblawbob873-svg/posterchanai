@@ -447,3 +447,27 @@ def test_the_world_conflict_grep_is_case_insensitive():
     assert "grep -ciE" in src or "grep -cieE" in src, "the conflict grep is case-sensitive again"
     # And the wording it must match is portage's actual wording, not a paraphrase of it.
     assert "skipped due to a dependency conflict" in src.lower()
+
+
+def test_a_conflict_count_that_cannot_be_read_is_a_failure_not_a_pass():
+    """The count is matched against what a TERMINAL returns, and an unreadable answer fails.
+
+    The first version ran the grep on one line and matched the number on the next with
+    `\\n(\\d+)\\r?\\n`. The real bytes are `\\x1b[?2004l\\r1\\r\\n` — bracketed-paste off, a CARRIAGE
+    RETURN, then the digit; no newline before it. So the pattern found nothing, the guard read
+    `if hits and ...` as False, and the gate PASSED a machine whose log held a conflict block.
+    Measured on run 10. Same false-green shape as the case bug, from the other direction."""
+    src = SRC[SRC.index("def portage_health("):SRC.index("def shell_quote(")]
+    assert "WORLDCONFLICTS=" in src, "the count is not returned inside its own marker"
+    assert "did not run, which is not the same as passing" in src, \
+        "an unreadable count still passes"
+
+    # The shipped pattern against the bytes a real console produced (captured from run 10).
+    console = ("root@livecd ~ # echo WORLDCONFLICTS=$(grep -ciE '...' /tmp/ph-world.log)\r\n"
+               "\x1b[?2004l\rWORLDCONFLICTS=1\r\n")
+    assert re.findall(r"WORLDCONFLICTS=(\d+)", console)[-1] == "1"
+
+    # And the OLD pattern, on those same bytes, finds nothing — which is why it passed.
+    old_console = "root@livecd ~ # grep -ciE '...'; echo WORLDGREP-$?\r\n\x1b[?2004l\r1\r\nWORLDGREP-0\r\n"
+    assert re.findall(r"\n(\d+)\r?\n[^\n]*WORLDGREP", old_console) == [], \
+        "the regression this test exists for is not reproduced by the fixture"
