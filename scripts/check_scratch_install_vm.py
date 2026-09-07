@@ -432,15 +432,30 @@ def portage_health(con, evidence, port):
             # media-libs/harfbuzz. Measured on run 9's evidence: 0 matches case-sensitive, 1 with
             # -i. A gate defeated by the case of one word in its own pattern is worse than no gate,
             # because it certifies the thing it was written to catch.
-            con.send("grep -ciE 'have been skipped due to a dependency conflict|slot conflict|"
-                     "unbreakable|Multiple package instances' /tmp/ph-world.log; echo WORLDGREP-$?")
-            if con.expect(r"WORLDGREP-\d", 300) is not None:
-                hits = re.findall(r"\n(\d+)\r?\n[^\n]*WORLDGREP", con.buf)
-                if hits and hits[-1] != "0":
-                    print(f"FAIL  `emerge -uDNp @world` exits 0 but reports {hits[-1]} conflict/"
-                          f"skipped-rebuild block(s) — the installed machine cannot cleanly update; "
-                          f"see {evidence}/portage-world.log")
-                    return 1
+            # THE COUNT COMES BACK INSIDE ITS OWN MARKER, and a count that cannot be read is a
+            # FAILURE. The first version ran the grep on one line and matched the number on the
+            # next with `\n(\d+)\r?\n`, which is not what a terminal returns: the real bytes are
+            # `\x1b[?2004l\r1\r\n` -- bracketed-paste off, then a CARRIAGE RETURN, then the digit.
+            # No newline before it, so the pattern found nothing, `if hits and ...` was False, and
+            # the gate PASSED. Measured on run 10: the log held 1 conflict block and the check
+            # certified it clean. That is the same false-green shape as the case bug one line
+            # above, arrived at from the other direction -- there the pattern could not match the
+            # log, here it could not match the answer -- and both times "found nothing" was read as
+            # "nothing is wrong".
+            con.send("echo WORLDCONFLICTS=$(grep -ciE 'have been skipped due to a dependency "
+                     "conflict|slot conflict|unbreakable|Multiple package instances' "
+                     "/tmp/ph-world.log)")
+            found = con.expect(r"WORLDCONFLICTS=\d+", 300)
+            hits = re.findall(r"WORLDCONFLICTS=(\d+)", con.buf)
+            if found is None or not hits:
+                print("FAIL  could not read the @world conflict count back from the guest — the "
+                      "check did not run, which is not the same as passing")
+                return 1
+            if hits[-1] != "0":
+                print(f"FAIL  `emerge -uDNp @world` exits 0 but reports {hits[-1]} conflict/"
+                      f"skipped-rebuild block(s) — the installed machine cannot cleanly update; "
+                      f"see {evidence}/portage-world.log")
+                return 1
     print("..    the installed system syncs and resolves @world cleanly")
     return 0
 

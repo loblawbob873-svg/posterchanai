@@ -844,13 +844,38 @@ buildGentoo() {
 	echo -e "\033[1;36m[Converging the package tree after Steam]\033[0m"
 	chroot $TARGET /usr/bin/emerge -uDN --newuse @world --autounmask-write >/dev/null 2>&1
 	chroot $TARGET /usr/sbin/etc-update -q --automode -5 >/dev/null 2>&1
-	if ! chroot $TARGET /usr/bin/emerge -uDN --newuse @world; then
-		echo -e "\033[1;31mThe post-Steam convergence pass did not finish. The machine is installed,\033[0m"
-		# NO BACKTICKS IN A DOUBLE-QUOTED MESSAGE. Inside "..." a backtick is command SUBSTITUTION,
-		# so quoting the command to run here would RUN it -- an `emerge -uDNp @world` executed on
-		# the live medium, at the one moment this branch exists to report a failure calmly. `bash -n`
-		# accepts it, because it is valid syntax doing something nobody meant.
-		echo -e "\033[1;31mbut check 'emerge -uDNp @world' before relying on it updating cleanly.\033[0m"
+	chroot $TARGET /usr/bin/emerge -uDN --newuse @world \
+		|| echo -e "\033[1;33m  the --newuse pass did not finish; continuing to the ABI sweep\033[0m"
+
+	# AND --newuse IS NOT ENOUGH, because a skipped rebuild is not an unsatisfied dependency.
+	#
+	# Measured after the pass above: `emerge -uDNp @world` still reported sys-libs/ncurses skipped.
+	# readline is installed carrying abi_x86_32 (Steam's chain put it there) and therefore requires
+	# ncurses[abi_x86_32], while the ncurses UPGRADE resolves 64-only because nothing asks it for the
+	# other ABI. Portage is not stuck -- it declines that one upgrade and carries on, so the
+	# resolution SUCCEEDS and autounmask has nothing to propose. --newuse rebuilds packages whose USE
+	# changed; ncurses' USE did not change, it needs to GAIN a flag, and nobody asked.
+	#
+	# So the names are read out of portage's own warning and given the flag explicitly. Data-driven
+	# rather than a hardcoded list: which packages are reached depends on Steam's dependency graph on
+	# the day, and a list written today is a list that is wrong after the next Steam bump.
+	local sweep skipped atom
+	for sweep in 1 2 3; do
+		skipped="$(chroot $TARGET /usr/bin/emerge -uDNp @world 2>&1 \
+			| sed -n '/have been skipped due to a dependency conflict/,$p' \
+			| grep -oE '^[a-z0-9][a-z0-9-]*/[A-Za-z0-9._+-]+' | sort -u)"
+		[ -n "$skipped" ] || break
+		echo -e "\033[1;33m  giving abi_x86_32 to: $(echo $skipped)\033[0m"
+		mkdir -p "$TARGET/etc/portage/package.use"
+		for atom in $skipped; do
+			echo "$atom abi_x86_32"
+		done >>"$TARGET/etc/portage/package.use/posterchan-abi"
+		chroot $TARGET /usr/bin/emerge -uDN --newuse @world || true
+	done
+	if [ -n "$skipped" ]; then
+		echo -e "\033[1;31mThese packages still cannot be upgraded on the installed machine:\033[0m"
+		echo -e "\033[1;31m  $(echo $skipped)\033[0m"
+		echo -e "\033[1;31mThe install is complete and bootable; run the world resolution to see why.\033[0m"
 	fi
 	echo
 	echo
@@ -2279,7 +2304,22 @@ installSteam() {
 	# gui-apps/wlr-randr already lives), which is served from gentoo.poster.place -- so both this
 	# command and an ordinary install talk to one host.
 	mkdir -p /etc/portage/package.use
-	printf '%s\n' 'media-libs/mesa vulkan' > /etc/portage/package.use/posterchan-steam
+	# THE TWO WE HAVE MEASURED, NAMED, so the upgrade is BUILT right the first time.
+	#
+	# Steam's chain leaves readline installed with abi_x86_32, which requires ncurses[abi_x86_32];
+	# the ncurses upgrade then resolves 64-only because nothing asks it for the other ABI, and
+	# portage declines that one upgrade for ever. Same for harfbuzz. Runs 9 and 10 both ended with
+	# exactly these two skipped, on a machine that was otherwise green -- and a package that can
+	# never be upgraded by `emerge -uDN @world` is a security update that silently does not arrive.
+	#
+	# The sweep in buildGentoo stays and is still the general answer: it reads whatever portage
+	# reports as skipped and gives it the ABI, so a future Steam bump that reaches different
+	# packages is covered without anybody editing a list. These two are named as well because they
+	# are measured, and asking for the right ABI up front is better than building the wrong thing,
+	# noticing, and rebuilding -- the sweep becomes the backstop rather than the mechanism.
+	printf '%s\n' 'media-libs/mesa vulkan' \
+		'sys-libs/ncurses abi_x86_32' \
+		'media-libs/harfbuzz abi_x86_32' > /etc/portage/package.use/posterchan-steam
 	mkdir -p /etc/portage/package.license
 	echo 'games-util/steam-launcher steam' >/etc/portage/package.license/posterchan-steam
 	emerge --autounmask-write games-util/steam-launcher media-libs/vulkan-loader dev-util/vulkan-tools || true
