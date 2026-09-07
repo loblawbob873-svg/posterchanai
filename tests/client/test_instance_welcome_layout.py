@@ -16,8 +16,8 @@ pytestmark = pytest.mark.skipif(not CHROME, reason='Chrome unavailable')
 
 def render(tmp_path, theme='professional', width=390, eligible=True, pending=False, action='apply'):
     css = (ROOT / 'static/css/client.css').read_text() + (ROOT / 'static/css/instance-welcome.css').read_text()
-    script = (ROOT / 'static/js/client/instance-welcome.js').read_text()
-    config = json.dumps({'eligible': eligible, 'pending': pending, 'site_name': 'Example Community'})
+    script = (ROOT / 'static/js/client/instance-access.js').read_text() + '\n' + (ROOT / 'static/js/client/instance-welcome.js').read_text()
+    config = json.dumps({'eligible': eligible, 'pending': pending, 'site_name': 'Example Community', 'domain':'community.example'})
     page = tmp_path / 'welcome.html'
     page.write_text(f'''<!doctype html><html data-theme="{theme}"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>{css}</style><body><pre id="result"></pre><script>
@@ -39,7 +39,7 @@ const columns=d?getComputedStyle(d.querySelector('.iw-benefits')).gridTemplateCo
 if(button&&'{action}'==='apply'){{button.click();button.click();await new Promise(r=>setTimeout(r,50));}}
 if('{action}'==='enter_open'){{desktop=true;document.body.append(document.createElement('div'));await new Promise(r=>setTimeout(r,50));}}
 if('{action}'==='logout'){{account='';await tick();}}
-document.getElementById('result').textContent=JSON.stringify({{shown,focused,columns,applies,
+document.getElementById('result').textContent=JSON.stringify({{shown,focused,columns,applies,features:[...d?.querySelectorAll('.iw-benefits h3')||[]].map(e=>e.textContent),text:d?.textContent,
 closed:!document.querySelector('dialog[open]'),status:d?.querySelector('.iw-status').textContent,
 fits:!d||(rect.left>=0&&rect.right<=innerWidth+1&&d.scrollWidth<=d.clientWidth+1),
 background:style?.backgroundColor,color:style?.color}});
@@ -59,7 +59,7 @@ background:style?.backgroundColor,color:style?.color}});
 def test_welcome_fits_theme_and_viewport_and_submits_once(tmp_path, theme, width):
     got = render(tmp_path, theme, width)
     assert got['shown'] and got['focused'] and got['fits'], got
-    assert got['columns'] == (1 if width == 390 else 3), got
+    assert got['columns'] == (2 if width == 390 else 3), got
     assert got['applies'] == 1 and 'application is saved' in got['status'], got
     assert got['background'] != got['color']
 
@@ -84,3 +84,12 @@ def test_splash_does_not_cover_desktop_or_setup(tmp_path, action):
 def test_entering_desktop_closes_an_already_open_splash(tmp_path):
     result = render(tmp_path, action='enter_open')
     assert result['shown'] and result['closed'] and result['applies'] == 0, result
+
+
+def test_welcome_explains_profile_requirement_and_all_member_apps(tmp_path):
+    got = render(tmp_path)
+    assert {'News','Meme Builder','Email','Documents','Folder Sync','Passwords','Torrents',
+            'My Analytics','Media Center','Git','Texts','Notes','Monero Wallet','Wallet','Web Search'}.issubset(got['features'])
+    assert all(text in got['text'] for text in ['Edit profile','NIP-05 / verified address','Save your profile',
+                                               'community.example','approval alone does not activate'])
+    assert 'poster.place' not in got['text']

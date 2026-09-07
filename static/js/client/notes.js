@@ -201,6 +201,7 @@
    * throttled, or merely slow — must leave the local library alone. That asymmetry is the anti-wipe
    * rule this codebase keeps relearning. */
   async function load(force){
+    if(window.PCInstanceAccess) await window.PCInstanceAccess.require('notes');
     const who = (ME() && ME().pubkey) || '';
     if(who !== _owner){
       _owner = who; _lib = null; _loading = null; _sel = null; _draft = null;

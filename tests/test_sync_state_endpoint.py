@@ -324,3 +324,12 @@ class SyncStateEndpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# These fixtures test generation/sync semantics after membership authorization.
+import pytest
+from tests.member_fixtures import allow_keys
+
+@pytest.fixture(autouse=True)
+def assigned_fixture_member(monkeypatch):
+    allow_keys(monkeypatch,'f'*64)

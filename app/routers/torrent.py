@@ -14,6 +14,7 @@ import httpx
 from app.database import get_db
 from app.utils import lb_auth
 from app.auth import get_current_user
+from app.services import instance_membership
 from app.models import User
 from app.services import settings_store
 from app.services.torrent_service import scrape_torrents, search_torrents
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/torrent", tags=["torrent"])
 security = HTTPBearer(auto_error=False)
 
 
-def get_torrent_user(
+async def get_torrent_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
@@ -45,6 +46,7 @@ def get_torrent_user(
 
         # Fall back to normal user authentication
         user = get_current_user(request, credentials, db)
+        await instance_membership.require_user(user)
         # Per-user torrent access (Admin → Users). Admins/user-1 always allowed; the flag
         # defaults True so existing users are unaffected. Load-balanced traffic returns above
         # with user=None and is never gated, so remote bt-server forwarding still works.

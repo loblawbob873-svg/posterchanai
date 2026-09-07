@@ -43,7 +43,8 @@ const _tlAnchor=()=>null, _restoreTlAnchor=()=>false, _tlFilter=()=>()=>true, _h
 const Store={feed:fn=>[{id:'peer',pubkey:pub(2),created_at:2},{id:'other',pubkey:pub(4),created_at:1}].filter(fn)};
 const isMutedView=e=>isMutedAuthor(e.pubkey), _noteKey=e=>e.id;
 const _noteNode=e=>{const n=document.createElement('article');n.className='note';n.dataset.key=e.id;n.dataset.pk=e.pubkey;n.innerHTML='<video></video>';return n;};
-const _withModule=async()=>PCAutoMute, toast=()=>{}, _persistMutes=()=>{};
+let moduleHold=false,modulePending=[];
+const _withModule=()=>moduleHold?new Promise(resolve=>modulePending.push(resolve)):Promise.resolve(PCAutoMute), toast=()=>{}, _persistMutes=()=>{};
 const _editPList=async()=>{manualWrites++;return true;};
 let peerMuted=true, timestamp=100, hold=false, pending=[], queryCalls=0;
 const answer=filters=>{
@@ -266,3 +267,40 @@ def test_another_tab_hydrates_saved_enable_disable_changes(chrome):
             chrome.session=None
             chrome.command('Target.closeTarget',{'targetId':target})
             chrome.session=first_session
+
+
+def test_toggle_persists_before_lazy_load_and_survives_reload(chrome):
+    with opened(chrome,375) as url:
+        chrome.evaluate("moduleHold=true;const t=document.querySelector('#set-auto-mute');t.checked=true;void t.onchange()")
+        assert chrome.evaluate("JSON.parse(localStorage.getItem(_autoMuteStoreKey())).enabled===true")
+        assert chrome.evaluate("modulePending.length===1")
+        chrome.command('Page.navigate',{'url':url+'?offline=1'})
+        settle(chrome)
+        assert chrome.evaluate("document.querySelector('#set-auto-mute').checked")
+        assert chrome.evaluate("_autoMuteStored().enabled===true")
+
+
+def test_delayed_module_rapid_toggle_preserves_latest_choice_and_records(chrome):
+    with opened(chrome,375):
+        chrome.click('.switch:has(#set-auto-mute)',touch=True)
+        settle(chrome)
+        chrome.evaluate("const beforeRecord=JSON.stringify(_autoMuteStored().records);moduleHold=true;const t=document.querySelector('#set-auto-mute');t.checked=false;void t.onchange();t.checked=true;void t.onchange();")
+        assert chrome.evaluate("JSON.parse(localStorage.getItem(_autoMuteStoreKey())).enabled===true")
+        assert chrome.evaluate("JSON.stringify(_autoMuteStored().records)===beforeRecord")
+        assert chrome.evaluate("_autoMuteHas(pub(2))")
+        chrome.evaluate("moduleHold=false;modulePending.splice(0).reverse().forEach(resolve=>resolve(PCAutoMute))")
+        settle(chrome)
+        assert chrome.evaluate("document.querySelector('#set-auto-mute').checked && _autoMuteStored().enabled===true")
+        assert chrome.evaluate("JSON.stringify(_autoMuteStored().records)===beforeRecord")
+
+
+def test_failed_toggle_write_keeps_prior_filter_and_shows_error(chrome):
+    with opened(chrome,375):
+        chrome.click('.switch:has(#set-auto-mute)',touch=True)
+        settle(chrome)
+        chrome.evaluate("const saved=localStorage.getItem(_autoMuteStoreKey());const originalSet=Storage.prototype.setItem;Storage.prototype.setItem=function(){throw Error('storage full')};const t=document.querySelector('#set-auto-mute');t.checked=false;void t.onchange();")
+        settle(chrome)
+        assert chrome.evaluate("document.querySelector('#set-auto-mute').checked && _autoMuteHas(pub(2))")
+        assert chrome.evaluate("localStorage.getItem(_autoMuteStoreKey())===saved")
+        assert chrome.evaluate("document.querySelector('#set-auto-mute-status').textContent.includes('storage full')")
+        chrome.evaluate('Storage.prototype.setItem=originalSet')

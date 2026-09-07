@@ -256,7 +256,7 @@ class TheContractWithAppJsTests(unittest.TestCase):
         """It sets VIEW directly and does its own nav clearing precisely because `repo` is not in the
         sidebar — routing it through switchView would fight the line after it."""
         at = self.git.index("function openRepo(")
-        body = self.git[at:at + 800]
+        body = self.git[at:self.git.index("const feed=", at)]
         self.assertIn("_clearNav()", body)
         self.assertNotIn("switchView('repo')", body)
 

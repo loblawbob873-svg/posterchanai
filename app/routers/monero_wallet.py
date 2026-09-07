@@ -23,7 +23,12 @@ from app.services.monero_wallet_service import MoneroWallet, WalletError, atomic
 # `/api/wallet/xmr` is the canonical path now. The old one stays mounted because installed clients
 # ask for it, and on a node that is NOT behind such a WAF it has always worked fine.
 router = APIRouter(tags=["monero-wallet"])
-WalletOwner = Annotated[User, Depends(get_admin_user)]
+async def get_member_wallet_owner(user: User = Depends(get_admin_user)):
+    from app.services.instance_membership import require_user
+    return await require_user(user)
+
+
+WalletOwner = Annotated[User, Depends(get_member_wallet_owner)]
 
 
 @router.get("/status")

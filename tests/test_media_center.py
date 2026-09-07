@@ -19,6 +19,9 @@ VIEWER = "22" * 32
 
 @pytest.fixture
 def api(monkeypatch, tmp_path):
+    # Existing ACL/playback cases use a registered-user authority fixture.
+    async def registered(user): return user
+    monkeypatch.setattr(routes.instance_membership, 'require_user', registered)
     documents = {}
     user = SimpleNamespace(nostr_npub=OWNER, is_admin=True, can_media=True)
     async def read(key):

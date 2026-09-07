@@ -24,6 +24,8 @@ def world(monkeypatch):
     monkeypatch.setattr(policy.users_store,'sync_user',AsyncMock(return_value=True))
     monkeypatch.setattr(nostr_dvm,'peer_pubkeys',lambda:{keys[4]})
     monkeypatch.setattr(policy.blossom_service,'_whitelist_pubkeys',lambda db:set(keys))
+    from app.services import instance_membership
+    monkeypatch.setattr(instance_membership, "status", AsyncMock(return_value={"qualified":True}))
     users=[]
     for i,key in enumerate(keys[:4]):
         u=User(username='user'+str(i),password_hash='unused',nostr_npub=ns.npub_of(key),can_ai=True,can_blossom=True,can_stream=True,
@@ -36,7 +38,7 @@ def world(monkeypatch):
 
 
 def test_preview_preserves_local_fediverse_admin_and_peer(world):
-    targets,keep,result=policy.plan(world.db)
+    targets,keep,result=asyncio.run(policy.plan(world.db))
     assert targets==[world.users[2]]
     assert result==dict(domain='poster.place',accounts=1,ai=1,blossom=1,streaming=1,whitelist=1)
     assert keep==set(world.keys)-{world.keys[2]}
@@ -44,7 +46,7 @@ def test_preview_preserves_local_fediverse_admin_and_peer(world):
 
 
 def test_explicitly_disabling_fediverse_exemption(world):
-    targets,keep,result=policy.plan(world.db,False)
+    targets,keep,result=asyncio.run(policy.plan(world.db,False))
     assert {u.id for u in targets}=={world.users[1].id,world.users[2].id}
     assert world.keys[5] not in keep
 
@@ -68,7 +70,7 @@ def test_failed_authority_write_does_not_claim_or_commit_success(world,monkeypat
 
 def test_empty_registry_refuses_cleanup(world):
     world.config['nostr_relay_nip05_names']=''
-    with pytest.raises(ValueError):policy.plan(world.db)
+    with pytest.raises(ValueError):asyncio.run(policy.plan(world.db))
 
 
 def test_policy_defaults_off_with_fediverse_exemption(world):
@@ -106,11 +108,11 @@ def test_streaming_only_account_is_selected_and_auth_is_revoked(world, monkeypat
     user.access_revoked = True
     monkeypatch.setattr(policy.blossom_service, '_whitelist_pubkeys', lambda db: set())
     assert _may_stream(user)
-    result = policy.plan(world.db)[2]
+    result = asyncio.run(policy.plan(world.db))[2]
     assert result['streaming'] == 1 and result['ai'] == 0 and result['blossom'] == 0
     asyncio.run(policy.run(world.db))
     assert not _may_stream(user)
-    assert policy.plan(world.db)[2]['accounts'] == 0
+    assert asyncio.run(policy.plan(world.db))[2]['accounts'] == 0
 
 
 def test_scheduler_runs_every_fifteen_minutes_and_obeys_config(world, monkeypatch):
@@ -164,3 +166,40 @@ def test_existing_obs_key_is_denied_after_cleanup_but_public_read_stays_open(wor
         assert (await auth('publish')).status_code == 403
         assert (await auth('read')).status_code == 200
     asyncio.run(exercise())
+
+
+def test_registered_name_without_profile_is_revoked_including_streaming(world, monkeypatch):
+    from app.services import instance_membership
+    monkeypatch.setattr(instance_membership, 'status', AsyncMock(return_value={'qualified':False}))
+    preview = asyncio.run(policy.plan(world.db))[2]
+    assert preview['accounts'] == 2 and preview['streaming'] == 2
+    assert world.users[0].can_ai  # Preview changes no grants.
+    result = asyncio.run(policy.run(world.db))
+    assert result['accounts'] == preview['accounts']
+    assert not world.users[0].can_ai and not world.users[0].can_blossom and not world.users[0].can_stream
+
+
+def test_profile_outage_aborts_before_any_revocation(world, monkeypatch):
+    from app.services import instance_membership
+    from fastapi import HTTPException
+    monkeypatch.setattr(instance_membership, 'status', AsyncMock(side_effect=HTTPException(503,'Relay unavailable')))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(policy.run(world.db))
+    assert exc.value.status_code == 503
+    assert all(u.can_ai and u.can_stream for u in world.users)
+    policy.users_store.sync_user.assert_not_awaited()
+    policy.settings.write_through.assert_not_awaited()
+
+
+def test_registry_change_during_preview_cannot_revoke_a_new_member(world, monkeypatch):
+    from app.services import instance_membership
+    from fastapi import HTTPException
+    async def changed(*args, **kwargs):
+        world.config['nostr_relay_nip05_names']+='\nnew '+world.keys[2]
+        return {'qualified':True}
+    monkeypatch.setattr(instance_membership, 'status', changed)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(policy.run(world.db))
+    assert exc.value.status_code==503
+    policy.users_store.sync_user.assert_not_awaited()
+    assert all(u.can_ai for u in world.users)

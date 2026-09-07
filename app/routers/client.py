@@ -1499,6 +1499,8 @@ async def meme_effect(data: MemeEffectReq, request: Request, db: Session = Depen
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
     # A forwarded job renders here and hands the BYTES back — the node that took the user's request
     # stores them. So a render peer needs ffmpeg, not a media store: `blossom_enabled` is per-node and
     # is off on a node that only holds bytes for someone else's Blossom (nas), which used to 503 every
@@ -1600,6 +1602,8 @@ async def meme_generate_image(data: MemeGenImageReq, request: Request, db: Sessi
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
     if not blossom_service.is_enabled(db):
         raise HTTPException(status_code=503, detail="media storage (Blossom) is disabled on this node")
 
@@ -1770,6 +1774,8 @@ async def meme_apply_effect(data: MemeApplyEffectReq, request: Request, db: Sess
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
     # Forwarded job → return bytes, let the requesting node store them (see meme_effect).
     _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
     if not _fwded and not blossom_service.is_enabled(db):
@@ -1925,6 +1931,8 @@ async def meme_face(data: MemeFaceReq, request: Request, db: Session = Depends(g
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
     if data.character:
         path = _pose_art_path(data.character)
         if not path:
@@ -1975,6 +1983,8 @@ async def meme_talk(data: MemeTalkReq, request: Request, db: Session = Depends(g
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
     # Forwarded job → return bytes, let the requesting node store them (see meme_effect).
     _fwded = bool(request is not None and request.headers.get("x-pcai-meme-fwd"))
     if not _fwded and not blossom_service.is_enabled(db):
@@ -4683,6 +4693,8 @@ async def sync_folders(data: SyncFoldersReq, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
     if not _verify_self_auth(data.auth, pk):
         return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
     user = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pk)).first()
     if not user:
         return JSONResponse({"ok": True, "folders": []})
@@ -4860,6 +4872,7 @@ async def _fs_list_all(port: int, sk: bytes, prefix: str, since: int | None = No
 @router.post("/sync-state")
 async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
     from app.services import nostr_store as store
+    from app.services.instance_membership import require_pubkey
     pk = nostr_service.to_pubkey_hex(data.pubkey)
     if not pk:
         return JSONResponse({"ok": False, "error": "invalid pubkey"}, status_code=400)
@@ -4884,9 +4897,11 @@ async def sync_state(data: SyncStateReq, db: Session = Depends(get_db)):
             # The one place the signer is still consulted: minting a replacement.
             return JSONResponse({"ok": False, "error": "unknown device token — sign once to mint "
                                  "a new one", "tokenInvalid": True}, status_code=401)
+        await require_pubkey(pk)
     else:
         if not _verify_self_auth(data.auth, pk):
             return JSONResponse({"ok": False, "error": "ownership proof required"}, status_code=403)
+        await require_pubkey(pk)
         if data.mintToken:
             token = secrets.token_hex(32)
             digest = hashlib.sha256(token.encode()).hexdigest()
@@ -5717,8 +5732,8 @@ async def _meme_lb_forward(request: "Request", subpath: str, body: dict, db: Ses
             try:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=8.0)) as c:
                     r = await c.post(url, json=body, headers={"x-pcai-meme-fwd": "1"})
-                if r.status_code >= 500:
-                    continue   # peer busy/broke → try the next, else local
+                if r.status_code == 403 or r.status_code >= 500:
+                    continue   # A peer may not have the profile yet; verified origin can render locally.
                 logger.info("[meme] render forwarded to %s (%s) -> %d", peer, subpath, r.status_code)
                 ct = r.headers.get("content-type", "") or ""
                 # An effect peer answers with RAW MEDIA (it has ffmpeg, not necessarily a blob store):
@@ -5767,6 +5782,8 @@ async def meme_render(data: MemeRenderReq, request: Request, db: Session = Depen
     pk = nostr_service.to_pubkey_hex(data.pubkey or "")
     if not pk or not _verify_self_auth(data.auth, pk):
         raise HTTPException(status_code=401, detail="bad auth")
+    from app.services.instance_membership import require_pubkey
+    await require_pubkey(pk)
 
     # Busy-overflow LB: if this node's render queue is full, run the whole project on a peer node and
     # stream its MP4 back — so several memes render across the fleet at once (the ffmpeg analogue of the

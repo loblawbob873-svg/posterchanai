@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.models import User
 from app.routers import instance_welcome as routes
-from app.services import instance_welcome as service, settings_store, system_dm
+from app.services import instance_welcome as service, settings_store, system_dm, instance_membership
 from app.services.nostr.event import build_event
 
 
@@ -31,6 +31,11 @@ def setup(monkeypatch):
     db.add(admin); db.commit()
     values = {'site_name': 'Example', 'nostr_relay_nip05_domain': 'example.test'}
     monkeypatch.setattr(settings_store, 'get', lambda key, default='': values.get(key, default))
+    async def profiles(pk, _port):
+        address=values.get('_profile_nip05','')
+        return [build_event(bytes.fromhex('21'*32),0,json.dumps({'nip05':address}),created_at=values.get('_profile_at',100))]
+    checker=instance_membership.MembershipChecker(query=profiles,configuration=lambda:(values.get('nostr_relay_nip05_names',''),'example.test','','3052'))
+    monkeypatch.setattr(instance_membership,'_checker',checker)
     sent = []
     async def send(to, text):
         sent.append((to, text)); return True
@@ -48,12 +53,14 @@ def call(app, path, body):
     return asyncio.run(run())
 
 
-def test_eligibility_uses_instance_assignment_not_external_profile(setup):
+def test_eligibility_requires_assigned_name_and_saved_profile(setup):
     app, db, sent, values = setup
     body = proof('status')
     assert call(app, 'status', body).json()['eligible']
     values['nostr_relay_nip05_names'] = 'alice ' + body['pubkey']
-    result = call(app, 'status', body).json()
+    assert call(app,'status',body).json()['eligible']
+    values['_profile_nip05']='alice@example.test';values['_profile_at']=101
+    result = call(app, 'status', {**body,'refresh':True}).json()
     assert not result['eligible'] and result['address'] == 'alice@example.test'
     assert sent == []
 
@@ -178,3 +185,14 @@ def test_real_admin_grant_requires_admin_signature_and_sends_approval(setup, mon
     assert len(sent) == 2 and 'approved' in sent[-1][1]
     assert asyncio.run(grant('22')).status_code == 200
     assert len(sent) == 2
+
+
+def test_profile_removal_restores_welcome_and_resaving_hides_it(setup):
+    app,db,sent,values=setup
+    body=proof('status');values['nostr_relay_nip05_names']='alice '+body['pubkey']
+    for at,address,eligible in [(100,'alice@example.test',False),(101,'alice@other.test',True),(102,'alice@example.test',False)]:
+        values['_profile_nip05']=address;values['_profile_at']=at
+        data=call(app,'status',{**body,'refresh':True}).json()
+        assert data['eligible'] is eligible,data
+        assert data['pubkey']==body['pubkey']
+    assert sent==[]

@@ -50,14 +50,7 @@ def _tiers():
     if not m:
         print("FAIL  could not find fontSize() in term.js — re-point this check")
         sys.exit(2)
-    # PAGEZOOM COMES WITH IT. fontSize multiplies by the page's scale, because the terminal host
-    # undoes body{zoom} and the font must be scaled by the same factor. Lifting only the tiers gave
-    # "pageZoom is not defined" -- and a check that cannot run is not a check that passes.
-    z = re.search(r"function pageZoom\(\)\{(.*?)\n    \}", src, re.S)
-    if not z:
-        print("FAIL  could not find pageZoom() in term.js — re-point this check")
-        sys.exit(2)
-    return "function pageZoom(){" + z.group(1) + "\n    }\n" + m.group(1)
+    return m.group(1)
 
 
 PAGE = """<!doctype html><meta charset="utf-8">
@@ -81,13 +74,14 @@ PAGE = """<!doctype html><meta charset="utf-8">
 <script src="%(xtermjs)s"></script>
 <script src="%(fitjs)s"></script>
 <script>
-(function(){
+(async function(){
   const out = { steps: [] };
   // term.js's own tiering, verbatim (see _tiers()).
   function fontSize(){
     %(tiers)s
   }
   try{
+    await document.fonts.ready;
     const term = new window.Terminal({ fontSize: fontSize(), cursorBlink:false, scrollback:1000,
       fontFamily:'ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace' });
     const F = window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon);
@@ -95,14 +89,15 @@ PAGE = """<!doctype html><meta charset="utf-8">
     if(fit) term.loadAddon(fit);
     term.open(document.getElementById('tty-screen'));
     const wrap = document.querySelector('.tty-wrap');
-    const step = (label) => {
+    const step = async (label) => {
+      await new Promise(resolve=>setTimeout(resolve,80));
       try{ term.options.fontSize = fontSize(); }catch(_){}
       try{ if(fit) fit.fit(); }catch(_){}
       out.steps.push({ label, cols: term.cols|0, rows: term.rows|0,
-                       font: term.options.fontSize,
+                       font: term.options.fontSize, cell:term._core._renderService.dimensions.css.cell.width, scrollbar:term._core.viewport.scrollBarWidth,
                        w: Math.round(wrap.getBoundingClientRect().width) });
     };
-    step('open');
+    await step('open');
     /* SHRINK THE BOX, not the window — headless Chrome cannot be resized mid-run, and the element is
      * what the ResizeObserver in term.js watches anyway, so this is the same input the real resize
      * path receives. */
@@ -115,9 +110,9 @@ PAGE = """<!doctype html><meta charset="utf-8">
     // measure a font-tier change rather than a resize.
     wrap.style.width = %(pw)d + 'px';
     app.style.height = Math.round(window.innerHeight * 0.5) + 'px';
-    step('phone');
+    await step('phone');
     wrap.style.width = ''; app.style.height = '';
-    step('back');
+    await step('back');
     out.ok = true;
   }catch(e){ out.ok = false; out.err = String(e && e.message || e); }
   document.title = JSON.stringify(out);
@@ -178,7 +173,10 @@ def main():
                 problems.append((label, "no-shrink-rows",
                                  "the row count did not change for a shorter viewport — the axis a "
                                  "soft keyboard halves"))
-            if op and bk and (op["cols"], op["rows"]) != (bk["cols"], bk["rows"]):
+            # xterm rounds its canvas width to pixels before dividing it by columns.
+            # One column of round-trip variation is possible at fractional cell widths;
+            # the live PTY diagnostic separately requires the exact rendered grid.
+            if op and bk and (abs(op["cols"] - bk["cols"]) > 1 or op["rows"] != bk["rows"]):
                 problems.append((label, "no-return",
                                  f"back at {label} the grid is {bk['cols']}x{bk['rows']}, not the "
                                  f"{op['cols']}x{op['rows']} it started at — a session picked up on "

@@ -301,6 +301,7 @@
   const FILTER = () => ({ kinds:[KIND], authors:[ME().pubkey], '#l':[L_TAG] });
 
   async function load(force, create = true){
+    if(window.PCInstanceAccess) await window.PCInstanceAccess.require('vault');
     if(_lib && !force) return _lib;
     if(!_loading) _loading = _loadCache(create).finally(()=>{ _loading=null; });
     return _loading;

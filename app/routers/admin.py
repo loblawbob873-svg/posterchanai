@@ -1743,11 +1743,11 @@ def relay_access_policy_status(db: Session = Depends(get_db), admin: User = Depe
 
 
 @router.post('/relay-access-policy/preview')
-def relay_access_policy_preview(data: RelayAccessPolicyRequest, db: Session = Depends(get_db),
+async def relay_access_policy_preview(data: RelayAccessPolicyRequest, db: Session = Depends(get_db),
                                 admin: User = Depends(get_admin_user)):
     from app.services import relay_access_policy as policy
     try:
-        targets, _, summary = policy.plan(db, data.exempt_fediverse)
+        targets, _, summary = await policy.plan(db, data.exempt_fediverse)
         return {**summary, 'affected_accounts': [
             {'name': u.username, 'npub': u.nostr_npub, 'ai': bool(u.can_ai),
              'blossom': bool(u.can_blossom), 'streaming': bool(u.can_stream)}
@@ -1763,7 +1763,7 @@ async def relay_access_policy_save(data: RelayAccessPolicyRequest, db: Session =
     async with policy._lock:
         if data.enabled:
             try:
-                policy.plan(db, data.exempt_fediverse)
+                await policy.plan(db, data.exempt_fediverse)
             except ValueError as e:
                 raise HTTPException(409, str(e))
         import json

@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.routers import office
+from tests.test_office_wopi import OFFICE_USER, registered_office_user
 
 
 def _app() -> TestClient:
@@ -36,7 +37,7 @@ class ExportIsGated(unittest.TestCase):
         d.mkdir(parents=True, exist_ok=True)
         (d / "document").write_bytes(b"hello pdf test\n")
         (d / "meta.json").write_text(
-            '{"name": "notes.txt", "size": 15, "version": 1, "readonly": false,'
+            '{"owner": "'+OFFICE_USER.nostr_npub+'", "name": "notes.txt", "size": 15, "version": 1, "readonly": false,'
             ' "expires": %d}' % (int(__import__("time").time()) + 3600), encoding="utf-8")
         self.token = office._token(self.session, int(__import__("time").time()) + 3600)
 

@@ -7356,6 +7356,7 @@
      * rather than leaving a spinner OR an error where somebody's thread was. */
     const _was = reset && feed ? feed.innerHTML : '';
     if (reset && VIEW!=='admin') feed.innerHTML = '<div class="spinner"></div>';
+    if(window.PCInstanceAccess && window.PCInstanceAccess.gate(VIEW,feed)) return;
     if (VIEW==='home' || VIEW==='global') return renderTimeline(VIEW, reset);
     if (VIEW==='trending') return renderTrending();
     if (VIEW==='notifications') return renderNotifications();
@@ -21653,7 +21654,7 @@
        * timeout on every Save, Save As and PDF export. */
       try{ if(location && location.origin && location.origin !== 'null') fd.append('origin', location.origin); }catch(_){ }
       let r;
-      try{ r=await fetch(B + '/client/office/session',{method:'POST',body:fd}); }
+      try{ await ensureAiSession();r=await window.__PC.authFetch(B + '/client/office/session',{method:'POST',body:fd}); }
       catch(e){ throw new Error('could not reach ' + (B || 'this node') + ' — ' + ((e&&e.message)||e)); }
       if(!r.ok){
         const said=(await r.json().catch(()=>null)||{}).detail||'';
@@ -21937,7 +21938,8 @@
                       ['presentation','Presentation','odp']];
   async function _createOfficeDocument(name, kind){
     const B = _instanceBase();
-    const r = await fetch(B + '/client/office/blank/' + encodeURIComponent(kind));
+    await ensureAiSession();
+    const r = await window.__PC.authFetch(B + '/client/office/blank/' + encodeURIComponent(kind));
     if(!r.ok) throw new Error('could not create the document (HTTP ' + r.status + ')');
     const ext = r.headers.get('X-Document-Extension') || 'odt';
     const blob = await r.blob();
@@ -32993,13 +32995,26 @@
       }; }
     { const toggle=$('#set-auto-mute'), update=$('#set-auto-mute-update');
       if(toggle) toggle.onchange=async()=>{
-        const wanted=toggle.checked, epoch=++_autoMuteEpoch;
-        _autoMuteLoading=null;
+        const wanted=toggle.checked, owner=ME&&ME.pubkey;
+        let epoch=_autoMuteEpoch;
         try{
-          const engine=await _loadAutoMute();if(epoch!==_autoMuteEpoch)return;engine.setEnabled(wanted);_autoMuteMessage='';
-          _scheduleAutoMutes();if(wanted)_updateAutoMutes();
-        }catch(error){if(epoch===_autoMuteEpoch)_autoMuteMessage=error.message||'Could not save automatic mute settings';}
-        _paintAutoMuteControls();
+          if(!owner || GUEST || !/^[0-9a-f]{64}$/.test(owner))throw new Error('Sign in to use automatic mutes');
+          // Save the choice before loading code: closing/updating the app during a
+          // slow module load must not discard a checked preference. Keep all history.
+          const previous=_autoMuteStored(), next={...previous,owner,enabled:wanted};
+          localStorage.setItem('pc_auto_mute:'+owner,JSON.stringify(next));
+          epoch=++_autoMuteEpoch;
+          if(_autoMuteEngine)_autoMuteEngine.destroy();
+          _autoMuteEngine=null;_autoMuteLoading=null;
+          _cacheAutoMute(next);_autoMuteMessage='';
+          if(previous.enabled!==wanted)_applyAutoMuteToView();
+          _scheduleAutoMutes();_paintAutoMuteControls();
+          if(wanted){
+            await _loadAutoMute();
+            if(ME&&ME.pubkey===owner && epoch===_autoMuteEpoch)_updateAutoMutes();
+          }
+        }catch(error){if(ME&&ME.pubkey===owner && epoch===_autoMuteEpoch)_autoMuteMessage=error.message||'Could not save automatic mute settings';}
+        if(ME&&ME.pubkey===owner && epoch===_autoMuteEpoch)_paintAutoMuteControls();
       };
       if(update)update.onclick=()=>_updateAutoMutes();
       _paintAutoMuteControls();
@@ -37035,13 +37050,16 @@
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
     // automatically after a relay change). Exposed for the sub-modules and for the console.
     carryPrivateToRelays, reconnectNetwork,
+    retryInstanceView:view=>{if(VIEW===view)renderView(true);},
+    editOwnProfile:()=>{if(ME&&!GUEST)editProfile(profOf(ME.pubkey));},
     /* Shared-feed modules may finish network/deferred work after navigation. They must ask who owns
      * the feed before painting; otherwise a late Concord render can replace Code (and vice versa). */
     isView: view => VIEW === view,
     $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
     viewer: () => {
-      const profile = ME && ME.pubkey ? (profOf(ME.pubkey) || {}) : {};
-      return { pubkey:(ME&&ME.pubkey)||'', npub:(ME&&ME.npub)||'', profile };
+      const stored = ME && ME.pubkey ? Store.profile(ME.pubkey) : null;
+      const profile = stored || {};
+      return { pubkey:(ME&&ME.pubkey)||'', npub:(ME&&ME.npub)||'', profile, profileKnown:stored!=null };
     },
     /* The clipboard, for the sub-modules. `navigator.clipboard` works in a browser and in NEITHER
        shell (the APK's WebView and the desktop's app:// origin both refuse it), so a module that

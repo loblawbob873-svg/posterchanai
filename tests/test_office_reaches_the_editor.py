@@ -42,6 +42,7 @@ from starlette.requests import Request
 
 from app.auth import NATIVE_APP_ORIGINS
 from app.routers import office
+from tests.test_office_wopi import OFFICE_USER, registered_office_user
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
@@ -69,7 +70,7 @@ def _request(monkeypatch, tmp_path):
 
 
 def _session(request, origin="", name="report.docx"):
-    return asyncio.run(office.create_session(request, Upload(name, b"original"), "edit", origin))
+    return asyncio.run(office.create_session(request, Upload(name, b"original"), "edit", origin, user=OFFICE_USER))
 
 
 # ---------------------------------------------------------------- 1. the post-message origin
@@ -80,7 +81,7 @@ def test_a_packaged_app_is_told_to_post_back_to_itself(origin, tmp_path, monkeyp
     an editor addressing https://poster.place is an editor nothing hears."""
     request = _request(monkeypatch, tmp_path)
     session = _session(request, origin)
-    info = office.check_file_info(session["id"], request, session["token"])
+    info = asyncio.run(office.check_file_info(session["id"], request, session["token"]))
     assert info["PostMessageOrigin"] == origin
 
 
@@ -90,7 +91,7 @@ def test_a_browser_is_unchanged(tmp_path, monkeypatch):
     request = _request(monkeypatch, tmp_path)
     for claimed in ("", "https://poster.place"):
         session = _session(request, claimed)
-        info = office.check_file_info(session["id"], request, session["token"])
+        info = asyncio.run(office.check_file_info(session["id"], request, session["token"]))
         assert info["PostMessageOrigin"] == "https://poster.place"
 
 
@@ -101,7 +102,7 @@ def test_an_origin_we_do_not_know_is_refused_not_echoed(tmp_path, monkeypatch):
     request = _request(monkeypatch, tmp_path)
     for hostile in ("https://evil.example", "app://posterchan.evil", "javascript:alert(1)", "*"):
         session = _session(request, hostile)
-        info = office.check_file_info(session["id"], request, session["token"])
+        info = asyncio.run(office.check_file_info(session["id"], request, session["token"]))
         assert info["PostMessageOrigin"] == "https://poster.place", hostile
 
 
@@ -114,7 +115,7 @@ def test_a_session_made_before_this_field_existed_still_answers(tmp_path, monkey
     import json
     data = json.loads(meta.read_text()); data.pop("origin", None)
     meta.write_text(json.dumps(data))
-    info = office.check_file_info(session["id"], request, session["token"])
+    info = asyncio.run(office.check_file_info(session["id"], request, session["token"]))
     assert info["PostMessageOrigin"] == "https://poster.place"
 
 

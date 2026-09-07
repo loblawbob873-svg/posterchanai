@@ -1,11 +1,26 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.routers import office
+
+
+OFFICE_USER = SimpleNamespace(nostr_npub='11'*32)
+
+@pytest.fixture(autouse=True)
+def registered_office_user(monkeypatch):
+    async def user(value):
+        assert value is OFFICE_USER
+        return value
+    async def pubkey(value):
+        assert value == OFFICE_USER.nostr_npub
+        return {'qualified': True}
+    monkeypatch.setattr(office.instance_membership, 'require_user', user)
+    monkeypatch.setattr(office.instance_membership, 'require_pubkey', pubkey)
 
 
 class Upload:
@@ -30,21 +45,21 @@ def test_session_is_capability_protected_and_uses_public_proxy(tmp_path, monkeyp
     request = Request({**request.scope, "scheme":"https",
         "headers":[(b"host",b"local"),(b"x-forwarded-proto",b"https"),(b"x-forwarded-host",b"cloud.example")]})
     upload = Upload("report.docx", b"original")
-    session = asyncio.run(office.create_session(request, upload, "edit"))
+    session = asyncio.run(office.create_session(request, upload, "edit", user=OFFICE_USER))
     assert session["editor_url"].startswith("https://cloud.example/office-code/browser/")
     with pytest.raises(HTTPException) as bad:
-        office.check_file_info(session["id"], request, "wrong")
+        asyncio.run(office.check_file_info(session["id"], request, "wrong"))
     assert bad.value.status_code == 401
-    info = office.check_file_info(session["id"], request, session["token"])
+    info = asyncio.run(office.check_file_info(session["id"], request, session["token"]))
     assert info["BaseFileName"] == "report.docx"
     assert info["UserCanWrite"] is True
 
 
 def test_wopi_lock_save_and_download(tmp_path, monkeypatch):
     request = _setup(tmp_path, monkeypatch)
-    session = asyncio.run(office.create_session(request, Upload("sheet.xlsx", b"v1"), "edit"))
-    assert office.file_operation(session["id"], session["token"], "LOCK", "a", "").status_code == 200
-    conflict = office.file_operation(session["id"], session["token"], "LOCK", "b", "")
+    session = asyncio.run(office.create_session(request, Upload("sheet.xlsx", b"v1"), "edit", user=OFFICE_USER))
+    assert asyncio.run(office.file_operation(session["id"], session["token"], "LOCK", "a", "")).status_code == 200
+    conflict = asyncio.run(office.file_operation(session["id"], session["token"], "LOCK", "b", ""))
     assert conflict.status_code == 409
     assert conflict.headers["x-wopi-lock"] == "a"
     class Body:
@@ -59,12 +74,12 @@ def test_disabled_and_size_limit(tmp_path, monkeypatch):
     monkeypatch.setenv("POSTERCHANAI_OFFICE", "0")
     request = Request({"type":"http","method":"POST","path":"/","scheme":"http","headers":[],"server":("local",80)})
     with pytest.raises(HTTPException) as off:
-        asyncio.run(office.create_session(request, Upload("a.docx", b"x"), "edit"))
+        asyncio.run(office.create_session(request, Upload("a.docx", b"x"), "edit", user=OFFICE_USER))
     assert off.value.status_code == 404
     monkeypatch.setenv("POSTERCHANAI_OFFICE", "1")
     monkeypatch.setattr(office, "_MAX", 2)
     with pytest.raises(HTTPException) as big:
-        asyncio.run(office.create_session(request, Upload("a.docx", b"xxx"), "edit"))
+        asyncio.run(office.create_session(request, Upload("a.docx", b"xxx"), "edit", user=OFFICE_USER))
     assert big.value.status_code == 413
 
 
@@ -162,7 +177,7 @@ def test_the_service_root_is_joined_exactly_once(tmp_path, monkeypatch):
             return _u
 
         monkeypatch.setattr(office, "_action_url", action)
-        out = asyncio.run(office.create_session(request, Upload("a.docx", b"x"), "edit"))
+        out = asyncio.run(office.create_session(request, Upload("a.docx", b"x"), "edit", user=OFFICE_USER))
         url = out["editor_url"]
         assert f"{root}/browser/hash/cool.html" in url, url
         assert root * 2 not in url, f"the service root was added twice: {url}"

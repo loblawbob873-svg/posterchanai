@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import AliasChoices, BaseModel, Field
 from starlette.requests import Request as InternalRequest
 
+from app.services import instance_membership
 from app.auth import SECRET_KEY
 from app.database import get_db
 from app.models import User
@@ -120,6 +121,7 @@ async def authenticate(request: Request, db=Depends(get_db)):
     requested_user = request.path_params.get('user_id') or query(request, 'UserId')
     if requested_user and requested_user.replace('-', '').lower() != uid:
         raise HTTPException(403, 'Only your own account is accessible')
+    await instance_membership.require_user(user)
     return SimpleNamespace(user=user, uid=uid, token=token, session=session)
 
 
@@ -166,6 +168,7 @@ async def authenticate_image(request: Request, db=Depends(get_db)):
                         if s['id'] == grant['sid'] and s['expires'] > time.time()), None)
         user = find_user(db, record['pubkey']) if session else None
         if session and native.media_allowed(user):
+            await instance_membership.require_user(user)
             return SimpleNamespace(user=user, uid=grant['uid'], token='', session=session)
     match = re.fullmatch(r'pcimg\.([a-f0-9]{32})\.([a-f0-9]{32})\.([0-9]{10})\.([a-f0-9]{64})', tag)
     if not match:
@@ -179,6 +182,7 @@ async def authenticate_image(request: Request, db=Depends(get_db)):
     user = find_user(db, record['pubkey']) if session else None
     if int(expires) <= time.time() or not hmac.compare_digest(signature, expected) or not native.media_allowed(user):
         raise HTTPException(401, 'Private artwork authorization expired or revoked')
+    await instance_membership.require_user(user)
     return SimpleNamespace(user=user, uid=uid, token='', session=session)
 
 
@@ -421,6 +425,7 @@ async def redeem_quick(body: QuickSecret, db=Depends(get_db)):
         user = find_user(db, entry['pubkey']) if entry and entry.get('pubkey') else None
         if not native.media_allowed(user):
             raise HTTPException(401, 'Quick Connect is not approved or Media Center access was revoked')
+        await instance_membership.require_user(user)
         uid = account_id(user)
         record = await media.read(account_key(uid)) or {'pubkey': media.identity(user)}
         token = uid + '.' + secrets.token_urlsafe(32)
@@ -1147,8 +1152,8 @@ async def client_socket(websocket: WebSocket, db=Depends(get_db)):
     global _socket_count
     try:
         await authenticate(websocket, db)
-    except HTTPException:
-        await websocket.close(code=1008)
+    except HTTPException as error:
+        await websocket.close(code=1013 if error.status_code == 503 else 1008)
         return
     if _socket_count >= 256:
         await websocket.close(code=1013)
@@ -1171,8 +1176,8 @@ async def client_socket(websocket: WebSocket, db=Depends(get_db)):
                 db.expire_all()
                 await authenticate(websocket, db)
                 db.rollback()
-            except HTTPException:
-                await websocket.close(code=1008)
+            except HTTPException as error:
+                await websocket.close(code=1013 if error.status_code == 503 else 1008)
                 return
             await websocket.send_json({'MessageType': 'KeepAlive', 'MessageId': str(uuid4())})
     except WebSocketDisconnect:

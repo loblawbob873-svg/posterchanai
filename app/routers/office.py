@@ -22,11 +22,13 @@ from defusedxml import ElementTree as ET
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 # The one list of origins the packaged apps run from — shared with the CORS policy and the
 # frame-ancestors header, so a shell added there is trusted here too and cannot be forgotten.
+from app.auth import get_current_user
+from app.services import instance_membership
 from app.auth import NATIVE_APP_ORIGINS
 
 import logging
@@ -124,7 +126,7 @@ def _token(file_id: str, expires: int) -> str:
     return f"{expires}.{sig}"
 
 
-def _authorize(file_id: str, token: str) -> dict:
+async def _authorize(file_id: str, token: str) -> dict:
     try:
         expires_s, sig = token.split(".", 1)
         expires = int(expires_s)
@@ -137,9 +139,11 @@ def _authorize(file_id: str, token: str) -> dict:
         raise HTTPException(401, "invalid office token")
     p = _dir(file_id)
     try:
-        return json.loads((p / "meta.json").read_text())
+        meta = json.loads((p / "meta.json").read_text())
     except (OSError, ValueError):
         raise HTTPException(404, "office session not found")
+    await instance_membership.require_pubkey(meta.get("owner", ""))
+    return meta
 
 
 def _cleanup() -> None:
@@ -244,9 +248,11 @@ async def _action_url(ext: str, mode: str) -> str:
 
 @router.post("/client/office/session")
 async def create_session(request: Request, file: UploadFile = File(...),
-                         mode: str = Form("edit"), origin: str = Form("")):
+                         mode: str = Form("edit"), origin: str = Form(""),
+                         user=Depends(get_current_user)):
     if not enabled():
         raise HTTPException(404, "built-in office support is disabled")
+    await instance_membership.require_user(user)
     name = Path(file.filename or "document").name[:240]
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
     if ext not in await _accepted_exts():
@@ -259,7 +265,7 @@ async def create_session(request: Request, file: UploadFile = File(...),
     p = _ROOT / file_id
     p.mkdir(mode=0o700, parents=True)
     (p / "document").write_bytes(data)
-    meta = {"name": name, "size": len(data), "version": 1, "created": int(time.time()),
+    meta = {"owner": user.nostr_npub, "name": name, "size": len(data), "version": 1, "created": int(time.time()),
             "readonly": mode != "edit", "origin": _post_message_origin(request, origin)}
     (p / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     expires = int(time.time()) + _TTL
@@ -286,8 +292,8 @@ async def create_session(request: Request, file: UploadFile = File(...),
 
 
 @router.get("/client/office/session/{file_id}/contents")
-def session_contents(file_id: str, access_token: str = Query(...)):
-    meta = _authorize(file_id, access_token)
+async def session_contents(file_id: str, access_token: str = Query(...)):
+    meta = await _authorize(file_id, access_token)
     return FileResponse(_dir(file_id) / "document", media_type="application/octet-stream",
                         filename=meta["name"])
 
@@ -315,7 +321,7 @@ _EXPORT = {"pdf": "application/pdf",
 
 @router.get("/client/office/session/{file_id}/export/{fmt}")
 async def session_export(file_id: str, fmt: str, access_token: str = Query(...)):
-    meta = _authorize(file_id, access_token)
+    meta = await _authorize(file_id, access_token)
     fmt = fmt.lower()
     if fmt not in _EXPORT:
         raise HTTPException(415, f"cannot export to .{fmt}")
@@ -343,8 +349,8 @@ async def session_export(file_id: str, fmt: str, access_token: str = Query(...))
 
 
 @router.delete("/client/office/session/{file_id}")
-def delete_session(file_id: str, access_token: str = Query(...)):
-    _authorize(file_id, access_token)
+async def delete_session(file_id: str, access_token: str = Query(...)):
+    await _authorize(file_id, access_token)
     shutil.rmtree(_dir(file_id), ignore_errors=True)
     with _MU:
         _LOCKS.pop(file_id, None)
@@ -352,8 +358,8 @@ def delete_session(file_id: str, access_token: str = Query(...)):
 
 
 @router.get("/wopi/files/{file_id}")
-def check_file_info(file_id: str, request: Request, access_token: str = Query(...)):
-    meta = _authorize(file_id, access_token)
+async def check_file_info(file_id: str, request: Request, access_token: str = Query(...)):
+    meta = await _authorize(file_id, access_token)
     base = _public_base(request)
     return {"BaseFileName": meta["name"], "Size": meta["size"],
             "Version": str(meta["version"]), "OwnerId": "posterchan",
@@ -366,8 +372,8 @@ def check_file_info(file_id: str, request: Request, access_token: str = Query(..
 
 
 @router.get("/wopi/files/{file_id}/contents")
-def get_file(file_id: str, access_token: str = Query(...)):
-    meta = _authorize(file_id, access_token)
+async def get_file(file_id: str, access_token: str = Query(...)):
+    meta = await _authorize(file_id, access_token)
     return FileResponse(_dir(file_id) / "document", media_type="application/octet-stream",
                         headers={"X-WOPI-ItemVersion": str(meta["version"])})
 
@@ -375,7 +381,7 @@ def get_file(file_id: str, access_token: str = Query(...)):
 @router.post("/wopi/files/{file_id}/contents")
 async def put_file(file_id: str, request: Request, access_token: str = Query(...),
                    x_wopi_lock: str | None = Header(None)):
-    meta = _authorize(file_id, access_token)
+    meta = await _authorize(file_id, access_token)
     if meta["readonly"]:
         raise HTTPException(403, "document is read-only")
     with _MU:
@@ -402,10 +408,10 @@ async def put_file(file_id: str, request: Request, access_token: str = Query(...
 
 
 @router.post("/wopi/files/{file_id}")
-def file_operation(file_id: str, access_token: str = Query(...),
+async def file_operation(file_id: str, access_token: str = Query(...),
                    x_wopi_override: str = Header(""), x_wopi_lock: str = Header(""),
                    x_wopi_oldlock: str = Header("")):
-    _authorize(file_id, access_token)
+    await _authorize(file_id, access_token)
     op = x_wopi_override.upper()
     with _MU:
         current = _LOCKS.get(file_id)
@@ -502,8 +508,9 @@ def blank_document(kind: str) -> tuple[bytes, str, str]:
 
 
 @router.get("/client/office/blank/{kind}")
-async def office_blank(kind: str):
+async def office_blank(kind: str, user=Depends(get_current_user)):
     """An empty document the caller can name, store on the drive and then open."""
+    await instance_membership.require_user(user)
     data, ext, mime = blank_document(kind)
     from fastapi.responses import Response
     return Response(content=data, media_type=mime, headers={

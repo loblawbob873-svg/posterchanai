@@ -114,7 +114,7 @@ def main():
         "xterm": "file://" + os.path.join(ROOT, "static", "vendor", "xterm", "xterm.css"),
         "xtermjs": "file://" + os.path.join(ROOT, "static", "vendor", "xterm", "xterm.js"),
         "fitjs": "file://" + os.path.join(ROOT, "static", "vendor", "xterm", "fit.js"),
-        "tiers": _fn("pageZoom") + "\n    " + _fn("fontSize"),
+        "tiers": _fn("fontSize"),
     }
     path = os.path.join(tmp, "s.html")
     with open(path, "w", encoding="utf-8") as fh:

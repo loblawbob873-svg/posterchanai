@@ -92,7 +92,7 @@ def test_tap_to_focus_is_not_runtime_scroll_intent():
 def test_large_replay_stays_pinned_until_chromium_finishes_layout():
     """A write callback can precede the final scrollHeight in packaged Electron."""
     pin = TERM[TERM.index("function _pinBottomAfterLayout"):
-               TERM.index("function pageZoom")]
+               TERM.index("function fontSize")]
     assert "const mine = ++bottomPinEpoch" in pin
     assert "requestAnimationFrame(() => requestAnimationFrame(settle))" in pin
     assert "setTimeout(settle, 120)" in pin

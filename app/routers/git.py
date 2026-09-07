@@ -15,10 +15,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.auth import get_current_user
+from app.services import instance_membership
 from app.models import User
 from app.services import settings_store, git_host_service as ghs, git_proxy
 
 logger = logging.getLogger(__name__)
+
+async def get_instance_user(user=Depends(get_current_user)):
+    return await instance_membership.require_user(user)
+
+
 router = APIRouter(prefix="/api/git", tags=["git"])
 
 # Smart-HTTP reverse-proxy router (NO /api prefix): mounted at /git/ (matching the recommended nginx
@@ -99,7 +105,7 @@ def _owner_hex_for(user: User, body_owner: str | None) -> str | None:
 
 
 @router.get("/status")
-def status(user: User = Depends(get_current_user)):
+def status(user: User = Depends(get_instance_user)):
     _require_enabled()
     if git_proxy.proxy_enabled():
         # Proxy node: no local subprocess; report the mode + upstream host.
@@ -112,7 +118,7 @@ def status(user: User = Depends(get_current_user)):
 
 
 @router.get("/repos")
-def list_repos(user: User = Depends(get_current_user)):
+def list_repos(user: User = Depends(get_instance_user)):
     """List hosted repos. Admin-gated so private repos are not disclosed anonymously."""
     _require_enabled()
     _require_local_host()
@@ -122,7 +128,7 @@ def list_repos(user: User = Depends(get_current_user)):
 
 
 @router.post("/host")
-async def host_repo(request: Request, user: User = Depends(get_current_user)):
+async def host_repo(request: Request, user: User = Depends(get_instance_user)):
     """Create/host a bare repo. Body: {repo_id, name?, description?, owner?(admin), private?, readers?}.
     Returns the clone/web/relays URLs + the suggested 30617 tags for the client to sign+publish."""
     _require_enabled()
@@ -168,7 +174,7 @@ async def host_repo(request: Request, user: User = Depends(get_current_user)):
 
 
 @router.post("/announce")
-async def announce_repo(request: Request, user: User = Depends(get_current_user)):
+async def announce_repo(request: Request, user: User = Depends(get_instance_user)):
     """Publish 30617 (+ an initial 30618 from current refs) for a PUBLIC repo, signed by the HOST
     OPERATOR key, to the local relay. Only valid when the repo owner IS the operator (e.g. the P4
     self-host of posterchanai). Refuses private repos. Non-operator owners sign client-side instead."""

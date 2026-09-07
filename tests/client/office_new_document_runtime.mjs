@@ -29,6 +29,10 @@ globalThis.openOfficeFile=async d=>opened.push(d);
 globalThis.toast=s=>toasts.push(String(s));
 globalThis.fetch=async url=>{requests.push(String(url));return new Response(new Uint8Array([80,75,3,4]),{status:200,headers:{'content-type':'application/vnd.oasis.opendocument.text','X-Document-Extension':'odt'}});};
 
+let sessionReady=false;
+globalThis.ensureAiSession=async()=>{sessionReady=true;};
+globalThis.window={__PC:{authFetch:async(...args)=>{if(!sessionReady)throw Error('missing session');return fetch(...args);}}};
+
 vm.runInThisContext(app.slice(start,end)+'\nglobalThis.__officeTest={_newDocumentModal};',{filename:'app-office-new-document.js'});
 __officeTest._newDocumentModal('text');
 node('nd-name').value='Quarterly/Plan';
@@ -46,3 +50,22 @@ if(node('nd-create').disabled)throw new Error('failed Create left its button per
 if(node('nd-create').textContent!=='Create')throw new Error('failed Create did not restore its label');
 if(!toasts.some(x=>x.includes('could not create it:')&&x.includes('HTTP 503')))throw new Error('failed Create was silent');
 console.log('office new-document click flow ok');
+
+// Drive opening an existing document through the same public bridge, without defining a bare
+// authFetch global: this catches the ReferenceError that syntax checks cannot find.
+const sessionStart=app.indexOf('  async function _officeSession(');
+const sessionEnd=app.indexOf('  function renderOfficeHome',sessionStart);
+if(sessionStart<0||sessionEnd<0)throw Error('missing Office session caller');
+globalThis.window.__PC.authFetch=async(url,opts)=>{
+  if(!sessionReady)throw Error('session not established before upload');
+  requests.push(String(url));
+  if(!(opts.body instanceof FormData)||opts.method!=='POST')throw Error('missing document upload');
+  return new Response(JSON.stringify({detail:'intentional editor fixture unavailable'}),{status:503});
+};
+globalThis.toast=s=>toasts.push(String(s));
+vm.runInThisContext(app.slice(sessionStart,sessionEnd)+'\nglobalThis.openSessionTest=_officeSession;');
+const documentFile=new Blob(['document'],{type:'application/vnd.oasis.opendocument.text'});
+documentFile.name='report.odt';
+await openSessionTest(documentFile,async()=>{});
+if(requests.at(-1)!=='https://instance.example/client/office/session')throw Error('document open never reached authenticated endpoint');
+if(!toasts.some(s=>s.includes('intentional editor fixture unavailable')))throw Error('document open failed before parsing the endpoint response');

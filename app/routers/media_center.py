@@ -25,7 +25,7 @@ from app.database import get_db
 from app.models import User
 from app.services.nostr.nostr_service import npub_of
 from app.services import media_center as media
-from app.services import settings_store
+from app.services import settings_store, instance_membership
 from app.utils import lb_auth
 
 PRIVATE = {"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"}
@@ -75,6 +75,7 @@ async def get_media_user(user=Depends(media_user_optional)):
         raise HTTPException(401, "Sign in to use Media Center")
     if not media_allowed(user):
         raise HTTPException(403, "An admin must enable your Media Center permission")
+    await instance_membership.require_user(user)
     return user
 
 
@@ -109,6 +110,7 @@ async def proxy_request(request: Request, user=Depends(media_user_optional), db=
             raise HTTPException(401, "Sign in to use Media Center")
         if not media_allowed(user):
             raise HTTPException(403, "An admin must enable your Media Center permission")
+    await instance_membership.require_user(user)
     pubkey = media.identity(user)
     if not pubkey:
         raise HTTPException(403, "Sign in with Nostr to use remote Media Center")
@@ -556,7 +558,7 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
               audio: int = Query(default=-1, ge=-1, le=1024),
               subtitle: int = Query(default=-1, ge=-1, le=1024),
               user=Depends(media_user_optional), db=Depends(get_db)):
-    ticket_user(viewer, user, db)
+    await instance_membership.require_user(ticket_user(viewer, user, db))
     library = await library_for(library_id, viewer)
     if (expires < time.time() or not library.get("playback_secret") or
             not hmac.compare_digest(ticket, sign_ticket(library, item_id, viewer, expires))):

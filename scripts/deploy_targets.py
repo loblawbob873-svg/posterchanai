@@ -101,6 +101,10 @@ _OWNED = (
     # nodes and dropped every connected Nostr client, for a file the relay never loads. WORKER is the
     # same cheap hedge the router rule carries: the news/markets pollers reach it by a lazy import.
     ("app/services/search_service.py", (APP, WORKER)),
+    # Membership serves app authorization and the worker's scheduled grant cleanup.
+    ("app/services/instance_membership.py", (APP, WORKER)),
+    ("app/services/instance_welcome.py", (APP, WORKER)),
+    ("app/services/relay_access_policy.py", (APP, WORKER)),
     # The datastore CLIENT (documents on the relay), and the calendar layer on top of it. MEASURED
     # the same way: relay_main, tor, proxy, git and the worker leave `app.services.nostr_store` out
     # of sys.modules; only stream_service (MEDIA) pulls it in, and the worker reaches it lazily.

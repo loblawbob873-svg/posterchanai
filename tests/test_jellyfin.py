@@ -55,7 +55,14 @@ def api(request, monkeypatch, tmp_path):
     def database():
         with Session(engine) as db:
             yield db
-    state = {'user': VIEWER}
+    state = {'user': VIEWER, 'membership': True}
+    # Protocol fixtures model registered users; signed-profile decisions are tested separately.
+    async def member(user):
+        if state['membership'] is not True:
+            from fastapi import HTTPException
+            raise HTTPException(503 if state['membership'] is None else 403, 'Set your instance address in your profile')
+        return user
+    monkeypatch.setattr(native.instance_membership, 'require_user', member)
     def signed_in():
         if state['user'] is None:
             return None
@@ -1249,3 +1256,26 @@ def test_client_crash_report_is_private_bounded_and_requires_active_media_login(
     assert api.edge['jellyfin-client-log:' + login['User']['Id']] == record
     assert c.post('/jellyfin/Sessions/Logout', headers=headers(login)).status_code == 204
     assert c.post(path, headers=headers(login), content='revoked').status_code == 401
+
+
+def test_instance_membership_revocation_preserves_public_bootstrap_but_blocks_token(api):
+    login = connect(api)
+    api.state['membership'] = False
+    assert api.client.post('/jellyfin/QuickConnect/Initiate').status_code == 200
+    assert api.client.get('/jellyfin/Users/Me', headers=headers(login)).status_code == 403
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with api.client.websocket_connect('/jellyfin/socket?api_key=' + login['AccessToken']):
+            pass
+    assert closed.value.code == 1008
+
+
+def test_profile_lookup_outage_is_retryable_for_tv_socket(api):
+    login = connect(api)
+    api.state['membership'] = None
+    assert api.client.get('/jellyfin/Users/Me', headers=headers(login)).status_code == 503
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with api.client.websocket_connect('/jellyfin/socket?api_key=' + login['AccessToken']):
+            pass
+    assert closed.value.code == 1013

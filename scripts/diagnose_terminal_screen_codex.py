@@ -3,6 +3,7 @@
 This diagnostic never attaches to, types in, or terminates an existing user session.
 """
 import asyncio
+import base64
 import codecs
 import fcntl
 import json
@@ -139,6 +140,25 @@ async def main():
                 assert list(actual)==expected, f'PTY grid {actual} does not match renderer {expected}'
             resized=await js('snapshot()');print('RESIZED:',resized)
             assert resized.count('terminal-regression-edited')==1, 'resizing duplicated or corrupted the draft'
+            old_font=await js('TEST_TERM.options.fontSize')
+            await js("document.querySelector('#tty-font-more').click()")
+            await asyncio.sleep(.3)
+            assert await js('TEST_TERM.options.fontSize')==old_font+1, 'text size control did not refit terminal'
+            assert await js("Number(localStorage.getItem('pc_tty_font_size'))")==old_font+1
+            await js("document.querySelector('#tty-font-less').click()")
+            await asyncio.sleep(.3)
+            await call('Input.insertText',{'text':' '+'typing visibility '*12+'end-of-draft'})
+            await asyncio.sleep(1)
+            for width in [390,1280]:
+                await call('Emulation.setDeviceMetricsOverride',{'width':width,'height':900,'deviceScaleFactor':1,'mobile':False})
+                await asyncio.sleep(1)
+                view=await js("(()=>{const b=TEST_TERM.buffer.active;return Array.from({length:TEST_TERM.rows},(_,i)=>b.getLine(b.viewportY+i)?.translateToString(true)||'').join('');})()")
+                assert view.count('terminal-regression-edited')==1 and view.count('end-of-draft')==1, 'wrapped draft is hidden or duplicated'
+            visible=await js("(()=>{const b=TEST_TERM.buffer.active;return Array.from({length:TEST_TERM.rows},(_,i)=>b.getLine(b.viewportY+i)?.translateToString(true)||'').join('\\n');})()")
+            print('VISIBLE:',visible)
+            assert visible.count('terminal-regression-edited')==1, 'draft exists in scrollback but is not visible'
+            shot=await call('Page.captureScreenshot',{'format':'png'})
+            (scratch/'terminal.png').write_bytes(base64.b64decode(shot['result']['data']))
             (scratch/'output.bin').write_bytes(raw)
             (scratch/'input.json').write_text(json.dumps(sent))
             print('Artifacts:',scratch)

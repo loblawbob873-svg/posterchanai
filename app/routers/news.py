@@ -9,10 +9,16 @@ from app.database import get_db
 from app.models import User
 from app.services import settings_store
 from app.auth import get_current_user
+from app.services import instance_membership
 from app.services.inference_factory import get_inference_service, prepare_vram_for_llm
 from app.services.proxy_utils import require_proxy
 
 logger = logging.getLogger(__name__)
+
+
+async def get_instance_user(user=Depends(get_current_user)):
+    return await instance_membership.require_user(user)
+
 
 router = APIRouter(prefix="/api/news", tags=["news"])
 
@@ -300,7 +306,7 @@ def get_user_news_sources(user: User, db: Session) -> list:
 @router.get("/sources")
 async def get_sources(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_instance_user)
 ):
     """Get the list of news sources for current user"""
     sources = get_user_news_sources(current_user, db)
@@ -312,7 +318,7 @@ async def get_headlines(
     source_url: str,
     conversation_id: int = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_instance_user)
 ):
     """Get news headlines from a source with AI summaries"""
     from app.models import Conversation, Message
@@ -348,7 +354,7 @@ async def get_headlines(
 @router.get("/all")
 async def get_all_headlines(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_instance_user)
 ):
     """Get headlines from all sources"""
     sources = get_user_news_sources(current_user, db)
@@ -365,7 +371,7 @@ async def get_all_headlines(
 async def summarize_article(
     url: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_instance_user)
 ):
     """Summarize a specific article URL"""
     import httpx

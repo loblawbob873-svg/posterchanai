@@ -16,3 +16,16 @@
 .instance-welcome .iw-later{min-height:44px;background:none;border:0;color:var(--muted);font:inherit;cursor:pointer}
 .instance-welcome button:focus-visible{outline:2px solid var(--neon);outline-offset:3px}
 @media(max-width:520px){.instance-welcome{padding:28px 20px}.instance-welcome .iw-benefits{grid-template-columns:1fr;gap:8px;margin:20px 0}.instance-welcome article{padding:12px}.instance-welcome article span{float:left;margin:8px 12px}.instance-welcome h3{margin:0 0 4px}}
+
+/* Keep the required steps and primary action ahead of the compact app list. */
+.instance-welcome .iw-steps{text-align:left;padding:16px 18px;border:1px solid var(--neon,var(--line));border-radius:12px;background:var(--panel);margin:20px 0}
+.instance-welcome .iw-steps h3{margin:0 0 10px;font-size:16px}
+.instance-welcome .iw-steps ol{padding-left:20px;margin:0;line-height:1.6;font-size:14px}
+.instance-welcome .iw-steps li+li{margin-top:8px}
+.iw-address{overflow-wrap:anywhere;font-family:ui-monospace,monospace;color:var(--text)!important;font-weight:600}
+.instance-welcome .iw-benefits{gap:8px;margin:14px 0 20px}
+.instance-welcome .iw-benefits article{padding:12px 8px;display:flex;align-items:center;justify-content:center;min-height:48px}
+.instance-welcome .iw-benefits h3{font-size:13px;margin:0;line-height:1.35;overflow-wrap:anywhere}
+.instance-app-gate{margin:24px auto;padding:24px;max-width:620px;line-height:1.6;border:1px solid var(--line);border-radius:16px;background:var(--panel);color:var(--text)}
+.instance-app-gate button{margin-top:8px;min-height:44px;white-space:normal}
+@media(max-width:520px){.instance-welcome .iw-benefits{grid-template-columns:repeat(2,minmax(0,1fr))}.instance-welcome .iw-steps{padding:12px}.instance-app-gate{margin:12px;padding:16px}}

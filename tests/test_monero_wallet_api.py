@@ -44,9 +44,9 @@ ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
 
 ADDRESS = "5" + "A" * 94
 MAINNET = "4" + "A" * 94
-ADMIN = User(id=3, username="root", is_admin=True)
-OTHER_ADMIN = User(id=9, username="second", is_admin=True)
-MEMBER = User(id=4, username="joe", is_admin=False)
+ADMIN = User(id=3, username="root", is_admin=True, nostr_npub="a"*64)
+OTHER_ADMIN = User(id=9, username="second", is_admin=True, nostr_npub="b"*64)
+MEMBER = User(id=4, username="joe", is_admin=False, nostr_npub="c"*64)
 
 
 class RpcLog(list):
@@ -180,9 +180,13 @@ def test_the_client_only_ever_asks_for_the_canonical_path():
 
 def test_every_route_is_declared_admin_only():
     """Static half: the `WalletOwner` annotation, on every route, with no exceptions."""
+    def dependencies(node):
+        for dep in node.dependencies:
+            yield dep.call
+            yield from dependencies(dep)
     for route in router_module.router.routes:
-        names = [dep.call.__name__ for dep in route.dependant.dependencies]
-        assert "get_admin_user" in names, f"{route.path} is not admin-gated"
+        calls = list(dependencies(route.dependant))
+        assert auth.get_admin_user in calls, f"{route.path} is not admin-gated"
 
 
 @pytest.mark.parametrize("method,path,body", ROUTES)
@@ -672,3 +676,9 @@ def test_the_caps_still_bind_on_mainnet(mainnet_client):
     spent_out = mainnet_client.post("/api/wallet/xmr/transfer/prepare",
                                     json={"address": MAINNET, "amount": "0.001"})
     assert spent_out.status_code == 400 and "daily" in spent_out.json()["detail"]
+
+
+@pytest.fixture(autouse=True)
+def assigned_wallet_fixture_members(monkeypatch):
+    from tests.member_fixtures import allow_keys
+    allow_keys(monkeypatch,'a'*64,'b'*64,'c'*64)

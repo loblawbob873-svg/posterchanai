@@ -32,6 +32,8 @@ class _User:
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
+    from tests.member_fixtures import allow_keys
+    allow_keys(monkeypatch,'f'*64)
     monkeypatch.setenv("EXODUS_TRANSFER_DIR", str(tmp_path / "transfers"))
     engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
     Base.metadata.create_all(engine, tables=[User.__table__, ExodusWallet.__table__, ExodusWalletRecord.__table__])

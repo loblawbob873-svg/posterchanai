@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/websearch", tags=["websearch"])
 
+async def get_search_member(current_user: User = Depends(get_current_user)):
+    from app.services.instance_membership import require_user
+    return await require_user(current_user)
+
+
 # One LLM job at a time from this screen. The inference service serializes internally anyway; this
 # keeps a burst of clicks from queueing behind each other with the VRAM swap re-run per job.
 _LLM_SLOT = asyncio.Semaphore(1)
@@ -111,9 +116,9 @@ async def web_search(
     time_range: str = Query(""),
     page: int = Query(1, ge=1, le=20),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_search_member),
 ):
-    """One page of results. No LLM — every logged-in user can search."""
+    """One page of results. No LLM — qualified instance members can search."""
     svc = get_search_service(db)
     return await svc.search_page(q.strip(), category=category, time_range=time_range, page=page)
 
@@ -122,7 +127,7 @@ async def web_search(
 async def read_page(
     url: str = Query(..., max_length=2000),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_search_member),
 ):
     """Extracted text of a result, so it can be read in place and backed out of.
 
@@ -395,8 +400,13 @@ def _page_viewer(request: Request, t: str = Query(""), db: Session = Depends(get
     return get_current_user(request=request, credentials=creds, db=db)
 
 
+async def _member_page_viewer(current_user: User = Depends(_page_viewer)):
+    from app.services.instance_membership import require_user
+    return await require_user(current_user)
+
+
 @router.post("/ticket")
-async def page_ticket(current_user: User = Depends(get_current_user)):
+async def page_ticket(current_user: User = Depends(get_search_member)):
     """A short-lived key for the page frame — see _mint_ticket."""
     return {"ticket": _mint_ticket(current_user.id), "expires_in": _TICKET_TTL}
 
@@ -440,7 +450,7 @@ async def render_asset(
     request: Request,
     url: str = Query(..., max_length=2000),
     db: Session = Depends(get_db),
-    current_user: User = Depends(_page_viewer),
+    current_user: User = Depends(_member_page_viewer),
 ):
     """A stylesheet, image or font belonging to a framed page, re-served from this node.
 
@@ -544,7 +554,7 @@ async def render_page(
     request: Request,
     url: str = Query(..., max_length=2000),
     db: Session = Depends(get_db),
-    current_user: User = Depends(_page_viewer),
+    current_user: User = Depends(_member_page_viewer),
 ):
     """The result's ACTUAL page, rendered in the app.
 
@@ -625,7 +635,7 @@ class SummarizeReq(BaseModel):
 async def summarize_link(
     req: SummarizeReq,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_search_member),
 ):
     """Summarize one result's page."""
     _require_ai(current_user)
@@ -668,7 +678,7 @@ class OverviewReq(BaseModel):
 async def overview(
     req: OverviewReq,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_search_member),
 ):
     """The "AI overview": answer the query from the top results, citing them by number.
 

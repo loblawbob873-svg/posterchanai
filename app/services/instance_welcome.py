@@ -88,7 +88,7 @@ async def notify_approval(db, pubkey, address):
     if not claimed:
         return False
     text = (f'Your NIP-05 name has been approved: {address}\n\n'
-            'You can now set it in your Nostr profile. Open Edit profile, paste this address '
+            'To activate access to this instance’s apps, you must save this exact address in your Nostr profile. Open Edit profile, paste this address '
             'into the NIP-05 / verified address field, and save your profile.')
     if await system_dm.send(pubkey, text):
         row.notified_address = address

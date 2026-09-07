@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.auth import get_current_user
+from app.services import instance_membership
 from app.services.nostr import event, nostr_service
 from app.services import instance_welcome as service, settings_store
 
@@ -13,6 +15,7 @@ router = APIRouter(prefix='/api/instance-welcome', tags=['instance welcome'])
 class Proof(BaseModel):
     pubkey: str = Field(max_length=100)
     auth: str = Field(max_length=8192)
+    refresh: bool = False
 
 
 def verify(data, purpose):
@@ -40,7 +43,8 @@ async def status(data: Proof, request: Request, db: Session = Depends(get_db)):
             await service.notify_approval(db, pk, address)
         else:
             await service.notify_admins(db, row)
-    return {'eligible': not bool(address), 'address': address,
+    membership = await instance_membership.status(pk, force=data.refresh)
+    return {**membership, 'eligible': not membership['qualified'], 'address': membership.get('address') or address,
             'pending': bool(row and not address),
             'site_name': settings_store.get('site_name', '') or 'this instance'}
 
@@ -54,3 +58,8 @@ async def apply(data: Proof, request: Request, db: Session = Depends(get_db)):
     row, created = service.apply(db, pk)
     notified = await service.notify_admins(db, row)
     return {'ok': True, 'pending': True, 'created': created, 'admin_notified': notified}
+
+
+@router.get('/access')
+async def access(refresh: bool = False, user=Depends(get_current_user)):
+    return await instance_membership.status(user.nostr_npub or '', force=refresh)

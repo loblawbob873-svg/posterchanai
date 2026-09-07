@@ -151,34 +151,24 @@
     }
     function _recall(){ try{ return sessionStorage.getItem(SKEY()) || ''; }catch(_){ return ''; } }
 
-    // Character cell width scales with the screen: a fixed 14px leaves a phone with ~27 columns,
-    // which is too narrow for `ls -l`, let alone anything that draws a box.
-    /* THE PAGE'S SCALE, WHICH THE TERMINAL DELIBERATELY DOES NOT SHARE. See `.tty-fit` in the
-     * stylesheet: the terminal host undoes `body{zoom}` so that xterm's hit-testing and its
-     * rendering are measured in one space. Undoing the zoom without undoing its EFFECT would render
-     * every glyph 1/zf bigger and fit half as many rows, so the font is scaled by the same factor
-     * the host removed. Measured: at 1366 the grid goes 42 -> 19 rows without this and 30 with it. */
-    function pageZoom(){
+    function fontSize(){
+      // The terminal cancels page zoom; keep its text readable in actual screen pixels.
       try{
-        const z = parseFloat(getComputedStyle(document.body).zoom);
-        return (z > 0 && z <= 1) ? z : 1;
-      }catch(_){ return 1; }
+        const saved=Number(localStorage.getItem('pc_tty_font_size'));
+        if(Number.isInteger(saved) && saved>=10 && saved<=24) return saved;
+      }catch(_){}
+      const box=document.getElementById('tty-screen');
+      const width=box && box.getBoundingClientRect().width;
+      const w=width>0 ? width : Math.min(window.innerWidth,window.innerHeight*1.6);
+      return w < 420 ? 11 : w < 700 ? 12 : 14;
     }
 
-    function fontSize(){
-      const w = Math.min(window.innerWidth, window.innerHeight * 1.6);
-      let px;
-      if(w < 420) px = 10;
-      else if(w < 700) px = 11;
-      else if(w < 1100) px = 13;
-      else px = 14;
-      /* FLOOR, NOT ROUND, and the difference is columns rather than taste. The host is shrunk by
-       * the page's zoom and the font is scaled by the same factor, so the column count should come
-       * out unchanged -- but rounding 13 x 0.67 = 8.7 UP to 9 makes every glyph 3% wider than
-       * proportional, and a phone-width box lost its thirtieth column: `ls -l` stops lining up.
-       * Rounding down cannot cost a column. 8px is the practical floor; below it xterm's glyph
-       * cache renders mush. */
-      return Math.max(8, Math.floor(px * pageZoom()));
+    function _changeFont(delta){
+      const size=Math.max(10,Math.min(24,fontSize()+delta));
+      try{ localStorage.setItem('pc_tty_font_size',String(size)); }
+      catch(_){ toast('Could not save terminal text size'); return; }
+      _fitPixels=''; _fit();
+      _focus();
     }
 
     /* ── SHELL HISTORY ─────────────────────────────────────────────────────────────────────────
@@ -311,6 +301,8 @@
           <button class="btn btn-ghost small hidden" id="tty-hist"
                   title="Commands from your terminals">History</button>
           <button class="btn btn-ghost small" id="tty-find" title="Find in terminal (Ctrl+Shift+F)">Find</button>
+          <button class="btn btn-ghost small" id="tty-font-less" title="Smaller terminal text" aria-label="Smaller terminal text">A−</button>
+          <button class="btn btn-ghost small" id="tty-font-more" title="Larger terminal text" aria-label="Larger terminal text">A+</button>
           <span class="tty-state" id="tty-state"></span>
         </div>
         <div class="tty-find" id="tty-find-panel" hidden>
@@ -520,29 +512,38 @@
        *
        * NO TOAST ON COPY. It fires on every drag of the mouse, and a notification per selection is
        * noise -- the selection highlighting IS the feedback. */
+      let selectionCopy = Promise.resolve();
       try{
         term.onSelectionChange(() => {
           let sel = '';
-          try{ sel = term.getSelection() || ''; }catch(_){ sel = ''; }
-          if(!sel) return;
-          try{ if(window.pcClip && window.pcClip.write) return void window.pcClip.write(sel); }catch(_){}
-          try{ PC && PC.copyValue && PC.copyValue(sel, '', ''); }catch(_){}
+          try{ sel = term.getSelection(); }catch(_){}
+          if(typeof sel !== 'string' || !sel) return;
+          // Serialize native writes: a slow earlier selection must not replace the final one.
+          selectionCopy = selectionCopy.then(async () => {
+            try{
+              if(window.pcClip && window.pcClip.write && await window.pcClip.write(sel)) return;
+            }catch(_){}
+            try{ if(PC && PC.copyValue) await PC.copyValue(sel, '', ''); }catch(_){}
+          });
         });
       }catch(_){}
 
-      /* Paste on the RELEASE of the right button, and prevent the browser menu. `term.paste()` is
-       * xterm's own, which sends the text through the same path as typing -- including bracketed
-       * paste, so a shell that supports it does not execute a multi-line paste line by line. */
+      /* Wait for highlight-to-copy before reading. Pass only text to xterm, which owns
+       * bracketed paste; a bridge object must never become shell input. */
       try{
         box.addEventListener('contextmenu', async (e) => {
           e.preventDefault();
+          const target = term;
+          await selectionCopy;
           let text = '';
           try{ if(window.pcClipRead && window.pcClipRead.read) text = await window.pcClipRead.read(); }catch(_){}
-          if(!text){
+          if(typeof text !== 'string' || !text){
             try{ text = await navigator.clipboard.readText(); }catch(_){ text = ''; }
           }
-          if(!text){ try{ PC && PC.toast && PC.toast('nothing to paste'); }catch(_){} return; }
-          try{ term.paste(text); }catch(_){}
+          if(typeof text !== 'string' || !text){ try{ PC && PC.toast && PC.toast('nothing to paste'); }catch(_){} return; }
+          // Closing/replacing a terminal during an async clipboard read cancels that paste.
+          if(term !== target || !box.isConnected) return;
+          try{ target.paste(text); }catch(_){}
         });
       }catch(_){}
       term.onData(d => { _histTyped(d); _send({ t: 'in', d }); });
@@ -1304,6 +1305,8 @@
       { const b = $('#tty-stop'); if(b) b.onclick = () => detach(); }
       { const b = $('#tty-kill'); if(b) b.onclick = () => kill(); }
       { const b = $('#tty-find'); if(b) b.onclick = _findOpen; }
+      { const b = $('#tty-font-less'); if(b) b.onclick = () => _changeFont(-1); }
+      { const b = $('#tty-font-more'); if(b) b.onclick = () => _changeFont(1); }
       { const b = $('#tty-find-prev'); if(b) b.onclick = () => _findMove(-1); }
       { const b = $('#tty-find-next'); if(b) b.onclick = () => _findMove(1); }
       { const b = $('#tty-find-close'); if(b) b.onclick = _findClose; }

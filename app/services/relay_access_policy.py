@@ -23,16 +23,18 @@ def configuration():
 
 
 
-def plan(db, exempt_fediverse=True):
+async def plan(db, exempt_fediverse=True):
     from app.services.nostr_relay.thread import _parse_nip05
     settings.hydrate_from_db(db)
     if not settings.is_hydrated():
         raise ValueError("Relay settings are still loading; no permissions were changed")
     domain = (settings.get("nostr_relay_nip05_domain", "") or "").strip().lower()
-    names, _ = _parse_nip05(settings.get("nostr_relay_nip05_names", "") or "", "")
+    registry = settings.get("nostr_relay_nip05_names", "") or ""
+    names, _ = _parse_nip05(registry, "")
     if not domain or not names:
         raise ValueError("Configure a NIP-05 domain and registered names before running this policy")
-    keep = set(names.values())
+    registered = {pk.lower() for pk in names.values()}
+    keep = set()
     users = db.query(User).all()
     # Infrastructure identities are not consumer access grants.
     for u in users:
@@ -51,6 +53,31 @@ def plan(db, exempt_fediverse=True):
         keep.update(pk for pk, in db.query(FediPuppet.pubkey_hex).all())
         keep.update(ns.to_pubkey_hex(u.nostr_npub) for u in users if u.nostr_npub and
                     (u.pleroma_acct or u.pleroma_enabled or u.pleroma_instance_url))
+    # Verify before any mutation: an unavailable profile source aborts the entire plan.
+    # Registry membership alone does not show that the user saved the address.
+    from app.services.instance_membership import status
+    from fastapi import HTTPException
+    slots = asyncio.Semaphore(8)
+    async def check(pk):
+        async with slots:
+            return pk, (await status(pk, force=True))['qualified']
+    try:
+        # Bound the whole preview as well as concurrency. No SQL writes occur until every
+        # answer is known; a slow relay cannot leave a request/transaction open indefinitely.
+        async with asyncio.timeout(45):
+            results = await asyncio.gather(*(check(pk) for pk in sorted(registered - keep)),
+                                           return_exceptions=True)
+    except TimeoutError:
+        raise HTTPException(503, 'Profile verification timed out; no permissions were changed')
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+        pk, qualified = result
+        if qualified:
+            keep.add(pk)
+    if (registry != (settings.get('nostr_relay_nip05_names', '') or '') or
+            domain != (settings.get('nostr_relay_nip05_domain', '') or '').strip().lower()):
+        raise HTTPException(503, 'Instance identity settings changed; retry without changing permissions')
     whitelist = set(blossom_service._whitelist_pubkeys(db))
     removed = whitelist - keep
     targets = [u for u in users if u.nostr_npub and ns.to_pubkey_hex(u.nostr_npub) not in keep
@@ -66,7 +93,7 @@ def plan(db, exempt_fediverse=True):
 
 async def run(db, exempt_fediverse=True):
     async with _lock:
-        targets, keep, summary = plan(db, exempt_fediverse)
+        targets, keep, summary = await plan(db, exempt_fediverse)
         # Persist each revocation to the authoritative relay before changing its read-cache.
         # A failed write leaves a visible error and is retried on the next run.
         for u in targets:
@@ -106,11 +133,13 @@ def start():
                 settings.hydrate_from_db(db)
                 cfg = configuration()
                 if cfg['enabled']:
-                    await run(db, cfg['exempt_fediverse'])
+                    result = await run(db, cfg['exempt_fediverse'])
+                    log.info('Relay access policy cleanup completed: %s', result)
             except Exception:
                 log.exception('Relay access policy cleanup failed')
     _scheduler = AsyncIOScheduler()
-    _scheduler.add_job(tick, 'interval', minutes=15, max_instances=1, coalesce=True)
+    _scheduler.add_job(tick, 'interval', minutes=15, max_instances=1, coalesce=True,
+                       id='relay-access-policy', name='Relay access policy cleanup')
     _scheduler.start()
 
 

@@ -731,7 +731,16 @@ window.PCGitFactory = function(dep){
    * back to a screen they never chose. Restored only on a BACK press (`opts.restore`), never when
    * the repo is opened fresh from the list — arriving somewhere starts at its front page. */
   const _rvTab = Object.create(null);
+  let _repoOpenEpoch=0;
   function openRepo(e, opts){
+    const attempt=++_repoOpenEpoch;
+    if(window.PCInstanceAccess&&!window.PCInstanceAccess.allowed('repos')){
+      const from=S.VIEW,owner=S.ME?.pubkey;
+      const current=()=>attempt===_repoOpenEpoch&&S.VIEW===from&&S.ME?.pubkey===owner;
+      window.PCInstanceAccess.require('repos').then(()=>{if(current())openRepo(e,opts);},
+        ()=>{if(current())switchView('repos');});
+      return;
+    }
     if(!e) return;
     // Put the repo in history. It was never a history entry, so Back from an issue popped straight PAST
     // it to whatever came before — the "no way back from an issue" dead end. The naddr doubles as the

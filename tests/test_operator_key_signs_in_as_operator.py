@@ -212,9 +212,13 @@ def test_the_wallet_stays_admin_only():
     """The fix must not have widened the wallet itself. It recognises one existing identity; it does
     not change who may spend."""
     from app.routers import monero_wallet
+    from app.auth import get_admin_user
+    def dependencies(node):
+        for dep in node.dependencies:
+            yield dep.call
+            yield from dependencies(dep)
     for route in monero_wallet.router.routes:
-        names = [d.call.__name__ for d in route.dependant.dependencies]
-        assert "get_admin_user" in names, f"{route.path} lost its admin gate"
+        assert get_admin_user in list(dependencies(route.dependant)), f"{route.path} lost its admin gate"
 
 
 # =============================================================================================

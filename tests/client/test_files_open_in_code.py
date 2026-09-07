@@ -547,7 +547,7 @@ class TheOfficeEditorGetsTheScreen(unittest.TestCase):
         self.assertIn(guard, body)
         self.assertIn("connect this app to your PosterChan instance", body)
         self.assertLess(body.index(guard), body.index("new FormData()"))
-        self.assertLess(body.index(guard), body.index("fetch(B + '/client/office/session'"))
+        self.assertLess(body.index(guard), body.index("window.__PC.authFetch(B + '/client/office/session'"))
 
 
 class EmailGetsTheSameNeutralWorkspace(unittest.TestCase):

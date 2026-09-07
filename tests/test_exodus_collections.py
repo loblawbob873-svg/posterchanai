@@ -26,6 +26,8 @@ def world(monkeypatch, tmp_path):
     db = Session(engine)
     users = [User(id=i, username=f'user{i}', password_hash='unused', nostr_npub=f'{i:064x}') for i in [1, 2]]
     db.add_all(users); db.commit()
+    from tests.member_fixtures import allow_keys
+    allow_keys(monkeypatch, *(u.nostr_npub for u in users))
     state = SimpleNamespace(db=db, users=users, user=users[0], docs={}, reachable=True, publish=True, writes=0)
     async def get(port, tag, *, seckey=None, kind=30078, strict=False, **kwargs):
         assert strict

@@ -39,6 +39,7 @@ psycopg2-binary>=2.9.0
 
 # Nostr: wss relay client + fast BIP340 verify
 websockets>=14.0
+python-socks>=2.4  # Cancellation-safe bounded HTTP CONNECT for profile verification
 coincurve>=19.0
 websocket-client>=1.7.0       # drives headless Chrome for screenshots / post cards (optional)
 segno>=1.6.0                  # QR codes for mobile (NIP-46 nostrconnect) sign-in — pure-Python

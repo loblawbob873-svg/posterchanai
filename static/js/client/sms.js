@@ -903,6 +903,7 @@
   }
   let _loadingArchive = null;
   async function load(force){
+    if(window.PCInstanceAccess) await window.PCInstanceAccess.require('texts');
     if(S.ready && !force) return;
     /* render(), focus and a late module route can all ask for the first load together. Without one
      * shared promise they race the same S.ready=false transition, paint different partial maps and

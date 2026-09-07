@@ -20,15 +20,38 @@ peer.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-# The SAME peer/API-key/JWT check the image and music endpoints use, imported rather than
-# reimplemented. Authentication is the last place to grow a second, subtly different copy — and this
-# endpoint has exactly the shape that one is written for: a peer with no user behind it.
-from app.routers.image_api import get_image_auth as peer_or_user_auth
+from app.auth import get_current_user_optional
+from app.utils import lb_auth
+
+
+async def peer_or_user_auth(request: Request, db: Session = Depends(get_db)) -> bool:
+    """Trusted peer work, or an authenticated qualified user; never anonymous search."""
+    if lb_auth.is_internal(request):
+        return True
+    from app.services.instance_membership import require_user
+    from app.utils.auth_utils import query_api_key_with_retry, get_user_from_api_key
+    bearer = request.headers.get('authorization', '')
+    candidates = [request.headers.get('x-api-key', '')]
+    if bearer.lower().startswith('bearer '):
+        candidates.append(bearer[7:].strip())
+    for token in dict.fromkeys(value.strip() for value in candidates if value.strip()):
+        api_key, user_id = query_api_key_with_retry(db, token)
+        if api_key and user_id:
+            user = get_user_from_api_key(db, user_id)
+            if user:
+                await require_user(user)
+                return True
+    user = get_current_user_optional(request, db)
+    if user is None:
+        raise HTTPException(401, 'Sign in to use Web Search')
+    await require_user(user)
+    return True
+
 
 logger = logging.getLogger(__name__)
 

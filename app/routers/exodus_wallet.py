@@ -26,7 +26,12 @@ from app.services import exodus_derivation as D
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/wallet/exodus", tags=["exodus-wallet"])
-CurrentUser = Annotated[User, Depends(auth.get_current_user)]
+async def get_member_wallet_user(user: User = Depends(auth.get_current_user)):
+    from app.services.instance_membership import require_user
+    return await require_user(user)
+
+
+CurrentUser = Annotated[User, Depends(get_member_wallet_user)]
 WalletId = Annotated[str, Query(alias="wallet", pattern=r"^(default|[0-9a-f]{32})$")]
 Portfolio = Annotated[int, Query(ge=0, le=15)]
 

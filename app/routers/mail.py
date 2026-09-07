@@ -11,6 +11,7 @@ from urllib.parse import unquote
 
 from app.database import get_db
 from app.auth import get_current_user
+from app.services import instance_membership
 from app.models import User
 from app.services.mail_service import (get_attachment, get_user_mail_accounts, sanitize_filename,
                                        send_email, reply_to_message, forward_message,
@@ -19,6 +20,11 @@ from app.services.mail_service import (get_attachment, get_user_mail_accounts, s
 from app.services.storage_service import StorageService, _sanitize_path_component, _validate_path_within_base
 
 logger = logging.getLogger(__name__)
+
+
+async def get_instance_user(user=Depends(get_current_user)):
+    return await instance_membership.require_user(user)
+
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
 
@@ -35,7 +41,7 @@ class MailAiReq(BaseModel):
 
 @router.post("/ai")
 async def mail_ai(req: MailAiReq, db: Session = Depends(get_db),
-                  current_user: User = Depends(get_current_user)):
+                  current_user: User = Depends(get_instance_user)):
     """The ✨ AI menu on an open email: summarize it, or draft a reply to it.
 
     THE MODEL ONLY EVER PRODUCES TEXT THE USER THEN REVIEWS. A summary is displayed; a reply draft
@@ -140,7 +146,7 @@ async def download_attachment(
     uid: str,
     index: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_instance_user)
 ):
     """Download an email attachment."""
     accounts = get_user_mail_accounts(current_user.id, db)
@@ -177,7 +183,7 @@ async def serve_saved_attachment(
     username: str,
     filename: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_instance_user)
 ):
     """Serve a saved mail attachment from temp directory (opens in browser)."""
     # Decode URL-encoded username (handles @ symbols, etc.)
@@ -336,12 +342,12 @@ def _summary(m: dict) -> dict:
 
 
 @router.get("/accounts")
-async def mail_accounts(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_accounts(db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     return {"accounts": [{"email": a.email} for a in get_user_mail_accounts(current_user.id, db)]}
 
 
 @router.post("/sync")
-async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_do_sync(db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """Fast new-mail refresh: mirror INBOX for every account.
 
     Other folders refresh when opened. Walking every Archive/Trash/custom folder here made the
@@ -389,7 +395,7 @@ _WARMING: dict = {}
 
 @router.get("/messages")
 async def mail_messages(account: str = "", folder: str = "INBOX", until: int = 0,
-                        db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+                        db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """One page of a folder, newest first. `until` is the cursor from the previous page."""
     sk = _seckey(db, current_user)
     # WARM THE THREAD SCAN WHILE THEY ARE READING THE LIST.
@@ -454,7 +460,7 @@ async def mail_messages(account: str = "", folder: str = "INBOX", until: int = 0
 
 @router.get("/message")
 async def mail_message(account: str, uid: str, folder: str = "INBOX",
-                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+                       db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     acc = _resolve_account(db, current_user, account)
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -481,7 +487,7 @@ async def mail_message(account: str, uid: str, folder: str = "INBOX",
 
 @router.get("/search")
 async def mail_search(q: str, account: str = "", folder: str = "",
-                      db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+                      db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     sk = _seckey(db, current_user)
     # PAGED, for the reason /thread is. `list_messages(..., limit=0)` is ONE page and the relay
     # clamps it to 5000: measured on the reporting mailbox, unified search saw 5,000 of 17,921
@@ -497,7 +503,7 @@ async def mail_search(q: str, account: str = "", folder: str = "",
 
 
 @router.post("/mark-read")
-async def mail_mark_read(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_mark_read(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
@@ -508,7 +514,7 @@ async def mail_mark_read(request: Request, db: Session = Depends(get_db), curren
 
 
 @router.post("/delete")
-async def mail_delete(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_delete(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
@@ -533,7 +539,7 @@ async def mail_delete(request: Request, db: Session = Depends(get_db), current_u
 
 
 @router.post("/archive")
-async def mail_archive(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_archive(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
@@ -548,7 +554,7 @@ async def mail_archive(request: Request, db: Session = Depends(get_db), current_
 
 
 @router.post("/move")
-async def mail_move(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_move(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """Move a message to a folder the user picked (the Move control, which Archive is one entry of).
 
     Reuses `mail_service.move_message`, which already existed for "delete → Trash rather than
@@ -596,7 +602,7 @@ def _decode_attachments(items) -> list:
 
 
 @router.post("/send")
-async def mail_send(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_send(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
@@ -611,7 +617,7 @@ async def mail_send(request: Request, db: Session = Depends(get_db), current_use
 
 
 @router.post("/reply")
-async def mail_reply(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_reply(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
@@ -623,7 +629,7 @@ async def mail_reply(request: Request, db: Session = Depends(get_db), current_us
 
 
 @router.post("/forward")
-async def mail_forward(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_forward(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
     if not acc:
@@ -638,7 +644,7 @@ async def mail_forward(request: Request, db: Session = Depends(get_db), current_
 
 @router.get("/dl/{account_hint}/{folder}/{uid}/{idx}")
 async def mail_download(account_hint: str, folder: str, uid: str, idx: int,
-                        db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+                        db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """Download a received attachment: fetch the ciphertext from Blossom and decrypt it (the message
     doc holds the per-file key+iv). Inline for viewable types, attachment otherwise."""
     acc = _resolve_account(db, current_user, account_hint)
@@ -659,7 +665,7 @@ async def mail_download(account_hint: str, folder: str, uid: str, idx: int,
 
 
 @router.post("/draft")
-async def mail_save_draft(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_save_draft(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """Save a compose draft as an encrypted Nostr doc in the virtual 'Drafts' folder. Overwrites the
     same uid when re-saving; the GUI lists/opens it like any folder, and a successful send deletes it."""
     import time
@@ -687,7 +693,7 @@ async def mail_save_draft(request: Request, db: Session = Depends(get_db), curre
 
 @router.get("/folder-map")
 async def mail_folder_map(account: str = "", db: Session = Depends(get_db),
-                          current_user: User = Depends(get_current_user)):
+                          current_user: User = Depends(get_instance_user)):
     """What this account's folders are, and which one currently plays each role.
 
     `detected` is what the server reports (RFC 6154 special-use, then name heuristics); `mapping` is
@@ -705,7 +711,7 @@ async def mail_folder_map(account: str = "", db: Session = Depends(get_db),
 
 @router.put("/folder-map")
 async def mail_folder_map_save(request: Request, db: Session = Depends(get_db),
-                               current_user: User = Depends(get_current_user)):
+                               current_user: User = Depends(get_instance_user)):
     """Save the mapping, then mirror it to the relay so it survives this node."""
     d = await request.json()
     acc = _resolve_account(db, current_user, d.get("account", ""))
@@ -723,7 +729,7 @@ async def mail_folder_map_save(request: Request, db: Session = Depends(get_db),
 
 
 @router.get("/folders")
-async def mail_folders(account: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_folders(account: str = "", db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """Account's REAL folders with friendly labels + special-use mapping (so 'Sent' points at the
     server's actual sent mailbox, e.g. INBOX.Sent / [Gmail]/Sent Mail). Returns ordered names + a
     {name: label} map. 'Drafts' is the local compose-drafts folder, pinned separately."""
@@ -762,7 +768,7 @@ async def mail_folders(account: str = "", db: Session = Depends(get_db), current
 
 
 @router.post("/sync-folder")
-async def mail_sync_folder(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def mail_sync_folder(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """Pull one folder on demand (the default sync only does INBOX/Sent)."""
     d = await request.json()
     if d.get("account") == "__all":
@@ -1028,7 +1034,7 @@ async def _thread_scan(sk: bytes, account_email: str | None, user_id) -> list:
 
 @router.get("/thread")
 async def mail_thread(account: str, uid: str, folder: str = "INBOX",
-                      db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+                      db: Session = Depends(get_db), current_user: User = Depends(get_instance_user)):
     """The whole conversation for a message (across folders), bodies rehydrated."""
     sk = _seckey(db, current_user)
     acc = None

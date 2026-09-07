@@ -22,7 +22,12 @@ from app.services.monero_user_wallets import user_wallets, zap_fee_percent
 from app.services.monero_wallet_service import WalletError, xmr_to_atomic
 
 router = APIRouter(tags=["monero-user-wallet"])
-CurrentUser = Annotated[User, Depends(auth.get_current_user)]
+async def get_member_wallet_user(user: User = Depends(auth.get_current_user)):
+    from app.services.instance_membership import require_user
+    return await require_user(user)
+
+
+CurrentUser = Annotated[User, Depends(get_member_wallet_user)]
 
 
 def _bad(exc: WalletError) -> HTTPException:
