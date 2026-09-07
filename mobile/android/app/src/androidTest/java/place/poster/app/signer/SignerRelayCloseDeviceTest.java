@@ -61,6 +61,10 @@ public class SignerRelayCloseDeviceTest {
         volatile WebSocket socket;
         @Override public void onOpen(WebSocket socket,Response response) { this.socket=socket; }
         @Override public void onMessage(WebSocket socket,String message) { messages.add(message); }
+        @Override public void onClosing(WebSocket socket,int code,String reason) {
+            // The test relay must acknowledge client-initiated cleanup as a real relay does.
+            socket.close(code==1005?1000:code,reason);
+        }
         @Override public void onClosed(WebSocket socket,int code,String reason) { closed.countDown(); }
         JSONArray message() throws Exception {
             String wire=messages.poll(12,TimeUnit.SECONDS);
@@ -101,6 +105,7 @@ public class SignerRelayCloseDeviceTest {
         server.start();
         Service service=new Service(context);
         String url=server.url("/relay").toString().replace("http://","ws://");
+        Throwable primaryFailure=null;
         try {
             owner(service,()->{
                 try {
@@ -146,16 +151,30 @@ public class SignerRelayCloseDeviceTest {
             assertEquals("after-restart",answer.getString("id"));
             assertEquals(phonePub,answer.getString("result"));
             assertFalse(answer.has("error"));
+        } catch(Exception | AssertionError error) {
+            primaryFailure=error;
+            throw error;
         } finally {
-            owner(service,()->{try {invoke(service,"closeAll",new Class<?>[0]);}
-                catch(Exception e){throw new AssertionError(e);}});
-            ((Handler)field(service,"handler")).removeCallbacksAndMessages(null);
-            ((HandlerThread)field(service,"thread")).quitSafely();
-            Object pool=field(service,"cryptoPool");
-            if(pool!=null)((java.util.concurrent.ExecutorService)pool).shutdownNow();
-            OkHttpClient client=(OkHttpClient)field(service,"http");
-            if(client!=null){client.dispatcher().cancelAll();client.dispatcher().executorService().shutdownNow();client.connectionPool().evictAll();}
-            server.shutdown();SignerKey.clear(context);
+            try {
+                owner(service,()->{try {invoke(service,"closeAll",new Class<?>[0]);}
+                    catch(Exception e){throw new AssertionError(e);}});
+                ((Handler)field(service,"handler")).removeCallbacksAndMessages(null);
+                ((HandlerThread)field(service,"thread")).quitSafely();
+                Object pool=field(service,"cryptoPool");
+                if(pool!=null)((java.util.concurrent.ExecutorService)pool).shutdownNow();
+                // Keep the client's writer alive until both sides finish the close handshake.
+                try {
+                    if(first.socket!=null)assertTrue("Initial relay cleanup stalled",first.closed.await(5,TimeUnit.SECONDS));
+                    if(second.socket!=null)assertTrue("Replacement relay cleanup stalled",second.closed.await(5,TimeUnit.SECONDS));
+                } finally {
+                    OkHttpClient client=(OkHttpClient)field(service,"http");
+                    if(client!=null){client.dispatcher().cancelAll();client.dispatcher().executorService().shutdownNow();client.connectionPool().evictAll();}
+                    server.shutdown();
+                }
+            } catch(Exception | AssertionError cleanupFailure) {
+                if(primaryFailure!=null)primaryFailure.addSuppressed(cleanupFailure);
+                else throw cleanupFailure;
+            } finally { SignerKey.clear(context); }
         }
     }
 }
