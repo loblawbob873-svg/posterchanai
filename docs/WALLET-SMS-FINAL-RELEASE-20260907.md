@@ -65,7 +65,9 @@ Local evidence:
 
 ## Android device gate
 
-Pending workflow 34071632847 on d29cf7cbf. This has the same wallet, SMS Java and
+Workflow 34071632847 on d29cf7cbf PASSED: downloaded XML records 92 tests,
+zero failures, errors or skips. Both real SMS link tap and recycled-view tests
+passed. Reports: /tmp/pc-wallet-final-device-report. This has the same wallet, SMS Java and
 client runtime as final candidate d8b303fbe; the later merge changes installer
 files only. Earlier runs 34070001300 and 34070995193 lost the emulator before
 instrumentation and are not device-test passes. The fresh run uses supported
@@ -75,5 +77,6 @@ mitigation, not a proven diagnosis of the prior emulator exits.
 
 ## Deployment and published artifacts
 
-Pending the Android device gate. Current public release remains 3134077bc,
+All predeployment gates above are complete. Deployment is next. Current public
+release remains 3134077bc,
 Android 1.0.2214 and desktop 1.0.1496 until this section is updated.
