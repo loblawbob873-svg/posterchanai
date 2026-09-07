@@ -93,9 +93,7 @@ def test_the_custody_line_is_not_hidden_in_a_help_page():
 
 # ── which chains offer a Send button ───────────────────────────────────────────────────────────
 #
-# Receiving works on every chain; spending is implemented for the EVM chains only. The button is
-# ABSENT on the others rather than present-and-refusing: a control that always says no is a worse
-# answer than no control. The server refuses them too — a button the page hides is not a rule.
+# Send controls reflect the implemented native assets; unsupported symbols stay disabled.
 
 def _can_send(sym):
     js = textwrap.dedent(f"""
@@ -116,12 +114,20 @@ def test_the_evm_chains_offer_send():
         assert _can_send(sym) is True, sym
 
 
-def test_the_chains_that_cannot_send_show_no_send_button():
-    for sym in ("BTC", "LTC", "DOGE", "BCH", "SOL"):
+def test_the_native_chains_offer_send():
+    for sym in ("BTC", "LTC", "DOGE", "BCH", "SOL", "XRP"):
+        assert _can_send(sym) is True, sym
+        html = _render({"known":True,"amount":"1","units":1},sym=sym,name=sym)
+        assert 'class="btn small ex-send"' in html
+        assert 'class="btn small ex-receive"' in html
+
+
+def test_unimplemented_symbols_do_not_offer_send():
+    for sym in ("UNKNOWN", "USDT", "NFT"):
         assert _can_send(sym) is False, sym
 
 
-def test_a_row_for_an_unsendable_chain_still_offers_receive():
-    """Not being able to spend BTC must not stop somebody being paid in it."""
+def test_bitcoin_receive_remains_available():
+    """Adding sends must preserve the existing receive action."""
     html = _render({"known": True, "units": 1, "amount": "0.00000001", "address": "1abc"})
     assert "ex-receive" in html
