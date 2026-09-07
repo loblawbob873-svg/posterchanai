@@ -14917,6 +14917,25 @@
     }
     return null;
   }
+  // The visible image may belong to a quoted post. Follow only explicit quote
+  // references, never reply parents, and bound cycles/depth before fetching.
+  async function effectImageUrl(ev){
+    const seen=new Set();
+    for(let depth=0; ev && depth<8; depth++){
+      if(seen.has(ev.id)) return null;
+      seen.add(ev.id);
+      const url=postImageUrl(ev); if(url) return url;
+      const quoted=((ev.tags||[]).find(t=>t && t[0]==='q')||[])[1];
+      if(depth===7 || !/^[0-9a-f]{64}$/i.test(quoted||'') || seen.has(quoted)) return null;
+      let next=Store.get(quoted);
+      if(!next){
+        try{ next=await fetchEvent(quoted); }catch(_){ return null; }
+        if(next) Store.saveEvent(next);
+      }
+      ev=next;
+    }
+    return null;
+  }
   // Shared launcher for the Effects studio: gate on AI access, stash the source image + optional reply
   // target, and switch to the AI view (aiMount consumes _ai.pendingFx and runs startEffectStudio). Used
   // by a post's 🎬 Effect action (replyTo = that post → the result offers ↩ Send the Reply) and by the
@@ -14967,7 +14986,7 @@
   async function effectPost(id, pk){
     let ev=Store.get(id); if(!ev){ ev=await fetchEvent(id); if(ev) Store.saveEvent(ev); }
     if(!ev){ toast('post not loaded'); return; }
-    const url=postImageUrl(ev);
+    const url=await effectImageUrl(ev);
     if(!url){ toast('this post has no image to apply an effect to'); return; }
     launchEffectStudio(url, { id, pk });
   }
