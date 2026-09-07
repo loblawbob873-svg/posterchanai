@@ -77,6 +77,19 @@ mitigation, not a proven diagnosis of the prior emulator exits.
 
 ## Deployment and published artifacts
 
-All predeployment gates above are complete. Deployment is next. Current public
-release remains 3134077bc,
-Android 1.0.2214 and desktop 1.0.1496 until this section is updated.
+Wallet/SMS runtime b8f2dc1f0 deployed successfully on server1, NAS and router.
+Public exodus.js, sms.js, sw.js and exodus.css match the tested bytes. App and
+worker services are active with zero automatic restarts on both application nodes.
+
+Android 1.0.2215 (workflow34072468272) and desktop 1.0.1497
+(workflow34072468215) are published. Public APK SHA256:
+1ccbacc22874225b0592d86347f0631e63f41f2e30c5d7e89b4c963a6b4abcb4.
+The APK's wallet, SMS and stylesheet assets match source. Desktop download SHA512
+matches its published checksum. Each actual published bundle passed 54 wallet/SMS
+runtime tests; the desktop document-app release gate also passed. The updated
+1497 desktop overlay pin passes nine tests and is included in the next sync.
+
+Read-only authenticated live wallet status/balances returned200. EVM/SOL/XRP
+balances were known; UTXO discovery and independent XMR synchronization were
+still in progress. This is not a claim that every live balance finished syncing.
+No additional monetary payments were sent.
