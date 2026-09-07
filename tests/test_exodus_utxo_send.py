@@ -15,6 +15,46 @@ KEY=b'z'*32
 TOKEN='12'*16
 
 
+@pytest.mark.anyio
+async def test_actual_dogecoin_mainnet_fee_quote_is_preserved_in_atomic_units():
+    from decimal import Decimal
+    payload={'name':'DOGE.main','medium_fee_per_kb':54470068,
+             'high_fee_per_kb':259827356,'low_fee_per_kb':7146037}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request:httpx.Response(200,json=payload))) as client:
+        assert await P.Provider('DOGE',{}).network_and_fee(client)==Decimal('54470.068')
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('value', [1,0.5,None,True,'1',-1,0,float('inf'),float('nan'),10001])
+async def test_litecoin_actual_recommended_endpoint_validates_fee(value):
+    calls=[]
+    def handle(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith('/block-height/0'):return httpx.Response(200,text=P.GENESIS['LTC'])
+        if request.url.path.endswith('/fee-estimates'):return httpx.Response(404,text='endpoint does not exist')
+        return httpx.Response(200,text=json.dumps({'fastestFee':1,'halfHourFee':1,'hourFee':value,'economyFee':1,'minimumFee':1}))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        provider=P.Provider('LTC',{})
+        if type(value) in (int,float) and value in (1,0.5):
+            assert await provider.network_and_fee(client)==value
+        else:
+            with pytest.raises(S.SendRefused):await provider.network_and_fee(client)
+    assert calls[-1].endswith('/v1/fees/recommended')
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('symbol,status',[('LTC',429),('LTC',500),('LTC',403),('BTC',404)])
+async def test_fee_fallback_never_masks_other_chain_or_provider_errors(symbol,status):
+    calls=[]
+    def handle(request):
+        calls.append(request.url.path)
+        if request.url.path.endswith('/block-height/0'):return httpx.Response(200,text=P.GENESIS[symbol])
+        return httpx.Response(status)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(httpx.HTTPStatusError):await P.Provider(symbol,{}).network_and_fee(client)
+    assert len(calls)==2
+
+
 @pytest.fixture
 def anyio_backend():return 'asyncio'
 
@@ -55,7 +95,10 @@ def fixture(monkeypatch,tmp_path,symbol='BTC',failure=None):
             return httpx.Response(200,text=txid) if symbol in ('BTC','LTC') else httpx.Response(200,json={'tx':{'hash':txid}} if symbol=='DOGE' else {'success':True,'status':200,'txid':txid})
         if path=='/block-height/0':return httpx.Response(200,text='wrong-chain' if failure=='network' else P.GENESIS[symbol])
         if path=='/fee-estimates':return httpx.Response(200,json={'6':2})
-        if path=='/':return httpx.Response(200,json={'name':'wrong-chain' if failure=='network' else 'DOGE.main','medium_fee_per_kb':1000000})
+        # Actual BlockCypher mainnet quote: atomic DOGE units per kilobyte,
+        # substantially larger than Bitcoin's atomic-unit fee rates.
+        if path=='/':return httpx.Response(200,json={'name':'wrong-chain' if failure=='network' else 'DOGE.main',
+            'medium_fee_per_kb':54470068,'high_fee_per_kb':259827356,'low_fee_per_kb':7146037})
         if '/address/' in path or '/addrs/' in path or path=='/bch/utxos':
             amount=coin.units+1 if failure=='amount' else coin.units
             if symbol in ('BTC','LTC'):value=[{'txid':coin.txid,'vout':0,'value':amount}]

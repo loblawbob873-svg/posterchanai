@@ -1,6 +1,7 @@
 """Public deterministic UTXOs; decode and independently verify every signed input."""
 from dataclasses import replace
 import hashlib
+from decimal import Decimal, ROUND_CEILING
 
 import pytest
 
@@ -8,6 +9,33 @@ from app.services import exodus_derivation as D, exodus_utxo_sign as U
 from app.services.exodus_send_service import SendRefused
 
 PHRASE='abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+
+
+@pytest.mark.parametrize('rate', ['54470.068', '259827.356'])
+def test_dogecoin_live_fee_units_produce_valid_capped_transactions(rate):
+    from embit.transaction import Transaction
+    coin,_=funding('DOGE',44,units=100_000_000)
+    result=U.build('DOGE',[coin],to=D.address(PHRASE,'DOGE',index=1),units=10_000_000,
+                   change=D.address(PHRASE,'DOGE',change=1),fee_rate=rate)
+    tx=Transaction.parse(bytes.fromhex(result['raw']))
+    verify_inputs(tx,[coin],'DOGE')
+    assert result['fee'] >= int((Decimal(rate)*result['vbytes']).to_integral_value(rounding=ROUND_CEILING))
+    assert result['fee'] < 10_000_000_000
+    assert sum(output.value for output in tx.vout)+result['fee']==coin.units
+
+
+def test_dogecoin_rate_limit_does_not_relax_total_fee_cap():
+    coins=[funding('DOGE',44,index=i,units=10_000_000_000)[0] for i in range(10)]
+    with pytest.raises(SendRefused,match='fee exceeds'):
+        U.build('DOGE',coins,to=D.address(PHRASE,'DOGE',index=51),units=70_000_000_000,
+                change=D.address(PHRASE,'DOGE',change=1),fee_rate=10_000_000)
+
+
+@pytest.mark.parametrize('symbol', ['BTC','LTC','DOGE','BCH'])
+def test_each_chain_refuses_rates_above_its_ceiling(symbol):
+    rate=10_000_001 if symbol=='DOGE' else 10_001
+    with pytest.raises(SendRefused,match='fee rate'):
+        build(symbol,(44,),units=1_000_000,rate=rate)
 
 
 def funding(symbol='BTC',purpose=84,index=0,units=1000000):

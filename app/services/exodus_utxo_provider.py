@@ -2,9 +2,11 @@
 from decimal import Decimal
 import json
 import re
+import httpx
 
 from app.services import exodus_chain_service as C
 from app.services.exodus_send_service import SendRefused
+from app.services.exodus_utxo_sign import MAX_FEE_RATE
 
 GENESIS = {'BTC':'000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f',
            'DOGE':'1a91e3dace36e2be3bf030a65679fe821aa1d6ef92e7c9902eb318182c355691',
@@ -78,11 +80,20 @@ class Provider:
             if expected is None or await self._request(client,'/block-height/0',text=True)!=expected:
                 raise SendRefused('The UTXO provider does not match the selected mainnet')
             if network_only: return None
-            estimates=await self._request(client,'/fee-estimates')
+            try:
+                estimates=await self._request(client,'/fee-estimates')
+            except httpx.HTTPStatusError as error:
+                if self.symbol!='LTC' or error.response.status_code!=404:
+                    raise
+                recommended=await self._request(client,'/v1/fees/recommended')
+                value=recommended.get('hourFee') if isinstance(recommended,dict) else None
+                if type(value) not in (int,float):
+                    raise SendRefused('The network fee estimate could not be read') from None
+                estimates={'6':value}
             if not isinstance(estimates,dict):
                 raise SendRefused('The network fee estimate could not be read')
             fee=Decimal(str(estimates.get('6',estimates.get('2'))))
-        if not fee.is_finite() or not 0<fee<=10000:
+        if not fee.is_finite() or not 0<fee<=MAX_FEE_RATE[self.symbol]:
             raise SendRefused('The network fee estimate is outside the supported range')
         return fee
 

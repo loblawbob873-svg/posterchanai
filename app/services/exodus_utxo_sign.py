@@ -7,6 +7,9 @@ from app.services.exodus_send_service import SendRefused
 
 MAX_INPUTS = 50
 MAX_FEE = {'BTC':1_000_000, 'LTC':10_000_000, 'DOGE':10_000_000_000, 'BCH':1_000_000}
+# Atomic units per virtual byte differ in economic scale between chains.
+# DOGE permits up to 0.1 DOGE/byte; MAX_FEE still caps the complete payment fee.
+MAX_FEE_RATE = {'BTC':10_000, 'LTC':10_000, 'DOGE':10_000_000, 'BCH':10_000}
 DUST = {'BTC':546, 'LTC':1000, 'DOGE':1_000_000, 'BCH':546}
 NETWORKS = {'BTC':(0, (5,), 'bc'), 'LTC':(48, (50,5), 'ltc'), 'DOGE':(30,(22,),None)}
 
@@ -138,7 +141,7 @@ def build(symbol, coins, *, to, units, change, fee_rate):
         raise SendRefused('The amount is below this network\'s minimum output')
     try:
         rate=Decimal(str(fee_rate))
-        if not rate.is_finite() or not 0<rate<=10000:
+        if not rate.is_finite() or not 0<rate<=MAX_FEE_RATE[symbol]:
             raise ValueError('Invalid fee rate')
     except Exception as error:
         raise SendRefused('The network fee rate could not be verified') from error
