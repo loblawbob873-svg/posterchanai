@@ -6753,7 +6753,9 @@ body.is-offline .needs-net{ opacity:.45; pointer-events:none; filter:saturate(.4
 /* Notebook workspace: quiet navigation, a distinct writing surface, and compact controls.
    Keep these rules Notes-only; Passwords shares the original pane utilities above. */
 .nt-wrap{background:var(--bg);color:var(--text);isolation:isolate}
-.nt-side{background:linear-gradient(160deg,rgba(var(--accent-rgb),.055),transparent 65%);padding:16px 12px;gap:10px}
+.nt-side{background:linear-gradient(160deg,rgba(var(--accent-rgb),.055),transparent 65%),var(--bg);padding:16px 12px;gap:10px}
+.nt-side .nt-sec{opacity:1;color:var(--muted)}
+.nt-side .nt-folder i,.nt-side .nt-fcaret{opacity:.8}
 .nt-brand{padding-bottom:18px}
 .nt-side .nt-new{border-radius:10px;min-height:40px;box-shadow:none;font-weight:600}
 .nt-list{background:rgba(var(--accent-rgb),.025)}

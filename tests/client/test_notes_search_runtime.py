@@ -62,6 +62,10 @@ async def drive(url, width):
             if await js("document.querySelectorAll('.nt-item').length===3"): break
             await asyncio.sleep(.03)
         assert await js("document.querySelectorAll('.nt-item').length===3")
+        # A later gradient shorthand must not erase the drawer's opaque base: underlying note
+        # titles otherwise show through its folder labels on mobile.
+        assert await js("(()=>{const c=document.createElement('canvas').getContext('2d');c.fillStyle=getComputedStyle(document.querySelector('.nt-side')).backgroundColor;c.fillRect(0,0,1,1);return c.getImageData(0,0,1,1).data[3]===255})()"), 'Folder panel background is translucent'
+
         await js("window.__search=document.querySelector('.nt-search');__search.focus();window.__baseline=__queries;window.__changes=0;new MutationObserver(()=>__changes++).observe(document.querySelector('.nt-results'),{childList:true})")
         for char in 'alpha':
             await call('Input.insertText', {'text':char})
