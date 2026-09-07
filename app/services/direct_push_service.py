@@ -48,6 +48,11 @@ def subscription_dict(row) -> dict:
 
 
 def enqueue(subscription_id: int, payload: dict) -> bool:
+    """Legacy retention contract: only a permanently missing device returns False."""
+    return enqueue_result(subscription_id, payload) != "expired"
+
+
+def enqueue_result(subscription_id: int, payload: dict) -> str:
     """Persist a small notification and wake a connected device. Called from worker threads."""
     from app.database import SessionLocal
     from app.models import DirectPushMessage, PushSubscription
@@ -56,10 +61,10 @@ def enqueue(subscription_id: int, payload: dict) -> bool:
         wire = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
     except (TypeError, ValueError):
         logger.warning("[direct-push] refused a non-JSON notification")
-        return True                    # transient/caller bug must not delete the device
+        return "failed"
     if not wire or len(wire.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
         logger.warning("[direct-push] refused notification larger than %d bytes", _MAX_PAYLOAD_BYTES)
-        return True
+        return "failed"
 
     db = SessionLocal()
     try:
@@ -68,7 +73,7 @@ def enqueue(subscription_id: int, payload: dict) -> bool:
             PushSubscription.transport == TRANSPORT,
         ).first()
         if not sub:
-            return False
+            return "expired"
         now = datetime.utcnow()
         db.query(DirectPushMessage).filter(DirectPushMessage.expires_at <= now).delete(
             synchronize_session=False)
@@ -86,11 +91,11 @@ def enqueue(subscription_id: int, payload: dict) -> bool:
     except Exception as e:
         db.rollback()
         logger.warning("[direct-push] queue failed: %s", e)
-        return True                    # database outage is transient; retain the registration
+        return "failed"
     finally:
         db.close()
     wake(subscription_id)
-    return True
+    return "queued"
 
 
 def wake(subscription_id: int) -> None:

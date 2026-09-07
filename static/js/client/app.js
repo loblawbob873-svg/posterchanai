@@ -32034,18 +32034,48 @@
    * A local showNotification() would only prove the browser can draw one, which is never the part
    * that breaks; the failures are permission, an uninstalled iOS PWA, a stale subscription, or the
    * OS holding the app asleep. This reports which. */
+  async function _pushTestWait(job, message, ms=30000){
+    let timer;
+    try{ return await Promise.race([job,new Promise((_,reject)=>{
+      timer=setTimeout(()=>reject(new Error(message)),ms);
+    })]); }finally{ clearTimeout(timer); }
+  }
   async function testPush(){
     if(GUEST||!ME.pubkey){ toast('Log in first'); return; }
+    const owner=ME.pubkey;
+    toast('Checking notifications…');
     try{
-      if((await pushState())!=='on'){ toast('Notifications are off — turn them on first'); return; }
-      if(!_pushPlugin() && Notification.permission!=='granted'){ toast('This browser is blocking notifications'); return; }
-      const auth=await sign(27235,'push-test',[['p',ME.pubkey]]);
-      toast('sending…');
-      const r=await fetch('/api/push/test',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ pubkey:ME.pubkey, auth:btoa(JSON.stringify(auth)) })}).then(r=>r.json());
-      if(r&&r.ok) toast(`sent to ${r.delivered} device${r.delivered===1?'':'s'} — check your notifications`);
-      else toast((r&&r.error)||'the server could not send it');
-    }catch(e){ toast('test failed: '+(e&&e.message||e)); }
+      if((await _pushTestWait(pushState(),'Notification status did not answer',10000))!=='on'){
+        toast('Notifications are off — turn them on first'); return;
+      }
+      const P=_pushPlugin();
+      if(!P && Notification.permission!=='granted'){ toast('This browser is blocking notifications'); return; }
+      let deviceId;
+      if(P){
+        const local=await _pushTestWait(P.getEndpoint(),'This device did not answer',10000);
+        deviceId=local && (local.deviceId||local.device_id);
+        if(!deviceId) throw new Error('This device needs to enable notifications again');
+      }
+      toast('Waiting for your signer to approve the notification test…');
+      const auth=await _pushTestWait(sign(27235,'push-test',[['p',owner]]),'Your signer did not answer the notification test');
+      if(ME.pubkey!==owner) throw new Error('Account changed; run the test again');
+      toast('Sending notification test…');
+      const controller=new AbortController();
+      let r;
+      try{
+        r=await _pushTestWait(fetch('/api/push/test',{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({pubkey:owner,auth:btoa(JSON.stringify(auth)),...(deviceId?{device_id:deviceId}:{})})
+        }).then(async response=>{
+          if(!response.ok) throw new Error('Server returned '+response.status);
+          return await response.json();
+        }),'The server did not answer the notification test',30000);
+      }finally{ controller.abort(); }
+      if(r&&r.ok){
+        if(r.queued) toast('Test queued for this device — check your notifications. If it does not arrive, reopen the app and check Android notification and battery settings.');
+        else if(r.accepted) toast('Push service accepted the test — check your notifications.');
+        else toast('Server accepted the test — check your notifications.');
+      }else toast((r&&r.error)||'The server could not send the test');
+    }catch(e){ toast('Notification test failed: '+(e&&e.message||e)); }
   }
   async function disablePush(){
     const P=_pushPlugin();

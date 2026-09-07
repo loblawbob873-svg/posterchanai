@@ -204,7 +204,8 @@ public class DirectPushService extends Service {
             }
 
             @Override public void onClosed(WebSocket webSocket, int code, String reason) {
-                if (code == 1008 || code == 4001 || code == 4003) {
+                if (mine != generation || !running) return;
+                if (code == 1008 || code == 4001 || code == 4003 || code == 4401) {
                     // A rejected/revoked token cannot recover through retries. Forget it so the UI
                     // reports notifications off and can perform a fresh signed registration.
                     DirectPushStore.clear(DirectPushService.this);

@@ -227,45 +227,46 @@ async def test_push(request: Request, db: Session = Depends(get_db)):
     pubkey = (body.get("pubkey") or "").strip().lower()
     if not nostr_event.verify_self_auth(body.get("auth") or "", pubkey):
         return {"ok": False, "error": "auth required"}
-    rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pubkey).all()
+    device_id = body.get("device_id")
+    if device_id is not None and (not isinstance(device_id, str) or not _DEVICE_ID.fullmatch(device_id)):
+        return {"ok": False, "error": "invalid device_id"}
+    query = db.query(PushSubscription).filter(PushSubscription.pubkey == pubkey)
+    if device_id:
+        query = query.filter(PushSubscription.device_id == device_id,
+                             PushSubscription.transport == direct_push_service.TRANSPORT)
+    rows = query.all()
     if not rows:
         return {"ok": False, "devices": 0,
-                "error": "This key has no device registered on this server. Turn notifications on first."}
+                "error": "This device is not registered on this server. Turn notifications off and on again."}
     payload = {"title": "🔔 Notifications are working",
                "body": "This is the test you just asked for.", "type": "test"}
-    delivered, dead = 0, []
-    for r in rows:
-        sub = direct_push_service.subscription_dict(r)
-        if push_service.send(sub, payload):
-            delivered += 1
+    # Network/DB work must not block the socket loop that delivers Direct notifications.
+    from starlette.concurrency import run_in_threadpool
+    accepted = queued = failed = 0
+    dead = []
+    for row in rows:
+        result = await run_in_threadpool(push_service.send_result,
+                                        direct_push_service.subscription_dict(row), payload)
+        if result == "accepted":
+            accepted += 1
+        elif result == "queued":
+            queued += 1
+        elif result == "expired":
+            dead.append(row)
         else:
-            dead.append(r)
-    # A rejected endpoint is a dead one — the browser dropped the subscription, or it expired. Prune
-    # it here so the count the user sees is the truth on the next press rather than a stale hope.
-    for r in dead:
-        db.delete(r)
+            failed += 1
+    for row in dead:
+        db.delete(row)
     if dead:
         db.commit()
-    # Distinguish "your device is gone" from "this SERVER cannot reach the push service" — they need
-    # completely different fixes and both otherwise read as "notifications are broken". The second is
-    # real and easy to miss: a node whose DNS sinkholes fcm.googleapis.com (ad-blocking resolvers do)
-    # can never deliver to Chrome or an Android Chrome PWA, no matter what the phone does.
-    # Only when something FAILED, and off the event loop: can_reach does a blocking getaddrinfo that
-    # can sit for ~10s against a dead resolver, and this process is a single uvicorn worker — every
-    # other request would wait behind a diagnostic nobody needs when delivery already worked.
-    reachable = True
-    if not delivered and rows:
-        from starlette.concurrency import run_in_threadpool
-        reachable = await run_in_threadpool(push_service.can_reach, rows[0].endpoint)
-    if delivered:
-        err = ""
-    elif not reachable:
-        err = ("This server cannot reach the push service for that device — check the node's DNS "
-               "and outbound network, not your phone.")
-    else:
-        err = "Every registered device rejected the push. Turn notifications off and on again."
-    return {"ok": delivered > 0, "devices": len(rows), "delivered": delivered, "expired": len(dead),
-            "reachable": reachable, "error": err}
+    error = ""
+    if not accepted and not queued:
+        error = ("The server could not send the test. Your registration was kept; try again shortly."
+                 if failed else "The registration expired. Turn notifications off and on again.")
+    return {"ok": bool(accepted or queued), "devices": len(rows),
+            "accepted": accepted, "queued": queued, "failed": failed, "expired": len(dead),
+            "delivered": accepted + queued,  # compatibility for older installed clients
+            "error": error}
 
 
 @router.post("/unsubscribe")

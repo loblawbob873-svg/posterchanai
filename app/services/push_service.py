@@ -76,33 +76,47 @@ def send(subscription: dict, payload: dict) -> bool:
         try:
             return direct_push_service.enqueue(int(subscription.get("id")), payload)
         except (TypeError, ValueError):
-            logger.warning("[push] direct subscription missing its database id")
             return True
+    return send_result(subscription, payload) != "expired"
+
+
+def send_result(subscription: dict, payload: dict) -> str:
+    """Diagnostic outcome: accepted by Web Push, queued for Direct, failed, or expired.
+
+    Accepted/queued does not prove the OS displayed it. Keep send()'s historical
+    retention contract for notification watchers, which delete only expired devices.
+    """
+    if subscription.get("transport") == direct_push_service.TRANSPORT:
+        try:
+            return direct_push_service.enqueue_result(int(subscription.get("id")), payload)
+        except (TypeError, ValueError):
+            logger.warning("[push] direct subscription missing its database id")
+            return "failed"
     if not ((subscription.get("keys") or {}).get("p256dh")
             and (subscription.get("keys") or {}).get("auth")):
         logger.warning("[push] ignored a legacy keyless subscription")
-        return False
+        return "expired"
     priv = settings_store.get("push_vapid_private")
     if not priv:
-        return True
+        return "failed"
     try:
         from pywebpush import webpush, WebPushException
     except Exception as e:
         logger.warning(f"[push] pywebpush not installed: {e}")
-        return True
+        return "failed"
     try:
         webpush(subscription_info=subscription, data=json.dumps(payload),
                 vapid_private_key=priv, vapid_claims={"sub": _VAPID_SUBJECT}, timeout=10)
-        return True
+        return "accepted"
     except WebPushException as e:
         code = getattr(getattr(e, "response", None), "status_code", None)
         if code in (404, 410):
-            return False   # subscription expired/unsubscribed → prune it
+            return "expired"   # subscription expired/unsubscribed → prune it
         logger.warning(f"[push] send failed ({code}): {e}")
-        return True
+        return "failed"
     except Exception as e:
         logger.warning(f"[push] send error: {e}")
-        return True
+        return "failed"
 
 
 def can_reach(endpoint: str) -> bool:
