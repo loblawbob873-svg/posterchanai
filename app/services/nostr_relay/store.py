@@ -456,7 +456,9 @@ class RelayStore:
                         continue
                     # Same direct-tie rule as the addressable branch below: a device saving its
                     # own profile/contacts twice in one second must not lose to its own write.
-                    _tie_direct = (row["created_at"] == created and origin == "direct"
+                    # Payment destinations must converge across clients even when two signed
+                    # updates share a second. Never let arrival order choose where money goes.
+                    _tie_direct = (kind != 10133 and row["created_at"] == created and origin == "direct"
                                    and str(row["origin"] or "") == "direct")
                     if row["created_at"] < created or (row["created_at"] == created and eid < row["id"]) or _tie_direct:
                         self._delete_sync(conn, row["id"])

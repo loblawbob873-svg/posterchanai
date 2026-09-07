@@ -28,6 +28,7 @@ FEATURES = {
     "deletions — an unstar or retraction made elsewhere": [5],
     "file metadata (webxdc attachments)": [1063],
     "polls": [1068],
+    "payment targets (Amethyst / Wisp NIP-A3)": [10133],
     "mutes and pins": [10000, 10001],
     "search / DM / blossom server lists": [10007, 10050, 10063],
     "follow sets + legacy generic lists (still written by other clients)": [30000, 30001],

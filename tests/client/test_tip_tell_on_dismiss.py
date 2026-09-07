@@ -152,8 +152,8 @@ class TipTellOnDismiss(unittest.TestCase):
         with open(APP) as fh:
             src = fh.read()
         self.assertEqual(src.count("_tipTellOnDismiss(root, {"), 2)
-        for fn, opener in (("doXmrTip", "async function doXmrTip(noteId, pk, cardXmr){"),
-                           ("doBchTip", "async function doBchTip(pk){")):
+        for fn, opener in (("doXmrTip", "async function doXmrTip("),
+                           ("doBchTip", "async function doBchTip(")):
             body = _fn(src, fn, opener)
             self.assertIn("_tipTellOnDismiss", body, f"{fn} can still be closed silently")
             self.assertIn("tell.posted=true", body, f"{fn} would ask again after 'I sent it'")

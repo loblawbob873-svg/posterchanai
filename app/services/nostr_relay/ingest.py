@@ -251,7 +251,7 @@ async def backfill_author(store, server, upstream, pubkey: str, *, direct: bool 
     # the store refuses to insert, so asking for them would spend a member's whole backfill budget
     # on rows that are dropped on arrival. NIP-71 video (21/22/34235) is NOT retired and stays.
     kinds = kinds or [0, 1, 3, 5, 6, 7, 21, 22, 1063, 1068, 1111, 2003, 2004, 10000, 10001, 10002,
-                      10003, 10007, 10050, 10063, 30000, 30001, 30003, 30023, 30311, 30617,
+                      10003, 10007, 10050, 10063, 10133, 30000, 30001, 30003, 30023, 30311, 30617,
                       34235, 31922, 31923, 31924, 31925]
     logger.info("[nostr-relay] sync started for %s…", pubkey[:12])
     common = dict(direct=direct, pace=pace, max_total=max_total, max_pages=max_pages)
@@ -426,12 +426,12 @@ async def backfill_ancestors(store, server, upstream, events, max_ancestors: int
 
 
 # Lookup-relay metadata kinds: profile (NIP-01), contact list (NIP-02), relay list (NIP-65).
-_LOOKUP_KINDS = [0, 3, 10002, 10050]
+_LOOKUP_KINDS = [0, 3, 10002, 10050, 10133]
 
 
 async def fetch_lookup_metadata(store, upstream, batch: int, limit: int, pace: float = 1.0,
                                 direct: bool = False, *, gate=None, blocked_relays=None) -> int:
-    """Pull lookup metadata (kind-0 profile, kind-3 contacts, kind-10002 relay list) for WoT
+    """Pull lookup metadata (profile, contacts, relay lists and NIP-A3 payment targets) for WoT
     members that lack it, so clients can use this relay to resolve who-is-who and where each
     member posts (the outbox / NIP-65 lookup-relay role). Batched + paced; replaceable events
     keep only the newest. These authors are WoT members, so they pass the gate."""

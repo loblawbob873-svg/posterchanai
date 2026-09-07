@@ -12357,26 +12357,161 @@
   // NIP-A3 payment destinations live in a replaceable kind-10133 event, not kind-0. Discover them
   // only when somebody opens a tip flow, so a timeline does not add one relay query per author.
   const _paymentTargetCache=new Map(), _paymentTargetPending=new Map();
+  async function _ensurePaymentTargets(){
+    if(typeof PCPaymentTargets!=='undefined')return PCPaymentTargets;
+    const loaded=await _withModule('payment-targets.js','PCPaymentTargets');
+    if(!loaded)throw new Error('Payment targets could not load. Reload the app and try again.');
+    return loaded;
+  }
+  let _paymentTargetResolver=null;
+  function _paymentResolver(){
+    if(!_paymentTargetResolver) _paymentTargetResolver=PCPaymentTargets.createResolver({
+      cache:_paymentTargetCache,pending:_paymentTargetPending,
+      verify:e=>NostrTools.verifyEvent(e),
+      deleted:e=>Store.query([{authors:[e.pubkey],kinds:[5],'#e':[e.id]}])
+        .some(d=>d.pubkey===e.pubkey&&d.kind===5&&d.tags.some(t=>t[0]==='e'&&t[1]===e.id)&&NostrTools.verifyEvent(d)),
+      local:pk=>Store.query([{authors:[pk],kinds:[10133],limit:1}]),
+      remember:e=>Store.saveEvent(e),
+      read:async pk=>{
+        const filters=[{authors:[pk],kinds:[10133],limit:1}];
+        const relayFilter={authors:[pk],kinds:[10002],limit:1};
+        const relayList=events=>events.filter(e=>{try{return e&&e.kind===10002&&e.pubkey===pk&&NostrTools.verifyEvent(e);}catch(_){return false;}})
+          .sort((a,b)=>b.created_at-a.created_at||a.id.localeCompare(b.id))[0];
+        const writes=list=>list?list.tags.filter(t=>t[0]==='r'&&(!t[2]||t[2]==='write')).map(t=>t[1]).filter(u=>{
+          try{const v=new URL(u);return v.protocol==='wss:'&&!v.username&&!v.password&&!v.hash;}catch(_){return false;}
+        }):[];
+        const list=relayList(Store.query([relayFilter]));
+        const own=writes(list);
+        // Cold Wisp/Amethyst profiles may publish targets ONLY to their NIP-65 write relays.
+        // Discover the relay list alongside the targets, then follow it once if it was not cached.
+        const results=await Promise.allSettled([
+          Relay.query([...filters,relayFilter],4000),
+          Relay.queryFrom([...own,...DISCOVERY_RELAYS],[...filters,relayFilter],{purpose:'payment target discovery',timeout:4000})]);
+        const events=results.flatMap(r=>r.status==='fulfilled'?r.value:[]),found=relayList([list,...events]);
+        if(found){
+          Store.saveEvent(found);
+          const extra=writes(found).filter(u=>!own.includes(u)&&!DISCOVERY_RELAYS.includes(u));
+          if(extra.length)try{events.push(...await Relay.queryFrom(extra,filters,{purpose:'payment target outbox',timeout:4000}));}catch(_){}
+        }
+        return {events,
+          complete:results[0].status==='fulfilled'&&results[0].value.complete===true};
+      }
+    });
+    return _paymentTargetResolver;
+  }
   function _lightningTarget(ev){
-    if(!ev || ev.kind!==10133) return '';
-    const t=(ev.tags||[]).find(t=>Array.isArray(t)&&t[0]==='payto'&&String(t[1]||'').toLowerCase()==='lightning');
-    return t && typeof t[2]==='string' ? t[2].trim() : '';
+    return (PCPaymentTargets.parse(ev).find(t=>t.type==='lightning')||{}).address||'';
   }
   async function _loadPaymentTargets(pk){
-    if(_paymentTargetCache.has(pk)) return _lightningTarget(_paymentTargetCache.get(pk));
-    if(_paymentTargetPending.has(pk)) return _paymentTargetPending.get(pk);
-    const load=(async()=>{
-      let evs=[];
-      try{ evs=await Relay.query([{authors:[pk],kinds:[10133],limit:1}]); }catch(_){}
-      if(!evs.length){ try{ evs=await Relay.queryFrom(DISCOVERY_RELAYS,[{authors:[pk],kinds:[10133],limit:1}],{purpose:'payment target discovery'}); }catch(_){} }
-      const ev=evs.filter(e=>e&&e.kind===10133&&e.pubkey===pk).sort((a,b)=>b.created_at-a.created_at)[0]||null;
-      _paymentTargetCache.set(pk,ev); // null is meaningful: do not repeat a failed discovery per tap
-      return _lightningTarget(ev);
-    })();
-    _paymentTargetPending.set(pk,load);
-    try{ return await load; }finally{ _paymentTargetPending.delete(pk); }
+    await _ensurePaymentTargets();
+    return _lightningTarget((await _paymentResolver().load(pk)).event);
   }
   async function _lightningAddress(pk,p){ return (await _loadPaymentTargets(pk)) || (p&&p.lud16) || (p&&p.lud06) || ''; }
+  async function _paymentAddress(pk,type,fallback=''){
+    await _ensurePaymentTargets();
+    const state=await _paymentResolver().load(pk);
+    return (state.targets.find(t=>t.type===type)||{}).address||fallback;
+  }
+  async function _paymentChoices(pk){
+    await _ensurePaymentTargets();
+    const state=await _paymentResolver().load(pk),p=profOf(pk)||{},targets=state.targets.slice();
+    for(const [type,address] of [['lightning',p.lud16||p.lud06],['monero',xmrOf(p)],['bitcoincash',bchOf(p)]])
+      if(address&&!targets.some(t=>t.type===type)){const t=PCPaymentTargets.target(type,address);if(t)targets.push(t);}
+    return targets;
+  }
+  function _notePaymentXmr(ev){
+    for(const t of ((ev&&ev.tags)||[])){
+      if(t && ['monero_address','xmr','monero'].includes(t[0]) && isXmrAddr(t[1]))return String(t[1]).trim();
+    }
+    return '';
+  }
+  function _paymentTargetSheet(pk,target){
+    const uri=PCPaymentTargets.uri(target);if(!uri)return toast('Invalid payment target');
+    const title=PCPaymentTargets.names[target.type]||target.type,qr=qrSrc(uri);
+    modal(`<h3>Pay · ${enc(title)}</h3><p class="muted small">${enc(profOf(pk).name||profOf(pk).display_name||'Payment address')}</p>
+      <div class="keybox"><code style="overflow-wrap:anywhere">${enc(target.address)}</code></div>
+      ${qr?`<div style="text-align:center;margin:12px 0"><img alt="Payment address QR code" src="${enc(qr)}" style="width:220px;max-width:100%"></div>`:''}
+      <div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn btn-cyan" id="pt-copy">Copy address</button><a class="btn btn-neon" href="${enc(uri)}" rel="noopener noreferrer">Open wallet</a></div>`,root=>{
+        $('#pt-copy',root).onclick=()=>copyValue(target.address);
+      });
+  }
+  function _payTarget(noteId,pk,target){
+    if(!target||!PCPaymentTargets.target(target.type,target.address))return toast('Invalid payment target');
+    if(target.type==='monero'&&!isXmrAddr(target.address))return toast('This Monero target is not a valid address.');
+    if(target.type==='bitcoincash'&&!isBchAddr(target.address))return toast('This Bitcoin Cash target is not a valid address.');
+    if(target.type==='lightning')return doZap(noteId,pk,target.address);
+    if(target.type==='monero')return doXmrTip(noteId,pk,target.address);
+    if(target.type==='bitcoincash')return doBchTip(pk,target.address);
+    return _paymentTargetSheet(pk,target);
+  }
+  async function showPaymentTargets(pk){
+    const viewer=ME&&ME.pubkey;
+    const targets=await _paymentChoices(pk);
+    if((ME&&ME.pubkey)!==viewer)return;
+    modal(`<h3>Payment targets</h3><p class="muted small">Choose how to pay ${enc(profOf(pk).name||profOf(pk).display_name||'this person')}.</p>
+      <div class="tip-choices">${targets.map((t,i)=>`<button class="btn btn-ghost full" data-pay-target="${i}" style="display:block;text-align:left;white-space:normal;overflow-wrap:anywhere"><b>${enc(PCPaymentTargets.names[t.type]||t.type)}</b><br><span class="muted small">${enc(t.address)}</span></button>`).join('')||'<p>No payment targets found. Try Refresh if their relays were unavailable.</p>'}</div>
+      <button class="btn btn-ghost small" id="pt-refresh">Refresh</button>`,root=>{
+        $$('[data-pay-target]',root).forEach(b=>b.onclick=()=>{if((ME&&ME.pubkey)!==viewer)return;closeModal();_payTarget(null,pk,targets[Number(b.dataset.payTarget)]);});
+        $('#pt-refresh',root).onclick=async()=>{await _paymentResolver().load(pk,{force:true});if(root.isConnected)showPaymentTargets(pk);};
+      });
+  }
+  async function _savePaymentTargets(owner,base,rows,active=()=>true){
+    const current=()=>!GUEST&&ME&&ME.pubkey===owner&&active();
+    if(!current())throw new Error('Account changed. Reopen your profile.');
+    await _ensurePaymentTargets();
+    const fresh=await _paymentResolver().load(owner,{force:true});
+    if(!current())throw new Error('Account changed. Reopen your profile.');
+    if(!fresh.available)throw new Error('Your relays did not answer. Your edits are kept here; try Save again when connected.');
+    if((fresh.event&&fresh.event.id)!==(base&&base.id))throw new Error('Payment targets changed on another device. Reload them before saving.');
+    const tags=PCPaymentTargets.buildTags(rows,base),stamp=Math.max(Math.floor(Date.now()/1000),(base&&base.created_at||0)+1);
+    if(stamp>Math.floor(Date.now()/1000)+60)throw new Error('The existing payment targets have a future timestamp. Check your device clock.');
+    const event=await sign(10133,'',tags,stamp);
+    if(!current())throw new Error('Account changed. Payment targets were not published.');
+    if(!NostrTools.verifyEvent(event)||event.pubkey!==owner||event.kind!==10133||event.content!==''||event.created_at!==stamp||JSON.stringify(event.tags)!==JSON.stringify(tags))
+      throw new Error('The signer returned different payment targets. Nothing was published.');
+    const sent=await Relay.publish(event);
+    if(!sent.ok)throw new Error(sent.msg||'Payment targets were not saved. Try again when connected.');
+    _paymentResolver().accept(event);return event;
+  }
+  function _bindPaymentTargetEditor(root){
+    const detail=$('#pf-payment-details',root),host=$('#pf-payment-editor',root),owner=ME.pubkey;
+    let loading=false,loaded=false,base=null;
+    const current=()=>root.isConnected&&ME&&ME.pubkey===owner&&!GUEST;
+    const row=t=>{
+      const el=document.createElement('div');el.className='pt-edit-row';
+      el.style.cssText='display:flex;flex-wrap:wrap;gap:6px;margin:8px 0';
+      el.innerHTML=`<input class="input pt-type" list="pt-types" aria-label="Payment type" maxlength="64" placeholder="monero, bitcoin, lightning…" value="${enc(t.type||'')}" style="flex:1 1 120px;min-width:0"><input class="input pt-address" aria-label="Payment address" maxlength="4096" placeholder="Address or username" value="${enc(t.address||'')}" style="flex:3 1 190px;min-width:0"><button type="button" class="btn btn-ghost small pt-remove" aria-label="Remove payment target">Remove</button>`;
+      $('.pt-remove',el).onclick=()=>el.remove();$('#pt-rows',host).appendChild(el);
+    };
+    const load=async()=>{
+      if(loading)return;loading=true;host.textContent='Loading payment targets…';
+      try{
+        await _ensurePaymentTargets();
+        const state=await _paymentResolver().load(owner,{force:true});if(!current())return;
+        base=state.event;loaded=true;
+        host.innerHTML=`<p class="muted small">These public addresses sync with Amethyst, Wisp and other compatible apps. Addresses in the profile fields above remain available too.</p>
+          <datalist id="pt-types">${Object.keys(PCPaymentTargets.names).map(t=>`<option value="${t}">${enc(PCPaymentTargets.names[t])}</option>`).join('')}</datalist><div id="pt-rows"></div>
+          <div class="row" style="flex-wrap:wrap;gap:8px"><button type="button" class="btn btn-ghost small" id="pt-add">Add target</button><button type="button" class="btn btn-ghost small" id="pt-reload">Reload targets</button><button type="button" class="btn btn-cyan small" id="pt-save">Save payment targets</button></div><p id="pt-status" class="muted small" role="status"></p>`;
+        state.targets.forEach(row);
+        if(!state.available)$('#pt-status',host).textContent='Your relays did not answer. Existing targets have been kept; saving will check again.';
+        $('#pt-add',host).onclick=()=>row({});
+        $('#pt-reload',host).onclick=async()=>{if(await uiConfirm('Reload payment targets and discard unsaved target edits?',{ok:'Reload',cancel:'Keep editing'}))load();};
+        $('#pt-save',host).onclick=async()=>{
+          const status=$('#pt-status',host);
+          const rows=$$('.pt-edit-row',host).map(el=>({type:$('.pt-type',el).value,address:$('.pt-address',el).value}));
+          const controls=$$('input,button',host);controls.forEach(c=>c.disabled=true);status.textContent='Saving…';
+          try{
+            if(base&&PCPaymentTargets.parse(base).length&&!rows.length && !await uiConfirm('Remove all payment targets from your shared list?',{ok:'Remove targets',cancel:'Keep editing'})){status.textContent='';return;}
+            base=await _savePaymentTargets(owner,base,rows,current);
+            if(current())status.textContent='Payment targets saved.';
+          }catch(e){if(current())status.textContent=e.message||String(e);}
+          finally{controls.forEach(c=>c.disabled=false);}
+        };
+      }catch(e){if(current())host.textContent=e.message||String(e);}
+      finally{loading=false;}
+    };
+    detail.ontoggle=()=>{if(detail.open&&!loaded)load();};
+  }
   // base58 (no 0 O I l), exactly 95 (std/sub) or 106 (integrated). String() FIRST: a kind-0 is
   // arbitrary JSON off the network, so `monero_address` can be a number, an object or null, and
   // `(a||'').trim()` throws on all three — inside xmrOf, which noteCard calls for every card.
@@ -13241,7 +13376,7 @@
     // 🎉 congrats / 🌅 gm from the post's own text; 😭 from other people's reactions. Text wins when both
     // apply, so a "congrats!" that someone sobbed at still reads as the celebration it is.
     const _celeb = _celebrateOf(bodyTxt) || ((_postEffectsOn() && counts.sob) ? 'sob' : '');
-    return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"`:''}${_celeb?` data-celebrate="${_celeb}"`:''}>
+    return `<article class="note" data-id="${ev.id}" data-pk="${ev.pubkey}"${hasNoteXmr?` data-xmr="${enc(noteXmr)}"${_notePaymentXmr(ev)?' data-xmr-note="1"':''}`:''}${_celeb?` data-celebrate="${_celeb}"`:''}>
       <img class="av" src="${enc(av)}" onerror="this.src='${LOGO}'">
       <div class="body">${prefix}
         <div class="hd"><span class="name" data-prof="${ev.pubkey}">${emojiName(ev.pubkey,name)}</span><span class="vchk"></span>
@@ -13759,9 +13894,9 @@
       if(a==='quote') return compose({quote:id});
       if(a==='reply') return compose({reply:id, replyPk:pk});
       if(a==='delete') return doDelete(id,art);
-      if(a==='tip') return doTip(id,pk,art.dataset.xmr);
+      if(a==='tip') return doTip(id,pk,art.dataset.xmr,art.dataset.xmrNote==='1');
       if(a==='zap') return doZap(id,pk);
-      if(a==='xmrtip') return doXmrTip(id,pk,art.dataset.xmr);
+      if(a==='xmrtip') return doXmrTip(id,pk,art.dataset.xmr,art.dataset.xmrNote==='1');
       if(a==='bookmark') return toggleBookmark(id,btn);
       if(a==='copyid'){ let _lk=id, _m='id copied';
         try{ _lk=_webLink(NT().nip19.neventEncode({id})); _m='link copied'; }
@@ -13877,22 +14012,33 @@
     } else if(methods.length===1) go(methods[0][0]);
     else go('ln');
   }
-  async function doTip(noteId, pk, cardXmr){
+  async function doTip(noteId, pk, cardXmr, cardIsNote=true){
+    const viewer=ME&&ME.pubkey;
     const p=profOf(pk)||{};
     const hasLn=!!(await _lightningAddress(pk,p));
     const ev=noteId?Store.get(noteId):null;
     // Prefer the address resolved at render (passed from the card) — the note may since have been evicted
     // from Store, which would otherwise drop its per-note monero_address tag and misroute the tip.
-    const xmrAddr = (cardXmr && isXmrAddr(cardXmr)) ? cardXmr : (ev?xmrForNote(ev):xmrOf(p));
+    const xmrAddr = (cardIsNote && cardXmr && isXmrAddr(cardXmr)) ? cardXmr : (_notePaymentXmr(ev) || await _paymentAddress(pk,'monero',xmrOf(p)));
     const hasXmr=isXmrAddr(xmrAddr);
-    const hasBch=isBchAddr(bchOf(p));   // BCH lives on the author's kind-0 (profile is loaded by click time)
+    const bchAddr=await _paymentAddress(pk,'bitcoincash',bchOf(p)),hasBch=isBchAddr(bchAddr);
     // Whatever payment routes the author advertises, offered together. 2+ → a chooser; exactly 1 → straight
     // in; none → doZap (which shows the "no lightning address" toast).
     const methods=[];
     if(hasLn)  methods.push(['ln',  '⚡ Lightning',      'instant zap',              'btn-neon']);
     if(hasXmr) methods.push(['xmr', 'ɱ Monero',         'private, from your wallet', 'btn-cyan']);
     if(hasBch) methods.push(['bch', '🟢 Bitcoin Cash',  'on-chain, from your wallet','btn-cyan']);
-    const go=m=>{ if(m==='ln') doZap(noteId,pk); else if(m==='xmr') doXmrTip(noteId,pk,xmrAddr); else doBchTip(pk); };
+    const targets=await _paymentChoices(pk);
+    const first=new Set();
+    targets.forEach((t,i)=>{
+      const handled=(t.type==='lightning'&&hasLn)||(t.type==='monero'&&hasXmr)||(t.type==='bitcoincash'&&hasBch);
+      if(handled&&!first.has(t.type)){first.add(t.type);return;}
+      methods.push(['target-'+i,enc(PCPaymentTargets.names[t.type]||t.type),enc(t.address),'btn-ghost']);
+    });
+    if((ME&&ME.pubkey)!==viewer)return;
+    const go=m=>{ if((ME&&ME.pubkey)!==viewer)return;
+      if(m==='ln') doZap(noteId,pk); else if(m==='xmr') doXmrTip(noteId,pk,xmrAddr);
+      else if(m==='bch') doBchTip(pk,bchAddr);else if(m.startsWith('target-'))_payTarget(noteId,pk,targets[Number(m.slice(7))]); };
     _tipMethodSheet(p,methods,go);
   }
   // User-defined amount presets (Settings → Zaps & tips), stored in the per-user Nostr client-prefs so they
@@ -13918,10 +14064,13 @@
   }
   function xmrPresets(){ return _parsePresets(ClientSettings.get('xmrPresets',''), _XMR_DEFAULTS); }
   function bchPresets(){ return _parsePresets(ClientSettings.get('bchPresets',''), _BCH_DEFAULTS); }
-  async function doZap(noteId, pk){
+  async function doZap(noteId, pk, selectedAddress){
+    const viewer=ME&&ME.pubkey;
     const p=profOf(pk); const addr=await _lightningAddress(pk,p);
-    if(!addr){ toast('no lightning address on this profile'); return; }
-    _lightningAmountSheet(p,amt=>_runZap(noteId,pk,amt));
+    if((ME&&ME.pubkey)!==viewer)return;
+    const destination=selectedAddress||addr;
+    if(!destination){ toast('no lightning address on this profile'); return; }
+    _lightningAmountSheet(p,amt=>{if((ME&&ME.pubkey)===viewer)_runZap(noteId,pk,amt,destination);});
   }
   function _lightningAmountSheet(profile,onAmount){
     const presets=zapPresets();
@@ -13934,8 +14083,8 @@
         const ci=$('#zap-custom',root); if(ci) ci.addEventListener('keydown',e=>{ if(e.key==='Enter') $('#zap-go',root).click(); });
       });
   }
-  async function _runZap(noteId, pk, amt){
-    const p=profOf(pk); const addr=await _lightningAddress(pk,p);
+  async function _runZap(noteId, pk, amt, selectedAddress){
+    const p=profOf(pk); const addr=selectedAddress||await _lightningAddress(pk,p);
     if(!addr || !amt || amt<1) return;
     toast('preparing zap…');
     try{
@@ -13983,11 +14132,15 @@
    * cryptographically verified sealed tally; Monero remains a private on-chain payment whose
    * existing flow posts the sender's acknowledgement after payment. */
   async function startConcordTip(pk,onLightningAmount){
+    const viewer=ME&&ME.pubkey;
     const profile=profOf(pk)||{},methods=[];
     if(await _lightningAddress(pk,profile))methods.push(['ln','⚡ Lightning','instant zap','btn-neon']);
-    if(isXmrAddr(xmrOf(profile)))methods.push(['xmr','ɱ Monero','private, from your wallet','btn-cyan']);
+    const xmr=await _paymentAddress(pk,'monero',xmrOf(profile));
+    if(isXmrAddr(xmr))methods.push(['xmr','ɱ Monero','private, from your wallet','btn-cyan']);
+    if((ME&&ME.pubkey)!==viewer)return;
     _tipMethodSheet(profile,methods,method=>{
-      if(method==='xmr')return doXmrTip(null,pk);
+      if((ME&&ME.pubkey)!==viewer)return;
+      if(method==='xmr')return doXmrTip(null,pk,xmr);
       if(!methods.some(x=>x[0]==='ln'))return toast('this member has no Lightning or Monero address');
       _lightningAmountSheet(profile,onLightningAmount);
     });
@@ -14041,10 +14194,12 @@
     obs.observe(host, { childList:true, subtree:true });
     return st;
   }
-  async function doXmrTip(noteId, pk, cardXmr){
+  async function doXmrTip(noteId, pk, cardXmr, cardIsNote=true){
+    const viewer=ME&&ME.pubkey;
     const p=profOf(pk); const ev=noteId?Store.get(noteId):null;
     // Prefer the render-time address (passed from the card) so an evicted note doesn't lose its per-note tag.
-    const addr = (cardXmr && isXmrAddr(cardXmr)) ? cardXmr : (ev ? xmrForNote(ev) : xmrOf(p));
+    const addr = (cardIsNote && cardXmr && isXmrAddr(cardXmr)) ? cardXmr : (_notePaymentXmr(ev) || await _paymentAddress(pk,'monero',xmrOf(p)));
+    if((ME&&ME.pubkey)!==viewer)return;
     if(!isXmrAddr(addr)){ toast('no Monero address on this post or profile'); return; }
     /* A local PosterChan micro-wallet gets first refusal. Its availability probe is deliberately
        fail-closed: browsers, old APKs and a stopped wallet service continue into the URI/QR flow
@@ -14060,6 +14215,7 @@
     try{
       const _xmrWallet = window.PCMoneroWallet
         || await _withModule('monero-wallet.js', 'PCMoneroWallet');
+      if((ME&&ME.pubkey)!==viewer)return;
       const _tipOpts = {
         address:addr, name:p.name||p.display_name||'anon', noteId, pubkey:pk,
         /* THE SAME AMOUNTS THE EXTERNAL FLOW OFFERS. They are a user setting (`xmrPresets`, synced
@@ -14219,8 +14375,8 @@
   // Open the payer's BCH wallet (bitcoincash:<addr>?amount=…), show a QR + copyable address. Optional
   // "I sent it" posts a public tip note crediting them (BCH has no cryptographic zap receipt; a txid,
   // if given, is verifiable on any explorer).
-  async function doBchTip(pk){
-    const p=profOf(pk); const addr=bchOf(p);
+  async function doBchTip(pk,selectedAddress){
+    const p=profOf(pk); const addr=selectedAddress||await _paymentAddress(pk,'bitcoincash',bchOf(p));
     if(!isBchAddr(addr)){ toast('no Bitcoin Cash address on this profile'); return; }
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'bitcoincash:'+addr+(a?('?amount='+encodeURIComponent(a)):'');
@@ -28239,7 +28395,7 @@
     const npub=NT().nip19.npubEncode(pk);
     feed.innerHTML=_PROFILE_TOP+`<div class="prof"><div class="banner">${p.banner?`<img src="${enc(p.banner)}" onerror="this.remove()">`:''}</div>
       <div class="phead"><img class="pav" src="${enc(p.picture||LOGO)}" onerror="this.src='${LOGO}'">
-        <div class="prof-actions">${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button><button class="btn btn-ghost small" id="open-settings"><span class="lbl">⚙ Settings</span><span class="ic">⚙</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
+        <div class="prof-actions"><button class="btn btn-ghost small" id="prof-pay">Pay</button>${mine?`<button class="btn btn-cyan small" id="edit-prof">Edit</button><button class="btn btn-ghost small" id="open-settings"><span class="lbl">⚙ Settings</span><span class="ic">⚙</span></button><button class="btn btn-ghost small prof-menu-btn" id="prof-menu" title="more"><svg class="ic b-ic" aria-hidden="true"><use href="#i-menu"></use></svg></button>`:`
           <button class="btn btn-ghost small" id="call-prof" title="voice/video call"><svg class="ic b-ic" aria-hidden="true"><use href="#i-phone"></use></svg>Call</button>
           <button class="btn btn-ghost small" id="zap-prof"><svg class="ic b-ic" aria-hidden="true"><use href="#i-zap"></use></svg>Zap</button>
           ${isXmrAddr(xmrOf(p))?`<button class="btn btn-ghost small" id="xmrtip-prof" title="tip Monero (XMR)">ɱ Tip</button>`:''}
@@ -28415,8 +28571,9 @@
         if(top()){ if(_prof.tab === 'notes'){ fillList('notes'); hydrate(feed); } return; }
       }
     })();
+    { const pay=$('#prof-pay',feed); if(pay)pay.onclick=()=>showPaymentTargets(pk); }
     _loadPaymentTargets(pk).then(lightning=>{
-      if(lightning && VIEW==='profile' && _prof.pk===pk && myGen===_profGen)
+      if(VIEW==='profile' && _prof.pk===pk && myGen===_profGen)
         _patchProfileTips(feed,pk,Store.profile(pk)||{},lightning);
     }).catch(()=>{});
     { const ln=$('#prof-ln'); if(ln) ln.onclick=()=>doZap(null, pk); }
@@ -28767,11 +28924,13 @@
       <label class="fld">ɱ Monero address<input class="input" id="pf-xmr" placeholder="4… or 8… (XMR — others can tip you)" value="${enc(xmrOf(p))}"></label>
       <label class="chk" style="display:flex;gap:8px;align-items:flex-start;margin:-4px 0 8px;font-size:13px"><input type="checkbox" id="pf-xmr-stamp" ${ClientSettings.get('xmrStampNotes',false)?'checked':''} style="margin-top:3px"><span class="muted">Attach my Monero address to every post so any client can tip me from a post (like Nosmero). <b>Less private</b> — it links all your posts to one address. Off = address only on your profile.</span></label>
       <label class="fld">🟢 Bitcoin Cash address<input class="input" id="pf-bch" placeholder="bitcoincash:q… (others can tip you)" value="${enc(bchDirect(p))}"></label>
+      <details id="pf-payment-details"><summary>Payment targets</summary><div id="pf-payment-editor"></div></details>
       <label class="fld">Picture URL<input class="input" id="pf-pic" placeholder="https://…" value="${enc(p.picture||'')}"></label>
       <label class="fld">Banner URL<input class="input" id="pf-banner" placeholder="https://…" value="${enc(p.banner||'')}"></label>
       <label class="fld">About<textarea id="pf-about" placeholder="a few words about you">${enc(p.about||'')}</textarea></label>
       <div class="row"><button class="btn btn-cyan small" id="pf-up"><svg class="ic b-ic" aria-hidden="true"><use href="#i-image"></use></svg>Upload pic</button><input type="file" id="pf-file" accept="image/*" hidden><span class="spacer"></span><button class="btn btn-neon" id="pf-save">Save</button></div>`, root=>{
       root.classList.add('modal-sticky');
+      _bindPaymentTargetEditor(root);
       { const x=$('#pf-close',root); if(x) x.onclick=()=>closeModal(); }
       // This node may have ASSIGNED this account a NIP-05 at signup that its kind-0 never carried —
       // e.g. the signup publish lost the race with the first socket. The name is a public read, so
