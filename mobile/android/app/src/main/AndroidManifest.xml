@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Launcher uninstall requests still require Android's user confirmation. -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
     <!-- Android 13+ will not show a notification without this being GRANTED at runtime. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Lets an incoming call take the screen rather than arrive as a quiet banner. Android 14+
