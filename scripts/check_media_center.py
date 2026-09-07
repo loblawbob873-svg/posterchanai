@@ -119,6 +119,14 @@ async def main():
         backend = ContextVar("media_backend", default="")
         routes.settings_store.get = lambda key, default=None: backend.get() if key == "media_center_server_url" else default
         routes.lb_auth.shared_secret = lambda: "isolated-media-test-peer-secret"
+        # Identity and membership are fixtures in this check; never query a live instance registry.
+        # Membership authorization itself is covered by test_instance_membership_routes.py.
+        async def fixture_membership(user):
+            if media.identity(user) not in {OWNER, VIEWER}:
+                from fastapi import HTTPException
+                raise HTTPException(403, 'Unknown fixture member')
+            return user
+        routes.instance_membership.require_user = fixture_membership
         nas = FastAPI()
         nas.include_router(routes.router)
         @nas.middleware("http")
@@ -184,7 +192,8 @@ async def main():
                     await asyncio.sleep(.1)
                 app_url = "http://127.0.0.1:" + str(server.servers[0].sockets[0].getsockname()[1])
                 nas_url = "http://127.0.0.1:" + str(nas_server.servers[0].sockets[0].getsockname()[1])
-                assert (await client.post(f'{app_url}/api/media-center/test/scan')).status_code == 200
+                scan_response = await client.post(f'{app_url}/api/media-center/test/scan')
+                assert scan_response.status_code == 200, (scan_response.status_code, scan_response.text)
                 async with websockets.connect(browser_page["webSocketDebuggerUrl"], max_size=32 * 1024 * 1024) as ws:
                     browser = Browser(ws)
                     await browser.call("Page.enable")
