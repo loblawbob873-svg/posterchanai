@@ -3524,6 +3524,19 @@ FSTAB
 		local IHERE ISRC
 		IHERE="$PCOS_TREE"
 		if [[ -f "$IHERE/gentoo.sh" ]]; then
+			# mksquashfs DOES NOT CREATE INTERMEDIATE DIRECTORIES for a pseudo definition — the
+			# parent must already exist, either in the source filesystem or as an earlier pseudo.
+			# A freshly installed machine has /usr/local/bin (the pc-* helpers are copied there) and
+			# NOT /usr/local/share, so packing one died at the very start of the slow part with
+			#   FATAL ERROR: Pathname "usr/local/share" does not exist in filesystem.
+			# and "nothing was written". That is every from-scratch install: the ISO could only ever
+			# be built on a machine that happened to have the directory already.
+			#
+			# Emitting the parents is harmless where they DO exist: mksquashfs says "exists in
+			# source filesystem ... Ignoring" and uses the real directory, exactly as it already
+			# does for usr/share/applications below. Cheaper than testing for them.
+			echo "usr/local d 755 0 0"
+			echo "usr/local/share d 755 0 0"
 			echo "usr/local/share/posterchanos d 755 0 0"
 			while IFS= read -r ISRC; do
 				local REL="${ISRC#$IHERE/}"

@@ -766,6 +766,23 @@ class PosterChanOSProfile(unittest.TestCase):
         build = self._code(self._fn("buildGentoo"))
         self.assertIn("posterchan-abi", build, "the generic ABI sweep was removed")
 
+    def test_the_iso_creates_the_parents_of_every_pseudo_directory(self):
+        """mksquashfs does not create intermediate directories for a pseudo definition.
+
+        The parent must exist in the source filesystem or as an earlier pseudo. A fresh install has
+        /usr/local/bin and not /usr/local/share, so `gentoo.sh livecd` died with
+        'FATAL ERROR: Pathname "usr/local/share" does not exist in filesystem' and wrote nothing —
+        on every machine PosterChanOS itself had installed."""
+        body = self._fn("liveCD")
+        for parent in ('echo "usr/local d 755 0 0"',
+                       'echo "usr/local/share d 755 0 0"',
+                       'echo "usr/local/share/posterchanos d 755 0 0"'):
+            self.assertIn(parent, body, "a pseudo directory is created without its parent")
+        # Order matters: a parent emitted after its child is not a parent.
+        self.assertLess(body.index('"usr/local d 755'), body.index('"usr/local/share d 755'))
+        self.assertLess(body.index('"usr/local/share d 755'),
+                        body.index('"usr/local/share/posterchanos d 755'))
+
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""
