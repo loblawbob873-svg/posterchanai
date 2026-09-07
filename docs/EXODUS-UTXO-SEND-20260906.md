@@ -53,10 +53,11 @@ Resource/operational limits:
   payments remain locked; automatic cancellation, replacement and fee bumping are
   not implemented. The same local-node/cross-user lock limits as the earlier
   EVM/SOL/XRP release still apply.
-- The free BCH endpoint timed out during a live read-only check. Its actual
-  controller/service source was inspected and response contracts tested; this is
-  not a claim that the public service was available. Provider errors fail closed.
-  No live monetary send was performed by this wallet-expansion thread.
+- Live read-only checks using the actual application transport verified BTC,
+  LTC and DOGE mainnet/fee responses and the BCH mainnet anchor. A subsequent BCH
+  public-example output lookup timed out; public-provider availability remains
+  an operational dependency. Provider errors fail closed. No live monetary send
+  was performed by this wallet-expansion thread.
 
 Dependencies are pinned in both app requirements files. Installed production
 coincurve21.0.0 and requests2.34.2 already satisfy BitCash; embit has no runtime
@@ -87,3 +88,17 @@ Primary provider/library contracts:
 The checked-in public BCH reference transaction comes from the service's own
 documentation and is verified by hash. It anchors BCH mainnet without relying on
 the genesis coinbase, which getrawtransaction cannot retrieve.
+
+Final integration review caught two provider-contract defects before release:
+DOGE's real fee quote exceeded the generic BTC-oriented rate bound, and LTC's
+provider returned 404 for the Esplora fee endpoint. DOGE now uses a chain-specific
+rate limit while retaining the total transaction fee ceiling. LTC falls back to
+its recommended-fees endpoint only on 404 and strictly validates hourFee. The
+93 UTXO regression tests pass, including captured public payload shapes, invalid
+fees and fee ceilings. Corrected live quotes passed through the app transport.
+
+The final browser suite has 51 wallet cases, including actual Send controls and
+submission forms for BTC, LTC, DOGE, BCH, SOL and XRP, wallet selection, receiving
+and pending status. Those 51 cases also passed against both generated Android
+and desktop web bundles. Full release results are recorded separately in
+WALLET-SMS-FINAL-RELEASE-20260907.md.
