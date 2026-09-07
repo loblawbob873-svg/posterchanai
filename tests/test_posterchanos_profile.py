@@ -737,6 +737,19 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("gentoo.poster.place/releases/amd64/binpackages", repo)
         self.assertIn("priority = 9999", repo)
 
+    def test_no_message_runs_a_command_by_quoting_it(self):
+        """A backtick inside a double-quoted string is command SUBSTITUTION, not punctuation.
+
+        `echo -e "check `emerge -uDNp @world` first"` RUNS emerge — on the live medium, from an
+        error path whose whole job is to report a failure calmly. bash -n accepts it: it is valid
+        syntax doing something nobody meant, so only reading for it finds it."""
+        for i, line in enumerate(self.src.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            for msg in re.findall(r'echo\s+(?:-e\s+)?"((?:[^"\\]|\\.)*)"', line):
+                self.assertNotIn("`", msg,
+                                 f"os/gentoo.sh:{i} runs a command inside a message: {line.strip()[:90]}")
+
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""

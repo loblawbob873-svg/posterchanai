@@ -846,7 +846,11 @@ buildGentoo() {
 	chroot $TARGET /usr/sbin/etc-update -q --automode -5 >/dev/null 2>&1
 	if ! chroot $TARGET /usr/bin/emerge -uDN --newuse @world; then
 		echo -e "\033[1;31mThe post-Steam convergence pass did not finish. The machine is installed,\033[0m"
-		echo -e "\033[1;31mbut check `emerge -uDNp @world` before relying on it updating cleanly.\033[0m"
+		# NO BACKTICKS IN A DOUBLE-QUOTED MESSAGE. Inside "..." a backtick is command SUBSTITUTION,
+		# so quoting the command to run here would RUN it -- an `emerge -uDNp @world` executed on
+		# the live medium, at the one moment this branch exists to report a failure calmly. `bash -n`
+		# accepts it, because it is valid syntax doing something nobody meant.
+		echo -e "\033[1;31mbut check 'emerge -uDNp @world' before relying on it updating cleanly.\033[0m"
 	fi
 	echo
 	echo
