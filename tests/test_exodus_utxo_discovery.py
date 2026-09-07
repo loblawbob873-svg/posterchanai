@@ -2,9 +2,16 @@
 import json
 import httpx
 import pytest
+from unittest.mock import AsyncMock
 from app.services import exodus_bitcoin_discovery as B, exodus_derivation as D
 
 PHRASE = 'abandon ' * 11 + 'about'
+
+
+@pytest.fixture(autouse=True)
+def provider_pacing(monkeypatch):
+    # Provider data contracts are independent from the separately tested shared rate scheduler.
+    monkeypatch.setattr('app.services.exodus_doge_rate.pace',AsyncMock())
 
 
 @pytest.fixture

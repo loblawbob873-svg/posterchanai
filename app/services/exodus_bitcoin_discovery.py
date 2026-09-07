@@ -45,6 +45,8 @@ async def other_address_state(client, endpoint, address, symbol, settings=None):
     if reader is C._utxo_balance:
         return await address_state(client, endpoint, address)
     if reader is C._doge_balance:
+        from app.services.exodus_doge_rate import pace
+        await pace()
         response = await client.get(endpoint.rstrip('/') + '/addrs/' + address + '/balance')
         response.raise_for_status()
         data = response.json()

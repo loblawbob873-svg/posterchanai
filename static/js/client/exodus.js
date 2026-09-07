@@ -174,7 +174,7 @@
   }
 
   // Only expose sends backed by a reviewed server transaction implementation.
-  const SENDABLE = new Set(['ETH', 'MATIC', 'BNB', 'AVAX', 'XMR', 'SOL', 'XRP']);
+  const SENDABLE = new Set(['ETH', 'MATIC', 'BNB', 'AVAX', 'XMR', 'SOL', 'XRP', 'BTC', 'LTC', 'DOGE', 'BCH']);
   const canSend = (sym) => SENDABLE.has(String(sym || '').toUpperCase());
 
   function row(sym, name, cell, quote){

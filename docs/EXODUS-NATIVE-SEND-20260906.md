@@ -1,8 +1,8 @@
 # Native SOL and XRP send follow-up
 
-This isolated follow-up adds native SOL and XRP sends to the wallet release. BTC,
-LTC, DOGE and BCH remain receive/balance-discovery assets pending separate reviewed
-UTXO transaction support. It does not change the built-in Monero wallet or wallet CSS.
+This isolated follow-up adds native SOL and XRP sends to the wallet release. The
+subsequent BTC/LTC/DOGE/BCH implementation is reviewed in
+EXODUS-UTXO-SEND-20260906.md. Neither changes the built-in Monero wallet or wallet CSS.
 
 SOL uses solders 0.29.0 to build and sign a versioned system transfer. Before
 broadcast it verifies mainnet genesis, recipient, balance and fee, then simulates

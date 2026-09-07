@@ -109,3 +109,5 @@ bip_utils>=2.9.3
 # receives and shows balances; only /send refuses, with a sentence rather than a traceback.
 eth-account>=0.13
 solders==0.29.0
+embit==0.8.0
+bitcash==1.2.0

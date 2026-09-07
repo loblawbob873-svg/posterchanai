@@ -186,10 +186,31 @@ def _send(client, **kw):
 
 def test_a_chain_that_cannot_send_says_so_instead_of_half_trying(client):
     _created(client)
-    for sym in ("BTC", "LTC", "DOGE", "BCH"):
+    for sym in ("UNKNOWN", "USDT"):
         r = _send(client, symbol=sym, to="1" + "a" * 33)
-        assert r.status_code == 501, (sym, r.status_code, r.text)
-        assert "not available" in r.text
+        assert r.status_code == 400, (sym, r.status_code, r.text)
+        assert "unsupported chain" in r.text
+
+
+@pytest.mark.parametrize('symbol',['BTC','LTC','DOGE','BCH'])
+def test_utxo_route_uses_wallet_phrase_and_account_with_durable_retry(client,monkeypatch,symbol):
+    from app.services import exodus_utxo_send as U
+    _created(client)
+    phrase=client.post('/api/wallet/exodus/reveal').json()['mnemonic']
+    captured=[]
+    async def send(**kwargs):
+        captured.append(kwargs)
+        assert kwargs['phrase']==phrase and kwargs['account']==0 and kwargs['symbol']==symbol
+        assert kwargs['units']==1000000
+        await kwargs['before_broadcast']('ab'*32,None,utxo={'inputs':[]})
+        return {'hash':'ab'*32,'pending':True}
+    monkeypatch.setattr(U,'send',send)
+    first=_send(client,symbol=symbol)
+    assert first.status_code==200 and first.json()['pending'] is True
+    assert _send(client,symbol=symbol).json()==first.json()
+    blocked=_send(client,symbol=symbol,requestId='02'*16)
+    assert blocked.status_code==202 and blocked.json()['unsure']
+    assert len(captured)==1
 
 
 @pytest.mark.parametrize('symbol', ['SOL', 'XRP'])

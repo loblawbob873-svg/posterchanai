@@ -257,8 +257,6 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), w
     spec = W.CHAINS.get(symbol)
     if not spec and symbol != "XMR":
         raise HTTPException(status_code=400, detail=f"unsupported chain {symbol!r}")
-    if symbol not in ('XMR', 'SOL', 'XRP') and (not spec or spec['kind'] != 'evm'):
-        raise HTTPException(501, f'Sending {symbol} is not available in this build')
 
     doc, phrase = await _open(db, user, wallet_id, portfolio)
     index = int(doc.get("addressIndex") or 0)
@@ -290,8 +288,15 @@ async def send(req: SendReq, user: CurrentUser, db: Session = Depends(get_db), w
                                req.requestId, req.to, units, doc.get('moneroHeight', 0), Collections.monero_recovery(doc, _seckey(db, user), portfolio))
         else:
             from app.services import exodus_transfers as T
-            source = D.address(phrase, symbol, index=index, account=portfolio, format=D.profile(doc))
+            if spec['kind']=='utxo':
+                from app.services import exodus_utxo_send as U
+                source=U.scope_address(phrase,symbol,portfolio)
+            else:
+                source = D.address(phrase, symbol, index=index, account=portfolio, format=D.profile(doc))
             async def execute(before_broadcast):
+                if spec['kind']=='utxo':
+                    return await U.send(user_id=user.id,doc=doc,phrase=phrase,account=portfolio,key=_seckey(db,user),
+                                        symbol=symbol,to=req.to,units=units,settings=_settings(),before_broadcast=before_broadcast)
                 if symbol in ('SOL', 'XRP'):
                     from app.services import exodus_account_send as A
                     args = dict(private_key=D.private_key(phrase, symbol, index=index, account=portfolio, format=D.profile(doc)),
@@ -394,9 +399,14 @@ async def send_status(req: SendStatusReq, user: CurrentUser, db: Session = Depen
         if symbol == 'XMR':
             keys = W.monero_keys(phrase, portfolio, Collections.monero_recovery(doc, _seckey(db, user), portfolio))
             return await M.send_status(M.identity(user.id, wallet_id, portfolio, keys.PrimaryAddress()), _seckey(db, user))
-        if symbol not in ('SOL', 'XRP') and W.CHAINS.get(symbol, {}).get('kind') != 'evm':
+        kind=W.CHAINS.get(symbol, {}).get('kind')
+        if symbol not in ('SOL', 'XRP') and kind not in ('evm','utxo'):
             raise HTTPException(400, 'Unsupported transfer status asset')
-        source = D.address(phrase, symbol, account=portfolio, index=int(doc.get('addressIndex') or 0), format=D.profile(doc))
+        if kind=='utxo':
+            from app.services import exodus_utxo_send as U
+            source=U.scope_address(phrase,symbol,portfolio)
+        else:
+            source = D.address(phrase, symbol, account=portfolio, index=int(doc.get('addressIndex') or 0), format=D.profile(doc))
         return await T.status(T.scope(user.id, symbol, source), _seckey(db, user), symbol, C.endpoint_for(symbol, _settings()))
     except W.WalletError as error:
         raise HTTPException(503, str(error)) from error

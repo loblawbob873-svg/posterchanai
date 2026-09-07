@@ -56,7 +56,7 @@ async def send(identity, key, token, to, units, operation, *, symbol=None, desti
     folder = _folder(identity)
     path, pending = folder / (token + '.enc'), folder / 'pending'
     # Preserve the existing EVM fingerprint on disk. Base58 addresses are case-sensitive.
-    details = [to if symbol in ('SOL', 'XRP') else to.lower(), units]
+    details = [to if symbol in ('SOL', 'XRP', 'BTC', 'LTC', 'DOGE', 'BCH') else to.lower(), units]
     if symbol == 'XRP':
         details.append(destination_tag)
     fingerprint = hashlib.sha256(json.dumps(details).encode()).hexdigest()
@@ -75,7 +75,7 @@ async def send(identity, key, token, to, units, operation, *, symbol=None, desti
         _write(pending, token)
 
         async def before_broadcast(tx_hash, nonce, **metadata):
-            if any(name not in ('solana', 'xrp') for name in metadata):
+            if any(name not in ('solana', 'xrp', 'utxo') for name in metadata):
                 raise ValueError('Unsupported transaction checkpoint metadata')
             record.update(state='broadcast', hash=tx_hash, nonce=nonce,
                           message=f'Transaction {tx_hash} may have been sent. Check its status before another payment.')
@@ -119,8 +119,11 @@ async def status(identity, key, symbol, endpoint):
             path.unlink(); pending.unlink()
             return {'state': 'not_sent'}
         async with S._client(S.RPC_TIMEOUT) as client:
-            if symbol in ('SOL', 'XRP'):
-                from app.services.exodus_account_send import transfer_status
+            if symbol in ('SOL', 'XRP', 'BTC', 'LTC', 'DOGE', 'BCH'):
+                if symbol in ('SOL','XRP'):
+                    from app.services.exodus_account_send import transfer_status
+                else:
+                    from app.services.exodus_utxo_send import status as transfer_status
                 answer = await transfer_status(client, endpoint, symbol, record)
                 if answer['state'] == 'not_sent':
                     path.unlink(); pending.unlink()
