@@ -861,9 +861,20 @@ buildGentoo() {
 	# the day, and a list written today is a list that is wrong after the next Steam bump.
 	local sweep skipped atom
 	for sweep in 1 2 3; do
+		# ONLY THE ONES WHOSE CONFLICT IS ACTUALLY ABOUT abi_x86_32.
+		#
+		# The first version took every skipped atom, and portage skips upgrades for reasons that have
+		# nothing to do with us: measured here, `sys-firmware/edk2-bin` is skipped because
+		# app-emulation/qemu RDEPENDs on `~sys-firmware/edk2-bin-202408` -- an exact-version pin by a
+		# reverse dependency, present on any Gentoo machine with qemu installed. Handing that package
+		# `abi_x86_32` changes nothing (it may not even have the flag) and writes a meaningless line
+		# into package.use on every install, three times, for ever. awk keeps each atom only if its
+		# own conflict detail mentions the ABI.
 		skipped="$(chroot $TARGET /usr/bin/emerge -uDNp @world 2>&1 \
-			| sed -n '/have been skipped due to a dependency conflict/,$p' \
-			| grep -oE '^[a-z0-9][a-z0-9-]*/[A-Za-z0-9._+-]+' | sort -u)"
+			| awk '/have been skipped due to a dependency conflict/ {s=1; next}
+			       !s {next}
+			       /^[a-z0-9][a-z0-9-]*\/[A-Za-z0-9._+-]+/ {atom=$0; sub(/:.*/, "", atom); next}
+			       /abi_x86_32/ {if (atom != "") {print atom; atom=""}}' | sort -u)"
 		[ -n "$skipped" ] || break
 		echo -e "\033[1;33m  giving abi_x86_32 to: $(echo $skipped)\033[0m"
 		mkdir -p "$TARGET/etc/portage/package.use"
@@ -876,6 +887,17 @@ buildGentoo() {
 		echo -e "\033[1;31mThese packages still cannot be upgraded on the installed machine:\033[0m"
 		echo -e "\033[1;31m  $(echo $skipped)\033[0m"
 		echo -e "\033[1;31mThe install is complete and bootable; run the world resolution to see why.\033[0m"
+	fi
+	# Upgrades portage declines for reasons that are not ours -- a reverse dependency pinning an
+	# exact version, most often -- are SAID, because an operator who reads about them in a bug report
+	# months later should have seen them here first, and NOT treated as a fault of this install.
+	local pinned
+	pinned="$(chroot $TARGET /usr/bin/emerge -uDNp @world 2>&1 \
+		| sed -n '/have been skipped due to a dependency conflict/,$p' \
+		| grep -oE '^[a-z0-9][a-z0-9-]*/[A-Za-z0-9._+-]+' | sort -u)"
+	if [ -n "$pinned" ]; then
+		echo -e "\033[1;33mNot upgraded, pinned by something else that is installed (normal):\033[0m"
+		echo -e "\033[1;33m  $(echo $pinned)\033[0m"
 	fi
 	echo
 	echo

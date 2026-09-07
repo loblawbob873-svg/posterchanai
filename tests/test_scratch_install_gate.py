@@ -458,16 +458,49 @@ def test_a_conflict_count_that_cannot_be_read_is_a_failure_not_a_pass():
     `if hits and ...` as False, and the gate PASSED a machine whose log held a conflict block.
     Measured on run 10. Same false-green shape as the case bug, from the other direction."""
     src = SRC[SRC.index("def portage_health("):SRC.index("def shell_quote(")]
-    assert "WORLDCONFLICTS=" in src, "the count is not returned inside its own marker"
+    assert "WORLDPINNED=" in src, "the counts are not returned inside their own markers"
     assert "did not run, which is not the same as passing" in src, \
         "an unreadable count still passes"
 
     # The shipped pattern against the bytes a real console produced (captured from run 10).
-    console = ("root@livecd ~ # echo WORLDCONFLICTS=$(grep -ciE '...' /tmp/ph-world.log)\r\n"
-               "\x1b[?2004l\rWORLDCONFLICTS=1\r\n")
-    assert re.findall(r"WORLDCONFLICTS=(\d+)", console)[-1] == "1"
+    console = ("root@livecd ~ # echo WORLDABI=$(sed -n '...' | grep -c abi_x86_32)\r\n"
+               "\x1b[?2004l\rWORLDABI=1\r\n")
+    assert re.findall(r"WORLDABI=(\d+)", console)[-1] == "1"
 
     # And the OLD pattern, on those same bytes, finds nothing — which is why it passed.
     old_console = "root@livecd ~ # grep -ciE '...'; echo WORLDGREP-$?\r\n\x1b[?2004l\r1\r\nWORLDGREP-0\r\n"
     assert re.findall(r"\n(\d+)\r?\n[^\n]*WORLDGREP", old_console) == [], \
         "the regression this test exists for is not reproduced by the fixture"
+
+
+def test_a_declined_upgrade_is_judged_by_its_cause_not_its_count():
+    """Portage declines upgrades for reasons no install can fix. Measured on run 11b:
+    sys-firmware/edk2-bin is skipped because app-emulation/qemu RDEPENDs
+    `~sys-firmware/edk2-bin-202408` — an exact-version pin by a reverse dependency, present on every
+    Gentoo machine with qemu installed. Failing a release for that means never being green, and a
+    gate that can never pass gets switched off. What must still fail is the seam WE make."""
+    src = SRC[SRC.index("def portage_health("):SRC.index("def shell_quote(")]
+    assert "WORLDABI=" in src and "WORLDHARD=" in src, "the ABI seam is no longer counted apart"
+    assert 'abi[-1] != "0" or hard[-1] != "0"' in src, "an ABI conflict no longer fails"
+    assert "not this install's doing" in src, "a version pin is not reported as benign"
+
+    # The sweep in the installer must not hand abi_x86_32 to a package skipped for another reason —
+    # it changes nothing and writes a meaningless USE line on every install, for ever.
+    body = SH[SH.index("buildGentoo() {"):SH.index("finalizeInstall() {")]
+    assert "/abi_x86_32/ {if (atom != \"\")" in body, \
+        "the sweep takes every skipped atom again, ABI-related or not"
+
+    # And the awk actually selects that way: edk2-bin (pinned) out, ncurses (ABI) in.
+    import subprocess
+    program = body[body.index("awk '") + 5:]
+    program = program[:program.index("' | sort -u")]
+    log = (
+        "WARNING: One or more updates/rebuilds have been skipped due to a dependency conflict:\n"
+        "\nsys-firmware/edk2-bin:0\n"
+        "  (edk2-bin-202411 ...) conflicts with\n"
+        "    ~sys-firmware/edk2-bin-202408[qemu_softmmu_targets_x86_64(+)] required by (qemu)\n"
+        "\nsys-libs/ncurses:0\n"
+        "  (ncurses-6.5 ...) ABI_X86=\"(64) -32\" conflicts with\n"
+        "    >=sys-libs/ncurses-5.9-r3:=[unicode(+),abi_x86_32(-)] required by (readline)\n")
+    got = subprocess.run(["awk", program], input=log, capture_output=True, text=True)
+    assert got.stdout.split() == ["sys-libs/ncurses"], got.stdout
