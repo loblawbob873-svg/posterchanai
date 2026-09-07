@@ -78,3 +78,18 @@ test, deployment/package, and relevant real-device check are complete. The insta
 - [ ] After the desktop is stable, add an optional macOS-style PosterChanOS desktop experience in
       Settings. Keep the current experience available, and cover switching, persistence, windows,
       focus, multi-monitor behavior, and rollback with the same no-black-window release tests.
+
+## Shared media: Quick Connect for library recipients
+
+- [ ] When an admin shares media with a user, show usable Jellyfin Quick Connect
+      authorization in that user's PosterChan Media Center, including when the user
+      owns no library. Keep account-level media restrictions enforced.
+- [ ] Add browser regression coverage for a signed-in shared recipient with zero
+      owned libraries: Quick Connect is visible and can submit a TV pairing code.
+- [ ] Add an integration test from admin sharing through recipient approval and TV
+      token redemption to TV library browsing/playback. Verify the TV sees the shared
+      library and cannot browse or play unrelated private libraries.
+- [ ] Cover expired/invalid/reused pairing codes, unshared users, revoked shares and
+      disabled account media access. Revocation must also affect existing TV sessions.
+- [ ] Run the affected backend/browser suites, real Jellyfin SDK compatibility gates
+      for Android TV 0.19.10 and newer, and a physical TV check before marking complete.
