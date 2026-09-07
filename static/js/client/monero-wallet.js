@@ -66,6 +66,7 @@
     const p=String(path||'').split('?')[0];
     return SPENDING_PATHS.some(x=>p===x);
   }
+  const unknownPayment = () => Object.assign(new Error('This payment may have been sent — check your transaction history before trying again.'), {unsure:true});
   async function request(path, opts){
     // Signing/login is interactive and can legitimately take longer than the network timeout. Starting
     // the timer before it meant a slow Android signer returned successfully and then handed fetch() an
@@ -79,7 +80,8 @@
        down: status, balance, address and history all 200, the operator authenticated, nothing refused.
        Raising it costs nothing in the case that matters: a wallet that is not running refuses the
        connection immediately, so this timer only ever fires while the node is genuinely working. */
-    const spend=isSpend(path), budget=spend?SPEND_TIMEOUT_MS:WALLET_TIMEOUT_MS;
+    const spend=isSpend(path), strictPay=String(path).split('?')[0]==='/api/wallet/xmr/me/pay';
+    const budget=spend?SPEND_TIMEOUT_MS:WALLET_TIMEOUT_MS;
     const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),budget), t0=Date.now();
     try{
       // Extension/Nostr login mints a bearer session, while the cookie may be absent after a server
@@ -102,6 +104,8 @@
            fetch" — which is equally consistent with every one of those and points at none.
            The address and the kind are both known HERE, so say them: the next report arrives with
            the one fact that identifies the cause instead of the one word that does not. */
+        // Once /me/pay was dispatched, a fast disconnect cannot prove that no funds moved.
+        if(strictPay) throw unknownPayment();
         const aborted=(err&&err.name==='AbortError')||ctl.signal.aborted;
         /* THE MONEY MAY ALREADY BE GONE — but only where it could actually have left.
            An unknown is worth stating loudly and it must stay rare, or it stops being believed:
@@ -118,7 +122,8 @@
           ? ('the wallet did not answer within '+Math.round(budget/1000)+'s: '+target)
           : ('could not reach '+target+' — '+((err&&err.message)||err)));
       }
-      let body={}; try{ body=await res.json(); }catch(_){}
+      if(strictPay && res.status>=500) throw unknownPayment();
+      let body={}; try{ body=await res.json(); }catch(_){if(strictPay && res.ok)throw unknownPayment();}
       /* A REFUSAL IS NOT AN OUTAGE, AND SAYING SO COST SEVERAL RELEASES.
          The wallet is admin-only. A Nostr sign-in that resolves to an ordinary account gets 403 on
          every route, the probe catches it, and the screen said "Local wallet unavailable · Retry
@@ -548,14 +553,14 @@
       const fee = Number(s.fee_percent || 0) || 0;
       PC.modal('<div class="mw-modal"><h3>Send Monero</h3>'
         + '<p class="muted small">From your wallet on this server to any Monero address.</p>'
-        + (fee > 0 ? '<p class="muted small">This node keeps ' + esc(String(fee))
+        + (fee > 0 ? '<p class="muted small">This node may keep up to ' + esc(String(fee))
                      + '% of what you send.</p>' : '')
         + '<label>Recipient address<input class="input" id="mw-ms-to" autocomplete="off" '
         + 'spellcheck="false"></label>'
         + '<label>Amount (XMR)<input class="input" id="mw-ms-amount" type="number" '
         + 'min="0.000000000001" step="0.0001" inputmode="decimal"></label>'
         + '<p class="muted small">' + esc(xmr(s.unlocked_balance, false))
-        + ' XMR can be sent now</p>'
+        + ' XMR available. Leave room for the additional network fee.</p>'
         + '<button class="btn btn-neon full" id="mw-ms-review">Review payment</button></div>', r => {
           const review = r.querySelector('#mw-ms-review'); if(!review) return;
           review.onclick = () => {
@@ -563,7 +568,7 @@
             const raw = String((r.querySelector('#mw-ms-amount') || {}).value || '').trim();
             if(!validAddress(to, s.network)){ PC.toast('check the Monero address for this network'); return; }
             const want = amount(raw);
-            if(!(want > 0)){ PC.toast('enter an amount to send'); return; }
+            if(!/^(?:0|[1-9]\d*)(?:\.\d{1,12})?$/.test(raw) || !(want > 0)){ PC.toast('enter a positive XMR amount with at most 12 decimal places'); return; }
             const have = amount(s.unlocked_balance);
             if(want > have){ PC.toast('only ' + xmr(s.unlocked_balance, false)
                                       + ' XMR is available to send right now'); return; }
@@ -571,23 +576,30 @@
             PC.modal('<div class="mw-modal"><h3>Confirm payment</h3><div class="mw-confirm">'
               + '<span>Send</span><strong>' + esc(raw) + ' XMR</strong>'
               + '<span>To</span><code>' + esc(to) + '</code></div>'
+              + '<p class="muted small">' + (fee > 0 ? 'Up to '+esc(String(fee))+'% of this amount may be deducted before it reaches the recipient. ' : '')
+              + 'The network fee is charged in addition.</p>'
               + '<label class="mw-check"><input type="checkbox" id="mw-ms-understand"> '
               + 'I understand this Monero transaction cannot be reversed.</label>'
               + '<button class="btn btn-neon full" id="mw-ms-go" disabled>Send now</button></div>', c => {
                 const box = c.querySelector('#mw-ms-understand'), go = c.querySelector('#mw-ms-go');
                 if(!box || !go) return;
-                box.onchange = () => { go.disabled = !box.checked; };
+                let phase='ready';
+                box.onchange = () => { go.disabled = phase!=='ready' || !box.checked; };
                 go.onclick = async () => {
-                  go.disabled = true; go.textContent = 'Sending\u2026';
+                  if(phase!=='ready' || !box.checked) return;
+                  phase='sending';go.disabled = true; go.textContent = 'Sending\u2026';
                   try{
-                    await request('/api/wallet/xmr/me/pay', {method:'POST',
+                    const receipt=await request('/api/wallet/xmr/me/pay', {method:'POST',
                       headers:{'Accept':'application/json','Content-Type':'application/json'},
                       body: JSON.stringify({payments:[{address: to, amount: raw}]})});
-                    PC.closeModal(); PC.toast('payment sent'); _meAt = 0; render(true);
+                    if(!Array.isArray(receipt?.tx_hash_list) || !receipt.tx_hash_list.length ||
+                       !receipt.tx_hash_list.every(hash=>typeof hash==='string' && /^[0-9a-f]{64}$/i.test(hash))) throw unknownPayment();
+                    phase='sent';PC.closeModal(); PC.toast('payment sent'); _meAt = 0; render(true);
                   }catch(e){
                     const msg = (e && e.message) || String(e);
-                    const unsure = /may have been sent|did not answer in time/i.test(msg);
-                    go.disabled = unsure; go.textContent = unsure ? 'Check your history' : 'Send now';
+                    const unsure = !!(e && e.unsure) || /may have been sent|did not answer in time/i.test(msg);
+                    phase=unsure?'unknown':'ready';
+                    go.disabled = unsure || !box.checked; go.textContent = unsure ? 'Check your history' : 'Send now';
                     PC.toast(unsure ? msg : ('payment not sent: ' + msg));
                   }
                 };
