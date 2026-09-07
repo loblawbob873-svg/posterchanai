@@ -442,20 +442,36 @@ def portage_health(con, evidence, port):
             # above, arrived at from the other direction -- there the pattern could not match the
             # log, here it could not match the answer -- and both times "found nothing" was read as
             # "nothing is wrong".
-            con.send("echo WORLDCONFLICTS=$(grep -ciE 'have been skipped due to a dependency "
-                     "conflict|slot conflict|unbreakable|Multiple package instances' "
-                     "/tmp/ph-world.log)")
-            found = con.expect(r"WORLDCONFLICTS=\d+", 300)
-            hits = re.findall(r"WORLDCONFLICTS=(\d+)", con.buf)
-            if found is None or not hits:
-                print("FAIL  could not read the @world conflict count back from the guest — the "
+            # COUNTED BY CAUSE, NOT BY NUMBER. Portage declines upgrades for reasons that are not
+            # ours and that no install can fix: measured here, sys-firmware/edk2-bin is skipped
+            # because app-emulation/qemu RDEPENDs `~sys-firmware/edk2-bin-202408`, an exact-version
+            # pin by a reverse dependency that exists on every Gentoo machine with qemu installed.
+            # Failing a release for that means never being green, and a gate that can never pass
+            # gets switched off. The seam this exists to catch is the one WE make -- abi_x86_32
+            # through the desktop's own graph -- plus portage's own hard verdicts.
+            con.send("echo WORLDABI=$(sed -n '/have been skipped due to a dependency conflict/,$p' "
+                     "/tmp/ph-world.log | grep -c abi_x86_32); "
+                     "echo WORLDHARD=$(grep -ciE 'slot conflict|unbreakable|"
+                     "Multiple package instances' /tmp/ph-world.log); "
+                     "echo WORLDPINNED=$(sed -n '/have been skipped due to a dependency conflict/,"
+                     "$p' /tmp/ph-world.log | grep -coE "
+                     "'^[a-z0-9][a-z0-9-]*/[A-Za-z0-9._+-]+')")
+            found = con.expect(r"WORLDPINNED=\d+", 300)
+            abi = re.findall(r"WORLDABI=(\d+)", con.buf)
+            hard = re.findall(r"WORLDHARD=(\d+)", con.buf)
+            pinned = re.findall(r"WORLDPINNED=(\d+)", con.buf)
+            if found is None or not (abi and hard and pinned):
+                print("FAIL  could not read the @world conflict counts back from the guest — the "
                       "check did not run, which is not the same as passing")
                 return 1
-            if hits[-1] != "0":
-                print(f"FAIL  `emerge -uDNp @world` exits 0 but reports {hits[-1]} conflict/"
-                      f"skipped-rebuild block(s) — the installed machine cannot cleanly update; "
-                      f"see {evidence}/portage-world.log")
+            if abi[-1] != "0" or hard[-1] != "0":
+                print(f"FAIL  `emerge -uDNp @world` exits 0 but the installed machine cannot "
+                      f"cleanly update: {abi[-1]} abi_x86_32 conflict line(s), {hard[-1]} hard "
+                      f"conflict(s) — see {evidence}/portage-world.log")
                 return 1
+            if pinned[-1] != "0":
+                print(f"..    {pinned[-1]} upgrade(s) declined by a version pin from something "
+                      f"already installed — normal Gentoo, not this install's doing")
     print("..    the installed system syncs and resolves @world cleanly")
     return 0
 
