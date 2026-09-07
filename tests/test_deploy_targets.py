@@ -31,6 +31,13 @@ class Mapping(unittest.TestCase):
         for name in ('push_service', 'direct_push_service'):
             self.assertEqual(set(dt.units_for(['app/services/'+name+'.py'])), {dt.APP, dt.WORKER})
 
+    def test_quote_notifications_do_not_restart_media_or_terminals(self):
+        files = ['app/services/nostr/quotes.py', 'app/services/nostr_relay/store.py',
+                 'app/services/nostr_relay/server.py', 'app/services/nostr_push_service.py',
+                 'app/services/direct_push_service.py', 'static/js/client/app.js',
+                 'static/js/client/notes.js', 'static/css/client.css']
+        self.assertEqual(set(dt.units_for(files)), {dt.APP, dt.RELAY, dt.WORKER})
+
     def test_ui_only_changes_restart_nothing(self):
         """The pre-existing rule this must not break: a static/client change is served from
         router.lan's own checkout, so it must never take the ~90s restart outage."""

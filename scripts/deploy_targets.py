@@ -154,6 +154,8 @@ _OWNED = (
     # worker that only draws it on the nightly cron, while the button an admin actually looks at kept
     # rendering the old code. Reported as "why does stats look the same".
     ("app/services/stats_bot_service.py", (APP, WORKER)),
+    # Quote recipients are shared by relay matching/indexing and the push watcher.
+    ("app/services/nostr/quotes.py", (APP, RELAY, WORKER)),
     ("app/services/nostr_push_service.py", (WORKER,)),
     # Notification transport is called by the push API and reminder/mail/Nostr workers.
     ("app/services/push_service.py", (APP, WORKER)),
