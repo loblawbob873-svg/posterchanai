@@ -26,7 +26,7 @@ window.__PC={{$:s=>document.querySelector(s),enc:s=>String(s).replaceAll('&','&a
 uiConfirm:()=>mode==='confirm'?new Promise(r=>releaseConfirm=r):Promise.resolve(true),
 authFetch:async(path,opts)=>{{const url=new URL(path,'https://instance.example'),wallet=url.searchParams.get('wallet')||'default';calls.push(url.pathname+'?'+url.searchParams);
 if(url.pathname.endsWith('/wallets'))return reply({{wallets}});
-if(url.pathname.endsWith('/status'))return reply({{exists:true,label:wallet==='default'?'Main wallet':'Savings',backedUp:true,portfolios:[{{id:0,name:'Main'}},{{id:1,name:'Long term'}}],chains:[{{symbol:'BTC',name:'Bitcoin'}},{{symbol:'ETH',name:'Ethereum'}}]}});
+if(url.pathname.endsWith('/status'))return reply({{exists:true,label:wallet==='default'?'Main wallet':'Savings',backedUp:true,portfolios:[{{id:0,name:'Main'}},{{id:1,name:'Long term'}}],chains:mode==='native'?['BTC','LTC','DOGE','BCH','SOL','XRP'].map(symbol=>({{symbol,name:symbol}})):[{{symbol:'BTC',name:'Bitcoin'}},{{symbol:'ETH',name:'Ethereum'}}]}});
 if(url.pathname.endsWith('/balances')){{if(mode==='balance'&&wallet==='default')return new Promise(r=>releaseBalance=()=>r(reply(dataFor(wallet))));return reply(dataFor(wallet));}}
 if(url.pathname.endsWith('/addresses')){{if(mode==='address')return new Promise(r=>releaseAddress=()=>r(reply({{addresses:{{BTC:'OLD-WALLET-ADDRESS'}}}})));return reply({{addresses:{{BTC:'address-'+wallet,ETH:'0x123'}}}});}}
 if(url.pathname.endsWith('/send-status'))return reply({{state:'idle'}});
@@ -254,3 +254,26 @@ setTimeout(()=>{document.querySelector('#result').textContent=JSON.stringify({
 ''')
     assert result['disabled'] is True
     assert 'payment failed' in result['text'] and 'Sent.' not in result['text']
+
+
+@pytest.mark.parametrize('symbol', ['BTC', 'LTC', 'DOGE', 'BCH', 'SOL', 'XRP'])
+def test_native_asset_card_opens_and_submits_its_own_send_form(tmp_path, symbol):
+    result = page(tmp_path, """
+const expected=SYMBOL,button=document.querySelector('.ex-send[data-sym="'+expected+'"]');
+let submitted;
+const original=__PC.authFetch;
+__PC.authFetch=async(path,opts)=>{
+ if(path.includes('/send?')){submitted={path,body:JSON.parse(opts.body)};return reply({hash:'native-fixture',pending:true});}
+ return original(path,opts);
+};
+button.click();
+setTimeout(async()=>{
+ document.querySelector('#ex-to').value='recipient-fixture';
+ document.querySelector('#ex-amt').value='0.001';
+ await document.querySelector('#ex-send-go').onclick();
+ document.querySelector('#result').textContent=JSON.stringify({symbol:submitted.body.symbol,
+ amount:submitted.body.amount,wallet:new URL(submitted.path,'https://instance.example').searchParams.get('wallet'),
+ submitted:document.querySelector('#ex-send-out').textContent.includes('Submitted.')});
+},40);
+""".replace('SYMBOL', json.dumps(symbol)), mode='native')
+    assert result == {'symbol':symbol,'amount':'0.001','wallet':'default','submitted':True}
