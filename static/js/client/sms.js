@@ -2155,6 +2155,19 @@
     return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
   }
 
+  // SMS remains plain text: links open the download page without trying to embed ciphertext.
+  function messageTextHtml(body){
+    const text = String(body || ''), pattern = /https?:\/\/[^\s<>"']+/gi;
+    let html = '', start = 0, match;
+    while((match = pattern.exec(text))){
+      const url = match[0].replace(/[)\].,!?;:]+$/, '');
+      html += PC.enc(text.slice(start, match.index));
+      html += `<a class="sms-text-link" href="${PC.enc(url)}" target="_blank" rel="noopener noreferrer">${PC.enc(url)}</a>`;
+      start = match.index + url.length;
+    }
+    return html + PC.enc(text.slice(start));
+  }
+
   async function send(to, body, file){
     if(!to || (!body && !file)) return { ok:false, error:'nothing to send' };
 
@@ -3713,7 +3726,7 @@
             /* THE ATTACHMENTS COME FIRST AND THE CAPTION UNDER THEM, which is where every messages
                app puts it -- and a bubble whose only content is an attachment must not also render
                an empty text node, or it collapses to a sliver. */
-            + (m.body ? `<span class="b-txt">${enc(m.body)}</span>` : '')
+            + (m.body ? `<span class="b-txt">${messageTextHtml(m.body)}</span>` : '')
             + `<span class="b-meta">${enc(when(m.date))}${ambiguousMmsError(m.error)?' · carrier status pending':m.pending?' · sending':m.failed?' · not sent':''}</span>`
             + (retryable ? `<button class="btn small sms-retry" data-sms-retry="${enc(m.doc)}">Retry</button>` : '')
             + `</div>`;

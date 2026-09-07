@@ -938,7 +938,8 @@ public class ThreadActivity extends PcActivity {
             // A PICTURE MESSAGE WITH NO CAPTION IS AN EMPTY BUBBLE, which reads as a message that
             // failed rather than one this screen cannot draw. This screen labels attachments; the
             // app's own Texts view shows them.
-            text.setText(bubbleText(m));
+            SmsLinks.bind(text, bubbleText(m));
+            text.setLinkTextColor(pal.accent);
             drawParts(attachments, m);
             text.setTextColor(pal.text);
             wrap.setBackground(Skin.bubble(ThreadActivity.this, pal, mine));
