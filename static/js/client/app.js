@@ -14332,7 +14332,9 @@
       if(_n < CHUNK*3 && grid.scrollHeight<=grid.clientHeight+8) _more();
     };
     const _show=items=>{ _items=items; _n=0; grid.innerHTML=''; _more();
-      if(!items.length) grid.innerHTML='<div class="ep-empty">no match</div>'; };
+      if(!items.length) grid.innerHTML='<div class="ep-empty">no match</div>';
+      // Tabs and search can grow Recent; re-anchor after every replacement render.
+      _placePop(pop, anchorBtn, opts); };
     grid.addEventListener('scroll',()=>{ if(grid.scrollTop+grid.clientHeight > grid.scrollHeight-160) _more(); });
     // TABS, like Pleroma's picker: recents, the built-in unicode set, then one per instance pack —
     // 3336 emoji in one endless scroll is unusable, and packs are how an operator organises them.
@@ -14397,14 +14399,12 @@
                          {inText:['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape','Home','End']});
     // Paint the built-in set instantly, then add the tab bar once the instance packs land.
     _show(REACTION_EMOJIS);
-    _placePop(pop, anchorBtn, opts);
     if(!opts.unicodeOnly) InstEmoji.load().then(list=>{
       if(!pop.isConnected) return;
       if(!list.length) return;             // no custom emoji here → no search box, no tabs, as before
       head.hidden=false;
       _buildTabs();
       _setTab(_recents().length ? 'recent' : 'std');
-      _placePop(pop, anchorBtn, opts);           // the head appearing changes the height → re-anchor
     });
     // Search looks across EVERY pack (that's the point of a search box with thousands of emoji);
     // clearing it drops back to the tab you were on.
