@@ -490,43 +490,144 @@ function _hasSigner(){ return !!(cfg && cfg.mode === 'full' && (cfg.sk || cfg.ni
  * request signatures, while the signer still owns policy/revocation and the identity key never
  * enters Firefox. The desktop need not stay open; both are clients of the signer relay. */
 const N46 = {
-  sockets:[], pending:new Map(), opening:null,
+  sockets:[], pending:new Map(), opening:null, generation:0, session:'', recovery:null,
+  lastResponse:0, lastRedial:0,
+  reset(){
+    this.generation++; this.session='';this.lastResponse=Date.now();this.lastRedial=Date.now();
+    clearTimeout(this.recovery); this.recovery=null;
+    if(this.cancelOpen)this.cancelOpen();
+    this.opening=null;
+    for(const q of this.pending.values())this._finish(q,new Error('Signer session changed'));
+    this._closeSockets();
+  },
+  _closeSockets(){ const old=this.sockets; this.sockets=[];
+    for(const w of old)try{w.close();}catch(_){} },
+  _session(){
+    const n=cfg && cfg.nip46; if(!n)throw new Error('no delegated signer session');
+    const session=JSON.stringify([cfg.pubkey,n.sk,n.remotePk,n.enc,n.relay,n.relays]);
+    if(session!==this.session){this.reset();this.session=session;}
+    return this.generation;
+  },
+  _finish(q,error,result){
+    if(this.pending.get(q.id)!==q)return;
+    this.pending.delete(q.id);clearTimeout(q.timer);
+    error?q.reject(error):q.resolve(result);
+    if(!this.pending.size){clearTimeout(this.recovery);this.recovery=null;}
+  },
+  _send(q,w){
+    if(this.pending.get(q.id)!==q||q.generation!==this.generation)return;
+    const previous=q.sent.get(w.url),now=Date.now();
+    if(previous&&(previous.count>=5||now<previous.nextAt))return;
+    try{if(w.readyState===1){
+      w.send(q.wire);
+      const count=(previous?.count||0)+1;
+      // Initial publication plus four retries per relay. Replacing a socket cannot
+      // reset this budget or flood the phone's crypto/approval queue during DM restore.
+      q.sent.set(w.url,{count,nextAt:count<5?now+[2000,4000,8000,16000][count-1]:Infinity});
+    }}catch(_){this._drop(w);}
+  },
+  _drop(w){
+    if(!this.sockets.includes(w))return;
+    this.sockets=this.sockets.filter(x=>x!==w);
+    try{w.close();}catch(_){}
+    this._schedule(100);
+  },
+  _schedule(delay=2000){
+    if(!this.pending.size||this.recovery)return;
+    const generation=this.generation;
+    this.recovery=setTimeout(()=>{
+      this.recovery=null;
+      if(generation!==this.generation||!this.pending.size)return;
+      // A silently dead socket remains OPEN. Redial only when no signer response has
+      // arrived recently, and never faster than once every four seconds for the session.
+      const now=Date.now();
+      const due=[...this.pending.values()].some(q=>!q.sent.size||[...q.sent.values()].some(at=>at.nextAt<=now));
+      if(!due){
+        if([...this.pending.values()].some(q=>[...q.sent.values()].some(at=>at.count<5)))this._schedule();
+        return;
+      }
+      if(now-this.lastResponse>=4000&&now-this.lastRedial>=4000){
+        this.lastRedial=now;this._closeSockets();
+      }
+      this.open().then(()=>{
+        if(generation!==this.generation)return;
+        for(const q of this.pending.values())for(const w of this.sockets)this._send(q,w);
+      }).catch(()=>{});
+      this._schedule();
+    },delay);
+  },
   async open(){
+    const generation=this._session();
     if(this.sockets.some(w=>w.readyState===1)) return;
     if(this.opening) return this.opening;
     const n=cfg && cfg.nip46; if(!n) throw new Error('no delegated signer session');
     const urls=_uniqRelays([...(n.relays||[]), n.relay||'']);
     this.opening=new Promise((resolve,reject)=>{
-      let left=urls.length, won=false; const fail=()=>{ if(--left<=0&&!won) reject(new Error('cannot reach PosterChan Signer')); };
+      let left=urls.length, won=false;
+      this.cancelOpen=()=>reject(new Error('Signer session changed'));
+      const fail=()=>{ if(--left<=0&&!won) reject(new Error('cannot reach PosterChan Signer')); };
       if(!left) return reject(new Error('the signer pairing has no relay'));
       for(const url of urls){ let w; try{ w=new WebSocket(url); }catch(_){ fail(); continue; }
-        w.onerror=fail; w.onclose=()=>{ this.sockets=this.sockets.filter(x=>x!==w); };
-        w.onopen=()=>{ this.sockets.push(w); this._subscribe(w); if(!won){ won=true; resolve(); } };
-        w.onmessage=e=>this._recv(e.data);
+        this.sockets.push(w);
+        let settled=false;
+        const failed=()=>{clearTimeout(timer);if(!settled){settled=true;fail();}this._drop(w);};
+        const timer=setTimeout(failed,4000);
+        w.onerror=failed;w.onclose=failed;
+        w.onopen=()=>{
+          if(generation!==this.generation||!this.sockets.includes(w)){try{w.close();}catch(_){}return;}
+          clearTimeout(timer);settled=true;
+          if(!this._subscribe(w)){this._drop(w);fail();return;}
+          if(!won){won=true;resolve();}
+          for(const q of this.pending.values())this._send(q,w);
+        };
+        w.onmessage=e=>{if(generation===this.generation&&this.sockets.includes(w))this._recv(e.data,generation);};
       }
-    }).finally(()=>{ this.opening=null; });
+    }).finally(()=>{ if(generation===this.generation){this.opening=null;this.cancelOpen=null;} });
     return this.opening;
   },
   _appSk(){ const s=cfg.nip46.sk; return /^[0-9a-f]{64}$/i.test(s)?V.fromHex(s):NT().nip19.decode(s).data; },
   _appPk(){ return NT().getPublicKey(this._appSk()); },
-  _subscribe(w){ try{ w.send(JSON.stringify(['REQ','pcn46',{kinds:[24133],'#p':[this._appPk()],since:Math.floor(Date.now()/1000)-300}])); }catch(_){} },
-  async _crypt(op, peer, text){ const T=NT(), sk=this._appSk();
+  _subscribe(w){ try{ w.send(JSON.stringify(['REQ','pcn46',{kinds:[24133],'#p':[this._appPk()],since:Math.floor(Date.now()/1000)-300}])); return true;}catch(_){return false;} },
+  async _crypt(op, peer, text, sk=this._appSk()){ const T=NT();
     if(op==='nip44') return T.nip44.v2.encrypt(text,T.nip44.v2.utils.getConversationKey(sk,peer));
     return T.nip04.encrypt(sk,peer,text); },
-  async _decrypt(peer, ct){ const T=NT(), sk=this._appSk(), ops=/\?iv=/.test(ct)?['nip04','nip44']:['nip44','nip04'];
+  async _decrypt(peer, ct, sk=this._appSk()){ const T=NT(), ops=/\?iv=/.test(ct)?['nip04','nip44']:['nip44','nip04'];
     for(const op of ops) try{ return op==='nip44'
       ? T.nip44.v2.decrypt(ct,T.nip44.v2.utils.getConversationKey(sk,peer))
       : await T.nip04.decrypt(sk,peer,ct); }catch(_){} throw new Error('could not read signer response'); },
-  async _recv(raw){ let m; try{m=JSON.parse(raw);}catch(_){return;} if(m[0]!=='EVENT'||m[1]!=='pcn46'||!m[2])return;
-    let p; try{p=JSON.parse(await this._decrypt(m[2].pubkey,m[2].content));}catch(_){return;}
-    const q=this.pending.get(p.id); if(!q)return; this.pending.delete(p.id); clearTimeout(q.timer);
-    p.error?q.reject(new Error(p.error)):q.resolve(p.result); },
-  async rpc(method, params){ await this.open(); const n=cfg.nip46, id='x'+randomId(), body=JSON.stringify({id,method,params});
-    const enc=n.enc==='nip44'?'nip44':'nip04', content=await this._crypt(enc,n.remotePk,body);
-    const ev=NT().finalizeEvent({kind:24133,created_at:Math.floor(Date.now()/1000),tags:[['p',n.remotePk]],content},this._appSk());
-    return new Promise((resolve,reject)=>{ const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('PosterChan Signer timed out'));},120000);
-      this.pending.set(id,{resolve,reject,timer}); let sent=0; for(const w of this.sockets)if(w.readyState===1)try{w.send(JSON.stringify(['EVENT',ev]));sent++;}catch(_){}
-      if(!sent){clearTimeout(timer);this.pending.delete(id);reject(new Error('cannot reach PosterChan Signer'));}
+  async _recv(raw,generation=this.generation){
+    if(typeof raw!=='string'||raw.length>524288)return;
+    let m,p;
+    try{
+      m=JSON.parse(raw);
+      if(m[0]!=='EVENT'||m[1]!=='pcn46'||!m[2]||generation!==this.generation)return;
+      const event=m[2],n=cfg&&cfg.nip46;
+      if(!n||event.kind!==24133||event.pubkey!==n.remotePk||!NT().verifyEvent(event)
+          ||!event.tags.some(t=>t[0]==='p'&&t[1]===this._appPk()))return;
+      p=JSON.parse(await this._decrypt(event.pubkey,event.content));
+    }catch(_){return;}
+    if(generation!==this.generation||!p||typeof p.id!=='string')return;
+    const q=this.pending.get(p.id);if(!q)return;
+    this.lastResponse=Date.now();
+    this._finish(q,p.error?new Error(String(p.error)):null,p.result);
+  },
+  async rpc(method, params, signal){
+    const generation=this._session(), n=cfg.nip46,sk=this._appSk();
+    if(signal&&signal.aborted)throw new Error('Signer request cancelled');
+    const id='x'+randomId(), body=JSON.stringify({id,method,params});
+    const enc=n.enc==='nip44'?'nip44':'nip04',content=await this._crypt(enc,n.remotePk,body,sk);
+    if(generation!==this.generation)throw new Error('Signer session changed');
+    if(signal&&signal.aborted)throw new Error('Signer request cancelled');
+    const ev=NT().finalizeEvent({kind:24133,created_at:Math.floor(Date.now()/1000),tags:[['p',n.remotePk]],content},sk);
+    return new Promise((resolve,reject)=>{
+      const cancel=()=>this._finish(q,new Error('Signer request cancelled'));
+      const clean=()=>{if(signal)signal.removeEventListener('abort',cancel);};
+      const q={id,generation,wire:JSON.stringify(['EVENT',ev]),sent:new Map(),
+        resolve:value=>{clean();resolve(value);},reject:error=>{clean();reject(error);}};
+      q.timer=setTimeout(()=>this._finish(q,new Error('PosterChan Signer timed out; check that your phone is connected')),120000);
+      this.pending.set(id,q);if(signal)signal.addEventListener('abort',cancel,{once:true});
+      this.open().then(()=>{for(const w of this.sockets)this._send(q,w);}).catch(()=>{});
+      this._schedule();
     }); },
   sign: async tmpl=>JSON.parse(await N46.rpc('sign_event',[JSON.stringify(tmpl)])),
   enc: (peer,text)=>N46.rpc('nip44_encrypt',[peer,text]), dec:(peer,ct)=>N46.rpc('nip44_decrypt',[peer,ct]),
@@ -1242,6 +1343,7 @@ async function pair(code){
   if(!payload.relay && !(payload.relays || []).length)
     throw new Error('that pairing code carries no relay address, so this browser could never sync. ' +
                     'Check the app has a relay configured and pair again.');
+  N46.reset();
   cfg = { pubkey: payload.pubkey, key: payload.key, relay: payload.relay || '',
           relays: Array.isArray(payload.relays) ? payload.relays.filter(Boolean) : [],
           mode: payload.mode === 'full' ? 'full' : 'ro', sk: payload.sk || '',
@@ -1266,6 +1368,7 @@ async function pair(code){
 }
 
 async function unpair(){
+  N46.reset();
   cfg = null; key = null; items = new Map();
   for(const [u, c] of conns){ closeConn(c); conns.delete(u); }
   ws = null;

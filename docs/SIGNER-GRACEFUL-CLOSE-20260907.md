@@ -45,3 +45,13 @@ Downloaded evidence for attempt 2:
 The device gate verifies the native fix on Android 14. It does not claim a tested
 production rollout to users' phones; release packaging and deployment are a
 separate step coordinated by the release agent.
+
+## Published Android2216
+
+Android build34076890703 from d3d13cf9cbc576fa5ef6e38b2e16416137ba646f
+published version1.0.2216 to the APK release and Zapstore. Public poster.place/apk
+SHA256:63e8dc5d92dc9c1b48866bdbe43057b9da67ccf30785ce27b45fdd7546e843ce,
+matching the release asset digest. Packaged app.js, exodus.js, monero-wallet.js,
+sms.js and exodus.css match the released sources. Post-push device run34076890541
+also passed93 tests with zero failures/errors/skips; the reconnect case passed4.821s.
+The native recovery fix requires users to install the update on their signing phone.

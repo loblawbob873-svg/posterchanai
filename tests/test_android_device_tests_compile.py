@@ -23,6 +23,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import androidcompile as ac  # noqa: E402
+import test_android_signer_service_compiles as signer_compile  # noqa: E402
 
 ANDROID_TEST = os.path.join(ac.ROOT, "mobile", "android", "app", "src", "androidTest", "java")
 
@@ -134,6 +135,40 @@ public class MusicWidget extends android.content.BroadcastReceiver {
             "place/poster/app/MainActivity.java":
                 "package place.poster.app;\npublic class MainActivity extends android.app.Activity { }\n",
         }
+        # Compile the real signer service and crypto alongside its new device test.
+        # Reuse the narrow external-library compile shims; the real OkHttp close
+        # handshake is executed by connectedDebugAndroidTest, not this javac floor.
+        shims.pop("place/poster/app/signer/SignerRelayService.java")
+        shims = {**signer_compile.SHIMS, **shims}
+        # Notification device tests must keep compiling the real push implementation.
+        shims.pop("place/poster/app/push/PushEventService.java", None)
+        shims.update({
+            "okhttp3/Dispatcher.java": """
+package okhttp3; public class Dispatcher {
+  public void cancelAll() { }
+  public java.util.concurrent.ExecutorService executorService() { return null; }
+}
+""",
+            "okhttp3/mockwebserver/MockResponse.java": """
+package okhttp3.mockwebserver; public class MockResponse {
+  public MockResponse withWebSocketUpgrade(okhttp3.WebSocketListener listener) { return this; }
+}
+""",
+            "okhttp3/mockwebserver/MockWebServer.java": """
+package okhttp3.mockwebserver; public class MockWebServer {
+  public void enqueue(MockResponse response) { }
+  public void start() throws java.io.IOException { }
+  public okhttp3.HttpUrl url(String path) { return null; }
+  public void shutdown() throws java.io.IOException { }
+}
+""",
+            "okhttp3/HttpUrl.java": """
+package okhttp3; public class HttpUrl { public String toString() { return ""; } }
+""",
+        })
+        for pkg in signer_compile.PACKAGES:
+            app += [p for p in glob.glob(os.path.join(ac.JAVA, "place", "poster", "app", pkg, "**", "*.java"), recursive=True)
+                    if not p.endswith("Plugin.java")]
         with tempfile.TemporaryDirectory() as out:
             r = ac.compile_sources(sorted(set(src + app)), out, shims=shims)
         self.assertEqual(r.returncode, 0,
