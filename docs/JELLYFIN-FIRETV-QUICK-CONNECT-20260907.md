@@ -99,3 +99,31 @@ diagnostic support, not a claim that the post-login crash is fixed.
 Full affected suite with both real JVM SDKs and the JavaScript SDK:87 passed,
 4 explicit Roku-fixture skips. Auth/revocation, upload limit, redaction and private
 storage checks pass. Log: /tmp/pc-jellyfin-crash-receiver-full.log.
+
+## Confirmed post-login TV crash: WebSocket message IDs
+
+The Fire Stick's authenticated crash report identified a missing `MessageId` in
+`ForceKeepAlive`, thrown by the official Kotlin SDK's socket decoder. Both server
+heartbeat message types now include a fresh UUID. This also fixes the subsequent
+`KeepAlive` response, which has the same required field. Authentication,
+revocation, connection limits and heartbeat timing retain their existing behavior.
+
+The expanded startup test opens the real adapter WebSocket after Quick Connect,
+receives both message types and passes them through the official SDK's polymorphic
+`OutboundWebSocketMessage` serializer on versions 1.7.1 and 1.8.12. The original
+frame reproduced the physical Fire Stick's exact MissingFieldException before
+applying the fix. These checks run for both supported authorization headers and
+local/NAS catalog fixtures; the fallback test also verifies valid distinct UUIDs.
+
+Evidence: `/tmp/pc-tv-socket-red.log` records the failing original frame;
+`/tmp/pc-tv-socket-green.log` records 87 passed and 4 external Roku-fixture skips;
+`/tmp/pc-tv-socket-polymorphic-final.log` records the stronger socket dispatch test.
+The full backend run and public post-deployment socket verification are recorded
+below when complete. Physical TV confirmation remains separate from SDK checks.
+
+Full backend validation of the runtime fix: **7782 passed, 18 skipped, 519 subtests
+passed** in 731.94 seconds (`/tmp/pc-tv-crash-full-backend.log`), with actual JVM
+and JavaScript SDK dependencies enabled. The final polymorphic socket test
+passed all 12 local/NAS/header/SDK combinations in 21.14 seconds. Review checked
+both outgoing frame types, UUID format/uniqueness, and retained existing socket
+authentication, revocation and capacity behavior; `git diff --check` passed.

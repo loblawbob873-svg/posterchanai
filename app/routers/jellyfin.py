@@ -15,7 +15,7 @@ import time
 from types import SimpleNamespace
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
@@ -1157,7 +1157,7 @@ async def client_socket(websocket: WebSocket, db=Depends(get_db)):
     try:
         db.rollback()  # Never hold a database connection for an idle client socket.
         await websocket.accept()
-        await websocket.send_json({'MessageType': 'ForceKeepAlive', 'Data': 30})
+        await websocket.send_json({'MessageType': 'ForceKeepAlive', 'MessageId': str(uuid4()), 'Data': 30})
         while True:
             try:
                 message = await asyncio.wait_for(websocket.receive_text(), timeout=60)
@@ -1174,7 +1174,7 @@ async def client_socket(websocket: WebSocket, db=Depends(get_db)):
             except HTTPException:
                 await websocket.close(code=1008)
                 return
-            await websocket.send_json({'MessageType': 'KeepAlive'})
+            await websocket.send_json({'MessageType': 'KeepAlive', 'MessageId': str(uuid4())})
     except WebSocketDisconnect:
         pass
     finally:

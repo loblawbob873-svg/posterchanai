@@ -509,6 +509,24 @@ def test_kotlin_tv_startup_and_playback_contract(api, auth_header, sdk_version, 
     login = c.post('/jellyfin/Users/AuthenticateWithQuickConnect', json={'Secret': pending['Secret']}).json()
     validate(login, 'AuthenticationResult')
     c, h = api.client, headers(login)
+    # TV starts its socket immediately after login. HTTP DTO checks alone miss
+    # fatal socket decoding errors (the reported Fire TV crash lacked MessageId).
+    with c.websocket_connect('/jellyfin/socket?api_key=' + login['AccessToken']) as ws:
+        first = ws.receive_json()
+        ws.send_json({'MessageType': 'KeepAlive'})
+        second = ws.receive_json()
+        for message, message_type in (
+            (first, 'ForceKeepAlive'),
+            (second, 'KeepAlive'),
+        ):
+            assert message['MessageType'] == message_type
+            if decoder:
+                decoded = subprocess.run(decoder + ['OutboundWebSocketMessage'], input=json.dumps(message),
+                                         capture_output=True, text=True, timeout=20)
+                assert decoded.returncode == 0, decoded.stderr
+            UUID(message['MessageId'])
+        assert first['Data'] == 30
+        assert first['MessageId'] != second['MessageId']
     for path, kind in [('/System/Info/Public', 'PublicSystemInfo'),
                        ('/Users/Me', 'UserDto'),
                        ('/DisplayPreferences/usersettings?client=android', 'DisplayPreferencesDto'),
