@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def document():
     app = (ROOT / 'static/js/client/app.js').read_text()
     controller = app[app.index('  // Automatic filtering has its own account-scoped cache.'):
-                     app.index('  async function fetchMutes(){')]
+                     app.index('  async function fetchMutes(')]
     toggle = app[app.index('  async function toggleMute(pk){'):app.index('  async function fetchPins()')]
     controls = app[app.index("    { const toggle=$('#set-auto-mute'), update=$('#set-auto-mute-update');"):
                    app.index("    { const wb=$('#set-words-save');")]

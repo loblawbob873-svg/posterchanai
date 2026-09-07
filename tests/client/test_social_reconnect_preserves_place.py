@@ -12,7 +12,9 @@ def _reconnect_body():
 
 def test_timeline_reconnect_uses_visible_card_anchor_without_restarting_view():
     body = _reconnect_body()
-    assert "if(VIEW==='home'||VIEW==='global') _drawTimeline(true)" in body
+    assert "if(VIEW==='home'||VIEW==='global') _refreshTimelineMembership(" in body
+    assert "fetchFollows({repaint:false})" in body
+    assert "fetchMutes({repaint:false})" in body
     assert "else renderView(false)" in body
     assert "renderView(true)" not in body
 

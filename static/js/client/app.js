@@ -4991,36 +4991,43 @@
     // live subs but NOT one-shot query() subs — so follows/mutes/pins/bookmarks fired on first connect
     // are lost and home/mutes show empty until a manual refresh, while the live notifications sub
     // recovers (the reported "1 notification, 0 home, 0 mutes"). Re-run the one-shot hydration here.
+    let _reconnectRefresh=null, _reconnectAgain=false;
     Relay.onReconnect = ()=>{
       // A socket that dropped and came back is the other half of the resume case — a tunnel, a wifi
       // handover — and the placeholders it left behind are the same ones. Before the GUEST return: a
       // guest reading the public feed gets the same half-drawn cards. Self-throttled.
       try{ _reaskMissing(); }catch(_){}
       if(GUEST) return;
+      if(_reconnectRefresh){ _reconnectAgain=true; return; }
+      const owner=ME.pubkey;
+      const before=_relayUserState();
       // Re-render only the views whose content depends on this per-user data AND that renderView()
       // handles cleanly — NOT thread/channel/group/search/hashtag/other-profile (renderView has no
-      // case for those, so it'd blank them to a spinner). The fetches also self-render these.
-      Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
-        .then(()=>{
+      // case for those, so it'd blank them to a spinner). Hydration below is quiet.
+      _reconnectRefresh=Promise.resolve().then(()=>Promise.allSettled([
+        fetchFollows({repaint:false}), fetchMutes({repaint:false}),
+        fetchPins(), fetchBookmarks({repaint:false}), fetchMyProfile()]))
+        .then(results=>{
+          if(!ME || ME.pubkey!==owner) return;
+          if(before===_relayUserState()) return;
           if(GUEST || !['home','global','notifications','messages','bookmarks'].includes(VIEW)) return;
-          // NEVER repaint out from under someone who is typing. A reconnect is routine — the socket
-          // freezes every time the tab is backgrounded, so this fires on the way back from a tab
-          // switch — but #feed owns the inline composer (#tl-cmp-ta) and the DM box (#dm-in), and a
-          // repaint rebuilds them EMPTY and drops focus. That is the reported "switching tabs resets
-          // the whole UI and I have to click the box and type again". _drawTimeline already refuses
-          // to wipe the composer on its own redraws (see the note there); this is the same promise
-          // for the reconnect path. Nothing is lost by skipping: relay.js re-arms the live subs on
-          // reopen, so posts keep arriving, and the next navigation repaints anyway.
-          if(_isTyping()) return;
+          // Timeline reconciliation preserves the composer, even when new follows need a
+          // subscription. Other views must not replace a focused input or an unfinished draft.
+          if(_isTyping() && VIEW!=='home' && VIEW!=='global') return;
           // A timeline already has its subscription re-armed by relay.js. Reconcile its cards in
           // place with the visible-card anchor: preserving only the numeric scrollTop is not enough
           // when offline catch-up inserted posts above the one being read. This also leaves the
           // inline composer and paging cursor alone. Other listed views still use their ordinary
           // non-blanking repaint.
           try{
-            if(VIEW==='home'||VIEW==='global') _drawTimeline(true);
+            if(VIEW==='home'||VIEW==='global') _refreshTimelineMembership(results[0].status==='fulfilled' && results[0].value===true);
             else renderView(false);
           }catch(_){}
+        }).finally(()=>{
+          _reconnectRefresh=null;
+          const again=_reconnectAgain; _reconnectAgain=false;
+          // One follow-up recovers one-shot queries lost during an overlapping reconnect.
+          if(again && ME && ME.pubkey===owner && !GUEST) Relay.onReconnect();
         });
     };
     connectRelays();
@@ -6250,7 +6257,21 @@
     const held=[...FOLLOWS].filter(p=>p!==ME.pubkey);
     return held.length>=8 && incoming.length<Math.floor(held.length/2) ? held : incoming;
   }
-  async function fetchFollows(){
+  function _sameMembers(a,b){ return a.size===b.size && [...a].every(value=>b.has(value)); }
+  function _relayUserState(){
+    return JSON.stringify([FOLLOWS,MUTED,MUTED_WORDS,MUTED_THREADS,PINNED,BOOKMARKS]
+      .map(values=>[...values].sort()));
+  }
+  function _refreshTimelineMembership(followsChanged){
+    if(VIEW==='home' && followsChanged){
+      const feed=$('#feed'), place=feed?_tlAnchor(feed):null, top=feed?feed.scrollTop:0;
+      // A changed follow list needs new author filters, but never a spinner or new composer.
+      renderTimeline('home',true);
+      if(feed && !_restoreTlAnchor(feed,place)) feed.scrollTop=top;
+    } else _drawTimeline(true);
+  }
+  async function fetchFollows({repaint=true}={}){
+    const owner=ME.pubkey, before=new Set(FOLLOWS);
     (ClientSettings.get('followsCache',[])||[]).forEach(p=>FOLLOWS.add(p));   // seed → never an empty base
     const recovery=_followSafetyMembers(), currentN=[...FOLLOWS].filter(p=>p!==ME.pubkey).length;
     // Recovery is for a wipe-sized loss, not an append-only follow list. A normal 40 -> 38 change
@@ -6259,6 +6280,7 @@
     { const recovered=[...FOLLOWS].filter(p=>p!==ME.pubkey), safe=ClientSettings.get('followsSafetyCache',[])||[];
       if(recovered.length>safe.length) ClientSettings.set('followsSafetyCache',recovered); }
     let ev=null; try{ const l=await Relay.query([{ authors:[ME.pubkey], kinds:[3], limit:1 }]); ev=l.sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
+    if(!ME || ME.pubkey!==owner || GUEST) return false;
     // Adopt the relay's list ONLY when it returned an event (respects unfollows). No event = timeout /
     // not-yet-synced → keep the seeded cache rather than shrinking to empty.
     /* ADOPTING A DRASTICALLY SHORTER LIST IS THE READ-SIDE OF THE WIPE, and it was the half with no
@@ -6287,7 +6309,9 @@
     // data saver is to avoid it. They're fetched lazily instead — on scroll (the feed's profile observer)
     // and on demand (when you actually open the mention autocomplete).
     if(!NO_IMAGES) [...FOLLOWS].slice(0,300).forEach(needProfile);
-    if (VIEW==='home') renderView(true);
+    const changed=!_sameMembers(before,FOLLOWS);
+    if(repaint && changed && VIEW==='home') _refreshTimelineMembership(true);
+    return changed;
   }
   // Automatic filtering has its own account-scoped cache. It never changes the
   // manual NIP-51 list or asks the signer to rewrite it during reconciliation.
@@ -6424,12 +6448,14 @@
     _autoMuteEngine=null;_autoMuteLoading=null;_autoMuteCache=null;_autoMuteMessage='';_autoMuteEpoch++;
     _applyAutoMuteToView();_syncAutoMutes().catch(()=>{});_paintAutoMuteControls();
   });
-  async function fetchMutes(){
+  async function fetchMutes({repaint=true}={}){
+    const owner=ME.pubkey, before=[new Set(MUTED),new Set(MUTED_WORDS),new Set(MUTED_THREADS)];
     // Seed from cache so a throttled/timed-out read leaves mutes intact (never an empty base → the wipe).
     (ClientSettings.get('mutedUsers',[])||[]).forEach(p=>MUTED.add(p));
     (ClientSettings.get('mutedWords',[])||[]).forEach(w=>MUTED_WORDS.add(String(w).toLowerCase()));
     (ClientSettings.get('mutedThreads',[])||[]).forEach(e=>MUTED_THREADS.add(e));
     let ev=null; try{ const l=await Relay.query([{ authors:[ME.pubkey], kinds:[10000], limit:1 }]); ev=l.sort((a,b)=>b.created_at-a.created_at)[0]||null; }catch(_){}
+    if(!ME || ME.pubkey!==owner || GUEST) return false;
     // Adopt the relay's list when it returned an event — a present-but-empty event is a real clear-all,
     // which we honour. A []-result is a timeout / not-yet-synced relay → keep the seeded cache.
     if(ev){
@@ -6439,7 +6465,14 @@
       _persistMutes();
     }
     _syncAutoMutes().catch(()=>{});
-    if(['home','global','notifications','messages'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
+    const changed=[MUTED,MUTED_WORDS,MUTED_THREADS].some((values,i)=>!_sameMembers(before[i],values));
+    if(repaint && changed){
+      try{
+        if(VIEW==='home'||VIEW==='global') _refreshTimelineMembership(false);
+        else if(['notifications','messages'].includes(VIEW)) renderView(false);
+      }catch(_){}
+    }
+    return changed;
   }
   // Replace the `word` tags on the kind-10000 mute list, preserving p/t/e mutes. NIP-51, so the
   // list follows the user to any client.
@@ -6611,7 +6644,9 @@
     toast(have?'unmuted':'muted');if(!automatic && ['home','global','notifications','messages'].includes(VIEW))renderView(true);
   }
   async function fetchPins(){
+    const owner=ME.pubkey;
     await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10001], limit:1 }], (evs)=>{
+      if(!ME || ME.pubkey!==owner || GUEST) return;
       if(evs.length) PINNED=new Set(evs[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));
     });
   }
@@ -6650,10 +6685,12 @@
     if(VIEW==='profile') renderProfileView(ME.pubkey);
   }
   // ---------- bookmarks (NIP-51 kind 10003 — replaceable e-tag list) ----------
-  async function fetchBookmarks(){
+  async function fetchBookmarks({repaint=true}={}){
+    const owner=ME.pubkey;
     await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10003], limit:1 }], (evs)=>{
+      if(!ME || ME.pubkey!==owner || GUEST) return;
       if(evs.length) BOOKMARKS=new Set(evs[0].tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));
-      if(VIEW==='bookmarks') renderBookmarks();
+      if(VIEW==='bookmarks'){ if(repaint) renderBookmarks(); }
       else try{ decorateCounts(); }catch(_){}   // light up the 🔖 on posts already on screen
     });
   }
