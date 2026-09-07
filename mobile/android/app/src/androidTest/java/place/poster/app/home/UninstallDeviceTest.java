@@ -49,6 +49,8 @@ public class UninstallDeviceTest {
             in.waitForIdleSync();
             AccessibilityNodeInfo root = in.getUiAutomation().getRootInActiveWindow();
             assertNotNull(root);
+            assertEquals("Only click Uninstall in our menu, never in the system confirmation",
+                    ctx().getPackageName(), String.valueOf(root.getPackageName()));
             boolean clicked = false;
             for (AccessibilityNodeInfo node : root.findAccessibilityNodeInfosByText(ctx().getString(R.string.home_uninstall))) {
                 if (ctx().getString(R.string.home_uninstall).contentEquals(node.getText() == null ? "" : node.getText())) {
@@ -69,8 +71,19 @@ public class UninstallDeviceTest {
                 SystemClock.sleep(100);
             }
             assertTrue("Android never opened its uninstall confirmation", confirmation);
+            String fixtureLabel = ctx().getPackageManager().getApplicationLabel(
+                    ctx().getPackageManager().getApplicationInfo(fixture, 0)).toString();
+            assertFalse("Confirmation does not identify the fixture", root.findAccessibilityNodeInfosByText(fixtureLabel).isEmpty());
             assertTrue(in.getUiAutomation().performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)); // NEVER confirm removal
-            in.waitForIdleSync();
+            long cancelDeadline = SystemClock.uptimeMillis() + 5000;
+            boolean dismissed = false;
+            while (SystemClock.uptimeMillis() < cancelDeadline) {
+                root = in.getUiAutomation().getRootInActiveWindow();
+                String pkg = root == null ? "" : String.valueOf(root.getPackageName());
+                if (ctx().getPackageName().equals(pkg)) { dismissed = true; break; }
+                SystemClock.sleep(100);
+            }
+            assertTrue("Cancel did not close the system confirmation", dismissed);
             assertNotNull(ctx().getPackageManager().getPackageInfo(fixture, 0));
         } finally {
             try {
