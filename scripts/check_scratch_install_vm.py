@@ -425,7 +425,14 @@ def portage_health(con, evidence, port):
             return 1
         # Exit 0 is not the whole answer for the world resolution.
         if name == "world":
-            con.send("grep -cE 'have been SKIPPED due to a dependency conflict|slot conflict|"
+            # -i, AND THAT ONE LETTER IS THE WHOLE CHECK. Portage writes "One or more
+            # updates/rebuilds have been skipped due to a dependency conflict" in LOWER CASE, so a
+            # case-sensitive pattern matched zero lines and the gate reported "syncs and resolves
+            # @world cleanly" over a machine that was still skipping sys-libs/ncurses and
+            # media-libs/harfbuzz. Measured on run 9's evidence: 0 matches case-sensitive, 1 with
+            # -i. A gate defeated by the case of one word in its own pattern is worse than no gate,
+            # because it certifies the thing it was written to catch.
+            con.send("grep -ciE 'have been skipped due to a dependency conflict|slot conflict|"
                      "unbreakable|Multiple package instances' /tmp/ph-world.log; echo WORLDGREP-$?")
             if con.expect(r"WORLDGREP-\d", 300) is not None:
                 hits = re.findall(r"\n(\d+)\r?\n[^\n]*WORLDGREP", con.buf)

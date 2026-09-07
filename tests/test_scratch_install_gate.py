@@ -400,7 +400,11 @@ def test_the_installed_machine_is_asked_whether_it_can_still_update():
     # Exit 0 is necessary and not sufficient — portage prints its skipped-rebuild and slot-conflict
     # blocks and still exits 0, which is exactly how run 4's seam would have passed unnoticed.
     src = SRC[SRC.index("def portage_health("):SRC.index("def shell_quote(")]
-    assert "SKIPPED due to a dependency conflict" in src, "exit 0 is being trusted on its own"
+    # CASE-INSENSITIVELY. Portage writes "have been skipped due to a dependency conflict" in lower
+    # case; the pattern was written in upper. It matched nothing, and the gate certified a machine
+    # that was still skipping ncurses and harfbuzz as resolving "cleanly".
+    assert re.search(r"grep -c[a-z]*i[a-z]*E", src), "the conflict grep is case-sensitive again"
+    assert "skipped due to a dependency conflict" in src.lower(), "exit 0 is being trusted on its own"
     assert "slot conflict" in src
 
 
