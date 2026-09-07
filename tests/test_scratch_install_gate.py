@@ -375,3 +375,35 @@ def test_the_version_gate_is_not_defeated_by_its_own_missing_tool(tmp_path):
     assert verdict(a, b, empty) == "RC=2"
     gate = SH[SH.index('_pc_same_file "$INSTALLER_SRC"'):]
     assert "Could not compare" in gate[:900], "a gate that cannot check must say so, not accuse"
+
+
+def test_the_installed_machine_is_asked_whether_it_can_still_update():
+    """Everything else proves an install COMPLETES; nothing proved what state it leaves portage in,
+    and that is what the owner of the machine meets first. The seam is not hypothetical — a mixed
+    64-bit-binary / 32-bit-source graph printed "WARNING: One or more updates/rebuilds have been
+    SKIPPED due to a dependency conflict" across cairo, mesa, harfbuzz, elfutils and llvm. An install
+    that finishes in that state hands somebody a computer whose first `emerge -uDN @world` refuses,
+    while the desktop comes up perfectly."""
+    names = [n for n, _ in MOD.PORTAGE_CHECKS]
+    assert names == ["overlay", "sync", "world"]
+    cmds = dict(MOD.PORTAGE_CHECKS)
+    # Pretend only: a gate that starts compiling has stopped being a gate.
+    assert "-uDNp" in cmds["world"], "the world check would BUILD, not resolve"
+    assert "/var/db/repos/posterchan" in cmds["overlay"]
+    # Exit 0 is necessary and not sufficient — portage prints its skipped-rebuild and slot-conflict
+    # blocks and still exits 0, which is exactly how run 4's seam would have passed unnoticed.
+    src = SRC[SRC.index("def portage_health("):SRC.index("def shell_quote(")]
+    assert "SKIPPED due to a dependency conflict" in src, "exit 0 is being trusted on its own"
+    assert "slot conflict" in src
+
+
+def test_the_portage_check_runs_in_the_installed_root_not_the_live_medium():
+    """The live CD has its own portage and would answer a different question entirely. The disk is
+    still mounted at /tmp/install with /proc, /dev and /sys bound, so a chroot reads the INSTALLED
+    system's repositories, configuration and package database — without needing a serial console on
+    a boot entry the product does not ship."""
+    src = SRC[SRC.index("def portage_health("):SRC.index("def shell_quote(")]
+    assert "chroot /tmp/install" in src, "the check is asking the live medium, not the install"
+    # And it runs only after a successful install: there is nothing to ask of a failed one.
+    body = SRC[SRC.index("def install("):SRC.index("# CAN THE MACHINE STILL UPDATE ITSELF")]
+    assert body.index('if rc != "0":') < body.index("portage_health(con, evidence, port)")

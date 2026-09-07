@@ -339,6 +339,8 @@ def install(iso, disk, boot, td, evidence, args, port, password):
             print(f"FAIL  gentoo.sh scratch exited {rc}; build log in {evidence}/scratch.log, "
                   f"console transcript in {evidence}/scratch-console.log")
             return 1
+        if portage_health(con, evidence, port):
+            return 1
         con.send("poweroff")
         try:
             proc.wait(timeout=180)
@@ -353,6 +355,75 @@ def install(iso, disk, boot, td, evidence, args, port, password):
                 proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+# CAN THE MACHINE STILL UPDATE ITSELF? Asked of the INSTALLED system, not the live medium.
+#
+# Everything above proves an install COMPLETES. It proves nothing about the state it leaves portage
+# in, and that is what the person who owns the machine meets first. The seam is real and we have
+# watched it open: a mixed 64-bit-binary / 32-bit-source graph produced "WARNING: One or more
+# updates/rebuilds have been SKIPPED due to a dependency conflict" across cairo, mesa, harfbuzz,
+# elfutils and llvm. An install that finishes in that state hands somebody a computer whose first
+# `emerge -uDN @world` refuses, or wants to rebuild half the system from source -- and nothing else
+# here would notice, because the desktop comes up perfectly.
+#
+# In the CHROOT, not a second boot. The disk is still mounted at /tmp/install with /proc, /dev and
+# /sys bound, so this reads the installed system's own portage configuration, repositories and
+# package database. Booting the installed kernel to ask the same question would need a serial
+# console on a boot entry the product does not ship, i.e. it would test something we do not build.
+#
+# PRETEND ONLY. `-p` on the world resolution: this is a test of whether portage can still make a
+# plan, and a gate that starts compiling has stopped being a gate.
+PORTAGE_CHECKS = (
+    # The overlay must be THERE and non-empty. "Section 'posterchan' in repos.conf has location
+    # attribute set to nonexistent directory" was printed by every emerge in run 4, and it meant the
+    # machine had no source for its own desktop packages.
+    ("overlay", "test -d /var/db/repos/posterchan/profiles "
+                "&& test -n \"$(ls -A /var/db/repos/posterchan)\""),
+    # The two things `emerge --sync` actually does here: a signed webrsync snapshot over HTTPS and a
+    # full git clone of the overlay (full, because the host is dumb HTTP and cannot do shallow).
+    ("sync", "emerge --sync"),
+    # THE ONE THAT ANSWERS THE QUESTION. Exit 0 is necessary and not sufficient: portage prints its
+    # skipped-rebuild and slot-conflict blocks and still exits 0, so the output is read too.
+    ("world", "emerge -uDNp @world"),
+)
+
+
+def portage_health(con, evidence, port):
+    """0 if the installed system can still update itself, 1 if it cannot. Prints what it found."""
+    print("..    checking the installed system can still use portage", flush=True)
+    for name, cmd in PORTAGE_CHECKS:
+        con.send(f"chroot /tmp/install /bin/bash -lc {shell_quote(cmd)} "
+                 f">/tmp/ph-{name}.log 2>&1; echo PH-{name.upper()}-$?")
+        end = con.expect(rf"PH-{name.upper()}-(\d+)", 1800)
+        if end is None:
+            print(f"FAIL  the installed system did not answer the {name} check")
+            return 1
+        rc = re.findall(rf"PH-{name.upper()}-(\d+)", con.buf)[-1]
+        con.send(f"wget -q --method=PUT --body-file=/tmp/ph-{name}.log "
+                 f"http://10.0.2.2:{port}/portage-{name}.log -O /dev/null; echo PUT-$?")
+        con.expect(r"PUT-\d", 300)
+        if rc != "0":
+            print(f"FAIL  the installed system cannot {name}: exit {rc} — see "
+                  f"{evidence}/portage-{name}.log")
+            return 1
+        # Exit 0 is not the whole answer for the world resolution.
+        if name == "world":
+            con.send("grep -cE 'have been SKIPPED due to a dependency conflict|slot conflict|"
+                     "unbreakable|Multiple package instances' /tmp/ph-world.log; echo WORLDGREP-$?")
+            if con.expect(r"WORLDGREP-\d", 300) is not None:
+                hits = re.findall(r"\n(\d+)\r?\n[^\n]*WORLDGREP", con.buf)
+                if hits and hits[-1] != "0":
+                    print(f"FAIL  `emerge -uDNp @world` exits 0 but reports {hits[-1]} conflict/"
+                          f"skipped-rebuild block(s) — the installed machine cannot cleanly update; "
+                          f"see {evidence}/portage-world.log")
+                    return 1
+    print("..    the installed system syncs and resolves @world cleanly")
+    return 0
+
+
+def shell_quote(s):
+    return "'" + s.replace("'", "'\"'\"'") + "'"
 
 
 def upload_log(con, port):
