@@ -158,22 +158,22 @@ def fetch_iso(cache: Path) -> Path | None:
         with urllib.request.urlopen(ISO_INDEX, timeout=30) as r:
             index = r.read().decode("utf-8", "replace")
     except Exception as exc:  # noqa: BLE001 - any failure here is "cannot run"
-        print(f"SKIP  could not list {ISO_INDEX}: {exc}")
+        print(f"SKIP  could not list {ISO_INDEX}: {exc}", flush=True)
         return None
     names = sorted(set(re.findall(r"install-amd64-minimal-[0-9TZ]+\.iso", index)))
     if not names:
-        print(f"SKIP  no minimal install ISO listed at {ISO_INDEX}")
+        print(f"SKIP  no minimal install ISO listed at {ISO_INDEX}", flush=True)
         return None
     iso = Path(cache, names[-1])
     if iso.is_file() and iso.stat().st_size > 100 * 1024 * 1024:
         return iso
     cache.mkdir(parents=True, exist_ok=True)
     part = iso.with_suffix(".part")
-    print(f"..    fetching {names[-1]}")
+    print(f"..    fetching {names[-1]}", flush=True)
     try:
         urllib.request.urlretrieve(ISO_INDEX + names[-1], part)
     except Exception as exc:  # noqa: BLE001
-        print(f"SKIP  could not download the install ISO: {exc}")
+        print(f"SKIP  could not download the install ISO: {exc}", flush=True)
         return None
     part.rename(iso)
     return iso
@@ -255,11 +255,11 @@ def install(iso, disk, boot, td, evidence, args, port, password):
                  "done; echo \"PCTOOLS:[$m]\"")
         at = con.expect(r"PCTOOLS:\[[^\]]*\]\s*\r?\n", 120)
         if at is None:
-            print("FAIL  the live shell did not answer a tool check")
+            print("FAIL  the live shell did not answer a tool check", flush=True)
             return 1
         missing = re.findall(r"PCTOOLS:\[([^\]]*)\]", con.buf)[-1].split()
         if missing:
-            print("SKIP  this live medium is missing " + " ".join(missing)
+            print("SKIP  this live medium is missing " + " ".join(missing, flush=True)
                   + " — the installer cannot run on it")
             return 2
 
@@ -274,7 +274,7 @@ def install(iso, disk, boot, td, evidence, args, port, password):
                  "tar xzf /tmp/pcos.tar.gz -C /usr/local/share/posterchanos && "
                  "chmod +x /usr/local/share/posterchanos/gentoo.sh && echo UNPACK-$?")
         if con.expect(r"UNPACK-0\b", 120) is None:
-            print("FAIL  the installer tree did not unpack in the guest")
+            print("FAIL  the installer tree did not unpack in the guest", flush=True)
             return 1
 
         # The installer's own scripting hook: disk, BTRFS root volume name, swap choice, one per
@@ -282,7 +282,7 @@ def install(iso, disk, boot, td, evidence, args, port, password):
         # install onto anyway. The values are the ones the interactive prompts default to.
         con.send("printf 'vda\\ngentoo\\nnone\\n' >/tmp/disk; echo HOOK-$?")
         if con.expect(r"HOOK-0\b", 60) is None:
-            print("FAIL  could not write the installer's /tmp/disk hook")
+            print("FAIL  could not write the installer's /tmp/disk hook", flush=True)
             return 1
 
         # THE BUILD, DETACHED FROM THE CONSOLE. setsid so a serial hiccup cannot signal it, output
@@ -294,7 +294,7 @@ def install(iso, disk, boot, td, evidence, args, port, password):
             "PC_REPO_CHOICE=local bash /usr/local/share/posterchanos/gentoo.sh scratch "
             ">/tmp/scratch.log 2>&1; echo $? >/tmp/scratch.rc) & echo LAUNCHED")
         if con.expect(r"LAUNCHED", 60) is None:
-            print("FAIL  the installer did not start")
+            print("FAIL  the installer did not start", flush=True)
             return 1
         # ONE LINE A MINUTE, AND IT SAYS WHAT PORTAGE IS DOING -- not merely the last line written.
         # The first version tailed one line, which on a `--jobs 5` build is whatever thread happened
@@ -329,7 +329,7 @@ def install(iso, disk, boot, td, evidence, args, port, password):
                 print(f"..    {mins:>4}m  log {int(last_seen[1]) // 1024}KB{errs}  "
                       f"{last_seen[3][-90:]}", flush=True)
         else:
-            print(f"FAIL  the build did not finish within {args.timeout}s")
+            print(f"FAIL  the build did not finish within {args.timeout}s", flush=True)
             upload_log(con, port)
             return 1
 
@@ -413,7 +413,7 @@ def portage_health(con, evidence, port):
                  f">/tmp/ph-{name}.log 2>&1; echo PH-{name.upper()}-$?")
         end = con.expect(rf"PH-{name.upper()}-(\d+)", 1800)
         if end is None:
-            print(f"FAIL  the installed system did not answer the {name} check")
+            print(f"FAIL  the installed system did not answer the {name} check", flush=True)
             return 1
         rc = re.findall(rf"PH-{name.upper()}-(\d+)", con.buf)[-1]
         con.send(f"wget -q --method=PUT --body-file=/tmp/ph-{name}.log "
@@ -472,7 +472,7 @@ def portage_health(con, evidence, port):
             if pinned[-1] != "0":
                 print(f"..    {pinned[-1]} upgrade(s) declined by a version pin from something "
                       f"already installed — normal Gentoo, not this install's doing")
-    print("..    the installed system syncs and resolves @world cleanly")
+    print("..    the installed system syncs and resolves @world cleanly", flush=True)
     return 0
 
 
@@ -531,10 +531,10 @@ def main():
 
     for tool in ("qemu-system-x86_64", "qemu-img", "bsdtar"):
         if not shutil.which(tool):
-            print(f"SKIP  {tool} is not installed on this host")
+            print(f"SKIP  {tool} is not installed on this host", flush=True)
             return 2
     if ovmf() == (None, None):
-        print("SKIP  no OVMF firmware on this host; a BIOS guest would not test the bootloader")
+        print("SKIP  no OVMF firmware on this host; a BIOS guest would not test the bootloader", flush=True)
         return 2
     # A from-scratch Gentoo build under TCG emulation is not a long test, it is an impossible one.
     if not Path("/dev/kvm").exists():
@@ -559,7 +559,7 @@ def main():
     else:
         iso = Path(args.iso)
     if not iso.is_file():
-        print(f"SKIP  no such ISO: {iso}")
+        print(f"SKIP  no such ISO: {iso}", flush=True)
         return 2
 
     evidence = Path(args.evidence_dir or tempfile.mkdtemp(prefix="pc-scratch-vm-"))
@@ -579,7 +579,7 @@ def main():
                             "boot/gentoo", "boot/gentoo.igz"],
                            capture_output=True, text=True)
         if r.returncode or not (boot / "gentoo").is_file():
-            print(f"SKIP  could not read a kernel out of {iso.name}: {r.stderr.strip()[-200:]}")
+            print(f"SKIP  could not read a kernel out of {iso.name}: {r.stderr.strip()[-200:]}", flush=True)
             return 2
 
         installer_tarball(Path(td))
@@ -602,13 +602,13 @@ def main():
 
     probe = HERE / "check_livecd_vm.py"
     if not probe.is_file():
-        print("..    no check_livecd_vm.py beside this script; the installed disk was not booted")
+        print("..    no check_livecd_vm.py beside this script; the installed disk was not booted", flush=True)
         return 0
-    print("..    booting the installed disk with no ISO")
+    print("..    booting the installed disk with no ISO", flush=True)
     rc = subprocess.run([sys.executable, str(probe), "--disk", str(disk),
                          "--evidence-dir", str(Path(evidence, "boot"))]).returncode
     if rc:
-        print("FAIL  the built system did not reach a graphical session")
+        print("FAIL  the built system did not reach a graphical session", flush=True)
         return rc
     if not args.keep_disk and not args.disk:
         disk.unlink(missing_ok=True)
