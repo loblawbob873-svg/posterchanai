@@ -24,3 +24,17 @@ Evidence: /tmp/pc-media-scan-old-limit-red.log and
 Full backend suite: **7785 passed, 18 skipped, 519 subtests passed** in739.25s,
 with the real Kotlin SDK1.7.1/1.8.12 and JavaScript Jellyfin SDK enabled.
 Log: /tmp/pc-media-scan-full-backend.log. Live rescan verification follows rollout.
+
+## Deployment incident and correction
+
+The first rollout incorrectly restarted all service roles because
+app/services/media_center.py lacked an explicit deploy_targets mapping. A playing
+TV received HTTP500/connection-refused errors during the relay restart at02:37UTC.
+The mapping now targets only the HTTP app; the mixed router/scanner release also
+includes the existing worker target. Relay and dedicated live-streaming services
+are excluded. A regression reproduces the mixed scanner/Android release paths and
+checks the exact restart set; the mapping-only correction itself restarts nothing.
+Deployment-target and role-split checks:60 passed (/tmp/pc-media-deploy-targets-tests.log).
+Post-restart public login, both WebSocket messages and library/item decoding pass
+both official SDKs (/tmp/pc-post-scan-deploy-tv-recovery.log). This verifies recovery,
+not uninterrupted playback during a service restart.

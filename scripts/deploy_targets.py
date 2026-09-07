@@ -118,6 +118,9 @@ _OWNED = (
     ("app/services/mail_sync.py", (APP,)),
     # Pooled output maintenance runs in the worker, which also imports the shared wallet helpers.
     # Restart both consumers so output fixes reach the scheduler without disconnecting relays.
+    # Media Center scanning/transcoding is imported by the HTTP media/Jellyfin routers.
+    # The dedicated MEDIA role is live streaming/TURN and does not load this module.
+    ("app/services/media_center.py", (APP,)),
     ("app/services/monero_wallet_service.py", (APP, WORKER)),
     ("app/services/monero_user_wallets.py", (APP, WORKER)),
     # The bundled metasearch: its own module, and the settings file it reads at import.

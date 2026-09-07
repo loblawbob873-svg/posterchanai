@@ -104,6 +104,16 @@ class Mapping(unittest.TestCase):
         for spared in (dt.RELAY, dt.MEDIA):
             self.assertNotIn(spared, got, f"a router change must not restart {spared}")
 
+    def test_media_scan_release_does_not_restart_relay_or_live_streaming(self):
+        self.assertEqual(dt.units_for(["app/services/media_center.py"]), [dt.APP])
+        # Reproduce the mixed scanner/Android release that hit the ALL fallback.
+        paths = ["app/services/media_center.py", "app/routers/media_center.py",
+                 "mobile/android/app/build.gradle",
+                 "mobile/android/app/src/main/java/place/poster/app/signer/SignerRelayService.java",
+                 "tests/test_media_center.py", "docs/MEDIA_CENTER.md"]
+        self.assertEqual(set(dt.units_for(paths)), {dt.APP, dt.WORKER})
+        self.assertEqual(dt.units_for(["scripts/deploy_targets.py", "tests/test_deploy_targets.py"]), [])
+
     def test_monero_changes_restart_api_and_output_scheduler_without_disconnecting_relays(self):
         """The worker imports pooled maintenance and shared RPC errors/amount helpers."""
         for path in ("app/services/monero_wallet_service.py",
