@@ -375,6 +375,22 @@ def install(iso, disk, boot, td, evidence, args, port, password):
 # PRETEND ONLY. `-p` on the world resolution: this is a test of whether portage can still make a
 # plan, and a gate that starts compiling has stopped being a gate.
 PORTAGE_CHECKS = (
+    # EVERY REPOSITORY AND MIRROR THE INSTALLED MACHINE USES MUST BE gentoo.poster.place, and the
+    # sync check below cannot answer that -- `emerge --sync` succeeds just as happily against a
+    # Gentoo mirror, so a repointed tree would pass a green gate for ever. This reads the installed
+    # system's own files and fails on any sync-uri or GENTOO_MIRRORS naming another host.
+    #
+    # IT COUNTS THEM FIRST, because "no URI matched a foreign host" is also what a MISSING config
+    # says. There are four (tree, overlay, binhost, distfiles); if fewer are found the machine has
+    # lost a repository rather than passed a check, and grep finding nothing must never read as
+    # success -- that is the false-green shape this repo keeps having to relearn.
+    ("repos", "u=$(grep -rhoE '^[[:space:]]*(sync-uri|GENTOO_MIRRORS)[[:space:]]*=.*' "
+              "/etc/portage/repos.conf /etc/portage/binrepos.conf /etc/portage/make.conf "
+              "2>/dev/null); n=$(printf '%s\\n' \"$u\" | grep -c .); "
+              "printf '%s\\n' \"$u\"; "
+              "if [ \"$n\" -lt 4 ]; then echo \"only $n repo/mirror URIs found, expected 4\"; exit 1; fi; "
+              "bad=$(printf '%s\\n' \"$u\" | grep -v 'gentoo\\.poster\\.place' || true); "
+              "if [ -n \"$bad\" ]; then echo \"NOT gentoo.poster.place:\"; printf '%s\\n' \"$bad\"; exit 1; fi"),
     # The overlay must be THERE and non-empty. "Section 'posterchan' in repos.conf has location
     # attribute set to nonexistent directory" was printed by every emerge in run 4, and it meant the
     # machine had no source for its own desktop packages.
