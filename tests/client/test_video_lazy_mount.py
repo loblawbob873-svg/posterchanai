@@ -85,11 +85,12 @@ class VideoLazyMount(unittest.TestCase):
 
     def test_notification_subs_do_not_redraw_per_event(self):
         """The live subscriptions must coalesce their redraws, not rebuild the view per event."""
-        for marker in ("Relay.subscribe([{ '#p':[ME.pubkey], kinds:[3]",
-                       "Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735"):
-            i = self.src.find(marker)
-            self.assertNotEqual(i, -1, f"notification subscription moved: {marker}")
-            block = _block(self.src, i + len(marker))
+        # Match the subscription's purpose, allowing additional filter options such as quotes.
+        for kinds in (r"3\]", r"1,6,7,9735"):
+            marker = re.search(r"Relay\.subscribe\(\[\{\s*'#p':\[ME\.pubkey\],[^}]*?kinds:\[" + kinds, self.src)
+            self.assertIsNotNone(marker, f"notification subscription moved: {kinds}")
+            block = _block(self.src, marker.end())
+            self.assertIn("renderNotificationsSoon()", block)
             self.assertNotIn(
                 "renderNotifications()", block,
                 "a notification subscription must call renderNotificationsSoon(), not rebuild per event",
