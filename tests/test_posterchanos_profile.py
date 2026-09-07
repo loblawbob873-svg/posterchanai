@@ -502,9 +502,20 @@ class PosterChanOSProfile(unittest.TestCase):
         code = self._code(body)
         self.assertLess(code.index("$PP/PosterChan-linux-x64.tar.zst"), code.index("api.github.com"),
                         "GitHub is still asked before poster.place")
-        self.assertLess(code.index('-o "$APPIMG" "$PP/PosterChan.AppImage"'),
+        self.assertLess(code.index('-o "$APPIMG" "$PP/linux"'),
                         code.index('-o "$APPIMG" "$GH/PosterChan.AppImage"'),
                         "the AppImage fallback still prefers GitHub")
+        # /desktop/linux IS the download; /desktop/<filename> IS NOT. Measured against the live host:
+        # /desktop/PosterChan.AppImage 302s to the human download PAGE, so curl -sSfL follows it,
+        # gets 200 text/html, writes the HTML to the file and exits 0 -- which the old size-only
+        # check read as a good download. The install then unpacked an HTML page ("zstd: unsupported
+        # format") and booted to no desktop.
+        self.assertNotIn('"$PP/PosterChan.AppImage"', code,
+                         "the AppImage URL that redirects to the HTML landing page is back")
+        # Downloads are judged by magic bytes, because a 200 is not an archive.
+        self.assertIn("_pc_keep_if", code, "a downloaded HTML page would pass as the desktop again")
+        self.assertIn("28b52ffd", code, "the tarball is not checked for the zstd magic")
+        self.assertIn("7f454c46", code, "the AppImage is not checked for the ELF magic")
 
     def test_overlay_success_is_checked_by_looking_not_by_exit_code(self):
         """A package that installs nothing useful exits 0."""

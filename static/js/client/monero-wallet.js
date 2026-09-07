@@ -512,7 +512,8 @@
       + esc(xmr(s.unlocked_balance, false)) + ' <small>XMR</small></strong>'
       + '<span class="muted small">' + esc(xmr(s.balance, false)) + ' XMR total'
       + (locked ? ' \u00b7 unlocks in about ' + esc(String(mins)) + ' min' : '') + '</span></section>'
-      + '<div class="mw-actions"><button class="btn btn-cyan" id="mw-me-receive">Receive</button>'
+      + '<div class="mw-actions"><button class="btn btn-neon" id="mw-me-send">Send</button>'
+      + '<button class="btn btn-cyan" id="mw-me-receive">Receive</button>'
       + '<button class="btn" id="mw-me-withdraw">Withdraw</button></div>'
       + '<section class="mw-card mw-address"><h3>Your receiving address</h3><code>'
       + esc(s.address || '') + '</code>'
@@ -529,6 +530,70 @@
         + '<code>' + esc(s.address || '') + '</code>'
         + '<button class="btn btn-cyan full" id="mw-me-qcopy">Copy address</button></div>',
         r => { const b = r.querySelector('#mw-me-qcopy'); if(b) b.onclick = () => copy(s.address); });
+    };
+    /* SEND, NOT ONLY WITHDRAW-EVERYTHING. Reported as "there is no send button on his Monero
+       wallet" by somebody comparing their screen with the operator's: the node wallet (admin-only)
+       has always had Send, and this screen offered Receive and a whole-balance sweep. So a user
+       holding a tip could empty the account to an address or nothing at all -- they could not pay
+       anyone an amount. The backend already did this: /me/pay takes {address, amount} pairs and is
+       what the tip sheet posts to. Only the button was missing.
+
+       THE SAME THREE RULES AS THE OTHER TWO MONEY PATHS, because this is the third and they must
+       not drift: the fee is stated BEFORE sending (a cut discovered afterwards is indistinguishable
+       from a broken wallet), the amount is checked against the UNLOCKED balance rather than the
+       total (Monero locks change for ~10 blocks, so a wallet with a balance can still be unable to
+       spend), and an unknown answer is never called a failure -- a spend that timed out may be in
+       flight, and re-enabling the button invites a second real payment. */
+    if(by('mw-me-send')) by('mw-me-send').onclick = () => {
+      const fee = Number(s.fee_percent || 0) || 0;
+      PC.modal('<div class="mw-modal"><h3>Send Monero</h3>'
+        + '<p class="muted small">From your wallet on this server to any Monero address.</p>'
+        + (fee > 0 ? '<p class="muted small">This node keeps ' + esc(String(fee))
+                     + '% of what you send.</p>' : '')
+        + '<label>Recipient address<input class="input" id="mw-ms-to" autocomplete="off" '
+        + 'spellcheck="false"></label>'
+        + '<label>Amount (XMR)<input class="input" id="mw-ms-amount" type="number" '
+        + 'min="0.000000000001" step="0.0001" inputmode="decimal"></label>'
+        + '<p class="muted small">' + esc(xmr(s.unlocked_balance, false))
+        + ' XMR can be sent now</p>'
+        + '<button class="btn btn-neon full" id="mw-ms-review">Review payment</button></div>', r => {
+          const review = r.querySelector('#mw-ms-review'); if(!review) return;
+          review.onclick = () => {
+            const to = String((r.querySelector('#mw-ms-to') || {}).value || '').trim();
+            const raw = String((r.querySelector('#mw-ms-amount') || {}).value || '').trim();
+            if(!validAddress(to, s.network)){ PC.toast('check the Monero address for this network'); return; }
+            const want = amount(raw);
+            if(!(want > 0)){ PC.toast('enter an amount to send'); return; }
+            const have = amount(s.unlocked_balance);
+            if(want > have){ PC.toast('only ' + xmr(s.unlocked_balance, false)
+                                      + ' XMR is available to send right now'); return; }
+            PC.closeModal();
+            PC.modal('<div class="mw-modal"><h3>Confirm payment</h3><div class="mw-confirm">'
+              + '<span>Send</span><strong>' + esc(raw) + ' XMR</strong>'
+              + '<span>To</span><code>' + esc(to) + '</code></div>'
+              + '<label class="mw-check"><input type="checkbox" id="mw-ms-understand"> '
+              + 'I understand this Monero transaction cannot be reversed.</label>'
+              + '<button class="btn btn-neon full" id="mw-ms-go" disabled>Send now</button></div>', c => {
+                const box = c.querySelector('#mw-ms-understand'), go = c.querySelector('#mw-ms-go');
+                if(!box || !go) return;
+                box.onchange = () => { go.disabled = !box.checked; };
+                go.onclick = async () => {
+                  go.disabled = true; go.textContent = 'Sending\u2026';
+                  try{
+                    await request('/api/wallet/xmr/me/pay', {method:'POST',
+                      headers:{'Accept':'application/json','Content-Type':'application/json'},
+                      body: JSON.stringify({payments:[{address: to, amount: raw}]})});
+                    PC.closeModal(); PC.toast('payment sent'); _meAt = 0; render(true);
+                  }catch(e){
+                    const msg = (e && e.message) || String(e);
+                    const unsure = /may have been sent|did not answer in time/i.test(msg);
+                    go.disabled = unsure; go.textContent = unsure ? 'Check your history' : 'Send now';
+                    PC.toast(unsure ? msg : ('payment not sent: ' + msg));
+                  }
+                };
+              });
+          };
+        });
     };
     if(by('mw-me-withdraw')) by('mw-me-withdraw').onclick = () => {
       /* THE WAY OUT. Custody without one is an IOU rather than a wallet, so it is on the screen
