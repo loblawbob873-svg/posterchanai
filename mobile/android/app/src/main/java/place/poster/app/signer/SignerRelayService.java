@@ -471,6 +471,17 @@ public class SignerRelayService extends Service {
                 handler.post(() -> { if (socks.get(url) == s)
                         dropped(url, t == null ? "socket failed" : String.valueOf(t.getMessage())); });
             }
+            @Override public void onClosing(WebSocket s, int code, String reason) {
+                /* A server restart starts a close handshake; OkHttp does not acknowledge it for
+                 * us. Waiting for onClosed without replying leaves the signer unable to receive
+                 * requests until the heartbeat detects the stranded connection. Acknowledge now
+                 * and schedule recovery immediately, retaining the retired-socket identity guard.
+                 * 1005 means an empty peer close frame and must never be sent on the wire. */
+                try { s.close(code == 1005 ? 1000 : code, reason); }
+                finally {
+                    handler.post(() -> { if (socks.get(url) == s) dropped(url, "closing"); });
+                }
+            }
             @Override public void onClosed(WebSocket s, int code, String reason) {
                 handler.post(() -> { if (socks.get(url) == s) dropped(url, "closed"); });
             }
