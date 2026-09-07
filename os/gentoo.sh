@@ -1881,6 +1881,22 @@ PROFILE
 	# Success is checked by looking for the FILES, not by trusting emerge's exit code — a package
 	# that installs nothing useful exits 0.
 	if [ -f "${TARGET}/etc/portage/repos.conf/posterchan.conf" ]; then
+	# RUN IT WHERE THE FILES ARE. This function is called BOTH ways — from the installer on the live
+	# system with TARGET pointing at the new root, and from inside the chroot during finalize, where
+	# TARGET is empty and the new root is simply `/`. A bare `chroot $TARGET` is a broken command in
+	# the second case, and one that would have failed silently at the end of an hour-long install.
+	#
+	# DEFINED HERE, ABOVE ITS FIRST USE, AND THAT IS THE WHOLE POINT. It used to be defined further
+	# down, AFTER the overlay-sync block that calls it -- so that call ran as an undefined command,
+	# exited 127, and the `if` read that as "the sync failed". The install then
+	# printed "the overlay sync failed — installing the shell directly" and went down the fallback
+	# path on EVERY run, blaming the network for a definition-order bug. Bash defines a function when
+	# it executes the definition, not when it parses the file.
+	if [ -z "$TARGET" ] || [ "$TARGET" = "/" ]; then
+		_in() { /bin/bash -c "$1"; }
+	else
+		_in() { chroot "$TARGET" /bin/bash -c "$1"; }
+	fi
 		echo -e "\033[1;33mSyncing the PosterChanOS overlay\033[0m"
 		# KEPT, NOT DISCARDED. `>/dev/null 2>&1` on all three of these turned "the overlay is not
 		# reachable" into a sentence with no evidence behind it -- and it was printed on a run where
@@ -1953,9 +1969,30 @@ PROFILE
 	if ! command -v curl >/dev/null 2>&1; then
 		echo "curl is not installed here, so the desktop cannot be downloaded" >>"$FETCHLOG"
 	fi
+	# A 200 IS NOT AN ARCHIVE, and that is how the desktop went missing on a run where every URL
+	# "worked". poster.place answers /desktop/<filename> with a 302 to the human download PAGE, so
+	# `curl -sSfL` follows it, receives 200 text/html, writes the HTML into the file and exits 0 --
+	# and -f cannot help, because the final response IS a success. `[ -s "$APPTAR" ]` then reported a
+	# good download, the AppImage was never tried, and the only symptom was `zstd: unsupported
+	# format` an hour into the install followed by a machine that boots to no desktop.
+	#
+	# So every download is judged by its MAGIC BYTES, and anything that is not what it claims is
+	# deleted so the next source is actually tried. Measured: /desktop/linux returns an ELF
+	# (7f454c46); /desktop/PosterChan.AppImage and /desktop/PosterChan-linux-x64.tar.zst BOTH 302 to
+	# the landing page; the GitHub desktop-latest asset 404s.
+	_pc_magic4() { od -An -tx1 -N4 "$1" 2>/dev/null | tr -d ' \n'; }
+	_pc_keep_if() { # <file> <expected 4-byte magic> <what it was>
+		[ -s "$1" ] || return 1
+		[ "$(_pc_magic4 "$1")" = "$2" ] && return 0
+		echo "$3 is not the file it claims: magic $(_pc_magic4 "$1"), expected $2 (an HTML page?)" \
+			>>"$FETCHLOG"
+		rm -f "$1"
+		return 1
+	}
 	if [ ! -s "$APPTAR" ]; then
 		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPTAR" "$PP/PosterChan-linux-x64.tar.zst" \
 			2>>"$FETCHLOG" || true
+		_pc_keep_if "$APPTAR" 28b52ffd "the poster.place tarball" || true
 	fi
 	if [ ! -s "$APPTAR" ]; then
 		TARURL="$(curl -sSfL --retry 2 --connect-timeout 20 \
@@ -1964,19 +2001,15 @@ PROFILE
 		[ -n "$TARURL" ] || echo "the release listing named no linux-x64.tar.zst asset" >>"$FETCHLOG"
 		[ -n "$TARURL" ] && { curl -sSfL --retry 3 --connect-timeout 20 -o "$APPTAR" "$TARURL" \
 			2>>"$FETCHLOG" || true; }
+		_pc_keep_if "$APPTAR" 28b52ffd "the GitHub tarball" || true
 	fi
-	if [ ! -s "$APPTAR" ] && [ ! -f "$APPIMG" ]; then
-		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$PP/PosterChan.AppImage" 2>>"$FETCHLOG" \
-			|| curl -sSfL --retry 2 -o "$APPIMG" "$GH/PosterChan.AppImage" 2>>"$FETCHLOG" || true
-	fi
-	# RUN IT WHERE THE FILES ARE. This function is called BOTH ways — from the installer on the live
-	# system with TARGET pointing at the new root, and from inside the chroot during finalize, where
-	# TARGET is empty and the new root is simply `/`. A bare `chroot $TARGET` is a broken command in
-	# the second case, and one that would have failed silently at the end of an hour-long install.
-	if [ -z "$TARGET" ] || [ "$TARGET" = "/" ]; then
-		_in() { /bin/bash -c "$1"; }
-	else
-		_in() { chroot "$TARGET" /bin/bash -c "$1"; }
+	if [ ! -s "$APPTAR" ] && [ ! -s "$APPIMG" ]; then
+		# /desktop/linux IS the download endpoint; the filename URLs are not.
+		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$PP/linux" 2>>"$FETCHLOG" || true
+		_pc_keep_if "$APPIMG" 7f454c46 "the poster.place AppImage" || {
+			curl -sSfL --retry 2 -o "$APPIMG" "$GH/PosterChan.AppImage" 2>>"$FETCHLOG" || true
+			_pc_keep_if "$APPIMG" 7f454c46 "the GitHub AppImage" || true
+		}
 	fi
 	if [ -s "$APPTAR" ]; then
 		[ "${TARGET:-/}" = "/" ] || cp -f "$APPTAR" ${TARGET}/tmp/PosterChan-linux-x64.tar.zst
