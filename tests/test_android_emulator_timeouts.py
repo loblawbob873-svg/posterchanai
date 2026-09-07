@@ -45,7 +45,7 @@ def test_emulator_memory_is_bounded_and_build_daemon_is_gone_before_boot():
 
 
 def test_verdict_boot_never_restores_mutable_cached_snapshot_state():
-    assert "key: avd-clean-1536-v1-" in WORKFLOW
+    assert "key: avd-gles-1536-v2-" in WORKFLOW
     run = WORKFLOW.split("- name: Run the device checks", 1)[1]
     options = run.split("emulator-options:", 1)[1].splitlines()[0]
     assert "-no-snapshot " in options and "-wipe-data " in options
@@ -79,3 +79,17 @@ def test_composer_focus_precondition_comes_from_native_webview_input():
     assert "composer stayed hidden" in COMPOSER
     assert "Concord route did not stay active" in COMPOSER
     assert "a.focus()" not in setup
+
+
+def test_emulator_uses_supported_gles_renderer_in_every_boot():
+    options=[line for line in WORKFLOW.splitlines() if 'emulator-options:' in line]
+    assert len(options)==2
+    assert all('-gpu swiftshader -feature -Vulkan' in line for line in options)
+    assert 'swiftshader_indirect' not in WORKFLOW
+
+
+def test_disappeared_emulator_keeps_host_memory_and_kernel_diagnostics():
+    assert 'Capture emulator host diagnostics' in WORKFLOW
+    assert 'free -m > /tmp/pc-emulator-host.txt' in WORKFLOW
+    assert 'sudo dmesg -T' in WORKFLOW
+    assert '/tmp/pc-emulator-host.txt' in WORKFLOW.split('- name: Upload logcat',1)[1]

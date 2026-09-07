@@ -116,7 +116,11 @@ jobs:
           test -n "$APK"
           python3 scripts/check_android_apk_assets.py "$APK" "$PWD"
 
-      # Cached so the AVD snapshot is not rebuilt on every run — a cold boot is most of the wall clock.
+      # Use the supported SwiftShader GLES path. Vulkan snapshots are unsupported and the
+      # deprecated indirect renderer repeatedly lost the emulator process during web UI checks.
+      # https://developer.android.com/studio/run/emulator-troubleshooting
+      # https://developer.android.com/studio/run/emulator-acceleration
+      # Cache identity includes graphics settings so no old AVD shape is restored.
       - name: AVD cache
         uses: actions/cache@v4
         id: avd-cache
@@ -127,7 +131,7 @@ jobs:
           # Versioned by the complete virtual-hardware/snapshot shape. The old `avd-34` snapshot
           # was created before RAM was specified (emulator chose 2560 MB) and later restored after
           # config.ini was changed to 1536 MB. QEMU twice vanished silently after that mixed restore.
-          key: avd-clean-1536-v1-${{ github.event.inputs.api_level || '34' }}
+          key: avd-gles-1536-v2-${{ github.event.inputs.api_level || '34' }}
 
       - name: Create AVD and snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
@@ -138,7 +142,7 @@ jobs:
           arch: x86_64
           ram-size: 1536M
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none
           disable-animations: false
           script: echo "AVD snapshot created"
 
@@ -153,7 +157,7 @@ jobs:
           # Do not restore mutable Quick Boot state for the verdict run. The cache saves image
           # download/AVD creation time; -wipe-data + -no-snapshot gives every test run one coherent
           # cold boot, independent of the emulator revision setup-android installed today.
-          emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           # TWO KINDS OF CHECK ON ONE BOOT, because booting the AVD is most of the wall clock.
           #
@@ -190,12 +194,21 @@ jobs:
           script: |
             timeout --kill-after=30s 15m bash scripts/android_device_checks.sh; a=$?; timeout --kill-after=30s 25m bash scripts/android_instrumented.sh; b=$?; echo "device=$a instrumented=$b"; case "$a:$b" in 0:0) exit 0;; 0:2|2:0|2:2) echo "::warning title=Device checks DID NOT RUN::the emulator never ran them; this build is NOT evidence that the app works on a device"; exit 0;; *) exit 1;; esac
 
+      # Keep evidence if the emulator process disappears without an Android crash report.
+      - name: Capture emulator host diagnostics
+        if: always()
+        run: |
+          free -m > /tmp/pc-emulator-host.txt
+          ps -eo comm,rss --sort=-rss | head -20 >> /tmp/pc-emulator-host.txt
+          sudo dmesg -T | tail -100 >> /tmp/pc-emulator-host.txt || true
+
       - name: Upload logcat
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: logcat
           path: |
+            /tmp/pc-emulator-host.txt
             /tmp/pc-logcat*.txt
             /tmp/pc-device-*.txt
           if-no-files-found: ignore
