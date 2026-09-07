@@ -7,7 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.SystemClock;
-import android.view.KeyEvent;
+import android.accessibilityservice.AccessibilityService;
 import android.view.accessibility.AccessibilityNodeInfo;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -69,12 +69,16 @@ public class UninstallDeviceTest {
                 SystemClock.sleep(100);
             }
             assertTrue("Android never opened its uninstall confirmation", confirmation);
-            in.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); // NEVER confirm removal
+            assertTrue(in.getUiAutomation().performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)); // NEVER confirm removal
             in.waitForIdleSync();
             assertNotNull(ctx().getPackageManager().getPackageInfo(fixture, 0));
         } finally {
-            in.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
-            HomeRoles.enableLauncherComponent(ctx(), enabled);
+            try {
+                AccessibilityNodeInfo root = in.getUiAutomation().getRootInActiveWindow();
+                String pkg = root == null ? "" : String.valueOf(root.getPackageName());
+                if (pkg.contains("packageinstaller") || pkg.contains("permissioncontroller"))
+                    in.getUiAutomation().performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK);
+            } finally { HomeRoles.enableLauncherComponent(ctx(), enabled); }
         }
     }
 }
