@@ -18,7 +18,7 @@ def page():
         start=re.search(r'^  (?:async )?function '+name+r'\(',app,re.M).start()
         end=re.search(r'^  (?:async )?function ',app[start+3:],re.M)
         return app[start:start+3+end.start()]
-    functions='\n'.join(function(n) for n in ('isXmrAddr','_tipMethodSheet','doTip','doZap','doXmrTip','doBchTip','_runZap'))
+    functions='\n'.join(function(n) for n in ('isXmrAddr','_tipMethodSheet','doTip','doZap','doXmrTip','doBchTip','_runZap','startConcordTip'))
     functions+=app[app.index('  const _CA_CHARSET='):app.index('  const _BCH_CASHADDR=')]
     script=r'''
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -53,7 +53,7 @@ const settle=async()=>{for(let i=0;i<15;i++)await new Promise(r=>setTimeout(r,5)
 
 
 @pytest.mark.parametrize('width',[380,1280])
-@pytest.mark.parametrize('case',['hydrate','save','clear','publish_failure','offline','account_switch','conflict','chooser','monero_tip','lightning_choice','invalid_monero','signer_refusal','signer_changed_targets','chooser_account_switch','cold_outbox','lazy_module','legacy_card','pinned_card','stored_note','bch_prefixed','lightning_account_switch','invoice_account_switch','bch_account_switch'])
+@pytest.mark.parametrize('case',['hydrate','save','clear','publish_failure','offline','account_switch','conflict','chooser','monero_tip','lightning_choice','invalid_monero','signer_refusal','signer_changed_targets','chooser_account_switch','cold_outbox','lazy_module','legacy_card','pinned_card','stored_note','bch_prefixed','lightning_account_switch','invoice_account_switch','bch_account_switch','concord_targets'])
 def test_payment_targets_in_browser(chrome,width,case):
     target=chrome.command('Target.createTarget',{'url':'about:blank'})['targetId']
     chrome.session=chrome.command('Target.attachToTarget',{'targetId':target,'flatten':True})['sessionId']
@@ -137,6 +137,10 @@ def test_payment_targets_in_browser(chrome,width,case):
             assert chrome.evaluate('lastTip.address')==chrome.evaluate('xmr' if case=='legacy_card' else 'profile.monero_address')
             chrome.evaluate('lastTip=null;doXmrTip("note",owner,profile.monero_address,'+('true' if case=='pinned_card' else 'false')+');settle()')
             assert chrome.evaluate('lastTip.address')==chrome.evaluate('xmr' if case=='legacy_card' else 'profile.monero_address')
+        elif case=='concord_targets':
+            chrome.evaluate('startConcordTip(owner,()=>{});settle()')
+            assert chrome.evaluate('lastTip.address===xmr')
+            assert chrome.evaluate('lastTip.pubkey')==chrome.evaluate('owner')
         elif case=='monero_tip':
             chrome.evaluate('doTip(null,owner);settle()')
             chrome.click('[data-m="xmr"]');chrome.evaluate('settle()')

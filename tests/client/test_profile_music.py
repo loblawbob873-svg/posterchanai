@@ -48,7 +48,7 @@ def extract(name):
 def test_own_profile_music_edit_save_reopen_and_play_lifecycle(width):
     edit_at = APP.index("function editProfile(")
     edit = APP[edit_at:APP.index("\n  // Show the relays", edit_at)]
-    functions = "\n".join((extract("_profileMusicFields"), extract("_profileMusicHtml"), edit))
+    functions = "\n".join((extract("_profileMusicFields"), extract("_profileMusicHtml"), extract("_bindPaymentTargetEditor"), edit))
     script = f'''
     const ME={{pubkey:'a'.repeat(64)}},LOGO='',ClientSettings={{get:()=>false,set(){{}}}};
     let profile={{name:'Alice',about:'hello'}},published=null,toasts=[];

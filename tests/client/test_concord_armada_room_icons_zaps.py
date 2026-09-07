@@ -42,8 +42,9 @@ def test_private_zap_uses_armada_sealed_rumor_shape():
 
 def test_concord_offers_the_same_monero_flow_as_social_without_weakening_private_lightning_zaps():
     helper = APP.split("function startConcordTip", 1)[1].split("function invoiceModal", 1)[0]
-    assert "isXmrAddr(xmrOf(profile))" in helper
-    assert "doXmrTip(null,pk)" in helper
+    assert "_paymentAddress(pk,'monero',xmrOf(profile))" in helper
+    assert "isXmrAddr(xmr)" in helper
+    assert "doXmrTip(null,pk,xmr)" in helper
     assert "_tipMethodSheet(profile,methods" in helper
     assert "_lightningAmountSheet(profile,onLightningAmount)" in helper
     surface = APP.split("window.__PC =", 1)[1]

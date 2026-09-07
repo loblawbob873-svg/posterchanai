@@ -10,10 +10,12 @@ const profiles=new Map([
   ['neither',{name:'No wallet'}],
 ]);
 const context={
+  ME:{pubkey:"viewer"},
+  _paymentAddress:async(_pk,_type,fallback)=>fallback,
   profOf:pk=>profiles.get(pk),
   xmrOf:profile=>profile&&profile.monero_address,
   isXmrAddr:value=>typeof value==='string'&&value.length===95,
-  doXmrTip:(note,pk)=>calls.push(['xmr',note,pk]),
+  doXmrTip:(note,pk,address)=>calls.push(['xmr',note,pk,address]),
   toast:value=>calls.push(['toast',value]),
   _lightningAmountSheet:(profile,callback)=>calls.push(['lightning',profile.name,callback]),
   _lightningAddress:async(_pk,profile)=>profile&&(profile.lud16||profile.lud06)||'',
@@ -26,7 +28,7 @@ let sheet=calls.shift();
 if(sheet[0]!=='sheet'||sheet[2].length!==1||sheet[2][0][0]!=='xmr')
   throw new Error('an XMR-only Concord member did not get the Social Monero choice');
 sheet[3]('xmr');
-if(JSON.stringify(calls.shift())!==JSON.stringify(['xmr',null,'xmr-only']))
+if(JSON.stringify(calls.shift())!==JSON.stringify(['xmr',null,'xmr-only',profiles.get('xmr-only').monero_address]))
   throw new Error('the Concord Monero choice did not enter Social\'s wallet flow');
 
 const lightningCallback=()=>{};
