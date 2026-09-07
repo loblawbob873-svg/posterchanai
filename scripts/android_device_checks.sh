@@ -131,6 +131,14 @@ crash_scan() {   # $1 = label
              "RemoteServiceException"; do
     if grep -q "$pat" "$OUT/pc-logcat-$1.txt"; then
       fail "$pat during: $1"
+      if [ "$pat" = "ANR in $PKG" ]; then
+        # Logcat has the timeout/CPU summary, but Android writes the main-thread stack
+        # separately. Preserve that trace before a later system ANR replaces it.
+        # Keep the failure verdict even when a dead emulator cannot provide diagnostics.
+        timeout --kill-after=2s 15s adb shell dumpsys activity lastanr-traces \
+          > "$OUT/pc-device-anr-$1.txt" 2>&1 \
+          || echo "ANR stack capture unavailable or timed out" >> "$OUT/pc-device-anr-$1.txt"
+      fi
       grep -B 2 -A 20 "$pat" "$OUT/pc-logcat-$1.txt" | head -40
       return 1
     fi
