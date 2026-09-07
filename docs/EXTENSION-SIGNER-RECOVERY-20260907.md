@@ -74,3 +74,17 @@ two 93-test emulator runs documented in SIGNER-GRACEFUL-CLOSE-20260907.md.
 
 Publication still requires checking the store result; a successful source deploy
 alone does not update an installed Firefox extension.
+
+## Published and confirmed
+
+Source 96b20acac reached all production nodes with **no restart targets**.
+Extension workflow 34079179849 succeeded. The public Firefox/Chrome rolling
+packages are version 1.4.10 and passed 48/48 downloaded-package recovery cases.
+Mozilla now serves signed 1.4.10; its background bytes match the reviewed source
+and all 24 recovery scenarios pass against the downloaded signed XPI. Chrome Web
+Store submission was skipped by the workflow's credentials condition; the public
+Chrome ZIP is updated. Firefox users can use the normal add-on update check.
+
+The complete backend confirmation finished cleanly: **7811 passed, 17 skipped,
+519 subtests passed in 756.86s** (`/tmp/pc-extension-full-backend-final.log`).
+The earlier compiler-harness failure and correction remain documented above.

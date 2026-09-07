@@ -12,3 +12,9 @@ Validation:
 - Visual review of 320px anchored and 375px sheet screenshots confirmed visible Monero labels, bounded tab scrolling and usable emoji grids. Screenshots from the first passing matrix are retained in `/tmp/pc-emoji-picker-screenshots/`.
 
 The browser harness runs the actual picker/placement/button functions and complete stylesheet. Pack contents are deterministic fixtures with 24 local XMR SVG images per pack; it does not modify installed packs or test public image hosting. Mobile coverage is browser viewport/touch emulation, not a physical-device claim. No signer, transport or pack-management logic changes are included.
+
+Full client suite: **3480 passed, 1 skipped, 121 subtests passed in 895.96s**
+(`/tmp/pc-emoji-picker-full-client.log`). The final search/touch refinements were
+also exercised after merging signer work: **31 focused tests passed in 9.71s**.
+The independent backend suite passed **7811 tests and 519 subtests**, 17 skips.
+Deployment target precheck for the picker release is empty (static assets only).
