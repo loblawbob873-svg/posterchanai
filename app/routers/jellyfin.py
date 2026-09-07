@@ -329,7 +329,8 @@ def expire_quick():
 
 def quick_dto(entry, secret):
     return {'Secret': secret, 'Code': entry['code'], 'Authenticated': bool(entry.get('pubkey')),
-            'DateAdded': entry['date']}
+            'DateAdded': entry['date'], 'DeviceId': entry.get('device_id', ''),
+            'DeviceName': entry['device'], 'AppName': entry['client'], 'AppVersion': entry['version']}
 
 
 @router.post('/QuickConnect/Initiate')
@@ -346,9 +347,10 @@ async def initiate_quick(request: Request):
             code = f'{secrets.randbelow(1000000):06d}'
         header = request.headers.get('X-Emby-Authorization') or request.headers.get('Authorization', '')
         fields = {key.lower(): re.sub(r'[\x00-\x1f\x7f]', '', value)[:100]
-                  for key, value in re.findall(r'(Client|Device|Version)\s*=\s*"([^"\r\n]*)"', header, re.I)}
+                  for key, value in re.findall(r'(Client|Device|DeviceId|Version)\s*=\s*"([^"\r\n]*)"', header, re.I)}
         entry = {'client': fields.get('client', 'Jellyfin'), 'device': fields.get('device', 'Jellyfin app'),
-                 'version': fields.get('version', ''), 'code': code, 'created': time.monotonic(),
+                 'version': fields.get('version', ''), 'device_id': fields.get('deviceid', ''),
+                 'code': code, 'created': time.monotonic(),
                  'date': datetime.now(timezone.utc).isoformat()}
         _quick[digest(secret)] = entry
     return quick_dto(entry, secret)

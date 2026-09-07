@@ -120,6 +120,8 @@ def test_quick_connect_requires_signed_approval_and_single_use_secret(api):
     assert c.get('/jellyfin/Users/Public').json() == []
     pending = c.post('/jellyfin/QuickConnect/Initiate').json()
     assert len(pending['Code']) == 6 and not pending['Authenticated']
+    assert {key: pending[key] for key in ('DeviceId', 'DeviceName', 'AppName', 'AppVersion')} == {
+        'DeviceId': '', 'DeviceName': 'Jellyfin app', 'AppName': 'Jellyfin', 'AppVersion': ''}
     assert c.post('/jellyfin/Users/AuthenticateWithQuickConnect', json={'Secret': pending['Secret']}).status_code == 401
     api.state['user'] = None
     assert c.post('/api/media-center/jellyfin-account/authorize', json={'code': pending['Code']}).status_code == 401
@@ -421,7 +423,8 @@ def test_tv_camel_case_quick_connect_and_playback_requests(api):
     assert c.post('/jellyfin/Users/AuthenticateWithQuickConnect',json={'secret':pending['Secret']}).status_code==401
 
 
-def test_kotlin_tv_startup_and_playback_contract(api):
+@pytest.mark.parametrize("auth_header", ["X-Emby-Authorization", "Authorization"])
+def test_kotlin_tv_startup_and_playback_contract(api, auth_header):
     """Kotlin deserialization requires fields that the JavaScript SDK tolerates omitting."""
     from pathlib import Path
     from uuid import UUID
@@ -460,7 +463,28 @@ def test_kotlin_tv_startup_and_playback_contract(api):
         else:
             raise AssertionError(f'Unhandled SDK type: {kind}')
 
-    login = connect(api)
+    c = api.client
+    device = {auth_header: 'MediaBrowser Client="Jellyfin Android TV", Device="Fire TV Stick", DeviceId="fire-tv-test-device", Version="0.19.10"'}
+    pending = c.post('/jellyfin/QuickConnect/Initiate', headers=device)
+    assert pending.status_code == 200
+    assert 'no-store' in pending.headers['cache-control']
+    pending = pending.json()
+    # Android TV 0.19.10 uses Kotlin SDK 1.7.1. Missing required device/app
+    # fields raise a decode error and the client disables Quick Connect.
+    validate(pending, 'QuickConnectResult')
+    assert {key: pending[key] for key in ('DeviceId', 'DeviceName', 'AppName', 'AppVersion')} == {
+        'DeviceId': 'fire-tv-test-device', 'DeviceName': 'Fire TV Stick',
+        'AppName': 'Jellyfin Android TV', 'AppVersion': '0.19.10'}
+    assert pending['Authenticated'] is False
+    assert c.post('/jellyfin/Users/AuthenticateWithQuickConnect', json={'Secret': pending['Secret']}).status_code == 401
+    polled = c.get('/jellyfin/QuickConnect/Connect', params={'secret': pending['Secret']}).json()
+    validate(polled, 'QuickConnectResult')
+    assert polled == pending
+    assert c.post('/api/media-center/jellyfin-account/authorize', json={'code': pending['Code']}).status_code == 200
+    approved = c.get('/jellyfin/QuickConnect/Connect', params={'secret': pending['Secret']}).json()
+    validate(approved, 'QuickConnectResult')
+    assert approved == {**pending, 'Authenticated': True}
+    login = c.post('/jellyfin/Users/AuthenticateWithQuickConnect', json={'Secret': pending['Secret']}).json()
     validate(login, 'AuthenticationResult')
     c, h = api.client, headers(login)
     for path, kind in [('/System/Info/Public', 'PublicSystemInfo'),

@@ -92,6 +92,7 @@
     "kotlin/jellyfin-model/src/commonMain/kotlin-generated/org/jellyfin/sdk/model/api/Video3dFormat.kt": "9f864ab8bfcdee8788aa84ddf8c0b6581fa84ef42957688f10ce5a2428ed0be7",
     "kotlin/jellyfin-model/src/commonMain/kotlin-generated/org/jellyfin/sdk/model/api/VideoRange.kt": "a264b321f517282a04f6f06555e5270bdf073dd9dce1b4801f43ce18c8463476",
     "kotlin/jellyfin-model/src/commonMain/kotlin-generated/org/jellyfin/sdk/model/api/VideoRangeType.kt": "a6c4a4fdd30728ea9ef0eb9e8e31292188a86552c0c3dca8b33e2709ce60ad1e",
-    "kotlin/jellyfin-model/src/commonMain/kotlin-generated/org/jellyfin/sdk/model/api/VideoType.kt": "42b2ca0a8cca13119b020d158389ee7459c02079a2c029ba1b441604835db09f"
+    "kotlin/jellyfin-model/src/commonMain/kotlin-generated/org/jellyfin/sdk/model/api/VideoType.kt": "42b2ca0a8cca13119b020d158389ee7459c02079a2c029ba1b441604835db09f",
+    "kotlin/jellyfin-model/src/commonMain/kotlin-generated/org/jellyfin/sdk/model/api/QuickConnectResult.kt": "3ed8adedefe7a5bb04e8b60c7265ad6361b0363d3c1216ba933d422b8e8ede25"
   }
 }
