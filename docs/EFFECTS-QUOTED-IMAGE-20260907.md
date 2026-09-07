@@ -28,3 +28,10 @@ Validation:
   The unchanged backend already passed 7811 tests plus 519 subtests in the preceding
   release. The installer pin now references audited desktop 1.0.1498; all 24
   installer/retention checks pass.
+
+Published-artifact follow-up: Android 2218 and desktop 1.0.1499 contained the exact
+reviewed app.js bytes and each passed all 15 Effects runtime cases. The public
+APK matched the GitHub artifact SHA256
+`51a75d31c35b8d966b0125561177fea461ff2b7d6d25abb4dc726e84dae49fdd`.
+Android's published bundle also passed all 12 picker layout cases. Workflow
+34081330539 completed 93 Android emulator tests with zero failures/errors/skips.
