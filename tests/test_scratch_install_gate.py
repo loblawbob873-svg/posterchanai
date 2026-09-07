@@ -385,8 +385,15 @@ def test_the_installed_machine_is_asked_whether_it_can_still_update():
     that finishes in that state hands somebody a computer whose first `emerge -uDN @world` refuses,
     while the desktop comes up perfectly."""
     names = [n for n, _ in MOD.PORTAGE_CHECKS]
-    assert names == ["overlay", "sync", "world"]
+    assert names == ["repos", "overlay", "sync", "world"]
     cmds = dict(MOD.PORTAGE_CHECKS)
+    # An install talks to gentoo.poster.place and nowhere else, and `emerge --sync` cannot say so —
+    # a tree repointed at rsync.gentoo.org syncs perfectly. The check reads the installed system's
+    # own config, and COUNTS the URIs before judging them: a deleted posterchan.conf leaves nothing
+    # for a grep-and-complain check to complain about, which would read as success.
+    assert "gentoo.poster.place" in cmds["repos"]
+    assert "GENTOO_MIRRORS" in cmds["repos"] and "sync-uri" in cmds["repos"]
+    assert "-lt 4" in cmds["repos"], "a missing repository would pass as 'nothing foreign found'"
     # Pretend only: a gate that starts compiling has stopped being a gate.
     assert "-uDNp" in cmds["world"], "the world check would BUILD, not resolve"
     assert "/var/db/repos/posterchan" in cmds["overlay"]
