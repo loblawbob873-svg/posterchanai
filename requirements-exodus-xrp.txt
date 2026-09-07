@@ -1,0 +1,3 @@
+# Install only in the dedicated offline XRP SDK venv, never the app environment.
+# xrpl-py requires websockets<16, while the app's signer uses websockets16.
+xrpl-py==5.1.0

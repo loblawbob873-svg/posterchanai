@@ -275,4 +275,4 @@ bip_utils>=2.9.3
 eth-account>=0.13
 # Native SOL/XRP transaction encoding and signatures use maintained chain SDKs.
 solders==0.29.0
-xrpl-py==5.1.0
+# XRP has its own offline SDK environment; see requirements-exodus-xrp.txt.

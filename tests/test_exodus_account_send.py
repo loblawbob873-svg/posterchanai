@@ -1,6 +1,9 @@
 """Decode real SDK signatures against controlled RPC fixtures; never use live funds."""
 import base64
 import json
+import os
+from pathlib import Path
+import subprocess
 
 import httpx
 import pytest
@@ -14,6 +17,30 @@ def anyio_backend():
 
 
 KEY = bytes.fromhex('01' * 32)
+
+
+def xrp_reference(operation, value):
+    """Decode/verify in the real isolated SDK; never import its dependency graph into the app."""
+    python = os.environ.get('EXODUS_XRP_PYTHON', '/usr/local/libexec/pc-exodus/xrp-venv/bin/python')
+    if not Path(python).is_file():
+        pytest.skip('Set EXODUS_XRP_PYTHON to the installed isolated XRP SDK for integration tests')
+    code = '''
+import json,sys
+from xrpl.core.binarycodec import decode,encode_for_signing
+from xrpl.core.keypairs import is_valid_message
+from xrpl.models.transactions import Payment
+from xrpl.core.addresscodec import classic_address_to_xaddress
+operation,value=json.load(sys.stdin)
+if operation=='decode':
+ payment=decode(value)
+ assert is_valid_message(bytes.fromhex(encode_for_signing(payment)),bytes.fromhex(payment['TxnSignature']),payment['SigningPubKey'])
+ result={'payment':payment,'hash':Payment.from_xrpl(payment).get_hash()}
+else: result=classic_address_to_xaddress(*value)
+print(json.dumps(result))
+'''
+    result = subprocess.run([python,'-I','-c',code],input=json.dumps([operation,value]),
+                            capture_output=True,text=True,check=True,timeout=10)
+    return json.loads(result.stdout)
 
 
 def sol_fixture(monkeypatch, *, overrides=None, lost_ack=False):
@@ -96,15 +123,10 @@ async def test_solana_lost_ack_preserves_locally_signed_identity(monkeypatch):
 
 
 def xrp_fixture(monkeypatch, *, overrides=None, target_flags=0, lost_ack=False):
-    from bip_utils import Secp256k1PrivateKey
-    from xrpl.constants import CryptoAlgorithm
-    from xrpl.core.binarycodec import decode, encode_for_signing
-    from xrpl.core.keypairs import is_valid_message
-    from xrpl.models.transactions import Payment
-    from xrpl.wallet import Wallet
-    public = Secp256k1PrivateKey.FromBytes(KEY).PublicKey().RawCompressed().ToHex().upper()
-    source = Wallet(public_key=public, private_key='00' + KEY.hex(), algorithm=CryptoAlgorithm.SECP256K1).address
+    from bip_utils import Secp256k1PrivateKey, XrpAddrEncoder
+    source = XrpAddrEncoder.EncodeKey(Secp256k1PrivateKey.FromBytes(KEY).PublicKey())
     target = 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh'
+    xrp_reference('xaddress', [target, None, False])  # Skip explicitly if SDK environment is absent.
     calls, checkpoints, raw = [], [], []
     values = {'server_info': {'info': {'network_id': 0, 'validated_ledger': {
         'seq': 1000, 'age': 1, 'reserve_base_xrp': 1, 'reserve_inc_xrp': 0.2}}},
@@ -113,10 +135,9 @@ def xrp_fixture(monkeypatch, *, overrides=None, target_flags=0, lost_ack=False):
     def handle(request):
         call = json.loads(request.content); method = call['method']; calls.append(method)
         if method == 'submit':
-            payment = decode(call['params'][0]['tx_blob']); raw.append(payment)
-            assert is_valid_message(bytes.fromhex(encode_for_signing(payment)),
-                                    bytes.fromhex(payment['TxnSignature']), payment['SigningPubKey'])
-            tx_hash = Payment.from_xrpl(payment).get_hash()
+            decoded = xrp_reference('decode', call['params'][0]['tx_blob'])
+            payment = decoded['payment']; raw.append(payment)
+            tx_hash = decoded['hash']
             assert checkpoints[0][0] == tx_hash
             if lost_ack:
                 raise httpx.ReadTimeout('lost acknowledgement', request=request)
@@ -184,16 +205,16 @@ async def test_xrp_lost_ack_retains_signed_transaction_hash(monkeypatch):
     assert checkpoints[0][0] in str(error.value) and calls.count('submit') == 1
 
 
-def test_xrp_embedded_tags_and_testnet_addresses():
-    from xrpl.core.addresscodec import classic_address_to_xaddress
+@pytest.mark.anyio
+async def test_xrp_embedded_tags_and_testnet_addresses():
     classic = 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh'
-    xaddress = classic_address_to_xaddress(classic, 123, False)
-    assert A.xrp_recipient(xaddress) == (classic, 123)
-    assert A.xrp_recipient(xaddress, 123) == (classic, 123)
+    xaddress = xrp_reference('xaddress', [classic, 123, False])
+    assert await A.xrp_recipient(xaddress) == (classic, 123)
+    assert await A.xrp_recipient(xaddress, 123) == (classic, 123)
     with pytest.raises(S.SendRefused, match='does not match'):
-        A.xrp_recipient(xaddress, 124)
+        await A.xrp_recipient(xaddress, 124)
     with pytest.raises(S.SendRefused, match='mainnet'):
-        A.xrp_recipient(classic_address_to_xaddress(classic, 123, True))
+        await A.xrp_recipient(xrp_reference('xaddress', [classic, 123, True]))
 
 
 @pytest.mark.anyio

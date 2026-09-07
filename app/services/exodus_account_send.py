@@ -123,37 +123,22 @@ async def xrp_server(client, endpoint):
     return info
 
 
-def xrp_recipient(address, destination_tag=None):
-    from xrpl.core.addresscodec import is_valid_classic_address, is_valid_xaddress, xaddress_to_classic_address
+async def xrp_recipient(address, destination_tag=None):
+    from app.services.exodus_xrp_sdk import call
     if destination_tag is not None:
         _uint(destination_tag, 2**32 - 1)
-    if is_valid_xaddress(address):
-        classic, embedded_tag, testnet = xaddress_to_classic_address(address)
-        if testnet:
-            raise S.SendRefused('Use an XRP mainnet address')
-        if destination_tag is not None and embedded_tag is not None and destination_tag != embedded_tag:
-            raise S.SendRefused('The destination tag does not match this XRP address')
-        return classic, embedded_tag if embedded_tag is not None else destination_tag
-    if not is_valid_classic_address(address):
-        raise S.SendRefused('Enter a valid XRP address')
-    return address, destination_tag
+    result = await call({'operation':'recipient', 'address':address, 'tag':destination_tag})
+    return result['address'], result['tag']
 
 
 async def send_xrp(*, private_key, to, units, endpoint, from_address, before_broadcast, destination_tag=None):
     from bip_utils import Secp256k1PrivateKey
-    from xrpl.constants import CryptoAlgorithm
-    from xrpl.core.binarycodec import encode
-    from xrpl.models.transactions import Payment
-    from xrpl.transaction import sign
-    from xrpl.wallet import Wallet
+    from app.services.exodus_xrp_sdk import call
 
     if not _uint(units, 100_000_000_000_000_000):
         raise S.SendRefused('The XRP amount must be greater than zero')
-    target, tag = xrp_recipient(to, destination_tag)
+    target, tag = await xrp_recipient(to, destination_tag)
     public = Secp256k1PrivateKey.FromBytes(private_key).PublicKey().RawCompressed().ToHex().upper()
-    wallet = Wallet(public_key=public, private_key='00' + private_key.hex().upper(), algorithm=CryptoAlgorithm.SECP256K1)
-    if wallet.address != from_address:
-        raise S.SendRefused('The sender address does not match the selected wallet')
     async with S._client(S.RPC_TIMEOUT) as client:
         info = await xrp_server(client, endpoint)
         ledger = info['validated_ledger']
@@ -183,10 +168,15 @@ async def send_xrp(*, private_key, to, units, endpoint, from_address, before_bro
                 raise S.SendRefused('The XRP recipient could not be verified')
             if _uint(data.get('Flags'), 2**32 - 1) & XRP_REQUIRE_DEST_TAG and tag is None:
                 raise S.SendRefused('This XRP recipient requires a destination tag')
-        payment = Payment(account=from_address, destination=target, amount=str(units), fee=str(fee), sequence=sequence,
-                          last_ledger_sequence=current_ledger + 4, destination_tag=tag)
-        signed = sign(payment, wallet)
-        encoded, tx_hash = encode(signed.to_xrpl()), signed.get_hash()
+        payment = {'TransactionType':'Payment', 'Account':from_address, 'Destination':target, 'Amount':str(units),
+                   'Fee':str(fee), 'Sequence':sequence, 'LastLedgerSequence':current_ledger+4}
+        if tag is not None:
+            payment['DestinationTag'] = tag
+        signed = await call({'operation':'sign','private':private_key.hex().upper(),'public':public,'payment':payment})
+        encoded, tx_hash = signed.get('blob'), signed.get('hash')
+        if (signed.get('address') != from_address or not isinstance(encoded,str) or not re.fullmatch(r'[0-9A-F]+', encoded)
+                or not isinstance(tx_hash,str) or not re.fullmatch(r'[0-9A-F]{64}', tx_hash)):
+            raise S.SendRefused('XRP signing returned an unreadable transaction')
     await before_broadcast(tx_hash, sequence, xrp={'firstLedger': current_ledger, 'lastLedger': current_ledger + 4})
     try:
         async with S._client(S.BROADCAST_TIMEOUT) as client:
