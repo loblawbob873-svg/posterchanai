@@ -58,3 +58,32 @@ backed up privately under /tmp/pc-movies-sharing-before-20260907.json. A new
 owner-save -> recipient web/TV access -> unrelated user denied -> revocation
 round-trip passes for both local and NAS-proxied libraries (two tests). This does
 not infer that an unsigned browser is logged in or bypass the account permission.
+
+## Login-response follow-up
+
+The first deployment fixed pairing initiation, but a physical TV attempt exposed
+a second required field missing from AuthenticationResult.User:
+HasConfiguredEasyPassword. Approval and redemption both returned200, after which
+the TV failed to decode UserDto; repeated approval attempts then correctly
+returned404 because the code had already been consumed.
+
+UserDto now supplies HasConfiguredEasyPassword:false. The manual contract had
+incorrectly marked this field optional; its flag and the other two required
+password-status boolean flags are corrected. Actual compiled serializers from
+both SDK versions were audited across86 models and597 fields. Other fixture
+limitations and version differences are retained in the local audit report; no
+additional emitted startup blocker was demonstrated.
+
+The regression suite now runs actual official JVM SDK serializers against every
+response in the existing full startup/browsing/playback contract, with both
+authorization-header spellings and local/NAS-proxied libraries. Explicit
+JELLYFIN_TEST_KOTLIN_MODELS configuration is required; absent jars are a reported
+skip, not a schema-only pass. ApiModelDecode.java uses the SDK's own JSON settings.
+
+Final affected suite:85 passed,4 skipped in108 seconds, with BOTH official Kotlin
+SDK versions and the current official JavaScript SDK enabled. The remaining
+skips require external Roku source/interpreter fixtures. Evidence:
+/tmp/pc-firetv-full-sdk-regressions.log. This follows the full7770-test backend
+run above; the only application follow-up is the additional response boolean.
+The actual old authentication shape fails MissingFieldException under both JVM
+SDKs; the corrected shape passes. A new TV code is required after deployment.

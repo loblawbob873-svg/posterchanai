@@ -227,7 +227,8 @@ def session_dto(session, user):
 
 def user_dto(user):
     return {'Id': account_id(user), 'Name': user.username, 'ServerId': SERVER_ID,
-            'HasPassword': False, 'HasConfiguredPassword': False, 'EnableAutoLogin': False,
+            'HasPassword': False, 'HasConfiguredPassword': False, 'HasConfiguredEasyPassword': False,
+            'EnableAutoLogin': False,
             'Configuration': {'PlayDefaultAudioTrack': True, 'SubtitleMode': 'None',
                               'EnableNextEpisodeAutoPlay': True, 'OrderedViews': [], 'MyMediaExcludes': [],
                               'DisplayMissingEpisodes': False, 'GroupedFolders': [], 'DisplayCollectionsView': False,

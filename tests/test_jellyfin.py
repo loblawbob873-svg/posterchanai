@@ -424,14 +424,36 @@ def test_tv_camel_case_quick_connect_and_playback_requests(api):
 
 
 @pytest.mark.parametrize("auth_header", ["X-Emby-Authorization", "Authorization"])
-def test_kotlin_tv_startup_and_playback_contract(api, auth_header):
+@pytest.mark.parametrize("sdk_version", [None, "1.7.1", "1.8.12"], ids=["schema", "sdk-1.7.1", "sdk-1.8.12"])
+def test_kotlin_tv_startup_and_playback_contract(api, auth_header, sdk_version, tmp_path):
     """Kotlin deserialization requires fields that the JavaScript SDK tolerates omitting."""
     from pathlib import Path
     from uuid import UUID
     from datetime import datetime
     contract = json.loads((Path(__file__).parent / 'jellyfin/kotlin_contract.json').read_text())['models']
+    decoder = None
+    if sdk_version:
+        import os
+        import subprocess
+        model_root = os.environ.get('JELLYFIN_TEST_KOTLIN_MODELS')
+        if not model_root:
+            pytest.skip('Set JELLYFIN_TEST_KOTLIN_MODELS to the official JVM SDK/runtime jar directories')
+        jars = sorted((Path(model_root) / sdk_version).glob('*.jar'))
+        assert any(p.name == 'jellyfin-model-jvm-' + sdk_version + '.jar' for p in jars)
+        # The SDK declares stdlib 2.2.10; the serialization dependency also names 2.2.0.
+        # Match Maven/Gradle's selected newer runtime instead of loading both copies.
+        classpath = os.pathsep.join(str(p) for p in jars if p.name != 'kotlin-stdlib-2.2.0.jar')
+        compiled = subprocess.run(['javac', '-cp', classpath, '-d', str(tmp_path),
+            str(Path(__file__).parent / 'jellyfin/ApiModelDecode.java')], capture_output=True, text=True, timeout=45)
+        assert compiled.returncode == 0, compiled.stderr
+        decoder = ['java', '-cp', str(tmp_path) + os.pathsep + classpath, 'ApiModelDecode']
 
     def validate(value, kind, path='$'):
+        if decoder and kind in contract:
+            decoded = subprocess.run(decoder + [kind], input=json.dumps(value),
+                                     capture_output=True, text=True, timeout=20)
+            assert decoded.returncode == 0, decoded.stderr
+            return
         if kind.endswith('?'):
             if value is None:
                 return
