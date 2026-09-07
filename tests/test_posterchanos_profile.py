@@ -750,6 +750,22 @@ class PosterChanOSProfile(unittest.TestCase):
                 self.assertNotIn("`", msg,
                                  f"os/gentoo.sh:{i} runs a command inside a message: {line.strip()[:90]}")
 
+    def test_the_measured_abi_packages_are_asked_for_up_front(self):
+        """ncurses and harfbuzz get abi_x86_32 before the emerge, not after a repair pass.
+
+        Steam leaves readline installed with abi_x86_32, which requires ncurses[abi_x86_32]; the
+        ncurses upgrade then resolves 64-only because nothing asks it for the other ABI, and portage
+        declines that upgrade permanently. Runs 9 and 10 both ended with exactly these two skipped.
+        The generic sweep still covers whatever a future Steam bump reaches — this makes the two we
+        have measured build correctly the first time instead of being repaired afterwards."""
+        steam = self._code(self._fn("installSteam"))
+        self.assertIn("sys-libs/ncurses abi_x86_32", steam)
+        self.assertIn("media-libs/harfbuzz abi_x86_32", steam)
+        self.assertIn("media-libs/mesa vulkan", steam, "the Vulkan flag was dropped")
+        # The sweep is the general answer and must not be replaced by the named list.
+        build = self._code(self._fn("buildGentoo"))
+        self.assertIn("posterchan-abi", build, "the generic ABI sweep was removed")
+
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""

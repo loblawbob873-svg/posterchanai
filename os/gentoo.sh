@@ -2304,7 +2304,22 @@ installSteam() {
 	# gui-apps/wlr-randr already lives), which is served from gentoo.poster.place -- so both this
 	# command and an ordinary install talk to one host.
 	mkdir -p /etc/portage/package.use
-	printf '%s\n' 'media-libs/mesa vulkan' > /etc/portage/package.use/posterchan-steam
+	# THE TWO WE HAVE MEASURED, NAMED, so the upgrade is BUILT right the first time.
+	#
+	# Steam's chain leaves readline installed with abi_x86_32, which requires ncurses[abi_x86_32];
+	# the ncurses upgrade then resolves 64-only because nothing asks it for the other ABI, and
+	# portage declines that one upgrade for ever. Same for harfbuzz. Runs 9 and 10 both ended with
+	# exactly these two skipped, on a machine that was otherwise green -- and a package that can
+	# never be upgraded by `emerge -uDN @world` is a security update that silently does not arrive.
+	#
+	# The sweep in buildGentoo stays and is still the general answer: it reads whatever portage
+	# reports as skipped and gives it the ABI, so a future Steam bump that reaches different
+	# packages is covered without anybody editing a list. These two are named as well because they
+	# are measured, and asking for the right ABI up front is better than building the wrong thing,
+	# noticing, and rebuilding -- the sweep becomes the backstop rather than the mechanism.
+	printf '%s\n' 'media-libs/mesa vulkan' \
+		'sys-libs/ncurses abi_x86_32' \
+		'media-libs/harfbuzz abi_x86_32' > /etc/portage/package.use/posterchan-steam
 	mkdir -p /etc/portage/package.license
 	echo 'games-util/steam-launcher steam' >/etc/portage/package.license/posterchan-steam
 	emerge --autounmask-write games-util/steam-launcher media-libs/vulkan-loader dev-util/vulkan-tools || true
