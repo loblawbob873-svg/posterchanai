@@ -18,6 +18,10 @@ public class NotificationCompat {
   }
 
   public static class Style { }
+  public static class CallStyle extends Style {
+    public static CallStyle forIncomingCall(Person person, PendingIntent reject, PendingIntent answer) { return new CallStyle(); }
+    public static CallStyle forOngoingCall(Person person, PendingIntent hangup) { return new CallStyle(); }
+  }
 
   /** A notification action, and (for a reply box) the RemoteInput attached to it. */
   public static class Action {

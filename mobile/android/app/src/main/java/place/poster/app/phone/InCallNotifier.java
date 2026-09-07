@@ -9,6 +9,7 @@ import android.os.Build;
 import android.telecom.Call;
 
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.Person;
 
 import place.poster.app.R;
 import place.poster.app.sms.PhoneBook;
@@ -80,11 +81,16 @@ public final class InCallNotifier {
         if (nm == null || call == null) return;
 
         int state = PcInCallService.stateOf(call);
-        boolean ringing = CallRules.canAnswer(state);
         String number = PcInCallService.numberOf(call);
         String who = PhoneBook.label(ctx, number);
         if (who.isEmpty()) who = ctx.getString(R.string.tel_unknown);
 
+        try { nm.notify(ID, build(ctx, state, who)); } catch (Throwable ignored) { }
+    }
+
+    /** Build separately so device tests exercise the actual OS notification and tap intent. */
+    static android.app.Notification build(Context ctx, int state, String who) {
+        boolean ringing = CallRules.canAnswer(state);
         Intent open = new Intent(ctx, InCallActivity.class)
                 .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent screen = PendingIntent.getActivity(ctx, 0, open, immutable());
@@ -103,15 +109,18 @@ public final class InCallNotifier {
 
         if (ringing) {
             b.setFullScreenIntent(screen, true);
-            b.addAction(R.drawable.ic_pc_call, ctx.getString(R.string.tel_answer),
-                        action(ctx, InCallReceiver.ACTION_ANSWER));
-            b.addAction(R.drawable.ic_pc_close, ctx.getString(R.string.tel_reject),
-                        action(ctx, InCallReceiver.ACTION_REJECT));
+            b.setStyle(NotificationCompat.CallStyle.forIncomingCall(
+                    new Person.Builder().setName(who).build(),
+                    action(ctx, InCallReceiver.ACTION_REJECT),
+                    action(ctx, InCallReceiver.ACTION_ANSWER)));
         } else {
-            b.addAction(R.drawable.ic_pc_close, ctx.getString(R.string.tel_hang_up),
-                        action(ctx, InCallReceiver.ACTION_HANG_UP));
+            // Android 14 permits dismissing generic ongoing cards. CallStyle retains the
+            // active call's return path while the user works in another app.
+            b.setStyle(NotificationCompat.CallStyle.forOngoingCall(
+                    new Person.Builder().setName(who).build(),
+                    action(ctx, InCallReceiver.ACTION_HANG_UP)));
         }
-        try { nm.notify(ID, b.build()); } catch (Throwable ignored) { }
+        return b.build();
     }
 
     /** Redraw for the call currently on top, or take it down when there is none. */

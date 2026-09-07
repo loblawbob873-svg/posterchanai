@@ -62,6 +62,8 @@ public class DialerActivity extends PcActivity {
     /* KEYPAD FIRST, and it is the default. A phone app opens on the thing you came to do. */
     private static final int TAB_KEYPAD = 0, TAB_RECENT = 1, TAB_CONTACTS = 2, TAB_VOICEMAIL = 3;
 
+    private TextView returnToCall;
+    private boolean callRefreshVisible;
     private TextView numberView, notice, empty, tPad, tRecent, tContacts, tVm;
     private LinearLayout padWrap;
     private ListView list;
@@ -72,6 +74,29 @@ public class DialerActivity extends PcActivity {
     private String typed = "";
     private int tab = TAB_KEYPAD;
     private final Handler main = new Handler(Looper.getMainLooper());
+
+    // This fallback stays available even if Android notification permission/channel is disabled.
+    // Only observe while Phone is visible; do not take InCallActivity's service watcher away.
+    private final Runnable refreshCall = new Runnable() {
+        @Override public void run() {
+            if (!callRefreshVisible) return;
+            updateReturnToCall();
+            main.postDelayed(this, 1000);
+        }
+    };
+
+    void updateReturnToCall() {
+        PcInCallService service = PcInCallService.INSTANCE;
+        boolean live = service != null && !service.liveCalls().isEmpty();
+        if (returnToCall != null) returnToCall.setVisibility(live ? View.VISIBLE : View.GONE);
+    }
+
+    private void returnToCall() {
+        PcInCallService service = PcInCallService.INSTANCE;
+        if (service == null || service.liveCalls().isEmpty()) { updateReturnToCall(); return; }
+        startActivity(new Intent(this, InCallActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+    }
 
     /** Open this person in PosterChan's Contacts screen, not in a second platform contacts UI. */
     private void openPosterContact(Row r) {
@@ -96,6 +121,8 @@ public class DialerActivity extends PcActivity {
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         setContentView(R.layout.tel_dialer);
+        returnToCall = (TextView) findViewById(R.id.pc_dl_return_call);
+        returnToCall.setOnClickListener(v -> returnToCall());
         numberView = (TextView) findViewById(R.id.pc_dl_number);
         notice = (TextView) findViewById(R.id.pc_dl_notice);
         empty = (TextView) findViewById(R.id.pc_dl_empty);
@@ -199,11 +226,20 @@ public class DialerActivity extends PcActivity {
     @Override
     protected void onStart() {
         super.onStart();
+        callRefreshVisible = true;
+        main.removeCallbacks(refreshCall);
+        refreshCall.run();
         applySkin();
         reload();
         new Thread(new Runnable() {
             @Override public void run() { CallLogStore.markSeen(DialerActivity.this); }
         }, "pc-tel-seen").start();
+    }
+
+    @Override protected void onStop() {
+        callRefreshVisible = false;
+        main.removeCallbacks(refreshCall);
+        super.onStop();
     }
 
     @Override protected void onThemeChanged() { applySkin(); }
@@ -221,6 +257,8 @@ public class DialerActivity extends PcActivity {
         Skin.glow(numberView, pal);
         notice.setBackground(Skin.ghost(this, pal, pal.amber, false));
         notice.setTextColor(pal.text);
+        returnToCall.setBackground(Skin.pill(this, pal, pal.green, true));
+        returnToCall.setTextColor(0xFF0B1A10);
         empty.setTextColor(pal.muted);
         search.setBackground(Skin.panel(this, pal));
         search.setTextColor(pal.text);

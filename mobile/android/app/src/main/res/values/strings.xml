@@ -174,4 +174,5 @@
     <string name="tel_copy_number">Copy number</string>
     <string name="tel_text_number">Send a text</string>
     <string name="sms_notifications_disabled">Text notifications are disabled. Tap to enable alerts.</string>
+    <string name="tel_return_call">Return to call</string>
 </resources>

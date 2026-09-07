@@ -35,6 +35,21 @@
             android:contentDescription="@string/sms_title" />
     </LinearLayout>
 
+    <TextView
+        android:id="@+id/pc_dl_return_call"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="8dp"
+        android:padding="12dp"
+        android:gravity="center"
+        android:text="@string/tel_return_call"
+        android:textStyle="bold"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
+
     <EditText
         android:id="@+id/pc_dl_search"
         android:layout_width="match_parent"
