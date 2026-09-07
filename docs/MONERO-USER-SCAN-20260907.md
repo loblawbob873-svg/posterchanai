@@ -21,4 +21,9 @@ Validation before deployment:
 - Existing wallet send and responsive-layout checks: 68 passed in 115.77s.
 - Independent review caught and verified the stale-session cleanup correction;
   no remaining scanner blocker was found.
-- Full client confirmation and published-bundle checks are in progress.
+- Generated Android and desktop bundles each passed all 36 combined auto-mute,
+  payment and scanner cases (79.39s and 79.36s).
+- Full client confirmation: 3528 passed, 1 skipped, 121 subtests in 957.06s.
+  The unchanged backend passed 7811 tests and 519 subtests in the preceding
+  release; its Android emulator run passed all 93 native tests.
+- Published-bundle checks follow deployment.
