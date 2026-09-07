@@ -24,5 +24,7 @@ Validation:
   as 754×1200 PNG images (524032 bytes).
 - Independent read-only review found no material blockers and confirmed all 15
   runtime scenarios. Syntax and whitespace checks pass.
-- Full client validation is running; the unchanged backend already passed 7811 tests
-  plus 519 subtests in the preceding release.
+- Full client validation passed: **3481 tests, 1 skip, 121 subtests in 878.78s**.
+  The unchanged backend already passed 7811 tests plus 519 subtests in the preceding
+  release. The installer pin now references audited desktop 1.0.1498; all 24
+  installer/retention checks pass.
