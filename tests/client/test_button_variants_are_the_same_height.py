@@ -55,9 +55,11 @@ def heights(size_class="small", width=1280):
     html = f"""<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
     <style>html,body{{margin:0;height:100%}}{CSS}</style>
     <div class="modal-bg"><div class="modal glass"><div class="row">{row}</div></div></div>
-    <pre id="out"></pre><script>requestAnimationFrame(()=>{{
+    <pre id="out"></pre><script>
+      // getBoundingClientRect forces layout. A headless DOM dump need not run an
+      // animation frame, so waiting for one can leave the result empty under load.
       out.textContent=JSON.stringify([...document.querySelectorAll('.btn')].map(b=>({{
-        v:b.className, h:Math.round(b.getBoundingClientRect().height)}})));}});</script>"""
+        v:b.className, h:Math.round(b.getBoundingClientRect().height)}})));</script>"""
     with tempfile.TemporaryDirectory() as td:
         page = Path(td) / "b.html"
         page.write_text(html)
