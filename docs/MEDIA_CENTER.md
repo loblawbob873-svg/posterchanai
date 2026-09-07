@@ -159,7 +159,7 @@ is committed only after every page is saved. Previous changed pages remain in th
 relay as snapshots; they are not copied upstream. Restarting during a scan leaves the
 previous committed catalog intact; rescan to complete the interrupted work.
 
-Current bounds: 100 libraries and 10,000 playable items per library. Subtitle/audio selection and private watch history are supported. Metadata/poster
+Current bounds: 100 libraries and 25,000 playable items per library. Subtitle/audio selection and private watch history are supported. Metadata/poster
 scraping, scheduled scanning, and direct-play/remux optimization are not implemented.
 
 ## Jellyfin apps and Quick Connect

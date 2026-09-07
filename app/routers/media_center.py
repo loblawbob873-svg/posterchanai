@@ -319,6 +319,9 @@ async def run_scan(library):
     try:
         updated = await save_scan(library)
         _scans[library["id"]] = {"state": "complete", "count": updated["count"], "skipped": updated["skipped"]}
+    except media.LibraryLimitError as error:
+        logging.getLogger(__name__).warning("Media Center scan reached its item limit")
+        _scans[library["id"]] = {"state": "failed", "error": str(error)}
     except Exception:
         logging.getLogger(__name__).exception("Media Center scan failed")
         _scans[library["id"]] = {"state": "failed", "error": "Scan failed; check the folder, FFmpeg, and local relay"}
@@ -466,8 +469,8 @@ async def rescan(library_id: str, background: BackgroundTasks, user=Depends(get_
 
 @router.get("/{library_id}/scan")
 async def scan_status(library_id: str, user=Depends(get_media_admin)):
-    await library_for(library_id, media.identity(user), owner=True)
-    return _scans.get(library_id, {"state": "idle"})
+    library = await library_for(library_id, media.identity(user), owner=True)
+    return _scans.get(library_id, {"state": "interrupted" if library.get("scan_incomplete") else "idle"})
 
 
 @router.put("/{library_id}/sharing")

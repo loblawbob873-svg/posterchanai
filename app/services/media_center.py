@@ -344,6 +344,13 @@ def generate_folder_art(root, source, metadata, attempted):
         pass
 
 
+MAX_LIBRARY_ITEMS = 25_000
+
+
+class LibraryLimitError(ValueError):
+    pass
+
+
 def scan(folder, previous=None, on_item=None):
     root = safe_root(folder)
     items, skipped = [], 0
@@ -366,8 +373,8 @@ def scan(folder, previous=None, on_item=None):
                 old = previous.get(relative)
                 if old and old["size"] == stat.st_size and old["mtime_ns"] == stat.st_mtime_ns:
                     items.append(old)
-                    if len(items) > 10000:
-                        raise ValueError("Library limit is 10,000 items; split this folder into libraries")
+                    if len(items) > MAX_LIBRARY_ITEMS:
+                        raise LibraryLimitError(f"Library limit is {MAX_LIBRARY_ITEMS:,} items; split this folder into libraries")
                     if on_item:
                         on_item(old)
                     generate_folder_art(root, path, old, artwork_attempted)
@@ -376,13 +383,13 @@ def scan(folder, previous=None, on_item=None):
                 items.append({"id": hashlib.sha256(relative.encode()).hexdigest()[:32], "path": relative,
                               "name": path.stem, "folder": path.parent.relative_to(root).as_posix(),
                               "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, **metadata})
-                if on_item and len(items) <= 10000:
+                if on_item and len(items) <= MAX_LIBRARY_ITEMS:
                     on_item(items[-1])
                 generate_folder_art(root, path, metadata, artwork_attempted)
             except (ValueError, OSError, subprocess.SubprocessError):
                 skipped += 1
-            if len(items) > 10000:
-                raise ValueError("Library limit is 10,000 items; split this folder into libraries")
+            if len(items) > MAX_LIBRARY_ITEMS:
+                raise LibraryLimitError(f"Library limit is {MAX_LIBRARY_ITEMS:,} items; split this folder into libraries")
     items.sort(key=lambda item: (natural(item["folder"]), natural(item["path"])))
     return items, skipped
 

@@ -994,3 +994,58 @@ def test_unreadable_subtree_does_not_replace_committed_catalog(api, monkeypatch)
     assert client.post('/api/media-center/abc/scan').status_code == 200
     assert docs['library:abc']['pages'] == pages
     assert client.get('/api/media-center/abc/scan').json()['state'] == 'failed'
+
+
+def test_large_rescan_finishes_and_removes_moved_deleted_entries(api, monkeypatch):
+    client, docs, user, root = api
+    seed(docs, root)
+    monkeypatch.setattr(media, 'probe', lambda path: {'duration': 20, 'video': False})
+    monkeypatch.setattr(media, 'generate_folder_art', lambda *args: None)
+    old = root / 'Old'
+    old.mkdir()
+    # Exceeds the former hard limit that prevented the live library finalizing.
+    for index in range(10_005):
+        (old / f'{index:05}.mp3').write_bytes(b'audio')
+    assert client.post('/api/media-center/abc/scan').status_code == 200
+    assert client.get('/api/media-center/abc/scan').json()['state'] == 'complete'
+    before = client.get('/api/media-center').json()['libraries'][0]['revision']
+    destination = root / 'New'
+    old.rename(destination)
+    (destination / '00000.mp3').unlink()
+    assert client.post('/api/media-center/abc/scan').status_code == 200
+    state = client.get('/api/media-center/abc/scan').json()
+    assert state == {'state': 'complete', 'count': 10_004, 'skipped': 0}
+    library = docs['library:abc']
+    assert library['scan_incomplete'] is False
+    items = asyncio.run(media.catalog(library))
+    assert len(items) == 10_004
+    assert all(item['path'].startswith('New/') for item in items)
+    assert all(item['path'] != 'New/00000.mp3' for item in items)
+    assert [f['name'] for f in client.get('/api/media-center/abc/folders').json()['folders']] == ['New']
+    assert client.get('/api/media-center').json()['libraries'][0]['revision'] != before
+    assert len(library['pages']) > 100
+    assert all(len(json.dumps(value, separators=(',', ':')).encode()) <= 60000 for value in docs.values())
+
+
+def test_scan_limit_reports_actionable_failure_and_preserves_catalog(api, monkeypatch):
+    client, docs, user, root = api
+    original = seed(docs, root)
+    pages = list(original['pages'])
+    monkeypatch.setattr(media, 'MAX_LIBRARY_ITEMS', 2)
+    monkeypatch.setattr(media, 'probe', lambda path: {'duration': 20, 'video': False})
+    monkeypatch.setattr(media, 'generate_folder_art', lambda *args: None)
+    for index in range(3):
+        (root / f'{index}.mp3').write_bytes(b'audio')
+    assert client.post('/api/media-center/abc/scan').status_code == 200
+    state = client.get('/api/media-center/abc/scan').json()
+    assert state['state'] == 'failed'
+    assert 'Library limit is 2 items' in state['error']
+    assert docs['library:abc']['pages'] == pages
+
+
+def test_scan_status_after_restart_reports_saved_incomplete_catalog(api):
+    client, docs, user, root = api
+    seed(docs, root)
+    docs['library:abc']['scan_incomplete'] = True
+    assert client.get('/api/media-center/abc/scan').json() == {'state': 'interrupted'}
+    assert client.get('/api/media-center').json()['libraries'][0]['scan']['state'] == 'interrupted'
