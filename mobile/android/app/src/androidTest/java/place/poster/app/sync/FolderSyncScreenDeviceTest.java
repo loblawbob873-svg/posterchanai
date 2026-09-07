@@ -41,6 +41,17 @@ public final class FolderSyncScreenDeviceTest {
             assertTrue("bundled Folder Sync client never became ready: " + ready,
                     ready.contains("complete|true|true"));
 
+            // Folder Sync now requires verified instance membership. This rendering/cache
+            // fixture has no signer or server: supply the same qualified response used by
+            // the authenticated API, while retaining the real client gate and invalidation.
+            assertTrue("anonymous Folder Sync access was granted", eval(web,
+                    "!!window.PCInstanceAccess&&!PCInstanceAccess.allowed('sync')").equals("true"));
+            assertTrue("qualified Folder Sync fixture was not accepted", eval(web,
+                    "(()=>{const pk='11'.repeat(32);window.__fsMemberProfile={nip05:'device@example.test'};"
+                    + "__PC.viewer=()=>({pubkey:pk,profile:window.__fsMemberProfile,profileKnown:true});"
+                    + "PCInstanceAccess.accept({pubkey:pk,qualified:true,address:'device@example.test'},pk);"
+                    + "return PCInstanceAccess.allowed('sync');})()").equals("true"));
+
             // `fullAt` is deliberately absent: this is the cache shape already-installed APKs have.
             // Before the regression fix, merely painting this established folder called stateS.load,
             // which converted that old cache into a full network read and decrypted every record on
@@ -84,6 +95,9 @@ public final class FolderSyncScreenDeviceTest {
             assertTrue("Folder Sync crashed after its delayed paint/startup work: " + settled,
                     settled.contains("\\\"alive\\\":true") && settled.contains("\\\"view\\\":true")
                     && settled.contains("\\\"card\\\":true") && settled.contains("\\\"posts\\\":0"));
+            assertTrue("removing the profile address retained Folder Sync membership", eval(web,
+                    "(()=>{window.__fsMemberProfile={};return !PCInstanceAccess.allowed('sync');})()")
+                    .equals("true"));
         } finally { scenario.close(); }
     }
 
