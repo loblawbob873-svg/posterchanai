@@ -214,7 +214,8 @@ def qemu_args(disk, iso, kernel, initrd, append, serial_path, code, vars_copy, m
 # Every tool the installer reaches for on the live medium. Asked for by name before the first byte
 # is written, because the alternative is finding out at `mkfs.vfat` -- after the disk has been
 # repartitioned and LUKS-formatted, which is the one state a person cannot simply retry from.
-LIVE_TOOLS = "wipefs parted cryptsetup mkfs.btrfs mkfs.vfat wget chroot blkid findmnt partprobe"
+LIVE_TOOLS = ("wipefs parted cryptsetup mkfs.btrfs mkfs.vfat wget chroot blkid findmnt "
+              "partprobe sha256sum")
 
 
 def install(iso, disk, boot, td, evidence, args, port, password):
@@ -355,10 +356,21 @@ def install(iso, disk, boot, td, evidence, args, port, password):
 
 
 def upload_log(con, port):
-    """Send the build log back to the host. Best effort -- a missing log must not fail a good run."""
+    """Send the build log back, and the per-package build logs with it.
+
+    Best effort -- a missing log must not fail a good run. The PACKAGE logs matter as much as the
+    install log: emerge reports a failure as "Failed to emerge X, Log file: <path>", and that path is
+    inside the guest, under a tmpfs, on a machine that is about to be powered off. Without them a
+    failed run yields two package NAMES and no reason. `gentoo.sh` sets PORTAGE_LOGDIR so they are
+    somewhere that outlives the build directory; this is what carries them out.
+    """
     con.send(f"wget -q --method=PUT --body-file=/tmp/scratch.log "
              f"http://10.0.2.2:{port}/scratch.log -O /dev/null; echo PUT-$?")
     con.expect(r"PUT-\d", 600)
+    con.send("tar czf /tmp/buildlogs.tgz -C /tmp/install/var/log portage 2>/dev/null; "
+             f"wget -q --method=PUT --body-file=/tmp/buildlogs.tgz "
+             f"http://10.0.2.2:{port}/buildlogs.tgz -O /dev/null; echo LOGS-$?")
+    con.expect(r"LOGS-\d", 600)
 
 
 def main():

@@ -13,6 +13,7 @@ from pathlib import Path
 import ast
 import importlib.util
 import re
+import shutil
 import subprocess
 import sys
 
@@ -25,6 +26,7 @@ SRC = GATE.read_text(encoding="utf-8")
 SPEC = importlib.util.spec_from_file_location("scratch_install_vm", GATE)
 MOD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MOD)
+BASH = shutil.which("bash") or "/bin/bash"
 
 
 def run_sh(body, env=None, stdin=""):
@@ -34,7 +36,9 @@ def run_sh(body, env=None, stdin=""):
     4000 lines of shell whose behaviour a regular expression can only guess at.
     """
     script = f'. "{SCRIPT}" help >/dev/null 2>&1\n{body}\n'
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+    # bash by ABSOLUTE path: some checks below hand the script a deliberately narrow PATH, and
+    # looking the interpreter up in that PATH would fail before the script ever ran.
+    return subprocess.run([BASH, "-c", script], capture_output=True, text=True,
                           input=stdin, env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", **(env or {})})
 
 
@@ -313,3 +317,61 @@ def test_opening_an_existing_volume_asks_for_its_passphrase():
     mount = SH[SH.index('elif [ "$1" = "mount" ]') + 10:]
     mount = mount[:mount.index("elif [")]
     assert mount.index("setDevices") < mount.index("readInstallPassword") < mount.index("systemMounts")
+
+
+def test_autounmask_gets_more_than_one_question():
+    """It was asked exactly once — write, apply, emerge — which is enough for a keyword and not for a
+    USE DEPENDENCY CHAIN. `steam-launcher` wants `mesa[abi_x86_32]`; accepting that reveals
+    `libudev[abi_x86_32]`; accepting THAT reveals `systemd[abi_x86_32]`. Each layer is invisible
+    until the one above it is answered, so one pass stops partway and the whole set fails."""
+    body = SH[SH.index("installPackages() {"):SH.index("installFlatpaks() {")]
+    assert "for pass in 1 2 3" in body, "autounmask still gets a single pass"
+    # PRETEND passes. A real merge per pass, with its output silenced so three resolutions of a
+    # 200-package set do not bury the log, makes the install SILENT for its longest phase —
+    # measured, 15 minutes of a frozen log with qemu at 458% CPU, which reads as a hang.
+    loop = body[body.index("for pass in 1 2 3"):body.index("# Visible, and the one that")]
+    assert "emerge -p -uDN $PACKAGES" in loop, "a convergence pass must not merge anything"
+    assert body.index("for pass in 1 2 3") < body.index("if /usr/bin/emerge -uDN $PACKAGES; then"), \
+        "the passes must run before the emerge whose success is being judged"
+    # And a pass that changed nothing ends it: three unconditional resolutions of a 200-package set
+    # is minutes of nothing on every install that never needed them.
+    assert "break" in body[body.index("for pass in 1 2 3"):]
+
+
+def test_the_version_gate_is_not_defeated_by_its_own_missing_tool(tmp_path):
+    """`cmp` is in sys-apps/diffutils, which Gentoo's minimal installcd trims — the medium a
+    from-scratch install runs from. The shell printed `cmp: command not found`, `if !` read that
+    non-zero status as "the files differ", and finalizeInstall refused a complete install with "The
+    target did not receive this PosterChanOS installer version". A gate defeated by its own
+    dependency fails good builds and names the wrong cause."""
+    import os
+    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
+    a.write_text("same"); b.write_text("same"); c.write_text("different")
+
+    def verdict(x, y, path):
+        # PATH is narrowed INSIDE the script: gentoo.sh assigns its own PATH at the top, so an
+        # environment set by the caller is gone by the time any of its functions run.
+        got = run_sh(f'PATH="{path}"; _pc_same_file "{x}" "{y}"; echo "RC=$?"')
+        return got.stdout.strip().splitlines()[-1]
+
+    full = "/usr/bin:/bin"
+    assert verdict(a, b, full) == "RC=0"
+    assert verdict(a, c, full) == "RC=1"
+
+    # The same answers with NO cmp reachable — a directory holding only the fallback hasher.
+    nocmp = tmp_path / "bin"
+    nocmp.mkdir()
+    for tool in ("sha256sum", "cut"):
+        src = shutil.which(tool)
+        if src:
+            os.symlink(src, nocmp / tool)
+    assert shutil.which("cmp", path=str(nocmp)) is None, "the fixture still has cmp"
+    assert verdict(a, b, nocmp) == "RC=0", "identical files read as different without cmp"
+    assert verdict(a, c, nocmp) == "RC=1"
+
+    # And with NOTHING to compare with, "could not tell" is its own answer — never "they differ".
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert verdict(a, b, empty) == "RC=2"
+    gate = SH[SH.index('_pc_same_file "$INSTALLER_SRC"'):]
+    assert "Could not compare" in gate[:900], "a gate that cannot check must say so, not accuse"

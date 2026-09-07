@@ -484,8 +484,14 @@ class PosterChanOSProfile(unittest.TestCase):
         """A first install is exactly when the overlay might not be reachable: no network yet, a
         mirror being rebuilt, a machine provisioned before the repo was published."""
         body = self._fn("posterchanShell")
-        self.assertIn("not reachable", body, "an unreachable overlay leaves no way to install")
+        self.assertIn("the overlay sync failed", body,
+                      "an unreachable overlay leaves no way to install")
         self.assertIn("AppImage", body, "the direct install was removed with the overlay added")
+        # AND IT SAYS WHY. The sync's output used to go to /dev/null, so "the overlay is not
+        # reachable" was printed with no evidence behind it — on a run where that same overlay had
+        # synced perfectly forty minutes earlier, which makes the message misleading, not just thin.
+        self.assertIn("pc-overlay-sync.log", body, "the sync failure leaves no evidence")
+        self.assertIn("FETCHLOG", body, "a failed desktop download leaves no evidence")
 
     def test_overlay_success_is_checked_by_looking_not_by_exit_code(self):
         """A package that installs nothing useful exits 0."""

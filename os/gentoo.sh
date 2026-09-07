@@ -308,6 +308,35 @@ fixSound() {
 	/usr/bin/systemctl --user enable --now pipewire.service
 }
 
+# ARE THESE TWO FILES THE SAME? Asked without depending on a tool that may not be installed.
+#
+# This was `cmp -s`, and the live medium a from-scratch install runs from -- Gentoo's minimal
+# installcd -- HAS NO cmp: it is in sys-apps/diffutils, which that image trims. The shell printed
+# `cmp: command not found`, the `if !` read that non-zero status as "the files differ", and
+# finalizeInstall refused an otherwise complete install with "The target did not receive this
+# PosterChanOS installer version". A release gate defeated by its own missing dependency is worse
+# than no gate: it fails a good build and names the wrong cause.
+#
+# Three answers, not two. 0 identical, 1 different, 2 COULD NOT TELL -- because "I have no tool to
+# compare with" is not "these differ", and the caller has to be able to say which.
+_pc_same_file() {
+	[ -f "$1" ] && [ -f "$2" ] || return 1
+	if command -v cmp >/dev/null 2>&1; then
+		cmp -s "$1" "$2" && return 0
+		return 1
+	fi
+	local h a b
+	for h in sha256sum sha1sum md5sum cksum; do
+		command -v "$h" >/dev/null 2>&1 || continue
+		a="$("$h" <"$1" 2>/dev/null | cut -d' ' -f1)"
+		b="$("$h" <"$2" 2>/dev/null | cut -d' ' -f1)"
+		[ -n "$a" ] || continue
+		[ "$a" = "$b" ] && return 0
+		return 1
+	done
+	return 2
+}
+
 gentooRepo() {
 	echo
 	clear
@@ -573,6 +602,13 @@ configurePortage() {
 	echo "FEATURES=\"$FEATURES\"" >>$TARGET/etc/portage/make.conf
 	echo "EMERGE_DEFAULT_OPTS=\"$EMERGE_DEFAULT_OPTS\"" >>$TARGET/etc/portage/make.conf
 	echo "L10N=\"en en-US\"" >>$TARGET/etc/portage/make.conf
+	# KEEP THE BUILD LOGS, SOMEWHERE THAT SURVIVES THE BUILD. Without PORTAGE_LOGDIR a package's
+	# build.log lives in its temp directory under PORTAGE_TMPDIR -- which is a tmpfs here, and which
+	# portage deletes on success -- so "Failed to emerge X, Log file: /var/tmp/portage/.../build.log"
+	# names a file that is gone by the time anybody looks, and gone entirely once the machine
+	# reboots. An install that failed on two packages then leaves nothing but their names.
+	echo "PORTAGE_LOGDIR=\"/var/log/portage\"" >>$TARGET/etc/portage/make.conf
+	mkdir -p $TARGET/var/log/portage
 	mkdir -p $TARGET/var/tmp/portage
 	mkdir -p $TARGET/etc/portage/env
 
@@ -916,10 +952,17 @@ POSTERCHAN_PROFILE
 		echo -e "\033[1;31mAutomatic LUKS unlock was selected but its key is not in the booted initramfs.\033[0m"
 		return 1
 	fi
-	if ! cmp -s "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"; then
-		echo -e "\033[1;31mThe target did not receive this PosterChanOS installer version — refusing to report success.\033[0m"
-		return 1
-	fi
+	_pc_same_file "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"
+	case $? in
+		0) ;;
+		2)
+			echo -e "\033[1;31mCould not compare the installed gentoo.sh with this one: no cmp, sha256sum,\033[0m"
+			echo -e "\033[1;31msha1sum, md5sum or cksum on this medium — refusing to report success.\033[0m"
+			return 1 ;;
+		*)
+			echo -e "\033[1;31mThe target did not receive this PosterChanOS installer version — refusing to report success.\033[0m"
+			return 1 ;;
+	esac
 	# Recovery needed root while the install was incomplete. At this point boot, accounts and the
 	# graphical shell all succeeded, so disable direct root login. pc-provision-user atomically makes
 	# the first key-backed person the administrator; everybody after them is an ordinary user.
@@ -933,6 +976,28 @@ POSTERCHAN_PROFILE
 
 installPackages() {
 	unmaskPackages
+	# AUTOUNMASK IS A CONVERSATION, NOT ONE QUESTION. It was asked exactly once: write the changes,
+	# apply them, emerge. That is enough when the answer is a keyword, and it is not enough for a USE
+	# DEPENDENCY CHAIN -- `steam-launcher` wants `mesa[abi_x86_32]`, which once resolved wants
+	# `libudev[abi_x86_32]`, which wants `systemd[abi_x86_32]`, and each layer only becomes visible
+	# after the one above it has been accepted. Each pass answers what it can see; three of them is
+	# where the chains here settle, and a pass that changes nothing stops the loop early.
+	# `-p`, SO THE PASSES RESOLVE AND DO NOT MERGE. Without it each pass is a real install of a
+	# 200-package set, and with its output silenced -- which the loop must do, or three resolutions
+	# of that set bury the log -- the install goes SILENT for its longest phase. Measured: 15 minutes
+	# with the log frozen at the same byte count and qemu at 458% CPU, which from outside is
+	# indistinguishable from a hang. A pretend pass writes the same autounmask changes, costs
+	# seconds, and leaves the merging to the one visible emerge below.
+	local pass
+	for pass in 1 2 3; do
+		/usr/bin/emerge -p -uDN $PACKAGES --autounmask --autounmask-write >/dev/null 2>&1
+		# etc-update applies the ._cfg files portage staged. If it had nothing to apply, the previous
+		# pass agreed with this one and another will not help.
+		if ! /usr/sbin/etc-update -q --automode -5 2>&1 | grep -q .; then
+			break
+		fi
+	done
+	# Visible, and the one that actually merges.
 	/usr/bin/emerge -uDN $PACKAGES --autounmask-write
 	/usr/sbin/etc-update -q --automode -5
 	if /usr/bin/emerge -uDN $PACKAGES; then
@@ -1789,12 +1854,19 @@ PROFILE
 	# that installs nothing useful exits 0.
 	if [ -f "${TARGET}/etc/portage/repos.conf/posterchan.conf" ]; then
 		echo -e "\033[1;33mSyncing the PosterChanOS overlay\033[0m"
-		if _in 'emerge --sync posterchan' >/dev/null 2>&1; then
+		# KEPT, NOT DISCARDED. `>/dev/null 2>&1` on all three of these turned "the overlay is not
+		# reachable" into a sentence with no evidence behind it -- and it was printed on a run where
+		# the very same overlay had synced perfectly forty minutes earlier, which makes the message
+		# not merely unhelpful but misleading. The output goes to a file and the tail of it is
+		# printed when the sync fails.
+		if _in 'emerge --sync posterchan' >/tmp/pc-overlay-sync.log 2>&1; then
 			_in 'emerge -uDN --autounmask-write app-misc/posterchanos-shell' >/dev/null 2>&1
 			_in 'etc-update -q --automode -5' >/dev/null 2>&1
 			_in 'emerge -uDN app-misc/posterchanos-shell' >/dev/null 2>&1 || true
 		else
-			echo -e "\033[1;33m  the overlay is not reachable — installing the shell directly\033[0m"
+			echo -e "\033[1;33m  the overlay sync failed — installing the shell directly\033[0m"
+			tail -n 12 "${TARGET}/tmp/pc-overlay-sync.log" 2>/dev/null \
+				|| tail -n 12 /tmp/pc-overlay-sync.log 2>/dev/null || true
 		fi
 		if [ -x "${TARGET}/usr/local/bin/posterchan" ] && [ -d "${TARGET}/opt/posterchan" ]; then
 			echo -e "\033[1;32m  ✓ installed from the overlay\033[0m"
@@ -1832,15 +1904,27 @@ PROFILE
 	mkdir -p ${TARGET}/tmp 2>/dev/null
 	# The release names the tarball with its version, which this cannot know in advance; the API
 	# lists the assets, and one grep finds it without hardcoding a build number.
+	# EVERY curl HERE KEEPS ITS ERROR. `2>/dev/null ... || true` made a failed download report
+	# "could not download the PosterChan desktop" and nothing else -- on a machine where the URLs
+	# answer 200 from anywhere else, which leaves no way to tell a dead release from missing CA
+	# certificates from no `curl` in the target at all. The reason is written down and shown.
+	FETCHLOG=/tmp/pc-desktop-fetch.log
+	: >"$FETCHLOG"
+	if ! command -v curl >/dev/null 2>&1; then
+		echo "curl is not installed here, so the desktop cannot be downloaded" >>"$FETCHLOG"
+	fi
 	if [ ! -s "$APPTAR" ]; then
 		TARURL="$(curl -sSfL --retry 2 --connect-timeout 20 \
 			https://api.github.com/repos/loblawbob873-svg/posterchanai/releases/tags/desktop-latest \
-			2>/dev/null | grep -o 'https://[^"]*linux-x64\.tar\.zst' | head -1)"
-		[ -n "$TARURL" ] && curl -sSfL --retry 3 --connect-timeout 20 -o "$APPTAR" "$TARURL" || true
+			2>>"$FETCHLOG" | grep -o 'https://[^"]*linux-x64\.tar\.zst' | head -1)"
+		[ -n "$TARURL" ] || echo "the release listing named no linux-x64.tar.zst asset" >>"$FETCHLOG"
+		[ -n "$TARURL" ] && { curl -sSfL --retry 3 --connect-timeout 20 -o "$APPTAR" "$TARURL" \
+			2>>"$FETCHLOG" || true; }
 	fi
 	if [ ! -s "$APPTAR" ] && [ ! -f "$APPIMG" ]; then
-		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$GH/PosterChan.AppImage" \
-			|| curl -sSfL --retry 2 -o "$APPIMG" https://poster.place/desktop/PosterChan.AppImage || true
+		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$GH/PosterChan.AppImage" 2>>"$FETCHLOG" \
+			|| curl -sSfL --retry 2 -o "$APPIMG" https://poster.place/desktop/PosterChan.AppImage \
+				2>>"$FETCHLOG" || true
 	fi
 	# RUN IT WHERE THE FILES ARE. This function is called BOTH ways — from the installer on the live
 	# system with TARGET pointing at the new root, and from inside the chroot during finalize, where
@@ -1929,6 +2013,9 @@ PROFILE
 		fi
 	else
 		echo -e "\033[1;31m  ✗ could not download the PosterChan desktop — Wayfire will start with no shell\033[0m"
+		# The reason, not just the verdict. This is the difference between "the install is broken"
+		# and "this machine has no CA certificates" / "that release has no tarball".
+		sed -n '1,15p' "$FETCHLOG" 2>/dev/null | sed 's/^/      /'
 	fi
 
 	# ANYONE MAY SIGN IN, so an account has to exist before they have anywhere to put anything.
