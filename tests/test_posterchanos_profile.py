@@ -702,6 +702,27 @@ class PosterChanOSProfile(unittest.TestCase):
         was REMOVED is satisfied by the paragraph explaining why it was removed."""
         return "\n".join(l for l in body.splitlines() if not l.strip().startswith("#"))
 
+    def test_the_installer_is_copied_after_the_last_thing_that_overwrites_it(self):
+        """The overlay package installs its own /usr/bin/gentoo.sh, and it lands AFTER the copy.
+
+        app-misc/posterchanos-shell does `dobin gentoo.sh` from its FILESDIR. finalizeInstall copies
+        the running installer to the target, THEN runs `gentoo.sh posterchan-shell`, which emerges
+        that package and overwrites the file — so the version gate compared the installer against
+        the overlay's published copy and refused a complete machine. It stayed hidden for as long as
+        the overlay install was broken: `_in` was called above its own definition, so every run took
+        the "installing the shell directly" fallback and nothing ever overwrote the copy.
+
+        A machine must be repairable with the installer that built it, so the LAST writer before the
+        check has to be the copy, not the package."""
+        body = self._code(self._fn("finalizeInstall"))
+        shell = body.index("gentoo.sh posterchan-shell")
+        gate = body.index('_pc_same_file "$INSTALLER_SRC"')
+        copies = [m.start() for m in re.finditer(r'cp -f "\$INSTALLER_SRC"', body)]
+        after = [c for c in copies if shell < c < gate]
+        self.assertTrue(after,
+                        "nothing re-copies the installer between the overlay install and the "
+                        "version gate, so the overlay's copy is what gets checked")
+
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""

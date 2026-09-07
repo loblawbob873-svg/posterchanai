@@ -976,6 +976,19 @@ POSTERCHAN_PROFILE
 		echo -e "\033[1;31mAutomatic LUKS unlock was selected but its key is not in the booted initramfs.\033[0m"
 		return 1
 	fi
+	# THE OVERLAY PACKAGE OWNS /usr/bin/gentoo.sh TOO, AND IT INSTALLS AFTER THE COPY ABOVE.
+	# app-misc/posterchanos-shell does `dobin gentoo.sh` from its FILESDIR, so once the overlay
+	# install started actually working -- it never had before, because `_in` was called above the
+	# line that defines it, so every run silently took the "installing the shell directly" fallback
+	# -- the target ended up carrying the OVERLAY's published copy instead of the installer that had
+	# just built it. The gate below then refused an otherwise complete machine with "the target did
+	# not receive this PosterChanOS installer version", which was TRUE and is exactly what it exists
+	# to say. The overlay's copy is published from this same file and can legitimately lag it.
+	#
+	# A machine must be repairable with the installer that built it, so the copy is made again here:
+	# after the last thing that can overwrite it, and immediately before the check that reads it.
+	cp -f "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"
+	chmod 0755 "$TARGET/usr/bin/gentoo.sh" 2>/dev/null || true
 	_pc_same_file "$INSTALLER_SRC" "$TARGET/usr/bin/gentoo.sh"
 	case $? in
 		0) ;;
