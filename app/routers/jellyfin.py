@@ -435,6 +435,25 @@ async def redeem_quick(body: QuickSecret, db=Depends(get_db)):
             'SessionInfo': session_dto(session, user)}
 
 
+@router.post('/ClientLog/Document')
+async def client_log(request: Request, auth=Depends(authenticate)):
+    # TV clients upload the exception after a crash. Keep one bounded encrypted report
+    # per account; never put its contents or credentials into the public server log.
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > 1_000_000:
+            raise HTTPException(413, 'Client report exceeds 1 MB')
+        body.extend(chunk)
+    text = body.decode('utf-8', errors='replace').replace(auth.token, '[redacted]')
+    text = re.sub(r'(?im)^.*(?:authorization:|x-emby-token:|access_token=|api_key=).*$',
+                  '[credential line redacted]', text)
+    report = {'received': int(time.time()), 'client': auth.session.get('client', ''),
+              'device': auth.session.get('device', ''), 'text': text[:8000],
+              'truncated': len(text) > 8000}
+    await media.write('jellyfin-client-log:' + auth.uid, report)
+    return {'FileName': 'client-report-' + auth.uid[:12] + '.log'}
+
+
 @router.post('/Sessions/Logout', status_code=204)
 async def logout(auth=Depends(authenticate)):
     async with _account_lock:

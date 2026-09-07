@@ -1208,3 +1208,26 @@ def test_saved_npub_share_is_visible_to_that_account_and_revocable(api):
     api.state['user'] = VIEWER
     assert c.get('/api/media-center').json()['libraries'] == []
     assert c.get('/jellyfin/UserViews', headers=headers(login)).json()['Items'] == []
+
+
+
+def test_client_crash_report_is_private_bounded_and_requires_active_media_login(api):
+    c = api.client
+    path = '/jellyfin/ClientLog/Document'
+    assert c.post(path, content='unauthenticated crash').status_code == 401
+    login = connect(api)
+    body = 'Stack Trace\njava.lang.IllegalStateException: startup\nToken: ' + login['AccessToken']
+    body += '\nAuthorization: Bearer another-secret\n' + 'x' * 9000
+    result = c.post(path, headers=headers(login), content=body)
+    assert result.status_code == 200, result.text
+    assert result.json()['FileName'].startswith('client-report-')
+    record = api.edge['jellyfin-client-log:' + login['User']['Id']]
+    assert 'java.lang.IllegalStateException: startup' in record['text']
+    assert login['AccessToken'] not in record['text'] and 'another-secret' not in record['text']
+    assert record['truncated'] and len(record['text']) == 8000
+    assert 'no-store' in result.headers['cache-control']
+    assert c.get('/jellyfin/' + result.json()['FileName']).status_code == 404
+    assert c.post(path, headers=headers(login), content=b'x' * 1_000_001).status_code == 413
+    assert api.edge['jellyfin-client-log:' + login['User']['Id']] == record
+    assert c.post('/jellyfin/Sessions/Logout', headers=headers(login)).status_code == 204
+    assert c.post(path, headers=headers(login), content='revoked').status_code == 401

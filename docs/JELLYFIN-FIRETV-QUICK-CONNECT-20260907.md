@@ -87,3 +87,15 @@ skips require external Roku source/interpreter fixtures. Evidence:
 run above; the only application follow-up is the additional response boolean.
 The actual old authentication shape fails MissingFieldException under both JVM
 SDKs; the corrected shape passes. A new TV code is required after deployment.
+
+## Post-login crash diagnostics
+
+Physical TV clients now pass login but reported a later crash. Their automatic
+ClientLog/Document upload previously returned404, hiding the actual exception.
+The adapter now accepts authenticated reports up to1 MB, retains only the first
+8000 characters in one encrypted latest-report document per account, redacts the
+active token and credential lines, and exposes no public log download. This is
+diagnostic support, not a claim that the post-login crash is fixed.
+Full affected suite with both real JVM SDKs and the JavaScript SDK:87 passed,
+4 explicit Roku-fixture skips. Auth/revocation, upload limit, redaction and private
+storage checks pass. Log: /tmp/pc-jellyfin-crash-receiver-full.log.
