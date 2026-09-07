@@ -31,3 +31,9 @@ Deployment 772ec237 reached the main server, NAS and router. The NAS relay fetch
 Android 1.0.2214 is published at `/apk`; its public APK SHA-256 is `039c6ab4128b703900073b31822016be56cea04705513d260f3cca6090915cd0`. Its app.js, sms.js and wallet CSS match source. Desktop 1.0.1496's immutable archive passes its published SHA-512 checksum. The extracted desktop bundle passed all 42 wallet UI tests and its document workspace checks. Tests against the public Android wallet/uploader and desktop picker passed 49 cases. The OS package pin is updated to desktop 1.0.1496 after its nine pin checks passed.
 
 The post-deployment Monero check found the reporting account with 12 unlocked unspent outputs, no pending outgoing transfer and zero blocks remaining to unlock. No additional live payments or real SMS were sent by this release validation.
+
+## Clickable message links
+
+A live handset test confirmed the large file reached the recipient, but the app displayed the URL as plain text. Both native Android and web Texts were missing actionable message links. Android now binds web URL spans while retaining text selection; web Texts emits escaped HTTP/HTTPS anchors without trying to embed encrypted ciphertext. The complete `#pcenc1` fragment is preserved.
+
+Regression coverage includes actual browser pointer clicks in the full Texts view at phone/desktop widths, hostile text escaping, punctuation/multiple links, and native touch dispatch plus recycled-row cleanup. The focused SMS run passed 32 tests and 10 subtests; the browser media and pointer check passed. Device touch tests must pass before publication.

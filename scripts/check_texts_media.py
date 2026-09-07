@@ -114,7 +114,13 @@ const EVENTS = [];
 const NOW = Date.now();
 /* A conversation long enough that a repaint can land in the middle of hydrating it — which is the
    whole point. Twelve pictures, no captions, plus a couple of ordinary texts around them. */
-EVENTS.push(archiveEvent('pcai:sms:t0', {address:'+15550100', body:'morning', date:NOW-100000,
+window.__downloadLink='https://poster.place/f/'+'a'.repeat(64)+'#pcenc1=eyJrIjoiYWJjXy0xMjM0NTY3ODkiLCJjIjoxfQ';
+window.__openedLinks=[];
+document.addEventListener('click',event=>{
+  const link=event.target.closest('.sms-text-link');
+  if(link){event.preventDefault();window.__openedLinks.push(link.href);}
+},true);
+EVENTS.push(archiveEvent('pcai:sms:t0', {address:'+15550100', body:'Download: '+window.__downloadLink, date:NOW-100000,
                                          incoming:true, name:'Alex'}, 1000));
 for(let i=0;i<12;i++)
   EVENTS.push(archiveEvent('pcai:sms:p'+i, {address:'+15550100', body:'', date:NOW-90000+i*1000,
@@ -326,6 +332,22 @@ async def drive(url):
                     problems.append(
                         f"{label}: bubble-collapsed  an attachment-only bubble is "
                         f"{r['shortest']}px tall")
+
+                link = await js("""(()=>{
+                  const a=document.querySelector('.sms-text-link');if(!a)return null;
+                  a.scrollIntoView({block:'center'});const r=a.getClientRects()[0];
+                  return {x:r.left+r.width/2,y:r.top+r.height/2,href:a.href,
+                    exact:a.href===window.__downloadLink,target:a.target,
+                    safe:a.rel.includes('noopener')&&a.rel.includes('noreferrer')};
+                })()""")
+                if not link or not link['exact'] or link['target']!='_blank' or not link['safe']:
+                    problems.append(f"{label}: download-link-not-actionable  missing or truncated encrypted link")
+                else:
+                    for kind in ('mousePressed','mouseReleased'):
+                        await call('Input.dispatchMouseEvent', {'type':kind,'x':link['x'],'y':link['y'],
+                                                               'button':'left','clickCount':1})
+                    if not await js("window.__openedLinks.includes(window.__downloadLink)"):
+                        problems.append(f"{label}: download-link-not-clickable  pointer click did not reach the link")
 
                 before = r["reads"]
                 rd = await js(REDRAW, awaited=True)
