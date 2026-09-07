@@ -437,40 +437,54 @@
       };
     });
   }
-  function putPayment(r,text){
-    const pay=parsePaymentUri(text,state&&state.network); if(!pay){PC.toast('That payment QR does not match the wallet network');return false;}
-    r.querySelector('#mw-to').value=pay.address;
-    if(pay.amount)r.querySelector('#mw-amount').value=pay.amount;
-    if(pay.recipient)r.querySelector('#mw-note').value=pay.recipient;
+  function putPayment(r,text,fields){
+    fields=fields||{};
+    const pay=parsePaymentUri(text,fields.network||(state&&state.network)); if(!pay){PC.toast('That payment QR does not match the wallet network');return false;}
+    const address=r.querySelector(fields.address||'#mw-to'), value=r.querySelector(fields.amount||'#mw-amount');
+    const note=r.querySelector(fields.note||'#mw-note');
+    if(!address)return false;
+    address.value=pay.address;
+    if(pay.amount && value)value.value=pay.amount;
+    if(pay.recipient && note)note.value=pay.recipient;
     return true;
   }
-  async function scanPayment(r){
-    // APK: reuse the same native ZXing plugin as PosterChan's signer scanner.
-    try{
-      const plugin=root.Capacitor&&root.Capacitor.Plugins&&root.Capacitor.Plugins.QrScan;
-      if(plugin&&typeof plugin.scan==='function'){
-        const got=await plugin.scan(),text=String((got&&got.text)||'').trim();
-        if(text)putPayment(r,text); return;
-      }
-    }catch(_){}
-    // Modern browsers: BarcodeDetector + the browser camera. Others retain a useful paste route.
+  const paymentScans=new WeakMap();
+  async function scanPayment(r,fields){
+    if(paymentScans.has(r))return;
+    let stream=null,stopped=false;
+    const stage=r.querySelector('#mw-scan-stage');
+    const stop=()=>{stopped=true;try{stream&&stream.getTracks().forEach(t=>t.stop());}catch(_){}
+      if(paymentScans.get(r)===stop){if(stage)stage.classList.add('hidden');paymentScans.delete(r);}};
+    paymentScans.set(r,stop);
+    const apply=text=>!stopped && r.isConnected && putPayment(r,text,fields);
+    // Both wallet types use the same native ZXing scanner and browser fallback.
+    const plugin=root.Capacitor&&root.Capacitor.Plugins&&root.Capacitor.Plugins.QrScan;
+    if(plugin&&typeof plugin.scan==='function'){
+      try{const got=await plugin.scan(),text=String((got&&got.text)||'').trim();if(text)apply(text);}
+      catch(_){PC.toast('Camera scan unavailable or cancelled — paste the Monero URI instead');}
+      finally{stop();}
+      return;
+    }
     let detector=null;
     try{if(root.BarcodeDetector){const formats=await root.BarcodeDetector.getSupportedFormats();if(formats.includes('qr_code'))detector=new root.BarcodeDetector({formats:['qr_code']});}}catch(_){}
     if(!detector||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-      const input=r.querySelector('#mw-to');input.focus();
-      PC.toast('Camera scanning is unavailable — paste the Monero URI in Recipient address');return;
+      const input=r.querySelector(fields&&fields.address||'#mw-to');if(input)input.focus();
+      stop();PC.toast('Camera scanning is unavailable — paste the Monero URI in Recipient address');return;
     }
-    const stage=r.querySelector('#mw-scan-stage'),video=stage.querySelector('video'); stage.classList.remove('hidden');
-    let stream=null,stopped=false;
-    const stop=()=>{stopped=true;try{stream&&stream.getTracks().forEach(t=>t.stop());}catch(_){}stage.classList.add('hidden');};
-    r.querySelector('#mw-scan-cancel').onclick=stop;
-    try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});video.srcObject=stream;await video.play();}
-    catch(_){stop();PC.toast('Camera unavailable — paste the Monero URI instead');return;}
+    const video=stage&&stage.querySelector('video');if(!video){stop();return;}
+    stage.classList.remove('hidden');
+    const cancel=r.querySelector('#mw-scan-cancel');if(cancel)cancel.onclick=stop;
+    try{
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+      if(stopped||!r.isConnected){stop();return;}
+      video.srcObject=stream;await video.play();
+    }catch(_){stop();PC.toast('Camera unavailable — paste the Monero URI instead');return;}
     const tick=async()=>{
       if(stopped||!r.isConnected){stop();return;}
-      try{const codes=await detector.detect(video),text=codes&&codes[0]&&codes[0].rawValue;if(text){if(putPayment(r,text))stop();else setTimeout(tick,350);return;}}catch(_){}
-      setTimeout(tick,250);
-    }; tick();
+      try{const codes=await detector.detect(video),text=codes&&codes[0]&&codes[0].rawValue;
+        if(text){if(apply(text))stop();else if(!stopped)setTimeout(tick,350);return;}}catch(_){}
+      if(!stopped)setTimeout(tick,250);
+    };tick();
   }
   function confirmDialog(pay,opts){
     PC.modal('<div class="mw-modal"><h3>Confirm payment</h3><div class="mw-confirm"><span>Send</span><strong>'+esc(pay.amount)+' XMR</strong><span>To</span><code>'+esc(pay.address)+'</code></div><label class="mw-check"><input type="checkbox" id="mw-understand"> I understand this Monero transaction cannot be reversed.</label><button class="btn btn-neon full" id="mw-confirm" disabled>Send now</button><a class="btn btn-ghost full" id="mw-external" href="'+esc(uri(pay.address,pay.amount,opts.name||''))+'">Open external wallet instead</a></div>',r=>{
@@ -555,6 +569,9 @@
         + '<p class="muted small">From your wallet on this server to any Monero address.</p>'
         + (fee > 0 ? '<p class="muted small">This node may keep up to ' + esc(String(fee))
                      + '% of what you send.</p>' : '')
+        + '<button type="button" class="btn btn-cyan full mw-scan" id="mw-ms-scan">Scan wallet QR</button>'
+        + '<div class="mw-scan-stage hidden" id="mw-scan-stage"><video playsinline muted></video>'
+        + '<span>Point at a Monero payment QR…</span><button type="button" class="btn btn-ghost small" id="mw-scan-cancel">Cancel scan</button></div>'
         + '<label>Recipient address<input class="input" id="mw-ms-to" autocomplete="off" '
         + 'spellcheck="false"></label>'
         + '<label>Amount (XMR)<input class="input" id="mw-ms-amount" type="number" '
@@ -562,9 +579,12 @@
         + '<p class="muted small">' + esc(xmr(s.unlocked_balance, false))
         + ' XMR available. Leave room for the additional network fee.</p>'
         + '<button class="btn btn-neon full" id="mw-ms-review">Review payment</button></div>', r => {
+          const fields={network:s.network,address:'#mw-ms-to',amount:'#mw-ms-amount'};
+          const scan=r.querySelector('#mw-ms-scan');if(scan)scan.onclick=()=>scanPayment(r,fields);
           const review = r.querySelector('#mw-ms-review'); if(!review) return;
           review.onclick = () => {
-            const to = String((r.querySelector('#mw-ms-to') || {}).value || '').trim();
+            let to = String((r.querySelector('#mw-ms-to') || {}).value || '').trim();
+            if(/^monero:/i.test(to)){if(!putPayment(r,to,fields))return;to=r.querySelector('#mw-ms-to').value.trim();}
             const raw = String((r.querySelector('#mw-ms-amount') || {}).value || '').trim();
             if(!validAddress(to, s.network)){ PC.toast('check the Monero address for this network'); return; }
             const want = amount(raw);
