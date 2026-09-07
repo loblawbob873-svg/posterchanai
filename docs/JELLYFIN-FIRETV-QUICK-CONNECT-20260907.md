@@ -45,3 +45,16 @@ Primary source contracts:
 
 Evidence: /tmp/pc-firetv-final-unit.json, /tmp/pc-firetv-quick-connect-red.log,
 /tmp/pc-firetv-quick-connect-tests.log.
+
+Deployed as19ea651a8 on all nodes. Actual public initiation and polling responses
+were decoded successfully by both official Kotlin SDK versions. The dedicated
+relay retained its pre-deploy activation timestamp; only APP and WORKER restarted.
+
+Shared-library follow-up: the reported recipient already had Media Center enabled,
+but the NAS Movies catalog had an empty sharing list. The owner's authenticated
+sharing API was used to add the explicitly requested npub, preserving any prior
+entries; a separate GET and NAS read verified access. The original empty list is
+backed up privately under /tmp/pc-movies-sharing-before-20260907.json. A new
+owner-save -> recipient web/TV access -> unrelated user denied -> revocation
+round-trip passes for both local and NAS-proxied libraries (two tests). This does
+not infer that an unsigned browser is logged in or bypass the account permission.

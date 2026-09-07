@@ -1159,3 +1159,30 @@ end sub
     del dto['Artists']
     broken = execute(dto)
     assert broken.returncode != 0 or 'PLAYER_ALIVE' not in broken.stdout
+
+
+def test_saved_npub_share_is_visible_to_that_account_and_revocable(api):
+    """Exercise owner Save sharing -> recipient web/TV access, including a real npub input."""
+    from app.services.nostr.nostr_service import npub_of
+    c = api.client
+    api.catalog['library:' + api.library['id']]['shared_with'] = []
+    api.state['user'] = OWNER
+    result = c.put('/api/media-center/' + api.library['id'] + '/sharing',
+                   json={'shared_with': [npub_of(VIEWER)]})
+    assert result.status_code == 200, result.text
+    assert result.json()['shared_with'] == [VIEWER]
+    api.state['user'] = VIEWER
+    libraries = c.get('/api/media-center').json()['libraries']
+    assert len(libraries) == 1 and libraries[0]['shared_with_me']
+    assert libraries[0]['id'] == api.library['id']
+    assert not libraries[0]['can_manage']
+    login = connect(api)
+    assert len(c.get('/jellyfin/UserViews', headers=headers(login)).json()['Items']) == 1
+    api.state['user'] = STRANGER
+    assert c.get('/api/media-center').json()['libraries'] == []
+    api.state['user'] = OWNER
+    assert c.put('/api/media-center/' + api.library['id'] + '/sharing',
+                 json={'shared_with': []}).status_code == 200
+    api.state['user'] = VIEWER
+    assert c.get('/api/media-center').json()['libraries'] == []
+    assert c.get('/jellyfin/UserViews', headers=headers(login)).json()['Items'] == []
