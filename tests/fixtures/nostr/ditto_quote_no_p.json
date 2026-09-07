@@ -1,0 +1,21 @@
+{
+  "content": "Go use PostrChan too:\nhttps://poster.place/\n\nnostr:nevent1qgsyk44m7swf9evxazyj0t9h3qmwkj0jkxzqs8hc2f39eautul2kh4spzemhxue69uhhyetvv9ujuerfw36x7tnsw43z7qpqlk80t3ur77m2m8ka98suk5ep37jc58jlt6zrey9au53crllhq2dqahjyfx",
+  "created_at": 1788816349,
+  "id": "2df3f2c650aedfde24066ff8f7255c0ecd169d2b91584c23b6ce0f58eda99aa7",
+  "kind": 1,
+  "pubkey": "86184109eae937d8d6f980b4a0b46da4ef0d983eade403ee1b4c0b6bde238b47",
+  "sig": "d4e6d5f966f86627a548657ea9564ac5e1aff4f65a6b47d99a766ab290297878d5528ae4af699f71df22b0ba28b0850eca1cb17702a70ee1010b3bdcf9d570d4",
+  "tags": [
+    [
+      "q",
+      "fd8ef5c783f7b6ad9edd29e1cb53218fa58a1e5f5e843c90bde52381fff7029a",
+      "wss://relay.ditto.pub/",
+      "4b56bbf41c92e586e88927acb78836eb49f2b184081ef852625cf78be7d56bd6"
+    ],
+    [
+      "client",
+      "Ditto",
+      "31990:781a1527055f74c1f70230f10384609b34548f8ab6a0a6caa74025827f9fdae5:ditto"
+    ]
+  ]
+}

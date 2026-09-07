@@ -23,6 +23,7 @@ from app.services.nostr.event import verify_event
 from .langfilter import blocked_language, blocked_word
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 from .store import retired_kind_reason as _retired_kind_reason
+from app.services.nostr.quotes import quote_pubkeys
 
 
 # pcai: CONFIG d-tags eligible for the opt-in DR backup to upstream (small + critical). Bulky /
@@ -196,6 +197,8 @@ def _match_one(flt: dict, ev: dict) -> bool:
         if isinstance(key, str) and key.startswith("#") and len(key) == 2 and vals:
             want = {str(v) for v in vals}
             have = {str(t[1]) for t in ev.get("tags", []) if len(t) >= 2 and t[0] == key[1]}
+            if key == "#p" and flt.get("_include_quotes") is True:
+                have |= quote_pubkeys(ev)
             if not (want & have):
                 return False
     if flt.get("search"):

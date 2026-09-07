@@ -148,6 +148,12 @@ public class PushPlugin extends Plugin {
         out.put("direct", true);
         out.put("connected", DirectPushService.connected);
         out.put("error", DirectPushService.lastError);
+        DirectPushStore.Credentials credentials = DirectPushStore.load(getContext());
+        String expected = call.getString("expectedSocketUrl", "");
+        out.put("needsRegistration", credentials != null && !expected.isEmpty()
+                && !expected.equals(credentials.socketUrl));
+        out.put("notificationsEnabled", PushEventService.canNotify(getContext(), false));
+        out.put("callsEnabled", PushEventService.canNotify(getContext(), true));
         call.resolve(out);
     }
 

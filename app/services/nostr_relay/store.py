@@ -24,6 +24,8 @@ from concurrent.futures import ThreadPoolExecutor
 import psycopg2
 import psycopg2.extras
 
+from app.services.nostr.quotes import quote_pubkeys
+
 logger = logging.getLogger(__name__)
 
 # Passwordless localhost (PG `trust` auth) by default; deployments needing password auth (Docker/
@@ -355,7 +357,25 @@ class RelayStore:
         self._loop = loop
         conn = self._conn()
         conn.executescript(_SCHEMA)
+        self._index_existing_quotes(conn)
         conn.commit()
+
+    @staticmethod
+    def _index_existing_quotes(conn):
+        # Derived index only: signed events and standard #p/#q semantics stay intact.
+        # Start from the existing q index so startup does not parse every stored event.
+        if conn.execute("SELECT value FROM relay_kv WHERE key='quote_author_index_v1'").fetchone():
+            return
+        conn.execute("""INSERT INTO event_tags (event_id, tag, value)
+            SELECT DISTINCT e.id, '_quote_author', q.value->>3
+            FROM events e
+            CROSS JOIN LATERAL jsonb_array_elements(e.tags::jsonb) AS q(value)
+            WHERE e.kind=1 AND e.id IN (SELECT event_id FROM event_tags WHERE tag='q')
+              AND q.value->>0='q' AND q.value->>1 ~ '^[0-9a-f]{64}$'
+              AND q.value->>3 ~ '^[0-9a-f]{64}$'
+            ON CONFLICT DO NOTHING""")
+        conn.execute("INSERT INTO relay_kv (key,value) VALUES ('quote_author_index_v1','1') "
+                     "ON CONFLICT DO NOTHING")
 
     def close(self) -> None:
         self._write_exec.shutdown(wait=True)
@@ -538,6 +558,9 @@ class RelayStore:
                         "INSERT INTO event_tags (event_id, tag, value) VALUES (?,?,?) "
                         "ON CONFLICT DO NOTHING",
                         (eid, t[0], str(t[1])))
+            for recipient in quote_pubkeys(ev):
+                conn.execute("INSERT INTO event_tags (event_id, tag, value) VALUES (?,?,?) "
+                             "ON CONFLICT DO NOTHING", (eid, "_quote_author", recipient))
             # NIP-09: a kind-5 deletion removes the author's own events. `e` = by event id;
             # `a` = addressable (kind:pubkey:dtag) — used for article drafts (30024), articles
             # (30023), communities (34550), etc. Only the author's own, not-newer events go.
@@ -881,10 +904,14 @@ class RelayStore:
         for key, vals in flt.items():
             if not (isinstance(key, str) and key.startswith("#") and len(key) == 2 and vals):
                 continue
+            # Opt-in extension: other relays ignore it and still serve ordinary p mentions.
+            # Multi-letter derived tags cannot be supplied through the single-letter indexer.
+            tag_clause = "tag IN ('p','_quote_author')" if key == "#p" and flt.get("_include_quotes") is True else "tag=?"
             where.append(
-                "e.id IN (SELECT event_id FROM event_tags WHERE tag=? AND value IN "
+                "e.id IN (SELECT event_id FROM event_tags WHERE " + tag_clause + " AND value IN "
                 f"({','.join('?' * len(vals))}))")
-            params.append(key[1])
+            if tag_clause == "tag=?":
+                params.append(key[1])
             params += [str(v) for v in vals]
         # PREFIX tag filter — a LOCAL extension, not NIP-01, and the app's datastore depends on it.
         #

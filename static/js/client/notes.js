@@ -605,6 +605,10 @@
     if(!PC || PC.VIEW !== 'notes') return;
     const feed = $('#feed');
     if(!feed || !_lib) return;
+    // Background hydration must not replace a search field while it owns focus or an IME session.
+    if(document.activeElement && document.activeElement.matches('.nt-search') && feed.contains(document.activeElement)){
+      renderList(); return;
+    }
     const notes = visibleNotes();
     const pend = pending().length;
     const folders = Array.from(_lib.folders.values()).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
@@ -614,6 +618,7 @@
     feed.innerHTML = `<div class="nt-wrap${_sel?' nt-open':''}${_drawerOpen?' nt-drawer':''}">
       <div class="nt-scrim"></div>
       <aside class="nt-side">
+        <div class="nt-brand"><span class="nt-brand-icon" aria-hidden="true"><svg class="ic"><use href="#i-pen"></use></svg></span><div><strong>Notes</strong><span>Your private notebook</span></div></div>
         <button class="btn btn-cyan nt-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg>New note</button>
         <div class="nt-sec">
           <span>Folders</span>
@@ -653,22 +658,15 @@
           </div>
           <div class="nt-searchwrap">
             <svg class="ic nt-searchic" aria-hidden="true"><use href="#i-search"></use></svg>
-            <input class="input nt-search" type="search" placeholder="Search notes…" value="${enc(_filter.q)}" autocomplete="off">
+            <input class="input nt-search" type="search" aria-label="Search notes" placeholder="Search your notes…" value="${enc(_filter.q)}" autocomplete="off">
           </div>
         </div>
-        ${notes.length ? notes.map(n=>`
-          <button class="nt-item${_sel===n.id?' active':''}" data-id="${enc(n.id)}">
-            <b>${enc(n.title || 'Untitled')}</b>
-            <span class="nt-snip muted small">${enc(((n.body||n.snippet||'')).replace(/[#*`>\-\n]+/g,' ').trim().slice(0,90))}</span>
-            <span class="nt-meta muted small">${_fmt(n.updated)}${n.res&&n.res.length?` · ${n.res.length} 📎`:''}</span>
-          </button>`).join('')
-        : `<div class="empty">${total ? 'Nothing matches that.' : 'No notes yet. Write one, or import your Joplin export.'}</div>`}
+        <div class="nt-results">${noteCards(notes)}</div>
       </section>
-      <section class="nt-editor" aria-label="Editor"></section>
+      <section class="nt-editor" aria-label="Editor"><div class="nt-welcome"><span class="nt-welcome-icon" aria-hidden="true"><svg class="ic"><use href="#i-pen"></use></svg></span><h2>A little space for your ideas</h2><p>Capture a thought, keep a plan, or pick up where you left off.</p><button class="btn btn-cyan nt-new">Write a note</button><span class="nt-private">Encrypted · Available offline after sync</span></div></section>
     </div>`;
 
-    // Both of them: the sidebar's and the phone toolbar's. $ returns the FIRST match, so wiring
-    // this with $ would leave whichever one the markup happens to emit second doing nothing.
+    // Wire every New action: sidebar, phone toolbar and the empty editor.
     $$('.nt-new', feed).forEach(b => b.onclick = () => {
       _draft = blankNote(_filter.folder);
       openNote(_draft, true);
@@ -682,16 +680,26 @@
       e.stopPropagation(); toggleCollapse(b.dataset.caret); _paint();
     });
     const s = $('.nt-search', feed);
-    let t=null;
-    s.oninput = () => { clearTimeout(t); t=setTimeout(()=>{ _filter.q = s.value; renderList(); }, 160); };
+    let t=null, composing=false;
+    const search = () => {
+      clearTimeout(t);
+      if(composing) return;
+      _filter.q = s.value;
+      t=setTimeout(() => {
+        if(s.isConnected && PC.VIEW === 'notes') renderList();
+      }, 300);
+    };
+    s.oninput = search;
+    s.addEventListener('compositionstart', () => { composing=true; clearTimeout(t); });
+    s.addEventListener('compositionend', () => { composing=false; search(); });
+    s.onkeydown = e => {
+      if(e.key === 'Enter' && !composing && !e.isComposing){ clearTimeout(t); _filter.q=s.value; renderList(); }
+    };
     // Choosing something IS the end of the errand the drawer was opened for — leaving it standing
     // over the list you just filtered means every pick costs a second tap to see the result.
     $$('.nt-folder[data-f]', feed).forEach(b => b.onclick = () => { _filter.folder = b.dataset.f; _filter.tag=''; _drawer(false); render(); });
     $$('.nt-tag', feed).forEach(b => b.onclick = () => { _filter.tag = (_filter.tag===b.dataset.t?'':b.dataset.t); _drawer(false); render(); });
-    $$('.nt-item', feed).forEach(b => b.onclick = () => {
-      _drawer(false); const n=_lib.notes.get(b.dataset.id);
-      if(n){ _draft=null; openNote(n, false); }
-    });
+    wireNoteCards(feed);
     if(_sel){
       const saved = _lib.notes.get(_sel);
       if(saved) openNote(saved, false);
@@ -728,11 +736,32 @@
   // than per paint — a handler added on every render is a handler leaked on every render.
   document.addEventListener('keydown', e => { if(e.key === 'Escape' && _drawerOpen) _drawer(false); });
 
-  // Re-render just the list (search typing) so the editor and its caret survive.
+  function noteCards(notes){
+    if(!notes.length) return `<div class="nt-empty"><h3>${_lib.notes.size ? 'No matching notes' : 'Your notebook starts here'}</h3><p>${_lib.notes.size ? 'Try another word, folder, or tag.' : 'Write your first note, or bring your notes in with Import.'}</p></div>`;
+    return notes.map(n => {
+      const folder = _lib.folders.get(n.folder);
+      return `<button class="nt-item${_sel===n.id?' active':''}" data-id="${enc(n.id)}" aria-pressed="${_sel===n.id}">
+        <b>${enc(n.title || 'Untitled')}</b>
+        <span class="nt-snip">${enc((n.body||n.snippet||'').replace(/[#*`>\-\n]+/g,' ').trim().slice(0,160) || 'An idea waiting to take shape…')}</span>
+        <span class="nt-meta"><span>${enc(_fmt(n.updated))}</span>${n.res&&n.res.length?`<span>${n.res.length} attachment${n.res.length===1?'':'s'}</span>`:''}</span>
+        ${folder || (n.tags||[]).length ? `<span class="nt-card-labels">${folder?`<span>${enc(folder.name)}</span>`:''}${(n.tags||[]).slice(0,2).map(t=>`<span>#${enc(t)}</span>`).join('')}</span>`:''}
+      </button>`;
+    }).join('');
+  }
+  function wireNoteCards(root){
+    $$('.nt-item', root).forEach(b => b.onclick = () => {
+      _drawer(false); const n=_lib.notes.get(b.dataset.id);
+      if(n){ _draft=null; openNote(n, false); }
+    });
+  }
+  // Search is entirely local. Keep the input, caret, editor and relay subscription intact.
   function renderList(){
-    const wrap = document.querySelector('.nt-wrap'); if(!wrap) return;
-    const keep = _sel;
-    render().then(()=>{ if(keep){ const el=document.querySelector('.nt-search'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } } });
+    if(!PC || PC.VIEW !== 'notes' || !_lib) return;
+    const results = document.querySelector('.nt-results'); if(!results) return;
+    const notes = visibleNotes();
+    results.innerHTML = noteCards(notes);
+    wireNoteCards(results);
+    renderSideCounts();
   }
 
   async function addFolder(){
@@ -771,6 +800,7 @@
     flushEdit();          // whatever was half-saved belongs to the note we are leaving
     _imgReset();          // and so does every pending picture load
     _sel = n.id;
+    $$('.nt-item').forEach(b => { const selected=b.dataset.id===_sel; b.classList.toggle('active', selected); b.setAttribute('aria-pressed', String(selected)); });
     const host = document.querySelector('.nt-editor');
     if(!host) return;
     /* READ FIRST. Opening straight into the raw markdown source meant an imported note showed
@@ -784,7 +814,7 @@
     host.innerHTML = `
       <div class="nt-ed-head">
         <button class="nt-back" aria-label="Back to the list"><svg class="ic b-ic" aria-hidden="true"><use href="#i-chevron-left"></use></svg></button>
-        <input class="input nt-title" placeholder="Title" value="${enc(n.title||'')}" maxlength="200">
+        <input class="input nt-title" aria-label="Note title" placeholder="Untitled note" value="${enc(n.title||'')}" maxlength="200">
         <span class="nt-state muted small"></span>
         <button class="btn nt-ico nt-preview" title="Edit" aria-label="Edit"><svg class="ic b-ic" aria-hidden="true"><use href="#i-pen"></use></svg></button>
         <button class="btn btn-red nt-ico nt-del" title="Delete note" aria-label="Delete note"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button>

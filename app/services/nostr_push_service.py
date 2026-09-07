@@ -1,7 +1,7 @@
 """Nostr → Web Push watcher.
 
-Polls the local relay for events that p-tag a pubkey with a registered push subscription (mentions,
-replies, reposts, reactions, zaps, NIP-22 comments) and delivers them as OS notifications — so the PWA
+Polls the local relay for events that address a pubkey with a registered push subscription (mentions,
+replies, NIP-18 quotes, reposts, reactions, zaps, NIP-22 comments) and delivers them as OS notifications — so the PWA
 notifies you even when it's closed. Runs in the background worker process (like the other pollers).
 First poll just sets the cursor (no backfill burst); dedup by event id; dead endpoints are pruned.
 """
@@ -15,6 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.services import push_service, settings_store
 from app.services.direct_push_service import subscription_dict
 from app.services.nostr import relay
+from app.services.nostr.quotes import quote_pubkeys
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ async def _name_for(pk: str) -> str:
     return name
 
 
-def _title(ev: dict, name: str) -> str:
+def _title(ev: dict, name: str, recipient: str = "") -> str:
     k = ev.get("kind")
     who = name or "Someone"
     if k == 9735:
@@ -80,6 +81,8 @@ def _title(ev: dict, name: str) -> str:
         return f"{who} commented on your post"
     if k == 42:
         return f"{who} mentioned you in a chat"
+    if recipient and recipient in quote_pubkeys(ev):
+        return f"{who} quoted your post"
     return f"{who} mentioned you"            # kind 1 (reply / mention)
 
 
@@ -247,7 +250,7 @@ async def _poll():
         since = _cursor - 5                   # small overlap for clock skew
         _cursor = now
 
-        evs = await relay.query(_local_relay(), [{"kinds": _KINDS, "#p": list(by_pk.keys()), "since": since}], timeout=8)
+        evs = await relay.query(_local_relay(), [{"kinds": _KINDS, "#p": list(by_pk.keys()), "_include_quotes": True, "since": since}], timeout=8)
         for ev in evs:
             eid = ev.get("id")
             if not eid or eid in _seen:
@@ -255,13 +258,13 @@ async def _poll():
             _seen.add(eid)
             author = ev.get("pubkey", "")
             ptags = [t[1] for t in (ev.get("tags") or []) if len(t) >= 2 and t[0] == "p"]
-            recips = [pk for pk in ptags if pk in by_pk and pk != author]   # not your own event
+            recips = [pk for pk in set(ptags) | quote_pubkeys(ev) if pk in by_pk and pk != author]   # not your own event
             if not recips:
                 continue
             name = await _name_for(author)
-            payload = {"title": "PosterChan", "body": _title(ev, name), "eid": eid, "author": author}
             dead = []
             for pk in recips:
+                payload = {"title": "PosterChan", "body": _title(ev, name, pk), "eid": eid, "author": author}
                 for s in by_pk[pk]:
                     ok = await asyncio.to_thread(
                         push_service.send,

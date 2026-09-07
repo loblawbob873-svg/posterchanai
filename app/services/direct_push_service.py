@@ -168,24 +168,29 @@ async def serve(websocket: WebSocket, subscription_id: int) -> None:
         _live[subscription_id] = conn
     if previous:
         asyncio.run_coroutine_threadsafe(previous.socket.close(code=4002), previous.loop)
+    # Keep one receive pending across queue wakes. Cancelling receive on each new notification
+    # could discard an ACK arriving in the same turn, leaving delivered cards in the durable queue.
+    recv = asyncio.create_task(websocket.receive_json())
+    signalled = None
     try:
         while True:
             for frame in await asyncio.to_thread(_pending, subscription_id):
                 await websocket.send_json(frame)
 
-            recv = asyncio.create_task(websocket.receive_json())
             signalled = asyncio.create_task(conn.wake.wait())
-            done, pending = await asyncio.wait((recv, signalled), timeout=20,
-                                               return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            if not done:
-                await websocket.send_json({"type": "ping"})
-                continue
+            done, _ = await asyncio.wait((recv, signalled), timeout=20,
+                                         return_when=asyncio.FIRST_COMPLETED)
             if signalled in done:
                 conn.wake.clear()
+            else:
+                signalled.cancel()
+                await asyncio.gather(signalled, return_exceptions=True)
+            if not done:
+                await websocket.send_json({"type": "ping"})
+            if recv not in done:
                 continue
             msg = recv.result()
+            recv = asyncio.create_task(websocket.receive_json())
             if not isinstance(msg, dict):
                 continue
             if msg.get("type") == "ack" and isinstance(msg.get("id"), int):
@@ -195,6 +200,10 @@ async def serve(websocket: WebSocket, subscription_id: int) -> None:
     except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     finally:
+        tasks = [task for task in (recv, signalled) if task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         with _live_lock:
             if _live.get(subscription_id) is conn:
                 _live.pop(subscription_id, None)

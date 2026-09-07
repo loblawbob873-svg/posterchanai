@@ -9,20 +9,22 @@ import subprocess
 import pytest
 from tests.test_android_launch_view import method
 
+@pytest.mark.parametrize('kind', ['sms', 'direct_message', 'direct_call'])
 @pytest.mark.skipif(not shutil.which('javac'), reason='JDK is required')
-def test_notification_readiness_checks_permission_app_and_channel(tmp_path):
+def test_notification_readiness_checks_permission_app_and_channel(tmp_path, kind):
     root = Path(__file__).resolve().parents[1]
-    source = (root / 'mobile/android/app/src/main/java/place/poster/app/sms/SmsNotifier.java').read_text()
+    relative = 'sms/SmsNotifier.java' if kind == 'sms' else 'push/PushEventService.java'
+    source = (root / 'mobile/android/app/src/main/java/place/poster/app' / relative).read_text()
     body = method(source, 'public static boolean canNotify')
     (tmp_path / 'android/content/pm').mkdir(parents=True)
     (tmp_path / 'android/content/pm/PackageManager.java').write_text(
         'package android.content.pm; public class PackageManager { public static final int PERMISSION_GRANTED=0; }')
-    (tmp_path / 'Harness.java').write_text('''
+    (tmp_path / 'Harness.java').write_text(('''
 class Build { static class VERSION { static int SDK_INT=34; } static class VERSION_CODES { static int O=26; } }
 class NotificationChannel { int importance; NotificationChannel(int value){importance=value;} int getImportance(){return importance;} }
 class NotificationManager {
  static final int IMPORTANCE_NONE=0; boolean enabled=true; NotificationChannel channel;
- boolean areNotificationsEnabled(){return enabled;} NotificationChannel getNotificationChannel(String id){return channel;}
+ boolean areNotificationsEnabled(){return enabled;} NotificationChannel getNotificationChannel(String id){if(!id.equals("EXPECTED_CHANNEL"))throw new AssertionError("wrong notification channel: "+id);return channel;}
 }
 class Context {
  static final String NOTIFICATION_SERVICE="notification";
@@ -31,10 +33,10 @@ class Context {
  Object getSystemService(String name){return manager;}
 }
 public class Harness {
- static final String CHANNEL="pcai_sms";
+ static final String CHANNEL="pcai_sms",CH_CALLS="pcai_calls",CH_MSGS="pcai_messages";
 ''' + body + '''
  static void expect(Context context, boolean expected, String name){
-   if(canNotify(context)!=expected)throw new AssertionError(name);
+   if(READINESS!=expected)throw new AssertionError(name);
  }
  public static void main(String[] ignored){
    Context c=new Context(); expect(c,true,"permission granted, channel not created yet");
@@ -48,7 +50,7 @@ public class Harness {
    c.manager=null; expect(c,false,"notification manager unavailable");
  }
 }
-''')
+''').replace('EXPECTED_CHANNEL', {'sms':'pcai_sms','direct_message':'pcai_messages','direct_call':'pcai_calls'}[kind]).replace('READINESS', 'canNotify(context)' if kind == 'sms' else 'canNotify(context, '+str(kind == 'direct_call').lower()+')'))
     compiled = subprocess.run(['javac', '-d', str(tmp_path), str(tmp_path/'Harness.java'),
                               str(tmp_path/'android/content/pm/PackageManager.java')],
                              capture_output=True, text=True, timeout=60)

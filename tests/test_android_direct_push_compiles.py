@@ -47,7 +47,7 @@ public class Request { public static class Builder {
     "okhttp3/Response.java": "package okhttp3; public class Response { }",
     "okhttp3/WebSocket.java": """
 package okhttp3; public interface WebSocket {
-  boolean send(String s); boolean close(int code, String reason);
+  boolean send(String s); boolean close(int code, String reason); void cancel();
 }
 """,
     "okhttp3/WebSocketListener.java": """

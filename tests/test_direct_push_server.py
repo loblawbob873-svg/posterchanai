@@ -118,3 +118,70 @@ def test_keyless_webpush_cannot_restore_unifiedpush(direct_db, monkeypatch):
     }), db))
     assert result["ok"] is False
     assert db.query(PushSubscription).count() == 0
+
+
+def test_live_wake_and_ack_together_drain_the_real_queue(direct_db, monkeypatch):
+    """A simultaneous new message wake must not swallow the previous notification's receipt."""
+    db = direct_db()
+    sid = _direct_row(db).id
+    assert direct.enqueue_result(sid, {'type': 'test'}) == 'queued'
+
+    async def exercise():
+        incoming = asyncio.Queue()
+        acknowledged = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        original_ack = direct._ack
+        def ack(subscription, message):
+            original_ack(subscription, message)
+            loop.call_soon_threadsafe(acknowledged.set)
+        monkeypatch.setattr(direct, '_ack', ack)
+        class Socket:
+            async def send_json(self, frame):
+                if frame['type'] != 'notification':
+                    return
+                # Both tasks are ready when serve waits: this used to discard the ACK.
+                direct._live[sid].wake.set()
+                await incoming.put({'type': 'ack', 'id': frame['id']})
+            async def receive_json(self):
+                return await incoming.get()
+        task = asyncio.create_task(direct.serve(Socket(), sid))
+        try:
+            await asyncio.wait_for(acknowledged.wait(), timeout=2)
+        finally:
+            task.cancel()
+            await task
+        assert sid not in direct._live
+        assert direct._pending(sid) == []
+    asyncio.run(exercise())
+
+
+def test_queue_wakes_do_not_cancel_an_inflight_device_receive(direct_db):
+    """A message arriving while another is being ACKed keeps the same socket reader alive."""
+    db = direct_db()
+    sid = _direct_row(db).id
+    async def exercise():
+        started = asyncio.Event()
+        class Socket:
+            cancelled = 0
+            async def send_json(self, frame):
+                pass
+            async def receive_json(self):
+                started.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    self.cancelled += 1
+                    raise
+        socket = Socket()
+        task = asyncio.create_task(direct.serve(socket, sid))
+        await started.wait()
+        try:
+            for _ in range(3):
+                direct._live[sid].wake.set()
+                await asyncio.sleep(.01)
+            assert socket.cancelled == 0
+        finally:
+            task.cancel()
+            await task
+        assert socket.cancelled == 1
+    asyncio.run(exercise())

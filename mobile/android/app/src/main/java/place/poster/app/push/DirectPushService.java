@@ -41,7 +41,9 @@ public class DirectPushService extends Service {
     public static volatile String lastError = "";
 
     private static final long MAX_MESSAGE_BYTES = 64L * 1024L;
-    private static final long MAX_BACKOFF_MS = 5L * 60L * 1000L;
+    // Incoming-call queue entries expire after 90 seconds. A five-minute retry ceiling
+    // could miss the whole ringing window after connectivity returned.
+    private static final long MAX_BACKOFF_MS = 30L * 1000L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private OkHttpClient client;
@@ -154,9 +156,11 @@ public class DirectPushService extends Service {
         socket = client.newWebSocket(request, new WebSocketListener() {
             @Override public void onOpen(WebSocket webSocket, Response response) {
                 if (mine != generation || !running) { webSocket.close(1000, "stale"); return; }
-                failures = 0;
-                connected = true;
-                lastError = "";
+                connected = false; // An HTTP upgrade is not authenticated delivery readiness.
+                lastError = "waiting for notification authorization";
+                handler.postDelayed(() -> {
+                    if (mine == generation && running && !connected) webSocket.cancel();
+                }, 15000);
                 try {
                     JSONObject auth = new JSONObject();
                     auth.put("type", "auth");
@@ -178,11 +182,17 @@ public class DirectPushService extends Service {
                         webSocket.send("{\"type\":\"pong\"}");
                         return;
                     }
-                    if ("pong".equals(type) || "ready".equals(type) || "auth-ok".equals(type)
-                            || "ack".equals(type)) return;
+                    if ("ready".equals(type)) {
+                        connected = true;
+                        failures = 0;
+                        lastError = "";
+                        RunningNote.refresh(DirectPushService.this);
+                        return;
+                    }
+                    if ("pong".equals(type) || "auth-ok".equals(type) || "ack".equals(type)) return;
                     // Fail closed for future/unknown protocol frames. Only an explicit notification
                     // envelope may reach Android's visible notification renderer.
-                    if (!"notification".equals(type) || message.optJSONObject("payload") == null) return;
+                    if (!connected || !"notification".equals(type) || message.optJSONObject("payload") == null) return;
                     String deliveryId = message.optString("id", "").trim();
                     if (!deliveryId.isEmpty() && deliveryId.length() <= 256
                             && DirectPushStore.wasDelivered(DirectPushService.this, deliveryId)) {

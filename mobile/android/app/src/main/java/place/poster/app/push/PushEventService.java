@@ -58,11 +58,26 @@ public final class PushEventService {
         // PosterChan Direct and the visible WebView relay can observe the SAME Nostr event. Both use
         // the event-id tag, so Android replaces the duplicate card while distinct events coexist.
         try {
+            if (!canNotify(ctx, "call".equals(type))) return false;
             show(ctx, title, body, type, eventTag, route);
             return true;
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    /** A blocked channel must keep the durable notification unacknowledged for retry. */
+    public static boolean canNotify(Context ctx, boolean call) {
+        if (Build.VERSION.SDK_INT >= 33 && ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) return false;
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return false;
+        if (Build.VERSION.SDK_INT >= 24 && !nm.areNotificationsEnabled()) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = nm.getNotificationChannel(call ? CH_CALLS : CH_MSGS);
+            if (channel != null && channel.getImportance() == NotificationManager.IMPORTANCE_NONE) return false;
+        }
+        return true;
     }
 
     /**

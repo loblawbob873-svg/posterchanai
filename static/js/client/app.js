@@ -24754,12 +24754,19 @@
     })();
     // Sub A — mentions/reposts/reactions/zaps/reports/chat/comments. Subscribed IMMEDIATELY, never gated on
     // the follower seed, so live mentions/zaps aren't delayed by the seed's laggy-link retry.
-    Relay.subscribe([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1984,1111,1621,1617], limit:150 }], {   // 42=chat, 1111=community comments, 1621/1617=NIP-34 issue/patch on your repo
+    Relay.subscribe([{ '#p':[ME.pubkey], _include_quotes:true, kinds:[1,6,7,9735,1984,1111,1621,1617], limit:150 }], {   // 42=chat, 1111=community comments, 1621/1617=NIP-34 issue/patch on your repo
       onEvent: ev => { if(ev.pubkey===ME.pubkey) return; if(Store.saveEvent(ev)){ invalidateCounts(); applySobLive(ev); needProfile(ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey);
         if(ev.created_at>seenNotif.last){ bumpNotif(); if(_notifReady) notifPing(ev); }
         renderNotificationsSoon(); } },
       onEose: ()=>{ _notifReady=true; if(VIEW==='notifications') renderNotificationsSoon(); else bumpNotif(); }   // show unseen count on load; ping LIVE ones
     });
+  }
+  function _quotesMe(ev){
+    return ev.kind===1 && (ev.tags||[]).some(t=>Array.isArray(t) && t[0]==='q'
+      && typeof t[1]==='string' && /^[0-9a-f]{64}$/.test(t[1]) && t[3]===ME.pubkey);
+  }
+  function _notifForMe(ev){
+    return (ev.tags||[]).some(t=>Array.isArray(t) && t[0]==='p' && t[1]===ME.pubkey) || _quotesMe(ev);
   }
   function notifPing(ev){
     // NEVER toast/OS-notify for follows. kind-3 is a whole contact list, republished on every edit, so
@@ -24780,7 +24787,7 @@
       : ev.kind===1111?'replied to you'
       : ev.kind===1621?'🐛 opened an issue on your repo'
       : ev.kind===1617?'🩹 sent a patch to your repo'
-      : isReply(ev)?'replied to you' : 'mentioned you';
+      : _quotesMe(ev)?'quoted your post' : isReply(ev)?'replied to you' : 'mentioned you';
     notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture);   // render the sender's custom :emoji: in the toast
     const target=_notifCtxId(ev)||ev.id;
     osNotify('PosterChan', `${who} ${what}`, { icon:p.picture||LOGO,
@@ -24807,7 +24814,7 @@
     // a row renderer is not enough, because everything still has to survive this filter. 1621/1617 (NIP-34
     // issue/patch on a repo you maintain) were added to the subscription and the renderer but not here, so
     // they were fetched, toasted live, and then dropped from the list that actually renders.
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !isMutedAuthor(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && (e.tags||[]).some(t=>t&&t[0]==='p'&&t[1]===ME.pubkey)
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !isMutedAuthor(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && _notifForMe(e)
       // A reaction or repost with no `e` tag says "someone liked something" and can't say what. The row
       // has nothing to open, and the handler's `ref||e.id` fallback opened the REACTION as a thread,
       // which renders as an empty one. Drop them here so a malformed event from any source — our fedi
@@ -25110,7 +25117,7 @@
         more.textContent='Loading older…'; more.disabled=true;
         const oldest=all[all.length-1].created_at;
         try{
-          const older=await Relay.query([{ '#p':[ME.pubkey], kinds:[1,6,7,9735,1111,1621,1617], until: oldest-1, limit:100 }]);
+          const older=await Relay.query([{ '#p':[ME.pubkey], _include_quotes:true, kinds:[1,6,7,9735,1111,1621,1617], until: oldest-1, limit:100 }]);
           older.forEach(e=>{ if(e.pubkey!==ME.pubkey) Store.saveEvent(e); });
         }catch(_){}
       }
@@ -25236,6 +25243,7 @@
     // instead of _notifSaid's content preview — an issue body's first line is rarely the headline.
     else if(e.kind===1621||e.kind===1617){cls='reply';ic=e.kind===1617?'🩹':'🐛';const _s=_repoTag(e,'subject');txt=(e.kind===1617?'sent a patch':'opened an issue')+(_s?': <b>'+enc(_s.slice(0,80))+'</b>':_notifSaid(e));}
     else if(_tipNote(e)){const _tn=_tipNote(e);cls='zap';ic=_tn.icon;txt=`tipped you${_tn.amt?` <b>${enc(_tn.amt)} ${enc(_tn.unit)}</b>`:''}`;}
+    else if(_quotesMe(e)){cls='mention';ic='❝';txt='quoted your post'+_notifSaid(e);}
     else if(isReply(e)){cls='reply';ic='💬';txt='replied'+_notifSaid(e);}
     else {cls='mention';ic='@';txt='mentioned you'+_notifSaid(e);}
     // follows/reports have no thread → the row opens the sender's profile (data-prof); others open the post.
@@ -31977,6 +31985,16 @@
       new Promise((_,rej)=>setTimeout(()=>rej(new Error('signer timeout')),30000)),
     ]);
   }
+  function _directPushSocketUrl(path='/api/push/direct/ws'){
+    // Bundled Android pages live at https://localhost; HTTP is routed to the selected instance.
+    // Native WebSockets must use that same instance, never the asset page's location.
+    const base=_instanceBase();
+    if(!base) throw new Error('Choose a server before enabling notifications');
+    const socket=new URL(path,base+'/');
+    if(socket.origin!==new URL(base).origin) throw new Error('Notification server does not match this instance');
+    socket.protocol=socket.protocol==='https:'?'wss:':'ws:';
+    return socket.href;
+  }
   async function _enablePushNative(P){
     const local=(await P.getEndpoint())||{};
     const deviceId=local.deviceId||local.device_id;
@@ -31989,9 +32007,7 @@
     if(!(issued&&issued.ok&&issued.token&&issued.websocket_url)){
       toast('Could not turn notifications on'+((issued&&issued.error)?': '+issued.error:'')); return;
     }
-    const socket=new URL(issued.websocket_url,location.href);
-    socket.protocol=socket.protocol==='https:'?'wss:':'ws:';
-    const r=await P.register({socketUrl:socket.href,token:issued.token,deviceId:issued.device_id||deviceId});
+    const r=await P.register({socketUrl:_directPushSocketUrl(issued.websocket_url),token:issued.token,deviceId:issued.device_id||deviceId});
     if(!(r&&r.ok)){
       // Android asks for notification permission only after the signed server registration. Revoke
       // that fresh token when permission is refused instead of leaving a phantom device behind.
@@ -32068,7 +32084,15 @@
       if(!P && Notification.permission!=='granted'){ toast('This browser is blocking notifications'); return; }
       let deviceId;
       if(P){
-        const local=await _pushTestWait(P.getEndpoint(),'This device did not answer',10000);
+        let local=await _pushTestWait(P.getEndpoint({expectedSocketUrl:_directPushSocketUrl()}),'This device did not answer',10000);
+        if(ME.pubkey!==owner) throw new Error('Account changed; run the test again');
+        if(local && local.needsRegistration){
+          toast('Repairing this device’s notification connection…');
+          await _pushTestWait(_enablePushNative(P),'Notification registration did not answer');
+          local=await _pushTestWait(P.getEndpoint({expectedSocketUrl:_directPushSocketUrl()}),'This device did not answer',10000);
+          if(!local || local.needsRegistration || !local.endpoint) throw new Error('Enable notifications again to reconnect this device');
+        }
+        if(local && local.notificationsEnabled===false) throw new Error('Android is blocking message notifications; enable them in app notification settings');
         deviceId=local && (local.deviceId||local.device_id);
         if(!deviceId) throw new Error('This device needs to enable notifications again');
       }
@@ -32088,6 +32112,13 @@
         }),'The server did not answer the notification test',30000);
       }finally{ controller.abort(); }
       if(r&&r.ok){
+        if(r.queued && P){
+          const status=await _pushTestWait(P.getEndpoint(),'This device did not answer',5000);
+          if(status && status.connected===false){
+            toast('Test queued — this device is not connected to notifications'+(status.error?': '+status.error:'. Reopen the app to reconnect.'));
+            return;
+          }
+        }
         if(r.queued) toast('Test queued for this device — check your notifications. If it does not arrive, reopen the app and check Android notification and battery settings.');
         else if(r.accepted) toast('Push service accepted the test — check your notifications.');
         else toast('Server accepted the test — check your notifications.');

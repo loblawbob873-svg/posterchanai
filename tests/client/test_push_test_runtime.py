@@ -16,11 +16,13 @@ def run(case):
     click = APP[APP.index('    if(tb) tb.onclick='):APP.index('    let cur = await pushState();')]
     harness = r'''
 const assert=require('node:assert/strict');
-const scenario=CASE, messages=[], requests=[],timers=new Map();let next=0,aborted=false,signCalls=0;
+const scenario=CASE, messages=[], requests=[],timers=new Map();let next=0,aborted=false,signCalls=0,repairs=0;
 const never=()=>new Promise(()=>{}),setTimeout=(fn,ms)=>{timers.set(++next,fn);return next;},clearTimeout=id=>timers.delete(id);
 let GUEST=scenario==='guest',ME={pubkey:'a'.repeat(64)};
 const toast=s=>messages.push(s),Notification={permission:scenario==='denied'?'denied':'granted'};
-const P={getEndpoint:()=>{if(scenario==='endpoint_switch')ME.pubkey='b'.repeat(64);return scenario==='native_hang'?never():Promise.resolve({deviceId:'phone-device-12345678'});}};
+const P={getEndpoint:()=>{if(scenario==='endpoint_switch')ME.pubkey='b'.repeat(64);return scenario==='native_hang'?never():Promise.resolve({deviceId:'phone-device-12345678',endpoint:'pcdirect:phone',needsRegistration:scenario==='repair'&&repairs===0,notificationsEnabled:scenario!=='muted',connected:scenario!=='disconnected',error:'connection failed'});}};
+const _enablePushNative=async()=>{repairs++;};
+const _directPushSocketUrl=()=> 'wss://poster.place/api/push/direct/ws';
 const _pushPlugin=()=>scenario==='browser'||scenario==='denied'?null:P;
 const pushState=()=>{if(scenario==='status_switch')ME.pubkey='b'.repeat(64);return scenario==='state_hang'?never():Promise.resolve(scenario==='off'?'off':'on');};
 const sign=()=>{signCalls++;if(scenario==='signer_hang'||scenario==='repeat')return never();if(scenario==='switch')ME.pubkey='b'.repeat(64);return Promise.resolve({sig:'signed'});};
@@ -44,6 +46,9 @@ CLICK
  if(scenario==='signer_hang'||scenario==='switch'||scenario==='state_hang'||scenario==='native_hang'||scenario==='off'||scenario==='denied'||scenario==='guest')assert.equal(requests.length,0);
  if(hung)assert.match(messages.at(-1),/did not answer/);
  if(scenario==='success'){assert.equal(requests[0].device_id,'phone-device-12345678');assert.match(messages.at(-1),/queued/);assert(!messages.at(-1).includes('sent to'));}
+ if(scenario==='repair'){assert.equal(repairs,1);assert.equal(requests.length,1);}
+ if(scenario==='disconnected'){assert.equal(requests.length,1);assert.match(messages.at(-1),/queued.*not connected.*connection failed/);}
+ if(scenario==='muted'){assert.equal(requests.length,0);assert.match(messages.at(-1),/blocking/);}
  if(scenario==='browser'){assert(!('device_id' in requests[0]));assert.match(messages.at(-1),/accepted/);}
  if(scenario==='http_error')assert.match(messages.at(-1),/503/);
  if(scenario==='server_error')assert.equal(messages.at(-1),'Device not registered');
@@ -59,6 +64,6 @@ CLICK
 
 @pytest.mark.parametrize('case', ['success', 'browser', 'state_hang', 'native_hang', 'signer_hang',
                                     'network_hang', 'body_hang', 'switch', 'off', 'denied', 'guest',
-                                    'http_error', 'server_error', 'repeat', 'status_switch', 'endpoint_switch'])
+                                    'http_error', 'server_error', 'repeat', 'status_switch', 'endpoint_switch', 'repair', 'muted', 'disconnected'])
 def test_actual_test_click_feedback_and_recovery(case):
     run(case)
