@@ -492,6 +492,19 @@ class PosterChanOSProfile(unittest.TestCase):
         # synced perfectly forty minutes earlier, which makes the message misleading, not just thin.
         self.assertIn("pc-overlay-sync.log", body, "the sync failure leaves no evidence")
         self.assertIn("FETCHLOG", body, "a failed desktop download leaves no evidence")
+        # POSTER.PLACE IS ASKED FIRST. This download was the one thing in an install that reached a
+        # third party before us — api.github.com to name the asset, github.com to serve it, and
+        # poster.place only after both failed. On a machine that cannot reach GitHub that is the
+        # difference between a desktop and an empty compositor, discovered at the end of an
+        # hour-long install.
+        # Comments stripped: the paragraph explaining the old order names api.github.com, and a
+        # plain index() would find the explanation rather than the call.
+        code = self._code(body)
+        self.assertLess(code.index("$PP/PosterChan-linux-x64.tar.zst"), code.index("api.github.com"),
+                        "GitHub is still asked before poster.place")
+        self.assertLess(code.index('-o "$APPIMG" "$PP/PosterChan.AppImage"'),
+                        code.index('-o "$APPIMG" "$GH/PosterChan.AppImage"'),
+                        "the AppImage fallback still prefers GitHub")
 
     def test_overlay_success_is_checked_by_looking_not_by_exit_code(self):
         """A package that installs nothing useful exits 0."""
@@ -681,10 +694,23 @@ class PosterChanOSProfile(unittest.TestCase):
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""
-        for atom in ("games-util/steam-launcher",
-                     "games-util/game-device-udev-rules", "media-libs/mesa",
+        for atom in ("games-util/game-device-udev-rules", "media-libs/mesa",
                      "media-libs/vulkan-loader", "dev-util/vulkan-tools"):
             self.assertIn(atom, self.pkgs, f"{atom} is missing from the regular install")
+        # STEAM IS NOT IN THE PACKAGE SET, ON PURPOSE, AND IT IS STILL INSTALLED. Resolving its
+        # 32-bit USE dependencies inside the ~200-package set is what made portage report "SKIPPED
+        # due to a dependency conflict" across cairo/mesa/harfbuzz/elfutils/llvm against a 64-only
+        # binary host -- and that state is handed to the owner, whose first `emerge -uDN @world`
+        # meets the same wall. It is emerged last, as its own transaction, after the base and the
+        # package set. Asserting the atom is ABSENT *and* that the install calls it is what stops
+        # the obvious "fix" of putting it back in the list.
+        self.assertNotIn("games-util/steam-launcher", self.pkgs,
+                         "Steam is back in the main set — its 32-bit chain re-opens the ABI seam")
+        build = self._code(self._fn("buildGentoo"))
+        self.assertIn("gentoo.sh steam", build,
+                      "nothing installs Steam any more: it left the package set and gained no call")
+        self.assertLess(build.index("install-packages"), build.index("gentoo.sh steam"),
+                        "Steam must be emerged AFTER the base and the package set, not before")
         steam = self._fn("installSteam")
         self.assertIn("gui-wm/gamescope", self.pkgs,
                       "Gamescope is the supported fullscreen game session on PosterChanOS")

@@ -253,7 +253,7 @@ net-print/cups \
 x11-misc/xdg-utils x11-apps/xrdb gnome-base/gsettings-desktop-schemas \
 media-video/pipewire media-video/wireplumber gui-libs/gtk media-fonts/noto media-fonts/noto-emoji \
 www-client/firefox-bin \
-games-util/steam-launcher games-util/game-device-udev-rules \
+games-util/game-device-udev-rules \
 media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
@@ -782,6 +782,30 @@ buildGentoo() {
 	# finalization runs regardless; what changes is that the installer stops claiming it succeeded.
 	PACKAGES_OK=0
 	chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh install-packages || PACKAGES_OK=$?
+
+	# STEAM IS INSTALLED LAST, AFTER THE BASE AND THE PACKAGE SET, AND THAT ORDER IS THE DESIGN.
+	#
+	# `games-util/steam-launcher` used to sit inside POSTERCHANOS_PACKAGES, which resolved its 32-bit
+	# USE dependencies as part of the ~200-package set -- and that is what opens the seam. The binary
+	# host serves 64-only copies of fontconfig, libglvnd, zstd, ncurses and libxcrypt while steam's
+	# chain wants cairo, mesa, harfbuzz, elfutils and llvm carrying abi_x86_32, so portage prints
+	# "WARNING: One or more updates/rebuilds have been SKIPPED due to a dependency conflict" through
+	# the middle of the desktop's own graph -- and the machine is then handed over in that state,
+	# where the owner's FIRST `emerge -uDN @world` meets the same wall. Resolved on its own at the
+	# end it buys the same 32-bit libraries and leaves the base set a clean binary install.
+	#
+	# THROUGH THE CHROOT, like install-packages above: installSteam runs `emerge` directly with no
+	# $TARGET, so calling it as a shell function from here would emerge Steam into the LIVE MEDIUM's
+	# tmpfs and report success.
+	#
+	# ITS FAILURE IS NOT THE INSTALL'S FAILURE, and that is the deliberate difference from the set
+	# above. That set IS the desktop; Steam is one application on top of it, installSteam already
+	# refuses a no-multilib profile with a sentence rather than half-installing it, and
+	# `gentoo.sh steam` re-runs it whenever the owner wants. So the verdict is SAID -- never silent,
+	# which is the failure this file keeps having to relearn -- and kept out of the exit status.
+	if ! chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh steam; then
+		echo -e "\033[1;31mSteam did not install — everything else did. Re-run it with: gentoo.sh steam\033[0m"
+	fi
 	echo
 	echo
 	echo -e "\033[1;36m[Configuring Accounts and post-setup tasks]\033[0m"
@@ -982,6 +1006,10 @@ installPackages() {
 	# `libudev[abi_x86_32]`, which wants `systemd[abi_x86_32]`, and each layer only becomes visible
 	# after the one above it has been accepted. Each pass answers what it can see; three of them is
 	# where the chains here settle, and a pass that changes nothing stops the loop early.
+	# steam-launcher itself is NO LONGER in this set -- it is emerged last, on its own (see
+	# buildGentoo) -- but it is kept as the example because it is the chain this was written from,
+	# and the loop still earns its place: mesa's vulkan USE and firefox-bin's licence both answer
+	# on a later pass than the one that asks.
 	# `-p`, SO THE PASSES RESOLVE AND DO NOT MERGE. Without it each pass is a real install of a
 	# 200-package set, and with its output silenced -- which the loop must do, or three resolutions
 	# of that set bury the log -- the install goes SILENT for its longest phase. Measured: 15 minutes
@@ -1897,7 +1925,19 @@ PROFILE
 	# The AppImage path stays as a FALLBACK, not as a preference: a release cut before the tarball
 	# existed has only the image, and an installer that refused it would fail on the last release
 	# rather than the next one.
+	# POSTER.PLACE FIRST, GITHUB AS THE FALLBACK -- it used to be the other way round.
+	#
+	# Every repository an install uses is ours; this download was the one thing that reached a third
+	# party FIRST, asking api.github.com to name the asset and then github.com to serve it, with
+	# poster.place tried only after both had failed. On a machine that cannot reach GitHub -- or
+	# whose CA bundle cannot verify it -- that is the difference between a desktop and an empty
+	# compositor, and it is reached at the very end of an hour-long install.
+	#
+	# https://poster.place/desktop/PosterChan-linux-x64.tar.zst is the same build, versionless, so it
+	# needs no release-listing call at all: one request instead of two, to the host this OS already
+	# depends on for its portage tree, its binary packages and its overlay.
 	echo -e "\033[1;33mInstalling the PosterChan desktop\033[0m"
+	PP="https://poster.place/desktop"
 	GH="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-latest"
 	APPTAR="/tmp/PosterChan-linux-x64.tar.zst"
 	APPIMG="/tmp/PosterChan.AppImage"
@@ -1914,6 +1954,10 @@ PROFILE
 		echo "curl is not installed here, so the desktop cannot be downloaded" >>"$FETCHLOG"
 	fi
 	if [ ! -s "$APPTAR" ]; then
+		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPTAR" "$PP/PosterChan-linux-x64.tar.zst" \
+			2>>"$FETCHLOG" || true
+	fi
+	if [ ! -s "$APPTAR" ]; then
 		TARURL="$(curl -sSfL --retry 2 --connect-timeout 20 \
 			https://api.github.com/repos/loblawbob873-svg/posterchanai/releases/tags/desktop-latest \
 			2>>"$FETCHLOG" | grep -o 'https://[^"]*linux-x64\.tar\.zst' | head -1)"
@@ -1922,9 +1966,8 @@ PROFILE
 			2>>"$FETCHLOG" || true; }
 	fi
 	if [ ! -s "$APPTAR" ] && [ ! -f "$APPIMG" ]; then
-		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$GH/PosterChan.AppImage" 2>>"$FETCHLOG" \
-			|| curl -sSfL --retry 2 -o "$APPIMG" https://poster.place/desktop/PosterChan.AppImage \
-				2>>"$FETCHLOG" || true
+		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPIMG" "$PP/PosterChan.AppImage" 2>>"$FETCHLOG" \
+			|| curl -sSfL --retry 2 -o "$APPIMG" "$GH/PosterChan.AppImage" 2>>"$FETCHLOG" || true
 	fi
 	# RUN IT WHERE THE FILES ARE. This function is called BOTH ways — from the installer on the live
 	# system with TARGET pointing at the new root, and from inside the chroot during finalize, where
