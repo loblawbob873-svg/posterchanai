@@ -56,5 +56,33 @@ that drafts reach the PTY once and remain visible through viewport and font-size
 no prompt and does not use the operator's terminal session. The reported duplicated prompt itself
 was not reproduced.
 
-Full-suite and deployment results will be recorded after completion. Installer files, including
-`os/gentoo.sh`, are owned by the other agent and are not changed by this work.
+The final backend rerun passed **7,885 tests**, with 18 environment-dependent skips and 519
+subtests. The full client suite passed **3,547 tests**, with one documented skip and 121 subtests.
+The other agent's installer checks passed 122 tests and 52 subtests; their commits were merged
+without editing their installer files or working documents.
+
+Live verification of the initial release caught a storage-node issue: the NAS has a separate
+NIP-05 registry and was rejecting already-qualified frontend viewers. The correction preserves
+the frontend's membership decision only for a distinct identity constructed after shared-secret
+verification. Direct users still require membership; media permissions, library ACLs, and playback
+signatures still apply. Regression cases cover an unavailable NAS registry, forged delegation,
+frontend denial before network access, and invalid playback tickets. The backend rerun above
+includes this correction.
+
+The live cleanup revoked 18 AI grants, 11 streaming grants, and 18 whitelist entries at
+2026-09-07T16:32:31Z. Its saved result persisted; a subsequent preview reported zero outstanding
+revocations. The real scheduler fired at 16:44:55Z with a 15-minute interval. That scheduled
+attempt aborted safely when an upstream profile relay was unavailable; it changed no permissions
+and retained the next scheduled retry. A restricted permissions snapshot was saved before cleanup.
+All 63 matching primary-instance signed profiles passed the revised checker.
+
+Android and Windows release packages were extracted and their nine changed client assets compared
+against the source (normalizing Windows CRLF). Both load the membership controller before app.js.
+Three actual clipboard checks passed against each packaged terminal controller. Android build
+2223 and Windows 1.0.1503 contain the client changes; no browser extension code changed.
+The Android large-folder device fixture now supplies a verified membership response, while checking
+that anonymous access and removing the profile address remain denied. The previous anonymous
+fixture correctly hit the new access gate instead of opening Folder Sync.
+
+Installer files, including `os/gentoo.sh`, remain owned by the other agent. This app deployment
+does not publish their installer overlay or ISO.
