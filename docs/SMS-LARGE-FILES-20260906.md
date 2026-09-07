@@ -11,3 +11,13 @@ Review: uploads finish before any SMS is sent; a failed chunk never produces a t
 Validation includes a 25 MiB native file under a 24 MiB JVM heap, independent decryption and full-content hash comparisons for native and actual JavaScript uploaders, failure of the second upload, changed media-server rejection, local-radio and remote-web send decisions, old-link compatibility, and real-browser download reconstruction/missing-chunk/invalid-manifest cases. Android content-URI staging and interrupted-copy tests are included in the emulator suite. No SMS was sent to a real contact during automated testing.
 
 Limits: uploads still require connectivity, storage quota, and a Blossom server accepting 4 MiB blobs. Files are limited to 4096 chunks. Current desktop Chromium uses its disk-backed File System Access picker; older builds without that API retain their bounded IPC fallback. Browser file inputs and native Android use the new large-file path. Interrupted uploads can leave retained encrypted chunks on Blossom, as existing failed shared uploads can; no plaintext or decryption key is uploaded.
+
+## Release validation
+
+The full backend rerun passed 7,600 tests and 520 subtests (19 skipped). The full client run passed 3,455 tests and 121 subtests (one skipped). The original backend run found three obsolete picker source assertions and a pre-existing installer test timing race; those test corrections are committed, and the entire backend was rerun. Raw first-run failures are retained in the local release logs.
+
+The release runner passed 54 additional checks, including signer transport, interactive/bulk recovery, Jellyfin compatibility, moved media reconciliation, share-link reconstruction and Texts media. Its 22 environment-dependent skips are not passes; these require attached installed desktops, VM/ISO images, services or temporary account registration. The standalone signer reconnect retry passed. The existing CSS-scale report remains advisory.
+
+Android and desktop generated bundles each passed all 42 wallet presentation tests. The native Java and instrumentation sources compiled. The first Android emulator run (34067306678) lost the emulator before instrumentation executed and is not device-test evidence; a fresh runner retry is required before release. No real SMS was sent by these checks.
+
+The independently committed installer change cf9924391 is preserved by merge; its 113 tests and 52 subtests passed after integration.
