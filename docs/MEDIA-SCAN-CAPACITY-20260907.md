@@ -38,3 +38,10 @@ Deployment-target and role-split checks:60 passed (/tmp/pc-media-deploy-targets-
 Post-restart public login, both WebSocket messages and library/item decoding pass
 both official SDKs (/tmp/pc-post-scan-deploy-tv-recovery.log). This verifies recovery,
 not uninterrupted playback during a service restart.
+
+Live rescan completed at1788749416 (UTC epoch):11446 playable items,4 skipped,
+scan_incomplete=false. Direct NAS catalog verification found zero paths whose files
+were missing (previously8). Original library shares remained present. User confirmed
+TV playback worked again after the earlier deployment interruption. Mapping-only
+follow-up b93fc2c40 synchronized every node with zero restart targets; relay activation
+remained2026-09-06 20:37:37MDT with no automatic restarts.
