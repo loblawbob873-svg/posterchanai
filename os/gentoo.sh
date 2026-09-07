@@ -820,6 +820,34 @@ buildGentoo() {
 	if ! chroot $TARGET /usr/bin/bash /usr/bin/gentoo.sh steam; then
 		echo -e "\033[1;31mSteam did not install — everything else did. Re-run it with: gentoo.sh steam\033[0m"
 	fi
+
+	# CONVERGE THE ABI, SO THE MACHINE IS HANDED OVER ABLE TO UPDATE ITSELF.
+	#
+	# Installing Steam adds `abi_x86_32` to packages the desktop already had, and portage does not
+	# retro-fit the ones it merged before that. Measured on a run that otherwise passed everything:
+	# readline ends up installed with ABI_X86="32 (64)" and therefore requires
+	# ncurses[abi_x86_32], while the ncurses UPGRADE portage wants to do is 64-only -- so it declines
+	# the upgrade and says
+	#
+	#     WARNING: One or more updates/rebuilds have been skipped due to a dependency conflict
+	#
+	# for sys-libs/ncurses and media-libs/harfbuzz. Nothing is broken that day; the desktop boots and
+	# every gate is green. What is broken is the FUTURE: those two packages can never be upgraded
+	# again by an ordinary `emerge -uDN @world`, which is the one command the owner of this machine
+	# will run, and a skipped security update is not a cosmetic complaint.
+	#
+	# One --newuse pass closes it: it rebuilds exactly the packages whose USE changed underneath them
+	# while Steam was resolving. Not fatal if it fails -- the machine is installed and bootable, and
+	# the release gate reads the resolution afterwards and will refuse on its own if a seam survives
+	# -- but never silent.
+	echo
+	echo -e "\033[1;36m[Converging the package tree after Steam]\033[0m"
+	chroot $TARGET /usr/bin/emerge -uDN --newuse @world --autounmask-write >/dev/null 2>&1
+	chroot $TARGET /usr/sbin/etc-update -q --automode -5 >/dev/null 2>&1
+	if ! chroot $TARGET /usr/bin/emerge -uDN --newuse @world; then
+		echo -e "\033[1;31mThe post-Steam convergence pass did not finish. The machine is installed,\033[0m"
+		echo -e "\033[1;31mbut check `emerge -uDNp @world` before relying on it updating cleanly.\033[0m"
+	fi
 	echo
 	echo
 	echo -e "\033[1;36m[Configuring Accounts and post-setup tasks]\033[0m"

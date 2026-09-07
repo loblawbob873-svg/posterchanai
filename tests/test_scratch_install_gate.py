@@ -418,3 +418,32 @@ def test_the_portage_check_runs_in_the_installed_root_not_the_live_medium():
     # And it runs only after a successful install: there is nothing to ask of a failed one.
     body = SRC[SRC.index("def install("):SRC.index("# CAN THE MACHINE STILL UPDATE ITSELF")]
     assert body.index('if rc != "0":') < body.index("portage_health(con, evidence, port)")
+
+
+def test_the_abi_is_converged_after_steam_so_the_machine_can_update_itself():
+    """Installing Steam adds abi_x86_32 to packages the desktop already had, and portage does not
+    retro-fit the ones merged before that. Measured on a run that passed every other gate: readline
+    ends up ABI_X86="32 (64)" and so requires ncurses[abi_x86_32], while the ncurses UPGRADE portage
+    wants is 64-only — so it declines the upgrade for sys-libs/ncurses and media-libs/harfbuzz.
+    Nothing is broken that day. What is broken is that an ordinary `emerge -uDN @world` — the one
+    command the machine's owner will run — can never upgrade those two again."""
+    body = SH[SH.index("buildGentoo() {"):SH.index("finalizeInstall() {")]
+    code = "\n".join(l for l in body.splitlines() if not l.strip().startswith("#"))
+    steam = code.index("gentoo.sh steam")
+    converge = code.index("emerge -uDN --newuse @world")
+    assert steam < converge, "the convergence pass must run AFTER Steam changed the USE flags"
+    assert converge < code.index("finalizeInstall"), \
+        "it must run before the release gates read the result"
+    assert "--newuse" in code[converge:converge + 60], \
+        "without --newuse portage does not rebuild packages whose USE changed underneath them"
+
+
+def test_the_world_conflict_grep_is_case_insensitive():
+    """Portage writes "have been skipped due to a dependency conflict" in LOWER CASE. The pattern
+    said SKIPPED, so the check that exists because "exit 0 is not sufficient" certified a machine
+    carrying the exact seam it was written to catch — measured on run 9's own log, `grep -cE` gave 0
+    and `grep -ciE` gave 1."""
+    src = SRC[SRC.index("def portage_health("):SRC.index("def shell_quote(")]
+    assert "grep -ciE" in src or "grep -cieE" in src, "the conflict grep is case-sensitive again"
+    # And the wording it must match is portage's actual wording, not a paraphrase of it.
+    assert "skipped due to a dependency conflict" in src.lower()
