@@ -32040,14 +32040,23 @@
       timer=setTimeout(()=>reject(new Error(message)),ms);
     })]); }finally{ clearTimeout(timer); }
   }
+  const _pushTestJobs=new Map();
   async function testPush(){
     if(GUEST||!ME.pubkey){ toast('Log in first'); return; }
     const owner=ME.pubkey;
+    if(_pushTestJobs.has(owner)) return await _pushTestJobs.get(owner);
+    const job=_runPushTest(owner);
+    _pushTestJobs.set(owner,job);
+    try{ return await job; }
+    finally{ if(_pushTestJobs.get(owner)===job) _pushTestJobs.delete(owner); }
+  }
+  async function _runPushTest(owner){
     toast('Checking notifications…');
     try{
       if((await _pushTestWait(pushState(),'Notification status did not answer',10000))!=='on'){
         toast('Notifications are off — turn them on first'); return;
       }
+      if(ME.pubkey!==owner) throw new Error('Account changed; run the test again');
       const P=_pushPlugin();
       if(!P && Notification.permission!=='granted'){ toast('This browser is blocking notifications'); return; }
       let deviceId;
@@ -32056,6 +32065,7 @@
         deviceId=local && (local.deviceId||local.device_id);
         if(!deviceId) throw new Error('This device needs to enable notifications again');
       }
+      if(ME.pubkey!==owner) throw new Error('Account changed; run the test again');
       toast('Waiting for your signer to approve the notification test…');
       const auth=await _pushTestWait(sign(27235,'push-test',[['p',owner]]),'Your signer did not answer the notification test');
       if(ME.pubkey!==owner) throw new Error('Account changed; run the test again');

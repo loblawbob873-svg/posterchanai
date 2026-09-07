@@ -16,14 +16,14 @@ def run(case):
     click = APP[APP.index('    if(tb) tb.onclick='):APP.index('    let cur = await pushState();')]
     harness = r'''
 const assert=require('node:assert/strict');
-const scenario=CASE, messages=[], requests=[],timers=new Map();let next=0,aborted=false;
+const scenario=CASE, messages=[], requests=[],timers=new Map();let next=0,aborted=false,signCalls=0;
 const never=()=>new Promise(()=>{}),setTimeout=(fn,ms)=>{timers.set(++next,fn);return next;},clearTimeout=id=>timers.delete(id);
 let GUEST=scenario==='guest',ME={pubkey:'a'.repeat(64)};
 const toast=s=>messages.push(s),Notification={permission:scenario==='denied'?'denied':'granted'};
-const P={getEndpoint:()=>scenario==='native_hang'?never():Promise.resolve({deviceId:'phone-device-12345678'})};
+const P={getEndpoint:()=>{if(scenario==='endpoint_switch')ME.pubkey='b'.repeat(64);return scenario==='native_hang'?never():Promise.resolve({deviceId:'phone-device-12345678'});}};
 const _pushPlugin=()=>scenario==='browser'||scenario==='denied'?null:P;
-const pushState=()=>scenario==='state_hang'?never():Promise.resolve(scenario==='off'?'off':'on');
-const sign=()=>{if(scenario==='signer_hang')return never();if(scenario==='switch')ME.pubkey='b'.repeat(64);return Promise.resolve({sig:'signed'});};
+const pushState=()=>{if(scenario==='status_switch')ME.pubkey='b'.repeat(64);return scenario==='state_hang'?never():Promise.resolve(scenario==='off'?'off':'on');};
+const sign=()=>{signCalls++;if(scenario==='signer_hang'||scenario==='repeat')return never();if(scenario==='switch')ME.pubkey='b'.repeat(64);return Promise.resolve({sig:'signed'});};
 const fetch=(_url,options)=>{requests.push(JSON.parse(options.body));options.signal.addEventListener('abort',()=>aborted=true);
  if(scenario==='network_hang')return never();
  return Promise.resolve({ok:scenario!=='http_error',status:503,json:()=>scenario==='body_hang'?never():Promise.resolve(
@@ -33,10 +33,13 @@ CODE
 CLICK
 (async()=>{
  const task=tb.onclick();assert.equal(tb.disabled,true);
+ const repeated=scenario==='repeat'?tb.onclick():null;
  for(let i=0;i<30;i++)await Promise.resolve();
- const hung=['state_hang','native_hang','signer_hang','network_hang','body_hang'].includes(scenario);
+ const hung=['state_hang','native_hang','signer_hang','network_hang','body_hang','repeat'].includes(scenario);
  if(hung){assert(messages.length>0,'click must immediately report progress');assert.equal(timers.size,1);[...timers.values()][0]();}
- await task;
+ await task;if(repeated)await repeated;
+ if(scenario==='repeat'){assert.equal(signCalls,1);const retry=tb.onclick();for(let i=0;i<30;i++)await Promise.resolve();assert.equal(signCalls,2);[...timers.values()][0]();await retry;}
+ if(scenario==='status_switch'||scenario==='endpoint_switch'){assert.equal(signCalls,0);assert.equal(requests.length,0);assert.match(messages.at(-1),/Account changed/);}
  assert.equal(tb.disabled,false);assert.equal(timers.size,0);
  if(scenario==='signer_hang'||scenario==='switch'||scenario==='state_hang'||scenario==='native_hang'||scenario==='off'||scenario==='denied'||scenario==='guest')assert.equal(requests.length,0);
  if(hung)assert.match(messages.at(-1),/did not answer/);
@@ -56,6 +59,6 @@ CLICK
 
 @pytest.mark.parametrize('case', ['success', 'browser', 'state_hang', 'native_hang', 'signer_hang',
                                     'network_hang', 'body_hang', 'switch', 'off', 'denied', 'guest',
-                                    'http_error', 'server_error'])
+                                    'http_error', 'server_error', 'repeat', 'status_switch', 'endpoint_switch'])
 def test_actual_test_click_feedback_and_recovery(case):
     run(case)
