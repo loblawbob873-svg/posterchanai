@@ -39,6 +39,18 @@ async def close_proxy():
         _proxy_client = None
 
 
+class _DelegatedMediaUser(SimpleNamespace):
+    """Viewer authenticated and authorized by the shared-secret media frontend."""
+
+
+async def require_membership(user):
+    # The frontend checks its own instance registry before delegating. A storage
+    # node has a separate registry; it must retain the frontend's decision while
+    # still enforcing media permissions, library ACLs, and playback tickets.
+    if not isinstance(user, _DelegatedMediaUser):
+        await instance_membership.require_user(user)
+
+
 async def media_user_optional(request: Request, user=Depends(get_current_user_optional)):
     assertion = request.headers.get("X-PC-Media-Viewer")
     if assertion is not None:
@@ -49,7 +61,7 @@ async def media_user_optional(request: Request, user=Depends(get_current_user_op
             key = media.normalize_pubkey(assertion)
         except ValueError as error:
             raise HTTPException(403, "Invalid media proxy identity") from error
-        return SimpleNamespace(nostr_npub=key, is_admin=request.headers.get("X-PC-Media-Admin") == "true",
+        return _DelegatedMediaUser(nostr_npub=key, is_admin=request.headers.get("X-PC-Media-Admin") == "true",
                                can_media=request.headers.get("X-PC-Media-Allowed") == "true")
     return user
 
@@ -75,7 +87,7 @@ async def get_media_user(user=Depends(media_user_optional)):
         raise HTTPException(401, "Sign in to use Media Center")
     if not media_allowed(user):
         raise HTTPException(403, "An admin must enable your Media Center permission")
-    await instance_membership.require_user(user)
+    await require_membership(user)
     return user
 
 
@@ -558,7 +570,7 @@ async def hls(library_id: str, item_id: str, asset: str, viewer: str = Query(max
               audio: int = Query(default=-1, ge=-1, le=1024),
               subtitle: int = Query(default=-1, ge=-1, le=1024),
               user=Depends(media_user_optional), db=Depends(get_db)):
-    await instance_membership.require_user(ticket_user(viewer, user, db))
+    await require_membership(ticket_user(viewer, user, db))
     library = await library_for(library_id, viewer)
     if (expires < time.time() or not library.get("playback_secret") or
             not hmac.compare_digest(ticket, sign_ticket(library, item_id, viewer, expires))):

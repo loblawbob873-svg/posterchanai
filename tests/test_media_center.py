@@ -149,10 +149,14 @@ def test_stopping_releases_slot_for_another_viewer(api):
 
 
 def test_proxy_identity_requires_secret_and_keeps_acl(api, monkeypatch):
+    from fastapi import HTTPException
     from app.auth import get_current_user_optional
     from app.utils import lb_auth
     client, docs, user, folder = api
     seed(docs, folder)
+    async def separate_registry(user):
+        raise HTTPException(503, 'Instance NIP-05 domain is not configured')
+    monkeypatch.setattr(routes.instance_membership, 'require_user', separate_registry)
     client.app.dependency_overrides.pop(routes.media_user_optional)
     client.app.dependency_overrides[get_current_user_optional] = lambda: None
     headers = {"X-PC-Media-Viewer": VIEWER, "X-PC-Media-Admin": "false", "X-PC-Media-Allowed": "true", lb_auth.FLAG_HEADER_NAME: "true"}
@@ -161,9 +165,40 @@ def test_proxy_identity_requires_secret_and_keeps_acl(api, monkeypatch):
     assert client.get("/api/media-center", headers=headers).status_code == 403
     headers[lb_auth.AUTH_HEADER_NAME] = "test-secret"
     assert len(client.get("/api/media-center", headers=headers).json()["libraries"]) == 1
+    playback = client.post('/api/media-center/abc/play/movie', headers=headers)
+    assert playback.status_code == 200
+    # The delegated identity does not bypass the signed playback capability.
+    url = playback.json()['url']
+    assert client.get(url.split('ticket=')[0] + 'ticket=' + '0' * 64, headers=headers).status_code == 403
     assert client.get("/api/media-center/limits", headers=headers).status_code == 403
     docs["library:abc"]["shared_with"] = []
     assert client.get("/api/media-center/abc/items", headers=headers).status_code == 404
+
+
+def test_frontend_checks_membership_before_delegation(api, monkeypatch):
+    from fastapi import HTTPException
+    client, docs, user, folder = api
+    monkeypatch.setattr(routes.settings_store, 'get', lambda *args: 'http://nas.lan:3051')
+    monkeypatch.setattr(routes.lb_auth, 'shared_secret', lambda: 'test-secret')
+    async def denied(user):
+        raise HTTPException(403, 'Save your approved profile address')
+    monkeypatch.setattr(routes.instance_membership, 'require_user', denied)
+    class NoNetwork:
+        def build_request(self, *args, **kwargs):
+            pytest.fail('Unqualified frontend user reached the storage node')
+    monkeypatch.setattr(routes, '_proxy_client', NoNetwork())
+    assert client.get('/api/media-center').status_code == 403
+
+
+def test_direct_user_cannot_claim_delegated_membership(api, monkeypatch):
+    from fastapi import HTTPException
+    client, docs, user, folder = api
+    # Arbitrary account properties cannot confer the internal identity type.
+    user.membership_verified = True
+    async def denied(user):
+        raise HTTPException(403, 'Save your approved profile address')
+    monkeypatch.setattr(routes.instance_membership, 'require_user', denied)
+    assert client.get('/api/media-center').status_code == 403
 
 
 def test_proxy_failure_never_falls_back_to_local_library(api, monkeypatch):
