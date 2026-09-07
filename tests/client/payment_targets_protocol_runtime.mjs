@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-const P=require('../../static/js/client/payment-targets.js');
+const P=require(process.env.PC_PAYMENT_TARGET_MODULE||'../../static/js/client/payment-targets.js');
 globalThis.window=globalThis;
 vm.runInThisContext(fs.readFileSync(new URL('../../static/vendor/nostr/nostr.bundle.js',import.meta.url),'utf8')+'\nglobalThis.NostrTools=NostrTools;');
 const N=globalThis.NostrTools,sk=Uint8Array.from({length:32},(_,i)=>i===31?1:0),other=Uint8Array.from({length:32},(_,i)=>i===31?2:0),owner=N.getPublicKey(sk);
@@ -86,6 +86,16 @@ const cases={
     let done,calls=0;const resolver=P.createResolver({verify:e=>N.verifyEvent(e),read:()=>{calls++;return new Promise(r=>done=r);}});
     const jobs=Array.from({length:20},()=>resolver.load(owner));assert.equal(calls,1);
     done({events:[fresh],complete:true});assert((await Promise.all(jobs)).every(s=>s.event.id===fresh.id));
+  },
+  async inflight_accept(){
+    let finish;const resolver=P.createResolver({verify:e=>N.verifyEvent(e),read:()=>new Promise(r=>finish=r)});
+    const job=resolver.load(owner);resolver.accept(fresh);finish({events:[old],complete:true});
+    assert.equal((await job).event.id,fresh.id);assert.equal((await resolver.load(owner)).event.id,fresh.id);
+  },
+  async inflight_live_update(){
+    let finish,local=[];const resolver=P.createResolver({verify:e=>N.verifyEvent(e),local:()=>local,remember:e=>local=[e],read:()=>new Promise(r=>finish=r)});
+    const job=resolver.load(owner);local=[fresh];finish({events:[old],complete:true});
+    assert.equal((await job).event.id,fresh.id);assert.equal(local[0].id,fresh.id);
   },
   async account_isolation(){
     const s=state();await s.resolver.load(owner);

@@ -65,7 +65,9 @@
       const job=(async()=>{
         let result={events:[],complete:false};try{result=await read(owner);}catch(_){}
         const received=newest(result.events||[],owner,valid);
-        const event=newest([stored,held&&held.event,received].filter(Boolean),owner,valid);
+        // A publication or live subscription can update destinations while discovery waits.
+        const latest=cache.get(owner);
+        const event=newest([stored,held&&held.event,received,latest&&latest.event,...(local(owner)||[])].filter(Boolean),owner,valid);
         const state={event,targets:parse(event),available:!!received||result.complete===true,
           expires:now()+(event?60000:10000)};
         if(event)remember(event);

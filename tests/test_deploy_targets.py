@@ -27,6 +27,10 @@ class Mapping(unittest.TestCase):
         for name in ('instance_membership', 'instance_welcome', 'relay_access_policy'):
             self.assertEqual(set(dt.units_for(['app/services/'+name+'.py'])), {dt.APP, dt.WORKER})
 
+    def test_push_transport_only_restarts_app_and_worker(self):
+        for name in ('push_service', 'direct_push_service'):
+            self.assertEqual(set(dt.units_for(['app/services/'+name+'.py'])), {dt.APP, dt.WORKER})
+
     def test_ui_only_changes_restart_nothing(self):
         """The pre-existing rule this must not break: a static/client change is served from
         router.lan's own checkout, so it must never take the ~90s restart outage."""

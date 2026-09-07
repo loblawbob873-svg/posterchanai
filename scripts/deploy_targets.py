@@ -155,6 +155,9 @@ _OWNED = (
     # rendering the old code. Reported as "why does stats look the same".
     ("app/services/stats_bot_service.py", (APP, WORKER)),
     ("app/services/nostr_push_service.py", (WORKER,)),
+    # Notification transport is called by the push API and reminder/mail/Nostr workers.
+    ("app/services/push_service.py", (APP, WORKER)),
+    ("app/services/direct_push_service.py", (APP, WORKER)),
     ("app/services/fedi_nostr_bridge_service.py", (WORKER,)),
     ("app/services/fedi_nostr_writeback_service.py", (WORKER,)),
     ("app/services/fedi_nostr_personal_service.py", (WORKER,)),

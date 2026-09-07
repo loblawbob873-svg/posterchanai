@@ -14084,23 +14084,28 @@
       });
   }
   async function _runZap(noteId, pk, amt, selectedAddress){
+    const viewer=ME&&ME.pubkey,current=()=>ME&&ME.pubkey===viewer;
     const p=profOf(pk); const addr=selectedAddress||await _lightningAddress(pk,p);
-    if(!addr || !amt || amt<1) return;
+    if(!current() || !addr || !amt || amt<1) return;
     toast('preparing zap…');
     try{
       const lnurl=await lnurlResolve(addr);
+      if(!current())return;
       if(!lnurl||!lnurl.callback){ toast('couldn\'t resolve '+addr); return; }
       const msat=amt*1000;
       let url=lnurl.callback+(lnurl.callback.includes('?')?'&':'?')+'amount='+msat;
       if(lnurl.allowsNostr){
         const zr=await sign(9734,'',[['relays',CFG.relay_url||''],['amount',String(msat)],['p',pk]].concat(noteId?[['e',noteId]]:[]));
+        if(!current())return;
         url+='&nostr='+encodeURIComponent(JSON.stringify(zr));
       }
       const inv=await corsJson(url);
+      if(!current())return;
       const pr=inv && inv.pr; if(!pr){ toast('no invoice'+(inv&&inv.reason?': '+inv.reason:'')); return; }
       // 1) an installed WebLN extension (Alby etc.) — the most direct one-click path → 2) a
       // configured NWC wallet (great when there's no extension, e.g. on mobile) → 3) show the invoice.
-      if(window.webln){ try{ await window.webln.enable(); await window.webln.sendPayment(pr); toast('⚡ zapped '+amt+' sats'); return; }catch(e){} }
+      if(window.webln){ try{ await window.webln.enable(); if(!current())return; await window.webln.sendPayment(pr); toast('⚡ zapped '+amt+' sats'); return; }catch(e){} }
+      if(!current())return;
       if(Nwc.configured()){ try{ toast('paying via your wallet…'); await Nwc.payInvoice(pr); toast('⚡ zapped '+amt+' sats'); return; }
         catch(e){ toast('wallet: '+((e&&e.message)||e)); } }
       invoiceModal(pr, amt);
@@ -14376,7 +14381,9 @@
   // "I sent it" posts a public tip note crediting them (BCH has no cryptographic zap receipt; a txid,
   // if given, is verifiable on any explorer).
   async function doBchTip(pk,selectedAddress){
-    const p=profOf(pk); const addr=selectedAddress||await _paymentAddress(pk,'bitcoincash',bchOf(p));
+    const viewer=ME&&ME.pubkey,p=profOf(pk);
+    const addr=String(selectedAddress||await _paymentAddress(pk,'bitcoincash',bchOf(p))).replace(/^bitcoincash:/i,'').trim();
+    if((ME&&ME.pubkey)!==viewer)return;
     if(!isBchAddr(addr)){ toast('no Bitcoin Cash address on this profile'); return; }
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'bitcoincash:'+addr+(a?('?amount='+encodeURIComponent(a)):'');
@@ -14401,13 +14408,13 @@
         // _tipTellOnDismiss). A txid is verifiable AFTER the fact, but only if somebody posts it.
         const tell=_tipTellOnDismiss(root, {
           ask: 'Did you send the Bitcoin Cash tip? They are only told if you post the tip note.',
-          onYes: ()=> _postBchTipNote(pk, amtVal(), addr, ''),
+          onYes: ()=> (ME&&ME.pubkey)===viewer && _postBchTipNote(pk, amtVal(), addr, ''),
         });
         amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
         $$('.bch-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });
         openBtn.addEventListener('click',()=>{ tell.engaged=true; });
         $('#bch-copy',root).onclick=()=>{ tell.engaged=true; copyValue(addr, 'address copied', 'Copy the BCH address:'); };
-        { const s=$('#bch-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
+        { const s=$('#bch-sent',root); if(s) s.onclick=async()=>{ if((ME&&ME.pubkey)!==viewer)return; const a=amtVal();
           const txid=(($('#bch-txid',root)||{}).value||'').trim().toLowerCase();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
           if(a){ ClientSettings.set('bchLastAmt', a); _prefTouched.add('bchTip'); saveClientPrefsNostr({ bchTip: a }); }   // remember + sync across devices
