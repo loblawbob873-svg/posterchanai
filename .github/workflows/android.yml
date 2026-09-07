@@ -16,6 +16,7 @@ on:
       # the new file, which is why this was easy to miss.
       - 'static/i18n/**'
       - 'templates/client.html'
+      - 'scripts/client_shell.py'
       - 'mobile/**'
       - 'zapstore.yaml'
       - 'scripts/zsp-signing-lineage.patch'

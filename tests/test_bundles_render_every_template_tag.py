@@ -109,10 +109,9 @@ def test_a_standalone_bundle_keeps_signup():
     assert not runtime_signup_hidden(enabled=False, solo=True)
 
 
-def test_the_mobile_bundle_is_unaffected_because_it_fetches_a_rendered_page():
-    """Stated so the asymmetry is not rediscovered: the APK was GREEN through this whole failure,
-    which is exactly what made it look like the desktop build was at fault on its own."""
-    mobile = (ROOT / "mobile/build-www.sh").read_text(encoding="utf-8")
-    assert "unrendered template tag" not in mobile, (
-        "mobile/build-www.sh now renders the shell locally too — it needs every substitution the "
-        "desktop bundler has, and this test's reasoning no longer holds")
+def test_both_bundles_use_the_same_local_template_renderer():
+    mobile = (ROOT / 'mobile/build-www.sh').read_text()
+    desktop = BUILD_WWW.read_text()
+    assert 'scripts/client_shell.py' in mobile
+    assert 'from client_shell import render' in desktop
+    assert 'https://poster.place/client -o' not in mobile

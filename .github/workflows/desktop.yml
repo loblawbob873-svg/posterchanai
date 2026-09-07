@@ -25,6 +25,7 @@ on:
       # a rebuild.
       - 'static/i18n/**'
       - 'templates/client.html'
+      - 'scripts/client_shell.py'
       - '.github/workflows/desktop.yml'
   workflow_dispatch:
 

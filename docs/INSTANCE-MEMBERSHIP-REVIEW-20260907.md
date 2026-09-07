@@ -42,6 +42,11 @@ in 25.3 seconds and selected 18 accounts: 18 AI grants, 11 streaming grants, and
 These were previews, not live revocations. Existing exemptions account for some differences between
 profile counts and targeted account counts.
 
+The native bundle review also found that Android downloaded production's page while copying
+JavaScript from the checkout, omitting newly added scripts during deployment races. Both native
+builders now share a local template renderer. An offline build test prevents a network fetch from
+returning; all native workflows watch the shared renderer.
+
 ## Validation and release
 
 Focused tests exercise signed profiles and real HTTP routes, browser account/profile transitions,

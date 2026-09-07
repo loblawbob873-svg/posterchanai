@@ -58,10 +58,9 @@ cp -r "$SRC"/static/vendor            www/static/
 cp "$SRC"/static/*.png "$SRC"/static/*.webp "$SRC"/static/*.svg \
    "$SRC"/static/*.jpg "$SRC"/static/*.ico  www/static/ 2>/dev/null || true
 
-# The rendered shell (auth gate + app scaffold) — take the LIVE one so the app matches the site exactly.
-curl --fail --silent --show-error --location \
-  --retry 5 --retry-all-errors --retry-delay 2 \
-  https://poster.place/client -o www/index.html
+# Render the shell from this checkout. Fetching production can combine an old page with new
+# JavaScript when release CI starts before the server deploy finishes.
+python3 "$SRC/scripts/client_shell.py" "$SRC" > www/index.html
 test -s www/index.html
 
 # Inject bundled-mode (API base + fetch/WS shim) right before </head>, ahead of every app script. Also

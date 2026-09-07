@@ -30,6 +30,8 @@ class DesktopBundleRenders(unittest.TestCase):
             cls.tpl = fh.read()
         with open(DESKTOP, encoding="utf-8") as fh:
             cls.sh = fh.read()
+        with open(os.path.join(ROOT, "scripts/client_shell.py"), encoding="utf-8") as fh:
+            cls.sh += "\n" + fh.read()
 
     def _dropped_blocks(self):
         """The `{% if X %}…{% endif %}` conditions the desktop script DELETES outright.
