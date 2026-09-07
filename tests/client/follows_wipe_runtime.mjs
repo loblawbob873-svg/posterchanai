@@ -18,8 +18,9 @@ const app = fs.readFileSync(new URL('../../static/js/client/app.js', import.meta
  * which is a test that fails for the wrong reason and would hide a real behavioural regression
  * behind a plumbing error. */
 const start = app.indexOf('  let _followShrinkWarned=false;');
-const end = app.indexOf('  async function fetchMutes(){', start);
-if (start < 0 || end < 0) throw new Error('fetchFollows moved');
+const body = app.indexOf('  async function fetchFollows(){', start);
+const end = app.indexOf('\n  }\n', body) + 5;
+if (start < 0 || body < 0 || end < 5) throw new Error('fetchFollows moved');
 const shipped = app.slice(start, end);
 
 const ME = { pubkey: 'me'.padEnd(64, '0') };

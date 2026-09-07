@@ -10166,3 +10166,7 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 .mc-resume-dialog{max-width:min(520px,calc(100vw - 32px));background:var(--bg,#10131c);color:var(--text);border:1px solid var(--line,#536078);border-radius:16px;padding:24px}.mc-resume-dialog::backdrop{background:#000a}
 
 .mc-device-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line,#334)}.mc-device-row>div{flex:1;min-width:0;overflow-wrap:anywhere}.mc-device-row small{display:block;color:var(--muted,#aab);margin-top:4px}
+
+/* Automatic filtering keeps active composers and unrelated media mounted. */
+.auto-muted-by-peer{display:none!important}
+.auto-mute-notice{padding:8px 12px;color:var(--muted);background:var(--bg2);font-size:13px;flex:0 0 auto}

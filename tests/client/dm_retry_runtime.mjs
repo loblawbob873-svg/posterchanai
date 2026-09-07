@@ -42,14 +42,14 @@ function harness({ failFirst, selfNote=false }){
       if(failFirst && !failed){ failed = true; throw new Error('signer timed out'); }
       return { kind:14, pubkey:selfNote?ME_PK:PEER, created_at:1000, content:selfNote?'NIP-05 application received':'hi', tags:[['p',ME_PK]] };
     }},
-    ClientSettings:{ get:(k,d)=>d, set(){} }, MUTED:new Set(),
+    ClientSettings:{ get:(k,d)=>d, set(){} }, MUTED:new Set(), _autoMuteHas:()=>false,
     _dmUnread:0, bumpDm(){}, _dmNotify(){}, dmNotify(){},
     dmUnread:new Map(), _dmBadge(){}, toast(){}, osNotify(){}, profOf:()=>({}),
     document:{ hidden:true, getElementById:()=>null, querySelector:()=>null },
     VIEW:'home', dmActive:'',
     Date, Math, String, Object, Array, JSON, Promise, setTimeout, Number, Boolean,
   };
-  vm.runInNewContext(extract('async function ingestWrap(ev, live){') + '\nthis.ingest=ingestWrap;',
+  vm.runInNewContext(extract('function isMutedAuthor(pk){') + '\n' + extract('async function ingestWrap(ev, live){') + '\nthis.ingest=ingestWrap;',
                      ctx, {filename:'app-ingest.js'});
   return { ctx, dmPeers, calls };
 }

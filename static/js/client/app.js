@@ -6289,6 +6289,141 @@
     if(!NO_IMAGES) [...FOLLOWS].slice(0,300).forEach(needProfile);
     if (VIEW==='home') renderView(true);
   }
+  // Automatic filtering has its own account-scoped cache. It never changes the
+  // manual NIP-51 list or asks the signer to rewrite it during reconciliation.
+  let _autoMuteEngine=null, _autoMuteLoading=null, _autoMuteRefresh=null, _autoMuteTimer=null;
+  let _autoMuteCache=null, _autoMuteMessage='', _autoMuteEpoch=0;
+  const _AUTO_MUTE_INTERVAL=15*60*1000;
+  function _autoMuteStoreKey(){ return 'pc_auto_mute:'+((ME&&ME.pubkey)||''); }
+  function _cacheAutoMute(value){
+    const owner=(ME&&ME.pubkey)||'';
+    const state=value && value.owner===owner ? value : {owner,enabled:false,records:{},ignored:[]};
+    const ignored=new Set(Array.isArray(state.ignored)?state.ignored:[]);
+    const keys=Object.keys(state.records||{}).slice(0,5000).filter(pk=>/^[0-9a-f]{64}$/.test(pk)
+      && pk!==owner && state.records[pk]?.muted===true && /^[0-9a-f]{64}$/.test(state.records[pk].id||'')
+      && Number.isSafeInteger(state.records[pk].created_at) && state.records[pk].created_at>=0 && !ignored.has(pk));
+    if(_autoMuteCache && _autoMuteCache.owner!==owner)_autoMuteMessage='';
+    _autoMuteCache={owner,state,keys:new Set(keys)};
+    return state;
+  }
+  function _autoMuteStored(){
+    const owner=(ME&&ME.pubkey)||'';
+    if(_autoMuteCache && _autoMuteCache.owner===owner) return _autoMuteCache.state;
+    let value=null; try{value=JSON.parse(localStorage.getItem(_autoMuteStoreKey())||'null');}catch(_){}
+    return _cacheAutoMute(value);
+  }
+  function _autoMuteHas(pk){
+    if(!ME || GUEST) return false;
+    const state=_autoMuteStored();
+    return state.enabled===true && _autoMuteCache.keys.has(pk);
+  }
+  function isMutedAuthor(pk){ return MUTED.has(pk) || _autoMuteHas(pk); }
+  function _applyAutoMuteToView(){
+    if(VIEW==='home' || VIEW==='global') _drawTimeline(true);
+    if(VIEW==='messages') _renderDmPeerRows();
+    if(VIEW==='notifications') renderNotifications();
+    // Change visibility in place: never rebuild a playing timeline or an open DM draft.
+    $$('article.note[data-pk],article.note[data-rtpk],.dm-peer[data-peer]').forEach(node=>{
+      const muted=_autoMuteHas(node.dataset.pk)||_autoMuteHas(node.dataset.rtpk)||_autoMuteHas(node.dataset.peer);
+      node.classList.toggle('auto-muted-by-peer',muted);
+    });
+    $$('.notif:not(.upd-notif)').forEach(node=>{
+      const authors=$$('.notif-av[data-pk]',node).map(image=>image.dataset.pk);
+      node.classList.toggle('auto-muted-by-peer',authors.length>0 && authors.every(_autoMuteHas));
+    });
+    const thread=$('#dm-thread'), active=typeof dmActive==='string'?dmActive:null;
+    let notice=$('#dm-auto-mute-notice');
+    if(thread && active && _autoMuteHas(active)){
+      if(!notice){notice=document.createElement('div');notice.id='dm-auto-mute-notice';notice.className='auto-mute-notice';
+        notice.setAttribute('role','status');thread.insertBefore(notice,thread.children[1]||null);}
+      notice.textContent='This account publicly muted you. Automatic mute is on.';
+    }else if(notice)notice.remove();
+    const button=$('#dm-mute');if(button && active)button.textContent=isMutedAuthor(active)?'🔊 Unmute':'🔇 Mute';
+    try{recountDmUnread();}catch(_){}
+    try{bumpNotif();}catch(_){}
+  }
+  function _paintAutoMuteControls(){
+    const state=_autoMuteStored(), enabled=state.enabled===true;
+    const toggle=$('#set-auto-mute'), button=$('#set-auto-mute-update'), status=$('#set-auto-mute-status');
+    if(toggle) toggle.checked=enabled;
+    if(button) button.disabled=!enabled || !!(_autoMuteRefresh && _autoMuteRefresh.owner===(ME&&ME.pubkey) && _autoMuteRefresh.epoch===_autoMuteEpoch);
+    if(status){
+      const summary=state.summary;
+      const checked=state.lastChecked ? 'Last checked '+new Date(state.lastChecked).toLocaleString()+'. ' : 'Not checked yet. ';
+      status.textContent=_autoMuteMessage || (enabled ? checked+(summary
+        ? summary.count+' automatic mutes; '+summary.added+' added, '+summary.removed+' removed.'+(summary.limited?' Some public lists may remain unchecked.':'')
+        : 'Use Update now to check public mute lists.') : 'Off. Your manual mutes remain active.');
+    }
+  }
+  async function _loadAutoMute(){
+    const owner=ME&&ME.pubkey;
+    if(!owner || GUEST) throw new Error('Sign in to use automatic mutes');
+    if(_autoMuteEngine && _autoMuteEngine.owner===owner) return _autoMuteEngine;
+    if(_autoMuteLoading && _autoMuteLoading.owner===owner) return _autoMuteLoading.promise;
+    if(_autoMuteEngine){ _autoMuteEngine.destroy(); _autoMuteEngine=null; }
+    const loading={owner,epoch:_autoMuteEpoch};
+    loading.promise=(async()=>{
+      const module=await _withModule('auto-mute.js','PCAutoMute');
+      if(!ME || ME.pubkey!==owner || loading.epoch!==_autoMuteEpoch) throw new Error('Account or settings changed');
+      if(!module || !module.create) throw new Error('Could not load automatic mute settings');
+      let effective=new Set(_autoMuteStored().enabled?_autoMuteCache.keys:[]);
+      _autoMuteEngine=module.create({owner, read:()=>_autoMuteStored(),
+        write:state=>{localStorage.setItem('pc_auto_mute:'+owner,JSON.stringify(state));_cacheAutoMute(state);},
+        isCurrent:pk=>!!ME && !GUEST && ME.pubkey===pk,
+        query:filters=>Relay.query(filters),
+        verify:async event=>{const result=await Relay.worker.call('verify',{event});return !!(result&&result.valid);},
+        onChange:state=>{
+          const next=new Set(state.enabled?_autoMuteCache.keys:[]);
+          const changed=next.size!==effective.size || [...next].some(pk=>!effective.has(pk));
+          effective=next;_paintAutoMuteControls();
+          if(changed)_applyAutoMuteToView();
+        }});
+      return _autoMuteEngine;
+    })().finally(()=>{if(_autoMuteLoading===loading)_autoMuteLoading=null;});
+    _autoMuteLoading=loading;
+    return loading.promise;
+  }
+  function _updateAutoMutes(){
+    const owner=ME&&ME.pubkey, epoch=_autoMuteEpoch;
+    if(_autoMuteRefresh && _autoMuteRefresh.owner===owner && _autoMuteRefresh.epoch===epoch) return _autoMuteRefresh.promise;
+    const refresh={owner,epoch};
+    const current=()=>ME && ME.pubkey===owner && _autoMuteEpoch===epoch;
+    refresh.promise=(async()=>{
+      try{
+        const engine=await _loadAutoMute();
+        if(!current() || !_autoMuteStored().enabled) return;
+        _autoMuteMessage='Checking public mute lists…';_paintAutoMuteControls();
+        const result=await engine.update();
+        if(current())_autoMuteMessage=result.ok ? '' : result.error;
+      }catch(error){if(current())_autoMuteMessage=error.message||'Could not check automatic mutes';}
+    })().finally(()=>{if(_autoMuteRefresh===refresh){_autoMuteRefresh=null;_paintAutoMuteControls();}});
+    _autoMuteRefresh=refresh;_paintAutoMuteControls();
+    return refresh.promise;
+  }
+  function _scheduleAutoMutes(delay=_AUTO_MUTE_INTERVAL){
+    clearTimeout(_autoMuteTimer);_autoMuteTimer=null;
+    if(!ME || GUEST || !_autoMuteStored().enabled) return;
+    _autoMuteTimer=setTimeout(async()=>{
+      if(document.visibilityState!=='hidden') await _updateAutoMutes();
+      _scheduleAutoMutes();
+    },delay);
+  }
+  async function _syncAutoMutes(){
+    if(!ME || GUEST || !_autoMuteStored().enabled){_scheduleAutoMutes();return;}
+    await _loadAutoMute();
+    const age=Date.now()-(_autoMuteStored().lastChecked||0);
+    _scheduleAutoMutes(age>=_AUTO_MUTE_INTERVAL?10000:_AUTO_MUTE_INTERVAL-age);
+  }
+  async function _excludeAutoMute(pk){
+    _autoMuteEpoch++;_autoMuteLoading=null;
+    const engine=await _loadAutoMute();engine.exclude(pk);_autoMuteMessage='';_paintAutoMuteControls();
+  }
+  window.addEventListener('storage',event=>{
+    if(event.key!==_autoMuteStoreKey()) return;
+    if(_autoMuteEngine)_autoMuteEngine.destroy();
+    _autoMuteEngine=null;_autoMuteLoading=null;_autoMuteCache=null;_autoMuteMessage='';_autoMuteEpoch++;
+    _applyAutoMuteToView();_syncAutoMutes().catch(()=>{});_paintAutoMuteControls();
+  });
   async function fetchMutes(){
     // Seed from cache so a throttled/timed-out read leaves mutes intact (never an empty base → the wipe).
     (ClientSettings.get('mutedUsers',[])||[]).forEach(p=>MUTED.add(p));
@@ -6303,6 +6438,7 @@
       MUTED_THREADS = new Set(ev.tags.filter(t=>t[0]==='e'&&t[1]).map(t=>t[1]));   // NIP-51 thread mutes
       _persistMutes();
     }
+    _syncAutoMutes().catch(()=>{});
     if(['home','global','notifications','messages'].includes(VIEW)){ try{ renderView(true); }catch(_){} }
   }
   // Replace the `word` tags on the kind-10000 mute list, preserving p/t/e mutes. NIP-51, so the
@@ -6356,12 +6492,12 @@
   }
   function isMutedView(ev){
     if(!ev) return false;
-    if(MUTED.has(ev.pubkey) || mutedByWord(ev) || _mutedThread(ev)) return true;
+    if(isMutedAuthor(ev.pubkey) || mutedByWord(ev) || _mutedThread(ev)) return true;
     if(ev.kind===6){
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
       const orig = inner || Store.get((ev.tags.find(t=>t[0]==='e')||[])[1]);
       const origPk = (orig && orig.pubkey) || (ev.tags.find(t=>t[0]==='p')||[])[1];
-      if(origPk && MUTED.has(origPk)) return true;
+      if(origPk && isMutedAuthor(origPk)) return true;
       if(orig && (mutedByWord(orig) || _mutedThread(orig))) return true;
     }
     return false;
@@ -6463,9 +6599,16 @@
     }catch(_){ _myFollowersLoaded = false; }   // allow a retry if the query failed
   }
   async function toggleMute(pk){
-    const have=MUTED.has(pk);
-    if(!await _editPList(10000, pk, !have)) return;   // relay didn't store it → don't fake the mute
-    have?MUTED.delete(pk):MUTED.add(pk); _persistMutes(); toast(have?'unmuted':'muted'); if(['home','global','notifications','messages'].includes(VIEW)) renderView(true);
+    const owner=ME&&ME.pubkey, have=MUTED.has(pk), automatic=_autoMuteHas(pk);
+    if(!have && automatic){
+      await _excludeAutoMute(pk);toast('automatic mute removed');
+      return;
+    }
+    if(!await _editPList(10000, pk, !have)) return;
+    if(!ME || ME.pubkey!==owner) return;
+    have?MUTED.delete(pk):MUTED.add(pk);_persistMutes();
+    if(have && automatic) await _excludeAutoMute(pk);
+    toast(have?'unmuted':'muted');if(!automatic && ['home','global','notifications','messages'].includes(VIEW))renderView(true);
   }
   async function fetchPins(){
     await _cacheFirstList([{ authors:[ME.pubkey], kinds:[10001], limit:1 }], (evs)=>{
@@ -14539,7 +14682,7 @@
     // yours going noisy is exactly when you want it.
     { const _r=_rootIdOf(Store.get(id))||id;
       items.push(['mutethread', MUTED_THREADS.has(_r)?'🔔 Unmute conversation':'🔕 Mute conversation']); }
-    if(!mine) items.push(['mute', MUTED.has(pk)?'🔊 Unmute author':'🔇 Mute author']);   // personal NIP-51 mute (any user)
+    if(!mine) items.push(['mute', isMutedAuthor(pk)?'🔊 Unmute author':'🔇 Mute author']);   // personal NIP-51 mute (any user)
     if(IS_ADMIN && !mine) items.push(['block','🚫 Block author','danger']);
     openMenuPopover(anchorBtn, items, a=>{
       if(a==='bookmark'){ toggleBookmark(id, null).then(()=>{ if(anchorBtn) anchorBtn.classList.toggle('on', BOOKMARKS.has(id)); }); return; }
@@ -24423,7 +24566,7 @@
     // Notifications list (Follows tab); they just don't interrupt. Kills the recurring follow spam.
     if(ev.kind===3) return;
     const fromPk = ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey;
-    if(MUTED.has(fromPk)) return;   // no toast / OS notification for a muted author
+    if(isMutedAuthor(fromPk)) return;   // no toast / OS notification for a muted author
     const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
     const _tn=_tipNote(ev);
     const what = ev.kind===9735?`⚡ zapped you ${fmtSats(zapAmount(ev))} sats`
@@ -24462,7 +24605,7 @@
     // a row renderer is not enough, because everything still has to survive this filter. 1621/1617 (NIP-34
     // issue/patch on a repo you maintain) were added to the subscription and the renderer but not here, so
     // they were fetched, toasted live, and then dropped from the list that actually renders.
-    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !MUTED.has(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && (e.tags||[]).some(t=>t&&t[0]==='p'&&t[1]===ME.pubkey)
+    const evs=Store.all().filter(e=>[1,6,7,9735,3,1984,1621,1617,1111].includes(e.kind) && e.pubkey!==ME.pubkey && !isMutedAuthor(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey) && (e.tags||[]).some(t=>t&&t[0]==='p'&&t[1]===ME.pubkey)
       // A reaction or repost with no `e` tag says "someone liked something" and can't say what. The row
       // has nothing to open, and the handler's `ref||e.id` fallback opened the REACTION as a thread,
       // which renders as an empty one. Drop them here so a malformed event from any source — our fedi
@@ -25037,7 +25180,7 @@
     // live sub for legacy DMs (since now is fine — kind-4 timestamps are real)
     const since=Math.floor(Date.now()/1000)-60;
     Relay.subscribe([{ kinds:[4], '#p':[ME.pubkey], since }, { kinds:[4], authors:[ME.pubkey], since }], {
-      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey && !MUTED.has(ev.pubkey)){ _dmUnread++; bumpDm(); _dmNotify(ev.pubkey); }
+      onEvent: ev => { Store.saveEvent(ev); if(ingestDM(ev) && ev.pubkey!==ME.pubkey && !isMutedAuthor(ev.pubkey)){ _dmUnread++; bumpDm(); _dmNotify(ev.pubkey); }
         _scheduleDmRefresh(); }   // debounced: never rebuilds per-message (would thrash + drop the mobile overlay)
     });
     // NIP-17 gift wraps carry RANDOMIZED past timestamps, so a `since` filter would drop them —
@@ -25541,7 +25684,7 @@
     // front, so the relay's echo is deduped above before it can reach this. What's left is the
     // arriving ones — server notifications, and your own notes from another device.
     const selfNote = mine && peer === ME.pubkey;
-    if((!mine || selfNote) && !MUTED.has(peer) && (rumor.created_at||0) > _seen){
+    if((!mine || selfNote) && !isMutedAuthor(peer) && (rumor.created_at||0) > _seen){
       _dmUnread++; bumpDm();
       // The interrupting toast/OS notification stays gated on `live`, so restoring a backlog on login
       // doesn't fire a burst of them. It names the SENDER only, never the message — so it says the same
@@ -25686,7 +25829,7 @@
   // ingestWrap — that's how the server delivers notifications — and this is the path that catches one
   // that arrived while the app was CLOSED, which is the whole point of notifying at all.
   function recountDmUnread(){ const seen=ClientSettings.get('dmSeen',0); let n=0;
-    for(const [pk,arr] of dmPeers){ if(MUTED.has(pk)) continue;
+    for(const [pk,arr] of dmPeers){ if(isMutedAuthor(pk)) continue;
       const selfThread = pk===ME.pubkey;
       for(const m of arr){ if((!m.mine || selfThread) && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
   function _dmNotify(fromPk, selfNote){
@@ -25819,21 +25962,12 @@
                                    else b.classList.add('hidden'); });
   }
 
-  function renderMessages(){
-    _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
-    if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
-    ensureDmInboxList();   // first DM use → publish our kind-10050 DM-inbox list (once/session, merge-not-replace)
-    const feed=$('#feed');
-    // Preserve the list scroll across the rebuild. A background refresh (the NIP-17 history replay)
-    // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
-    // try to scroll (and a jump-to-top is what makes the mobile browser re-reveal its toolbar).
-    const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
-    feed.innerHTML=`<nav class="messages-tabs" aria-label="Message type"><button class="on" aria-current="page">Direct messages</button><button id="messages-communities">Communities</button></nav><div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
-    $('#messages-communities').onclick=()=>switchView('concord');
-    const list=$('#dm-list');
+  // Reconcile only inbox rows; keep the open thread, composer, search and scroll alive.
+  function _renderDmPeerRows(list=$('#dm-list')){
+    if(!list || !$('#dm-rows',list)) return {peers:[],hidePrev:true};
     // Optional privacy: don't reveal message previews in the list until you open the conversation.
     const hidePrev = ClientSettings.get('hideDmPreview', false);
-    const peers=[...dmPeers.keys()].filter(pk=>!MUTED.has(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
+    const peers=[...dmPeers.keys()].filter(pk=>!isMutedAuthor(pk)).sort((a,b)=>{ const la=dmPeers.get(a).slice(-1)[0]||{}, lb=dmPeers.get(b).slice(-1)[0]||{}; return (lb.t||0)-(la.t||0); });
     // A messenger list, not a directory: avatar, name, the last line, WHEN it happened, and unread
     // weight. Previously every row was an identical name+preview pill with no time and no way to see
     // what was new — "a long boring list".
@@ -25854,11 +25988,36 @@
             ${unread?'<i class="dm-dot" aria-label="unread"></i>':''}</div>
         </div></div>`;
     }).join('');
+    const box=$('#dm-rows',list), scroll=list.scrollTop;
+    box.innerHTML=rows || '<div class="empty">No conversations yet.</div>';
+    $$('[data-peer]',list).forEach(el=> el.onclick=()=>openDm(el.dataset.peer));
+    // The name carries data-prof (used elsewhere for profile popovers); inside a list row it must not
+    // steal the tap from the row.
+    $$('.dm-peer .name',list).forEach(n=>{ n.removeAttribute('data-prof'); });
+    const search=$('#dm-search',list);
+    if(search && search.value) search.dispatchEvent(new Event('input'));
+    list.scrollTop=scroll;
+    return {peers,hidePrev};
+  }
+
+  function renderMessages(){
+    _dmUnread=0; ClientSettings.set('dmSeen', Math.floor(Date.now()/1000)); bumpDm();   // mark DMs read (persistent)
+    if(!_dmLoaded){ ensureDMs(); }   // lazy-load on first open
+    ensureDmInboxList();   // first DM use → publish our kind-10050 DM-inbox list (once/session, merge-not-replace)
+    const feed=$('#feed');
+    // Preserve the list scroll across the rebuild. A background refresh (the NIP-17 history replay)
+    // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
+    // try to scroll (and a jump-to-top is what makes the mobile browser re-reveal its toolbar).
+    const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
+    feed.innerHTML=`<nav class="messages-tabs" aria-label="Message type"><button class="on" aria-current="page">Direct messages</button><button id="messages-communities">Communities</button></nav><div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
+    $('#messages-communities').onclick=()=>switchView('concord');
+    const list=$('#dm-list');
     list.innerHTML = `<div class="dm-listhd">
         <input class="input dm-search" id="dm-search" type="search" placeholder="🔍 Search conversations" autocomplete="off">
         <button class="btn btn-neon small dm-newbtn" id="dm-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-mail"></use></svg>New</button>
       </div>
-      <div class="dm-rows" id="dm-rows">${rows || '<div class="empty">No conversations yet.</div>'}</div>`;
+      <div class="dm-rows" id="dm-rows"></div>`;
+    const {peers,hidePrev}=_renderDmPeerRows(list);
     { const q=$('#dm-search',list);
       if(q) q.addEventListener('input', ()=>{ const t=q.value.trim().toLowerCase();
         $$('.dm-peer',list).forEach(r=>{ const hay=(r.dataset.name||'')+' '+(r.querySelector('.dm-prev')||{}).textContent;
@@ -25866,10 +26025,6 @@
     $('#dm-new').onclick=newDmModal;
     _dmProgress();   // re-attach the "decrypting…" line — the innerHTML above just wiped it
     if(_listScroll && list) list.scrollTop=_listScroll;   // restore scroll so a background refresh doesn't jump to top
-    $$('[data-peer]',list).forEach(el=> el.onclick=()=>openDm(el.dataset.peer));
-    // The name carries data-prof (used elsewhere for profile popovers); inside a list row it must not
-    // steal the tap from the row.
-    $$('.dm-peer .name',list).forEach(n=>{ n.removeAttribute('data-prof'); });
     // The AVATAR opens the conversation too. It's the biggest target in the row, so making it the one
     // spot that does something ELSE meant reaching for a chat and landing on a profile. Every
     // messenger opens the chat from anywhere in the row; the profile is one tap away inside it (the
@@ -27603,7 +27758,7 @@
     };
     const _msgsHtml = `${older}${msgs.map((m,i)=>bubble(m, msgs[i-1])).join('')}`;
     const _peerName = emojiName(pk, p.name||p.display_name||niceNip05(p.nip05)||(NT().nip19.npubEncode(pk).slice(0,14)+'…'));
-    const _muteLabel = MUTED.has(pk)?'🔊 Unmute':'🔇 Mute';
+    const _muteLabel = isMutedAuthor(pk)?'🔊 Unmute':'🔇 Mute';
     // A refresh of the conversation ALREADY on screen touches only the message list. Rebuilding the
     // pane wholesale is what ate a half-typed message every time a DM arrived, and the draft is not
     // the only casualty: the caret, the focus, the grown height of the box and the list scroll are
@@ -27635,6 +27790,7 @@
           <span class="dm-sendstate" id="dm-sendstate" role="status" aria-live="polite"></span>
           <button class="dm-sendbtn" id="dm-send" title="Send" aria-label="Send"><svg class="ic x-ic" aria-hidden="true"><use href="#i-send"></use></svg></button>
         </div></div>`;
+    _applyAutoMuteToView();
     // Back must do something on DESKTOP too. It only removed `has-active`, which is what shows the
     // thread as a full-screen overlay on a phone — on a two-pane desktop layout that class changes
     // nothing, so the button looked broken. Now it also clears the open thread and the row highlight,
@@ -27650,8 +27806,8 @@
     // is filtered out); toggleMute re-renders Messages so it disappears immediately.
     // Close the thread only AFTER the mute actually lands — toggleMute now no-ops on a relay failure, so
     // closing first would dismiss the conversation while the mute silently didn't apply.
-    { const mb=$('#dm-mute'); if(mb) mb.onclick=async()=>{ const wasMuted=MUTED.has(pk); await toggleMute(pk);
-        if(!wasMuted && MUTED.has(pk)){ dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } }; }
+    { const mb=$('#dm-mute'); if(mb) mb.onclick=async()=>{ const wasMuted=isMutedAuthor(pk); await toggleMute(pk);
+        if(!wasMuted && isMutedAuthor(pk)){ dmActive=null; const dl=$('#dm-list'); if(dl) dl.classList.remove('has-active'); } }; }
     const inp=$('#dm-in');
     // Paste-to-attach + removable preview strip (📎 Attach / 🌸 Files / 🎬 GIF also feed it via 'input').
     const _syncAtts = wireImgAttach(inp, $('#dm-atts'), {enc:true});
@@ -28349,7 +28505,7 @@
     const items = mine ? [['reports','🚩 Reports received']] : [
       ['follow', FOLLOWS.has(pk)?'➖ Unfollow':'➕ Follow'],
       ['message','✉️ Message'],
-      ['mute', MUTED.has(pk)?'🔊 Unmute':'🔇 Mute'],
+      ['mute', isMutedAuthor(pk)?'🔊 Unmute':'🔇 Mute'],
       ['reports','🚩 Reports received'],
     ];
     items.push(['relays','🖧 Relays']);   // view the relays this user publishes to (NIP-65)
@@ -32519,6 +32675,11 @@
           <div class="muted small">Don’t show the last message text in the Messages list — only reveal it when you open the conversation. Saved on this device.</div>
         </div>
         <div class="us-pane" data-pane="muted">
+          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Auto-mute people who mute you<label class="switch"><input type="checkbox" id="set-auto-mute" ${_autoMuteStored().enabled?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">Filters accounts whose public mute list includes you. Checks every 15 minutes while this app is open. Update now also removes automatic mutes when a newer public list no longer includes you. Private mutes cannot be detected. Your manual mute list stays separate. Saved for this account on this device.</div>
+          <div class="set-actions"><button class="btn btn-neon small" id="set-auto-mute-update">Update now</button></div>
+          <div class="muted small" id="set-auto-mute-status" role="status" aria-live="polite"></div>
+
           <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Blur sensitive / NSFW posts<label class="switch"><input type="checkbox" id="set-blur-nsfw" ${BLUR_NSFW?'checked':''}><span class="slider"></span></label></label>
           <div class="muted small">Posts flagged sensitive (NIP-36 content warning) are blurred behind a “Show” reveal. Turn this off to see them unblurred. Saved on this device.</div>
           <div class="muted small">Hide posts containing any of these words or phrases (case-insensitive, one per line). Saved to your Nostr mute list (NIP-51), so it follows you to other clients.</div>
@@ -32830,6 +32991,19 @@
         toast(hd.checked?'DM previews hidden':'DM previews shown');
         if(VIEW==='messages'){ try{ renderMessages(); }catch(_){} }
       }; }
+    { const toggle=$('#set-auto-mute'), update=$('#set-auto-mute-update');
+      if(toggle) toggle.onchange=async()=>{
+        const wanted=toggle.checked, epoch=++_autoMuteEpoch;
+        _autoMuteLoading=null;
+        try{
+          const engine=await _loadAutoMute();if(epoch!==_autoMuteEpoch)return;engine.setEnabled(wanted);_autoMuteMessage='';
+          _scheduleAutoMutes();if(wanted)_updateAutoMutes();
+        }catch(error){if(epoch===_autoMuteEpoch)_autoMuteMessage=error.message||'Could not save automatic mute settings';}
+        _paintAutoMuteControls();
+      };
+      if(update)update.onclick=()=>_updateAutoMutes();
+      _paintAutoMuteControls();
+    }
     { const wb=$('#set-words-save'); if(wb) wb.onclick=async()=>{
         const words=($('#set-muted-words').value||'').split('\n').map(w=>w.trim()).filter(Boolean);
         wb.disabled=true; const st=$('#set-words-status'); if(st) st.textContent='saving…';
@@ -36349,7 +36523,7 @@
         return;
       }
       if(msg.t==='invite'){
-        if(MUTED.has(from)) return;   // a muted/blocked pubkey can't ring you
+        if(isMutedAuthor(from)) return;   // a muted/blocked pubkey can't ring you
         // Compatibility with an older PosterChan sender that produced a screen/video offer but lost
         // the remoteDesktop field. This inference is deliberately narrow: only another device signed
         // with MY key, while this device's Remote Desktop surface is explicitly open, can qualify.
@@ -36796,7 +36970,7 @@
   }
   function _roomRing(from, msg){
     if(_call || _room){ _roomSend(from,{v:1,room:msg.room,t:'rbye'}); return; }   // busy
-    if(MUTED.has(from)) return;
+    if(isMutedAuthor(from)) return;
     _room={ id:msg.room, video:!!msg.video, local:null, peers:new Map(), members:new Set([...(msg.members||[]), from, ME.pubkey]), ringing:true, invite:{from} };
     _room.timeout=setTimeout(()=>{ if(_room && _room.ringing){ _ringtone(false); _roomLeave(); } }, 60000);
     try{ needProfile(from); }catch(_){}

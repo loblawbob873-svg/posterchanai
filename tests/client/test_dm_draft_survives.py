@@ -47,6 +47,7 @@ pytestmark = pytest.mark.skipif(CHROME is None, reason="chrome not installed")
 
 # Extracted verbatim: the pane renderer plus every helper it calls that is part of what broke.
 WANT = [
+    "function isMutedAuthor(pk){",
     "function wireImgAttach(inp, strip, opts){",
     "function _dmClock(ts){",
     "function _dmDayLabel(ts){",
@@ -121,6 +122,8 @@ const LOGO = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 const NO_IMAGES = false;
 const CFG = {gif_enabled: false};
 const MUTED = new Set();
+// This draft fixture has no automatic mutes; their rendering has separate browser coverage.
+const _autoMuteHas = () => false, _applyAutoMuteToView = () => {};
 const dmPeers = new Map();
 const _dmShown = new Map(), _dmFull = new Set();
 const _DM_INIT = 25, _DM_STEP = 30;
