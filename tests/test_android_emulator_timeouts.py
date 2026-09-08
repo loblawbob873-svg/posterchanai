@@ -1,4 +1,7 @@
 from pathlib import Path
+import os
+import subprocess
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,3 +96,62 @@ def test_disappeared_emulator_keeps_host_memory_and_kernel_diagnostics():
     assert 'free -m > /tmp/pc-emulator-host.txt' in WORKFLOW
     assert 'sudo dmesg -T' in WORKFLOW
     assert '/tmp/pc-emulator-host.txt' in WORKFLOW.split('- name: Upload logcat',1)[1]
+
+
+@pytest.mark.parametrize('mode', ['good', 'empty', 'error', 'hang', 'dead'])
+def test_lifecycle_crash_scan_requires_a_complete_nonempty_device_capture(tmp_path, mode):
+    """Execute the shipped shell functions against healthy, dead and wedged ADB transports."""
+    bindir = tmp_path / 'bin'; bindir.mkdir()
+    adb = bindir / 'adb'
+    adb.write_text('''#!/bin/bash
+if [ "$1" = get-state ]; then
+  [ "$CAPTURE_MODE" = dead ] && exit 1
+  echo device; exit 0
+fi
+case "$CAPTURE_MODE" in
+ good) echo 'I ActivityManager: resumed place.poster.app/.MainActivity';;
+ empty) exit 0;;
+ error) echo 'adb: device offline' >&2; exit 1;;
+ hang) exec sleep 5;;
+esac
+''')
+    adb.chmod(0o755)
+    timer = bindir / 'timeout'
+    timer.write_text('''#!/bin/bash
+echo "$1 $2" >> "$TIMEOUT_LOG"
+shift 2
+exec /usr/bin/timeout --kill-after=0.05s 0.05s "$@"
+''')
+    timer.chmod(0o755)
+    prelude = DEVICE[:DEVICE.index('\nAPK=')]
+    scan = DEVICE[DEVICE.index('crash_scan()'):DEVICE.index('\ncrash_scan launch')]
+    script = prelude + '\nOUT="$TEST_OUTPUT"\n' + scan + '\ncrash_scan launch\nexit "$FAILED"\n'
+    env = os.environ | {'PATH': str(bindir) + ':' + os.environ['PATH'],
+                        'CAPTURE_MODE': mode, 'TEST_OUTPUT': str(tmp_path),
+                        'TIMEOUT_LOG': str(tmp_path / 'timeouts')}
+    result = subprocess.run(['bash', '-c', script], env=env, text=True,
+                            capture_output=True, timeout=3)
+    if mode == 'good':
+        assert result.returncode == 0, result.stderr
+        assert 'ok: no crash during: launch' in result.stdout
+    else:
+        assert result.returncode != 0
+        assert 'ok: no crash' not in result.stdout
+        assert ('emulator disappeared' if mode == 'dead' else 'crash checks did not run') in result.stdout
+    limits = (tmp_path / 'timeouts').read_text()
+    assert '--kill-after=2s 5s' in limits
+    if mode != 'dead':
+        assert '--kill-after=2s 20s' in limits
+        assert (tmp_path / 'pc-device-logcat-launch.txt').exists()
+    if mode == 'error':
+        assert 'adb: device offline' in (tmp_path / 'pc-device-logcat-launch.txt').read_text()
+
+
+def test_lifecycle_unbounded_adb_commands_and_exit_diagnostics_are_guarded():
+    assert 'adb() { timeout --kill-after=2s 30s adb "$@"; }' in DEVICE
+    assert 'timeout --kill-after=2s 120s adb install' in DEVICE
+    assert 'trap capture_before_teardown EXIT' in DEVICE
+    assert "trap 'exit 143' TERM" in DEVICE
+    assert 'pc-device-host-before-teardown.txt' in DEVICE
+    assert 'timeout --kill-after=2s 15m adb logcat -v threadtime' in DEVICE
+    assert 'capture_logcat full || true' in DEVICE

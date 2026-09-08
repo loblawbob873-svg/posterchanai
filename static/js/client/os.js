@@ -2022,12 +2022,16 @@
     el.addEventListener('pointerdown', (e) => {
       if(_gesturePress(e)) _natFocusHold = true;
       if(!el.classList.contains('focused')) focusWin(w);
+      // Native apps do not clear this DOM class. A new body press still supersedes their pending
+      // focus request, without repainting the Settings controls the user is interacting with.
+      else if(w.native == null) focusWin(w, false);
     }, true);
     /* Keyboard activation, assistive technology and code-driven `.click()` do not emit a
      * pointerdown.  Focus during CAPTURE so an app handler can never repaint the shared workspace
      * while some other window still owns it (the Terminal-turns-into-Blossom regression). */
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (e) => {
       if(!el.classList.contains('focused')) focusWin(w);
+      else if(w.native == null && e.detail===0) focusWin(w, false);
     }, true);
 
     /* Concord is a three-pane workspace. Opening it in the generic reading-column geometry wastes
@@ -2189,7 +2193,13 @@
   }
 
   function openSystemSettings(){
-    const w=openDoc('os-settings', 'System Settings', 'i-gear', renderSystemSettings, false, true);
+    const paint=()=>{
+      // openDoc starts rendering before it returns the window. Claim the view now so queued
+      // Social redraws cannot use the Settings feed while its first native bridge read is pending.
+      try{ if(PC().adoptView) PC().adoptView('doc:os-settings'); }catch(_){}
+      return renderSystemSettings();
+    };
+    const w=openDoc('os-settings', 'System Settings', 'i-gear', paint, false, true);
     if(w){ w.rerun=true; w.isolated=true; }
     return w;
   }
@@ -2271,6 +2281,25 @@
       }
       if(!alive()) return;
     }
+    let clock={}, zones=[], clockError='';
+    if(_osSettingsPage==='datetime'){
+      if(!window.pcDateTime) clockError='Date and time controls are unavailable on this device.';
+      else{
+        const r=await _settingsRead(pcDateTime.status(), 'date and time');
+        if(r.ok){ clock=r.value||{}; if(!clock.available)clockError=clock.reason||'System time controls are unavailable.'; }
+        else clockError=r.timedOut?'The system time service did not answer.':'Could not read date and time: '+r.error;
+        if(!alive())return;
+        if(clock.available){
+          const z=await _settingsRead(pcDateTime.timezones(), 'time zones');
+          if(z.ok)zones=z.value||[];
+          else clockError=z.timedOut?'The time zone list did not answer.':'Could not read time zones: '+z.error;
+          if(!alive())return;
+        }
+      }
+    }
+    const localClock=()=>{
+      try{return new Date(clock.now||Date.now()).toLocaleString(undefined,{timeZone:clock.timezone});}catch(_){return new Date(clock.now||Date.now()).toLocaleString();}
+    };
     const rows=outs.map(o=>{ const cur=(o.modes||[]).find(m=>m.current);
       const hz=m=>Math.round((+m.refresh||0)/1000*1000)/1000;
       return {name:o.name,label:[o.make,o.model].filter(Boolean).join(' ')||o.name,enabled:!!o.active,
@@ -2285,27 +2314,29 @@
       const maxX=Math.max(...rows.filter(x=>x.enabled).map(x=>x.x+x.w),1920), maxY=Math.max(...rows.filter(x=>x.enabled).map(x=>x.y+x.h),1080);
       const scale=Math.min(620/Math.max(1,maxX-minX),300/Math.max(1,maxY-minY));
       host.innerHTML=`<div class="os-settings"><aside class="os-set-nav">
-        <div class="os-set-title">${iconSvg('gear')}<b>System Settings</b></div>
-        <button data-page="displays" class="${_osSettingsPage==='displays'?'on':''}">${iconSvg('monitor')} Displays</button>
-        <button data-page="appearance" class="${_osSettingsPage==='appearance'?'on':''}">${iconSvg('palette')} Appearance</button>
-        <button data-page="sound" class="${_osSettingsPage==='sound'?'on':''}">${iconSvg('volume')} Sound</button>
-        ${window.pcPrinters?`<button data-page="printers" class="${_osSettingsPage==='printers'?'on':''}">${iconSvg('note')} Printers</button>`:''}
-        <button data-page="network" class="${_osSettingsPage==='network'?'on':''}">${iconSvg('wifi')} Network</button>
-        <button data-page="bluetooth" class="${_osSettingsPage==='bluetooth'?'on':''}">${iconSvg('bluetooth')} Bluetooth</button>
-        <button data-page="power" class="${_osSettingsPage==='power'?'on':''}">${iconSvg('power')} Power &amp; brightness</button>
-        <button data-page="users" class="${_osSettingsPage==='users'?'on':''}">${iconSvg('user')} Users</button>
-        <button data-page="updates" class="${_osSettingsPage==='updates'?'on':''}">${iconSvg('refresh')} Updates</button>
-        <button data-page="about" class="${_osSettingsPage==='about'?'on':''}">${iconSvg('chart')} About</button>
-        <button data-page="liveusb" class="${_osSettingsPage==='liveusb'?'on':''}">${iconSvg('drive')} Installation media</button>
+        <div class="os-set-title">${iconSvg('i-gear')}<b>System Settings</b></div>
+        <button data-page="displays" class="${_osSettingsPage==='displays'?'on':''}">${iconSvg('i-monitor')} Displays</button>
+        <button data-page="appearance" class="${_osSettingsPage==='appearance'?'on':''}">${iconSvg('i-palette')} Appearance</button>
+        <button data-page="sound" class="${_osSettingsPage==='sound'?'on':''}">${iconSvg('i-volume')} Sound</button>
+        ${window.pcPrinters?`<button data-page="printers" class="${_osSettingsPage==='printers'?'on':''}">${iconSvg('i-note')} Printers</button>`:''}
+        <button data-page="network" class="${_osSettingsPage==='network'?'on':''}">${iconSvg('i-wifi')} Network</button>
+        <button data-page="bluetooth" class="${_osSettingsPage==='bluetooth'?'on':''}">${iconSvg('i-bluetooth')} Bluetooth</button>
+        <button data-page="power" class="${_osSettingsPage==='power'?'on':''}">${iconSvg('i-power')} Power &amp; brightness</button>
+        <button data-page="datetime" class="${_osSettingsPage==='datetime'?'on':''}">${iconSvg('i-clock')} Date &amp; Time</button>
+        <button data-page="users" class="${_osSettingsPage==='users'?'on':''}">${iconSvg('i-user')} Users</button>
+        <button data-page="updates" class="${_osSettingsPage==='updates'?'on':''}">${iconSvg('i-refresh')} Updates</button>
+        <button data-page="about" class="${_osSettingsPage==='about'?'on':''}">${iconSvg('i-chart')} About</button>
+        <button data-page="liveusb" class="${_osSettingsPage==='liveusb'?'on':''}">${iconSvg('i-drive')} Installation media</button>
       </aside><main class="os-set-main"><label class="os-set-mobile-nav"><span>Settings category</span><select data-settings-mobile aria-label="Settings category">
         <option value="page:displays" ${_osSettingsPage==='displays'?'selected':''}>Displays</option>
         <option value="page:appearance" ${_osSettingsPage==='appearance'?'selected':''}>Appearance</option>
         <option value="page:sound" ${_osSettingsPage==='sound'?'selected':''}>Sound</option>${window.pcPrinters?`<option value="page:printers" ${_osSettingsPage==='printers'?'selected':''}>Printers</option>`:''}<option value="page:network" ${_osSettingsPage==='network'?'selected':''}>Network</option><option value="page:bluetooth" ${_osSettingsPage==='bluetooth'?'selected':''}>Bluetooth</option>
         <option value="page:power" ${_osSettingsPage==='power'?'selected':''}>Power &amp; brightness</option>
+        <option value="page:datetime" ${_osSettingsPage==='datetime'?'selected':''}>Date &amp; Time</option>
         <option value="page:users" ${_osSettingsPage==='users'?'selected':''}>Users</option><option value="page:updates" ${_osSettingsPage==='updates'?'selected':''}>Updates</option>
         <option value="page:about" ${_osSettingsPage==='about'?'selected':''}>About</option>
         <option value="page:liveusb" ${_osSettingsPage==='liveusb'?'selected':''}>Installation media</option>
-      </select></label><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
+      </select></label><section data-settings-page="displays" ${_osSettingsPage==='displays'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-monitor')}</div><span><h2>Displays</h2><p>Arrange monitors, choose resolution and scaling, then preview safely before saving.</p></span></header>
         <section class="os-set-card"><div class="os-set-cardhead"><b>Monitor arrangement</b><span>Drag each numbered screen to match its physical position on your desk.</span></div>
         ${displayError?`<div class="empty">${enc(displayError)}</div>`:''}${rows.length?`<div class="os-display-map" style="height:${Math.max(180,(maxY-minY)*scale+40)}px">${rows.map((r,i)=>
           `<button class="os-display ${i===selected?'selected':''} ${r.enabled?'':'off'}" data-i="${i}"
@@ -2314,21 +2345,21 @@
         <div class="os-display-controls"></div>
         ${window.pcDisplays?`<div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
           <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}`:`${displayError?'':`<div class="empty">No displays were detected. Reconnect a display, then reopen Settings.</div>`}`}</section></section>
-        <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
+        <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
         <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Choose PosterChan's desktop or a complete macOS-style layout with a menu bar, floating Dock, launcher and matching windows.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
         <section class="os-setting-row os-set-control"><div><b>Display scale</b><span>How large text and controls are drawn in PosterChan. A 4K-class monitor starts at 125% so it is readable at its native resolution &mdash; the screens themselves stay at 100%, which is what keeps games sharp and full speed.</span></div><select data-ui-scale aria-label="Display scale">${UI_SCALE_CHOICES.map(n=>`<option value="${n}" ${n===uiScaleEffective()?'selected':''}>${Math.round(n*100)}%</option>`).join('')}</select></section>
         <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Automatic uses low power on touch devices. Modern adds shadows, transparency and visual transitions.</span></div><select data-window-effects aria-label="Window effects"><option value="auto" ${desktopEffectsMode()==='auto'?'selected':''}>Automatic</option><option value="full" ${desktopEffectsMode()==='full'?'selected':''}>Modern</option><option value="off" ${desktopEffectsMode()==='off'?'selected':''}>Low power / off</option></select></section></section>
-        ${[['sound','volume','Sound','Output, input, and application volume.','Open sound controls'],
-           ['network','wifi','Network','Wi-Fi and wired network connections.','Open network controls'],
-           ['bluetooth','bluetooth','Bluetooth','Discover, pair, and manage nearby devices.','Open Bluetooth controls']].map(([key,ic,title,desc,action])=>`
+        ${[['sound','i-volume','Sound','Output, input, and application volume.','Open sound controls'],
+           ['network','i-wifi','Network','Wi-Fi and wired network connections.','Open network controls'],
+           ['bluetooth','i-bluetooth','Bluetooth','Discover, pair, and manage nearby devices.','Open Bluetooth controls']].map(([key,ic,title,desc,action])=>`
         <section data-settings-page="${key}" ${_osSettingsPage===key?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg(ic)}</div><span><h2>${title}</h2><p>${desc}</p></span></header>
           <section class="os-set-card"><div class="os-set-cardhead"><b>${title} controls</b><span>Controls open beside this Settings window and return here when closed.</span></div>
           ${window.PCOSShell&&PCOSShell.openControl?`<button class="btn primary os-set-open-control" data-open-control="${key}">${action}</button>`:`<div class="empty">${title} controls are unavailable on this device.</div>`}</section></section>`).join('')}
-        <section data-settings-page="printers" ${_osSettingsPage==='printers'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('note')}</div><span><h2>Printers</h2><p>Add a printer and print a test page.</p></span></header>${window.pcPrinters?`<div class="os-set-card" data-printers><div class="os-set-cardhead"><b>Printers on this computer</b><span>CUPS's own pages ask for a Unix password and a PosterChan identity account has none, so printers are managed here — using the administrator rights this account already holds.</span></div>
+        <section data-settings-page="printers" ${_osSettingsPage==='printers'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-note')}</div><span><h2>Printers</h2><p>Add a printer and print a test page.</p></span></header>${window.pcPrinters?`<div class="os-set-card" data-printers><div class="os-set-cardhead"><b>Printers on this computer</b><span>CUPS's own pages ask for a Unix password and a PosterChan identity account has none, so printers are managed here — using the administrator rights this account already holds.</span></div>
           <div data-printer-list class="os-printer-list"><div class="empty">Loading…</div></div>
           <div class="os-set-actions"><button class="btn" data-printer-refresh>Refresh</button><button class="btn primary" data-printer-find>Find printers</button><span class="muted" data-printer-status></span></div>
           <div data-printer-found class="os-printer-found hidden"></div></div>`:`<div class="empty">Printer management is unavailable on this device.</div>`}</section>
-        <section data-settings-page="power" ${_osSettingsPage==='power'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('power')}</div><span><h2>Power &amp; brightness</h2><p>Battery, performance, sleep, and display brightness.</p></span></header>
+        <section data-settings-page="power" ${_osSettingsPage==='power'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-power')}</div><span><h2>Power &amp; brightness</h2><p>Battery, performance, sleep, and display brightness.</p></span></header>
         ${powerError?`<div class="empty">${enc(powerError)}</div>`:''}
         ${power.brightness&&power.brightness.available?`<section class="os-setting-row os-set-control"><div><b>Brightness</b><span>${enc(power.brightness.name||'Built-in display')}</span></div><label><output data-bright-value>${enc(power.brightness.percent)}%</output><input data-brightness type="range" min="1" max="100" value="${enc(power.brightness.percent)}" aria-label="Display brightness"></label></section>`:''}
         ${power.profiles&&power.profiles.available?`<section class="os-setting-row os-set-control"><div><b>Power mode</b><span>Balance speed, heat, and battery use.</span></div><select data-power-profile aria-label="Power mode">${power.profiles.list.map(n=>`<option ${n===power.profiles.active?'selected':''}>${enc(n)}</option>`).join('')}</select></section>`:''}
@@ -2339,14 +2370,23 @@
           <select data-idle-timeout aria-label="Display idle timeout">
             ${[[60,'1 minute'],[120,'2 minutes'],[300,'5 minutes'],[600,'10 minutes'],[1800,'30 minutes'],[0,'Never']].map(([n,label])=>`<option value="${n}" ${Number(power.idleSeconds)===n?'selected':''}>${label}</option>`).join('')}
           </select></section></section>
-        <section data-settings-page="users" ${_osSettingsPage==='users'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('user')}</div><span><h2>Users</h2><p>The signed-in PosterChan identity and the private operating-system session attached to it.</p></span></header>
-          ${identityError?`<div class="empty">${enc(identityError)}</div>`:''}<section class="os-set-card os-user-account"><div class="os-user-avatar">${iconSvg('user')}</div><div><span>Current account</span><b>${enc((me()&&((me().profile&&me().profile.name)||me().name))||'PosterChan user')}</b><code>${enc(machineIdentity||((me()&&me().pubkey)||'No local OS identity'))}</code></div></section>
+        <section data-settings-page="datetime" ${_osSettingsPage==='datetime'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-clock')}</div><span><h2>Date &amp; Time</h2><p>Set this computer's clock and time zone.</p></span></header>
+          ${clockError?`<div class="empty" role="alert">${enc(clockError)}</div>`:''}
+          ${clock.available?`<section class="os-set-card"><div class="os-set-cardhead"><b data-clock-current>${enc(localClock())}</b><span>${enc(clock.timezone)}</span></div></section>
+          <section class="os-setting-row os-set-control"><div><b>Automatic date and time</b><span>Use systemd's network time service. ${clock.automatic?(clock.synchronized?'Clock synchronized.':'Enabled — waiting for synchronization.'):'Automatic time is off.'}</span></div><label class="os-set-switch"><input data-clock-auto type="checkbox" ${clock.automatic?'checked':''} ${clock.canAutomatic?'':'disabled'} aria-label="Automatic date and time"><span>${clock.automatic?'On':'Off'}</span></label></section>
+          ${clock.canAutomatic?'':'<p class="muted">No network time service is available on this computer.</p>'}
+          <section class="os-setting-row os-set-control"><div><b>Time zone</b><span>Applies to every app on this computer.</span></div><label><select data-clock-zone aria-label="Time zone" ${zones.length?'':'disabled'}>${clock.timezone&&!zones.includes(clock.timezone)?`<option value="${enc(clock.timezone)}" selected disabled>${enc(clock.timezone)} (current)</option>`:''}${zones.map(z=>`<option value="${enc(z)}" ${z===clock.timezone?'selected':''}>${enc(z.replace(/_/g,' '))}</option>`).join('')}</select><button class="btn" data-clock-zone-save ${zones.includes(clock.timezone)?'':'disabled'}>Save time zone</button></label></section>
+          <section class="os-setting-row os-set-control"><div><b>Set date and time manually</b><span>${clock.automatic?'Turn off automatic time to edit the clock.':'Enter local time for '+enc(clock.timezone)+'.'}</span></div><label><input class="input" data-clock-time type="datetime-local" step="1" aria-label="Local date and time" ${clock.automatic?'disabled':''}><button class="btn" data-clock-time-save ${clock.automatic?'disabled':''}>Set date and time</button></label></section>`:''}
+          <div class="os-set-actions"><button class="btn" data-clock-refresh>Refresh</button><span class="muted" role="status" data-clock-status></span></div>
+        </section>
+        <section data-settings-page="users" ${_osSettingsPage==='users'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-user')}</div><span><h2>Users</h2><p>The signed-in PosterChan identity and the private operating-system session attached to it.</p></span></header>
+          ${identityError?`<div class="empty">${enc(identityError)}</div>`:''}<section class="os-set-card os-user-account"><div class="os-user-avatar">${iconSvg('i-user')}</div><div><span>Current account</span><b>${enc((me()&&((me().profile&&me().profile.name)||me().name))||'PosterChan user')}</b><code>${enc(machineIdentity||((me()&&me().pubkey)||'No local OS identity'))}</code></div></section>
           <div class="os-set-actions"><button class="btn" data-user-profile ${PC().openProfile?'':'disabled'}>Open profile</button><button class="btn primary" data-user-switch ${PC().accountMenu?'':'disabled'}>Switch account</button></div></section>
-        <section data-settings-page="updates" ${_osSettingsPage==='updates'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('refresh')}</div><span><h2>Updates</h2><p>Operating-system and installed application updates.</p></span></header>
+        <section data-settings-page="updates" ${_osSettingsPage==='updates'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-refresh')}</div><span><h2>Updates</h2><p>Operating-system and installed application updates.</p></span></header>
           <section class="os-set-card os-update-status"><div class="os-set-ready">Automatic</div><div><b>PosterChan updates itself safely</b><span>The desktop downloads signed application updates in the background and offers installation only after the download is complete. PosterChanOS system updates are installed by its guarded updater and restart the desktop when idle.</span></div></section>
           <section class="os-about-grid os-set-card"><div><span>Running build</span><b><code>${enc(String(window.__PC_BUILD||'unknown').slice(0,16))}</code></b></div><div><span>Update channel</span><b>${window.pcShell?'Desktop automatic':'Web deployment'}</b></div></section>
           <div class="os-set-actions"><button class="btn" data-update-reload>Reload current build</button></div></section>
-        <section data-settings-page="about" ${_osSettingsPage==='about'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('chart')}</div><span><h2>About</h2><p>Hardware and session information for this computer.</p></span></header>
+        <section data-settings-page="about" ${_osSettingsPage==='about'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-chart')}</div><span><h2>About</h2><p>Hardware and session information for this computer.</p></span></header>
         ${systemError?`<div class="empty">${enc(systemError)}</div>`:''}
         <section class="os-set-card os-about-grid">
           <div><span>System</span><b>PosterChanOS</b></div>
@@ -2355,7 +2395,7 @@
           <div><span>Graphics</span><b>${enc(system.gpu||'—')}</b></div>
           <div><span>Up time</span><b>${Number.isFinite(system.uptime)?enc(Math.floor(system.uptime/3600))+'h '+enc(Math.floor(system.uptime/60)%60)+'m':'—'}</b></div>
         </section></section>
-        <section data-liveusb data-settings-page="liveusb" ${_osSettingsPage==='liveusb'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('drive')}</div><span><h2>Installation media</h2><p>Build PosterChanOS recovery media and write it to a removable USB drive.</p></span></header>${window.pcLiveUSB?`<div class="os-liveusb os-set-card"><div class="os-liveusb-head"><div><b>PosterChanOS installation media</b><span>Build an ISO first, then safely select where to write it.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
+        <section data-liveusb data-settings-page="liveusb" ${_osSettingsPage==='liveusb'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-drive')}</div><span><h2>Installation media</h2><p>Build PosterChanOS recovery media and write it to a removable USB drive.</p></span></header>${window.pcLiveUSB?`<div class="os-liveusb os-set-card"><div class="os-liveusb-head"><div><b>PosterChanOS installation media</b><span>Build an ISO first, then safely select where to write it.</span></div><button class="btn" data-live-refresh>Refresh</button></div>
           <div class="os-liveusb-grid"><div><h3>Build an ISO</h3><label>Output folder<div class="os-path-pick"><input class="input" data-live-out readonly placeholder="Choose a folder"><button class="btn" data-live-dir>Choose…</button></div></label><label><input type="checkbox" data-live-home> Include personal home files <small>(recovery media only)</small></label><button class="btn primary" data-live-build>Build ISO</button></div>
           <div><h3>Write a USB drive</h3><label>ISO file<div class="os-path-pick"><input class="input" data-live-iso readonly placeholder="Choose an ISO"><button type="button" class="btn" data-live-copy disabled>Copy path</button><button type="button" class="btn" data-live-pick>Choose…</button></div></label><label>Removable drive<select data-live-disk><option value="">Scanning…</option></select></label><button class="btn danger" data-live-burn>Write USB…</button></div></div>
           <pre class="os-liveusb-status" data-live-status>Ready</pre></div>`:`<div class="empty">Installation-media tools are unavailable on this device.</div>`}</section>
@@ -2412,6 +2452,31 @@
             b.style.transform=`translate(${ev.clientX-sx}px,${ev.clientY-sy}px)`; };
           b.onpointerup=ev=>{try{b.releasePointerCapture(ev.pointerId)}catch(_){} draw()}; };
       });
+      const clockPane=host.querySelector('[data-settings-page="datetime"]');
+      if(clockPane){
+        let saving=false;
+        const save=async action=>{
+          if(saving)return; saving=true;
+          const controls=[...clockPane.querySelectorAll('input,select,button')], disabled=controls.map(c=>c.disabled);
+          controls.forEach(c=>c.disabled=true);
+          const status=clockPane.querySelector('[data-clock-status]');status.textContent='Saving…';
+          try{
+            await action();
+            if(!alive())return;
+            await renderSystemSettings();
+            if(_osSettingsPage==='datetime'){
+              const result=host.querySelector('[data-clock-status]');if(result)result.textContent='Saved';
+            }
+          }catch(e){
+            if(alive()){status.textContent=String(e&&e.message||e);const toggle=clockPane.querySelector('[data-clock-auto]');if(toggle)toggle.checked=!!clock.automatic;}
+          }finally{saving=false;controls.forEach((c,i)=>c.disabled=disabled[i]);}
+        };
+        clockPane.querySelector('[data-clock-refresh]').onclick=()=>renderSystemSettings();
+        const auto=clockPane.querySelector('[data-clock-auto]');if(auto)auto.onchange=()=>save(()=>pcDateTime.setAutomatic(auto.checked));
+        const zone=clockPane.querySelector('[data-clock-zone-save]'), zoneSelect=clockPane.querySelector('[data-clock-zone]');
+        if(zone){zoneSelect.onchange=()=>{zone.disabled=!zones.includes(zoneSelect.value);};zone.onclick=()=>save(()=>pcDateTime.setTimezone(zoneSelect.value));}
+        const manual=clockPane.querySelector('[data-clock-time-save]');if(manual)manual.onclick=()=>save(()=>pcDateTime.setTime(clockPane.querySelector('[data-clock-time]').value));
+      }
       const detect=host.querySelector('[data-detect]'); if(detect)detect.onclick=()=>renderSystemSettings();
       const apply=host.querySelector('[data-apply]'); if(apply)apply.onclick=async()=>{
         const st=host.querySelector('[data-status]'); apply.disabled=true; if(st)st.textContent='Applying…';

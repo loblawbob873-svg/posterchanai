@@ -145,7 +145,7 @@ def test_every_system_settings_icon_exists_in_the_shared_sprite():
     sprite = (ROOT / "static" / "js" / "client" / "sprite.js").read_text()
     render = OS[OS.index("async function renderSystemSettings()"):
                 OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
-    referenced = {'i-' + name for name in re.findall(r"iconSvg\('([^']+)'", render)}
+    referenced = {name.removeprefix('#') for name in re.findall(r"iconSvg\('([^']+)'", render)}
     defined = set(re.findall(r'<symbol id="([^"]+)"', sprite))
     assert referenced <= defined, f"missing settings icons: {sorted(referenced - defined)}"
 

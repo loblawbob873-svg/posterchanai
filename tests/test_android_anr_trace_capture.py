@@ -13,6 +13,7 @@ SCRIPT = ROOT / 'scripts/android_device_checks.sh'
 def test_actual_scan_captures_anr_trace_without_changing_verdict(tmp_path, case):
     text = SCRIPT.read_text()
     scan = text[text.index('crash_scan() {'):text.index('\ncrash_scan launch')]
+    capture = text[text.index('capture_logcat() {'):text.index('\ncapture_before_teardown()')]
     log = ('E ActivityManager: ANR in place.poster.app (place.poster.app/.MainActivity)\n'
            if case in ('anr', 'unavailable') else
            'E ActivityManager: ForegroundServiceStartNotAllowed\n' if case == 'service_failure' else
@@ -34,13 +35,14 @@ adb(){
 }
 timeout(){
  printf '%s\n' "$*" >> "$OUT/timeout-args.txt"
- [ "$1" = --kill-after=2s ] && [ "$2" = 15s ] || return 2
+ [ "$1" = --kill-after=2s ] && { [ "$2" = 15s ] || [ "$2" = 20s ]; } || return 2
  shift 2; "$@"
 }
+CAPTURE
 SCAN
 crash_scan screen-off
 printf '%s' "$FAILED" > "$OUT/verdict.txt"
-'''.replace('SCAN', scan)
+'''.replace('CAPTURE', capture).replace('SCAN', scan)
     result = subprocess.run(['bash', '-c', harness], env={**os.environ, 'OUT': str(tmp_path), 'CASE': case},
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 0, result.stderr
@@ -53,4 +55,4 @@ printf '%s' "$FAILED" > "$OUT/verdict.txt"
     else:
         assert not artifact.exists()
     if artifact.exists():
-        assert (tmp_path / 'timeout-args.txt').read_text().startswith('--kill-after=2s 15s adb shell')
+        assert '--kill-after=2s 15s adb shell' in (tmp_path / 'timeout-args.txt').read_text()

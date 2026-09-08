@@ -2318,7 +2318,7 @@ async function openPopupWindow(e, kind, rect, arg){
    * anchored to the Start button at local x=10 was placed at global x=10 — always the leftmost
    * screen, whichever one the person was looking at. */
   const scope = _shellScopes.get(e.sender.id);
-  let originX = 0, originY = 0;
+  let originX = 0, originY = 0, sourceScale = null;
   try{
     const outs = await wm().outputs();
     const mine = scope && outs.find(o => o && o.name === scope.output);
@@ -2332,7 +2332,13 @@ async function openPopupWindow(e, kind, rect, arg){
     // A pointer click belongs to its sender even if another output still has keyboard focus.
     // Global keyboard ticks are routed to one owner by forwardShellTick before reaching here.
     const box = (mine && mine.rect) || (focused && focused.rect);
-    if(box){ originX = Math.round(box.x) || 0; originY = Math.round(box.y) || 0; }
+    if(box){
+      originX = Math.round(box.x) || 0; originY = Math.round(box.y) || 0;
+      const vw = Number(r.viewportWidth), vh = Number(r.viewportHeight);
+      if(Number.isFinite(vw) && vw > 0 && Number.isFinite(vh) && vh > 0
+        && box.width > 0 && box.height > 0)
+        sourceScale = {x: box.width / vw, y: box.height / vh};
+    }
   }catch(_){ /* one output, or no compositor — local coordinates are global */ }
 
   closePopupWindow();
@@ -2359,9 +2365,11 @@ async function openPopupWindow(e, kind, rect, arg){
   p.once('ready-to-show', () => {
     if(p.isDestroyed()) return;
     p.show();
-    placePopupWindow(p, { x: originX + num(r.x, -20000, 20000, 0),
-                          y: originY + num(r.y, -20000, 20000, 0),
-                          w: p.getBounds().width, h: p.getBounds().height });
+    const geometry = { x: originX + num(r.x, -20000, 20000, 0) * (sourceScale ? sourceScale.x : 1),
+                       y: originY + num(r.y, -20000, 20000, 0) * (sourceScale ? sourceScale.y : 1),
+                       w: p.getBounds().width, h: p.getBounds().height };
+    if(sourceScale) geometry.sourceScale = sourceScale;
+    placePopupWindow(p, geometry);
   });
   if(!sticky) p.on('blur', () => { if(_popupWin === p) closePopupWindow(); });
   p.on('closed', () => {
@@ -2486,7 +2494,10 @@ async function placePopupWindow(win, want){
           if(bounds.width>0 && row.rect.width>0) sx=row.rect.width/bounds.width;
           if(bounds.height>0 && row.rect.height>0) sy=row.rect.height/bounds.height;
         }catch(_){ }
-        const visualWant=Object.assign({},want,{w:want.w*sx,h:want.h*sy});
+        // The anchor and requested size belong to the originating renderer. A popup may
+        // initially map on a different monitor, so its own scale only converts client sizes.
+        const source = want.sourceScale || {x:sx,y:sy};
+        const visualWant=Object.assign({},want,{w:want.w*source.x,h:want.h*source.y});
         const put = snapPopupToWorkArea(visualWant, row, _popupKind, _popupOutputs);
         // Fixed-size menus reject compositor resize requests. Update their client constraints
         // before placement when a small display requires a smaller menu.
@@ -3382,6 +3393,12 @@ ipcMain.handle('pc:bt:power', (e, on) => { fsGuard(e); return bluetooth.power(!!
 ipcMain.handle('pc:bt:device', (e, address, action) => {
   fsGuard(e); return bluetooth.device(String(address||''),String(action||''));
 });
+const dateTime = require('./datetime.js');
+ipcMain.handle('pc:datetime:status', e => { fsGuard(e); return dateTime.status(); });
+ipcMain.handle('pc:datetime:zones', e => { fsGuard(e); return dateTime.timezones(); });
+ipcMain.handle('pc:datetime:automatic', (e, on) => { fsGuard(e); return dateTime.setAutomatic(on); });
+ipcMain.handle('pc:datetime:timezone', (e, zone) => { fsGuard(e); return dateTime.setTimezone(zone); });
+ipcMain.handle('pc:datetime:time', (e, value) => { fsGuard(e); return dateTime.setTime(value); });
 const systemInfo = require('./system.js');
 ipcMain.handle('pc:system:snapshot', (e, full) => { fsGuard(e); return systemInfo.snapshot(!!full); });
 ipcMain.handle('pc:system:end', (e, pid) => { fsGuard(e); return systemInfo.end(Number(pid)); });

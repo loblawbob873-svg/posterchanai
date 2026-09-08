@@ -368,14 +368,18 @@ if (isOurPage) {
    * shell: sway paints floating windows above tiled ones and the shell is the tiled one. This opens
    * a real floating window for it instead — see pc:popup:open in main.js. `pick` is how that
    * window, which is its own renderer, tells the shell what was chosen. */
+  // Anchors are measured in this renderer's viewport, which can differ from compositor units.
+  const popupGeometry = rect => Object.assign({}, rect || {}, {
+    viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+  });
   contextBridge.exposeInMainWorld('pcPopup', {
     open: (kind, rect, arg) =>
-      ipcRenderer.invoke('pc:popup:open', String(kind || ''), rect || {}, String(arg == null ? '' : arg)),
+      ipcRenderer.invoke('pc:popup:open', String(kind || ''), popupGeometry(rect), String(arg == null ? '' : arg)),
     /* Open it, or close it if this kind is already up — decided by the process that owns the
      * window, never by what a renderer remembers about it. Resolves true when a window is now
      * showing, false when there is none. */
     toggle: (kind, rect, arg) =>
-      ipcRenderer.invoke('pc:popup:toggle', String(kind || ''), rect || {}, String(arg == null ? '' : arg)),
+      ipcRenderer.invoke('pc:popup:toggle', String(kind || ''), popupGeometry(rect), String(arg == null ? '' : arg)),
     close: () => ipcRenderer.invoke('pc:popup:close'),
     pick: (view) => ipcRenderer.invoke('pc:popup:pick', String(view || '')),
     /* Anything that is not a view name — open this post, reply to this event, run this tray action.
@@ -463,6 +467,14 @@ if (isOurPage) {
     status: (scan) => ipcRenderer.invoke('pc:bt:status', !!scan),
     power: (on) => ipcRenderer.invoke('pc:bt:power', !!on),
     device: (address, action) => ipcRenderer.invoke('pc:bt:device', String(address||''), String(action||'')),
+  });
+
+  contextBridge.exposeInMainWorld('pcDateTime', {
+    status: () => ipcRenderer.invoke('pc:datetime:status'),
+    timezones: () => ipcRenderer.invoke('pc:datetime:zones'),
+    setAutomatic: on => ipcRenderer.invoke('pc:datetime:automatic', on),
+    setTimezone: zone => ipcRenderer.invoke('pc:datetime:timezone', zone),
+    setTime: value => ipcRenderer.invoke('pc:datetime:time', value),
   });
 
   contextBridge.exposeInMainWorld('pcSystem', {

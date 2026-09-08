@@ -10,11 +10,16 @@ mkdir -p "$STATE_ROOT" "$(dirname "$GETTY")"
 exec 9>"$LOCK"
 flock -x 9
 
+# THE FOURTH COPY OF THIS TEMPLATE, and the one that outlives the other three: it is rewritten on
+# every nostr sign-in, so an ordering fixed in gentoo.sh is stripped again the first time somebody
+# logs in. network-online.target (not merely NetworkManager.service, which is satisfied once NM has
+# STARTED) is what stops the desktop coming up before the machine has an address -- the race that
+# showed a "Join a network" screen to a desk with its cable plugged in.
 write_getty(){
   local user="$1"
   local tmp
   tmp=$(mktemp "$(dirname "$GETTY")/.override.XXXXXX")
-  printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' "$user" >"$tmp"
+  printf '[Unit]\nWants=NetworkManager.service network-online.target\nAfter=NetworkManager.service network-online.target\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' "$user" >"$tmp"
   chmod 0644 "$tmp"
   mv -f "$tmp" "$GETTY"
 }
@@ -85,8 +90,27 @@ printf '%s' "$BOOTDATA" | runuser -u "$USER_NAME" -- sh -c 'umask 077; cat > "$1
 runuser -u "$USER_NAME" -- chmod 0700 "$HOME_DIR" "$HOME_DIR/.config" "$HOME_DIR/.config/posterchanos"
 runuser -u "$USER_NAME" -- chmod 0600 "$HOME_DIR/.bash_profile" "$BOOT"
 
+# ALREADY BEING THIS IDENTITY IS NOT A REASON TO RESTART, and restarting is not free: it replaces
+# the whole graphical session, so every window the person has open is destroyed. Measured on a real
+# desk -- this helper was invoked THREE times in eight seconds for the same npub
+# (--challenge/switch, plain, --challenge/switch again) and each one restarted the session:
+# "my desktop reloaded 2-3 times after logging in", "i had windows opened, and they were no longer
+# opened after the restarts". Nothing was crashing; it was being asked to arrive somewhere it had
+# already arrived.
+#
+# Everything above this line is idempotent -- the account, the profile, the handoff, the getty -- so
+# repeating it costs nothing. Only the restart is destructive, so only the restart is conditional.
+# The test is the pair of facts this script itself records: the npub it last switched to, and the
+# user the console autologins. A root helper must not trust its caller to ask only once.
+WAS_NPUB=$(cat "$STATE_ROOT/current-npub" 2>/dev/null || true)
+WAS_USER=$(sed -n 's/.*--autologin \([^ ][^ ]*\).*/\1/p' "$GETTY" 2>/dev/null | head -1)
+
 write_getty "$USER_NAME"
 printf '%s\n' "$NPUB" >"$STATE_ROOT/current-npub"
 chmod 0600 "$STATE_ROOT/current-npub"
+if [ "$WAS_NPUB" = "$NPUB" ] && [ "$WAS_USER" = "$USER_NAME" ]; then
+  printf '%s\n' "$OUT"
+  exit 0
+fi
 restart_later
 printf '%s\n' "$OUT"

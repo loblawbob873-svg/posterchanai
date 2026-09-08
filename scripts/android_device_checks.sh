@@ -24,6 +24,33 @@ say()  { printf '\n=== %s\n' "$*"; }
 fail() { printf '\nFAIL: %s\n' "$*"; FAILED=1; }
 ok()   { printf 'ok: %s\n' "$*"; }
 
+# A device can disappear between a readiness probe and the next command. Bound every
+# otherwise-unbounded adb call; explicit longer install/capture limits below bypass this function.
+adb() { timeout --kill-after=2s 30s adb "$@"; }
+
+capture_logcat() {
+  local label="$1" rc=0
+  timeout --kill-after=2s 20s adb logcat -d > "$OUT/pc-logcat-$label.txt" \
+    2> "$OUT/pc-device-logcat-$label.txt" || rc=$?
+  if [ "$rc" -ne 0 ] || [ ! -s "$OUT/pc-logcat-$label.txt" ]; then
+    fail "logcat capture unavailable during $label (exit $rc); crash checks did not run"
+    cat "$OUT/pc-device-logcat-$label.txt" >&2
+    return 1
+  fi
+}
+
+capture_before_teardown() {
+  # The action's cleanup removes QEMU before later workflow steps can inspect it.
+  # Preserve process and kernel evidence here, while the failed device still exists.
+  if [ -n "${LIVE_LOGCAT_PID:-}" ]; then kill "$LIVE_LOGCAT_PID" 2>/dev/null || true; fi
+  {
+    date -u
+    free -m
+    ps -eo pid,ppid,stat,comm,rss --sort=-rss | head -35
+    timeout --kill-after=2s 5s sudo -n dmesg -T | tail -100
+  } > "$OUT/pc-device-host-before-teardown.txt" 2>&1 || true
+}
+
 # A dead emulator is infrastructure evidence, not a reason to spend the rest of this script waiting
 # on disconnected adb sockets. Exit promptly so the workflow can preserve the last logcat and report
 # that instrumentation did not run; the combined gate still fails because lifecycle did not pass.
@@ -38,14 +65,20 @@ APK=$(find mobile/android -path '*debug*' -name '*.apk' | head -1)
 [ -n "$APK" ] || { echo "no debug APK built"; exit 1; }
 
 say "install $APK"
-adb install -r -g "$APK" || { echo "install failed"; exit 1; }
+timeout --kill-after=2s 120s adb install -r -g "$APK" || { echo "install failed"; exit 1; }
 
 # -g grants runtime permissions, but the SAF tree grant and the account are user gestures we cannot
 # make here. So these checks assert what is reachable without them: that the app STARTS, that its
 # background machinery is wired, and that nothing throws. A sweep of real files needs a real grant
 # and is out of scope — saying so is better than a check that pretends.
 
-adb logcat -c
+adb logcat -c || { fail "could not clear device logcat"; exit 1; }
+trap capture_before_teardown EXIT
+trap 'exit 143' TERM
+# Keep the last Android messages even if a later snapshot encounters a dead transport.
+timeout --kill-after=2s 15m adb logcat -v threadtime > "$OUT/pc-logcat-live.txt" \
+  2> "$OUT/pc-device-logcat-live.txt" &
+LIVE_LOGCAT_PID=$!
 
 say "launch"
 # EXPLICIT, NOT `monkey`. `monkey -p $PKG -c LAUNCHER 1` picks a RANDOM launcher activity from the
@@ -92,7 +125,7 @@ sleep 20
 
 crash_scan() {   # $1 = label
   require_device
-  adb logcat -d > "$OUT/pc-logcat-$1.txt" 2>/dev/null
+  capture_logcat "$1" || return 1
   # A FATAL EXCEPTION FROM *OUR* PACKAGE IS A FAILURE — and this has to be the SAME crash, not two
   # facts about the same file.
   #
@@ -536,7 +569,7 @@ fi
 say "the app survived the whole cycle"
 if adb shell pidof $PKG >/dev/null 2>&1; then ok "still running"; else fail "the app died during the cycle"; fi
 
-adb logcat -d > "$OUT/pc-logcat-full.txt" 2>/dev/null
+capture_logcat full || true  # capture_logcat records failure in FAILED
 
 if [ "$FAILED" -ne 0 ]; then
   echo
