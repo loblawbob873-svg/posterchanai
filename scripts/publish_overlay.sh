@@ -48,17 +48,18 @@ if [ -n "${LIVE:-}" ]; then
     ASSET="PosterChan-${LIVE}-linux-x64.tar.zst"
     GH="https://github.com/loblawbob873-svg/posterchanai/releases/download/desktop-v${LIVE}"
     DL="$(mktemp)"
-    if curl -fsSL --retry 2 --max-time 900 -o "$DL" "$GH/$ASSET"; then
+    if curl -fsSL --retry 2 --max-time 900 -o "$DL" "$GH/$ASSET" && [ -s "$DL" ]; then
         printf 'DIST posterchan-desktop-%s.tar.zst %s BLAKE2B %s SHA512 %s\n' \
             "$LIVE" "$(stat -c%s "$DL")" \
             "$(b2sum "$DL" | cut -d' ' -f1)" \
             "$(sha512sum "$DL" | cut -d' ' -f1)" >"$EB_DIR/Manifest"
         echo "[overlay] Manifest written for $ASSET"
     else
-        # NEVER LEAVE A STALE ONE. A Manifest describing a different build is worse than none: the
-        # download succeeds and portage rejects it, which reads as a corrupt mirror.
-        rm -f "$EB_DIR/Manifest"
-        echo "[overlay] WARN: could not fetch $ASSET — publishing with no Manifest (emerge will refuse it)" >&2
+        # Keep the existing source and published repository intact when the artifact cannot be
+        # verified. Continuing without a Manifest makes every installed machine reject its update.
+        rm -f "$DL"
+        echo "[overlay] ERROR: could not fetch a nonempty $ASSET; overlay publication aborted" >&2
+        exit 1
     fi
     rm -f "$DL"
 fi
