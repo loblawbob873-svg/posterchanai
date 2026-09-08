@@ -389,7 +389,7 @@
   function testMessages(id){ if(remoteMessages.has(id))return uniqueMessages(remoteMessages.get(id));try{ const v=JSON.parse(localStorage.getItem('pc.concord.test.'+id)||'[]'); return uniqueMessages(v); }catch(_){ return []; } }
   function markRemoteStore(id){if(!remoteMessages.has(id))remoteMessages.set(id,testMessages(id));remoteStoreIds.add(id);try{localStorage.removeItem('pc.concord.test.'+id);}catch(_){} }
   function saveTestMessages(id,v){const clean=uniqueMessages(v);if(remoteStoreIds.has(id)){remoteMessages.set(id,clean.slice(-5000));try{localStorage.removeItem('pc.concord.test.'+id);}catch(_){}return;}try{localStorage.setItem('pc.concord.test.'+id,JSON.stringify(clean.slice(-200)));}catch(_){} }
-  async function clearRoomCache(room){const loadKey=room&&(room.communityId||room.naddr);if(!loadKey)return;try{if(window.PCConcordCache)await window.PCConcordCache.dropRoom(loadKey);}catch(e){console.warn('Concord room cache cleanup failed',e);}for(const channel of channelsOf(room)){const id=channelStoreId(room,channel.name);remoteMessages.delete(id);remoteStoreIds.delete(id);try{localStorage.removeItem('pc.concord.test.'+id);}catch(_){}}for(const id of [...remoteMessages.keys()])if(room.naddr&&id.startsWith(room.naddr)){remoteMessages.delete(id);remoteStoreIds.delete(id);}const icon=roomIconRefs.get(loadKey);if(icon&&/^blob:/i.test(String(icon.url||'')))try{URL.revokeObjectURL(icon.url);}catch(_){}roomIconRefs.delete(loadKey);}
+  async function clearRoomCache(room){nip29EventStreams.delete(roomIdentity(room));const loadKey=room&&(room.communityId||room.naddr);if(!loadKey)return;try{if(window.PCConcordCache)await window.PCConcordCache.dropRoom(loadKey);}catch(e){console.warn('Concord room cache cleanup failed',e);}for(const channel of channelsOf(room)){const id=channelStoreId(room,channel.name);remoteMessages.delete(id);remoteStoreIds.delete(id);try{localStorage.removeItem('pc.concord.test.'+id);}catch(_){}}for(const id of [...remoteMessages.keys()])if(room.naddr&&id.startsWith(room.naddr)){remoteMessages.delete(id);remoteStoreIds.delete(id);}const icon=roomIconRefs.get(loadKey);if(icon&&/^blob:/i.test(String(icon.url||'')))try{URL.revokeObjectURL(icon.url);}catch(_){}roomIconRefs.delete(loadKey);}
   function pendingEchoMatch(messages,remote){
     const candidates=(messages||[]).filter(m=>m&&m.pending&&String(m.pubkey||'')===String(remote&&remote.pubkey||'')&&String(m.text||'')===String(remote&&remote.text||'')&&Number(m.kind||9)===Number(remote&&remote.kind||9)).map(m=>({message:m,gap:Math.abs(Number(m.at||0)-Number(remote&&remote.at||0))})).filter(x=>x.gap<120000).sort((a,b)=>a.gap-b.gap);
     if(!candidates.length)return null;
@@ -1264,7 +1264,46 @@
   }
   function foldNip29History(events,p,groupId){const scoped=events.filter(e=>(e.tags||[]).some(t=>t[0]==='h'&&t[1]===groupId)).sort((a,b)=>Number(a.created_at)-Number(b.created_at)),deletions=[],deleted=new Set(),byId=new Map(),reactions=[];for(const e of scoped){if(e.kind===5){deletions.push(e);continue;}if(e.kind===7){reactions.push(e);continue;}if(![9,10,11,12,1111].includes(e.kind))continue;const pr=p.profOf?p.profOf(e.pubkey):{};byId.set(e.id,{id:e.id,pubkey:e.pubkey,by:pr.display_name||pr.name||e.pubkey.slice(0,12)+'…',text:e.content,at:Number(e.created_at)*1000,kind:e.kind,tags:e.tags||[],reactions:{},reactionIds:{},remote:true});}const reactionById=new Map(reactions.map(e=>[e.id,e]));for(const deletion of deletions)for(const t of deletion.tags||[])if(t[0]==='e'){const target=byId.get(t[1])||reactionById.get(t[1]);if(target&&target.pubkey===deletion.pubkey)deleted.add(t[1]);}for(const id of deleted)byId.delete(id);for(const e of reactions){if(deleted.has(e.id))continue;const target=((e.tags||[]).find(t=>t[0]==='e')||[])[1],m=byId.get(target);if(!m)continue;const emoji=e.content==='+'?'👍':e.content||'👍';(m.reactions[emoji]||(m.reactions[emoji]=[])).push(e.pubkey);(m.reactionIds[emoji]||(m.reactionIds[emoji]={}))[e.pubkey]=e.id;}for(const m of byId.values())if(m.kind===1111){const target=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(target)m.reply={id:target.id,by:target.by,text:target.text};}return [...byId.values()].sort((a,b)=>a.at-b.at);}
   async function nip29History(p,room){const events=await nip29RelayQuery(p,room.relay,[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],limit:500}],10000);return foldNip29History(events,p,room.groupId);}
-  async function hydrateNip29Room(p,index){const rooms=saved(),room=rooms[index];if(!room||room.protocol!=='nip29')return;const messages=await nip29History(p,room),storeId=channelStoreId(room,'general');markRemoteStore(storeId);saveTestMessages(storeId,messages);room.nip29Hydrated=true;const latest=saved(),at=latest.findIndex(item=>sameRoom(item,room));if(at<0)return;latest[at]={...latest[at],nip29Hydrated:true};save(latest);if(sameRoom(latest[state.community],room))backgroundRender();}
+  // Fold verified history and live events together; replacing a folded snapshot loses concurrent
+  // arrivals, while merging folded rows would resurrect legitimately deleted messages.
+  let nip29EventOwner=null,nip29SeedRestored=true;
+  const nip29EventStreams=new Map();
+  function mergeNip29Live(p,room,events){
+    const owner=deliveryOwner(p),changedOwner=nip29EventOwner!==owner;
+    if(changedOwner){if(nip29EventOwner!==null)nip29SeedRestored=false;nip29EventStreams.clear();nip29EventOwner=owner;}
+    const key=roomIdentity(room);
+    // A restored/handoff store may already contain verified rows before this renderer sees a live
+    // event. Seed it once, but never carry the previous account's plaintext into a new owner.
+    if(!nip29EventStreams.has(key)&&nip29SeedRestored){
+      const seed=[];
+      for(const m of testMessages(channelStoreId(room,'general')))if(m.remote&&(m.tags||[]).some(t=>t[0]==='h'&&t[1]===room.groupId)){
+        seed.push({id:messageId(m),kind:m.kind,pubkey:m.pubkey,created_at:Number(m.at)/1000,content:m.text,tags:m.tags});
+        for(const [emoji,people] of Object.entries(m.reactionIds||{}))for(const [pubkey,id] of Object.entries(people||{}))
+          seed.push({id,kind:7,pubkey,created_at:Number(m.at)/1000,content:emoji,tags:[['h',room.groupId],['e',messageId(m)]]});
+      }
+      nip29EventStreams.set(key,seed);
+    }
+    const byId=new Map((nip29EventStreams.get(key)||[]).map(e=>[e.id,e]));
+    for(const event of events||[])if(event&&event.id&&(event.tags||[]).some(t=>t[0]==='h'&&t[1]===room.groupId))byId.set(event.id,event);
+    const merged=[...byId.values()].sort((a,b)=>Number(a.created_at)-Number(b.created_at)||String(a.id).localeCompare(String(b.id))).slice(-5000);
+    nip29EventStreams.set(key,merged);
+    const pending=testMessages(channelStoreId(room,'general')).filter(m=>!m.remote&&m.pubkey===owner&&!byId.has(messageId(m)));
+    return mergeRelayMessages(pending,foldNip29History(merged,p,room.groupId));
+  }
+  async function readNip29Live(p,room,events=[]){
+    const owner=deliveryOwner(p),identity=roomIdentity(room);
+    mergeNip29Live(p,room,events);
+    const history=await nip29RelayQuery(p,room.relay,[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],limit:500}],10000);
+    if(deliveryOwner(p)!==owner||!saved().some(r=>roomIdentity(r)===identity))return null;
+    return mergeNip29Live(p,room,history);
+  }
+  async function hydrateNip29Room(p,index){
+    const room=saved()[index];if(!room||room.protocol!=='nip29')return;
+    const messages=await readNip29Live(p,room);if(!messages)return;
+    const storeId=channelStoreId(room,'general');markRemoteStore(storeId);saveTestMessages(storeId,messages);
+    const latest=saved(),at=latest.findIndex(item=>sameRoom(item,room));if(at<0)return;
+    latest[at]={...latest[at],nip29Hydrated:true};save(latest);if(sameRoom(latest[state.community],room))backgroundRender();
+  }
   async function membershipEvents(p,pubkey,{external=true,legacyRecovery=false,signal=null}={}){
     /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
        relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
@@ -2042,7 +2081,9 @@
   async function publishNip29Message(p,room,channelName,text,extraTags=[],kind=9){
     if(!p.publishNip29Authed||!room.relay||!room.groupId)throw new Error('authenticated NIP-29 publishing is unavailable');
     const viewer=p.viewer?p.viewer():{},tags=[['h',room.groupId],...nip29PreviousTags(testMessages(channelStoreId(room,channelName)),viewer.pubkey),...extraTags];
-    const event=await p.publishNip29Authed(room.relay,{kind,created_at:Math.floor(Date.now()/1000),content:text,tags});return{...event,rumorId:event.id,ms:Number(event.created_at)*1000};
+    const event=await p.publishNip29Authed(room.relay,{kind,created_at:Math.floor(Date.now()/1000),content:text,tags});
+    if(deliveryOwner(p)===viewer.pubkey&&saved().some(r=>sameRoom(r,room)))mergeNip29Live(p,room,[event]);
+    return{...event,rumorId:event.id,ms:Number(event.created_at)*1000};
   }
   async function publishCordMessage(p,room,channelName,text,extraTags=[],kind=9,onPrepared){
     if(p.customEmojiTags) extraTags=await p.customEmojiTags(text,extraTags);
@@ -2179,9 +2220,18 @@
      * just left are merged into the store of the one you just opened. */
     if(roomIdentity(room)+'\n'+String(channel.id||'')!==key)return;
     if(room.protocol==='nip29'){
-      const prior=testMessages(channelStoreId(room,channel.name)),needsContext=wraps.some(ev=>[5,7].includes(Number(ev.kind))),
-        incoming=needsContext?await nip29History(p,room):foldNip29History(wraps,p,room.groupId),merged=needsContext?incoming:mergeRelayMessages(prior,incoming);
-      if(JSON.stringify(merged)!==JSON.stringify(prior)){saveTestMessages(channelStoreId(room,channel.name),merged);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());}
+      const storeId=channelStoreId(room,channel.name),owner=deliveryOwner(p),identity=roomIdentity(room),
+        needsContext=wraps.some(ev=>[5,7].includes(Number(ev.kind)));
+      let merged;
+      try{merged=needsContext?await readNip29Live(p,room,wraps):mergeNip29Live(p,room,wraps);}
+      catch(e){
+        console.warn('Concord NIP-29 history refresh failed; retaining received events',e);
+        if(deliveryOwner(p)!==owner||!saved().some(r=>roomIdentity(r)===identity))return;
+        merged=mergeNip29Live(p,room,[]);
+      }
+      if(!merged)return;
+      const prior=testMessages(storeId);
+      if(JSON.stringify(merged)!==JSON.stringify(prior)){saveTestMessages(storeId,merged);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());}
       return;
     }
     const bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
