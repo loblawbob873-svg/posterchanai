@@ -29,6 +29,7 @@ import os
 import re
 import shlex
 import time
+import threading
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -106,16 +107,17 @@ def _mux_name(user_id, label: str) -> str:
     return f"pcai-{user_id or 0}-{mux_label(label)}"
 
 
-def _mux_command(name: str) -> str:
+def _mux_command(name: str, screen_marker: str = "") -> str:
     """tmux, else screen, else a plain login shell — decided ON THE HOST, at connect time, because
     what is installed there is not something this node can know.
 
     `new-session -A` is attach-or-create in one atomic step; `-s` names it. screen's `-xRR` is the
     same idea. Both are `exec`d so the wrapper shell does not sit between the PTY and the session."""
     q = shlex.quote(name)
+    metadata = ("printf '\\036" + screen_marker + ":%s\\037' \"$(tty)\"; ") if screen_marker else ""
     return (
         f"if command -v tmux >/dev/null 2>&1; then exec tmux -u new-session -A -s {q}; "
-        f"elif command -v screen >/dev/null 2>&1; then exec screen -xRR {q}; "
+        f"elif command -v screen >/dev/null 2>&1; then {metadata}exec screen -xRR {q}; "
         f'else exec "${{SHELL:-/bin/sh}}" -l; fi'
     )
 
@@ -284,6 +286,16 @@ class SshSession:
         self.killed = False
         self.mux = False
         self.mux_name = ""
+        self._screen_marker = b""
+        self._screen_pending = bytearray()
+        self._screen_pending_at = 0.0
+        self._screen_probe_at = 0.0
+        self._screen_scanned = 0
+        self._screen_tty = ""
+        self._screen_wait_output = False
+        self._screen_fit_task = None
+        self._screen_revision = 0
+        self._last_pty_size = None
         # WHICH TAB THIS IS. Reported to the client so a new tab can pick a label nobody is using —
         # kept even when multiplexing is off, where it is merely a name.
         self.label = "main"
@@ -310,6 +322,59 @@ class SshSession:
         return self.detached_at is not None
 
     def _push(self, data: bytes):
+        screen_output = True
+        if self._screen_marker:
+            if not self._screen_pending:
+                self._screen_pending_at = time.monotonic()
+            self._screen_pending.extend(data)
+            pending = bytes(self._screen_pending)
+            prefix = self._screen_marker
+            remaining = max(0, 4096 - self._screen_scanned)
+            start = pending.find(prefix, 0, remaining + len(prefix))
+            expired = (time.monotonic() - self._screen_probe_at >= 10
+                       or time.monotonic() - self._screen_pending_at >= 1 or not remaining)
+            if start < 0 and not expired:
+                # A remote shell startup banner is ordinary output, not a reason to lose the
+                # metadata that follows it. Retain only a possible split nonce prefix.
+                keep = next((n for n in range(min(len(prefix)-1, len(pending)), 0, -1)
+                             if pending.endswith(prefix[:n])), 0)
+                data = pending[:-keep] if keep else pending
+                self._screen_pending = bytearray(pending[-keep:] if keep else b"")
+                self._screen_scanned += len(data)
+                if self._screen_scanned >= 4096:
+                    data += bytes(self._screen_pending)
+                    self._screen_pending.clear()
+                    self._screen_marker = b""
+            elif start >= 0 and not expired:
+                end = pending.find(b"\x1f", start + len(prefix))
+                if end < 0 and len(pending) - start <= 256 and not expired:
+                    data = pending[:start]
+                    self._screen_pending = bytearray(pending[start:])
+                else:
+                    if end >= 0 and end + 1 - start <= 256:
+                        tty = pending[start + len(prefix):end].decode("ascii", "replace")
+                        tail = pending[end + 1:]
+                        data = pending[:start] + tail
+                        screen_output = bool(tail)
+                        # Consume our framed metadata on unsupported remote tty layouts too.
+                        if re.fullmatch(r"/dev/(?:pts/[0-9]{1,12}|tty[A-Za-z0-9]{1,16})", tty):
+                            self._screen_tty = tty
+                            self._screen_wait_output = True
+                    else:
+                        data = pending
+                    self._screen_marker = b""
+                    self._screen_pending.clear()
+            else:
+                data = pending
+                self._screen_marker = b""
+                self._screen_pending.clear()
+        if not data:
+            return
+        if self._screen_wait_output and screen_output:
+            # The prefix precedes exec. Screen's first redraw is the readiness signal; fitting
+            # before it maps the display can silently succeed without changing a window.
+            self._screen_wait_output = False
+            self._schedule_screen_fit()
         self.buf.extend(data)
         self.seq += len(data)
         if len(self.buf) > REPLAY_MAX:
@@ -320,6 +385,8 @@ class SshSession:
         """Always running while the PTY is open — see the class note."""
         try:
             while True:
+                if self._screen_pending and time.monotonic() - self._screen_pending_at >= 1:
+                    self._push(b"")
                 if self.closed():
                     break
                 if self.read_ready():
@@ -357,7 +424,11 @@ class SshSession:
 
         self.label = mux_label(label)
         self.mux_name = _mux_name(self.user_id, label) if multiplex_enabled() else ""
-        mux = _mux_command(self.mux_name) if self.mux_name else ""
+        marker = "PCSSH-" + os.urandom(16).hex()
+        mux = _mux_command(self.mux_name, marker) if self.mux_name else ""
+        self._screen_marker = ("\x1e" + marker + ":").encode() if mux else b""
+        self._screen_probe_at = time.monotonic()
+        self._last_pty_size = (cols, rows)
         self.mux = bool(mux)
 
         def _open():
@@ -387,6 +458,7 @@ class SshSession:
             return cli, chan
 
         self.client, self.chan = await asyncio.to_thread(_open)
+        self._screen_probe_at = time.monotonic()
         logger.info("[ssh] opened %s@%s:%s (session %s)", h.user, h.host, h.port, self.sid)
         _sessions[self.sid] = self
         self._reader = asyncio.create_task(self._drain())
@@ -409,7 +481,69 @@ class SshSession:
             return
         cols = max(20, min(500, int(cols or 80)))
         rows = max(5, min(200, int(rows or 24)))
+        if self._last_pty_size == (cols, rows):
+            self._schedule_screen_fit()
+            return
         await asyncio.to_thread(self.chan.resize_pty, cols, rows)
+        self._last_pty_size = (cols, rows)
+        self._schedule_screen_fit()
+
+    def _fit_screen_display(self) -> bool:
+        """Fit only this SSH display; never detach another Screen client or guess its window."""
+        if self.closed() or not self.client or not self.mux_name or not re.fullmatch(r"/dev/(?:pts/[0-9]{1,12}|tty[A-Za-z0-9]{1,16})", self._screen_tty):
+            return False
+        command = " ".join(shlex.quote(v) for v in
+                           ("screen", "-S", self.mux_name, "-X", "fit"))
+        command += " < " + shlex.quote(self._screen_tty)
+        channel = None
+        watchdog = None
+        try:
+            channel = self.client.get_transport().open_session(timeout=2)
+            channel.settimeout(2)
+            if self.closed():
+                return False
+            # Paramiko's exec-request acknowledgement ignores settimeout. Closing the channel
+            # releases that wait too; a coroutine timeout alone would strand the worker thread.
+            watchdog = threading.Timer(2, channel.close)
+            watchdog.daemon = True
+            watchdog.start()
+            channel.exec_command(command + " >/dev/null 2>&1")
+            deadline = time.monotonic() + 2
+            while not channel.exit_status_ready():
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.025)
+            return channel.recv_exit_status() == 0
+        except Exception:
+            return False
+        finally:
+            if watchdog:
+                watchdog.cancel()
+            if channel:
+                channel.close()
+
+    def _schedule_screen_fit(self):
+        if not self._screen_tty or self._screen_wait_output:
+            return
+        self._screen_revision += 1
+        if self._screen_fit_task and not self._screen_fit_task.done():
+            return
+
+        async def settle():
+            failures = 0
+            while self.chan and not self.closed():
+                revision = self._screen_revision
+                await asyncio.sleep(0.1)
+                if revision != self._screen_revision:
+                    continue
+                ok = await asyncio.to_thread(self._fit_screen_display)
+                if revision != self._screen_revision:
+                    failures = 0
+                    continue
+                if ok or failures >= 2:
+                    return
+                failures += 1
+        self._screen_fit_task = asyncio.create_task(settle())
 
     def read_ready(self) -> bool:
         return bool(self.chan and self.chan.recv_ready())
@@ -458,6 +592,13 @@ class SshSession:
         self.close()
 
     def close(self) -> None:
+        if self._screen_pending:
+            self._screen_marker = b""
+            pending = bytes(self._screen_pending)
+            self._screen_pending.clear()
+            self._push(pending)
+        if self._screen_fit_task and not self._screen_fit_task.done():
+            self._screen_fit_task.cancel()
         for obj in (self.chan, self.client):
             try:
                 if obj:
