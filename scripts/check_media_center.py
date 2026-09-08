@@ -30,6 +30,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from app.models import User
 
 from app.routers import media_center as routes, jellyfin
 from app.services import media_center as media
@@ -152,6 +156,21 @@ async def main():
             key = request.headers.get("X-Test-Viewer") or request.query_params.get("viewer") or OWNER
             return SimpleNamespace(nostr_npub=key, username='fixture-'+key[:8], is_admin=key == OWNER, can_media=True)
         app.dependency_overrides[routes.media_user_optional] = user
+        # Redeeming a TV secret rechecks a registered account independently of browser auth.
+        # Keep that lookup isolated too; no request in this harness should touch real users.
+        engine = create_engine('sqlite:///' + str(temp / 'users.db'))
+        User.__table__.create(engine)
+        with Session(engine) as db:
+            for name, key in [('owner', OWNER), ('viewer', VIEWER)]:
+                db.add(User(username=name, password_hash='fixture-not-a-password', nostr_npub=key,
+                            is_admin=key == OWNER, can_media=True))
+            db.commit()
+        def database():
+            with Session(engine) as db:
+                yield db
+        app.dependency_overrides[routes.get_db] = database
+        nas.dependency_overrides[routes.get_db] = database
+
         javascript = (ROOT / "static/js/client/app.js").read_text()
         functions = javascript[javascript.index("  let _mediaCenterLibraryTab="):javascript.index("  // ---------- torrents (NIP-35")]
         bootstrap = """
@@ -299,6 +318,32 @@ async def main():
                         await second.js("document.querySelector('.mc-directory').click()", True)
                         await second.until("document.querySelectorAll('.mc-folder-trail button').length===2")
                         print('PASS: shared viewer opens Shared with me, browses folders, and has no admin controls', flush=True)
+                        # Pair from the recipient's rendered controls, not the owner's session.
+                        # This identity owns no library; an owner-only Quick Connect card can pass
+                        # every owner UI test while stranding exactly this shared-library TV user.
+                        recipient_libraries = (await client.get(f'{app_url}/api/media-center',
+                            headers={'X-Test-Viewer': VIEWER})).json()['libraries']
+                        assert recipient_libraries and all(item['shared_with_me'] and not item['can_manage']
+                                                           for item in recipient_libraries), recipient_libraries
+                        recipient_pending = (await client.post(f'{app_url}/jellyfin/QuickConnect/Initiate')).json()
+                        await second.js("document.querySelector('#mc-jellyfin').open=true")
+                        await second.js("document.querySelector('#mc-jellyfin-approve input').value=" + json.dumps(recipient_pending['Code']) +
+                                        ";document.querySelector('#mc-jellyfin-approve').requestSubmit()", gesture=True)
+                        await second.until("window.lastToast?.startsWith('Jellyfin app approved')")
+                        recipient_polled = await client.get(f'{app_url}/jellyfin/QuickConnect/Connect',
+                                                           params={'Secret': recipient_pending['Secret']})
+                        assert recipient_polled.json()['Authenticated'] is True, recipient_polled.text
+                        recipient_login_response = await client.post(f'{app_url}/jellyfin/Users/AuthenticateWithQuickConnect',
+                            json={'Secret': recipient_pending['Secret']})
+                        assert recipient_login_response.status_code == 200, recipient_login_response.text
+                        recipient_login = recipient_login_response.json()
+                        assert recipient_login['User']['Id'] == jellyfin.account_id(SimpleNamespace(nostr_npub=VIEWER))
+                        recipient_tv_headers = {'X-Emby-Token': recipient_login['AccessToken']}
+                        recipient_views = await client.get(f'{app_url}/jellyfin/UserViews', headers=recipient_tv_headers)
+                        assert recipient_views.status_code == 200 and len(recipient_views.json()['Items']) == 1, recipient_views.text
+                        await second.js("document.querySelector('#mc-jellyfin').open=false")
+                        print('PASS: zero-owned-library recipient pairs TV from Quick Connect UI and sees the shared library', flush=True)
+
                         await asyncio.gather(browser.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True),
                                              second.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True))
                         await asyncio.gather(browser.until("document.querySelector('video').currentTime>2"),
@@ -307,6 +352,9 @@ async def main():
                         url = await second.js("_mediaCenterSession")
                         documents["library:test"]["shared_with"] = []
                         assert (await client.get(f"{app_url}" + url)).status_code == 404
+                        revoked_views = await client.get(f'{app_url}/jellyfin/UserViews', headers=recipient_tv_headers)
+                        assert revoked_views.status_code == 200 and revoked_views.json()['Items'] == [], revoked_views.text
+
                         print("two viewers PASS: concurrent HLS playback and existing-ticket revocation", flush=True)
                         await asyncio.gather(browser.js("document.querySelector('#mc-close-player').onclick()", True),
                                              second.js("document.querySelector('#mc-close-player').onclick()", True))
@@ -330,6 +378,7 @@ async def main():
             await server_task
             await nas_task
             await routes.close_proxy()
+            engine.dispose()
 
 
 if __name__ == "__main__":
