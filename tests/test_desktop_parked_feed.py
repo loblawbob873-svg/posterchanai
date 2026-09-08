@@ -19,6 +19,7 @@ stub feature and never evaluates app.js, so flushLive does not exist in it.
 """
 import os
 import re
+import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_JS = open(os.path.join(ROOT, "static", "js", "client", "app.js"), encoding="utf-8").read()
@@ -135,11 +136,30 @@ def test_every_click_focuses_its_window_before_the_apps_handler_runs():
     """`.click()`, keyboard activation and accessibility tools can fire click without pointerdown.
     Capture is load-bearing: a bubbling app handler may render immediately, and while another
     window owns the shared feed that turns Terminal/Code into Blossom or Concord."""
-    needle = "el.addEventListener('click', () => {"
-    start = OS_JS.index(needle, OS_JS.index("function openApp("))
-    body = OS_JS[start:OS_JS.index("}, true);", start) + len("}, true);")]
-    assert "focusWin(w)" in body
-    assert body.endswith("}, true);"), "the focus fallback must run in capture before app handlers"
+    match = re.search(r"el\.addEventListener\('click',\s*\([^)]*\)\s*=>\s*\{.*?\},\s*true\);",
+                      OS_JS[OS_JS.index("function openApp("):], re.S)
+    assert match, "click focus must run in capture before app handlers"
+    # Execute the production listener, including keyboard activation without pointerdown.
+    script = """
+const assert = require('node:assert/strict');
+let focused=false, calls=[], handler;
+const w={native:null};
+const el={classList:{contains:()=>focused},addEventListener:(type,fn,capture)=>{
+  assert.equal(type,'click');assert.equal(capture,true);handler=fn;
+}};
+function focusWin(target,render){assert.equal(target,w);focused=true;calls.push(render);}
+""" + match.group(0) + """
+for(const detail of [0,1]){
+  focused=false;calls=[];handler({detail});
+  assert.equal(focused,true);assert.equal(calls.length,1);
+}
+// Renew explicit keyboard focus without repainting an already focused app's controls.
+focused=true;calls=[];handler({detail:0});assert.deepEqual(calls,[false]);
+calls=[];handler({detail:1});assert.deepEqual(calls,[]);
+w.native=42;handler({detail:0});assert.deepEqual(calls,[]);
+"""
+    result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
 
 
 def test_the_slot_is_the_scroller():

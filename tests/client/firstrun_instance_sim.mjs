@@ -10,7 +10,7 @@ import fs from 'node:fs';
 const src = fs.readFileSync(new URL('../../static/js/client/osfirstrunui.js', import.meta.url), 'utf8');
 const a = src.indexOf('    /* A DEFAULT NOBODY CHOSE IS NOT AN ANSWER');
 if (a < 0) throw new Error('the instance detection moved');
-const b = src.indexOf('    w.instanceSkipped', a);
+const b = src.indexOf('    w.networkSkipped', a);
 if (b < 0) throw new Error('the end of the instance block moved');
 const body = src.slice(a, b);
 

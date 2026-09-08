@@ -73,7 +73,7 @@ def test_handed_off_communities_frame_selects_direct_messages_at_runtime():
     """The destination frame is canonical `messages`, but its restored tab is `concord`."""
     os_js = ROOT / "static/js/client/os.js"
     boot = f"""
-global.window = {{}};
+global.window = new EventTarget();
 global.document = {{ addEventListener(){{}}, querySelector(){{ return null; }},
                     querySelectorAll(){{ return []; }} }};
 global.getComputedStyle = () => ({{ zoom: '1' }});
@@ -97,7 +97,7 @@ def test_handoff_reads_the_live_tab_when_the_frame_owns_the_feed():
     os_js = ROOT / "static/js/client/os.js"
     boot = f"""
 const feed={{}}; const body={{querySelector:s=>s==='#feed'?feed:null}};
-global.window={{__PC:{{VIEW:'concord'}}}};
+global.window=Object.assign(new EventTarget(),{{__PC:{{VIEW:'concord'}}}});
 global.document={{ addEventListener(){{}}, querySelector(s){{return s==='#feed'?feed:null;}},
                   querySelectorAll(){{return [];}} }};
 global.getComputedStyle=()=>({{zoom:'1'}});
@@ -117,7 +117,7 @@ def test_messages_identity_and_tab_survive_a_stale_cross_window_repaint():
     """Communities -> move -> Direct must not become a new Social/DM popout."""
     os_js = ROOT / "static/js/client/os.js"
     boot = f"""
-global.window={{__PC:{{VIEW:'global'}}}};
+global.window=Object.assign(new EventTarget(),{{__PC:{{VIEW:'global'}}}});
 global.document={{addEventListener(){{}},querySelector(){{return null;}},querySelectorAll(){{return [];}}}};
 global.getComputedStyle=()=>({{zoom:'1'}});
 require({json.dumps(str(os_js))});

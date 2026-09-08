@@ -19,6 +19,7 @@ import tempfile
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urljoin
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -306,6 +307,17 @@ async def main():
                         await browser.js("document.querySelector('#mc-close-player').onclick()", True)
                         await browser.until("document.querySelector('#mc-playback').hidden")
                         print(name, "PASS: artwork, grid, search, actual HLS playback, full screen, seek, close", flush=True)
+                    # Start the recipient chain with an actual administrator share mutation.
+                    documents['library:test']['shared_with'] = []
+                    private = {**copy.deepcopy(documents['library:test']), 'id':'private',
+                               'name':'Unrelated private movies', 'shared_with':[]}
+                    documents['library:private'] = private
+                    documents['index']['ids'].append('private')
+                    before_share = await client.get(f'{app_url}/api/media-center', headers={'X-Test-Viewer': VIEWER})
+                    assert before_share.json()['libraries'] == [], before_share.text
+                    shared = await client.put(f'{app_url}/api/media-center/test/sharing',
+                        headers={'X-Test-Viewer': OWNER}, json={'shared_with':[VIEWER]})
+                    assert shared.status_code == 200 and shared.json()['shared_with'] == [VIEWER], shared.text
                     # Two real browsers play the same cached media under separate Nostr identities.
                     target = await browser.call("Target.createTarget", {"url": f"{app_url}/?viewer=" + VIEWER})
                     pages = (await client.get(f"http://127.0.0.1:{CDP_PORT}/json/list")).json()
@@ -343,6 +355,46 @@ async def main():
                         assert recipient_views.status_code == 200 and len(recipient_views.json()['Items']) == 1, recipient_views.text
                         await second.js("document.querySelector('#mc-jellyfin').open=false")
                         print('PASS: zero-owned-library recipient pairs TV from Quick Connect UI and sees the shared library', flush=True)
+                        # Follow the TV API's browse/playback/HLS path all the way to decoded video.
+                        tv_library = recipient_views.json()['Items'][0]
+                        assert tv_library['Id'] == jellyfin.library_id(documents['library:test'])
+                        listing = await client.get(f'{app_url}/jellyfin/Items', headers=recipient_tv_headers,
+                                                   params={'ParentId':tv_library['Id']})
+                        tv_item = listing.json()['Items'][0]
+                        while tv_item['IsFolder']:
+                            listing = await client.get(f'{app_url}/jellyfin/Items', headers=recipient_tv_headers,
+                                                       params={'ParentId':tv_item['Id']})
+                            assert listing.status_code == 200, listing.text
+                            tv_item = listing.json()['Items'][0]
+                        playback = await client.post(f"{app_url}/jellyfin/Items/{tv_item['Id']}/PlaybackInfo",
+                            headers=recipient_tv_headers, json={'MaxStreamingBitrate':650000})
+                        assert playback.status_code == 200, playback.text
+                        playback_info = playback.json()
+                        master_url = urljoin(app_url+'/jellyfin/', playback_info['MediaSources'][0]['TranscodingUrl'])
+                        master = await client.get(master_url)
+                        assert master.status_code == 200, master.text
+                        variant_url = urljoin(master_url, next(line for line in master.text.splitlines() if line and not line.startswith('#')))
+                        variant = await client.get(variant_url)
+                        assert variant.status_code == 200, variant.text
+                        segment_url = urljoin(variant_url, next(line for line in variant.text.splitlines() if line and not line.startswith('#')))
+                        segment = await client.get(segment_url, timeout=30)
+                        assert segment.status_code == 200, segment.text[:100] if segment.status_code != 200 else ''
+                        decoded = subprocess.run(['ffmpeg','-v','error','-i','pipe:0','-map','0:v:0','-frames:v','1','-f','null','-'],
+                                                 input=segment.content, capture_output=True, timeout=20)
+                        assert decoded.returncode == 0, decoded.stderr.decode(errors='replace')
+                        # Valid IDs from another library cannot bypass its private ACL, even if cached.
+                        private_item = jellyfin.remember(private, scanned[0])
+                        for forbidden_id in [jellyfin.library_id(private), private_item]:
+                            denied = await client.get(f'{app_url}/jellyfin/Items/{forbidden_id}', headers=recipient_tv_headers)
+                            assert denied.status_code == 404, denied.text
+                            denied = await client.post(f'{app_url}/jellyfin/Items/{forbidden_id}/PlaybackInfo',
+                                                       headers=recipient_tv_headers, json={})
+                            assert denied.status_code == 404, denied.text
+                        stopped = await client.post(f'{app_url}/jellyfin/Sessions/Playing/Stopped',
+                            headers=recipient_tv_headers, json={'PlaySessionId':playback_info['PlaySessionId']})
+                        assert stopped.status_code == 204, stopped.text
+                        print('PASS: admin share -> recipient browser pairing -> TV browse and decoded HLS; unrelated private library denied', flush=True)
+
 
                         await asyncio.gather(browser.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True),
                                              second.js("document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)", True))

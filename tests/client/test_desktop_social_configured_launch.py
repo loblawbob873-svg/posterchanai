@@ -18,7 +18,8 @@ def test_desktop_resolves_only_the_launcher_social_alias():
     helper = helper[:helper.index("\n  /*", 10)]
     assert "view==='global' && PC().socialTimeline" in helper
     assert "target=PC().socialTimeline()||view" in helper
-    assert "return openApp(target,app&&app.label,app&&app.icon)" in helper
+    assert "const opened=openApp(target,app&&app.label,app&&app.icon)" in helper
+    assert "return opened;" in helper
     # Explicit route navigation must retain the literal Home/Nostrverse tab the user selected.
     route = OS[OS.index("function routeView(view, focusOnly)"):]
     route = route[:route.index("\n  /*", 10)]

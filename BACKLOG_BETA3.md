@@ -81,15 +81,28 @@ test, deployment/package, and relevant real-device check are complete. The insta
 
 ## Shared media: Quick Connect for library recipients
 
-- [ ] When an admin shares media with a user, show usable Jellyfin Quick Connect
+- [x] When an admin shares media with a user, show usable Jellyfin Quick Connect
       authorization in that user's PosterChan Media Center, including when the user
       owns no library. Keep account-level media restrictions enforced.
-- [ ] Add browser regression coverage for a signed-in shared recipient with zero
+      Evidence: recipient browser approval/token redemption in `scripts/check_media_center.py`;
+      account permission and membership enforcement in `tests/test_jellyfin.py`.
+- [x] Add browser regression coverage for a signed-in shared recipient with zero
       owned libraries: Quick Connect is visible and can submit a TV pairing code.
-- [ ] Add an integration test from admin sharing through recipient approval and TV
+      Evidence: isolated Chrome/FFmpeg harness passed; issued TV account matches the recipient,
+      shared library appears in TV UserViews, and unsharing removes it from the existing session.
+- [x] Add an integration test from admin sharing through recipient approval and TV
       token redemption to TV library browsing/playback. Verify the TV sees the shared
       library and cannot browse or play unrelated private libraries.
-- [ ] Cover expired/invalid/reused pairing codes, unshared users, revoked shares and
+      Evidence: the isolated browser harness passes one admin-share → recipient browser
+      approval → TV redemption/browse/PlaybackInfo/HLS chain, with a real FFmpeg-decoded
+      video frame. Valid unrelated private-library/item IDs cannot browse or start playback,
+      including when their item locator is already cached.
+- [x] Cover expired/invalid/reused pairing codes, unshared users, revoked shares and
       disabled account media access. Revocation must also affect existing TV sessions.
+      Evidence: local/NAS-proxy Jellyfin tests cover code validation/expiry/single use,
+      shared-library visibility, and permission/token revocation during existing playback;
+      the browser harness also checks existing TV views and HLS tickets after unsharing.
 - [ ] Run the affected backend/browser suites, real Jellyfin SDK compatibility gates
       for Android TV 0.19.10 and newer, and a physical TV check before marking complete.
+      Backend/browser checks passed for the changes above. Version-specific SDK gates and
+      a physical-TV check of this candidate have not been established by these test runs.

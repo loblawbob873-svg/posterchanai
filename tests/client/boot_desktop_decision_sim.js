@@ -31,7 +31,11 @@ async function boot({ availableNow, isShell, osModeRemembered, windowWidth }){
   const doc={ createElement:el, body:el(), documentElement:el(), head:el(),
     querySelector(){return el()}, querySelectorAll(){return []},
     addEventListener(){}, removeEventListener(){}, hidden:false, hasFocus(){return true} };
+  const windowEvents=new EventTarget();
   const sandbox={
+    addEventListener:windowEvents.addEventListener.bind(windowEvents),
+    removeEventListener:windowEvents.removeEventListener.bind(windowEvents),
+    dispatchEvent:windowEvents.dispatchEvent.bind(windowEvents),
     window:null, document:doc, console,
     innerWidth:windowWidth, innerHeight:900, devicePixelRatio:1,
     location:{ search:'', href:'http://x/' }, URLSearchParams,

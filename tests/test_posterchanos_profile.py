@@ -169,6 +169,7 @@ class PosterChanOSProfile(unittest.TestCase):
         "wlr-randr": "gui-apps/wlr-randr",
         "nmcli": "base:net-misc/networkmanager",   # BASE_PACKAGES
         "systemctl": "base:sys-apps/systemd",
+        "timedatectl": "base:sys-apps/systemd",    # Date & Time settings
         "script": "base:sys-apps/util-linux",      # the local terminal's PTY
         "stty": "base:sys-apps/util-linux",        # resize that PTY without injecting input
         "lsblk": "base:sys-apps/util-linux",       # enumerate removable LiveUSB targets safely

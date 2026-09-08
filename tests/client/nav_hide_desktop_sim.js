@@ -52,7 +52,7 @@ const rows = (opt.sidebar || []).map(spec => {
   return new El(spec, parent);
 });
 
-global.window = {};
+global.window = new EventTarget();
 global.document = {
   addEventListener(){},
   querySelector(){ return null; },

@@ -251,15 +251,17 @@ def test_the_shell_only_paints_what_it_is_told():
 
 
 def test_the_surface_that_owns_the_press_is_chosen_before_anything_is_destroyed():
-    """The ordering IS the bug: deciding after `closePopupWindow()` meant the second caller killed
-    the first caller's window and then declined, leaving nothing."""
+    """Pointer ownership comes from the sender; keyboard ticks are routed to one surface.
+    Resolve the sender's output before replacing the popup. Runtime multi-output coverage lives
+    in test_desktop_popup_output_ownership.py and exercises both entry paths."""
     body = MAIN[MAIN.index("async function openPopupWindow("):]
     body = body[:body.index("ipcMain.handle('pc:popup:close'")]
-    decide = body.index("mine.name !== focused.name")
+    decide = body.index("const box = (mine && mine.rect) || (focused && focused.rect)")
     destroy = body.index("closePopupWindow();")
     assert decide < destroy, (
-        "the output check runs after the existing popup has been closed — on two monitors that "
-        "destroys the menu that just opened")
+        "the sender's output must be resolved before replacing the popup")
+    assert "mine.name !== focused.name" not in body, (
+        "pointer clicks on a different monitor must not be rejected by stale keyboard focus")
 
 
 def test_the_window_is_placed_on_the_output_that_asked_for_it():

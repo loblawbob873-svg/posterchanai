@@ -902,9 +902,30 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
     def test_installer_can_remount_media_detached_by_dracut(self):
         """A booted squashfs may have no /run/initramfs/live after switch-root."""
         self.assertIn("/run/posterchan-live-media", self.fn)
-        self.assertIn('type="$(blkid -s TYPE -o value "$dev"', self.fn)
-        self.assertIn('[ "$type" = iso9660 ] || [ "$type" = udf ]', self.fn)
         self.assertIn('sudo mount -o ro "$dev" "$media"', self.fn)
+        self.assertIn('findmnt -no SOURCE / | grep -qx "$dev" && continue', self.fn)
+        # Hybrid USB exposes the same contents as HFS+, so filesystem type cannot identify
+        # the source. Execute the actual content predicate against safe temporary fixtures.
+        probe = self.fn[self.fn.index('for dev in $cand; do'):]
+        probe = probe[:probe.index('\n\t\tdone')]
+        probe = re.sub(r'(?m)^\s*#.*$', '', probe)
+        self.assertNotIn('blkid -s TYPE', probe, 'hybrid media must not be filtered by filesystem type')
+        predicate = re.search(r'if (\[ -d "\$media/boot".*?); then', self.fn).group(1)
+        for boot, live, kernel, accepted in (
+            (True, True, True, True), (True, False, True, False),
+            (False, True, False, False), (True, True, False, False),
+        ):
+            with self.subTest(boot=boot, live=live, kernel=kernel), tempfile.TemporaryDirectory() as tmp:
+                media = Path(tmp)
+                if boot:
+                    (media / 'boot').mkdir()
+                if live:
+                    (media / 'LiveOS').mkdir()
+                if kernel:
+                    (media / 'boot/vmlinuz').write_text('fixture')
+                result = subprocess.run(['bash', '-c', 'media="$1"; ' + predicate, 'check', tmp],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
 
     def test_installer_can_remount_a_non_traversable_squashfs_lower_layer(self):
         self.assertIn("/run/posterchan-live-root", self.fn)

@@ -71,7 +71,7 @@ def test_desktop_treats_direct_messages_and_concord_as_one_window_at_runtime():
     """Run the shipped desktop router decision, instead of asserting that a fix-shaped string exists."""
     os_js = ROOT / "static/js/client/os.js"
     boot = f"""
-global.window = {{}};
+global.window = new EventTarget();
 global.document = {{ addEventListener(){{}}, querySelector(){{ return null; }},
                     querySelectorAll(){{ return []; }} }};
 global.getComputedStyle = () => ({{ zoom: '1' }});
