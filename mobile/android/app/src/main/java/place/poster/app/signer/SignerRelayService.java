@@ -161,6 +161,15 @@ public class SignerRelayService extends Service {
     /** The SMS outbox's own subscription id, so its events are told apart from signer traffic. */
     private String smsSubId;
     private boolean stopping = false;
+    private final SignerReplyQueue<ReplyAuthority> replies = new SignerReplyQueue<>();
+    private final Map<String,Object> replyAuthority = new HashMap<>();
+    private static final class ReplyAuthority {
+        final String pk, relay; final Object generation;
+        ReplyAuthority(Nip46Core.Session session, Object generation) {
+            this.pk=session.pk; this.relay=session.relay; this.generation=generation;
+        }
+    }
+    private boolean replyRetryScheduled = false;
     private static final java.util.concurrent.ConcurrentLinkedQueue<String[]> smsArchive =
             new java.util.concurrent.ConcurrentLinkedQueue<>();
     private static final java.util.concurrent.ConcurrentLinkedQueue<String> smsArchiveDeletes =
@@ -286,8 +295,10 @@ public class SignerRelayService extends Service {
 
     /** Re-read the published pairings and make the sockets match them. */
     private void reload() {
+        byte[] previousKey = sec();
         sec = null;                       // re-read: the key may have just been armed or cleared
         myPubHex = null;
+        if (!java.util.Arrays.equals(previousKey, sec())) { replies.clear(); replyAuthority.clear(); }
         if (sec() == null) {
             // No key on this phone: there is nothing to sign with, so holding sockets open would be
             // pure battery for a service that must refuse every request anyway.
@@ -312,6 +323,14 @@ public class SignerRelayService extends Service {
         }
 
         Map<String, Nip46Core.Session> next = Nip46Core.merge(sessions, incoming);
+        replyAuthority.keySet().retainAll(next.keySet());
+        for (Nip46Core.Session incomingSession : next.values()) {
+            Nip46Core.Session previous = sessions.get(incomingSession.pk);
+            if (previous == null || !previous.relay.equals(incomingSession.relay)
+                    || !previous.perms.equals(incomingSession.perms))
+                replyAuthority.put(incomingSession.pk,new Object());
+            else replyAuthority.computeIfAbsent(incomingSession.pk, ignored -> new Object());
+        }
         sessions.clear();
         sessions.putAll(next);
         paired = sessions.size();          // what the shared notification says; see RunningNote
@@ -430,6 +449,8 @@ public class SignerRelayService extends Service {
         }
         WebSocket ws = http().newWebSocket(req, new WebSocketListener() {
             @Override public void onOpen(WebSocket s, Response r) {
+                handler.post(() -> {
+                if (socks.get(url) != s || stopping) return;
                 failures.remove(url);
                 try {
                     JSONObject f = new JSONObject();
@@ -454,11 +475,13 @@ public class SignerRelayService extends Service {
                     } catch (Throwable ignored2) { }
                     flushSmsReceipts(s);
                 } catch (Throwable ignored) { }
-                handler.post(() -> { lastRx.put(url, System.currentTimeMillis());
-                                     connected = socks.size(); note(); publishSmsArchive(); });
+                lastRx.put(url, System.currentTimeMillis());
+                connected = socks.size(); note(); publishSmsArchive(); flushReplies();
+                });
             }
             @Override public void onMessage(WebSocket s, String text) {
-                handler.post(() -> { lastRx.put(url, System.currentTimeMillis()); recv(url, text); });
+                handler.post(() -> { if (socks.get(url) != s || stopping) return;
+                    lastRx.put(url, System.currentTimeMillis()); recv(url, text); });
             }
             /* `socks.get(url) == s` — a death report is only about the socket that is CURRENT.
              *
@@ -665,8 +688,9 @@ public class SignerRelayService extends Service {
         final String peer = from;
         final String content = ev.optString("content", "");
         final String encNow = sess.enc, permsNow = sess.perms, peerPk = sess.pk;
-        final WebSocket ws = socks.get(sess.relay);
         final Nip46Core.Session sref = sess;
+        final ReplyAuthority authority = new ReplyAuthority(sess,
+                replyAuthority.computeIfAbsent(peer, ignored -> new Object()));
         pool().execute(() -> {
             String[] learned = new String[1];
             String plain = decode(sec, peer, content, encNow, learned);
@@ -691,29 +715,33 @@ public class SignerRelayService extends Service {
                 catch (Throwable t) { error = String.valueOf(t.getMessage()); }
             }
 
-            boolean sent = false;
+            String prepared = null;
             try {
                 JSONObject out = new JSONObject();
                 out.put("id", id);
                 out.put("result", error != null ? "" : (result == null ? "" : result));
                 if (error != null) out.put("error", error);
-                send(sec, peerPk, learned[0] != null ? learned[0] : encNow, ws, out.toString());
-                sent = true;
+                prepared = prepareReply(sec, peerPk, learned[0] != null ? learned[0] : encNow, out.toString());
             } catch (Throwable t) {
                 lastError = "could not answer";
             }
             // Back to the owner thread for every piece of shared state, including the counters the
             // panel reads — those are what tell a phone that answered from one that only tried.
-            final boolean ok = sent;
+            final String wire = prepared;
             final String enc = learned[0];
             final String fp = method + "|" + params.length() + "|"
                     + params.toString().substring(0, Math.min(64, params.toString().length()));
             final String methodF = method;
             handler.post(() -> {
-                if (enc != null) sref.enc = enc;
-                sref.last = System.currentTimeMillis() / 1000;
-                lastRequestAt = sref.last;
-                if (ok) requestsAnswered++;
+                Nip46Core.Session currentSession = sessions.get(peer);
+                if (stopping || currentSession == null || replyAuthority.get(peer) != authority.generation
+                        || !java.util.Arrays.equals(sec, sec())) return;
+                if (wire != null && !replies.add(authority, wire, android.os.SystemClock.elapsedRealtime()))
+                    lastError = "signer reply delivery queue full";
+                flushReplies();
+                if (enc != null) currentSession.enc = enc;
+                currentSession.last = System.currentTimeMillis() / 1000;
+                lastRequestAt = currentSession.last;
                 long[] t = perApp.get(peer);
                 if (t == null) { t = new long[]{0, 0}; perApp.put(peer, t); }
                 t[0]++;
@@ -826,8 +854,8 @@ public class SignerRelayService extends Service {
         return null;
     }
 
-    /** Encrypt, sign and publish the reply on the socket that carries this session. */
-    private void send(byte[] sec, String peerPk, String enc, WebSocket ws, String payload)
+    /** Encrypt and sign once on the crypto worker; the owner thread chooses the current socket. */
+    private String prepareReply(byte[] sec, String peerPk, String enc, String payload)
             throws Exception {
         byte[] peer = Nostr.unhex(peerPk);
         String ct = Nip46Core.replyWithNip04(enc)
@@ -851,8 +879,23 @@ public class SignerRelayService extends Service {
         ev.put("content", ct);
         ev.put("sig", Nostr.hex(Nostr.sign(Nostr.unhex(eid), sec, null)));
 
-        // The socket was looked up on the work thread and handed in; OkHttp's send() is thread-safe.
-        if (ws != null) ws.send(new JSONArray().put("EVENT").put(ev).toString());
+        return new JSONArray().put("EVENT").put(ev).toString();
+    }
+
+    /** Retry only prepared bytes, on the current socket; never repeat a signing operation. */
+    private void flushReplies() {
+        if (stopping) { replies.clear(); return; }
+        requestsAnswered += replies.flush(android.os.SystemClock.elapsedRealtime(),
+            session -> sessions.containsKey(session.pk) && replyAuthority.get(session.pk) == session.generation,
+            (session, wire) -> {
+                WebSocket current = socks.get(session.relay);
+                if (current == null) return false;
+                try { return current.send(wire); } catch (Throwable ignored) { return false; }
+            });
+        if (replies.size() > 0 && !replyRetryScheduled) {
+            replyRetryScheduled = true;
+            handler.postDelayed(() -> { replyRetryScheduled=false; flushReplies(); },1000L);
+        }
     }
 
     /**

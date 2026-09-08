@@ -90,6 +90,30 @@ public class SignerRelayCloseDeviceTest {
     }
 
     @Test public void restartClose1001ReconnectsResubscribesAndAnswersWithoutAppReload() throws Exception {
+        restart(false, "");
+    }
+
+    @Test public void restartDuringCryptoDeliversPreparedReplyOnReplacementSocket() throws Exception {
+        restart(true, "");
+    }
+
+    @Test public void unpairWhileCryptoQueuedSuppressesPreparedReply() throws Exception {
+        restart(true, "unpair");
+    }
+
+    @Test public void keyChangeWhileCryptoQueuedSuppressesPreparedReply() throws Exception {
+        restart(true, "key");
+    }
+
+    @Test public void ordinaryReloadWhileCryptoQueuedKeepsReplyAuthorized() throws Exception {
+        restart(true, "refresh");
+    }
+
+    @Test public void permissionChangeWhileCryptoQueuedSuppressesPreparedReply() throws Exception {
+        restart(true, "permissions");
+    }
+
+    private void restart(boolean duringCrypto, String change) throws Exception {
         Context context=new ContextWrapper(ApplicationProvider.getApplicationContext()) {
             @Override public SharedPreferences getSharedPreferences(String name,int mode) {
                 return super.getSharedPreferences("signer-close-device-test-"+name,mode);
@@ -114,7 +138,24 @@ public class SignerRelayCloseDeviceTest {
                     invoke(service,"open",new Class<?>[]{String.class},url);
                 } catch(Exception e) { throw new AssertionError(e); }
             });
-            first.subscriptions(phonePub);
+            String originalSubscription=first.subscriptions(phonePub);
+            JSONObject request=new JSONObject().put("id","after-restart").put("method","get_public_key").put("params",new JSONArray());
+            JSONObject event=place.poster.app.sms.SmsOutbox.signed(peer,peerPub,System.currentTimeMillis()/1000,
+                24133,java.util.Collections.singletonList(java.util.Arrays.asList("p",phonePub)),
+                Crypt.nip04Encrypt(peer,Nostr.unhex(phonePub),request.toString()));
+            CountDownLatch releaseCrypto=new CountDownLatch(1);
+            if(duringCrypto) {
+                Method poolMethod=SignerRelayService.class.getDeclaredMethod("pool");poolMethod.setAccessible(true);
+                java.util.concurrent.ThreadPoolExecutor pool=(java.util.concurrent.ThreadPoolExecutor)poolMethod.invoke(service);
+                CountDownLatch occupied=new CountDownLatch(1);
+                pool.execute(()->{occupied.countDown();try{releaseCrypto.await(20,TimeUnit.SECONDS);}
+                    catch(InterruptedException interrupted){Thread.currentThread().interrupt();}});
+                assertTrue(occupied.await(5,TimeUnit.SECONDS));
+                assertTrue(first.socket.send(new JSONArray().put("EVENT").put(originalSubscription).put(event).toString()));
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);
+                while(pool.getQueue().isEmpty() && System.nanoTime()<deadline)Thread.sleep(5);
+                assertFalse("Request must be queued before relay restart",pool.getQueue().isEmpty());
+            }
             AtomicReference<WebSocket> old=new AtomicReference<>();
             owner(service,()->{try {old.set((WebSocket)((Map<?,?>)field(service,"socks")).get(url));}
                 catch(Exception e){throw new AssertionError(e);}});
@@ -137,11 +178,30 @@ public class SignerRelayCloseDeviceTest {
             owner(service,()->{try {assertSame(replacement.get(),((Map<?,?>)field(service,"socks")).get(url));}
                 catch(Exception e){throw new AssertionError(e);}});
 
-            JSONObject request=new JSONObject().put("id","after-restart").put("method","get_public_key").put("params",new JSONArray());
-            JSONObject event=place.poster.app.sms.SmsOutbox.signed(peer,peerPub,System.currentTimeMillis()/1000,
-                24133,java.util.Collections.singletonList(java.util.Arrays.asList("p",phonePub)),
-                Crypt.nip04Encrypt(peer,Nostr.unhex(phonePub),request.toString()));
-            assertTrue(second.socket.send(new JSONArray().put("EVENT").put(subscription).put(event).toString()));
+            if(!change.isEmpty()) {
+                owner(service,()->{try {
+                    if(change.equals("unpair")) {
+                        ((Map<?,?>)field(service,"sessions")).clear();
+                    } else {
+                        byte[] replacementKey=new byte[32];replacementKey[31]=13;
+                        if(change.equals("key")) SignerKey.store(context,replacementKey);
+                        SignerRelayService.publishSessions(context,new JSONArray().put(new JSONObject()
+                            .put("pk",peerPub).put("relay",url).put("name","renamed client")
+                            .put("perms",change.equals("permissions")?"ping":"get_public_key").put("enc","")).toString());
+                        invoke(service,"reload",new Class<?>[0]);
+                    }
+                } catch(Exception e){throw new AssertionError(e);}});
+            }
+            if(duringCrypto) releaseCrypto.countDown();
+            else assertTrue(second.socket.send(new JSONArray().put("EVENT").put(subscription).put(event).toString()));
+            if(!change.isEmpty() && !change.equals("refresh")) {
+                // Drain work through both owners before asserting absence; no timing-only success.
+                java.util.concurrent.ThreadPoolExecutor pool=(java.util.concurrent.ThreadPoolExecutor)field(service,"cryptoPool");
+                pool.submit(()->{}).get(10,TimeUnit.SECONDS);
+                owner(service,()->{});
+                assertNull("Changed identity must suppress the prepared reply",second.messages.poll(500,TimeUnit.MILLISECONDS));
+                return;
+            }
             JSONArray response=second.message(); assertEquals("EVENT",response.getString(0));
             JSONObject signed=response.getJSONObject(1);
             assertEquals(phonePub,signed.getString("pubkey"));
@@ -151,6 +211,8 @@ public class SignerRelayCloseDeviceTest {
             assertEquals("after-restart",answer.getString("id"));
             assertEquals(phonePub,answer.getString("result"));
             assertFalse(answer.has("error"));
+            oldListener.onMessage(old.get(),new JSONArray().put("EVENT").put(originalSubscription).put(event).toString());
+            assertNull("Retired socket must not dispatch another request",second.messages.poll(500,TimeUnit.MILLISECONDS));
         } catch(Exception | AssertionError error) {
             primaryFailure=error;
             throw error;

@@ -966,7 +966,7 @@ def test_the_crypto_does_not_run_on_the_socket_thread():
     # decode/send must not be handed the session object — that is what would let the pool mutate it.
     assert "private String decode(byte[] sec, String peerHex, String ct, String encNow, String[] learned)" in svc, \
         "decode still takes the session, so the pool writes session state off-thread"
-    assert "private void send(byte[] sec, String peerPk, String enc, WebSocket ws, String payload)" in svc, \
+    assert "private String prepareReply(byte[] sec, String peerPk, String enc, String payload)" in svc, \
         "send still reads the session and the socket map from the pool"
     # This service also uses the pool for background SMS archival. Anchor on the NIP-46 request's
     # captured session values so this assertion measures the crypto path it describes.
@@ -974,9 +974,10 @@ def test_the_crypto_does_not_run_on_the_socket_thread():
     body = svc[svc.index("pool().execute(", request):]
     body = body[:body.index("\n    }")]
     for banned in ("sessions.", "socks.", "failures."):
-        assert banned not in body, f"the crypto pool touches {banned} — those maps are thread-confined"
+        assert banned not in body.split("handler.post(",1)[0], f"the crypto pool touches {banned} — those maps are thread-confined"
     assert "handler.post(" in body, "the pool updates shared state without posting back"
-    assert "requestsAnswered++" in body, "the answered counter left the request path"
+    assert "flushReplies();" in body, "prepared reply must return to the owner thread"
+    assert "requestsAnswered += replies.flush(" in svc, "count only accepted transport sends"
     # …and the pool must not be a permanent set of threads on a phone that signs nothing.
     assert "0, 3, 30L" in svc, "the crypto pool no longer reaps its idle threads"
 
