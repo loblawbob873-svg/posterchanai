@@ -239,7 +239,8 @@ def main():
     subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(disk), args.size], check=True)
 
     with tempfile.TemporaryDirectory(prefix="pc-install-sock-") as td:
-        rc = install(args.iso, disk, td, evidence, args.timeout, args.memory, args.cpus)
+        rc = install(args.iso, disk, td, evidence, args.timeout, args.memory, args.cpus,
+                     args.usb)
     if rc:
         return rc
     print(f"OK  PosterChanOS installed from {Path(args.iso).name} onto a blank UEFI disk "
