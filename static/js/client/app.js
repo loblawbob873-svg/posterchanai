@@ -15286,8 +15286,63 @@
   // target, and switch to the AI view (aiMount consumes _ai.pendingFx and runs startEffectStudio). Used
   // by a post's 🎬 Effect action (replyTo = that post → the result offers ↩ Send the Reply) and by the
   // 📸 screenshot card (replyTo = null → the result's 🚀 Post button publishes a fresh timeline post).
+  // A studio belongs to the account, conversation and reading position that opened it.
+  function _effectReturnValid(target){
+    return !!(target && _ai.fxReturn===target && ME && ME.pubkey===target.owner &&
+      (!target.ready || _ai.convId===target.conversation));
+  }
+  function _syncEffectReturn(){
+    const b=$('#ai-back-social'); if(b)b.hidden=!_effectReturnValid(_ai.fxReturn);
+  }
+  function _forgetEffectReturn(target){
+    if(!target||_ai.fxReturn!==target)return;
+    _ai.fxReturn=null;_ai.replyTo=null;_syncEffectReturn();
+  }
+  function _returnFromEffect(target){
+    if(!_effectReturnValid(target))return false;
+    if(target.windowReturn){
+      if(!target.windowReturn()){toast('The original Social window was closed.');return false;}
+    }else{
+      const wasRouting=_routing;_routing=true;
+      try{
+        let paint=null;
+        const e=target.entity;
+        if(e && (target.view==='profile'||target.view==='thread')){
+          const d=NT().nip19.decode(e.q);
+          if(d.type==='npub')paint=renderProfileView(d.data);
+          else if(d.type==='nprofile')paint=renderProfileView(d.data.pubkey);
+          else if(d.type==='note')paint=openThread(d.data);
+          else if(d.type==='nevent')paint=openThread(d.data.id,d.data.relays);
+          else switchView(target.view);
+        }else switchView(target.view);
+        if(target.url)try{history.replaceState(target.scroll,'',target.url);}catch(_){}
+        _restoreNavScroll(target.scroll);
+        if(paint && typeof paint.then==='function'){
+          // Cached thread heads can accept the offset before a later network paint clears them.
+          // Restore once more after that paint, unless the reader has already interacted or left.
+          const feed=$('#feed');let touched=false;
+          const touch=()=>{touched=true;};
+          const events=['pointerdown','touchstart','wheel','keydown'];
+          if(feed)events.forEach(e=>feed.addEventListener(e,touch,{once:true,passive:true}));
+          Promise.resolve(paint).then(()=>{
+            if(!touched && ME&&ME.pubkey===target.owner && VIEW===target.view && location.href===target.url)
+              _restoreNavScroll(target.scroll);
+          }).catch(()=>{}).finally(()=>{if(feed)events.forEach(e=>feed.removeEventListener(e,touch));});
+        }
+      }catch(_){toast('Could not return to the original Social page.');return false;}
+      finally{_routing=wasRouting;}
+    }
+    _ai.fxReturn=null;_ai.replyTo=null;_syncEffectReturn();return true;
+  }
   async function launchEffectStudio(url, replyTo){
     if(!url){ toast('no image to apply an effect to'); return; }
+    const owner=ME&&ME.pubkey, sourceView=VIEW, sourceUrl=location.href;
+    let origin=null;
+    if(replyTo && owner){
+      let windowReturn=null;
+      try{if(window.PCOS&&PCOS.captureReturnTarget)windowReturn=PCOS.captureReturnTarget();}catch(_){}
+      origin={owner,view:sourceView,url:sourceUrl,scroll:_navState(sourceView),entity:_entityFromPath(),windowReturn,ready:false};
+    }
     // gate on AI permission — show a nice modal if the account isn't allowed
     let a={}; try{ a=await ensureAiSession(); }catch(_){}
     if(!a || !a.can_ai){
@@ -15296,7 +15351,9 @@
         root=>{ const c=root.querySelector('#fx-close'); if(c) c.onclick=closeModal; const q=root.querySelector('#fx-req'); if(q) q.onclick=()=>{ closeModal(); switchView('ai'); }; });
       return;
     }
+    if(!ME || ME.pubkey!==owner || VIEW!==sourceView || location.href!==sourceUrl)return;
     toast('opening the Effects studio…');
+    _ai.fxReturn=origin;
     _ai.replyTo=replyTo||null; _ai.fxImage=null; _ai.fxMedia={};
     // Hand the image off to aiMount via _ai.pendingFx instead of polling for #ai-input: the old wait()
     // loop fired as soon as the input existed, but aiMount's own conversation load was still in flight,
@@ -15340,10 +15397,18 @@
   // land last and survive. Opens a fresh conversation for the effect, fetches the source image, attaches.
   async function startEffectStudio(url){
     try{
-      await aiNewConversation();
+      const target=_ai.fxReturn, owner=ME&&ME.pubkey, previousConversation=_ai.convId;
+      const conversation=await aiNewConversation(()=>VIEW==='ai' && ME&&ME.pubkey===owner &&
+        _ai.fxReturn===target && _ai.convId===previousConversation);
+      if(_ai.convId!==conversation || VIEW!=='ai'){_forgetEffectReturn(target);return;}
+      if(target){
+        if(!_effectReturnValid(target)||!conversation){_forgetEffectReturn(target);return;}
+        target.conversation=conversation;target.ready=true;_syncEffectReturn();
+      }
       let blob=null;
       try{ blob=await fetch('/client/proxy-image?url='+encodeURIComponent(url)).then(r=>r.ok?r.blob():null); }catch(_){}
       if(!blob){ try{ blob=await fetch(url).then(r=>r.blob()); }catch(_){} }
+      if(!ME||ME.pubkey!==owner||_ai.convId!==conversation || VIEW!=='ai' || (target&&!_effectReturnValid(target))){_forgetEffectReturn(target);return;}
       if(!blob){ toast('could not load the post image'); return; }
       const ext=((url.split(/[?#]/)[0].split('.').pop())||'jpg').toLowerCase();
       _ai.fxImage=new File([blob], 'effect-source.'+ext, { type:blob.type||'image/jpeg' });
@@ -15553,13 +15618,16 @@
   }
   // Post the generated effect media (data:base64 in _ai.fxMedia) back as a reply to the source post.
   async function sendEffectReply(mid, btn){
+    const target=_ai.fxReturn, owner=ME&&ME.pubkey, conversation=_ai.convId;
     const m=_ai.fxMedia[mid], to=_ai.replyTo;
+    if(target&&!_effectReturnValid(target)){toast('The account or conversation changed.');return;}
     if(!m || !to){ toast('nothing to reply with'); return; }
     if(btn){ btn.disabled=true; btn.textContent='posting…'; }
     try{
       if(!m.url){ const bin=Uint8Array.from(atob(m.b64), c=>c.charCodeAt(0)); m.url=await uploadBlob(new File([bin], 'effect.'+m.ext, { type:m.mime })); }
+      if(!ME||ME.pubkey!==owner||_ai.convId!==conversation||_ai.replyTo!==to||(target&&!_effectReturnValid(target)))throw new Error('The account or conversation changed.');
       const r=await publish(1, m.url, eTags(to.id, to.pk));   // failure toast by publish()
-      if(r && r.ok){ toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; btn.classList.add('on'); } }
+      if(r && r.ok){ toast('✓ reply posted'); if(btn){ btn.textContent='✓ replied'; btn.classList.add('on'); } if(target && VIEW==='ai')_returnFromEffect(target); }
       else if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; }
     }catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; btn.textContent='↩ Send the Reply'; } }
   }
@@ -29667,7 +29735,7 @@
   async function aiMount(feed){
     _aiBadge(false);   // entering the view IS the acknowledgement
     feed.innerHTML=`<div class="ai-chat">
-      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-make" title="Make something — image, song, video, a cloned voice…"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Make</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
+      <div class="ai-bar"><button class="btn btn-ghost small" id="ai-back-social" hidden>← Back to Social</button><button class="btn btn-ghost small" id="ai-make" title="Make something — image, song, video, a cloned voice…"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg>Make</button><select id="ai-conv" class="input"></select><button class="btn btn-ghost small" id="ai-new"><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>New</button><button class="btn btn-ghost small" id="ai-nodes" title="Agents — run tasks on your servers" style="display:none"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg></button><button class="btn btn-ghost small" id="ai-tts" title="Voice narration"><svg class="ic b-ic" aria-hidden="true"><use href="#i-volume"></use></svg></button><button class="btn btn-ghost small" id="ai-del" title="delete this chat"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg></button></div>
       <div class="ai-msgs" id="ai-msgs"></div>
       <div class="ai-attachbar" id="ai-attachbar"></div>
       <div class="ai-compose">
@@ -29678,16 +29746,17 @@
       </div>
     </div>`;
     _ai.attach=[];
-    $('#ai-new').onclick=()=>aiNewConversation();
+    $('#ai-new').onclick=()=>{_forgetEffectReturn(_ai.fxReturn);aiNewConversation();};
     // Node Control button — revealed only for users on the node_exec allowlist (access checked once/session).
     { const nb=$('#ai-nodes'); if(nb){ nb.onclick=openNodePanel;
         if(_ai.nodeAccess===true) nb.style.display='';
         else if(_ai.nodeAccess===undefined) _nodeFetchState().then(()=>{ if(_ai.nodeAccess){ const b=$('#ai-nodes'); if(b) b.style.display=''; } }); } }
     // The starter cards paint themselves on a fresh chat; this is how you reach the same tools
     // mid-conversation, and it is why the composer no longer carries a second copy of the button.
+    $('#ai-back-social').onclick=()=>_returnFromEffect(_ai.fxReturn);_syncEffectReturn();
     $('#ai-make').onclick=()=>openGenPicker();
     $('#ai-del').onclick=()=>aiDeleteConversation();
-    $('#ai-conv').onchange=e=>aiOpenConversation(parseInt(e.target.value,10));
+    $('#ai-conv').onchange=e=>{_forgetEffectReturn(_ai.fxReturn);aiOpenConversation(parseInt(e.target.value,10));};
     $('#ai-attach').onclick=()=>{
       // Attach from Camera (app), a local file, OR an existing Blossom file — so you don't have to
       // re-upload something already on your drive. Blossom picks are fetched into a real attachment
@@ -29852,9 +29921,10 @@
     else if(convs && convs.length) aiOpenConversation(convs[0].id);
     else aiNewConversation();
   }
-  async function aiNewConversation(){
+  async function aiNewConversation(stillWanted){
     try{
       const c=await fetch('/api/conversations',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:'New Chat'}) }).then(r=>r.json());
+      if(stillWanted && !stillWanted())return null;
       const sel=$('#ai-conv'); if(sel){ const o=document.createElement('option'); o.value=c.id; o.textContent=c.title||'New Chat'; sel.prepend(o); sel.value=c.id; }
       await aiOpenConversation(c.id);   // await so callers (e.g. the Effects studio) attach AFTER the conv render settles
       return c.id;
@@ -29890,6 +29960,9 @@
     // made the leave-the-view guard keep the NEW, idle socket open forever, since nothing was coming
     // to clear it. Reset it with the switch — the abandoned reply is still persisted server-side and
     // shows on reopening that conversation.
+    if(_ai.fxReturn && _ai.fxReturn.ready && id!==_ai.fxReturn.conversation){
+      _ai.fxReturn=null;_ai.replyTo=null;_syncEffectReturn();
+    }
     if(_ai.convId !== id){
       _ai.awaiting = false;
       try{ clearTimeout(_ai.recoverWatch); }catch(_){ }
@@ -31453,10 +31526,14 @@
     catch(e){ toast('failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Copy link'); } }
   }
   async function replyFileUrl(u, btn){
+    const target=_ai.fxReturn, owner=ME&&ME.pubkey, conversation=_ai.convId;
     const to=_ai.replyTo; if(!to){ toast('no post to reply to'); return; }
+    if(target&&!_effectReturnValid(target)){toast('The account or conversation changed.');return;}
     if(btn){ btn.disabled=true; _btnText(btn,'posting…'); }
-    try{ const pub=await _fileToPublicUrl(u); const r=await publish(1, pub, eTags(to.id, to.pk));   // failure toast by publish()
-      if(r && r.ok){ toast('✓ reply posted'); if(btn){ _btnText(btn,'✓ replied'); } }
+    try{ const pub=await _fileToPublicUrl(u);
+      if(!ME||ME.pubkey!==owner||_ai.convId!==conversation||_ai.replyTo!==to||(target&&!_effectReturnValid(target)))throw new Error('The account or conversation changed.');
+      const r=await publish(1, pub, eTags(to.id, to.pk));   // failure toast by publish()
+      if(r && r.ok){ toast('✓ reply posted'); if(btn){ _btnText(btn,'✓ replied'); } if(target && VIEW==='ai')_returnFromEffect(target); }
       else if(btn){ btn.disabled=false; _btnText(btn,'Send the Reply'); } }
     catch(e){ toast('reply failed: '+((e&&e.message)||e)); if(btn){ btn.disabled=false; _btnText(btn,'Send the Reply'); } }
   }
@@ -33663,7 +33740,7 @@
     const _rep = (VIEW === 'thread');
     try{ _navUrl('/'+NT().nip19.neventEncode(hints.length?{ id, relays:hints }:{ id }), _rep); }
     catch(_){ try{ _navUrl('/'+NT().nip19.noteEncode(id), _rep); }catch(__){} }
-    renderThread(id, hints);
+    return renderThread(id, hints);
   }
   /* THE THREAD'S FIRST PAINT — the post you tapped, on screen before the conversation is resolved.
    *

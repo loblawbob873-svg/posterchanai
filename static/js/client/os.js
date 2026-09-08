@@ -2902,6 +2902,17 @@
     return String(w.appView||w.view||'') !== requested;
   }
 
+  // Return from a tool to the exact frame that launched it, preserving its parked DOM and route.
+  function captureReturnTarget(){
+    if(!on)return null;
+    const feed=$('#feed'), w=feed&&wins.find(x=>x.body===feed.parentElement);
+    if(!w)return null;
+    return ()=>{
+      if(!on||!wins.includes(w))return false;
+      focusWin(w);return true;
+    };
+  }
+
   function routeView(view, focusOnly){
     if(!on || !view) return false;
     if(!apps().some(a => a.view === view)) return false;
@@ -10100,7 +10111,7 @@
                    * Leave the windowed desktop for this session without changing the user's saved
                    * desktop preference; an ordinary later launch may restore it. */
                   mobileLanding: () => { if(on) exit(false); },
-                  isOn: () => on, openDoc, focusDoc, closeDoc, routeView, snapTo, documentWindow,
+                  isOn: () => on, openDoc, focusDoc, closeDoc, captureReturnTarget, routeView, snapTo, documentWindow,
                   openSystemSettings, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the
