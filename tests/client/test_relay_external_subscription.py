@@ -137,7 +137,7 @@ def test_successful_background_poll_is_throttled_and_view_leave_closes_pending_s
         constructor(url){{this.url=url;FakeWS.all.push(this);}}
         send(value){{this.sent=JSON.parse(value);}}
         close(){{this.closed=true;}}
-        open(){{this.onopen&&this.onopen();}}
+        open(){{this.readyState=1;this.onopen&&this.onopen();}}
         receive(value){{this.onmessage&&this.onmessage({{data:JSON.stringify(value)}});}}
       }}
       FakeWS.all=[];global.WebSocket=FakeWS;global.window=global;global.self=global;

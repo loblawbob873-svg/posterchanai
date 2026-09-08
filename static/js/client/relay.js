@@ -178,7 +178,7 @@
 
     // The application owns the active signer (local key, NIP-07, NIP-46 or NIP-55). Keeping only
     // this callback here lets the transport answer NIP-42 without learning or retaining key data.
-    setAuthSigner(fn){ this._authSigner = typeof fn === 'function' ? fn : null; },
+    setAuthSigner(fn, getPubkey){ this._authSigner = typeof fn === 'function' ? fn : null; this._authOwner=typeof getPubkey==='function'?getPubkey:null; },
     _authenticate(conn, wantPubkey){
       if(wantPubkey && conn.authPubkeys.has(wantPubkey))return Promise.resolve(true);
       if(conn._authPromise)return conn._authPromise;
@@ -190,10 +190,11 @@
       // producing an unhandled rejection in every logged-out view that queried private app data.
       // A remote signer may answer after this socket has been replaced. Its old challenge
       // must never be sent on the replacement or retire that connection's newer attempt.
-      const socket=conn.ws, challenge=conn.challenge;
-      const current=()=>conn.ws===socket && socket && socket.readyState===1 && conn.challenge===challenge;
-      const attempt=Promise.resolve().then(()=>this._authSigner({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
-        tags:[['relay',conn.url],['challenge',String(challenge)]]})).then(ev=>new Promise(resolve=>{
+      const socket=conn.ws, challenge=conn.challenge,signer=this._authSigner,ownerReader=this._authOwner,owner=ownerReader?ownerReader():null;
+      const current=()=>conn.ws===socket && socket && socket.readyState===1 && conn.challenge===challenge&&
+        this._authSigner===signer&&this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner);
+      const attempt=Promise.resolve().then(()=>current()?signer({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
+        tags:[['relay',conn.url],['challenge',String(challenge)]]}):null).then(ev=>new Promise(resolve=>{
           if(!current()||!ev||!ev.id||(wantPubkey&&ev.pubkey!==wantPubkey))return resolve(false);
           const tm=setTimeout(()=>{this._okWaiters.delete(ev.id);resolve(false);},8000);
           this._okWaiters.set(ev.id,{auth:true,conn,socket,settle:r=>{clearTimeout(tm);const ok=current()&&r&&r.ok;if(ok&&ev.pubkey)conn.authPubkeys.add(ev.pubkey);resolve(!!ok);}});
@@ -201,6 +202,54 @@
         })).catch(()=>false).finally(()=>{if(conn._authPromise===attempt)conn._authPromise=null;});
       conn._authPromise=attempt;
       return attempt;
+    },
+
+    // External room streams are authored by stream keys, but AUTH belongs to the signed-in user.
+    // Each helper owns one exact socket and at most two distinct challenge attempts. No global
+    // OK waiter or replacement socket can consume its delayed signer result.
+    _authRequired(reason){return /^(?:ERROR:\s*)?auth-required:/i.test(String(reason||''));},
+    _externalReadAuth(ws,url,isCurrent,replay,deny,onRequired=()=>{}){
+      const signer=this._authSigner,ownerReader=this._authOwner,owner=ownerReader?ownerReader():null;
+      const current=()=>isCurrent()&&ws.readyState===1&&this._authSigner===signer&&
+        this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner);
+      let challenge='',required=false,closed=false,awaiting=false,pendingId='',timer=null,version=0;
+      const attempted=new Set();
+      const stop=()=>{closed=true;version++;clearTimeout(timer);pendingId='';};
+      const fail=()=>{if(closed)return;stop();deny();};
+      const attempt=()=>{
+        if(closed||!required||!challenge||attempted.has(challenge))return;
+        if(!current()||!signer||(ownerReader&&!owner)||attempted.size>=2)return fail();
+        attempted.add(challenge);awaiting=true;const captured=challenge,token=++version;pendingId='';
+        clearTimeout(timer);timer=setTimeout(fail,12000);onRequired();
+        Promise.resolve().then(()=>{
+          if(!current()||closed||version!==token)return null;
+          return signer({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
+            tags:[['relay',url],['challenge',captured]]});
+        }).then(ev=>{
+          if(closed||version!==token)return;
+          if(!current()||!ev||!ev.id||ev.kind!==22242||(owner&&ev.pubkey!==owner))return fail();
+          pendingId=ev.id;
+          try{ws.send(JSON.stringify(['AUTH',ev]));}catch(_){fail();}
+        }).catch(()=>{if(version===token)fail();});
+      };
+      return {stop,current,receive:m=>{
+        if(closed)return false;
+        if(m[0]==='AUTH'&&m[1]){
+          const next=String(m[1]);if(next!==challenge){challenge=next;version++;pendingId='';awaiting=false;clearTimeout(timer);}
+          attempt();return true;
+        }
+        if(m[0]==='CLOSED'&&this._authRequired(m[2])){
+          required=true;
+          if(attempted.has(challenge)&&!awaiting)return fail(),true;
+          attempt();return true;
+        }
+        if(m[0]==='OK'&&pendingId&&m[1]===pendingId){
+          if(!current()||m[2]!==true)return fail(),true;
+          clearTimeout(timer);pendingId='';required=false;awaiting=false;
+          try{replay();}catch(_){fail();}return true;
+        }
+        return false;
+      }};
     },
 
     /* Ephemeral external reads belong to the screen that requested them. A route change closes all
@@ -400,14 +449,17 @@
         else { this._vq.push({ ev, sub }); if (!this._vt) this._vt = setTimeout(()=>this._flush(), 40); }
       } else if (typ === 'EOSE' || typ === 'CLOSED'){
         const sub = this._subs.get(m[1]); if (!sub) return;
-        if(typ==='CLOSED' && String(m[2]||'').toLowerCase().startsWith('auth-required')){
+        if(typ==='CLOSED' && this._authRequired(m[2])){
           // A private owner-bound subscription gets ONE AUTH attempt on this relay. A filter with
           // no owner, several owners, or a repeated refusal can never be satisfied by the active
           // account; blindly re-signing here was an unbounded NIP-46/NIP-55 prompt storm.
           sub.eosed.delete(conn.url);
           const priv=(sub.filters||[]).filter(f=>(f.kinds||[]).some(k=>Number(k)===78||Number(k)===30078));
           const owners=[...new Set(priv.flatMap(f=>Array.isArray(f.authors)&&f.authors.length===1?[String(f.authors[0])]:[]))];
-          const possible=priv.length>0&&owners.length===1&&priv.every(f=>Array.isArray(f.authors)&&f.authors.length===1);
+          const room=(sub.filters||[]).length>0&&(sub.filters||[]).every(f=>Array.isArray(f.kinds)&&f.kinds.length>0&&f.kinds.every(k=>Number(k)===1059));
+          const user=room&&this._authOwner?this._authOwner():null;
+          const authOwner=user||(owners.length===1?owners[0]:null);
+          const possible=!!user||(priv.length>0&&owners.length===1&&priv.every(f=>Array.isArray(f.authors)&&f.authors.length===1));
           sub.authTried=sub.authTried||new Set();
           const finishDenied=()=>{
             sub.eosed.add(conn.url);
@@ -416,7 +468,7 @@
           if(!possible||sub.authTried.has(conn.url)){finishDenied();return;}
           sub.authTried.add(conn.url);
           const socket=conn.ws;
-          this._authenticate(conn,owners[0]).then(ok=>{
+          this._authenticate(conn,authOwner).then(ok=>{
             if(conn.ws!==socket||this._subs.get(m[1])!==sub)return;
             if(ok&&conn._send(['REQ',m[1],...sub.filters]))sub.sent.add(conn.url);
             else finishDenied();
@@ -454,12 +506,12 @@
             this._okWaiters.delete(m[1]); w.settle({ok:false,msg:m[3]||'auth rejected'}); return;
           }
           w.authTried=w.authTried||new Set();
-          if(String(m[3]||'').toLowerCase().startsWith('auth-required')&&!w.authTried.has(conn.url)){
+          if(this._authRequired(m[3])&&!w.authTried.has(conn.url)){
             // A signed NIP-78 event must be replayed after same-owner connection AUTH. Do not count
             // the pre-auth refusal as final; it is the relay's challenge flow, not a failed write.
             w.authTried.add(conn.url);
             const socket=conn.ws;
-            this._authenticate(conn,w.event&&w.event.pubkey).then(ok=>{
+            this._authenticate(conn,w.event&&w.event.kind===1059&&this._authOwner?this._authOwner():w.event&&w.event.pubkey).then(ok=>{
               if(conn.ws!==socket||this._okWaiters.get(w.event.id)!==w)return;
               if(ok)conn._send(['EVENT',w.event]);
               else {w.no=(w.no||0)+1;w.why='auth rejected';if(w.sent&&w.no>=w.sent){this._okWaiters.delete(w.event.id);w.settle({ok:false,msg:w.why});}}
@@ -805,19 +857,29 @@
         .filter(u => includeManaged || !this._conns.has(u)).slice(0, max);
       if (!targets.length) return finishResults([]);
       return Promise.all(targets.map(u => new Promise(resolve => {
-        let ws, done = false, tm, attempted=false;
-        const fin = (ok, msg='', rejected=false) => { if (done) return; done = true; clearTimeout(tm);
+        let ws, done = false, tm, attempted=false,auth=null,authRejected=false;
+        const fin = (ok, msg='', rejected=false) => { if (done) return; done = true; clearTimeout(tm);if(auth)auth.stop();
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
           resolve({ok,uncertain:!ok&&attempted&&!rejected,msg}); };
         try { ws = new WebSocket(u); } catch(_){ return fin(false,'could not connect to a room relay'); }
-        tm = setTimeout(()=>fin(false,'room relay timed out'), timeout);
-        ws.onopen = () => { try{ attempted=true;ws.send(JSON.stringify(['EVENT', event])); }
-          catch(_){ fin(false,'room relay connection failed'); } };
+        tm = setTimeout(()=>fin(false,'room relay timed out',authRejected), timeout);
+        const wire=JSON.stringify(['EVENT',event]);
+        const send=()=>{if(auth&&!auth.current()){fin(false,'account changed during room delivery',authRejected);return;}attempted=true;authRejected=false;ws.send(wire);};
+        if(includeManaged&&detailed)auth=this._externalReadAuth(ws,u,()=>!done,send,
+          ()=>fin(false,'room relay authentication refused',authRejected),()=>{clearTimeout(tm);tm=setTimeout(()=>fin(false,'room relay authentication timed out',authRejected),12000);});
+        ws.onopen = () => { try{send();}catch(_){fin(false,'room relay connection failed',authRejected);} };
         ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+          if(auth){
+            if(!auth.current())return fin(false,'account changed during room delivery',authRejected);
+            if(auth.receive(m))return;
+            if(m[0]==='OK'&&m[1]===event.id&&m[2]===false&&this._authRequired(m[3])){
+              authRejected=true;auth.receive(['CLOSED','',m[3]]);return;
+            }
+          }
           if (m[0] === 'OK' && m[1] === event.id && typeof m[2]==='boolean')
             fin(m[2],String(m[3]||'room relay rejected the message'),!m[2]); };
-        ws.onerror = () => fin(false,'room relay connection failed');
-        ws.onclose = () => fin(false,'room relay connection closed');
+        ws.onerror = () => fin(false,'room relay connection failed',authRejected);
+        ws.onclose = () => fin(false,'room relay connection closed',authRejected);
       }))).then(finishResults);
     },
     /* A temporary LIVE subscription to one or more relays outside the user's normal pool.
@@ -845,6 +907,8 @@
     subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false } = {}){
       const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>!this._conns.has(u)).slice(0,max);
       const sockets=[]; let closed=false,tm=null,readyDone=false,readyResolve;
+      const ownerReader=this._authOwner,owner=ownerReader?ownerReader():null;
+      const active=()=>!closed&&this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner);
       /* Callers that bridge a realtime protocol must not report "joined" before an external
        * socket has actually sent its REQ.  The old API returned its closer immediately, while the
        * websocket was still connecting; ioquake then sent host-election packets into the gap.  A
@@ -862,32 +926,38 @@
       if(!targets.length)markReady(true); // every requested URL is already in the managed pool
       if(timeout>0) tm=setTimeout(stop,timeout);
       targets.forEach((u,n)=>{
-        const id='xf'+Math.random().toString(36).slice(2,9)+n;
-        let backoff=1000,retry=null,cur=null;
+        const id='xf'+Math.random().toString(36).slice(2,9)+n,wire=JSON.stringify(['REQ',id,...filters]);
+        let backoff=1000,retry=null,cur=null,auth=null,authBlocked=false;
         /* ONE entry per target, registered once. Pushing a canceller per RETRY would grow a list
            for as long as a relay stays down, and pushing every redialled socket onto `sockets`
            would do the same — the handle must not accumulate over a subscription that is meant to
            outlive many outages. `cur` is the socket `stop()` closes. */
-        redials.push(()=>{ if(retry){clearTimeout(retry);retry=null;} if(cur){try{cur.close();}catch(_){}} });
+        redials.push(()=>{if(auth)auth.stop(); if(retry){clearTimeout(retry);retry=null;} if(cur){try{cur.close();}catch(_){}} });
         const schedule=()=>{
-          if(!live||closed||retry)return;
+          if(!active()){stop();return;}if(!live||retry||authBlocked)return;
           retry=setTimeout(()=>{retry=null;dial();},backoff);
           backoff=Math.min(backoff*2,30000);
         };
         const dial=()=>{
-          if(closed)return;
+          if(!active()){stop();return;}
           let ws;
           try{ws=new WebSocket(u);}catch(_){ return schedule(); }
-          cur=ws; if(!live)sockets.push(ws);
-          ws.onopen=()=>{backoff=1000;try{ws.send(JSON.stringify(['REQ',id,...filters]));markReady(true);}catch(_){}};
+          if(auth)auth.stop();cur=ws; if(!live)sockets.push(ws);
+          const current=()=>active()&&cur===ws;
+          const request=()=>{if(!current())return;ws.send(wire);markReady(true);};
+          auth=this._externalReadAuth(ws,u,current,request,()=>{authBlocked=true;try{ws.close();}catch(_){}markReady(false);});
+          const ownAuth=auth;
+          ws.onopen=()=>{if(!current())return;backoff=1000;try{request();}catch(_){}};
           ws.onmessage=async e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
-            if(closed||m[0]!=='EVENT'||m[1]!==id||!m[2])return;
+            if(!current()||!ownAuth.current())return;
+            if((m[0]!=='CLOSED'||m[1]===id)&&ownAuth.receive(m))return;
+            if(m[0]!=='EVENT'||m[1]!==id||!m[2])return;
             try{const rs=await worker.call('verifyBatch',{events:[m[2]]});
-              if(!closed&&rs&&rs[0]&&rs[0].valid&&onEvent)onEvent(this._normTags(m[2]));}catch(_){} };
+              if(current()&&ownAuth.current()&&rs&&rs[0]&&rs[0].valid&&onEvent)onEvent(this._normTags(m[2]));}catch(_){} };
           if(live){
             /* Both events land here and `retry` makes the pair idempotent: a refused connection
                fires error THEN close, while a clean far-end close fires only close. */
-            ws.onclose=schedule;
+            ws.onclose=()=>{ownAuth.stop();if(current())schedule();};
             ws.onerror=()=>{try{ws.close();}catch(_){}};
           }
         };
@@ -964,10 +1034,10 @@
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);
       return Promise.all(targets.map(u => new Promise(resolve => {
-        let ws, done = false, tm; const got = [];
+        let ws, done = false, tm,auth; const got = [];
         const abort = () => fin('abort');
         const stop = () => fin('abort');
-        const fin = (outcome='failure') => { if (done) return; done = true; clearTimeout(tm);
+        const fin = (outcome='failure') => { if (done) return; done = true; clearTimeout(tm);if(auth)auth.stop();
           if (signal) signal.removeEventListener('abort', abort);
           Relay._queryFromStops.delete(stop);Relay._queryFromActive.delete(u);
           if(outcome==='failure'){
@@ -986,8 +1056,12 @@
         if(minInterval>0)Relay._queryFromPurposeCooldown.set(u+'\0'+purpose,Date.now()+minInterval);
         try { ws = new WebSocket(u); } catch(_){ return fin('failure'); }
         tm = setTimeout(fin, timeout);
-        ws.onopen = () => { try{ ws.send(JSON.stringify(['REQ', subId, ...filters])); }catch(_){ fin(); } };
+        const wire=JSON.stringify(['REQ',subId,...filters]),request=()=>{if(auth&&!auth.current()){fin('abort');return;}ws.send(wire);};
+        auth=this._externalReadAuth(ws,u,()=>!done,request,()=>fin('failure'),()=>{clearTimeout(tm);tm=setTimeout(fin,12000);});
+        ws.onopen = () => { try{ request(); }catch(_){ fin(); } };
         ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+          if(done||!auth.current())return;
+          if((m[0]!=='CLOSED'||m[1]===subId)&&auth.receive(m))return;
           if (m[0] === 'EVENT' && m[1] === subId && m[2]) got.push(Relay._normTags(m[2]));
           else if ((m[0] === 'EOSE' || m[0] === 'CLOSED') && m[1] === subId) fin('success'); };
         ws.onerror = () => fin('failure');

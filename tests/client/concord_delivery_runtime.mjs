@@ -6,9 +6,9 @@ let signCount=0,releaseSign,signMode='ok',ackMode='unknown';
 const sentPackets=[],decoded=new Map();
 const sandbox={window:{},self:{},Worker:class{postMessage(){}},console,setTimeout,clearTimeout,
  WebSocket:class{
-  constructor(url){this.url=url;queueMicrotask(()=>this.onopen?.());}
+  constructor(url){this.url=url;this.readyState=0;queueMicrotask(()=>{this.readyState=1;this.onopen?.();});}
   send(raw){const packet=JSON.parse(raw);sentPackets.push({url:this.url,packet});if(ackMode!=='unknown')queueMicrotask(()=>this.onmessage?.({data:JSON.stringify(['OK',packet[1].id,ackMode==='ok','fixture'])}));}
-  close(){}
+  close(){this.readyState=3;}
  }};
 vm.createContext(sandbox);vm.runInContext(fs.readFileSync('static/js/client/relay.js','utf8'),sandbox);
 const actualRelay=sandbox.window.Relay;

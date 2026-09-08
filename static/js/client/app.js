@@ -1464,7 +1464,7 @@
     // exception or trigger a login/prompt storm. The relay completes that subscription as denied.
     if(GUEST || !signer) return null;
     return signer.signEvent(Object.assign({}, tpl, {pubkey:ME.pubkey}));
-  });
+  },()=>GUEST?'':String(ME&&ME.pubkey||''));
   // ONE cached kind-27235 ownership proof (base64) reused by ALL /client self-auth endpoints (drafts,
   // scheduled, …). The server verifies sig + pubkey + a 5-min freshness window, NOT the content, so a
   // single proof authorizes every self-scoped call — and caching it (~4 min) means an external signer
