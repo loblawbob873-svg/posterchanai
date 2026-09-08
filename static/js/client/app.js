@@ -1749,7 +1749,7 @@
      * socket closed, the url went with it and nothing could reopen what had just been lost. That is
      * survivable while a close is followed by an immediate successful retry and fatal the moment one
      * isn't (see _scheduleReopen). Kept per SESSION, cleared only by reset(). */
-    _urls:[], _boff:{}, _rtimer:{}, _revivedAt:0,
+    _urls:[], _boff:{}, _rtimer:{}, _revivedAt:0, _generation:0, _opening:{}, _openingCancel:{},
     _live(){ return (this._socks||[]).filter(w => w && w.readyState === 1); },
     /* A REPLY THAT WAS IN FLIGHT WHEN THE LAST SOCKET DIED IS NEVER ARRIVING.
      *
@@ -1777,7 +1777,11 @@
       try{ console.warn('[nip46] signer relay lost — released ' + dead.length + ' in-flight request(s)'); }catch(_){}
     },
     _want(url){ if(url && this._urls.indexOf(url) < 0) this._urls.push(url); },
-    reset(){ this._wantOpen=false; this._enc='nip04'; this._lastDec=null; this._encOk=false; this._encSeen=null;
+    reset(){ this._wantOpen=false; this._generation++;
+      // Settle and retire attempts from the old account before another session can dial.
+      Object.values(this._openingCancel||{}).forEach(cancel=>{try{cancel();}catch(_){}});
+      this._opening={};this._openingCancel={};
+      this._enc='nip04'; this._lastDec=null; this._encOk=false; this._encSeen=null;
       (this._socks||[]).forEach(w=>{ try{ w.onclose=w.onerror=w.onmessage=null; w.close(); }catch(_){} });
       Object.keys(this._rtimer||{}).forEach(u=>{ try{ clearTimeout(this._rtimer[u]); }catch(_){} });
       this._socks=[]; this._urls=[]; this._boff={}; this._rtimer={}; this.relay=null; this._subId=null;
@@ -1814,8 +1818,12 @@
     },
     // load (or reuse) the ephemeral app key into the worker
     async _ensureAppKey(sk){
+      const generation=this._generation;
+      const check=()=>{if(generation!==this._generation)throw Object.assign(new Error('signer disconnected'),{cancelledSession:true});};
       const g = sk ? { sk } : await Relay.worker.call('genKey', {});
+      check();
       const r = await Relay.worker.call('setKey', { sk: g.sk });
+      check();
       this.appSk = g.sk; this.appPk = r.pubkey; return this.appPk;
     },
     // The response subscription, sent on every socket the moment it opens.
@@ -1894,7 +1902,7 @@
         this._rtimer[url] = 0;
         if(!this._wantOpen) return;
         if(this._socks.some(w => w._pcUrl === url && w.readyState <= 1)) return;
-        this._openRelay(url).catch(()=>{ this._scheduleReopen(url); });
+        this._openRelay(url).catch(e=>{ if(!e.cancelledSession)this._scheduleReopen(url); });
       }, d);
     },
     /* Reopen NOW — the page came back from sleep / the network returned.
@@ -1914,7 +1922,7 @@
       this._urls.forEach(url=>{
         try{ clearTimeout(this._rtimer[url]); }catch(_){}
         this._rtimer[url] = 0; this._boff[url] = 0;
-        this._openRelay(url).catch(()=>{ this._scheduleReopen(url); });
+        this._openRelay(url).catch(e=>{ if(!e.cancelledSession)this._scheduleReopen(url); });
       });
     },
     /* A live socket before a request goes out, or the truth about why there isn't one.
@@ -1933,7 +1941,7 @@
         try{ clearTimeout(this._rtimer[url]); }catch(_){}
         this._rtimer[url] = 0; this._boff[url] = 0;
         if(!this._socks.some(w => w._pcUrl === url && w.readyState <= 1))
-          this._openRelay(url).catch(()=>{ this._scheduleReopen(url); });
+          this._openRelay(url).catch(e=>{ if(!e.cancelledSession)this._scheduleReopen(url); });
       });
       const t0 = Date.now(), cap = ms || 9000;
       while(Date.now() - t0 < cap){
@@ -1946,29 +1954,34 @@
     _openRelay(relay){
       this._wantOpen=true;
       this._want(relay);
-      /* One connect attempt per relay at a time. The socket is not in `_socks` until it OPENS, so
-       * without this an _ensure() racing a scheduled retry opens two sockets to the same relay and
-       * both get adopted — two copies of every reply, and two idle connections held for the session. */
-      this._opening = this._opening || {};
-      if(this._opening[relay]) return this._opening[relay];
-      const p = new Promise((res,rej)=>{
-        let done=false; let ws;
-        const fin=(fn,v)=>{ if(done) return; done=true; if(this._opening) this._opening[relay]=null; fn(v); };
-        try{ ws=new WebSocket(relay); }
-        catch(e){ fin(rej, new Error('cannot reach signer relay')); return; }
-        ws.onopen=()=>{ this._adopt(ws, relay); fin(res, relay); };
-        ws.onmessage=(e)=>this._recv(e.data);
-        ws.onerror=()=>{ fin(rej, new Error('cannot reach signer relay')); };
-        // A socket still CONNECTING at the ceiling is abandoned for real: left alone it can open a
-        // minute later and adopt itself alongside the retry that has since succeeded.
-        setTimeout(()=>{
-          if(done) return;
-          if(ws && ws.readyState !== 1){ try{ ws.onopen=ws.onerror=ws.onmessage=null; ws.close(); }catch(_){} }
-          fin(rej, new Error('signer relay timed out'));
-        }, 20000);
-      });
-      this._opening[relay] = p;
-      return p;
+      if(this._live().some(w=>w._pcUrl===relay))return Promise.resolve(relay);
+      // Initial pairing, resume and retries share the same attempt. A still-connecting
+      // socket is not in _socks yet, so checking only that list creates duplicate listeners.
+      if(this._opening[relay])return this._opening[relay];
+      const generation=this._generation;
+      let resolve, reject, ws, timer, done=false;
+      const promise=new Promise((res,rej)=>{resolve=res;reject=rej;});
+      this._opening[relay]=promise;
+      const retire=()=>{
+        if(ws)try{ws.onopen=ws.onclose=ws.onerror=ws.onmessage=null;ws.close();}catch(_){}
+      };
+      const finish=(ok,value)=>{
+        if(done)return;done=true;clearTimeout(timer);
+        if(this._opening[relay]===promise){delete this._opening[relay];delete this._openingCancel[relay];}
+        if(!ok)retire();
+        (ok?resolve:reject)(value);
+      };
+      this._openingCancel[relay]=()=>finish(false,Object.assign(new Error('signer disconnected'),{cancelledSession:true}));
+      try{ws=new WebSocket(relay);}
+      catch(_){finish(false,new Error('cannot reach signer relay'));return promise;}
+      ws.onopen=()=>{
+        if(done || generation!==this._generation || !this._wantOpen){retire();return;}
+        this._adopt(ws,relay);finish(true,relay);
+      };
+      ws.onmessage=e=>{if(generation===this._generation)this._recv(e.data);};
+      ws.onerror=ws.onclose=()=>finish(false,new Error('cannot reach signer relay'));
+      timer=setTimeout(()=>finish(false,new Error('signer relay timed out')),20000);
+      return promise;
     },
     /* Open EVERY relay this session knows, and keep them all.
      *
@@ -1986,28 +1999,27 @@
      * the others join as they arrive. It rejects only when every one of them has failed. */
     _openAll(list, ms){
       const urls=[...new Set((Array.isArray(list)?list:[list]).filter(Boolean))];
-      if(!urls.length) return Promise.reject(new Error('no signer relay configured'));
+      if(!urls.length)return Promise.reject(new Error('no signer relay configured'));
       this._wantOpen=true;
+      const generation=this._generation;
       return new Promise((res,rej)=>{
-        let opened=false, dead=0;
-        const fail=()=>{ if(opened || ++dead < urls.length) return;
-          clearTimeout(to);
-          rej(new Error('no signer relay is reachable right now — try again in a minute')); };
-        const to=setTimeout(()=>{ if(!opened)
-          rej(new Error('signer relays timed out')); }, ms||20000);
+        let opened=false,dead=0;
+        const fail=error=>{
+          if(opened)return;
+          if(error && error.cancelledSession){clearTimeout(timer);rej(error);return;}
+          if(++dead<urls.length)return;
+          clearTimeout(timer);
+          rej(new Error('no signer relay is reachable right now — try again in a minute'));
+        };
+        const timer=setTimeout(()=>{if(!opened)rej(new Error('signer relays timed out'));},ms||20000);
         urls.forEach(url=>{
-          this._want(url);
-          // A relay that fails HERE is retried too. It is in the session's list either because the
-          // bunker link named it (the signer is listening there) or because it is this node's own,
-          // and "down at the moment we happened to log in" must not mean "gone for the session".
-          const fell=()=>{ fail(); this._scheduleReopen(url); };
-          let ws; try{ ws=new WebSocket(url); }catch(_){ fell(); return; }
-          ws.onerror=fell; ws.onclose=fell;
-          ws.onopen=()=>{
-            if(!this._wantOpen){ try{ ws.close(); }catch(_){} return; }   // reset() while we connected
-            this._adopt(ws, url);
-            if(!opened){ opened=true; clearTimeout(to); res(url); }
-          };
+          this._openRelay(url).then(()=>{
+            if(generation!==this._generation)return fail(Object.assign(new Error('signer disconnected'),{cancelledSession:true}));
+            if(!opened){opened=true;clearTimeout(timer);res(url);}
+          },e=>{
+            fail(e);
+            if(generation===this._generation && !e.cancelledSession)this._scheduleReopen(url);
+          });
         });
       });
     },
@@ -2420,6 +2432,9 @@
       return { uri, qrUri, done };
     },
     async resume(s){
+      const generation=this._generation;
+      const current=()=>generation===this._generation;
+      const check=()=>{if(!current())throw Object.assign(new Error('signer disconnected'),{cancelledSession:true});};
       /* Reconnect to the relays this session was PAIRED on, and to this node's own as well.
        *
        * The signer is on the paired ones and nowhere else — ours is here only because a relay can
@@ -2428,7 +2443,7 @@
        * is listening on, with a 120s timeout for feedback. Which is why they are all OPENED and each
        * request goes to all of them (see _openAll): choosing between them is the mistake — picking
        * the fastest picks ours, and ours is exactly the one the signer is not on. */
-      await this._ensureAppKey(s.sk);
+      await this._ensureAppKey(s.sk);check();
       // A session paired before this existed has no `enc` — nip04 is what it was using, so that is
       // the only safe default. Never re-negotiate on resume: the signer already knows this session.
       this._enc = (s.enc === 'nip44') ? 'nip44' : 'nip04';
@@ -2459,13 +2474,18 @@
        * in the saved session; only a future SIGNING operation needs the socket, and _ensure() dials
        * before one. Start the dial now for low latency, but never put the local OS behind it. */
       if(this.userPk){
-        this._openAll(relays).catch(() => this._openRelay(paired[0] || s.relay).catch(e2 =>
-          console.warn('signer relay not up yet — keeping the login:', e2)));
+        this._openAll(relays).catch(e=>{
+          if(!current() || e.cancelledSession)return;
+          return this._openRelay(paired[0] || s.relay).catch(e2=>{
+            if(current() && !e2.cancelledSession)console.warn('signer relay not up yet — keeping the login:',e2);
+          });
+        });
         return this.userPk;
       }
       try{ await this._openAll(relays); }
-      catch(_){ await this._openRelay(paired[0] || s.relay); }
-      if(!this.userPk) this.userPk=await this._send('get_public_key',[]);
+      catch(e){ check();if(e.cancelledSession)throw e;await this._openRelay(paired[0] || s.relay); }
+      check();
+      if(!this.userPk){const pk=await this._send('get_public_key',[]);check();this.userPk=pk;}
       return this.userPk;
     },
     // signer interface — every user op is forwarded to the remote signer

@@ -112,7 +112,7 @@ class TheLocalShellNeedsNothing(unittest.TestCase):
         with open(APP, encoding="utf-8") as fh:
             app = _decomment(fh.read())
         start = app.index("const relays = paired.concat(_ncRelays())")
-        end = app.index("if(!this.userPk) this.userPk=await", start)
+        end = app.index("async signEvent(tpl)", start)
         body = app[start:end]
         branch = body[body.index("if(this.userPk){") : body.index("try{ await this._openAll", body.index("if(this.userPk){"))]
         self.assertIn("this._openAll(relays).catch", branch)
