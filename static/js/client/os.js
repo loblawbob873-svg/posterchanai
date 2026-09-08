@@ -7968,8 +7968,8 @@
       `<div class="os-noti-head"><b>Notifications</b>
          <span class="os-noti-hb">
            <button class="os-noti-x" id="os-noti-ding"
-                   title="${settings().get('osDing', true) ? 'Mute the arrival sound' : 'Unmute the arrival sound'}"
-                   aria-label="Notification sound">${settings().get('osDing', true) ? '🔔' : '🔕'}</button>
+                   title="${(PC().notificationPreference ? PC().notificationPreference('sound')!=='off' : settings().get('osDing', true)) ? 'Mute the arrival sound' : 'Unmute the arrival sound'}"
+                   aria-label="Notification sound">${(PC().notificationPreference ? PC().notificationPreference('sound')!=='off' : settings().get('osDing', true)) ? '🔔' : '🔕'}</button>
            <button class="os-noti-x" id="os-noti-all" title="Open the Notifications app">Open all</button>
          </span></div>
        ${permRow}${mailRow}
@@ -7995,8 +7995,9 @@
     };
     $('#os-noti-ding', panel).onclick = (e) => {
       e.stopPropagation();
-      const nowOn = !settings().get('osDing', true);
-      settings().set('osDing', nowOn);
+      const nowOn = !(PC().notificationPreference ? PC().notificationPreference('sound')!=='off' : settings().get('osDing', true));
+      if(PC().setNotificationPreference)PC().setNotificationPreference('sound',nowOn?'chime':'off');
+      else settings().set('osDing', nowOn);
       if(nowOn) ding();                    // hear what you just switched on
       if(inPopup){ const h = popupHost(); h.innerHTML = ''; h.appendChild(buildNotiPanel(true)); return; }
       toggleNoti(true);                    // repaint the header
@@ -8409,7 +8410,8 @@
    * desktop restored from the remembered toggle has had no click yet, so a blocked play is swallowed
    * rather than thrown — the toast is the notification, the sound is the courtesy. */
   function ding(){
-    if(!settings().get('osDing', true)) return;
+    if(PC().notificationSound){PC().notificationSound();return;}
+    if(!(PC().notificationPreference ? PC().notificationPreference('sound')!=='off' : settings().get('osDing', true))) return;
     try{
       const AC = window.AudioContext || window.webkitAudioContext;
       if(!AC) return;
@@ -8438,8 +8440,8 @@
     }catch(_){ /* no audio here — the toast still is the notification */ }
   }
 
-  function osToast(html, pic, onClick){
-    if(!on) return;
+  function osToast(html, pic, onClick, notificationType){
+    if(!on || (PC().notificationAllowed && !PC().notificationAllowed(notificationType))) return;
     ding();
     if(!toastHost || !toastHost.isConnected){
       toastHost = document.createElement('div');
@@ -8469,7 +8471,7 @@
       try{ n = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){ return; }
       if(mailSeen === null){ mailSeen = n; mailAck = n; return; }   // baseline, not an arrival
       if(n > mailSeen) osToast(`✉ <b>${n - mailSeen} new email</b>`, '',
-                               () => { try{ openApp('mail'); }catch(_){} });
+                               () => { try{ openApp('mail'); }catch(_){} }, 'email');
       if(n !== mailSeen){ mailSeen = n; drawBar(); }
     }, 20000);
   }

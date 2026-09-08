@@ -3122,7 +3122,7 @@ ipcMain.handle('pc:host:notify', (e, options) => {
   if(!Notification||!Notification.isSupported())return false;
   const owner=BrowserWindow.fromWebContents(e.sender)||win,route=String(o.route||'notifications').slice(0,220);
   const note=new Notification({title:String(o.title||'PosterChan').slice(0,120),
-    body:String(o.body||'').slice(0,1000),icon:path.join(__dirname,'icon.png'),silent:false});
+    body:String(o.body||'').slice(0,1000),icon:path.join(__dirname,'icon.png'),silent:o.silent===true});
   note.on('click',()=>{try{if(owner){owner.show();owner.focus();}if(!e.sender.isDestroyed())e.sender.send('pc:host:notification-click',route);}catch(_){}});
   note.show();return true;
 });

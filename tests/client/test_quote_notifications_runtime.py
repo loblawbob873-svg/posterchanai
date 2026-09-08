@@ -18,7 +18,8 @@ def test_quote_only_event_survives_the_list_and_opens_its_own_post():
     harness = r'''
 const assert=require('node:assert/strict');
 const quote=QUOTE,ME={pubkey:quote.tags[0][3]},LOGO='logo';
-let events=[quote], muted=false, lastToast='', lastOS;
+let events=[quote], muted=false, lastToast='', lastOS, alerts=true;
+const notificationAllowed=type=>{assert.equal(type,'quotes');return alerts;};
 const Store={all:()=>events},_followSeeded=false,isMutedAuthor=()=>muted;
 const _notifTs=e=>e.created_at,profOf=()=>({name:'Ditto author'}),_tipNote=()=>null;
 const isReply=()=>false,emojiName=(pk,n)=>n,enc=s=>s,_notifSaid=()=>'',_notifCtx=()=>'',timeAgo=()=>'';
@@ -32,6 +33,9 @@ notifPing(quote);
 assert.match(lastToast,/quoted your post/);
 assert.equal(lastOS.o.route,'post:'+quote.id);
 assert.equal(lastOS.o.tag,'nostr-'+quote.id);
+alerts=false;lastToast='';lastOS=null;notifPing(quote);
+assert.equal(lastToast,'');assert.equal(lastOS,null);assert.deepEqual(notifList(),[quote]);
+alerts=true;
 muted=true;assert.deepEqual(notifList(),[]);muted=false;
 events=[{...quote,pubkey:ME.pubkey}];assert.deepEqual(notifList(),[]);
 events=[{...quote,tags:[['q',quote.tags[0][1],'','a'.repeat(64)]]}];assert.deepEqual(notifList(),[]);

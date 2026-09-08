@@ -107,6 +107,7 @@ def _prefs(script, answer):
                 + _lift("_readPrefs", src)
                 + "\n" + _lift("saveClientPrefsNostr", src)
                 + "\nlet _prefsSaveChain = Promise.resolve();\n"
+                + "const _notificationState=()=>({clock:0,values:{},dirty:{}}), _notificationStore=()=>{};\n"
                 + script)
 
 
@@ -295,3 +296,14 @@ def test_the_servers_spend_ledger_records_no_destination_address():
     insert = re.search(r"INSERT INTO monero_spend_attempts\(([^)]*)\)", service)
     assert {c.strip() for c in insert.group(1).split(",")} == {"at", "user_id", "amount_atomic"}
     assert "address" not in create.group(1) and "txid" not in create.group(1)
+
+
+def test_equal_second_preference_events_choose_lowest_id_independent_of_relay_order():
+    events=[{"id":"b"*64,"created_at":100,"content":json.dumps({"notificationPrefs":{"email":True}})},
+            {"id":"a"*64,"created_at":100,"content":json.dumps({"notificationPrefs":{"email":False}})}]
+    for ordered in (events, list(reversed(events))):
+        got=_prefs("""(async()=>{
+          await saveClientPrefsNostr({xmrTip:'0.1'});
+          process.stdout.write(JSON.stringify(published));
+        })();""", {"events":ordered,"complete":True})
+        assert got[0]["content"]["notificationPrefs"]["email"] is False

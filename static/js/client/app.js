@@ -1650,8 +1650,8 @@
     // — so fetch it here before tagging rather than silently publishing a bare :shortcode:.
     if(!InstEmoji.loaded && InstEmoji.SC_RE.test(content||'')) { try{ await InstEmoji.load(); }catch(_){ } }
     tags = _enrichTags(kind, tags, content);
-    const ev = await sign(kind, content, tags);
-    if(_FEDI_SOCIAL_KINDS.has(kind) && ev.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
+    const ev = await sign(kind, content, tags, kind===30078 && opts && Number.isSafeInteger(opts.createdAt) ? opts.createdAt : undefined);
+    if((_FEDI_SOCIAL_KINDS.has(kind) || kind===30078) && ev.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
     Store.saveEvent(ev); invalidateCounts(); applySobLive(ev);   // optimistic: show it instantly
     const r = await Relay.publish(ev);
     // publish() reports {ok}; it never throws on a relay failure. On failure it ROLLS BACK the optimistic
@@ -17148,38 +17148,53 @@
      takes every pref this device did not load with it — one flaky moment while remembering a Monero
      tip amount would drop the zap presets, the BCH presets and the data-saver. `Relay.query` marks
      a set `complete` when every relay EOSE'd, which is the only thing that separates the two. */
-  async function _readPrefs(){   // read the current prefs event, with retries (a laggy first REQ can EOSE empty)
+  async function _readPrefs(owner=(ME&&ME.pubkey)){   // read the current prefs event, with retries (a laggy first REQ can EOSE empty)
     let ev=null, answered=false;
     for(let a=0; a<3 && !ev; a++){ if(a) await new Promise(r=>setTimeout(r, 450*a));
-      try{ const evs=await Relay.query([{ authors:[ME.pubkey], kinds:[30078], '#d':['pcai:client-prefs'], limit:1 }]);
+      try{ const evs=await Relay.query([{ authors:[owner], kinds:[30078], '#d':['pcai:client-prefs'], limit:1 }]);
         if(evs && evs.complete === true) answered=true;
-        ev=(evs||[]).sort((x,y)=>y.created_at-x.created_at)[0]||null; }catch(_){} }
+        ev=(evs||[]).sort((x,y)=>(y.created_at-x.created_at)||String(x.id||'').localeCompare(String(y.id||'')))[0]||null; }catch(_){} }
     if(!ev) return answered ? {} : null;
-    try{ return JSON.parse(ev.content||'{}')||{}; }catch(_){ return {}; }
+    try{ const value=JSON.parse(ev.content||'{}')||{};
+      if(typeof value!=='object'||Array.isArray(value))return {};
+      Object.defineProperty(value,'_pcPrefsCreatedAt',{value:Number(ev.created_at)||0});
+      return value;
+    }catch(_){ return {}; }
   }
   let _prefsSaveChain = Promise.resolve();
   function saveClientPrefsNostr(patch){
     if(!ME || !ME.pubkey) return Promise.resolve();
+    const owner=ME.pubkey;
     // SERIALIZE writes: each read-modify-write runs after the previous one's publish, so two concurrent
     // saves (e.g. a data-saver toggle + a presets Save) can't each read a stale `cur` and clobber the other.
     _prefsSaveChain = _prefsSaveChain.catch(()=>{}).then(async()=>{
       try{
+        if(!ME || ME.pubkey!==owner)return;
         // Merge only the changed key(s) into the CURRENT remote value, so changing one pref can't wipe the
         // others a laggy restore hasn't loaded yet (the replaceable-list-wipe class).
-        const cur = await _readPrefs();
+        const cur = await _readPrefs(owner);
         // Nothing answered — skip the write instead of replacing the document with this patch alone.
         // What the user just set is already in ClientSettings on this device, so nothing they did is
         // lost here; the next save that CAN read the document carries it up.
-        if(cur === null) return;
-        await publish(30078, JSON.stringify({ ...cur, ...(patch||{}) }), [['d','pcai:client-prefs']]);
+        if(cur === null || !ME || ME.pubkey!==owner) return;
+        const state=_notificationState(owner);
+        const createdAt=Math.max(Math.floor(Date.now()/1000),state.clock+1,(cur._pcPrefsCreatedAt||0)+1);
+        const merged={...cur,...(patch||{})};
+        if(cur._pcPrefsCreatedAt && cur._pcPrefsCreatedAt<state.clock)
+          merged.notificationPrefs={..._notificationClean(cur.notificationPrefs),...state.values,...state.dirty};
+        const result=await publish(30078, JSON.stringify(merged), [['d','pcai:client-prefs']],{createdAt});
+        if(result && result.ok){const latest=_notificationState(owner);latest.clock=Math.max(latest.clock,createdAt);_notificationStore(owner,latest);}
       }catch(_){}
     });
     return _prefsSaveChain;
   }
   async function restoreClientPrefsNostr(){
     if(!ME || !ME.pubkey) return;
-    const pr = await _readPrefs();
-    if(!pr) return;
+    const owner=ME.pubkey;
+    const pr = await _readPrefs(owner);
+    if(!pr || owner!==_notificationOwner()) return;
+    _hydrateNotificationPreferences(owner,pr.notificationPrefs,pr._pcPrefsCreatedAt);
+    if(Object.keys(_notificationState(owner).dirty).length)_syncNotificationPreferences(owner);
     try{
       if(!_prefTouched.has('noImages') && typeof pr.noImages==='boolean' && pr.noImages!==NO_IMAGES){
         NO_IMAGES=pr.noImages; ClientSettings.set('noImages', NO_IMAGES);
@@ -17308,6 +17323,152 @@
       }
     }catch(_){}
   }
+  // Account-scoped alert preferences. Pending field edits survive reload and delayed relay replies.
+  const _NOTIFICATION_TYPES = [['email','Email'],['dm','Direct messages'],['likes','Likes and reactions'],
+    ['replies','Replies'],['quotes','Quote posts'],['mentions','Mentions'],['reposts','Reposts'],
+    ['zaps','Zaps and tips'],['concord','Concord mentions'],['reminders','Reminders']];
+  const _NOTIFICATION_SOUNDS = ['chime','soft','bright','off'];
+  function _notificationOwner(){ return (ME && ME.pubkey)||''; }
+  function _notificationClean(value){
+    const out={};
+    if(!value || typeof value!=='object' || Array.isArray(value))return out;
+    for(const [key] of _NOTIFICATION_TYPES)if(typeof value[key]==='boolean')out[key]=value[key];
+    if(_NOTIFICATION_SOUNDS.includes(value.sound))out.sound=value.sound;
+    return out;
+  }
+  function _notificationState(owner=_notificationOwner()){
+    let raw={};try{raw=JSON.parse(localStorage.getItem('pc_notification_prefs:'+owner)||'{}')||{};}catch(_){}
+    return {values:_notificationClean(raw.values),dirty:_notificationClean(raw.dirty),clock:Number.isSafeInteger(raw.clock)?raw.clock:0};
+  }
+  function _notificationStore(owner,state){
+    localStorage.setItem('pc_notification_prefs:'+owner,JSON.stringify(state));
+  }
+  function notificationPreference(key){
+    const state=_notificationState(),v={...state.values,...state.dirty}[key];
+    return v===undefined ? (key==='sound'?'chime':true) : v;
+  }
+  function notificationAllowed(type){return !_NOTIFICATION_TYPES.some(([key])=>key===type) || notificationPreference(type)!==false;}
+  function _hydrateNotificationPreferences(owner,remote,createdAt=0){
+    if(!owner || owner!==_notificationOwner())return;
+    const state=_notificationState(owner);
+    if(remote===undefined || remote===null){_paintNotificationSettings();return;}
+    if(createdAt && createdAt<state.clock)return;
+    state.clock=Math.max(state.clock,createdAt||0);
+    state.values={..._notificationClean(remote),...state.dirty};
+    _notificationStore(owner,state);_paintNotificationSettings();
+  }
+  function setNotificationPreference(key,value){
+    const owner=_notificationOwner(),patch=_notificationClean({[key]:value});
+    if(!owner || !Object.keys(patch).length)return Promise.resolve(false);
+    const state=_notificationState(owner);
+    state.values={...state.values,...patch};state.dirty={...state.dirty,...patch};
+    _notificationStore(owner,state);_paintNotificationSettings();
+    return _syncNotificationPreferences(owner);
+  }
+  function _syncNotificationPreferences(owner=_notificationOwner()){
+    if(!owner)return Promise.resolve(false);
+    _prefsSaveChain=_prefsSaveChain.catch(()=>{}).then(async()=>{
+      if(owner!==_notificationOwner())return false;
+      try{
+        const remote=await _readPrefs(owner);
+        if(owner!==_notificationOwner() || remote===null)return false;
+        _hydrateNotificationPreferences(owner,remote.notificationPrefs,remote._pcPrefsCreatedAt);
+        const state=_notificationState(owner),patch={...state.dirty};
+        if(!Object.keys(patch).length)return true;
+        const base=remote.notificationPrefs==null || (remote._pcPrefsCreatedAt && remote._pcPrefsCreatedAt<state.clock)
+          ? state.values : _notificationClean(remote.notificationPrefs);
+        const merged={...base,...patch};
+        // Equal-second replaceable events choose the lower ID, not the last submitted choice.
+        const createdAt=Math.max(Math.floor(Date.now()/1000),state.clock+1,(remote._pcPrefsCreatedAt||0)+1);
+        const ev=await sign(30078,JSON.stringify({...remote,notificationPrefs:merged}),[['d','pcai:client-prefs']],createdAt);
+        if(owner!==_notificationOwner() || !ev || ev.pubkey!==owner)return false;
+        const result=await Relay.publish(ev);
+        if(!result || !result.ok)return false;
+        Store.saveEvent(ev);
+        const latest=_notificationState(owner);
+        for(const [key,value] of Object.entries(patch))if(latest.dirty[key]===value)delete latest.dirty[key];
+        latest.values={...merged,...latest.dirty};latest.clock=Math.max(latest.clock,createdAt);_notificationStore(owner,latest);
+        if(owner===_notificationOwner())_paintNotificationSettings();
+        return true;
+      }catch(_){return false;}
+    });
+    return _prefsSaveChain;
+  }
+  function _notificationPane(s){
+    return `<div class="us-pane" data-pane="notifications" data-notification-owner="${enc(_notificationOwner())}">
+      ${_standalone()?'':`<label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>`}
+      <div class="set-title small">App alerts</div>
+      <p class="muted small">Choose which events interrupt you. Messages and notification history remain available. Changes save immediately and sync with your account.</p>
+      ${_NOTIFICATION_TYPES.map(([key,label])=>`<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">${label}<label class="switch"><input type="checkbox" data-notification-type="${key}" ${notificationPreference(key)?'checked':''}><span class="slider"></span></label></label>`).join('')}
+      <label class="fld">App arrival sound<select class="input" id="us-notification-sound">${_NOTIFICATION_SOUNDS.map(sound=>`<option value="${sound}"${notificationPreference('sound')===sound?' selected':''}>${sound==='off'?'Silent':sound[0].toUpperCase()+sound.slice(1)}</option>`).join('')}</select></label>
+      <div class="set-actions"><button class="btn btn-ghost small" id="us-notification-preview">Preview sound</button><button class="btn btn-ghost small" id="us-notification-sync">Sync now</button></div>
+      <div class="muted small" id="us-notification-sync-state" role="status"></div>
+      <p class="muted small">Phone calls, carrier texts and Android background notification channels use your phone’s notification settings.</p>
+      ${window.Capacitor?'<button class="btn btn-ghost small" id="us-notification-android">Open Android app settings</button>':''}
+    </div>`;
+  }
+  function _paintNotificationSettings(){
+    const pane=$('[data-notification-owner]');if(!pane || pane.dataset.notificationOwner!==_notificationOwner())return;
+    $$('[data-notification-type]',pane).forEach(el=>el.checked=notificationPreference(el.dataset.notificationType));
+    const sound=$('#us-notification-sound',pane);if(sound)sound.value=notificationPreference('sound');
+    const status=$('#us-notification-sync-state',pane);if(status)status.textContent=Object.keys(_notificationState().dirty).length?'Saved on this device. Waiting to sync.':'Saved.';
+  }
+  function _wireNotificationSettings(host){
+    const pane=$('[data-notification-owner]',host);if(!pane)return;
+    const owner=pane.dataset.notificationOwner;
+    $$('[data-notification-type]',pane).forEach(el=>el.onchange=()=>{
+      if(owner===_notificationOwner())setNotificationPreference(el.dataset.notificationType,el.checked);
+    });
+    $('#us-notification-sound',pane).onchange=event=>{if(owner===_notificationOwner())setNotificationPreference('sound',event.target.value);};
+    $('#us-notification-preview',pane).onclick=()=>{if(owner===_notificationOwner())notificationSound(true);};
+    $('#us-notification-sync',pane).onclick=()=>{if(owner===_notificationOwner())_syncNotificationPreferences(owner);};
+    const android=$('#us-notification-android',pane);if(android)android.onclick=async()=>{
+      const plugin=_capPlugin('PosterChanPush','openBatterySettings');
+      try{if(plugin)await plugin.openBatterySettings();else toast('Open Android Settings → Apps → PosterChan → Notifications.');}
+      catch(_){toast('Open Android Settings → Apps → PosterChan → Notifications.');}
+    };
+    _paintNotificationSettings();
+  }
+  let _notificationLastSound=0;
+  function notificationSound(preview=false){
+    const sound=notificationPreference('sound');if(sound==='off')return;
+    // Android owns background channels; don't overlay a second WebView chime on its native alert.
+    if(!preview && window.Capacitor)return;
+    const now=Date.now();if(!preview && now-_notificationLastSound<500)return;
+    _notificationLastSound=now;
+    try{
+      const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;
+      const audio=new Audio(),t=audio.currentTime;
+      if(audio.state==='suspended')audio.resume().catch(()=>{});
+      const gain=audio.createGain();gain.connect(audio.destination);
+      gain.gain.setValueAtTime(0.0001,t);
+      gain.gain.exponentialRampToValueAtTime(sound==='soft'?0.025:0.05,t+0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001,t+0.65);
+      const frequencies=sound==='bright'?[659.25,987.77]:sound==='soft'?[392,523.25]:[523.25,783.99];
+      frequencies.forEach(f=>{const osc=audio.createOscillator();osc.type='sine';osc.frequency.value=f;osc.connect(gain);osc.start(t);osc.stop(t+0.7);});
+      setTimeout(()=>{try{audio.close();}catch(_){}},800);
+    }catch(_){}
+  }
+  function _notificationType(opts){
+    opts=opts||{};if(opts.notificationType)return opts.notificationType;
+    const tag=String(opts.tag||''),route=String(opts.route||'');
+    if(tag==='pc-mail'||route==='mail')return 'email';
+    if(tag==='pc-dm')return 'dm';
+    if(tag.startsWith('concord-')||route.startsWith('concord:'))return 'concord';
+    if(tag==='pc-reminder')return 'reminders';
+    return '';
+  }
+  let _notificationRefreshAt=0;
+  function _refreshNotificationPreferences(){
+    if(!_notificationOwner() || Date.now()-_notificationRefreshAt<30000)return;
+    _notificationRefreshAt=Date.now();_syncNotificationPreferences();
+  }
+  window.addEventListener('focus',_refreshNotificationPreferences);
+  window.addEventListener('online',()=>{_notificationRefreshAt=0;_refreshNotificationPreferences();});
+  window.addEventListener('storage',event=>{
+    if(event.key==='pc_notification_prefs:'+_notificationOwner())_paintNotificationSettings();
+  });
+  // END ACCOUNT NOTIFICATION PREFERENCES
   async function sha256hex(buf){ const h=await crypto.subtle.digest('SHA-256', buf); return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join(''); }
   const _MIME_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/avif':'avif',
     'video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/mpeg':'mp3','audio/ogg':'ogg','audio/wav':'wav','audio/mp4':'m4a','audio/aac':'aac','audio/flac':'flac'};
@@ -24941,6 +25102,9 @@
     // (the relay can't be trusted to have every follower's current list). Follows still show in the
     // Notifications list (Follows tab); they just don't interrupt. Kills the recurring follow spam.
     if(ev.kind===3) return;
+    const notificationType=ev.kind===7?'likes':ev.kind===6?'reposts':ev.kind===9735||_tipNote(ev)?'zaps':
+      ev.kind===1111||isReply(ev)?'replies':_quotesMe(ev)?'quotes':'mentions';
+    if(!notificationAllowed(notificationType))return;
     const fromPk = ev.kind===9735?(zapSender(ev)||ev.pubkey):ev.pubkey;
     if(isMutedAuthor(fromPk)) return;   // no toast / OS notification for a muted author
     const p=profOf(fromPk); const who=p.name||p.display_name||'someone';
@@ -24955,22 +25119,24 @@
       : ev.kind===1621?'🐛 opened an issue on your repo'
       : ev.kind===1617?'🩹 sent a patch to your repo'
       : _quotesMe(ev)?'quoted your post' : isReply(ev)?'replied to you' : 'mentioned you';
-    notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture);   // render the sender's custom :emoji: in the toast
+    notifToast(`🔔 <b>${emojiName(fromPk, who)}</b> ${what}`, p.picture, null, notificationType);   // render the sender's custom :emoji: in the toast
     const target=_notifCtxId(ev)||ev.id;
     osNotify('PosterChan', `${who} ${what}`, { icon:p.picture||LOGO,
-                                               tag:'nostr-'+ev.id,
+                                               tag:'nostr-'+ev.id, notificationType,
                                                route:target?'post:'+target:'notifications',
                                                onClick:()=>target?openThread(target):switchView('notifications') });
   }
   // `html` is trusted markup (callers build names via emojiName + enc their content) — do NOT re-escape it.
-  function notifToast(html, pic, onClick){
+  function notifToast(html, pic, onClick, notificationType){
+    if(!notificationAllowed(notificationType))return;
+    notificationSound();
     // On the desktop these become Windows-style cards in the bottom-right corner instead (with the
     // arrival chime). Routed here rather than detected again in os.js: this function is already the
     // ONE place a live notification, DM or new email announces itself, so the two cannot disagree
     // about what arrived. onClick names where the card should GO — email belongs in Messages, not in
     // the Notifications view this used to send everything to.
     const go = onClick || (() => switchView('notifications'));
-    try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast){ PCOS.osToast(html, pic, go); return; } }catch(_){}
+    try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast){ PCOS.osToast(html, pic, go, notificationType); return; } }catch(_){}
     const t=document.createElement('div'); t.className='toast notif-toast';
     t.innerHTML=`<img src="${enc(pic||LOGO)}" onerror="this.src='${LOGO}'"><span>${html}</span>`;
     t.onclick=()=>{ go(); t.remove(); };
@@ -26210,6 +26376,7 @@
       const selfThread = pk===ME.pubkey;
       for(const m of arr){ if((!m.mine || selfThread) && (m.t||0)>seen) n++; } } _dmUnread=n; bumpDm(); }
   function _dmNotify(fromPk, selfNote){
+    if(!notificationAllowed('dm'))return;
     // A note to self is how the server delivers system notifications (agent run finished, uptime
     // alerts) — "you sent you a message" would be both confusing and wrong. Say what it is.
     if(selfNote){
@@ -27787,7 +27954,7 @@
         if(total){ this.unread+=total;
           if(manual) toast(total+' new message'+(total>1?'s':''));
           else notifToast('📧 <b>'+total+' new email'+(total>1?'s':'')+'</b>', LOGO,
-                          () => switchView('mail'));
+                          () => switchView('mail'), 'email');
           // The badge is Email's OWN now, and it is not raised while you are LOOKING at the mailbox.
           if(VIEW==='mail') Mail.unread=0;
           bumpMail();
@@ -27873,7 +28040,7 @@
           // A NOTIFICATION, not a plain toast: this is the one moment the client learns mail has
           // arrived, and going through notifToast is what gives it the desktop card and the chime.
           notifToast('📧 <b>'+total+' new email'+(total>1?'s':'')+'</b>', LOGO,
-                     () => switchView('mail'));
+                     () => switchView('mail'), 'email');
           if(VIEW==='mail'){ this.unread=0; try{ this.loadList(); }catch(_){} }
           bumpMail();
           if(VIEW!=='mail') osNotify('📧 New email', total+' new message'+(total>1?'s':''),
@@ -31225,6 +31392,8 @@
   }
   window.PCOpenNotificationRoute=openOsNotificationRoute;
   function osNotify(title, body, opts){
+    if(!notificationAllowed(_notificationType(opts)))return null;
+    notificationSound();
     const clean = String(body||'').replace(/<[^>]+>/g,'')
                     .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim();
     /* Bundled desktop pages must not depend on Chromium's per-origin web-notification permission.
@@ -31233,7 +31402,7 @@
     if(window.pcHost&&pcHost.notify){
       if(!osNotify._nativeClicks&&pcHost.onNotificationClick){osNotify._nativeClicks=pcHost.onNotificationClick(openOsNotificationRoute);}
       try{const r=pcHost.notify({title:String(title||'PosterChan'),body:clean,
-        route:(opts&&opts.route)||'notifications',tag:(opts&&opts.tag)||''});if(r&&r.catch)r.catch(()=>{});}catch(_){}
+        route:(opts&&opts.route)||'notifications',tag:(opts&&opts.tag)||'',silent:true});if(r&&r.catch)r.catch(()=>{});}catch(_){}
       return null;
     }
     /* THE APK GOES NATIVE, because Android's WebView does not implement the Notifications API at all.
@@ -31259,7 +31428,7 @@
       if(!window.Notification || Notification.permission!=='granted') return null;
       const n=new Notification(title, { body:String(body||'').replace(/<[^>]+>/g,'')
                                           .replace(_SHORTCODE_STRIP,'').replace(/\s+/g,' ').trim(),
-                                        icon:(opts&&opts.icon)||LOGO, tag:(opts&&opts.tag)||undefined });
+                                        icon:(opts&&opts.icon)||LOGO, tag:(opts&&opts.tag)||undefined, silent:true });
       n.onclick=()=>{ try{ window.focus(); }catch(_){}
                       try{ if(opts&&opts.onClick) opts.onClick(); else openOsNotificationRoute(opts&&opts.route); }catch(_){}
                       try{ n.close(); }catch(_){} };
@@ -32894,7 +33063,7 @@
     const _phoneTab = window.Capacitor ? [['phone','Phone']] : [];
     // 🧭 Sidebar is its OWN tab, not a block in Profile: it is ~35 switches, which inside a pane of
     // unrelated settings is a wall you scroll past rather than a thing you go to.
-    const tabs=[['profile','Profile'],['timeline','Timeline'],['sidebar','Sidebar'],['relays','Relays'],..._phoneTab,..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
+    const tabs=[['profile','Profile'],['timeline','Timeline'],['notifications','Notifications'],['sidebar','Sidebar'],['relays','Relays'],..._phoneTab,..._torTab,['media','Media'],['cache','Cache'],['zaps','Zaps'],['privacy','Privacy'],['muted','Muted'],['mail','Mail'],['telegram','Telegram'],['social','Social'],['keys','API Keys']]
       .filter(t => !(_standalone() && INSTANCE_SETTINGS_TABS.has(t[0])));
     // Standalone has no built-in relay for the switch to fall back TO, so "use my own relays" is not a
     // choice there — the list IS the relay config, always on. The switch is hidden and forced checked
@@ -32952,9 +33121,9 @@
           </label>
           <div class="muted small">Which PosterChan server this app talks to for AI, media rendering and streams — your Nostr key and your posts never depend on it, they live on relays. Tap a quick-pick or type a domain, or paste a <code>.onion</code> address to connect over Tor. <b>Relays only</b> runs the app with no server at all: you keep Social, Messages, Notes, Passwords, Budget and the games, and the server-backed features are hidden until you name an instance again. Switching reloads the app.</div>
           ` : ''}
-          ${_standalone() ? '' : `<label class="fld">Notification email<input class="input" id="us-email" value="${enc(s.notification_email||'')}" placeholder="you@example.com"></label>
-          <label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>`}
+          ${_standalone() ? '' : `<label class="fld">News sources <span class="muted small">(one per line: url|name) — used by the <code>news</code> command</span><textarea class="input" id="us-news-src" rows="4">${enc(s.news_sources||'')}</textarea></label>`}
         </div>
+        ${_notificationPane(s)}
         <div class="us-pane" data-pane="timeline">
           <div class="muted small">How the feed behaves: what lands in it, when it moves, and what a
             post does when you touch it.</div>
@@ -33248,6 +33417,7 @@
         if(u && !Nwc.parse(u)){ if(st) st.textContent='Not a valid nostr+walletconnect:// string'; return; }
         ClientSettings.set('nwc', u); if(st) st.textContent=u?'✓ Wallet connected — zaps pay instantly':'cleared'; toast(u?'wallet saved':'wallet cleared'); }; }
     { const nc=$('#set-nwc-clear'); if(nc) nc.onclick=()=>{ ClientSettings.set('nwc',''); const i=$('#set-nwc'); if(i) i.value=''; const st=$('#set-nwc-status'); if(st) st.textContent='Disconnected'; toast('wallet disconnected'); }; }
+    _wireNotificationSettings(host);
     // Blur-NSFW toggle: persist immediately (per-device) and re-render the open feed so it applies live.
     { const bn=$('#set-blur-nsfw'); if(bn) bn.onchange=()=>{
         BLUR_NSFW = bn.checked; ClientSettings.set('blurNsfw', BLUR_NSFW);
@@ -37551,7 +37721,7 @@
        an error, so a module calling the browser API directly draws nothing on the packaged app and
        nothing says so. sms.js needs it: on a laptop the relay subscription is the ONLY way a text
        arriving on the phone is ever heard about. */
-    osNotify,
+    osNotify, notificationAllowed, notificationPreference, setNotificationPreference, notificationSound,
     /* The ⋯ menu, for the sub-modules. It was already passed INTO the git.js factory, which is easy
      * to mistake for an export list — and has been mistaken for one before, producing a
      * `_fmtBytes is not a function` on the confirmation of an irreversible action, where a throw
