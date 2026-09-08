@@ -136,20 +136,36 @@ def test_everything_that_needs_a_window_is_handed_to_the_shell(what, action):
 
 
 def test_the_popup_never_navigates_itself():
-    """The failure this prevents is subtle and looks like nothing: the popup renders a whole thread
-    inside itself and then closes on blur, so the post flashes and vanishes."""
+    """Run the actual handlers: popup actions leave via the bridge, never repaint that popup."""
     body = _fn("  function buildNotiPanel(inPopup){")
-    for call in ("PC().openThread", "PC().openProfile", "PC().compose"):
-        idx = 0
-        while True:
-            idx = body.find(call, idx)
-            if idx < 0:
-                break
-            before = body[max(0, idx - 420):idx]
-            assert "inPopup" in before, (
-                f"{call} is reachable from the popup without an inPopup guard — it would render "
-                f"inside the menu and disappear when the menu closes")
-            idx += len(call)
+    row = _fn("n.onclick = (ev) => {", body).split("=", 1)[1]
+    reply = _fn("b.onclick = (ev) => {", body).split("=", 1)[1]
+    script = r'''
+const assert=require('node:assert/strict');
+let actions=[],local=[],hidden=0,closed=0;
+const send=x=>actions.push(x),shut=()=>closed++,hideNoti=()=>hidden++;
+const window={PCOpenNotificationRoute:x=>local.push(['route',x])};
+const PC=()=>({openThread:x=>local.push(['thread',x]),openProfile:x=>local.push(['profile',x]),
+ compose:x=>local.push(['compose',x]),reactTo(){},toast(){}});
+const event={target:{closest:()=>false},stopPropagation(){}};
+for(const inPopup of [true,false]){
+ for(const [dataset,action,kind,value] of [
+   [{route:'calendar'},'view:calendar','route','calendar'],
+   [{route:'notifications'},'view:notifications','route','notifications'],
+   [{prof:'author'},'profile:author','profile','author'],
+   [{open:'post'},'thread:post','thread','post']]){
+  actions=[];local=[];hidden=0;const n={dataset};const click=ROW;click(event);
+  if(inPopup){assert.deepEqual(actions,[action]);assert.deepEqual(local,[]);assert.equal(hidden,0);}
+  else{assert.deepEqual(actions,[]);assert.deepEqual(local,[[kind,value]]);assert.equal(hidden,1);}
+ }
+ actions=[];local=[];hidden=0;const b={dataset:{a:'reply'}},id='post',pk='author';
+ const click=REPLY;click(event);
+ if(inPopup){assert.deepEqual(actions,['reply:post:author']);assert.deepEqual(local,[]);assert.equal(hidden,0);}
+ else{assert.deepEqual(actions,[]);assert.deepEqual(local,[['compose',{reply:id,replyPk:pk}]]);assert.equal(hidden,1);}
+}
+'''.replace('ROW', row).replace('REPLY', reply)
+    result=subprocess.run(['node','-e',script],capture_output=True,text=True,timeout=10)
+    assert result.returncode==0,result.stderr
 
 
 def test_the_popup_renderer_is_wired_up():
