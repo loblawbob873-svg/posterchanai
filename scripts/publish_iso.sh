@@ -50,9 +50,20 @@ fi
 # Readers therefore never receive a partial ISO or a sidecar for an upload that failed verification.
 ISO_NAME="${PUBLISH_PATH##*/}"
 ssh "$PUBLISH_HOST" "printf '%s  %s\\n' '$LOCAL_SHA' '$ISO_NAME' > '$CHECKSUM_STAGING' && chmod 0644 '$STAGING_PATH' '$CHECKSUM_STAGING' && mv -f '$STAGING_PATH' '$PUBLISH_PATH' && mv -f '$CHECKSUM_STAGING' '$CHECKSUM_PATH'"
-PUBLISHED_SHA="$(ssh "$PUBLISH_HOST" "awk 'NR==1 {print \\$1}' '$CHECKSUM_PATH'")"
+# READ THE SIDECAR BACK WITH `cut`, NOT `awk`. This line used to send awk a field reference
+# through two levels of quoting as `\\$1`; bash turned that into a literal backslash, the remote
+# awk died with "unexpected character '\\'", and under `set -e` the failed command substitution
+# aborted the script HERE -- after the renames. So a correct publish printed neither its success
+# line nor its failure line and exited nonzero, which reads as "the ISO did not go out" about an
+# ISO that had. `cut` needs no escaping and cannot be got wrong the same way.
+PUBLISHED_SHA="$(ssh "$PUBLISH_HOST" "cut -d' ' -f1 '$CHECKSUM_PATH'" || true)"
+if [[ -z "$PUBLISHED_SHA" ]]; then
+	# The bytes and the sidecar are already in place by now; say so rather than implying otherwise.
+	echo "Published, but the sidecar could not be read back for verification: $CHECKSUM_PATH" >&2
+	exit 1
+fi
 if [[ "$PUBLISHED_SHA" != "$LOCAL_SHA" ]]; then
-	echo "Published checksum sidecar could not be verified" >&2
+	echo "Published checksum sidecar does not match: sidecar $PUBLISHED_SHA, local $LOCAL_SHA" >&2
 	exit 1
 fi
 echo "Published $PUBLISH_HOST:$PUBLISH_PATH and $CHECKSUM_PATH (sha256 $LOCAL_SHA)"
