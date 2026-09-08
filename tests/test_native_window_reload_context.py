@@ -18,7 +18,7 @@ const sender={}, other={}, dead={};
 const pcAppWindows=new Map([['reservation',{pending:true}],['destroyed',{get webContents(){throw Error('destroyed getter')},isDestroyed:()=>true}],['settings',{webContents:sender,isDestroyed:()=>false}],['mail',{webContents:dead,isDestroyed:()=>true}]]);
 const fsGuard=e=>{if(!e.trusted)throw Error('denied')};
 vm.runInNewContext(HANDLER,{ipcMain,pcAppWindows,fsGuard});
-function context(w,trusted=true){const e={sender:w,trusted};handle(e);return e.returnValue}
+function context(w,trusted=true){let reply, writes=0;const e={sender:w,trusted};Object.defineProperty(e,'returnValue',{set(value){if(writes++===0)reply=value}});handle(e);assert.equal(writes,1,'Sync IPC must send exactly one reply');return reply}
 assert.deepEqual(context(sender),{role:'app',view:'settings'});
 assert.equal(context(other),null);assert.equal(context(dead),null);assert.equal(context(sender,false),null);
 function preload(ctx,search='',trusted=true){const sandbox={isOurPage:trusted,ipcRenderer:{sendSync:()=>ctx},location:{search},URLSearchParams,process:{argv:[]}};vm.runInNewContext(ROLE+';globalThis.result={windowContext,backgroundOwner};',sandbox);return sandbox.result}

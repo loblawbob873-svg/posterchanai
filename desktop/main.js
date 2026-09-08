@@ -1548,16 +1548,19 @@ const fsGuard = (e) => { if (!fromOurPage(e)) throw new Error('denied'); };
 
 // Renderer routing removes ?pcwin=. Ownership belongs to the BrowserWindow and survives reload.
 ipcMain.on('pc:window:context', (e) => {
-  e.returnValue = null;
+  let context = null;
   try {
     fsGuard(e);
     for (const [view, child] of pcAppWindows) {
       if (child && typeof child.isDestroyed === 'function' && !child.isDestroyed() && child.webContents === e.sender) {
-        e.returnValue = { role: 'app', view };
-        return;
+        context = { role: 'app', view };
+        break;
       }
     }
   } catch (_) { /* Untrusted frames receive no managed-window identity. */ }
+  // Electron sends a synchronous reply immediately when returnValue is assigned.
+  // Send once, after resolving ownership; an early null cannot be replaced later.
+  e.returnValue = context;
 });
 
 /* ── THE COMPOSITOR AND THE NETWORK ────────────────────────────────────────────────────────────
