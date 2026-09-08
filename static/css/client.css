@@ -746,7 +746,7 @@ body.native .sidebar{padding-top:calc(18px + env(safe-area-inset-top));padding-b
    → QR version 21, i.e. 101x101 modules: at 300px that was ~2.5 device pixels per module before the
    camera's own scaling, which a webcam pointed at a screen decodes only in good light. The symbol
    already carries the spec's 4-module quiet zone (qr.js), so the win here is purely physical size. */
-.nc-qr{display:block;width:380px;max-width:86vw;height:auto;margin:10px auto;background:#fff;padding:12px;border-radius:12px;box-shadow:0 0 24px rgba(var(--accent-rgb),.25)}
+.nc-qr{display:block;width:380px;max-width:100%;box-sizing:border-box;height:auto;margin:10px auto;background:#fff;padding:12px;border-radius:12px;box-shadow:0 0 24px rgba(var(--accent-rgb),.25)}
 .qr-video{display:block;width:100%;max-width:360px;aspect-ratio:1/1;object-fit:cover;margin:10px auto;background:#000;border-radius:12px;border:1px solid var(--line)}
 .keybox label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;display:block;margin:8px 0 4px}
 .keyrow{display:flex;gap:8px;align-items:center}
@@ -10298,7 +10298,7 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 
 /* Artwork-led sign-in. Keep the complete image visible and the controls on an opaque surface. */
 .auth-gate{zoom:calc(1 / var(--zf,1))}
-.auth-gate .auth-stack{width:min(1240px,100%);display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,400px);gap:32px;align-items:center;padding:24px 0}
+.auth-gate .auth-stack{width:min(1240px,100%);display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,480px);gap:32px;align-items:center;padding:24px 0}
 .auth-hero{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:24px;background:var(--bg);box-shadow:0 24px 80px #0003}
 .auth-hero-art{display:block;width:100%;height:auto;aspect-ratio:1916/821;object-fit:contain;background:#111a27}
 .auth-hero-copy{padding:32px 36px;background:radial-gradient(ellipse at 100% 100%,rgba(var(--accent-rgb),.1),transparent 70%)}
