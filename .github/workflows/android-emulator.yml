@@ -105,6 +105,7 @@ jobs:
 
       # DEBUG, not release: it needs no signing secret, installs over adb, and is the same Java.
       - name: Build debug APK
+        id: debug-build
         working-directory: mobile/android
         run: |
           chmod +x gradlew
@@ -137,8 +138,16 @@ jobs:
           # config.ini was changed to 1536 MB. QEMU twice vanished silently after that mixed restore.
           key: avd-gles-1536-v2-${{ github.event.inputs.api_level || '34' }}
 
-      - name: Create AVD and snapshot
-        if: steps.avd-cache.outputs.cache-hit != 'true'
+      - name: Preserve emulator child exit evidence
+        run: |
+          mv "$ANDROID_HOME/emulator/emulator" "$ANDROID_HOME/emulator/emulator.pc-real"
+          cp scripts/android_emulator_supervisor.sh "$ANDROID_HOME/emulator/emulator"
+          chmod +x "$ANDROID_HOME/emulator/emulator"
+
+      # Run native regressions before the separate lifecycle boot can lose its emulator.
+      # Both cold boots remain mandatory; this does not convert lifecycle failure to a pass.
+      - name: Run instrumented checks on a fresh emulator
+        id: instrumented
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ github.event.inputs.api_level || '34' }}
@@ -147,11 +156,20 @@ jobs:
           ram-size: 1536M
           force-avd-creation: false
           pre-emulator-launch-script: touch /tmp/pc-emulator-console.txt
-          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
-          disable-animations: false
-          script: echo "AVD snapshot created"
+          emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
+          disable-animations: true
+          script: |
+            timeout --kill-after=30s 25m bash scripts/android_instrumented.sh; b=$?; echo "$b" > /tmp/pc-instrumented-status; exit "$b"
+
+      - name: Preserve first boot and stop the instrumentation build daemon
+        if: always() && steps.debug-build.outcome == 'success'
+        run: |
+          cp /tmp/pc-emulator-console.txt /tmp/pc-emulator-instrumented-console.txt || true
+          cd mobile/android
+          timeout --kill-after=5s 30s ./gradlew --stop || true
 
       - name: Run the device checks
+        if: always() && steps.debug-build.outcome == 'success'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ github.event.inputs.api_level || '34' }}
@@ -167,40 +185,16 @@ jobs:
           pre-emulator-launch-script: touch /tmp/pc-emulator-console.txt
           emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
           disable-animations: true
-          # TWO KINDS OF CHECK ON ONE BOOT, because booting the AVD is most of the wall clock.
-          #
-          # `android_device_checks.sh` drives the LIFECYCLE — install, launch, home, screen off, real
-          # Doze via `dumpsys deviceidle force-idle`, wake — and fails on a crash, an ANR or a
-          # foreground-service violation. Nothing else in this repo can see any of that.
-          #
-          # `connectedDebugAndroidTest` runs INSTRUMENTED tests, which is what a launcher, an SMS
-          # app and a dialer need: those live behind system roles and providers (`RoleManager`,
-          # `Telephony.Sms`, `CallLog`, `InCallService`) that do not exist off a device, so a javac
-          # test cannot reach them and a text-matching test proves nothing about them.
-          #
-          # SKIPPED, LOUDLY, WHEN THERE ARE NONE. A gradle task with no sources exits 0, which is
-          # indistinguishable from a green run — and this repo has already shipped a whole rewrite
-          # behind a test file that could not compile. If there are no androidTest sources the step
-          # says so as a run annotation instead of printing a tick.
-          # ONE `bash` INVOCATION, and that is not style. The runner hands this block to `sh`, and
-          # `sh` on this image is dash — which parsed the multi-line `if … fi` that used to be here
-          # as `Syntax error: end of file unexpected`, failed the step, and MEANT THE INSTRUMENTED
-          # TESTS NEVER RAN ONCE. Every emulator run since they were written was red for that reason
-          # and green on everything it did manage to do, which is the worst possible combination:
-          # the job that exists to catch what static checks cannot was itself never running.
-          # BOTH RUN, ALWAYS, and the step fails if either did. Chained with `&&` the instrumented
-          # tests were skipped whenever a lifecycle check failed — which is exactly when their answer
-          # is most wanted, and it kept them from running a second time after the `sh` fix.
-          # Bound each half independently. A wedged adb/Gradle/instrumentation command used to sit
-          # inside this opaque combined step until the job-wide 60-minute timeout, at which point
-          # the artifact-upload steps had no useful report to publish. These limits are several
-          # times the normal duration. Each command gets its own process group plus a hard KILL
-          # grace period: a foreground timeout can signal the emulator owned by this action, while
-          # TERM alone is insufficient when adb has printed "Complete" but kept its socket open.
-          # Crucially, the second half runs even when the first times out, and the always() uploads
-          # below retain whichever diagnostics were produced.
+          # Separate fresh boot: no test state or dead transport inherited from instrumentation.
           script: |
-            timeout --kill-after=30s 15m bash scripts/android_device_checks.sh; a=$?; timeout --kill-after=30s 25m bash scripts/android_instrumented.sh; b=$?; echo "device=$a instrumented=$b"; case "$a:$b" in 0:0) exit 0;; 0:2|2:0|2:2) echo "::error title=Device checks DID NOT RUN::the emulator never ran them; this build is NOT evidence that the app works on a device"; exit 1;; *) exit 1;; esac
+            timeout --kill-after=30s 15m bash scripts/android_device_checks.sh; a=$?; echo "$a" > /tmp/pc-device-status; exit "$a"
+
+      - name: Require both real device verdicts
+        if: always()
+        run: |
+          a=$(cat /tmp/pc-device-status 2>/dev/null || echo 125)
+          b=$(cat /tmp/pc-instrumented-status 2>/dev/null || echo 125)
+          echo "device=$a instrumented=$b"; case "$a:$b" in 0:0) exit 0;; 0:2|2:0|2:2) echo "::error title=Device checks DID NOT RUN::the emulator never ran them; this build is NOT evidence that the app works on a device"; exit 1;; *) exit 1;; esac
 
       # Keep evidence if the emulator process disappears without an Android crash report.
       - name: Capture emulator host diagnostics
@@ -217,6 +211,8 @@ jobs:
           name: logcat
           path: |
             /tmp/pc-emulator-host.txt
+            /tmp/pc-emulator-supervisor.txt
+            /tmp/pc-emulator-instrumented-console.txt
             /tmp/pc-emulator-console.txt
             /tmp/pc-logcat*.txt
             /tmp/pc-device-*.txt

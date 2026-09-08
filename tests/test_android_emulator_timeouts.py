@@ -161,7 +161,7 @@ def test_lifecycle_unbounded_adb_commands_and_exit_diagnostics_are_guarded():
 @pytest.mark.parametrize('instrumented', [0, 1, 2, 124])
 def test_workflow_only_passes_when_both_device_checks_really_ran(device, instrumented):
     line = next(line.strip() for line in WORKFLOW.splitlines()
-                if line.strip().startswith('timeout --kill-after=30s 15m bash'))
+                if 'case "$a:$b"' in line)
     verdict = line[line.index('case "$a:$b"'):]
     result = subprocess.run(['bash', '-c', f'a={device}; b={instrumented}; ' + verdict],
                             capture_output=True, text=True, timeout=2)
