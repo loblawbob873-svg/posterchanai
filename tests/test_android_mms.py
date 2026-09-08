@@ -270,7 +270,9 @@ class MmsIdentity(unittest.TestCase):
         thread = open(os.path.join(SMS, "ThreadActivity.java"), encoding="utf-8").read()
         bubble = open(os.path.join(ROOT, "mobile/android/app/src/main/res/layout/sms_bubble.xml"),
                       encoding="utf-8").read()
-        self.assertIn("m.mms && (m.failed() || m.pending()) && !m.parts.isEmpty()", thread)
+        self.assertIn("m.mms && m.failed() && !m.parts.isEmpty()", thread)
+        self.assertIn("final boolean retry = retryableMms(m)", thread)
+        self.assertIn("boolean retryable = mine && retryableMms(m)", thread)
         self.assertIn('android:id="@+id/pc_b_retry"', bubble)
         self.assertIn("retry.setVisibility(retryable ? View.VISIBLE : View.GONE)", thread)
         self.assertIn("retry.setOnClickListener(retryable ? view -> retryMms(m)", thread)

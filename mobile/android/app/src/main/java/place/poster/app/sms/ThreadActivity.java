@@ -350,6 +350,10 @@ public class ThreadActivity extends PcActivity {
 
     private void send() {
         if (attachmentBusy()) return;
+        if (attachmentDraft != null) {
+            restoreAttachmentDraft();
+            if (attachmentDraft == null) return; // another screen already retired this draft
+        }
         String body = input.getText().toString();
         /* Camera capture is an in-memory JPEG, while Device is a content URI.  Treat them as the
          * same draft: checking only the URI made a photo-only send do nothing and made a captioned
@@ -360,8 +364,9 @@ public class ThreadActivity extends PcActivity {
         if (hasAttachment) {
             /* System acceptance is asynchronous. A second tap after navigation/recreation must not
              * submit the same carrier MMS again; FAILED is the only state send() may retry. */
-            if (attachmentDraft != null && !MmsDraft.READY.equals(attachmentDraft.state)
-                    && !MmsDraft.FAILED.equals(attachmentDraft.state)) {
+            if (attachmentDraft != null && ((!MmsDraft.READY.equals(attachmentDraft.state)
+                    && !MmsDraft.FAILED.equals(attachmentDraft.state))
+                    || MmsFailures.indeterminate(attachmentDraft.error))) {
                 say(attachmentDraft.state); return;
             }
             sendMms(body);
@@ -762,13 +767,9 @@ public class ThreadActivity extends PcActivity {
     private void messageMenu(final SmsMsg m) {
         if (m == null) return;
         try {
-            /* Rows created before the completion receiver was shipped can remain OUTBOX forever.
-             * They are every bit as retryable as FAILED rows; restricting this action to failed
-             * made the repair unreachable for the exact messages it was added to recover. Keep it
-             * explicit (long-press → Retry) because an old carrier submission may have escaped even
-             * though its provider row never advanced. */
-            final boolean retry = m.mms && (m.failed() || m.pending()) && !m.parts.isEmpty()
-                    && !MmsFailures.indeterminate(m.error);
+            // OUTBOX includes both in-flight and delivery-unknown submissions. Replaying
+            // either can send the same picture again even when the bubble still says Sending.
+            final boolean retry = retryableMms(m);
             final CharSequence[] actions = retry
                     ? new CharSequence[]{ getString(R.string.sms_retry_send),
                                           getString(R.string.sms_copy),
@@ -795,19 +796,49 @@ public class ThreadActivity extends PcActivity {
         } catch (Throwable ignored) { }
     }
 
-    /** Retry is explicit: automatically replaying a timed-out carrier send can duplicate it. */
-    private void retryMms(final SmsMsg m) {
+    private static boolean retryableMms(SmsMsg m) {
+        return m != null && m.id > 0 && m.mms && m.failed() && !m.parts.isEmpty()
+                && !MmsFailures.indeterminate(m.error);
+    }
+
+    /** Compare-and-set the original row so another screen/process cannot repeat this retry. */
+    private boolean retryBox(long id, int from, int to) {
+        try {
+            android.content.ContentValues values = new android.content.ContentValues();
+            values.put(android.provider.Telephony.Mms.MESSAGE_BOX, to);
+            return getContentResolver().update(Uri.parse("content://mms/" + id), values,
+                    android.provider.Telephony.Mms.MESSAGE_BOX + "=?",
+                    new String[]{String.valueOf(from)}) == 1;
+        } catch (Throwable ignored) { return false; }
+    }
+
+    /** Retry only a fresh, definitively failed provider row, never an old UI snapshot. */
+    private void retryMms(final SmsMsg shown) {
+        if (!retryableMms(shown)) { reload(); return; }
+        final SmsMsg m = MmsStore.one(this, Uri.parse("content://mms/" + shown.id));
+        if (!retryableMms(m) || !m.docId().equals(shown.docId())) { reload(); return; }
         SmsPart image = null;
         for (SmsPart p : m.parts) if (p.ct != null && (p.ct.startsWith("image/")
                 || p.ct.startsWith("video/"))) { image = p; break; }
         if (image == null) { say(getString(R.string.sms_attachment_bad)); return; }
         byte[] raw = MmsStore.partBytes(this, image.id, 8 * 1024 * 1024);
         if (raw == null || raw.length == 0) { say(getString(R.string.sms_attachment_bad)); return; }
+        final SmsMsg current = MmsStore.one(this, Uri.parse("content://mms/" + shown.id));
+        if (!retryableMms(current) || !current.docId().equals(m.docId())) { reload(); return; }
+        final int failed = android.provider.Telephony.Mms.MESSAGE_BOX_FAILED;
+        final int pending = android.provider.Telephony.Mms.MESSAGE_BOX_OUTBOX;
+        if (!retryBox(m.id, failed, pending)) { reload(); return; }
         SmsSender.Result result = MmsSender.send(this, m.address, m.body, raw, image.ct, image.name);
-        if (!result.ok) { say(result.error == null || result.error.isEmpty()
-                ? getString(R.string.sms_failed) : result.error); return; }
-        // A new outbox row now owns this attempt; remove the old FAILED rendering only after the
-        // platform accepted the retry, so a synchronous refusal loses nothing.
+        if (!result.ok) {
+            // A synchronous refusal did not accept another attempt. Failed cleanup, process
+            // death, or an accepted/unknown send leaves the durable claim pending, never retryable.
+            retryBox(m.id, pending, failed);
+            say(result.error == null || result.error.isEmpty()
+                    ? getString(R.string.sms_failed) : result.error);
+            reload(); return;
+        }
+        // Delete only the original row we claimed, after the replacement was accepted. If the
+        // provider refuses deletion, its pending state still prevents another duplicate on reopen.
         if (MmsStore.delete(this, new long[]{m.id}) > 0)
             SignerRelayService.archiveDelete(this, m.docId());
         say(getString(R.string.sms_retrying));
@@ -977,8 +1008,7 @@ public class ThreadActivity extends PcActivity {
             /* Long-press remains the full copy/delete menu, but it is not discoverable. A stuck
              * outgoing carrier row is urgent and common enough to expose directly. Rebind on every
              * recycled view so an incoming row can never inherit the previous row's listener. */
-            boolean retryable = mine && m.mms && (m.pending() || m.failed()) && !m.parts.isEmpty()
-                    && !MmsFailures.indeterminate(m.error);
+            boolean retryable = mine && retryableMms(m);
             retry.setVisibility(retryable ? View.VISIBLE : View.GONE);
             retry.setEnabled(retryable);
             retry.setText(getString(R.string.sms_retry_send));
