@@ -776,24 +776,37 @@
     // reconnect, no pool membership, deduped + capped fan-out so a send can't spike CPU/sockets.
     // Resolves with the number of relays that accepted. Skips relays already in the pool (publish()
     // covered them) and is a no-op when there are none.
-    async publishTo(urls, event, { timeout=5000, max=4 } = {}){
-      if(_fediPrivate(event)) return 0;
-      if(this.socialRoute && await this.socialRoute(event,true)) return 0;
-      const targets = [...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u => !this._conns.has(u)).slice(0, max);
-      if (!targets.length) return Promise.resolve(0);
+    async publishTo(urls, event, { timeout=5000, max=4, includeManaged=false, detailed=false } = {}){
+      // Room sends must reach their exact relay set even when those URLs are already pooled.
+      // Keep the external-only default for callers that already used publish() for the pool.
+      const finishResults = results => {
+        const accepted=results.filter(r=>r.ok).length;
+        if(!detailed)return accepted;
+        const uncertain=!accepted&&results.some(r=>r.uncertain);
+        return {ok:accepted>0,accepted,uncertain,
+          msg:accepted?'':uncertain?'delivery has not been confirmed':
+            results.find(r=>r.msg)?.msg||'no eligible room relays'};
+      };
+      if(_fediPrivate(event)) return finishResults([]);
+      if(this.socialRoute && await this.socialRoute(event,true)) return finishResults([]);
+      const targets = [...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))]
+        .filter(u => includeManaged || !this._conns.has(u)).slice(0, max);
+      if (!targets.length) return finishResults([]);
       return Promise.all(targets.map(u => new Promise(resolve => {
-        let ws, done = false, tm;
-        const fin = (ok) => { if (done) return; done = true; clearTimeout(tm);
+        let ws, done = false, tm, attempted=false;
+        const fin = (ok, msg='', rejected=false) => { if (done) return; done = true; clearTimeout(tm);
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
-          resolve(ok ? 1 : 0); };
-        try { ws = new WebSocket(u); } catch(_){ return fin(false); }
-        tm = setTimeout(()=>fin(false), timeout);
-        ws.onopen = () => { try{ ws.send(JSON.stringify(['EVENT', event])); }catch(_){ fin(false); } };
+          resolve({ok,uncertain:!ok&&attempted&&!rejected,msg}); };
+        try { ws = new WebSocket(u); } catch(_){ return fin(false,'could not connect to a room relay'); }
+        tm = setTimeout(()=>fin(false,'room relay timed out'), timeout);
+        ws.onopen = () => { try{ attempted=true;ws.send(JSON.stringify(['EVENT', event])); }
+          catch(_){ fin(false,'room relay connection failed'); } };
         ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
-          if (m[0] === 'OK' && m[1] === event.id) fin(!!m[2]); };
-        ws.onerror = () => fin(false);
-        ws.onclose = () => fin(false);
-      }))).then(rs => rs.reduce((a,b)=>a+b,0));
+          if (m[0] === 'OK' && m[1] === event.id && typeof m[2]==='boolean')
+            fin(m[2],String(m[3]||'room relay rejected the message'),!m[2]); };
+        ws.onerror = () => fin(false,'room relay connection failed');
+        ws.onclose = () => fin(false,'room relay connection closed');
+      }))).then(finishResults);
     },
     /* A temporary LIVE subscription to one or more relays outside the user's normal pool.
      * Remote Desktop address discovery uses this for a peer's advertised relay: publishing the
