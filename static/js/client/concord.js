@@ -1017,8 +1017,19 @@
     return true;
   }
   function discoverInvites(text,source){
-    const matches=String(text||'').match(/https?:\/\/[^\s<>]+\/invite\/naddr1[023456789acdefghjklmnpqrstuvwxyz]+#[A-Za-z0-9_-]+/gi)||[];
-    return matches.map(url=>url.replace(/[),.;!?]+$/,'' )).map(url=>{ const parsed=inviteParts(url); if(!parsed)return null; const blurb=String(text).replace(url,'').replace(/#[\w-]+/g,'').replace(/\s+/g,' ').trim(); return {...parsed,name:blurb.slice(0,80)||'Public Concord community',description:blurb,source}; }).filter(Boolean);
+    const content=String(text||''),pattern=/https?:\/\/[^\s<>]+\/invite\/naddr1[023456789acdefghjklmnpqrstuvwxyz]+#[A-Za-z0-9_-]+/gi;
+    const matches=[...content.matchAll(pattern)];
+    const blurb=content.replace(pattern,'').replace(/#[\w-]+/g,'').replace(/\s+/g,' ').trim();
+    return matches.map(match=>{
+      const url=match[0].replace(/[),.;!?]+$/,''),parsed=inviteParts(url);if(!parsed)return null;
+      // Directory announcements contain several distinct invites. Use the label beside this
+      // link, not the announcement's shared opening sentence, and never merge by display name.
+      const before=content.slice(0,match.index).replace(/[ \t]*\r?\n[ \t]*$/,'');
+      const line=before.slice(before.lastIndexOf('\n')+1).trim();
+      const label=/^([^:\r\n]+):\s*$/.exec(line);
+      const name=label?label[1].replace(/^[-*•]\s+/,'').trim():blurb;
+      return {...parsed,name:name.slice(0,80)||'Public Concord community',description:blurb,source};
+    }).filter(Boolean);
   }
   /* v2 BECAUSE v1 HOLDS RECORDS NOTHING CAN CLEAR, AND THAT IS A COMMUNITY HIDDEN FOR EVER.
    *
