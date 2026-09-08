@@ -136,7 +136,7 @@ def test_concord_fills_workspace_and_identifies_the_signed_in_user():
 def test_concord_has_discord_style_panes_and_dm_style_composer():
     for surface in ('cc-communities', 'cc-channels', 'cc-conversation', 'cc-members-pane', 'cc-messages', 'cc-compose'):
         assert surface in CONCORD
-    assert 'Message #${state.channel' in CONCORD
+    assert "Message #${p.enc(state.channel||'general')}" in CONCORD
     assert 'id="messages-direct"' in CONCORD
     assert 'id="messages-communities"' in APP
 
