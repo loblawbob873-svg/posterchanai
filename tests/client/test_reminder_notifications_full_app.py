@@ -75,6 +75,18 @@ async def run(width):
                 await b.until("document.querySelectorAll('#feed .reminder-notif').length===3")
                 assert await b.js("document.querySelector('#feed .reminder-notif').dataset.route==='calendar'")
                 assert await b.js("(()=>{const r=document.querySelector('#feed .reminder-notif').getBoundingClientRect();return r.width>100&&r.right<=innerWidth+2})()")
+                assert await b.js("!document.querySelector('#reminderOverlay')")
+                # Actual logout reloads the document. A newly fetched reminder from before the next
+                # login belongs in history, even though that account never saw its live frame.
+                old={'reminder_id':11,'due_at':'2026-09-08T10:00:00Z','delivered_at':'2026-09-08T10:00:01Z','content':'While signed out','route':'calendar'}
+                await b.call('Page.addScriptToEvaluateOnNewDocument',{'source':'window.__historyOK=true;window.__history='+json.dumps([old])+';'})
+                await b.js("document.querySelector('#btn-logout').click()")
+                await b.until("document.body?.classList.contains('guest') && document.querySelector('#btn-logout')?.textContent==='Log in'")
+                await b.js("document.querySelector('#nsec-input').value=NostrTools.nip19.nsecEncode(new Uint8Array(32).fill(1));document.querySelector('#btn-nsec-login').click()")
+                await b.until("!!window.__PC?.me() && !document.body.classList.contains('guest')")
+                await b.js("__PC.switchView('notifications')")
+                await b.until("document.querySelectorAll('#feed .reminder-notif').length===4")
+                assert await b.js("!document.querySelector('#reminderOverlay')")
                 assert not await b.js('__errors')
         finally:
             proc.terminate();proc.wait(timeout=10);server.shutdown();server.server_close()
