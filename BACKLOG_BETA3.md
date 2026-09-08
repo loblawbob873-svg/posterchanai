@@ -161,3 +161,12 @@ all unless we want early KMS.
 - [ ] Watch the image size — nvidia-drivers is a few hundred MB on an image that is 3.2 GB.
 - [ ] Test on the real P1000, not only in a VM. QEMU cannot reproduce a proprietary driver
       failing to modeset, exactly as it could not reproduce the 30-second network-online wait.
+
+## Final follow-up requested 2026-09-08: private Monero zap announcement choice
+
+- [ ] At the end of the Monero zap form, add an optional checkbox labelled "Do not post this zap".
+  When selected, send the authorized payment without publishing a social post tagging the recipient.
+  Preserve the existing announcement behavior when unchecked. Keep this task at the end of the
+  backlog, after current stabilization and the earlier deferred work.
+- [ ] Add behavior tests for both checkbox states, payment failure, ambiguous payment responses,
+  and retries; changing this option must never send a second payment. Review before deployment.
