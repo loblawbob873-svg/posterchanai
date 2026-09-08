@@ -200,3 +200,39 @@ async def saved_popup(cached_policy):
 @pytest.mark.parametrize('cached_policy',[True,False])
 def test_saved_login_popup_keeps_search_and_applies_fresh_instance_policy(cached_policy):
     asyncio.run(saved_popup(cached_policy))
+
+
+async def delayed_native_apps():
+    async def check(b):
+        await b.until("!!document.querySelector('#os-q')")
+        assert await b.js('!PCOSShell.available() && __waitingHTTP.length>0')
+        await b.js("(()=>{const q=document.querySelector('#os-q');q.value='Firefox';q.focus();q.dispatchEvent(new Event('input',{bubbles:true}));q.setSelectionRange(1,4);window.__nativeSearch=q})()")
+        assert await b.js('__appScans===0')
+        await b.js('__releaseCompositor()')
+        await b.until('PCOSShell.available()')
+        # Wait for the host discovery call, not generic PosterChan menu row counts.
+        for _ in range(20):
+            if await b.js("!!document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]')"):break
+            await asyncio.sleep(.05)
+        assert await b.js("!!document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]')"),await b.js("({scans:__appScans,available:PCOSShell.available(),menu:document.querySelector('#os-startmenu').innerText})")
+        assert await b.js('__instanceMode==="hang" && __waitingHTTP.length>0')
+        assert await b.js("document.querySelector('#os-q')===__nativeSearch && __nativeSearch.value==='Firefox' && document.activeElement===__nativeSearch && __nativeSearch.selectionStart===1 && __nativeSearch.selectionEnd===4")
+        assert await b.js("document.querySelector('#os-startmenu').textContent.includes('This computer')")
+        assert await b.js("(()=>{const row=document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]');return row.getBoundingClientRect().height>0 && getComputedStyle(row).visibility==='visible' && row.innerText==='Firefox'})()")
+        assert await b.js('__appScans===1')
+        await b.js("document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]').click()")
+        await b.until('__nativeActions.length===1')
+        await asyncio.sleep(.1)
+        assert await b.js('__nativeActions')==['app:app%3Afirefox-fixture']
+    await with_browser('hang','?pcpopup=start',check,r'''
+window.__appScans=0;window.__nativeActions=[];
+const compositorReady=new Promise(resolve=>window.__releaseCompositor=()=>resolve([]));
+window.pcWM={windows:()=>compositorReady};
+window.pcApps={list:async()=>{__appScans++;return{apps:[{id:'firefox-fixture',name:'Firefox',comment:'Installed web browser'},{id:'btop-fixture',name:'btop',comment:'Installed system monitor'}]}}};
+window.pcPopup.act=async action=>{__nativeActions.push(action);return true};
+''')
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
+def test_offline_start_discovers_delayed_native_apps_and_preserves_search():
+    asyncio.run(delayed_native_apps())
