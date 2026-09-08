@@ -40,6 +40,11 @@ def test_concord_rejected_room_send_is_visible_and_retry_does_not_sign_again():
         assert first and first!='null'
         await b.js("__publishOK=true;document.querySelector('[data-cc-retry-delivery]').click()")
         await b.until("[...document.querySelectorAll('.cc-delivery-status')].some(x=>x.innerText==='Sent')")
+        assert await b.js("""(()=>{const status=[...document.querySelectorAll('.cc-delivery-status')].find(x=>x.textContent==='Sent');
+          if(!status||status.getAttribute('role')!=='status')return false;
+          const css=getComputedStyle(status),rect=status.getBoundingClientRect();
+          return css.position==='absolute'&&css.overflow==='hidden'&&css.clip!=='auto'&&rect.width<=1&&rect.height<=1;
+        })()"""),'successful delivery label must remain accessible without visible text or layout space'
         assert await b.js('__concordSigns')==1,'retry invoked signer again'
         assert await b.js("JSON.stringify(__published.filter(e=>e.kind===1059).at(-1))")==first
         assert await b.js("![...Object.values(localStorage)].some(x=>String(x).includes('Visible failed room send'))")

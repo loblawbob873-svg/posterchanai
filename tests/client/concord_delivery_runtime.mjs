@@ -63,6 +63,8 @@ assert(signCount===2,'retry requested an extra signature');
 assert(sentPackets.slice(4).every(x=>JSON.stringify(x.packet[1])===originalWrap),'retry changed signed wrap');
 assert(rowFor('retry ciphertext exactly').delivery==='sent','positive ACK did not mark sent: '+JSON.stringify({row:rowFor('retry ciphertext exactly'),toasts:calls.toasts.slice(-2)}));
 assert([...pendingDeliveryCache.values()].every(m=>m.size===0),'ACK left resurrectable pending record');
+PCConcord.render();
+assert(/role="status" style="[^"]*clip:rect\(0,0,0,0\)[^"]*">Sent<\/span>/.test(feed.innerHTML),'successful delivery still visibly labels every message');
 
 // An account change while signature is pending stores only owner-bound ciphertext, sends nothing.
 ackMode='ok';signMode='defer';const switched=submit('owner changed while signing');await tick();
