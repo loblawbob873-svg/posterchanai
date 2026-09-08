@@ -356,12 +356,17 @@ public final class SmsStore {
      * Every read sets it, so it always describes the read that just happened.
      */
     private static volatile boolean refused = false;
+    // Reaction matching requires a complete snapshot from THIS calling thread. A concurrent
+    // archive read must not turn this read's provider failure into apparently empty history.
+    private static final ThreadLocal<Boolean> reactionReadComplete = new ThreadLocal<Boolean>();
+    static boolean reactionReadComplete() { return Boolean.TRUE.equals(reactionReadComplete.get()); }
 
     /** True when the last query could not be performed at all (no READ_SMS, provider missing). */
     public static boolean refused() { return refused; }
 
     private static List<SmsMsg> query(Context ctx, String where, String[] args,
                                       String order, int limit) {
+        reactionReadComplete.set(false);
         List<SmsMsg> out = new ArrayList<SmsMsg>();
         if (ctx == null) return out;
         refused = false;
@@ -392,12 +397,15 @@ public final class SmsStore {
                 m.id = c.getLong(0);
                 m.threadId = c.getLong(1);
                 m.address = str(c, 2);
-                m.body = str(c, 3);
+                // A missing body could hide a duplicate reaction target. Treat read errors as partial.
+                m.body = c.getString(3);
+                if (m.body == null) m.body = "";
                 m.date = c.getLong(4);
                 m.type = c.getInt(5);
                 m.read = c.getInt(6) != 0;
                 out.add(m);
             }
+            reactionReadComplete.set(out.size() < limit);
         } catch (Throwable t) {
             Log.w(TAG, "sms: cursor went bad part-way", t);
         } finally {

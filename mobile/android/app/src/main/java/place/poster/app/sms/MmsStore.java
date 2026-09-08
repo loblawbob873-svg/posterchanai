@@ -107,6 +107,11 @@ public final class MmsStore {
     }
 
     private static volatile boolean refused = false;
+    // Reaction matching requires a complete snapshot from THIS calling thread. A concurrent
+    // archive read must not turn this read's provider failure into apparently empty history.
+    private static final ThreadLocal<Boolean> reactionReadComplete = new ThreadLocal<Boolean>();
+    static boolean reactionReadComplete() { return Boolean.TRUE.equals(reactionReadComplete.get()); }
+
     private static volatile boolean capped = false;
 
     /** True when the last read could not be performed at all — never the same as "none found". */
@@ -179,6 +184,7 @@ public final class MmsStore {
 
     private static List<SmsMsg> query(Context ctx, String where, String[] args,
                                       String order, int limit) {
+        reactionReadComplete.set(false);
         List<SmsMsg> out = new ArrayList<SmsMsg>();
         if (ctx == null) return out;
         refused = false;
@@ -236,6 +242,7 @@ public final class MmsStore {
                 if (m.failed() || m.pending()) m.error = MmsFailures.get(ctx, m.id);
                 out.add(m);
             }
+            reactionReadComplete.set(out.size() < want);
         } catch (Throwable t) {
             Log.w(TAG, "mms: cursor went bad part-way", t);
         } finally {

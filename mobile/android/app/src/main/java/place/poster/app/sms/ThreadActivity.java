@@ -772,8 +772,8 @@ public class ThreadActivity extends PcActivity {
 
     private SmsReactionThread reactionHistory(long id, String peer) {
         List<SmsMsg> rows = Messages.thread(this, id, 501);
-        boolean complete = rows.size() < 501 && !SmsStore.refused()
-                && !MmsStore.refused() && !MmsStore.capped() && ids().length == 1;
+        boolean complete = rows.size() < 501 && SmsStore.reactionReadComplete()
+                && MmsStore.reactionReadComplete() && ids().length == 1;
         return new SmsReactionThread(rows, complete, id, peer);
     }
 
