@@ -4997,7 +4997,6 @@
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions(); startCallSignaling();
       hydrateReminderNotifications();
-      if(!_reminderPoll)_reminderPoll=setInterval(()=>hydrateReminderNotifications(),60000);
       // Folder sync: attach the watchers for any folder this device maps. Deliberately NOT a timer —
       // the adapter notifies, and shouldSync decides whether that is worth a sweep right now. On a
       // platform with no watcher (Android's SAF has none worth having) this is a no-op and sync
@@ -5306,6 +5305,7 @@
   // popstate (the back button skipped a view) and the refresh timers (double work forever after).
   function bindGlobalsOnce(){
     if(window.__pcGlobalsBound) return; window.__pcGlobalsBound = true;
+    setInterval(()=>hydrateReminderNotifications(),60000);   // one poller, also after guest → login
     // See _navView: a view switch becomes a history entry only once somebody has touched the app.
     ['pointerdown','keydown','touchstart'].forEach(t=>{
       try{ document.addEventListener(t, ()=>{ _userActed = true; }, { capture:true, passive:true }); }catch(_){ }
@@ -25148,7 +25148,7 @@
   // account and instance (numeric reminder IDs belong to one backend). The backend is authoritative
   // for missed deliveries; this bounded cache also works offline and across native popup windows.
   const _reminderLoads=new Map();
-  let _reminderPoll=null, _reminderEpochOwner='', _reminderEpochAt=0;
+  let _reminderEpochOwner='', _reminderEpochAt=0;
   function _reminderOwner(){ return ME&&ME.pubkey ? _instanceBase()+':'+ME.pubkey : ''; }
   function _reminderRows(owner=_reminderOwner()){
     if(!owner)return [];
