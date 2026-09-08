@@ -15,6 +15,8 @@ Assertions, each a way a month grid specifically breaks:
                        computed start-of-grid, and an off-by-one there silently drops a week.
   wrong-day-count      The days shown for the month don't match the real calendar — the classic
                        Monday-first/Sunday-first mistake, which puts every event on the wrong column.
+  boundary-months     Sunday/Monday/Saturday month starts, year rollover and leap day must keep
+                       every cell under its weekday header and events on their selected dates.
   event-not-on-its-day An event whose DTSTART is on the selected day does not appear in the day
                        panel. Parsing DTSTART is the one piece of iCalendar this screen must get
                        right; an all-day event stored as VALUE=DATE and read as UTC lands a day out
@@ -73,6 +75,12 @@ const ITEMS = [
   { uid:'allday-1', cal:'work', component:'VEVENT',
     ics:'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:allday-1\r\nDTSTART;VALUE=DATE:'+YMD+'\r\nDTEND;VALUE=DATE:'+YMD+'\r\nSUMMARY:Public holiday\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n' },
 ];
+for (const key of ['2024-02-29', '2025-12-31', '2026-02-01', '2026-06-01', '2026-08-01']) {
+  ITEMS.push({uid:key, cal:'work', component:'VEVENT',
+    ics:'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:'+key+
+      '\r\nDTSTART;VALUE=DATE:'+key.replace(/-/g,'')+
+      '\r\nSUMMARY:Boundary '+key+'\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'});
+}
 window.__loads = 0;
 window.fetch = async (url, opts) => {
   const u = String(url);
@@ -175,6 +183,58 @@ NEXT_MONTH_AND_BACK = r"""(async () => {
   return { title0, title1, back: document.querySelector('.cal-title').textContent };
 })()"""
 
+BOUNDARY_MONTHS = r"""(() => {
+  const errors = [];
+  const headers = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const cases = [
+    // Sunday, Monday, Saturday month starts; previous-year cells; leap day.
+    ['February 2026', '2026-02-01', '2026-02-01', 28],
+    ['June 2026', '2026-05-31', '2026-06-01', 30],
+    ['August 2026', '2026-07-26', '2026-08-01', 31],
+    ['January 2026', '2025-12-28', '2025-12-31', 31],
+    ['February 2024', '2024-01-28', '2024-02-29', 29],
+  ];
+  for (const [title, first, eventDay, count] of cases) {
+    const target = new Date(title + ' 1');
+    for (let n=0; n<2400; n++) {
+      const shown = document.querySelector('.cal-title').textContent;
+      if (shown === title) break;
+      const backwards = new Date(shown + ' 1') > target;
+      document.querySelector(backwards ? '#cal-prev' : '#cal-next').click();
+    }
+    if (document.querySelector('.cal-title').textContent !== title) {
+      errors.push(title + ': navigation failed'); continue;
+    }
+    const cells = [...document.querySelectorAll('.cal-day')];
+    const labels = [...document.querySelectorAll('.cal-dow')];
+    if (labels.map(e=>e.textContent).join() !== headers.join()) errors.push(title + ': headers');
+    if (cells.length !== 42 || cells[0].dataset.key !== first) errors.push(title + ': grid start');
+    if (cells.filter(e=>!e.classList.contains('other')).length !== count) errors.push(title + ': month length');
+    for (let i=0; i<cells.length; i++) {
+      const d = new Date(cells[i].dataset.key + 'T00:00:00');
+      const expected = new Date(first + 'T00:00:00');
+      expected.setDate(expected.getDate() + i);
+      if (+d !== +expected || d.getDay() !== i%7) errors.push(title + ': misplaced ' + cells[i].dataset.key);
+      const rect = cells[i].getBoundingClientRect();
+      const header = labels[i%7].getBoundingClientRect();
+      if (Math.abs(rect.left-header.left) > 1 || Math.abs(rect.width-header.width) > 1)
+        errors.push(title + ': column alignment');
+    }
+    const eventCell = document.querySelector('.cal-day[data-key="' + eventDay + '"]');
+    if (!eventCell || ![...eventCell.querySelectorAll('.cal-chip')].some(e=>e.title === 'Boundary ' + eventDay))
+      errors.push(title + ': missing event on ' + eventDay);
+    if (eventCell) eventCell.click();
+    const weekday = headers[new Date(eventDay + 'T00:00:00').getDay()];
+    if (!document.querySelector('.cal-day-hd').textContent.startsWith(weekday + ' '))
+      errors.push(title + ': selected weekday');
+    if (![...document.querySelectorAll('.cal-evtitle')].some(e=>e.textContent === 'Boundary ' + eventDay))
+      errors.push(title + ': selected event');
+    if (document.documentElement.scrollWidth > innerWidth + 1) errors.push(title + ': overflow');
+  }
+  return errors;
+})()"""
+
+
 OPEN_EDITOR = r"""(async () => {
   document.querySelector('#cal-new').click();
   await new Promise(r=>setTimeout(r,250));
@@ -275,9 +335,9 @@ async def drive(url):
                 if r["monthDays"] != days_in_month:
                     problems.append((label, "wrong-day-count",
                                      f"{r['monthDays']} cells for this month, but it has {days_in_month} days"))
-                if r["firstCol"].strip() != "Mon":
+                if r["firstCol"].strip() != "Sun":
                     problems.append((label, "wrong-day-count",
-                                     f"the grid starts on {r['firstCol']!r} — the cells are computed Monday-first"))
+                                     f"the grid starts on {r['firstCol']!r} — the cells must start Sunday-first"))
                 # A weekly series running since 2022 must land on 4-6 days of any month. Drawing
                 # it once (on a DTSTART years in the past) is what made an imported calendar of 707
                 # events look almost empty.
@@ -313,6 +373,13 @@ async def drive(url):
                     elif st["back"] != st["title1"]:
                         problems.append((label, "state-lost",
                                          f"came back on {st['back']!r} instead of {st['title1']!r}"))
+
+                boundary = await js(BOUNDARY_MONTHS)
+                if boundary is None:
+                    problems.append((label, "boundary-months", "calendar boundary test did not evaluate"))
+                else:
+                    for error in boundary:
+                        problems.append((label, "boundary-months", error))
 
                 ed = await js(OPEN_EDITOR, awaited=True)
                 if not ed or ed.get("error"):

@@ -17,7 +17,7 @@
  *   our own parser: all-day is VALUE=DATE, timed is UTC with a Z, and every text field is escaped.
  */
 (function(){
-  const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const MONTHS = ['January','February','March','April','May','June','July','August','September',
                   'October','November','December'];
   const PALETTE = ['#3ce8ff','#ff5cf0','#00ff88','#ffcf2b','#ff5a7a','#9b8cff','#4ade80','#fb923c'];
@@ -81,8 +81,8 @@
     const firstOf = d => new Date(d.getFullYear(), d.getMonth(), 1);
     const addMonths = (d, n) => new Date(d.getFullYear(), d.getMonth()+n, 1);
     const todayKey = () => ymd(new Date());
-    // Monday-first, which is what the rest of the world (and every calendar app here) uses.
-    const gridStart = m => { const d = firstOf(m); const back = (d.getDay() + 6) % 7;
+    // Sunday-first, matching the weekday headers and native Date weekday indices.
+    const gridStart = m => { const d = firstOf(m); const back = d.getDay();
                              return new Date(d.getFullYear(), d.getMonth(), 1 - back); };
 
     /* iCalendar timestamps. A timed event is written in UTC (…Z) rather than with a VTIMEZONE block:
@@ -680,7 +680,7 @@
         </div>`).join('')
         : '<div class="empty">Nothing on this day.</div>';
       return `<div class="cal-day-panel">
-        <div class="cal-day-hd">${DAYS[(d.getDay()+6)%7]} ${d.getDate()} ${MONTHS[d.getMonth()]}</div>
+        <div class="cal-day-hd">${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}</div>
         ${list}</div>`;
     }
 
