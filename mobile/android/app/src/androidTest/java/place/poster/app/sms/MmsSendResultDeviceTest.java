@@ -44,6 +44,40 @@ public class MmsSendResultDeviceTest {
         checkResult(0, Telephony.Mms.MESSAGE_BOX_OUTBOX);
     }
 
+    @Test public void providerHonorsFailedToOutboxCompareAndSet() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String previous = Telephony.Sms.getDefaultSmsPackage(context);
+        Uri row = null;
+        try {
+            shell("cmd role add-role-holder android.app.role.SMS " + context.getPackageName());
+            assertEquals(context.getPackageName(), Telephony.Sms.getDefaultSmsPackage(context));
+            ContentValues values = new ContentValues();
+            values.put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_FAILED);
+            values.put(Telephony.Mms.DATE, System.currentTimeMillis() / 1000);
+            row = context.getContentResolver().insert(Telephony.Mms.CONTENT_URI, values);
+            assertNotNull(row);
+            assertEquals(Telephony.Mms.MESSAGE_BOX_FAILED, box(context, row));
+            ContentValues pending = new ContentValues();
+            pending.put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_OUTBOX);
+            String selection = Telephony.Mms.MESSAGE_BOX + "=?";
+            String[] failed = {String.valueOf(Telephony.Mms.MESSAGE_BOX_FAILED)};
+            assertEquals("First retry claims exactly its failed provider row", 1,
+                    context.getContentResolver().update(row, pending, selection, failed));
+            assertEquals(Telephony.Mms.MESSAGE_BOX_OUTBOX, box(context, row));
+            assertEquals("Provider must honor selection and refuse a second retry claim", 0,
+                    context.getContentResolver().update(row, pending, selection, failed));
+            assertEquals(Telephony.Mms.MESSAGE_BOX_OUTBOX, box(context, row));
+        } finally {
+            if (row != null) context.getContentResolver().delete(row, null, null);
+            if (previous != null && !previous.equals(context.getPackageName())) {
+                shell("cmd role add-role-holder android.app.role.SMS " + previous);
+                assertEquals(previous, Telephony.Sms.getDefaultSmsPackage(context));
+            } else if (previous == null) {
+                shell("cmd role remove-role-holder android.app.role.SMS " + context.getPackageName());
+            }
+        }
+    }
+
     private void checkResult(int carrierResult, int expectedBox) throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         String previous = Telephony.Sms.getDefaultSmsPackage(context);
