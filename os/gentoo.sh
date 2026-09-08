@@ -3336,7 +3336,21 @@ FSTAB
 		# Autologin as the live user. Same file the installed system uses, rewritten rather than
 		# removed — deleting it gives a login prompt for an account with no password set.
 		mkdir -p "$WORK/gettyd"
-		printf '[Unit]\nWants=NetworkManager.service network-online.target\nAfter=NetworkManager.service network-online.target\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
+		# THE LIVE SESSION ORDERS AFTER NetworkManager STARTING, AND DELIBERATELY NOT AFTER
+		# network-online.target -- which is the opposite of what the INSTALLED system wants.
+		#
+		# An installed machine has stored connections, so waiting for an address costs nothing and
+		# buys a first-run wizard that can see the network (19daf8142). A live USB has NO stored
+		# connection: the Welcome screen is what configures wifi. Ordering its getty after
+		# network-online.target therefore waits for an address that only the desktop it is blocking
+		# can obtain -- `nm-online -s -q` times out after 30 SECONDS and only then does anything
+		# appear. Measured on real hardware: "30 seconds of flashing" plymouth, every boot, on the
+		# first image ever built after that commit.
+		#
+		# posterchan-live-network.service already carries the ordering that IS right here: it
+		# requires NetworkManager to be ACTIVE and runs Before=getty@tty1.service, so nmcli works
+		# by the time Welcome asks.
+		printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
 			>"$WORK/gettyd/override.conf"
 		# AND THE SAME ON THE SERIAL CONSOLE, or this disc cannot be installed without a monitor.
 		#
@@ -3797,7 +3811,7 @@ DESKTOP
 				| sed -n "s/.*--autologin \([^ ]*\).*/\1/p" | head -1)"
 			NET_ORDER="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
 				etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null \
-				| grep -cE '^After=.*network-online\.target')"
+				| grep -cE '^After=.*NetworkManager\.service')"
 			PW="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" etc/passwd 2>/dev/null \
 				| grep -c "^$SESS_USER:")"
 			echo "image: autologin=$WHO passwd-has-$SESS_USER=$PW net-order=$NET_ORDER" >>"$LOG" 2>/dev/null
@@ -3810,7 +3824,7 @@ DESKTOP
 				return
 			fi
 			if [[ "$NET_ORDER" -lt 1 ]]; then
-				_lcd_fail "The image autologins as '$WHO' but its getty is not ordered after network-online.target, so the desktop would start before the machine has an address — the ISO was not made."
+				_lcd_fail "The image autologins as '$WHO' but its getty is not ordered after NetworkManager.service, so Welcome could run before nmcli can answer — the ISO was not made."
 				return
 			fi
 		fi

@@ -805,11 +805,26 @@ class PosterChanOSProfile(unittest.TestCase):
         captured online:false and showed "Join a network" to somebody whose cable was plugged in,
         on a machine that reported enp37s0:ethernet:connected seconds later.
 
-        Every getty override the installer writes must order after network-online.target, which
-        pulls NetworkManager-wait-online.service."""
+        Every INSTALLED session must order after network-online.target, which pulls
+        NetworkManager-wait-online.service.
+
+        THE LIVE IMAGE IS THE EXCEPTION, AND IT IS NOT AN OVERSIGHT. An installed machine has
+        stored connections, so waiting for an address costs nothing. A live USB has none — the
+        Welcome screen is what configures wifi — so ordering its getty after network-online.target
+        waits for an address only the desktop it is blocking can obtain. `nm-online -s -q` gives up
+        after 30 seconds, and until then there is no session at all: measured on real hardware as
+        half a minute of flashing plymouth on every boot. The live session orders after
+        NetworkManager STARTING, which is what makes nmcli answer for Welcome."""
         got = [l for l in self.src.splitlines() if "Wants=NetworkManager.service" in l]
         self.assertTrue(got, "the installer no longer orders the session after NetworkManager")
+        live = [l for l in got if "--autologin live" in l]
+        self.assertTrue(live, "the live image no longer writes a getty autologin override")
+        for line in live:
+            self.assertNotIn("network-online.target", line,
+                             "the live session waits for an address that only it can obtain")
         for line in got:
+            if "--autologin live" in line:
+                continue
             self.assertIn("network-online.target", line,
                           "a session is ordered after NM STARTING, not after the machine is online")
 
