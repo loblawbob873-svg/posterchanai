@@ -172,3 +172,11 @@ def test_workflow_only_passes_when_both_device_checks_really_ran(device, instrum
 
 def test_emulator_crashpad_evidence_is_uploaded_for_host_process_failures():
     assert '/tmp/android-runner/emu-crash*' in WORKFLOW.split('- name: Upload logcat', 1)[1]
+
+
+def test_emulator_console_survives_background_shell_and_action_teardown():
+    assert WORKFLOW.count('pre-emulator-launch-script: touch /tmp/pc-emulator-console.txt') == 2
+    options = [line for line in WORKFLOW.splitlines() if 'emulator-options:' in line]
+    assert len(options) == 2
+    assert all('-stdouterr-file /tmp/pc-emulator-console.txt' in line for line in options)
+    assert '/tmp/pc-emulator-console.txt' in WORKFLOW.split('- name: Upload logcat', 1)[1]

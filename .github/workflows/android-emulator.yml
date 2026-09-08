@@ -146,7 +146,8 @@ jobs:
           arch: x86_64
           ram-size: 1536M
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: touch /tmp/pc-emulator-console.txt
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
           disable-animations: false
           script: echo "AVD snapshot created"
 
@@ -161,7 +162,10 @@ jobs:
           # Do not restore mutable Quick Boot state for the verdict run. The cache saves image
           # download/AVD creation time; -wipe-data + -no-snapshot gives every test run one coherent
           # cold boot, independent of the emulator revision setup-android installed today.
-          emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none
+          # Linux emulator supports direct stdout/stderr capture but requires an existing file.
+          # Keep QEMU's final message even after the action's background-shell pipe is closed.
+          pre-emulator-launch-script: touch /tmp/pc-emulator-console.txt
+          emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
           disable-animations: true
           # TWO KINDS OF CHECK ON ONE BOOT, because booting the AVD is most of the wall clock.
           #
@@ -213,6 +217,7 @@ jobs:
           name: logcat
           path: |
             /tmp/pc-emulator-host.txt
+            /tmp/pc-emulator-console.txt
             /tmp/pc-logcat*.txt
             /tmp/pc-device-*.txt
             /tmp/android-runner/emu-crash*

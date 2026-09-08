@@ -41,6 +41,21 @@ done
 for command in sway foot firefox-bin virsh qemu-system-x86_64; do
   command -v "$command" >/dev/null || { echo "first-run core command is missing: $command" >&2; exit 1; }
 done
+# A package-owned wrapper can survive while the ISO excludes its /opt/firefox payload.
+# Exercise the loader without opening a browser/profile; command -v cannot detect this.
+check_firefox_payload(){
+  local version
+  if ! version="$(timeout 10 firefox-bin --version 2>&1)"; then
+    printf 'Installed Firefox cannot execute its payload: %s\n' "$version" >&2
+    return 1
+  fi
+  if ! [[ "$version" =~ Mozilla[[:space:]]Firefox[[:space:]][0-9] ]]; then
+    printf 'Installed Firefox returned no browser version: %s\n' "$version" >&2
+    return 1
+  fi
+}
+check_firefox_payload
+
 grep -q 'posterchan-update.lock' /usr/local/bin/update-posterchan
 grep -q 'emaint sync -r posterchan' /usr/local/bin/update-posterchan
 autologin_user="$(sed -n 's/^ExecStart=.*--autologin \([^ ]*\).*/\1/p' \
