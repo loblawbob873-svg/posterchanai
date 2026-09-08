@@ -77,7 +77,7 @@
     delivered(){
       try{return JSON.parse(localStorage.getItem(DELIVERED_KEY)||'[]').filter(x=>x&&x.ev&&Date.now()-x.at<MAX_AGE*1000);}catch(_){return [];}
     },
-    confirm(id){
+    acknowledgeDelivery(id){
       const item=items.find(x=>x.ev.id===id);if(!item)return false;
       const receipts=this.delivered().filter(x=>x.ev.id!==id);
       receipts.push({ev:item.ev,at:Date.now()});
@@ -147,7 +147,7 @@
           if (!window.Relay || Relay.status !== 'ok') break;   // went away mid-drain → stop, keep the rest
           let r = null;
           try{ r = await Relay.publish(it.ev); }catch(_){ r = null; }
-          if (r && r.ok){ this.confirm(it.ev.id); sent++; sentIds.push(it.ev.id); continue; }
+          if (r && r.ok){ this.acknowledgeDelivery(it.ev.id); sent++; sentIds.push(it.ev.id); continue; }
           /* A STRIKE IS A REFUSAL, NOT A BAD MOMENT.
            *
            * MAX_TRIES exists for an event the relay will never accept — the wrong kind, a bad

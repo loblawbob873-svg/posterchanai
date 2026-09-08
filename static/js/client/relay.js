@@ -384,7 +384,7 @@
         if(conn.trusted && wireEv && wireEv.id){
           const ack = this._okWaiters.get(wireEv.id);
           if(ack){ this._okWaiters.delete(wireEv.id); ack.settle({ ok:true, msg:'relay echo' }); }
-          try{ if(window.Outbox && Outbox.has(wireEv.id)){ if(Outbox.confirm)Outbox.confirm(wireEv.id);else Outbox.remove(wireEv.id); } }catch(_){}
+          try{ if(window.Outbox && Outbox.has(wireEv.id)){ if(Outbox.acknowledgeDelivery)Outbox.acknowledgeDelivery(wireEv.id);else Outbox.remove(wireEv.id); } }catch(_){}
         }
         const sub = this._subs.get(m[1]); if (!sub || !sub.onEvent) return;
         const ev = this._normTags(m[2]); if (!ev || sub.seen.has(ev.id)) return;   // dedup across relays
