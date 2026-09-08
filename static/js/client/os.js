@@ -45,9 +45,10 @@
    * because this file may be evaluated before the body exists. The class only ever HIDES, and
    * `popupHost()` still does its own work, so this cannot change what a popup finally draws — it
    * only removes the window in which the wrong thing is visible. */
+  let _popupIdentity = '';
   try{
-    if(new URLSearchParams(window.location.search).get('pcpopup'))
-      document.documentElement.classList.add('pc-popup-boot');
+    _popupIdentity = String(new URLSearchParams(window.location.search).get('pcpopup') || '');
+    if(_popupIdentity) document.documentElement.classList.add('pc-popup-boot');
   }catch(_){ }
 
   const MIN_WIDTH = 1024;          // below this the desktop is not offered at all
@@ -5241,6 +5242,7 @@
    * they are two views of one document and a change made in either has to show in both. A folder
    * whose last member was just dragged out has nothing left to show, so its window goes with it. */
   function refreshIcons(){
+    if(popupKind() === 'start'){ renderStartPopup(); return; }
     if(!on || !desk) return;
     drawDesktop();
     for(const w of wins.slice()){
@@ -8886,11 +8888,12 @@
       });
   }
 
-  /* This page is a POPUP surface (the start menu in its own window), not a desktop and not an app
-     window. Kept as a function rather than a constant because `restore()` and `enter()` both ask,
-     and a constant read before the query string is parsed has been a bug here before. */
+  /* Popup ownership belongs to this document, not its current route. Client navigation
+     cleans launch parameters from history; a later restore must not turn that same menu
+     into a desktop hidden behind the popup stylesheet. */
   function popupKind(){
-    try{ return String(new URLSearchParams(window.location.search).get('pcpopup') || ''); }
+    if(_popupIdentity) return _popupIdentity;
+    try{ return (_popupIdentity = String(new URLSearchParams(window.location.search).get('pcpopup') || '')); }
     catch(_){ return ''; }
   }
 
@@ -9850,6 +9853,14 @@
     try{ document.body.classList.add('os-popup-start'); }catch(_){ }
     _menuInPopup = true;
     root = host;
+    // Login/config completion can restore this same popup again. Refresh its rows without
+    // replacing the search input or losing what the person typed while the server was down.
+    const existingMenu = $('#os-startmenu', host);
+    if(existingMenu){
+      startOpen = true;
+      if(_repaintStart) _repaintStart(($('#os-q', existingMenu) || {}).value || '');
+      return;
+    }
     startOpen = false;
     try{
       /* A popup is a separate renderer, so it does not inherit the shell renderer's successful
@@ -9859,8 +9870,13 @@
       if(window.PCOSShell && PCOSShell.detect){
         Promise.resolve(PCOSShell.detect()).then(() => {
           if(!host.isConnected) return;
-          startOpen = false;
-          toggleStart(true);
+          const menu = $('#os-startmenu', host);
+          if(menu){
+            if(_repaintStart) _repaintStart(($('#os-q', menu) || {}).value || '');
+          }else{
+            startOpen = false;
+            toggleStart(true);
+          }
         }, () => {});
       }
       toggleStart(true);

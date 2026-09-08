@@ -3860,6 +3860,24 @@
     try{
       if(window.PCOSWin && PCOSWin.isWindow()){ PCOSWin.adopt(); _asWindow = true; }
     }catch(e){ try{ console.error('[pc] window mode', e); }catch(_){ } }
+    // Native desktop controls are local. Paint them before asking the instance: an OPEN
+    // network interface can still blackhole requests while its server is restarting. Popups
+    // deliberately hide the ordinary client until restore(), so awaiting config here leaves
+    // Start and the tray completely black on every click. Keep the normal fresh-config path
+    // below, but do not rebuild a menu the person has already started using when it settles.
+    let _localShellRestored = false;
+    const _bootNostrOnly = window.PC_NOSTR_ONLY;
+    const _localShellBoot = BUNDLED && window.pcShell && !_asWindow;
+    if(_localShellBoot){
+      CFG = _standalone() ? {} : _cfgCached() || {};
+      applyInstanceGating();
+      try{
+        if(window.PCOS && typeof PCOS.restore === 'function'){
+          PCOS.restore();
+          _localShellRestored = true;
+        }
+      }catch(_){}
+    }
     // Standalone has no /client/config to ask, and asking anyway costs a failed request and a cached
     // answer from whichever instance this install used to point at — which would then re-enable every
     // server-backed surface for a session with no server. Skip straight to {}.
@@ -3892,13 +3910,15 @@
     }
     CFG = _standalone() ? {} : _bootCfg || _cfgCached() || {};
     _cfgCache(CFG);
+    if(_localShellBoot) window.PC_NOSTR_ONLY = _bootNostrOnly;
     applyInstanceGating();
+    if(_localShellRestored){ try{ PCOS.navChanged && PCOS.navChanged(); }catch(_){} }
     // The logo becomes the way into PosterChan OS. Wired after gating, so the desktop's app list —
     // which it reads from the sidebar — reflects what this deployment actually shows.
     try{ _wireOsLogo(); }catch(_){}
     /* A WINDOW IS NOT A DESKTOP. `restore()` turns this page into the windowed shell — icons,
      * taskbar, the lot — which inside a window would be a whole second desktop drawn in it. */
-    if(!_asWindow){ try{ window.PCOS && window.PCOS.restore(); }catch(_){} }   // remembered per device
+    if(!_asWindow && !_localShellRestored){ try{ window.PCOS && window.PCOS.restore(); }catch(_){} }   // remembered per device
     // Custom branding (Admin → Site): override the logo used as the avatar fallback + brand
     // marks, and point the favicon/splash at it. Blank → keep the built-in PosterChan logo.
     if (CFG.logo_url){
