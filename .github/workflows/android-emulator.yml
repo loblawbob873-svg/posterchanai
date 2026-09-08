@@ -136,7 +136,7 @@ jobs:
           # Versioned by the complete virtual-hardware/snapshot shape. The old `avd-34` snapshot
           # was created before RAM was specified (emulator chose 2560 MB) and later restored after
           # config.ini was changed to 1536 MB. QEMU twice vanished silently after that mixed restore.
-          key: avd-gles-1536-v2-${{ github.event.inputs.api_level || '34' }}
+          key: avd-gles-swangle-1536-v3-${{ github.event.inputs.api_level || '34' }}
 
       - name: Preserve emulator child exit evidence
         run: |
@@ -155,7 +155,10 @@ jobs:
           arch: x86_64
           ram-size: 1536M
           force-avd-creation: false
-          pre-emulator-launch-script: touch /tmp/pc-emulator-console.txt
+          pre-emulator-launch-script: |
+            cmp -s "$ANDROID_HOME/emulator/emulator" scripts/android_emulator_supervisor.sh || exit 1
+            "$ANDROID_HOME/emulator/emulator" -version | grep -F '37.1.11.0 (build_id 15917651)' || exit 1
+            touch /tmp/pc-emulator-console.txt
           emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
           disable-animations: true
           script: |
@@ -168,6 +171,10 @@ jobs:
           cd mobile/android
           timeout --kill-after=5s 30s ./gradlew --stop || true
 
+      # Run34285025052 completed all112 native cases, then the separate lifecycle emulator
+      # SIGSEGV'd after screen-off (ColorBuffer62). Change only this boot's supported GLES
+      # backend to SwiftShader+ANGLE; keep the same emulator build and every device assertion.
+      # https://developer.android.com/studio/run/emulator-acceleration#accel-graphics
       - name: Run the device checks
         if: always() && steps.debug-build.outcome == 'success'
         uses: reactivecircus/android-emulator-runner@v2
@@ -182,8 +189,11 @@ jobs:
           # cold boot, independent of the emulator revision setup-android installed today.
           # Linux emulator supports direct stdout/stderr capture but requires an existing file.
           # Keep QEMU's final message even after the action's background-shell pipe is closed.
-          pre-emulator-launch-script: touch /tmp/pc-emulator-console.txt
-          emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
+          pre-emulator-launch-script: |
+            cmp -s "$ANDROID_HOME/emulator/emulator" scripts/android_emulator_supervisor.sh || exit 1
+            "$ANDROID_HOME/emulator/emulator" -version | grep -F '37.1.11.0 (build_id 15917651)' || exit 1
+            touch /tmp/pc-emulator-console.txt
+          emulator-options: -no-snapshot -wipe-data -no-window -gpu swangle -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
           disable-animations: true
           # Separate fresh boot: no test state or dead transport inherited from instrumentation.
           script: |

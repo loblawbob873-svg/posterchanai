@@ -48,7 +48,7 @@ def test_emulator_memory_is_bounded_and_build_daemon_is_gone_before_boot():
 
 
 def test_verdict_boot_never_restores_mutable_cached_snapshot_state():
-    assert "key: avd-gles-1536-v2-" in WORKFLOW
+    assert "key: avd-gles-swangle-1536-v3-" in WORKFLOW
     run = WORKFLOW.split("- name: Run the device checks", 1)[1]
     options = run.split("emulator-options:", 1)[1].splitlines()[0]
     assert "-no-snapshot " in options and "-wipe-data " in options
@@ -87,7 +87,8 @@ def test_composer_focus_precondition_comes_from_native_webview_input():
 def test_emulator_uses_supported_gles_renderer_in_every_boot():
     options=[line for line in WORKFLOW.splitlines() if 'emulator-options:' in line]
     assert len(options)==2
-    assert all('-gpu swiftshader -feature -Vulkan' in line for line in options)
+    assert '-gpu swiftshader -feature -Vulkan' in options[0]
+    assert '-gpu swangle -feature -Vulkan' in options[1]
     assert 'swiftshader_indirect' not in WORKFLOW
 
 
@@ -175,8 +176,36 @@ def test_emulator_crashpad_evidence_is_uploaded_for_host_process_failures():
 
 
 def test_emulator_console_survives_background_shell_and_action_teardown():
-    assert WORKFLOW.count('pre-emulator-launch-script: touch /tmp/pc-emulator-console.txt') == 2
+    assert WORKFLOW.count('touch /tmp/pc-emulator-console.txt') == 2
     options = [line for line in WORKFLOW.splitlines() if 'emulator-options:' in line]
     assert len(options) == 2
     assert all('-stdouterr-file /tmp/pc-emulator-console.txt' in line for line in options)
     assert '/tmp/pc-emulator-console.txt' in WORKFLOW.split('- name: Upload logcat', 1)[1]
+
+
+@pytest.mark.parametrize("version,accepted,tampered", [
+    ("Android emulator version 37.1.11.0 (build_id 15917651) (CL:N/A)", True, False),
+    ("Android emulator version 37.2.0.0 (build_id 99999999) (CL:N/A)", False, False),
+    ("", False, False),
+    ("Android emulator version 37.1.11.0 (build_id 15917651) (CL:N/A)", False, True),
+])
+def test_actual_prelaunch_guards_renderer_experiment_build(tmp_path,version,accepted,tampered):
+    """Execute both workflow prelaunch scripts; emulator drift must fail before a boot."""
+    import yaml
+    flow=yaml.safe_load(WORKFLOW)
+    boots=[s for s in flow['jobs']['emulator']['steps'] if s.get('uses','').startswith('reactivecircus/android-emulator-runner@')]
+    assert len(boots)==2
+    sdk=tmp_path/'sdk';binary=sdk/'emulator/emulator.pc-real';binary.parent.mkdir(parents=True)
+    binary.write_text('#!/bin/sh\nprintf "%s\\n" "$FIXTURE_VERSION"\n')
+    binary.chmod(0o755)
+    entry=binary.parent/'emulator'
+    entry.write_bytes(binary.read_bytes() if tampered else (ROOT/'scripts/android_emulator_supervisor.sh').read_bytes())
+    entry.chmod(0o755)
+    for i,boot in enumerate(boots):
+        console=tmp_path/f'console-{i}.txt'
+        script=boot['with']['pre-emulator-launch-script'].replace('/tmp/pc-emulator-console.txt',str(console))
+        result=subprocess.run(['bash','-c',script],cwd=ROOT,env={**os.environ,'ANDROID_HOME':str(sdk),'FIXTURE_VERSION':version},capture_output=True,text=True,timeout=5)
+        assert (result.returncode==0)==accepted,result.stdout+result.stderr
+        assert console.exists()==accepted
+        assert '-wipe-data' in boot['with']['emulator-options']
+        assert '-no-snapshot ' in boot['with']['emulator-options']
