@@ -49,9 +49,9 @@ function start(opts) {
    * port and nothing anywhere said why. Same shape as the `wl-copy` leak: short-lived children are
    * harmless, anything long-lived is not.
    *
-   * Done here rather than in the spawn options because node offers no "close the rest": `script`
-   * runs this string through `sh -c`, so the prologue is the one place that is inside the child and
-   * before the shell. 0/1/2 are the pty and are kept.
+   * Close them BEFORE exec script: cleaning up only inside its command leaves the long-lived
+   * script parent holding Chromium sockets. Bash supports multi-digit descriptor redirections;
+   * dash does not. Forward script arguments literally through "$@" and preserve 0/1/2.
    *
    * NO `2>/dev/null` ON THE LOOP, and that is not tidiness. A redirection on a compound command is
    * undone afterwards, so the shell first SAVES the old descriptor to a high number -- which the
@@ -62,13 +62,14 @@ function start(opts) {
     'for __fd in /proc/$$/fd/[0-9]*; do __n=${__fd##*/}; ' +
     'case "$__n" in \'\'|*[!0-9]*) continue;; esac; ' +
     '[ "$__n" -le 2 ] || eval "exec $__n>&-"; done; unset __fd __n';
-  const cmd = `${closeInherited}; stty cols ${cols} rows ${rows} 2>/dev/null; exec ${shell} -l`;
-  const proc = spawn('script', ['-qfc', cmd, '/dev/null'], {
+  const cmd = `stty cols ${cols} rows ${rows} 2>/dev/null; exec "$SHELL" -l`;
+  const proc = spawn('/bin/bash', ['-c', `${closeInherited}; exec "$@"`,
+    'posterchan-terminal', 'script', '-qfc', cmd, '/dev/null'], {
     cwd: o.cwd || process.env.HOME || '/',
     /* COLORTERM, because the far end of this PTY is xterm.js and xterm.js does 24-bit colour. It is
      * the flag every tool checks before it commits to a gradient, and without it a shell here
      * quantises to the 256-colour cube on a terminal that never needed to. */
-    env: Object.assign({}, process.env, { TERM: 'xterm-256color', COLORTERM: 'truecolor' }),
+    env: Object.assign({}, process.env, { TERM: 'xterm-256color', COLORTERM: 'truecolor', SHELL: shell }),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 

@@ -1,62 +1,104 @@
-"""A TERMINAL SOMEBODY LEAVES OPEN HELD A DEAD SHELL'S LISTENING SOCKET.
-
-Chromium's file descriptors are not CLOEXEC, so anything this process spawns inherits all of them.
-For `grim`, `slurp`, `wpctl` or `nmcli` that is harmless -- they exit in milliseconds. The local
-terminal is the opposite: a LOGIN SHELL that lives for days.
-
-Measured on the running desktop, long after the shell that opened it had exited:
-
-    LISTEN 127.0.0.1:9222  users:(("bash",pid=1089812,fd=59),("script",pid=1089811,fd=59))
-
-95 descriptors, 13 of them sockets, one of them a LISTENING socket -- so the replacement shell could
-not bind its own port, and nothing in any log connected the two. The fix is a prologue inside the
-child, because node offers no "close the rest" and `script` runs its command through `sh -c`, which
-is the one place that is after the fork and before the shell.
-"""
-import re
-import subprocess
+"""Exercise the real terminal process tree with an inherited listening socket."""
+import json
+import os
 from pathlib import Path
+import shutil
+import socket
+import subprocess
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = (ROOT / "desktop/localterm.js").read_text()
 
 
-def _prologue():
-    """The exact string the launcher builds, recovered from the source rather than retyped."""
-    body = SRC.split("const closeInherited =", 1)[1].split("const cmd =", 1)[0]
-    # Only the CONCATENATED string literals, and the escaped empty-pattern `\'\'` inside the case
-    # is part of the shell text, not a delimiter -- so join on the JS `+` rather than on quotes.
-    parts = re.findall(r"'((?:[^'\\]|\\.)*)'", body)
-    return "".join(p.replace("\\'", "'") for p in parts)
-
-
-def test_the_shell_is_started_behind_the_prologue():
-    assert "closeInherited" in SRC
-    cmd = SRC.split("const cmd = `", 1)[1].split("`;", 1)[0]
-    assert cmd.startswith("${closeInherited};"), cmd
-    assert "exec ${shell} -l" in cmd
-
-
-def test_it_actually_closes_an_inherited_descriptor():
-    """RUN it. A regex over the source cannot tell a working `exec N>&-` from a typo in one."""
-    pro = _prologue()
-    assert "exec" in pro and ">&-" in pro
-    open_two = "exec 9< /etc/hostname; exec 8< /etc/hosts; "
-    listing = "ls /proc/$$/fd | tr '\\n' ' '"
-    before = subprocess.check_output(["sh", "-c", open_two + listing], text=True).split()
-    after = subprocess.check_output(["sh", "-c", open_two + pro + "; " + listing], text=True).split()
-    assert "8" in before and "9" in before, before
-    assert after == ["0", "1", "2"], after
-
-
-def test_the_terminal_still_gets_its_pty_and_its_size():
-    """The prologue must not take stdin/stdout/stderr with it: those ARE the pty."""
-    pro = _prologue()
-    out = subprocess.check_output(
-        ["sh", "-c", pro + "; echo alive >&1; echo err >&2"], text=True, stderr=subprocess.STDOUT)
-    # STDERR IS THE HALF THAT BROKE. A `2>/dev/null` on the loop made the shell save fd 2 to a high
-    # descriptor the glob had already listed, so the loop closed the shell's own copy and every
-    # later diagnostic went nowhere -- on a TERMINAL, where stderr is most of the point.
-    assert "alive" in out and "err" in out, out
-    assert "stty cols" in SRC.split("const cmd = `", 1)[1].split("`;", 1)[0]
+@pytest.mark.skipif(not shutil.which('node') or not shutil.which('script'), reason='requires Node and util-linux script')
+@pytest.mark.parametrize('descriptor,literal_shell_path', [(9, False), (64, False), (64, True)])
+def test_script_and_shell_release_inherited_listener_but_keep_terminal_io(descriptor, literal_shell_path, tmp_path):
+    # Inject a real inherited FD at the spawn boundary, reproducing Chromium's
+    # non-CLOEXEC descriptors without Electron or a user's running terminal.
+    shell = Path('/bin/bash')
+    if literal_shell_path:
+        shell = tmp_path / 'terminal shell;literal'
+        shell.symlink_to('/bin/bash')
+    listener = socket.socket()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen()
+    address = listener.getsockname()
+    inherited = listener.fileno()
+    identity = os.readlink(f'/proc/self/fd/{inherited}')
+    js = r'''
+const cp = require('child_process'), fs = require('fs');
+const spawn = cp.spawn;
+let child;
+cp.spawn = (command, args, opts) => {
+  const stdio = opts.stdio.slice();
+  while(stdio.length <= SLOT) stdio.push('ignore');
+  stdio[SLOT] = FD;
+  child = spawn(command, args, {...opts, stdio});
+  return child;
+};
+const T = require(MODULE);
+const session = T.start({cols: 113, rows: 37});
+fs.closeSync(FD);
+let output = '', reported = false;
+const deadline = setTimeout(() => { T.closeAll(); process.exit(2); }, 10000);
+function links(pid) {
+  return fs.readdirSync(`/proc/${pid}/fd`).flatMap(n => {
+    try { return [fs.readlinkSync(`/proc/${pid}/fd/${n}`)]; } catch (_) { return []; }
+  });
+}
+T.subscribe(session.id, ev => {
+  if(ev.t !== 'out') return;
+  output += ev.d;
+  const pid = /SHELL_PID=(\d+)/.exec(output);
+  if(!reported && pid && output.includes('OUTPUT_OK') && output.includes('ERROR_OK') && output.includes('SIZE=37 113')) {
+    reported = true;
+    process.stdout.write(JSON.stringify({parent: child.pid, shell: +pid[1],
+      parentName: fs.readFileSync(`/proc/${child.pid}/comm`, 'utf8').trim(),
+      parentFds: links(child.pid), shellFds: links(+pid[1]), output,
+      alive: T.backlog(session.id, 0).alive}) + '\n');
+  }
+});
+// Disable echo first, so commands themselves cannot satisfy output assertions.
+setTimeout(() => T.write(session.id, 'stty -echo\n'), 150);
+setTimeout(() => T.write(session.id, 'printf "SHELL_PID=%s\\n" "$$"; printf "OUTPUT_%s\\n" OK; printf "ERROR_%s\\n" OK >&2; printf "SIZE="; stty size\n'), 300);
+process.stdin.on('data', () => {
+  T.write(session.id, 'printf "STILL_%s\\n" RUNNING\n');
+  const end = setInterval(() => {
+    if(output.includes('STILL_RUNNING')) {
+      clearInterval(end); clearTimeout(deadline);
+      process.stdout.write(JSON.stringify({continued: true}) + '\n');
+      T.closeAll(); setTimeout(() => process.exit(0), 100);
+    }
+  }, 20);
+});
+'''.replace('MODULE', json.dumps(str(ROOT / 'desktop/localterm.js'))).replace('SLOT', str(descriptor)).replace('FD', str(inherited))
+    proc = subprocess.Popen(['node', '-e', js], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, pass_fds=(inherited,),
+                            env={**os.environ, 'SHELL': str(shell)})
+    try:
+        line = proc.stdout.readline()
+        assert line, proc.stderr.read()
+        result = json.loads(line)
+        listener.close()
+        assert result['parentName'] == 'script', result
+        assert result['parent'] != result['shell'], result
+        assert identity not in result['parentFds'], result
+        assert identity not in result['shellFds'], result
+        assert result['alive'], result
+        # Both original owners released it; a still-open terminal must not hold
+        # the port hostage when the desktop tries to restart its listener.
+        with socket.socket() as replacement:
+            replacement.bind(address)
+            replacement.listen()
+        remaining, errors = proc.communicate('continue\n', timeout=12)
+        assert proc.returncode == 0, errors
+        assert json.loads(remaining)['continued'] is True
+    finally:
+        listener.close()
+        if proc.poll() is None:
+            try:
+                proc.communicate('stop\n', timeout=12)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
