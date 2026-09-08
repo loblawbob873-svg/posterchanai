@@ -433,7 +433,7 @@
   function roomParticipants(room,viewerPubkey=''){
     const fromMessages=channelsOf(room).flatMap(channel=>
       testMessages(channelStoreId(room,channel.name)).map(message=>message&&message.pubkey));
-    let owner='',transport=new Set(channelsOf(room).flatMap(channel=>channel.streamPubkeys||[]).map(pk=>String(pk).toLowerCase()));
+    let owner='',grantees=[],banned=new Set(),transport=new Set(channelsOf(room).flatMap(channel=>channel.streamPubkeys||[]).map(pk=>String(pk).toLowerCase()));
     try{
       const loadKey=room&&(room.communityId||room.naddr),bundle=room&&room.cord&&room.cord.bundle,
             reader=window.PosterCordReader,wraps=loadKey?roomControls.get(loadKey):null;
@@ -444,16 +444,16 @@
         else{
           // inspectControl validates the owner's binding to this community before trusting it.
           const view=reader.inspectControl(bundle,wraps||[]);
-          known={owner:bundle.owner||'',transport:[...(view&&view.controlPubkeys||[]),
+          known={owner:bundle.owner||'',members:(view&&view.members)||[],banned:(view&&view.banned)||[],transport:[...(view&&view.controlPubkeys||[]),
             ...((view&&view.channels)||[]).flatMap(channel=>channel.streamPubkeys||[])]};
           _partsCache.clear();_partsCache.set(loadKey,{bundle,wraps,known});
         }
-        owner=known.owner;for(const pk of known.transport)transport.add(String(pk).toLowerCase());
+        owner=known.owner;grantees=known.members;banned=new Set(known.banned);for(const pk of known.transport)transport.add(String(pk).toLowerCase());
       }
     }catch(_){ /* Visible message authors remain available while metadata is unavailable. */ }
     const valid=pk=>typeof pk==='string'&&/^[0-9a-f]{64}$/i.test(pk);
-    return [...new Set([viewerPubkey,owner,...fromMessages].filter(valid).map(pk=>pk.toLowerCase()))]
-      .filter(pk=>pk===String(owner).toLowerCase()||!transport.has(pk));
+    return [...new Set([viewerPubkey,owner,...grantees,...fromMessages].filter(valid).map(pk=>pk.toLowerCase()))]
+      .filter(pk=>!banned.has(pk)&&(pk===String(owner).toLowerCase()||!transport.has(pk)));
   }
   function mentionAliases(profile,pubkey,fallback=''){
     const aliases=new Set([profile&&profile.display_name,profile&&profile.name,fallback,pubkey]

@@ -26632,6 +26632,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       relays: community.relays,
       controlPubkeys: groups.map((g) => g.pk),
       banned: [...folded.banned],
+      members: [...new Set(folded.roster.grants.filter(g => g.roleIds.length && !folded.banned.has(g.member)).map(g => g.member))],
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
   }
