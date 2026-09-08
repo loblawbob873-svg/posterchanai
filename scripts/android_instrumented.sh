@@ -41,6 +41,15 @@ cd mobile/android || exit 1
 # emulator never booted or has already gone, and every second spent building is spent for nothing.
 device_present || skip "no emulator was attached when the instrumented tests were due to start (adb devices lists none)."
 
+# The instrumentation boot is independent of the lifecycle boot. Establish the same
+# explicit granted-runtime-permission fixture that lifecycle's install -r -g supplied before
+# these gates were split. Otherwise Dialer's real permission dialog prevents ActivityScenario
+# resume, and restoring the SMS role revokes role-only permissions and kills the test process.
+# This changes only the disposable test installation; role/provider assertions remain real.
+APK=$(find app/build/outputs/apk -path '*debug*' -name '*.apk' ! -name '*androidTest*' | head -1)
+[ -n "$APK" ] || { echo "no debug APK built for instrumentation"; exit 1; }
+timeout --kill-after=2s 120s adb install -r -g "$APK" || { echo "instrumentation install failed"; exit 1; }
+
 # `:app:` AND NOT THE ROOT TASK, and that colon is the whole difference between a job that reports
 # what a device did and one that never gets to ask.
 #
