@@ -1398,14 +1398,40 @@ liveISOinstall() {
 	if [ -z "$LIVEDIR" ]; then
 		local media dev type
 		media=/run/posterchan-live-media
-		for dev in $(blkid -o device 2>/dev/null); do
-			type="$(blkid -s TYPE -o value "$dev" 2>/dev/null)"
-			[ "$type" = iso9660 ] || [ "$type" = udf ] || continue
+		# IDENTIFIED BY WHAT IS ON IT, NOT BY ITS FILESYSTEM TYPE.
+		#
+		# The old test accepted only iso9660/udf, so that an installed disk could never be mistaken
+		# for the source medium. Correct intent, wrong discriminator, and it made the installer
+		# unusable from the medium people actually use. Measured on real hardware booted from a USB
+		# stick:
+		#   /dev/sda   whole disk, HAS the iso9660 magic (CD001 at 32769) -- and cannot be mounted
+		#              while the live system is running it: "Can't open blockdev"
+		#   /dev/sda1  not mountable        /dev/sda2  vfat, the ESP, no /boot
+		#   /dev/sda3  hfsplus -- and it holds LiveOS/, System/ and boot/, i.e. the ISO's contents,
+		#              exposed through the HFS+ partition grub-mkrescue writes for hybrid booting
+		#   /dev/sda4  not mountable
+		# So the ONE device carrying the kernel was rejected for having the wrong type, every
+		# candidate directory was absent, and somebody standing in front of a working live desktop
+		# was told "No kernel found on this live medium". From a CD it always worked, because
+		# /dev/sr0 IS iso9660 -- which is why every test passed: the medium under test was the one
+		# that cannot show the bug.
+		#
+		# A live medium is now recognised by carrying BOTH boot/ and LiveOS/ -- LiveOS/ is written
+		# by liveCD and by nothing else, so it identifies OUR image positively. That is a stronger
+		# guarantee than the type test it replaces: an installed disk has boot/ but never LiveOS/.
+		local cand
+		cand="$(lsblk -pnro NAME,TYPE 2>/dev/null | awk '$2=="disk"||$2=="part"{print $1}')"
+		[ -n "$cand" ] || cand="$(blkid -o device 2>/dev/null)"
+		for dev in $cand; do
+			[ -b "$dev" ] || continue
+			# Never touch something already mounted read-write, and never the running root.
+			findmnt -no SOURCE / | grep -qx "$dev" && continue
 			sudo mkdir -p "$media"
-			if ! mountpoint -q "$media"; then
-				sudo mount -o ro "$dev" "$media" >/dev/null 2>&1 || continue
+			mountpoint -q "$media" && sudo umount "$media" >/dev/null 2>&1
+			sudo mount -o ro "$dev" "$media" >/dev/null 2>&1 || continue
+			if [ -d "$media/boot" ] && [ -d "$media/LiveOS" ] && ls "$media"/boot/* >/dev/null 2>&1; then
+				LIVEDIR="$media"; break
 			fi
-			if [ -d "$media/boot" ]; then LIVEDIR="$media"; break; fi
 			sudo umount "$media" >/dev/null 2>&1 || true
 		done
 	fi
