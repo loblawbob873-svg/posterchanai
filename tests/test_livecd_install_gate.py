@@ -105,3 +105,43 @@ def test_the_transcript_survives_a_failure():
     """"The install did not finish" with no console output cannot be acted on."""
     assert "install-console.log" in SRC
     assert SRC.count("transcript in") >= 2
+
+
+def _run_main(tmp_path, extra, monkeypatch):
+    """Drive the gate's real main() with the install itself replaced by a recorder."""
+    seen = {}
+
+    def fake_install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
+        seen["usb"] = usb
+        return 0
+
+    monkeypatch.setattr(MOD, "install", fake_install)
+    iso = tmp_path / "fake.iso"
+    iso.write_bytes(b"not really an iso")
+    monkeypatch.setattr(sys, "argv", ["check_livecd_install_vm.py", str(iso),
+                                      "--disk", str(tmp_path / "d.qcow2"),
+                                      "--size", "64M",
+                                      "--evidence-dir", str(tmp_path / "ev")] + extra)
+    assert MOD.main() == 0
+    return seen
+
+
+def test_asking_for_a_usb_actually_boots_a_usb(tmp_path, monkeypatch):
+    """--usb REACHES the guest, and the flag is worth nothing if it does not.
+
+    `qemu_args(usb=True)` was correct and `main()` never passed `args.usb` to `install()`, so every
+    run of this gate booted the ISO as a CD-ROM — the one medium on which the installer's kernel
+    search cannot fail, and the exact reason the flag was added. A silently ignored flag makes the
+    gate report a pass about a medium it did not test.
+    """
+    assert _run_main(tmp_path, ["--usb"], monkeypatch)["usb"] is True
+    assert _run_main(tmp_path, [], monkeypatch)["usb"] is False
+
+
+def test_the_usb_guest_is_a_partitioned_stick_not_a_cdrom(tmp_path):
+    """The medium's SHAPE is the point: a stick is a partitioned disk behind a protective MBR, a
+    CD-ROM is an iso9660 /dev/sr0. They reach liveISOinstall's kernel search by different paths."""
+    stick = " ".join(MOD.qemu_args("d.qcow2", "x.iso", "s.sock", None, None, 4096, 4, True))
+    disc = " ".join(MOD.qemu_args("d.qcow2", "x.iso", "s.sock", None, None, 4096, 4, False))
+    assert "usb-storage" in stick and "media=cdrom" not in stick
+    assert "media=cdrom" in disc and "usb-storage" not in disc
