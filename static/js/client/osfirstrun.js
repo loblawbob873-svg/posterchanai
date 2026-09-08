@@ -32,7 +32,18 @@
 
     /* NETWORK. Satisfied by ANY route out, not by wifi specifically — a machine on ethernet has
      * nothing to ask, and asking anyway is the wizard being pleased with itself. */
+    /* AND SATISFIED BY SOMEBODY SAYING SO. This was the one step with no way past it, and
+     * machineUnusable() returns true while it is unfinished — so a machine NetworkManager cannot
+     * get online was held at this screen for ever, with the desktop behind it and no terminal in
+     * front of it. Reported from an ethernet-only desktop whose NIC NM did not bring up: "no wifi
+     * listed", then "i have no access to the machine". Every other step already has an answer that
+     * means 'not now' — instanceSkipped, torSkipped, signinSkipped — and the one that can lock the
+     * door was the one that did not.
+     *
+     * A skip is not a claim that the machine is online. It records that the person was ASKED and
+     * chose to go on, which is why it is a separate flag and not a fake `online`. */
     out.network = w.online === true ? 'done'
+                : w.networkSkipped === true ? 'done'
                 : w.netReadable === false ? 'blocked'      // NetworkManager could not be asked
                 : 'todo';
 

@@ -41,6 +41,9 @@
    * browses signed out is asked again on EVERY boot: `everHadAccount` stays false for ever, so the
    * welcome would nag the one person it can never help. */
   const KEY_SIGNIN_SKIP = 'pc_fr_signin_skipped';
+  /* The network step's own 'not now'. See stepState(): without it this screen is the only one that
+   * can hold a machine for ever, and it holds the machine that most needs a way past it. */
+  const KEY_NETWORK_SKIP = 'pc_fr_network_skipped';
   const get = (k) => { try{ return localStorage.getItem(k); }catch(_){ return null; } };
   const set = (k, v) => { try{ localStorage.setItem(k, v); }catch(_){} };
 
@@ -111,6 +114,7 @@
       try{ w.instance = !!(PC() && PC().apiBase && PC().apiBase()); }catch(_){ w.instance = false; }
       if(!w.instance){ try{ w.instance = !!(root.__PC_API_BASE__); }catch(_){} }
     }
+    w.networkSkipped = get(KEY_NETWORK_SKIP) === '1';
     w.instanceSkipped = get(KEY_INSTANCE_SKIP) === '1';
     const tor = get(KEY_TOR);
     w.torChosen = tor === 'on';
@@ -227,8 +231,17 @@
       'Pick your wifi. If this computer is plugged into a cable, it is already online and this step '
       + 'will pass by itself.',
       `<div class="osfr-list" id="osfr-wifi"><div class="spinner"></div></div>`,
-      `<button class="btn btn-ghost small" data-fr="rescan">Scan again</button>`);
+      `<button class="btn btn-ghost small" data-fr="rescan">Scan again</button>
+       <button class="btn btn-ghost small" data-fr="nonet">Continue without a network</button>`);
     card.querySelector('[data-fr="rescan"]').onclick = () => stepNetwork(false);
+    /* THE WAY OUT. An ethernet-only machine whose NIC NetworkManager has not brought up sees an
+     * empty wifi list and, before this, nothing else at all — the wizard covers the desktop and
+     * there is no terminal in front of it. Recording the skip rather than faking `online` keeps
+     * every later screen honest about what it can reach. */
+    card.querySelector('[data-fr="nonet"]').onclick = () => {
+      try{ set(KEY_NETWORK_SKIP, '1'); }catch(_){}
+      run();
+    };
 
     let list = null;
     try{ list = await net.wifi(true); }catch(_){ list = null; }
