@@ -98,7 +98,7 @@ const block=source.slice(start,source.indexOf("ipcMain.handle('pc:host:pickDirec
 const notes=[];let handler,guards=0,shown=0,focused=0,route;
 class Notification{static isSupported(){return true;}constructor(options){this.options=options;notes.push(this);}on(name,fn){this.click=fn;}show(){shown++;}}
 const owner={show(){},focus(){focused++;}},sender={isDestroyed:()=>false,send:(name,value)=>route=value};
-vm.runInNewContext(block,{ipcMain:{handle:(name,fn)=>handler=fn},fsGuard:e=>{guards++;if(e.denied)throw Error('denied');},electron:{Notification},BrowserWindow:{fromWebContents:()=>owner},win:owner,path:{join:()=>'/icon'},__dirname:'/app'});
+vm.runInNewContext(block,{SHELL_MODE:false,ipcMain:{handle:(name,fn)=>handler=fn},fsGuard:e=>{guards++;if(e.denied)throw Error('denied');},electron:{Notification},BrowserWindow:{fromWebContents:()=>owner},win:owner,path:{join:()=>'/icon'},__dirname:'/app'});
 for(const value of [true,false,'true',undefined]){handler({sender},{title:'hello',body:'body',silent:value,route:'mail'});assert.equal(notes.at(-1).options.silent,value===true);}
 assert.equal(guards,4);assert.equal(shown,4);notes[0].click();assert.equal(focused,1);assert.equal(route,'mail');
 assert.throws(()=>handler({denied:true,sender},{silent:true}));assert.equal(shown,4);
