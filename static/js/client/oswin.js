@@ -184,7 +184,11 @@
       ch.onmessage=(event)=>{
         const v=String(event&&event.data&&event.data.view||''),state=root.__PC_WIN_STATE__;
         if(!state||String(state.view||'')!==v)return;
-        try{if(root.__PC&&typeof root.__PC.switchView==='function')root.__PC.switchView(v);}catch(_){}
+        try{
+          if(root.__PC && ['home','global','trending'].includes(v) && typeof root.__PC.timelineTop==='function')
+            root.__PC.timelineTop(v);
+          else if(root.__PC&&typeof root.__PC.switchView==='function')root.__PC.switchView(v);
+        }catch(_){}
         try{root.focus();}catch(_){}
       };
     }

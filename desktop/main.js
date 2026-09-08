@@ -1920,11 +1920,13 @@ async function wireShellRecovery(){
       shellIds:()=>Array.from(_shellSurfaces.values()).map(record=>Number(record&&record.conId)).filter(Number.isFinite),
       windows:()=>wm().windows(),
       focus:id=>wm().focus(id),
+      lowerShell:id=>typeof wm().keepBelow==='function' ? wm().keepBelow(id,true) : false,
       /* THE SAME EXCEPTION `sinkShellSurfaces` ALREADY HONOURED. Both of them lower the desktop and
        * only one of them knew that a surface drawing System Settings must stay up -- see the block
        * on createDesktopBottomGuard. A con_id maps back to the renderer that owns it through the
        * surface record, which is the id `pc:wm:shell-front` records. */
       wantsFront:(conId)=>{
+        if(_shellFullscreenFailsafes.has(Number(conId)))return true;
         for(const record of _shellSurfaces.values()){
           if(!record || Number(record.conId) !== Number(conId)) continue;
           const wc = record.browser && !record.browser.isDestroyed() ? record.browser.webContents : null;
@@ -2327,14 +2329,15 @@ async function openPopupWindow(e, kind, rect, arg){
     const fname = await wm().focusedOutputName().catch(() => '');
     const focused = (fname && outs.find(o => o && String(o.name) === String(fname)))
                     || outs.find(o => o && o.focused);
-    if(mine && focused && mine.name !== focused.name) return false;   // the focused surface opens it
+    // A pointer click belongs to its sender even if another output still has keyboard focus.
+    // Global keyboard ticks are routed to one owner by forwardShellTick before reaching here.
     const box = (mine && mine.rect) || (focused && focused.rect);
     if(box){ originX = Math.round(box.x) || 0; originY = Math.round(box.y) || 0; }
   }catch(_){ /* one output, or no compositor — local coordinates are global */ }
 
   closePopupWindow();
   const p = new BrowserWindow({
-    show: false, frame: false, resizable: sticky, skipTaskbar: true,
+    show: false, frame: false, resizable: sticky, skipTaskbar: true, alwaysOnTop: true,
     title: POPUP_TITLE,
     width: num(r.width, 220, 1400, 420), height: num(r.height, 160, 2200, 560),
     x: Number.isFinite(Number(r.x)) ? Math.round(Number(r.x)) : undefined,
@@ -2428,8 +2431,15 @@ function snapPopupToWorkArea(want, row, kind, outputs){
     const area = [..._workAreas.values()].find(a =>
       px >= a.x && px < a.x + a.w
       && py >= a.y && py < a.y + a.h + (Number(a.reserve) || 0));
-    if(area && area.reserve > 0 && h <= area.h)
-      return Object.assign({}, want, { y: Math.max(area.y, (area.y + area.h) - h - 8) });
+    const fit = a => {
+      const width = Math.min(Math.max(1, Number(want.w) || 1), a.w);
+      const height = Math.min(h, Math.max(1, a.h - 8));
+      return Object.assign({}, want, {
+        x: Math.max(a.x, Math.min(px, a.x + a.w - width)),
+        y: Math.max(a.y, a.y + a.h - height - 8), w: width, h: height,
+      });
+    };
+    if(area && area.reserve > 0) return fit(area);
 
     /* ONE MONITOR'S TASKBAR IS THE OTHER MONITOR'S TASKBAR.
      *
@@ -2451,8 +2461,8 @@ function snapPopupToWorkArea(want, row, kind, outputs){
       && py >= o.rect.y && py < o.rect.y + o.rect.height + reserve);
     if(!out || !(Number(out.rect.height) > 0)) return want;
     const bottom = Number(out.rect.y) + Number(out.rect.height) - reserve;
-    if(h > Number(out.rect.height) - reserve) return want;
-    return Object.assign({}, want, { y: Math.max(Number(out.rect.y), bottom - h - 8) });
+    return fit({x:Number(out.rect.x), y:Number(out.rect.y), w:Number(out.rect.width),
+                h:bottom-Number(out.rect.y)});
   }catch(_){ return want; }
 }
 async function placePopupWindow(win, want){
@@ -2468,9 +2478,26 @@ async function placePopupWindow(win, want){
       if(row){
         /* sway.config maps this title transparent. Reveal only in the SAME transaction as its final
          * geometry, otherwise Wayland's unavoidable initial centre placement visibly flashes. */
-        const put = snapPopupToWorkArea(want, row, _popupKind, _popupOutputs);
+        // Electron sizes are DIP; Wayfire reports the mapped surface in compositor pixels.
+        // Anchor the visible frame, then convert the requested size back for the client.
+        let sx=1, sy=1;
+        try{
+          const bounds=win.getBounds();
+          if(bounds.width>0 && row.rect.width>0) sx=row.rect.width/bounds.width;
+          if(bounds.height>0 && row.rect.height>0) sy=row.rect.height/bounds.height;
+        }catch(_){ }
+        const visualWant=Object.assign({},want,{w:want.w*sx,h:want.h*sy});
+        const put = snapPopupToWorkArea(visualWant, row, _popupKind, _popupOutputs);
+        // Fixed-size menus reject compositor resize requests. Update their client constraints
+        // before placement when a small display requires a smaller menu.
+        try{ if(typeof win.setSize==='function') win.setSize(Math.max(1,Math.floor(put.w/sx)),Math.max(1,Math.floor(put.h/sy))); }catch(_){ }
         await wm().placeAndReveal(Number(row.id), Math.round(put.x), Math.round(put.y),
                                   Math.round(put.w), Math.round(put.h));
+        if(win.isDestroyed() || _popupWin !== win) return;
+        // Positioning is not activation: Social or another toplevel can still cover the menu.
+        try{ if(typeof wm().focus==='function') await wm().focus(Number(row.id)); }catch(_){ }
+        if(win.isDestroyed() || _popupWin !== win) return;
+        try{ if(typeof win.focus==='function') win.focus(); }catch(_){ }
         try{ win.webContents.send('pc:host:popup-placed'); }catch(_){ }
         return;
       }
@@ -2479,7 +2506,7 @@ async function placePopupWindow(win, want){
   }
   /* Do not leave the renderer permanently shielded on a non-Sway compositor. It may honour the
    * BrowserWindow x/y directly; even when it does not, a delayed centred menu is still usable. */
-  try{ if(!win.isDestroyed())win.webContents.send('pc:host:popup-placed'); }catch(_){ }
+  try{ if(!win.isDestroyed() && _popupWin===win){ if(typeof win.focus==='function')win.focus(); win.webContents.send('pc:host:popup-placed'); } }catch(_){ }
 }
 ipcMain.handle('pc:popup:close', (e) => { fsGuard(e); closePopupWindow(); return true; });
 /* What the popup chose, handed to the SHELL. The popup is its own renderer and cannot call the
@@ -2551,7 +2578,7 @@ function publishWorkAreaFile(area){
   const file = path.join(dir, 'posterchan-workarea.json');
   const body = JSON.stringify({ x: Number(area.x) || 0, y: Number(area.y) || 0,
                                 w: Number(area.w), h: Number(area.h),
-                                reserve: Number(area.reserve) || 0, at: Date.now() });
+                                reserve: Number(area.reserve) || 0, areas: Array.from(_workAreas.values()), at: Date.now() });
   /* Written through a temp file and renamed: the reader is a short script that may run at any
    * moment, and a half-written JSON file is a reader that falls back for no reason. */
   try{

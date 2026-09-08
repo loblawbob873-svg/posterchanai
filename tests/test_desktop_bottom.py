@@ -28,3 +28,7 @@ def test_main_tells_the_guard_when_the_desktop_has_a_window_of_its_own():
         "the predicate does not read the set pc:wm:shell-front writes, so it can never say yes")
     assert "conId" in wiring, (
         "a compositor view id must be mapped back to the renderer that owns it")
+    assert "lowerShell:" in wiring and "wm().keepBelow(id,true)" in wiring, (
+        "working send-to-back must preserve taskbar input focus")
+    assert "_shellFullscreenFailsafes.has(Number(conId))" in wiring, (
+        "Alt+Tab must retain its existing shell foreground exception")

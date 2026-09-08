@@ -26,10 +26,8 @@ def test_every_shell_lookup_accepts_electron_44_wayland_app_id_case():
     # so a window drawn INSIDE it could never come forward ("running Global then clicking on System
     # Settings ... System settings never gets focus").
     #
-    # THE COUNT IS A PROXY AND THE PROPERTY IS BELOW. It has now been bumped five times by
-    # legitimate new call sites; what actually matters is that no site spells the lookup any other
-    # way, which the next assertion checks directly.
-    assert OS.count("/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i") == 8
+    # Sharing a shell lookup changes the number of call sites, not the accepted app IDs.
+    assert "/^(?:posterchan(?:-desktop)?|place\\.poster\\.desktop)$/i" in OS
     # And no site spells it any other way: a lookup that misses `place.poster.desktop` adopts the
     # shell as a recursive black native window, which is the failure this guard exists for.
     assert "posterchan(?:-desktop)?" not in OS.replace(

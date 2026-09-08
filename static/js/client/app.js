@@ -8054,7 +8054,9 @@
    * distance from the viewport while reconciling; new cards inserted above it then cannot turn the
    * same scrollTop into a completely different post after resume/reconnect. */
   function _tlAnchor(feed){
-    if(!feed) return null;
+    // At the composer/top, keep the viewport there when a new post is inserted.
+    // Anchoring the first card below the composer instead scrolls down by the new card height.
+    if(!feed || feed.scrollTop <= 2) return null;
     const edge=feed.getBoundingClientRect().top;
     for(const el of [..._tlNotes(feed).children]){
       if(!(el.dataset && el.dataset.key)) continue;

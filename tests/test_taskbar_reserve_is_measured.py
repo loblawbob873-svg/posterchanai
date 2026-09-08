@@ -164,3 +164,14 @@ def test_the_snap_helper_can_find_its_own_socket():
                               text=True, capture_output=True, timeout=30)
         assert "no Wayfire IPC socket" not in (done.stderr + done.stdout), (
             "the socket in XDG_RUNTIME_DIR was not discovered")
+
+
+def test_keyboard_snap_uses_its_own_output_reserve(tmp_path, monkeypatch):
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(tmp_path))
+    areas=[{'x':0,'y':0,'w':1920,'h':1040,'reserve':40},
+           {'x':1920,'y':0,'w':2560,'h':1344,'reserve':96}]
+    # The last publisher was the left screen: the right screen still owns a 96px taskbar.
+    (tmp_path/'posterchan-workarea.json').write_text(json.dumps(dict(areas[0],areas=areas)))
+    fn=_reserve_fn()
+    assert fn({'x':1920,'y':0,'width':2560,'height':1440})==96
+    assert fn({'x':0,'y':0,'width':1920,'height':1080})==40

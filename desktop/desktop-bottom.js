@@ -1,10 +1,7 @@
 'use strict';
 
-/* A desktop surface is a background, not an ordinary top-level window. Wayfire 0.10 has no
- * lower-view IPC method, so clicking Electron's full-output shell can otherwise obscure every
- * normal window. Restore only the most recently focused normal view on that output/workspace.
- * This deliberately does not make applications always-on-top and therefore preserves their z
- * order and normal click-to-raise behaviour. */
+/* Keep the desktop below applications without taking keyboard focus away from its controls.
+ * Older compositors without working send-to-back support need the sibling-focus fallback. */
 function pickDesktopSibling(rows, shellIds, shell){
   const ids=new Set(Array.from(shellIds||[], Number));
   const workspace=String((shell&&shell.workspace)??'');
@@ -35,7 +32,7 @@ function pickDesktopSibling(rows, shellIds, shell){
  * `wantsFront` is that exception. It is deliberately a callback rather than a flag: the set it
  * reads is written by IPC from whichever renderer owns the surface, and it changes between the
  * event and the deferred call that acts on it. */
-function createDesktopBottomGuard({backend, shellIds, windows, focus, defer, wantsFront}={}){
+function createDesktopBottomGuard({backend, shellIds, windows, focus, defer, wantsFront, lowerShell}={}){
   let queued=false;
   const later=defer||((fn)=>setTimeout(fn,0));
   const asked=(id)=>{ try{ return typeof wantsFront==='function' && wantsFront(Number(id))===true; }
@@ -52,6 +49,17 @@ function createDesktopBottomGuard({backend, shellIds, windows, focus, defer, wan
          * publishes the wish from the same click that produced this focus. Asked only at the top,
          * a desktop window opened one tick before the IPC landed was still shoved behind. */
         if(asked(shell.id))return;
+        /* Refocusing a sibling between pointerdown and pointerup blurs the shell and can replace
+         * its pressed button before click. Prefer the compositor's focus-preserving operation;
+         * fall back only when it is unavailable or explicitly fails. */
+        if(typeof lowerShell==='function'){
+          try{
+            const lowered=await lowerShell(Number(shell.id));
+            if(lowered===true || (lowered && typeof lowered==='object'
+              && !lowered.error && lowered.success!==false && lowered.result!=='error'))return;
+          }catch(_){}
+          if(asked(shell.id))return;
+        }
         const ids=new Set(Array.from(shellIds(),Number));
         const sibling=pickDesktopSibling(await windows(),ids,shell);
         if(asked(shell.id))return;

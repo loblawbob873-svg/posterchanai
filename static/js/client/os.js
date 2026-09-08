@@ -2061,7 +2061,13 @@
       try{ target=PC().socialTimeline()||view; }catch(_){}
     }
     const app=target!==view ? apps().find(a=>a.view===view) : null;
-    return openApp(target,app&&app.label,app&&app.icon);
+    const existing=wins.find(w=>sameAppWindow(w.view,target));
+    const opened=openApp(target,app&&app.label,app&&app.icon);
+    // Fresh Home/global windows reset inside openApp; returning launcher clicks reset once here.
+    // Alt+Tab uses focusWin and keeps its reading position. Trending can be the only visible tab.
+    if(opened && (opened===existing || target==='trending') &&
+       ['home','global','trending'].includes(target) && PC().timelineTop) PC().timelineTop(target);
+    return opened;
   }
 
   /* ✨ is a WINDOW-MANAGER capability, not another chatbot button.  Context is collected only after
@@ -3564,6 +3570,7 @@
    * Each shell renderer answers for its OWN output: it measures its own desk, and the plan ignores
    * any window whose centre is on another screen. */
   let _barSeen = new Map();
+  let _barSettleT = 0;
   async function _guardTaskbar(list, shellId){
     if(!NAT() || !NAT().taskbarPlan || !window.pcWM || !pcWM.place) return;
     /* WHICH SURFACE THIS RENDERER IS, ANSWERED BY MAIN OR NOT AT ALL — no "the first PosterChan
@@ -3583,7 +3590,9 @@
                                     cssH, scale);
     /* "I could not measure it" is not "there is no taskbar": forget what was settled rather than
      * acting on a stale reading, and try again on the next event. */
-    if(!area || !(area.reserve > 0)){ _barSeen = new Map(); return; }
+    if(!area || !(area.reserve > 0)){
+      _barSeen = new Map(); clearTimeout(_barSettleT); _barSettleT = 0; return;
+    }
     /* The compositor half needs it too — a snap or maximise asked for from the taskbar or from
      * Super+Up is arithmetic that lives in main, and it had a hardcoded reserve in it. */
     try{ if(pcWM.workArea) await pcWM.workArea(area); }catch(_){}
@@ -3591,10 +3600,23 @@
      * measured against `desk`, so it is above the bar by construction. Two authorities for one
      * rectangle is the argument this file has already lost twice. */
     const hosted = new Set(nativeWins().map(w => Number(w.native)));
-    const foreign = list.filter(r => r && !hosted.has(Number(r.id))
-      && !/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(r.app || '')));
+    // Native Social/Terminal windows share the desktop's app-id, but their decorated
+    // frames must stay above the bar too. Only the shell and its popup surfaces are exempt.
+    const foreign = list.filter(r => r && Number(r.id) !== shellId && !hosted.has(Number(r.id))
+      && (!/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(r.app || ''))
+          || /^PosterChan Window(?:\s|$)/.test(String(r.title || ''))));
     const plan = NAT().taskbarPlan(foreign, area, _barSeen);
     _barSeen = plan.seen;
+    // A newly mapped window may produce no further compositor events. Give the planner
+    // its second, fresh sample without requiring a click on the covered taskbar.
+    const placing = new Set(plan.place.map(it => it.id));
+    const settling = NAT().taskbarPlan(foreign, area, plan.seen).place
+      .some(it => !placing.has(it.id));
+    clearTimeout(_barSettleT); _barSettleT = 0;
+    if(settling) _barSettleT = setTimeout(() => {
+      _barSettleT = 0;
+      if(on && !_deskIdle) return Promise.resolve(adoptAll()).catch(()=>{});
+    }, 120);
     for(const it of plan.place){
       try{ await pcWM.place(it.id, it.rect.x, it.rect.y, it.rect.w, it.rect.h); }catch(_){}
     }
@@ -3979,14 +4001,21 @@
    * it was written: `[con_id=<shell>] fullscreen enable` and sway answered `foot visible False,
    * firefox-bin visible False` with the desktop on screen.
    *
-   * It waits for the previews because `pc:wm:preview` REFUSES an invisible window and grim can only
-   * photograph pixels that are on the screen — raise first and every native card is a blank tile.
-   * Capped, because a chooser that appears only once grim has finished is a chooser that stutters.
+   * Show the chooser without waiting for screenshots. View capture can fill cards asynchronously;
+   * an unavailable preview must never hold up the keyboard gesture.
    *
    * And it is undone by a timer as well as by every exit path. A shell left fullscreen hides every
    * window on the workspace with nothing on screen to explain it — the worst failure in this file
    * is the one that needs a person to know a keyboard shortcut to escape. */
   let _altFsId=0,_altFsTimer=0,_altFsGen=0,_altFsBusy=false;
+  function _altShell(s){
+    if(s.shellPromise)return s.shellPromise;
+    // Reconciliation already knows this output's shell. Share the fallback lookup per gesture.
+    const cached=typeof _natShell!=='undefined' ? _natShell : null;
+    s.shellPromise=cached ? Promise.resolve(cached) : Promise.resolve(pcWM.windows()).then(list=>
+      (list||[]).find(x=>/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||''))));
+    return s.shellPromise;
+  }
   function _altRaiseShell(on){
     if(!window.pcWM||!pcWM.fullscreen)return;
     if(!on){
@@ -4001,13 +4030,9 @@
     const gen=++_altFsGen,s=_altSwitch;
     clearTimeout(_altFsTimer);
     _altFsTimer=setTimeout(()=>_altRaiseShell(false),8000);
-    Promise.race([Promise.allSettled((s&&s.previewJobs)||[]),new Promise(r=>setTimeout(r,500))])
-      .then(()=>Promise.resolve(pcWM.windows()))
-      .then(list=>{
+    _altShell(s).then(shell=>{
         _altFsBusy=false;
-        if(gen!==_altFsGen||_altSwitch!==s)return;      // the gesture ended while grim was working
-        const shell=(list||[]).find(x=>
-          /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
+        if(gen!==_altFsGen||_altSwitch!==s)return;
         if(!shell||shell.fullscreen)return;             // already fullscreen for its own reasons
         _altFsId=Number(shell.id);
         return Promise.resolve(pcWM.fullscreen(_altFsId,true)).then(()=>{
@@ -4032,6 +4057,17 @@
     return true;
   }
   function _drawAltSwitch(s){
+    // Selection changes reuse connected cards: keep previews and pending captures intact.
+    const keys=s.rows.map(e=>e.key).join('|');
+    if(s.el && s.cardKeys===keys){
+      Array.from(s.el.children).forEach((b,i)=>{
+        b.className='os-alt-card'+(i===s.index?' selected':'');
+        b.setAttribute('aria-selected',i===s.index?'true':'false');
+        if(i===s.index&&b.scrollIntoView)try{b.scrollIntoView({block:'nearest',inline:'nearest'});}catch(_){}
+      });
+      return;
+    }
+    s.cardKeys=keys;
     if(!s.el){s.el=document.createElement('div');s.el.className='os-alt-switch';
       s.el.setAttribute('role','listbox');s.el.setAttribute('aria-label','Open windows');
       document.body.appendChild(s.el);}
@@ -4050,6 +4086,7 @@
           if(clone.childElementCount||String(clone.textContent||'').trim())p.appendChild(clone);}
       }
       if(!p.children.length&&!p.style.backgroundImage)p.classList.add('empty');
+      b.appendChild(p);s.el.appendChild(b);
       if(e.native!=null&&pcWM.preview){
         /* A native screenshot used to exist only when overlap reconciliation had stashed the app.
          * Ordinary live Firefox/Telegram therefore showed an empty generic card in Alt+Tab even
@@ -4060,8 +4097,7 @@
           p.style.backgroundImage=`url("${String(data).replace(/["\\]/g,'')}")`;p.classList.remove('empty');};
         if(s.nativePreviews.has(key))apply(s.nativePreviews.get(key));
         else{
-          /* grim captures SCREEN PIXELS, so a window has to still be on screen to be photographed —
-           * which is why the raise below waits for these. */
+          // Capture asynchronously; selection changes retain this connected preview element.
           const job=Promise.resolve(pcWM.preview(key))
             .then(data=>{s.nativePreviews.set(key,data||'');apply(data);}).catch(()=>{});
           (s.previewJobs=s.previewJobs||[]).push(job);
@@ -4072,7 +4108,7 @@
        * taskbar button's does — a generic grid tile beside "Firefox" is not a picture of Firefox. */
       label.innerHTML=(w?iconSvg(w.icon||'i-grid'):appIcon(e.row))+
         '<span>'+enc(e.title||'Window')+'</span>';
-      b.appendChild(p);b.appendChild(label);s.el.appendChild(b);
+      b.appendChild(label);
       if(i===s.index&&b.scrollIntoView)try{b.scrollIntoView({block:'nearest',inline:'nearest'});}catch(_){}
     });
   }
@@ -4123,8 +4159,9 @@
          staged; native targets are focused only on commit, otherwise their opaque surface would
          cover the chooser and turn Alt+Tab back into an invisible shortcut. */
       const switchFocusToken=_claimFocus();
-      try{Promise.resolve(pcWM.windows()).then(list=>{const shell=(list||[]).find(x=>
-        /^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i.test(String(x.app||'')));
+      const gesture=_altSwitch;
+      try{_altShell(gesture).then(shell=>{
+        if(_altSwitch!==gesture)return;
         if(shell)return _focusCompositorCurrent(shell.id,switchFocusToken);}).catch(()=>{});}catch(_){}
       /* Focus alone leaves the chooser underneath every floating application — see _altRaiseShell. */
       try{_altRaiseShell(true);}catch(_){}
@@ -7472,9 +7509,38 @@
     catch(_){ _shellFrontSent = null; }
   }
 
+  // A focus/tray update must not detach the button between pointerdown and click.
+  let _barPointerHeld=false, _barDrawPending=false, _barReleaseTimer=0;
+  const _barPointers=new Set();
+  function _deferBarDraw(){
+    if(!_barPointerHeld) return false;
+    _barDrawPending=true;
+    return true;
+  }
+  function _releaseBarPointer(e){
+    if(e.type==='blur') _barPointers.clear();
+    else if(!_barPointers.delete(e.pointerId)) return;
+    if(_barPointers.size) return;
+    clearTimeout(_barReleaseTimer);
+    // click follows pointerup in the same interaction; retain its target until then.
+    _barReleaseTimer=setTimeout(()=>{
+      _barPointerHeld=false;
+      if(_barDrawPending){ _barDrawPending=false; drawBar(); }
+    },0);
+  }
+  document.addEventListener('pointerdown',e=>{
+    if(e.button!==0 || !bar) return;
+    if(!bar.contains(e.target) && !(root && root.contains(e.target)
+      && e.target.closest && e.target.closest('.os-tray'))) return;
+    clearTimeout(_barReleaseTimer); _barPointers.add(e.pointerId); _barPointerHeld=true;
+  },true);
+  document.addEventListener('pointerup',_releaseBarPointer,true);
+  document.addEventListener('pointercancel',_releaseBarPointer,true);
+  window.addEventListener('blur',_releaseBarPointer);
+
   function drawBar(){
     _publishShellFront();
-    if(!bar) return;
+    if(!bar || _deferBarDraw()) return;
     /* A preceding macOS draw leaves its tray beside the Dock. The markup below creates the one new
      * tray for this frame, so discard the old detached instance first instead of accumulating
      * clocks and relay watchers across focus changes. */
@@ -9249,8 +9315,9 @@
            * only the tray node it owns, preserving Start, the search caret and every task button. */
           Promise.resolve(adoptAll()).then(changed => {
             if(changed){ drawBar(); return; }
+            if(_deferBarDraw()) return;
             try{
-              const shell = $('#os-shell', bar);
+              const shell = $('#os-shell', root);
               if(shell && PCOSShell.available()) PCOSShell.paintTray(shell);
             }catch(_){}
           }).catch(()=>{});

@@ -309,3 +309,27 @@ def test_the_measurement_reaches_the_compositor_process():
     assert re.search(r"workArea:\s*\(area\)\s*=>\s*ipcRenderer\.invoke\('pc:wm:workarea'", preload)
     assert "ipcMain.handle('pc:wm:workarea'" in main
     assert "setWorkArea" in main, "the handler must reach the backend"
+
+
+@needs_node
+@pytest.mark.parametrize('width,height,scale,x,y', [
+    (1024,768,1,0,0),(1366,768,1,0,0),(1920,1080,1.25,-1920,0),
+    (2560,1440,1.5,1920,0),(3840,2160,2,0,-2160),(3840,2560,1.25,3840,0),
+    (3440,1440,1,0,0),(1080,1920,1.25,2560,-300),
+])
+def test_decorated_snap_fits_work_area_at_each_resolution(width,height,scale,x,y):
+    result=raw_node('''
+const {WayfireWM}=require(%s);
+const [width,height,scale,x,y]=%s, reserve=Math.round(48*scale);
+const wm=new WayfireWM('/nonexistent');
+wm.windows=async()=>[{id:1,above:10,below:32,rect:{x:x+100,y:y+100,width:300,height:300}}];
+wm.outputs=async()=>[{id:1,rect:{x,y,width,height},work:{x,y,w:width,h:height-reserve}}];
+const placed=[];wm.place=async(id,x,y,w,h)=>{placed.push({x,y,w,h});return true;};
+(async()=>{for(const zone of ['left','right','max','top-left','top-right','bottom-left','bottom-right'])await wm.snap(1,zone);console.log(JSON.stringify(placed));})();
+''' % (json.dumps(os.path.join(ROOT,'desktop','wm-wayfire.js')),json.dumps([width,height,scale,x,y])))
+    for rect in result:
+        assert x <= rect['x'] < x+width
+        assert rect['x']+rect['w'] <= x+width
+        assert rect['y']-10 >= y
+        assert rect['y']+rect['h']+32 <= y+height-round(48*scale)
+        assert rect['w'] > 0 and rect['h'] > 0

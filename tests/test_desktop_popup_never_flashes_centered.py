@@ -117,3 +117,60 @@ def test_focus_is_asked_for_not_inferred_from_a_flag_wayfire_never_sets():
     outs = wayfire[wayfire.index("async outputs()"):]
     outs = outs[:outs.index("\n  ")] if "\n  " in outs else outs
     assert "_randr" not in outs, "outputs() now spawns wlr-randr on the drag path"
+
+
+def test_start_is_activated_above_social_after_placement_and_stale_popups_do_not_take_focus():
+    import subprocess
+    src=MAIN[MAIN.index('async function placePopupWindow('):MAIN.index("ipcMain.handle('pc:popup:close'")]
+    script="""
+const assert=require('node:assert/strict');
+let active='Social',_popupWin,_popupKind='start';const POPUP_TITLE='PosterChan Popup';
+const order=[];let replaced=false;
+const popup={isDestroyed:()=>false,focus:()=>{active='Start';order.push('electron-focus')},
+ webContents:{send:()=>order.push('reveal')}};
+const wm=()=>({windows:async()=>[{id:88,title:POPUP_TITLE}],outputs:async()=>[],
+ placeAndReveal:async()=>{order.push('place');if(replaced)_popupWin={};},
+ focus:async()=>{active='Start';order.push('compositor-focus')}});
+const snapPopupToWorkArea=want=>want;
+"""+src+"""
+(async()=>{
+ _popupWin=popup;await placePopupWindow(popup,{x:0,y:0,w:400,h:500});
+ assert.equal(active,'Start');assert.deepEqual(order,['place','compositor-focus','electron-focus','reveal']);
+ active='Social';order.length=0;replaced=true;_popupWin=popup;
+ await placePopupWindow(popup,{x:0,y:0,w:400,h:500});
+ assert.equal(active,'Social');assert.deepEqual(order,['place']);
+})().catch(e=>{console.error(e);process.exitCode=1});
+"""
+    run=subprocess.run(['node','-e',script],capture_output=True,text=True,timeout=15)
+    assert run.returncode==0,run.stderr
+
+
+def test_scaled_popups_fit_above_taskbar_on_small_large_and_portrait_outputs():
+    import subprocess
+    source=MAIN[MAIN.index('const _BAR_FLYOUTS = new Set('):MAIN.index("ipcMain.handle('pc:popup:close'")]
+    script='''
+const assert=require('node:assert/strict');
+const _workAreas=new Map(),POPUP_TITLE='PosterChan Popup';
+let _popupWin,_popupKind='noti',row,outputs,placed,clientSize;
+const wm=()=>({windows:async()=>[row],outputs:async()=>outputs,
+ placeAndReveal:async(id,x,y,w,h)=>{placed={x,y,w,h}},focus:async()=>{}});
+'''+source+'''
+(async()=>{
+ for(const [width,height,x,y] of [[1024,768,0,0],[1366,768,-1366,0],[1920,1080,0,0],[3840,2560,3840,0],[1080,1920,0,-1920]]){
+  for(const scale of [1,1.25,1.5,2])for(const kind of ['start','noti','tray','net']){
+   const reserve=Math.round(48*scale),bounds={width:430,height:1200};
+   _workAreas.clear();_workAreas.set('output',{x,y,w:width,h:height-reserve,reserve});
+   outputs=[{rect:{x,y,width,height}}];
+   row={id:88,title:POPUP_TITLE,rect:{x,y,width:bounds.width*scale,height:bounds.height*scale}};
+   _popupWin={isDestroyed:()=>false,getBounds:()=>bounds,setSize:(w,h)=>{clientSize={w,h}},focus:()=>{},webContents:{send:()=>{}}};
+   _popupKind=kind;
+   await placePopupWindow(_popupWin,{x:x+width-100,y:y+10,w:bounds.width,h:bounds.height});
+   assert(Math.abs(clientSize.w*scale-placed.w)<=1 && Math.abs(clientSize.h*scale-placed.h)<=1);
+   assert(placed.x>=x && placed.x+placed.w<=x+width+1,JSON.stringify(placed));
+   assert(placed.y>=y && placed.y+placed.h<=y+height-reserve+1,JSON.stringify(placed));
+  }
+ }
+})().catch(e=>{console.error(e);process.exitCode=1});
+'''
+    result=subprocess.run(['node','-e',script],capture_output=True,text=True,timeout=20)
+    assert result.returncode==0,result.stderr

@@ -35,7 +35,7 @@ CSS = ROOT / "static" / "css" / "client.css"
 # Enough of a document for os.js to evaluate: it touches the DOM only inside functions, but it does
 # bind one keydown listener at load, and reads the zoom through getComputedStyle.
 BOOT = """
-global.window = {};
+global.window = { addEventListener(){} };
 global.document = { addEventListener(){}, querySelector(){ return null; },
                     querySelectorAll(){ return []; } };
 global.getComputedStyle = () => ({ zoom: '1' });

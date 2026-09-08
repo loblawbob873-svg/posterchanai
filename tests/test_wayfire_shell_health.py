@@ -7,6 +7,7 @@ import threading
 import time
 import zlib
 import re
+import pytest
 from pathlib import Path
 
 
@@ -570,3 +571,102 @@ def test_a_second_screen_being_off_does_not_hide_a_broken_first_one(tmp_path):
         assert "no shell marker" in done.stderr
     finally:
         stub.close()
+
+
+def test_startup_ignores_app_windows_but_requires_every_shell(monkeypatch):
+    import runpy
+    module = runpy.run_path(str(HEALTH))
+    layout = module['shell_layout']
+    outputs = [{'id': 1}, {'id': 2}]
+    shells = [{'pid': 42, 'app-id': 'place.poster.desktop', 'output-id': n,
+               'title': 'PosterChan · Nostr'} for n in (1, 2)]
+    views = shells + [dict(shells[0], title='PosterChan Window — global'),
+                      dict(shells[1], title='PosterChan Window — terminal'),
+                      dict(shells[1], title='PosterChan Popup')]
+    monkeypatch.setitem(layout.__globals__, 'request',
+                        lambda method: outputs if method.endswith('list-outputs') else views)
+    assert layout(42) == (outputs, shells)
+    views.remove(shells[1])
+    assert layout(42) is None
+
+
+def test_corner_decode_keeps_png_filter_dependencies_and_bounds_work(tmp_path):
+    import runpy
+    module = runpy.run_path(str(HEALTH))
+    width, height, channels = 128, 160, 4
+    raw_rows, filtered = [], bytearray()
+    prior = bytes(width * channels)
+    for y in range(height):
+        row = bytes((x * 13 + y * 7) % 256 for x in range(width * channels))
+        raw_rows.append(row)
+        mode = y % 5
+        filtered.append(mode)
+        for x, value in enumerate(row):
+            left = row[x-channels] if x >= channels else 0
+            up = prior[x]
+            corner = prior[x-channels] if x >= channels else 0
+            p = left + up - corner
+            a, b, c = abs(p-left), abs(p-up), abs(p-corner)
+            paeth = left if a <= b and a <= c else up if b <= c else corner
+            predictor = (0, left, up, (left+up)//2, paeth)[mode]
+            filtered.append((value-predictor) % 256)
+        prior = row
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind+data))
+    path = tmp_path/'filtered.png'
+    path.write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width,height,8,6,0,0,0))
+                     + chunk(b'IDAT', zlib.compress(filtered)) + chunk(b'IEND', b''))
+    decoded = module['png_rgb'](str(path), max_rows=96)
+    assert decoded[:3] == (width, height, channels)
+    assert decoded[3] == raw_rows[:96]
+    assert module['png_rgb'](str(path))[3] == raw_rows
+
+
+@pytest.mark.parametrize('width,height,scale,channels', [
+    (800, 600, 1, 3), (1366, 768, 1.25, 4), (2560, 1440, 1.5, 4),
+    (3840, 2560, 2, 3), (2560, 3840, 3, 4),
+])
+def test_startup_marker_survives_display_resolution_and_fractional_scale(
+        tmp_path, width, height, scale, channels):
+    """Decode real PNGs, including portrait/4K, without scanning their whole framebuffer."""
+    import runpy
+    module = runpy.run_path(str(HEALTH))
+    # Model the renderer's four 4-CSS-pixel squares with a scaled one-pixel inset.
+    inset, square = round(scale), round(4 * scale)
+    black = bytes(width * channels)
+    stream = bytearray()
+    for y in range(height):
+        row = bytearray(black)
+        if inset <= y < inset + square * 2:
+            for x in range(inset, inset + square * 2):
+                colour = SECONDARY_MARKER[((y-inset)//square)*2 + (x-inset)//square]
+                row[x*channels:(x+1)*channels] = bytes(colour + ((255,) if channels == 4 else ()))
+        stream.extend(b'\0' + row)
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind+data))
+    packed = zlib.compress(stream)
+    path = tmp_path / 'scaled.png'
+    path.write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack(
+        '>IIBBBBB', width, height, 8, 2 if channels == 3 else 6, 0, 0, 0)) +
+        chunk(b'IDAT', packed[:len(packed)//2]) + chunk(b'IDAT', packed[len(packed)//2:]) + chunk(b'IEND', b''))
+    assert module['has_marker'](str(path), SECONDARY_MARKER)
+    assert not module['has_marker'](str(path), MARKER)
+    assert len(module['png_rgb'](str(path), max_rows=96)[3]) == 96
+
+
+def test_startup_app_exclusion_does_not_accept_another_process_or_duplicate_shell(monkeypatch):
+    import runpy
+    layout = runpy.run_path(str(HEALTH))['shell_layout']
+    outputs = [{'id': 1}, {'id': 2}]
+    primary = {'pid': 42, 'app-id': 'place.poster.desktop', 'output-id': 1,
+               'title': 'PosterChan · Nostr'}
+    secondary = dict(primary, **{'output-id': 2})
+    views = [primary, secondary, dict(primary, title='PosterChan Window — Social')]
+    monkeypatch.setitem(layout.__globals__, 'request',
+                        lambda method: outputs if method.endswith('list-outputs') else views)
+    assert layout(42)
+    secondary['pid'] = 43
+    assert layout(42) is None
+    secondary['pid'] = 42
+    views.append(dict(primary))
+    assert layout(42) is None

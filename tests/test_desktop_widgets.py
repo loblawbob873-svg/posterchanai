@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OS_JS = ROOT / "static" / "js" / "client" / "os.js"
 
 BOOT = """
-global.window = {};
+global.window = { addEventListener(){} };
 global.document = { addEventListener(){}, querySelector(){ return null; },
                     querySelectorAll(){ return []; } };
 global.getComputedStyle = () => ({ zoom: '1' });

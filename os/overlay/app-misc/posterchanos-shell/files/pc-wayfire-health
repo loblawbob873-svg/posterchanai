@@ -78,7 +78,8 @@ def shell_layout(pid):
     shells = [row for row in views
               if row.get("mapped", True)
               and str(row.get("app-id") or row.get("app_id") or row.get("app") or "") in APP_IDS
-              and "Popup" not in str(row.get("title") or "")]
+              and "Popup" not in str(row.get("title") or "")
+              and not str(row.get("title") or "").startswith("PosterChan Window")]
     if not output_ids or len(shells) != len(output_ids):
         return None
     if any(int(row.get("pid") or 0) != pid for row in shells):
@@ -90,7 +91,7 @@ def shell_layout(pid):
     return outputs, shells
 
 
-def png_rgb(path):
+def png_rgb(path, max_rows=None):
     """Decode the non-interlaced 8-bit RGB/RGBA PNG emitted by grim, without optional Pillow."""
     raw = open(path, "rb").read()
     if raw[:8] != b"\x89PNG\r\n\x1a\n":
@@ -107,9 +108,13 @@ def png_rgb(path):
         elif kind == b"IDAT": packed.extend(data)
         elif kind == b"IEND": break
     channels = 3 if colour == 2 else 4
-    scan = zlib.decompress(bytes(packed)); stride = width * channels
+    stride = width * channels
+    decode_height = height if max_rows is None else min(height, max(0, int(max_rows)))
+    # Only the corner is inspected at startup. Decoding two entire 4K outputs in Python
+    # can consume the health timeout before the next rendered frame is sampled.
+    scan = zlib.decompressobj().decompress(bytes(packed), (stride + 1) * decode_height) if decode_height else b""
     rows, offset, prior = [], 0, bytearray(stride)
-    for _ in range(height):
+    for _ in range(decode_height):
         mode, offset = scan[offset], offset + 1
         current = bytearray(scan[offset:offset + stride]); offset += stride
         for x in range(stride):
@@ -128,7 +133,7 @@ def png_rgb(path):
 
 
 def has_marker(path, colours=PRIMARY_MARKER):
-    width, height, channels, rows = png_rgb(path)
+    width, height, channels, rows = png_rgb(path, max_rows=96)
     if width < 8 or height < 8:
         return False
     # The marker is at the shell's output-local top-left. Search a bounded corner because fractional

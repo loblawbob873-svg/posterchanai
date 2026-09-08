@@ -167,16 +167,17 @@ console.log(JSON.stringify(snapPopupToWorkArea2({x:0, y:7, w:300, h:400}, row, '
 """)
         self.assertEqual(json.loads(r.stdout.strip().splitlines()[-1])["y"], 7)
 
-    def test_a_flyout_taller_than_the_area_is_left_alone(self):
+    def test_a_flyout_taller_than_the_area_is_clamped(self):
         got = self._r("out(snapPopupToWorkArea2({x:0, y:0, w:400, h:9000}, row, 'start'));")
         self.assertEqual(got["y"], 0)
+        self.assertEqual(got["h"], 2492)
 
 
 class TestThePlacementCallUsesIt(unittest.TestCase):
     def test_place_popup_snaps_before_it_commits(self):
         body = MAIN[MAIN.index("async function placePopupWindow"):]
         body = body[: body.index("ipcMain.handle('pc:popup:close'")]
-        self.assertIn("snapPopupToWorkArea(want, row, _popupKind, _popupOutputs)", body)
+        self.assertIn("snapPopupToWorkArea(visualWant, row, _popupKind, _popupOutputs)", body)
         self.assertIn("placeAndReveal(Number(row.id), Math.round(put.x)", body,
                       "the snapped rectangle is computed and then not used")
 

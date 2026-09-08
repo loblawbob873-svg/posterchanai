@@ -24,6 +24,7 @@ const wmObj={
   subscribe:async()=>true,
   on:(name,fn)=>{(handlers[name]=handlers[name]||[]).push(fn);},
   workspaces:async()=>[{name:'ws-left',focused:true}],
+  focusedOutputName:async()=>'DP-1',
   outputs:async()=>[{name:'DP-1',focused:true},{name:'DP-2',focused:false}],
   windows:async()=>[],
 };

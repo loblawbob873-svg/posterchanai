@@ -33,6 +33,8 @@ deferred.shift()().then(()=>{
   assert.deepEqual(focused,[13,11]);
   return frontWish();
 }).then(()=>{
+  return focusPreservingLower();
+}).then(()=>{
   console.log('desktop-bottom behavioral simulation: ok');
 }).catch(e=>{console.error(e);process.exit(1);});
 
@@ -89,4 +91,31 @@ async function frontWish(){
   g3({change:'view-focused',wayfireView:rows[1]});
   await bq.shift()();
   assert.equal(boom.length,1,'a throwing predicate must not disable the guard');
+}
+
+async function focusPreservingLower(){
+  for(const result of [true,{result:'ok'},{},false,undefined,{success:false},{error:'unsupported'},new Error('IPC closed')]){
+    const q=[],lowered=[],focused=[];let queried=0;
+    const succeeded=result===true || (result && !(result instanceof Error)
+      && typeof result==='object' && !result.error && result.success!==false);
+    const g=createDesktopBottomGuard({backend:'wayfire',shellIds:()=>[5,7],
+      windows:async()=>{queried++;return rows;},focus:async id=>focused.push(id),defer:fn=>q.push(fn),
+      lowerShell:async id=>{lowered.push(id);if(result instanceof Error)throw result;return result;}});
+    g({change:'view-focused',wayfireView:rows[1]});
+    g({change:'view-focused',wayfireView:rows[1]});
+    assert.equal(q.length,1,'focus storms are coalesced while lowering');
+    await q.shift()();
+    assert.deepEqual(lowered,[7]);
+    if(succeeded){
+      assert.deepEqual(focused,[],'taskbar press must not bounce focus back to Social');
+      assert.equal(queried,0,'working lower does not need sibling discovery');
+    }else assert.deepEqual(focused,[11],'unsupported or failed lower retains old-compositor fallback');
+  }
+  // The renderer can ask for a Settings window or Alt+Tab while lowering is pending.
+  let wants=false;const q=[],focused=[];
+  const g=createDesktopBottomGuard({backend:'wayfire',shellIds:()=>[5,7],
+    windows:async()=>rows,focus:async id=>focused.push(id),defer:fn=>q.push(fn),
+    wantsFront:()=>wants,lowerShell:async()=>{wants=true;throw Error('unsupported');}});
+  g({change:'view-focused',wayfireView:rows[1]});await q.shift()();
+  assert.deepEqual(focused,[],'failed lower must recheck a new front wish before fallback');
 }

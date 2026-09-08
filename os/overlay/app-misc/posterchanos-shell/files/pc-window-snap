@@ -102,6 +102,12 @@ def taskbar_reserve(box):
         if run:
             with open(os.path.join(run, "posterchan-workarea.json"), "r") as fh:
                 area = json.load(fh)
+            # Each output can use a different UI scale and taskbar height.
+            if isinstance(area.get("areas"), list):
+                area = next((a for a in area["areas"] if
+                    int(a.get("x", 0)) == int(box.get("x", 0)) and
+                    int(a.get("y", 0)) == int(box.get("y", 0)) and
+                    int(a.get("w", 0)) == int(box.get("width", 0))), {})
             reserve = int(area.get("reserve") or 0)
             height = int(box.get("height", 0) or 0)
             # It must be a band at the bottom of THIS output, not a stray number from another.
@@ -181,7 +187,7 @@ def wayfire_main(side):
     if not out:
         return
     box = out.get("workarea") or out.get("geometry") or {}
-    width, height = int(box.get("width", 1)), max(1, int(box.get("height", 1)) - taskbar_reserve(box))
+    width, height = int(box.get("width", 1)), max(1, int(box.get("height", 1)) - taskbar_reserve(out.get("geometry") or box))
     current = win.get("geometry") or {}
     if side == "edge":
         x, y = int(current.get("x", 0)), int(current.get("y", 0))
@@ -205,8 +211,14 @@ def wayfire_main(side):
         w, h = width // 2, height
         if side == "right": x = width - w
     else: return
+    # Wayfire configures content bounds; decorations must also fit above the taskbar.
+    base = win.get("base-geometry") or win.get("base_geometry") or current
+    above = int(current.get("y", 0)) - int(base.get("y", 0))
+    below = int(base.get("y", 0)) + int(base.get("height", 0)) - int(current.get("y", 0)) - int(current.get("height", 0))
+    if not (0 <= above <= 256 and 0 <= below <= 256):
+        above, below = 0, max(0, min(256, int(base.get("height", 0)) - int(current.get("height", 0))))
     wayfire("window-rules/configure-view", {"id": view_id, "output_id": int(out["id"]),
-        "geometry": {"x": x, "y": y, "width": w, "height": h}})
+        "geometry": {"x": x, "y": y + above, "width": w, "height": max(1, h - above - below)}})
 
 
 # WHICH WINDOW IS THIS: asked once, here, and never inline.

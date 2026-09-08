@@ -420,3 +420,26 @@ def test_focusing_a_posterchan_window_parks_compositor_windows_above_it():
         "every window stashing everything it shares pixels with"
     )
     assert "pcWM.hide(it.native)" in src, "nothing carries the plan out"
+
+
+def test_right_snap_keeps_server_decorations_above_taskbar():
+    source=SNAP.read_text()
+    start=source.index('def wayfire_main(')
+    end=source.index('\n\n# WHICH WINDOW',start)
+    calls=[]
+    win={'id':11,'mapped':True,'activated':True,'output-id':2,
+         'geometry':{'x':100,'y':47,'width':800,'height':600},
+         'base-geometry':{'x':97,'y':24,'width':806,'height':652}}
+    def wf(method,data=None):
+        if method=='window-rules/list-views':return [win]
+        if method=='window-rules/list-outputs':return [{'id':2,'geometry':{'x':1920,'y':0,'width':2560,'height':1440}}]
+        calls.append((method,data))
+    ns={'wayfire':wf,'is_posterchan_shell':lambda w:False,'is_popped_out_window':lambda w:False,
+        'taskbar_reserve':lambda box:96}
+    exec(source[start:end],ns)
+    ns['wayfire_main']('right')
+    method,data=calls[-1];r=data['geometry']
+    assert method=='window-rules/configure-view'
+    assert data['output_id']==2 and r['x']==1280
+    assert r['y']==23
+    assert r['y']+r['height']+29==1440-96

@@ -51,6 +51,7 @@ const WRITES = [];
 // rather than refusing to.
 global.location = { search: %(search)s };
 global.window = { innerWidth: %(width)d,
+                  addEventListener(){},
                   location: global.location,
                   ClientSettings: { get:(k,d)=> (k==='osMode' ? %(osmode)s : d),
                                     set:(k,v)=>{ WRITES.push([k,v]); } } };
