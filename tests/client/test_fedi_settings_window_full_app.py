@@ -59,3 +59,36 @@ def test_crosspost_save_keeps_settings_window(relays_enabled, change_relay_toggl
 
     extra = "localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),relaysEnabled:" + json.dumps(relays_enabled) + ",relays:" + json.dumps(['wss://fixture.invalid'] if relays_enabled else []) + "}));"
     asyncio.run(desktop.with_browser('online', '', check, extra))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')
+@pytest.mark.parametrize('reload_from_save', [False, True])
+def test_native_settings_reload_keeps_app_role_after_route_query_removed(reload_from_save):
+    async def check(b):
+        await desktop.login(b)
+        await b.until("!!document.querySelector('#us-fedi-crosspost')")
+        assert await b.js('PCOSWin.isWindow()')
+        await b.js("document.querySelector('.us-tab[data-tab=social]').click();document.querySelector('#us-fedi-crosspost').click();document.querySelector('#us-save').click()")
+        await b.until("(document.querySelector('#us-save-status')?.innerText||'').includes('Saved')")
+        assert not await b.js("document.querySelector('#us-save-status').innerText.includes('reloading')")
+        assert await b.js("JSON.parse(localStorage.getItem('pc_nostr_settings')).blossomEnabled") is False
+        # Exercise a real document reload after client routing consumed its initial pcwin query.
+        await b.js("history.replaceState(null,'',location.pathname);window.__beforeReload=__documentIdentity")
+        before=await b.js('__documentIdentity')
+        if reload_from_save:
+            await b.js("document.querySelector('#set-relays-on').click();document.querySelector('#us-save').click()")
+            await b.until("(document.querySelector('#us-save-status')?.innerText||'').includes('reloading')")
+            await asyncio.sleep(.9)
+        else:
+            await b.call('Page.reload',{})
+        await b.until("!!window.__PC&&!!window.PCOSWin&&!!__PC.me()&&!!document.querySelector('#us-fedi-crosspost')")
+        assert await b.js('__documentIdentity')!=before
+        assert await b.js("PCOSWin.isWindow() && PCOSWin.viewOf()==='settings'")
+        assert await b.js("document.documentElement.classList.contains('pc-oswin')")
+        assert not await b.js("!!document.querySelector('#os-desktop, #os-taskbar')")
+    extra="""
+window.pcShell.windowContext={role:'app',view:'settings'};
+window.pcShell.backgroundOwner=false;
+localStorage.setItem('pc_nostr_settings',JSON.stringify({...JSON.parse(localStorage.getItem('pc_nostr_settings')||'{}'),relaysEnabled:false,relays:[],blossomEnabled:false,mediaServer:'https://old-disabled-media.invalid'}));
+"""
+    asyncio.run(desktop.with_browser('online','?pcwin=settings',check,extra))

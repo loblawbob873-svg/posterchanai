@@ -185,11 +185,23 @@ const isOurPage = isTrustedPreloadPage(location.href, preloadDir);
  * OPENER'S process — so a window popped out of the primary surface inherits `backgroundOwner: true`
  * and becomes a second folder-sync writer over the same tree with the same device identity. That is
  * the failure the marker exists to prevent, arriving through the one door it does not cover. The
- * document says what it is: `?pcwin=` is on the URL when this preload runs, before the client
- * rewrites its own address. */
-const _isWindowDoc = (() => {
-  try { return new URLSearchParams(location.search).has('pcwin'); } catch (_) { return false; }
+ * main process retains the managed window identity across reloads. The initial `?pcwin=` URL
+ * covers creation before the child is registered. */
+const windowContext = (() => {
+  if (!isOurPage) return null;
+  try {
+    const context = ipcRenderer.sendSync('pc:window:context');
+    if (context && context.role === 'app' && typeof context.view === 'string' && context.view)
+      return { role: 'app', view: context.view };
+  } catch (_) {}
+  // The initial child preload may run before did-create-window registers its BrowserWindow.
+  try {
+    const view = new URLSearchParams(location.search).get('pcwin');
+    if (view) return { role: 'app', view };
+  } catch (_) {}
+  return null;
 })();
+const _isWindowDoc = !!windowContext;
 const backgroundOwner = !_isWindowDoc && !process.argv.includes('--pc-secondary-surface');
 
 // Clipboard WRITE, exposed more widely than the controls below — it cannot repoint the app or enumerate
@@ -222,6 +234,7 @@ if (isOurPage) {
 
   contextBridge.exposeInMainWorld('pcShell', {
     instanceSync,
+    windowContext,
     /* Was an instance CHOSEN, or is `instanceSync` the built-in default? Only the first-run wizard
      * cares: every other reader wants a URL that works. */
     instanceChosen: instanceChosenSync,

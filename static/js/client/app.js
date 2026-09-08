@@ -33031,7 +33031,7 @@
     // just apply it (no-op if already set) then reflect the current choice into the settings inputs.
     await restoreMediaServer();
     const srv=ClientSettings.get('mediaServer','');
-    if(srv){
+    if(srv && ClientSettings.get('blossomEnabled')){
       // A server was restored from Nostr AFTER the pane rendered — reflect it into the 3-way choice:
       // nostr.build → the 'nostrbuild' radio, anything else → 'custom' with the URL filled.
       const isNb=/(?:^|\/\/)(?:www\.)?nostr\.build\/?$/i.test(srv);
@@ -33834,7 +33834,7 @@
         const { enabled, url } = _mediaChoice();
         // Ignore a half-filled 'My own server' (blank URL) so the global Save doesn't wipe the current choice.
         if(!(enabled && !url)){
-          if(enabled!==!!ClientSettings.get('blossomEnabled') || url!==ClientSettings.get('mediaServer','')) needReload=true;
+          if(enabled!==!!ClientSettings.get('blossomEnabled') || (enabled && url!==ClientSettings.get('mediaServer',''))) needReload=true;
           ClientSettings.set('blossomEnabled', enabled); ClientSettings.set('mediaServer', url);
           if(enabled){ const proto=/(?:^|\/\/)(?:www\.)?nostr\.build\/?$/i.test(url) ? 'nip96' : await detectProto(url);
             ClientSettings.set('mediaProto', proto);

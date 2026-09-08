@@ -41,19 +41,26 @@
    * the same window. Measured on the real desktop: `location.search` empty, `isWindow()` false,
    * `VIEW` 'global'.
    *
-   * The URL is the only way IN — a child is opened with it — but the answer is latched the first
-   * time it is asked, before anything can navigate. */
+   * The initial URL is latched before routing. On document reload the preload recovers the
+   * native window identity from the main process, because neither the URL nor this latch survives. */
+  function nativeView(){
+    try {
+      const context = root.pcShell && root.pcShell.windowContext;
+      return context && context.role === 'app' ? String(context.view || '') : '';
+    } catch (_) { return ''; }
+  }
+
   function isWindow(){
     try{ if(root.__PC_WIN_STATE__) return true; }catch(_){ }
     try{
-      if(new URLSearchParams(root.location.search).has(PARAM)){ _latch(); return true; }
+      if(nativeView() || new URLSearchParams(root.location.search).has(PARAM)){ _latch(); return true; }
     }catch(_){ }
     return false;
   }
 
   function viewOf(){
     try{ if(root.__PC_WIN_STATE__) return String(root.__PC_WIN_STATE__.view || ''); }catch(_){ }
-    try{ return String(new URLSearchParams(root.location.search).get(PARAM) || ''); }
+    try{ return nativeView() || String(new URLSearchParams(root.location.search).get(PARAM) || ''); }
     catch(_){ return ''; }
   }
 
@@ -62,7 +69,7 @@
   function _latch(){
     try{
       if(root.__PC_WIN_STATE__) return;
-      const v = String(new URLSearchParams(root.location.search).get(PARAM) || '');
+      const v = nativeView() || String(new URLSearchParams(root.location.search).get(PARAM) || '');
       root.__PC_WIN_STATE__ = { view: v, shared: false, label: '' };
     }catch(_){ }
   }

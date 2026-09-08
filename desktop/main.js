@@ -1546,6 +1546,20 @@ ipcMain.handle('pc:tor:restart', async (e) => {
  */
 const fsGuard = (e) => { if (!fromOurPage(e)) throw new Error('denied'); };
 
+// Renderer routing removes ?pcwin=. Ownership belongs to the BrowserWindow and survives reload.
+ipcMain.on('pc:window:context', (e) => {
+  e.returnValue = null;
+  try {
+    fsGuard(e);
+    for (const [view, child] of pcAppWindows) {
+      if (child && typeof child.isDestroyed === 'function' && !child.isDestroyed() && child.webContents === e.sender) {
+        e.returnValue = { role: 'app', view };
+        return;
+      }
+    }
+  } catch (_) { /* Untrusted frames receive no managed-window identity. */ }
+});
+
 /* ── THE COMPOSITOR AND THE NETWORK ────────────────────────────────────────────────────────────
  *
  * PosterChanOS runs PosterChan as the SHELL of a Wayland compositor: sway owns the screen, a
