@@ -94,7 +94,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       # Tor, bundled. The app advertises native Tor, so this must be a HARD failure: an installer that
       # ships the switch without the binary is a promise the app cannot keep, and the user has no way to
@@ -226,6 +226,9 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
         run: |
           set -euo pipefail
+          # Electron 44 downloads its binary lazily; npm ci installs only the package.
+          timeout --kill-after=5s 120s node desktop/node_modules/electron/install.js
+          test -x desktop/node_modules/electron/dist/electron
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv
           python3 -m venv "$RUNNER_TEMP/native-ipc-venv"
