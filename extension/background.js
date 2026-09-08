@@ -207,9 +207,12 @@ function openConn(url){
   conns.set(url, c);
   closeConn(c);                 // detach before replacing, or the close we cause schedules a retry
   c.ready = false; c.authed = false; c.authing = null; c.authId = null;
-  try{ c.ws = new WebSocket(url); }
+  let socket;
+  try{ socket = c.ws = new WebSocket(url); }
   catch(_){ return retry(url); }
+  const current = () => conns.get(url) === c && c.ws === socket;
   c.ws.onopen = () => {
+    if(!current()) return;
     c.backoff = 1000;
     // The primary socket is whichever opened first: publishing needs ONE that is definitely up.
     if(!ws || ws.readyState !== 1) ws = c.ws;
@@ -218,15 +221,20 @@ function openConn(url){
     refreshStatus();
   };
   c.ws.onmessage = (e) => {
+    if(!current()) return;
     let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
     if(m[0] === 'AUTH' && m[1] && !c.authing && !c.authId){
       // NIP-78 private data now requires same-owner NIP-42 AUTH. Sign through whichever full
       // pairing mode owns this vault (local key or NIP-46), then replay the owner-bound REQ.
-      c.authing=finalize({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
+      const signing=finalize({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
         tags:[['relay',url],['challenge',String(m[1])]]}).then(a=>{
+          if(!current() || socket.readyState !== 1) return;
           c.authId=a.id;
-          c.ws.send(JSON.stringify(['AUTH',a]));
-        }).catch(()=>{c.authed=false;}).finally(()=>{c.authing=null;});
+          socket.send(JSON.stringify(['AUTH',a]));
+        }).catch(()=>{if(current()) c.authed=false;}).finally(()=>{
+          if(current() && c.authing === signing) c.authing=null;
+        });
+      c.authing=signing;
     }
     else if(m[0] === 'EVENT' && m[2]) absorb(m[2]);
     else if(m[0] === 'OK'){
@@ -249,8 +257,8 @@ function openConn(url){
         BM.engine.union().catch(()=>{});
       } }
   };
-  c.ws.onclose = () => { c.ready = false; if(ws === c.ws) ws = _anyOpen(); refreshStatus(); retry(url); };
-  c.ws.onerror = () => { try{ c.ws.close(); }catch(_){ } };
+  c.ws.onclose = () => { if(!current()) return; c.ready = false; if(ws === c.ws) ws = _anyOpen(); refreshStatus(); retry(url); };
+  c.ws.onerror = () => { if(!current()) return; try{ socket.close(); }catch(_){ } };
 }
 
 function _anyOpen(){
