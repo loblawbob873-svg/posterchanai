@@ -89,20 +89,18 @@ def test_a_browser_is_completely_unaffected(case, expect, now):
 
 
 def test_this_reproduction_can_fail():
-    """MUTATION, against the real pre-fix file rather than a hand-edit — and it must fail ONLY on
-    the two OS rows, or the fix changed something it had no business changing."""
-    head = subprocess.run(["git", "show", "HEAD:static/js/client/os.js"],
-                          cwd=ROOT, capture_output=True, text=True, timeout=60)
-    assert head.returncode == 0, head.stderr[-400:]
+    """Removing the late boot decision must fail only the two previously broken OS rows.
+    Mutate current source so committing the fix never turns this negative control into a skip."""
+    source = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+    decision = "PCOSShell.detect().then(yes => { if(yes) enter(); }).catch(()=>{});"
+    assert source.count(decision) == 1, "locate the late boot decision before mutating it"
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         old = Path(td) / "os.js"
-        old.write_text(head.stdout, encoding="utf-8")
+        old.write_text(source.replace(decision, "void 0;"), encoding="utf-8")
         before = run(old)
     after = run()
     differ = {k for k in after if before.get(k) != after[k]}
-    if not differ:
-        pytest.skip("HEAD already carries the fix — the mutation has nothing to compare against")
     assert differ == {"OS · detect PENDING, NARROW", "OS · pending, narrow, nopref"}, (
         f"the fix changed rows it should not have: {sorted(differ)}")
     for row in ("browser · wide, pref on", "browser · wide, no pref", "browser · narrow, pref on"):

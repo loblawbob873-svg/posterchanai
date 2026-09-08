@@ -17,7 +17,7 @@
  * stub does the same, because a stub where it never flips models a different bug.
  */
 const fs=require('fs'), path=require('path'), vm=require('vm');
-const ROOT='/home/verita84/posterchanai';
+const ROOT=path.resolve(__dirname,'../..');
 const src=fs.readFileSync(process.env.PC_OS_JS||path.join(ROOT,'static/js/client/os.js'),'utf8');
 
 async function boot({ availableNow, isShell, osModeRemembered, windowWidth }){

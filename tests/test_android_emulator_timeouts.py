@@ -155,3 +155,20 @@ def test_lifecycle_unbounded_adb_commands_and_exit_diagnostics_are_guarded():
     assert 'pc-device-host-before-teardown.txt' in DEVICE
     assert 'timeout --kill-after=2s 15m adb logcat -v threadtime' in DEVICE
     assert 'capture_logcat full || true' in DEVICE
+
+
+@pytest.mark.parametrize('device', [0, 1, 2, 124])
+@pytest.mark.parametrize('instrumented', [0, 1, 2, 124])
+def test_workflow_only_passes_when_both_device_checks_really_ran(device, instrumented):
+    line = next(line.strip() for line in WORKFLOW.splitlines()
+                if line.strip().startswith('timeout --kill-after=30s 15m bash'))
+    verdict = line[line.index('case "$a:$b"'):]
+    result = subprocess.run(['bash', '-c', f'a={device}; b={instrumented}; ' + verdict],
+                            capture_output=True, text=True, timeout=2)
+    assert (result.returncode == 0) == (device == instrumented == 0)
+    if device == 0 and instrumented == 2:
+        assert '::error title=Device checks DID NOT RUN' in result.stdout
+
+
+def test_emulator_crashpad_evidence_is_uploaded_for_host_process_failures():
+    assert '/tmp/android-runner/emu-crash*' in WORKFLOW.split('- name: Upload logcat', 1)[1]

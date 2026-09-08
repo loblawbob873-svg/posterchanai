@@ -26,18 +26,54 @@ DRIVE = r"""(async()=>{
   const frame=[...document.querySelectorAll('.osw:not(.osw-native)')].find(w=>
     /System Settings/i.test((w.querySelector('.osw-title')||{}).textContent||''));
   if(!frame)throw new Error('System Settings did not open in its own window');
-  const expected=['displays','appearance','sound','network','bluetooth','power','users','updates','about','liveusb'];
-  const switched=[];
+  const waitFor=async(test,label)=>{
+    const end=Date.now()+20000;
+    while(Date.now()<end){if(test())return;await new Promise(r=>setTimeout(r,50));}
+    throw new Error('Timed out waiting for '+label);
+  };
+  await waitFor(()=>frame.querySelector('[data-page="datetime"]'),'settings navigation');
+  const required=['displays','appearance','sound','network','bluetooth','power','datetime','users','updates','about','liveusb'];
+  if(window.pcPrinters)required.push('printers');
+  const expected=[...frame.querySelectorAll('[data-page]')].map(b=>b.dataset.page);
+  for(const page of required)if(!expected.includes(page))throw new Error('Missing category '+page);
+  const checkIcon=node=>{
+    const use=node&&node.querySelector('svg use');
+    const href=use&&(use.getAttribute('href')||use.getAttribute('xlink:href'));
+    const symbol=href&&href.startsWith('#')&&document.getElementById(href.slice(1));
+    if(!symbol||!symbol.children.length)throw new Error('Missing icon for '+(node&&node.textContent));
+    const rect=use.closest('svg').getBoundingClientRect();
+    if(rect.width<=0||rect.height<=0)throw new Error('Invisible category icon');
+  };
+  const switched=[];let dateTime=null;
   for(const page of expected){
     const button=frame.querySelector('[data-page="'+page+'"]');
-    if(!button)continue;
-    button.click(); await new Promise(r=>setTimeout(r,35));
+    if(!button)throw new Error('Category disappeared: '+page);
+    checkIcon(button);
+    button.click();
+    await waitFor(()=>{
+      const pane=frame.querySelector('[data-settings-page="'+page+'"]');
+      return pane&&!pane.hidden;
+    },page+' page');
     const pane=frame.querySelector('[data-settings-page="'+page+'"]');
-    if(pane&&!pane.hidden)switched.push(page);
+    const visible=[...frame.querySelectorAll('[data-settings-page]')].filter(p=>!p.hidden);
+    if(visible.length!==1||visible[0]!==pane)throw new Error('Categories overlap: '+page);
+    checkIcon(pane.querySelector('.os-set-pagehead'));
+    if(page==='datetime'){
+      const clock=pane.querySelector('[data-clock-current]'),zone=pane.querySelector('[data-clock-zone]');
+      const auto=pane.querySelector('[data-clock-auto]'),manual=pane.querySelector('[data-clock-time]');
+      dateTime={clock:clock&&clock.textContent.trim(),zone:zone&&zone.value,
+        zones:zone&&zone.options.length,automatic:!!(auto&&auto.checked),
+        manualDisabled:!!(manual&&manual.disabled)};
+      if(!dateTime.clock||!dateTime.zone||!dateTime.zones||!auto||!manual)
+        throw new Error('Date & Time did not load: '+pane.textContent);
+      if(dateTime.manualDisabled!==dateTime.automatic)throw new Error('Manual clock edit state is inconsistent');
+      // Inspect only: never toggle NTP or submit a clock/time-zone change on the real machine.
+    }
+    switched.push(page);
   }
   const mobile=[...frame.querySelectorAll('[data-settings-mobile] option')].map(o=>o.value);
   const widgetControls=frame.querySelectorAll('[data-widgets],[data-widget-add],[data-widget-remove]').length;
-  const first={expected,switched,mobile,widgetControls,
+  const first={expected,switched,mobile,widgetControls,dateTime,
     settings:!!frame.querySelector('.os-settings'),
     displayPage:!!frame.querySelector('[data-settings-page="displays"]'),
     aboutPage:!!frame.querySelector('[data-settings-page="about"]'),
@@ -77,6 +113,7 @@ async def main():
             assert result.get("switched") == expected, result
             assert all("page:" + page in result.get("mobile", []) for page in expected), result
             assert result.get("widgetControls") == 0, result
+            assert result.get("dateTime", {}).get("clock"), result
             assert all(result.get(k) for k in ("displayPage", "aboutPage", "liveUsbPage")), result
         finally:
             await cdp.eval(CLEANUP)
