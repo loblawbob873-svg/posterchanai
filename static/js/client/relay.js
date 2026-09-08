@@ -90,6 +90,8 @@
         // start — open the app, the first queries fire before the sockets finish connecting, and every
         // one of them returns empty at its 6s timeout.
         for (const [id, s] of this.pool._subs){
+          // NIP-42 authorization belongs to one connection, not the relay URL's lifetime.
+          if(s.authTried)s.authTried.delete(this.url);
           if (s.live || !s.sent.has(this.url)){ this._send(['REQ', id, ...s.filters]); s.sent.add(this.url); }
         }
         this.pool._connReady(this);
@@ -186,14 +188,19 @@
       // connection remains unauthenticated" and must take the same contained path. Evaluating the
       // callback as Promise.resolve(callback()) let a guest callback throw before .catch existed,
       // producing an unhandled rejection in every logged-out view that queried private app data.
-      conn._authPromise=Promise.resolve().then(()=>this._authSigner({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
-        tags:[['relay',conn.url],['challenge',String(conn.challenge)]]})).then(ev=>new Promise(resolve=>{
-          if(!ev||!ev.id)return resolve(false);
+      // A remote signer may answer after this socket has been replaced. Its old challenge
+      // must never be sent on the replacement or retire that connection's newer attempt.
+      const socket=conn.ws, challenge=conn.challenge;
+      const current=()=>conn.ws===socket && socket && socket.readyState===1 && conn.challenge===challenge;
+      const attempt=Promise.resolve().then(()=>this._authSigner({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
+        tags:[['relay',conn.url],['challenge',String(challenge)]]})).then(ev=>new Promise(resolve=>{
+          if(!current()||!ev||!ev.id||(wantPubkey&&ev.pubkey!==wantPubkey))return resolve(false);
           const tm=setTimeout(()=>{this._okWaiters.delete(ev.id);resolve(false);},8000);
-          this._okWaiters.set(ev.id,{auth:true,settle:r=>{clearTimeout(tm);if(r&&r.ok&&ev.pubkey)conn.authPubkeys.add(ev.pubkey);resolve(!!(r&&r.ok));}});
+          this._okWaiters.set(ev.id,{auth:true,conn,socket,settle:r=>{clearTimeout(tm);const ok=current()&&r&&r.ok;if(ok&&ev.pubkey)conn.authPubkeys.add(ev.pubkey);resolve(!!ok);}});
           conn._send(['AUTH',ev]);
-        })).catch(()=>false).finally(()=>{conn._authPromise=null;});
-      return conn._authPromise;
+        })).catch(()=>false).finally(()=>{if(conn._authPromise===attempt)conn._authPromise=null;});
+      conn._authPromise=attempt;
+      return attempt;
     },
 
     /* Ephemeral external reads belong to the screen that requested them. A route change closes all
@@ -309,6 +316,7 @@
       // A stalled delivery may replace its exact socket once. Keep the original signed event
       // and deadline; reopening must not require another signer request or a second post id.
       if(conn && this._conns.get(conn.url)===conn)for(const w of this._okWaiters.values()){
+        if(w.authTried)w.authTried.delete(conn.url);
         if(w.recoverUrls && w.recoverUrls.delete(conn.url))conn._send(['EVENT',w.event]);
       }
       if (!this._ready){ this._ready = true; if (this.onReady) try { this.onReady(); } catch(e){ console.warn(e); } }
@@ -407,8 +415,9 @@
           };
           if(!possible||sub.authTried.has(conn.url)){finishDenied();return;}
           sub.authTried.add(conn.url);
+          const socket=conn.ws;
           this._authenticate(conn,owners[0]).then(ok=>{
-            if(!this._subs.has(m[1]))return;
+            if(conn.ws!==socket||this._subs.get(m[1])!==sub)return;
             if(ok&&conn._send(['REQ',m[1],...sub.filters]))sub.sent.add(conn.url);
             else finishDenied();
           });
@@ -422,6 +431,7 @@
         }
       } else if (typ === 'OK'){
         const w = this._okWaiters.get(m[1]);
+        if(w&&w.auth&&(w.conn!==conn||w.socket!==conn.ws))return;
         if (w && m[2]){ this._okWaiters.delete(m[1]); w.settle({ ok: true, msg: m[3]||'' }); }   // first accept wins
         /* A REFUSAL IS AN ANSWER, and it was being thrown away.
          *
@@ -448,7 +458,9 @@
             // A signed NIP-78 event must be replayed after same-owner connection AUTH. Do not count
             // the pre-auth refusal as final; it is the relay's challenge flow, not a failed write.
             w.authTried.add(conn.url);
+            const socket=conn.ws;
             this._authenticate(conn,w.event&&w.event.pubkey).then(ok=>{
+              if(conn.ws!==socket||this._okWaiters.get(w.event.id)!==w)return;
               if(ok)conn._send(['EVENT',w.event]);
               else {w.no=(w.no||0)+1;w.why='auth rejected';if(w.sent&&w.no>=w.sent){this._okWaiters.delete(w.event.id);w.settle({ok:false,msg:w.why});}}
             });
