@@ -105,6 +105,47 @@ const timerCount=timers.length;
 externalEvents[0]({id:'late-old-room',kind:1059});
 if(timers.length!==timerCount)throw new Error('a stale room callback scheduled a flush after close');
 
+/* Slow decryption can overlap the next live batch. Completing the old batch must not
+   replace messages already delivered by the newer batch. */
+api.startChatLive(p, ROOM, CH);
+const deferred=[];
+window.PosterCordReader.inspectChat=(bundle,ctrl,id,wraps)=>new Promise(resolve=>{
+  deferred.push(()=>resolve({messages:wraps.map(w=>({id:'overlap-'+w.id,pubkey:'c'.repeat(64),
+    text:'overlap '+w.id,at:3000,kind:9,tags:[]})),reactions:[],reactionUrls:[]}));
+});
+externalEvent({id:'slow',kind:1059});
+timers.at(-1)();
+for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
+externalEvent({id:'fast',kind:1059});
+timers.at(-1)();
+for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
+if(deferred.length!==2)throw new Error('fixture did not overlap two decryption batches');
+deferred[1]();
+for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
+if(!api.__testMessages('cid-1').some(m=>m.id==='overlap-fast'))throw new Error('new batch never delivered');
+deferred[0]();
+for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
+const overlapIds=api.__testMessages('cid-1').map(m=>m.id);
+for(const id of ['overlap-fast','overlap-slow'])
+  if(!overlapIds.includes(id))throw new Error('concurrent live message was lost until reload: '+id);
+if(new Set(overlapIds).size!==overlapIds.length)throw new Error('overlap duplicated a message');
+
+/* Decryption started by an old account or a room we left must not commit. */
+for(const reason of ['account','membership']){
+  externalEvent({id:'stale-'+reason,kind:1059});
+  timers.at(-1)();
+  for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
+  const viewer=p.viewer;
+  if(reason==='account')p.viewer=()=>({pubkey:'d'.repeat(64),profile:{}});
+  else store['pc.concord.invites']='[]';
+  deferred.at(-1)();
+  for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
+  if(api.__testMessages('cid-1').some(m=>m.id==='overlap-stale-'+reason))
+    throw new Error('stale '+reason+' decryption committed');
+  p.viewer=viewer;
+  store['pc.concord.invites']=JSON.stringify([ROOM]);
+}
+
 /* NIP-29 uses public group events rather than encrypted kind-1059 wraps, but it needs the same
    managed+invite-relay lifecycle and must update without leaving and re-entering the room. */
 const NIP={protocol:'nip29',name:'Public group',naddr:'nip-room',groupId:'group-1',relay:'wss://groups.example',
