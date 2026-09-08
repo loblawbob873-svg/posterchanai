@@ -10288,3 +10288,43 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 /* Automatic filtering keeps active composers and unrelated media mounted. */
 .auto-muted-by-peer{display:none!important}
 .auto-mute-notice{padding:8px 12px;color:var(--muted);background:var(--bg2);font-size:13px;flex:0 0 auto}
+
+/* Artwork-led sign-in. Keep the complete image visible and the controls on an opaque surface. */
+.auth-gate{zoom:calc(1 / var(--zf,1))}
+.auth-gate .auth-stack{width:min(1240px,100%);display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,400px);gap:32px;align-items:center;padding:24px 0}
+.auth-hero{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:24px;background:var(--bg);box-shadow:0 24px 80px #0003}
+.auth-hero-art{display:block;width:100%;height:auto;aspect-ratio:1916/821;object-fit:contain;background:#111a27}
+.auth-hero-copy{padding:32px 36px;background:radial-gradient(ellipse at 100% 100%,rgba(var(--accent-rgb),.1),transparent 70%)}
+.auth-eyebrow{margin:0 0 16px;color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+.auth-hero h2{margin:0;font-size:clamp(32px,4.5vw,58px);line-height:1.06;letter-spacing:-.04em;font-weight:800;color:var(--text)}
+.auth-hero h2 span{color:var(--neon)}
+.auth-hero-description{margin:20px 0;color:var(--muted);font-size:15px;line-height:1.65}
+.auth-hero .feat-chips{justify-content:flex-start;margin:24px 0 0;gap:8px}
+.auth-hero .feat-chips span{padding:8px 12px}
+.auth-gate .auth-card{width:100%;min-width:0;margin:0;padding:28px;border-radius:24px;background:var(--bg);border:1px solid var(--line);box-shadow:0 24px 80px #0003}
+.auth-gate .auth-card .logo-img{width:56px;height:56px;border-radius:16px;margin-bottom:14px}
+.auth-gate .auth-card .logo{font-size:24px;letter-spacing:.06em}
+.auth-gate .auth-card .tagline{font-size:12px;letter-spacing:0;margin-bottom:24px;color:var(--muted)}
+.auth-gate .auth-card .btn{min-height:46px;white-space:normal;line-height:1.4}
+.auth-gate .auth-card .input{min-width:0;max-width:100%;font-size:16px}
+@media(max-width:900px){
+  .auth-gate .auth-stack{width:min(560px,100%);grid-template-columns:minmax(0,1fr);gap:18px;padding:0}
+  .auth-hero-copy{padding:22px 24px}
+  .auth-hero h2{font-size:32px}
+  .auth-hero h2 br{display:none}
+  .auth-hero h2 span::before{content:' '}
+  .auth-eyebrow{font-size:10px;margin-bottom:10px;letter-spacing:.08em}
+  .auth-hero-description{font-size:13px;margin:12px 0 0}
+  .auth-hero .feat-chips{margin-top:16px;gap:6px}
+  .auth-hero .feat-chips span{font-size:10px;padding:7px 9px}
+  .auth-gate .auth-card{padding:24px}
+}
+@media(max-width:480px){
+  .auth-hero,.auth-gate .auth-card{border-radius:18px}
+  .auth-hero-copy{padding:18px 20px}
+  .auth-hero h2{font-size:28px}
+  .auth-hero-description br{display:none}
+}
+@media(max-height:640px) and (max-width:900px){
+  .auth-hero-copy{display:none}
+}

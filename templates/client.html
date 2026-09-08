@@ -96,17 +96,23 @@
 <!-- ===== Login / signup gate ===== -->
 <div id="auth-gate" class="auth-gate hidden">
     <div class="auth-stack">
-    <div class="nostr-banner" role="img" aria-label="The Ultimate Nostr Experience">
-        <img class="ostrich" src="/static/nostr-ostrich.png" alt="Nostr">
-        <div class="nb-title">The Ultimate<br><span>Nostr Experience</span></div>
-    </div>
+    <section class="auth-hero" aria-labelledby="auth-hero-title">
+        <img class="auth-hero-art" src="/static/signon-nostr-city.png" width="1916" height="821"
+             alt="Pure signal. Zero noise. Nostr artwork above a neon-lit Toronto waterfront at sunset."
+             fetchpriority="high" decoding="async">
+        <div class="auth-hero-copy">
+            <p class="auth-eyebrow">Your people. Your keys. Your world.</p>
+            <h2 id="auth-hero-title">Make yourself<br><span>at home.</span></h2>
+            <p class="auth-hero-description">Conversations, creativity, and a whole world to explore.<br>Bring your Nostr identity and make it yours.</p>
+            <div class="feat-chips" aria-label="what's inside">
+                <span>🎨 AI art</span><span>🎵 music</span><span>🎬 video</span><span>♟ games</span><span>⚡ zaps</span>
+            </div>
+        </div>
+    </section>
     <div class="auth-card glass neon-border">
         <img class="logo-img" src="/static/posterchan-relay.png" alt="PosterChan">
         <h1 class="logo glitch" data-text="POSTER//CHAN">POSTER//CHAN</h1>
-        <p class="tagline">a cyberpunk nostr terminal</p>
-        <div class="feat-chips" aria-label="what's inside">
-            <span>🎨 AI art</span><span>🎵 music</span><span>🎬 video</span><span>♟ games</span><span>⚡ zaps</span>
-        </div>
+        <p class="tagline">Welcome back. Choose how to sign in.</p>
 
         <!-- Grouped by HOW you sign in, not as one stack of same-weight buttons: signers first (the
              key never leaves your device), then the paste-a-key path folded away behind a disclosure
