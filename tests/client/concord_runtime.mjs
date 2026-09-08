@@ -485,6 +485,18 @@ await new Promise(resolve=>setTimeout(resolve,0));
 const passiveOptions=(calls.queryOptions||[]).slice(optionsBeforePassiveCard);
 if(passiveOptions.some(options=>/explicit invite|concord room$/.test(String(options.purpose||''))))
   throw new Error('passive public community card opened its invite/bootstrap relays');
+// A relay replay and another announcement may encode the same signer using different naddr
+// routing hints and another web host. They must replace the card, not add a second room.
+const listingCount=()=>dollars('[data-cc-discover]').length;
+const beforeDuplicate=listingCount();
+calls.discoveryHandlers.onEvent({id:'public-card-repost',created_at:100,pubkey:'b'.repeat(64),content:'Updated public https://poster.place/invite/naddr1pppp#abc_DEF'});
+calls.discoveryHandlers.onEvent({id:'public-card-repost',created_at:100,pubkey:'b'.repeat(64),content:'Updated public https://poster.place/invite/naddr1pppp#abc_DEF'});
+await new Promise(resolve=>setTimeout(resolve,0));
+if(listingCount()!==beforeDuplicate)throw new Error('same invite appeared twice after relay replay/host and routing-hint variant');
+if(!feed.innerHTML.includes('Updated public'))throw new Error('newer discovery announcement did not update its card');
+calls.discoveryHandlers.onEvent({id:'other-bundle',created_at:101,pubkey:'b'.repeat(64),content:'Updated public https://poster.place/invite/naddr1pppp#different_secret'});
+await new Promise(resolve=>setTimeout(resolve,0));
+if(listingCount()!==beforeDuplicate+1)throw new Error('distinct encrypted bundle at the same signer was hidden');
 const automaticQueries=calls.queryTargets.slice(queriesBeforeDiscover),automaticTargets=automaticQueries.flat();
 for(let i=0;i<automaticQueries.length;i++)if(automaticQueries[i].some(relay=>/relay\.(?:ditto\.pub|damus\.io)/.test(relay))){
   const options=calls.queryOptions[calls.queryOptions.length-automaticQueries.length+i]||{};
@@ -765,6 +777,27 @@ await concordLightning(21);
 if(lightningPays!==1||calls.lastChat?.kind!==9735 ||
    !calls.lastChat.tags.some(t=>t[0]==='preimage'&&t[1]==='1'.repeat(64)))
   throw new Error('Concord Lightning choice lost its sealed Armada receipt');
+
+// Restore a disk written by old builds: invite-only and membership rows for one room,
+// followed by an unrelated same-name community. Opening Communities must repair storage and
+// keep the selected community, its hydrated channels, and both invite aliases across refreshes.
+const duplicateRoom={name:'Same name',url:'https://armada.buzz/invite/naddr1qqqq#abc_DEF',naddr:'naddr1qqqq',channels:[{name:'general'}]};
+const hydratedDuplicate={...duplicateRoom,url:'https://poster.place/invite/naddr1pppp#abc_DEF',naddr:'naddr1pppp',communityId:'dedup-community',cord:{bundle:{community_id:'dedup-community'},hydrated:true},channels:[{name:'general',id:'real-channel'},{name:'support',id:'support-channel'}]};
+const otherRoom={name:'Same name',communityId:'distinct-community',naddr:'other',channels:[{name:'general'}],local:true};
+const normalized=PCConcord.uniqueRooms([duplicateRoom,otherRoom,hydratedDuplicate,hydratedDuplicate]);
+if(normalized.length!==2||normalized[0].channels.length!==2||normalized[0].communityId!=='dedup-community')throw new Error('hydrated membership/invite duplicates were not merged safely');
+const legacyMerged=PCConcord.uniqueRooms([{...duplicateRoom,communityId:duplicateRoom.naddr},hydratedDuplicate]);
+if(legacyMerged.length!==1||legacyMerged[0].communityId!=='dedup-community')throw new Error('legacy naddr membership id overrode hydrated community id');
+if(PCConcord.uniqueRooms([...legacyMerged,{...hydratedDuplicate,url:'https://armada.buzz/invite/naddr1qqqq#rotated_secret'}]).length!==1)throw new Error('membership refresh with another invite recreated legacy-id duplicate');
+if(PCConcord.sameRoom(hydratedDuplicate,{...hydratedDuplicate,communityId:'different-community'}))throw new Error('different community ids merged by invite alias');
+if(PCConcord.sameRoom({protocol:'nip29',communityId:'nip29:wss://one#general'},{protocol:'nip29',communityId:'nip29:wss://two#general'}))throw new Error('same-named groups on separate relays merged');
+localStorage.setItem('pc.concord.invites',JSON.stringify([duplicateRoom,hydratedDuplicate,otherRoom]));
+localStorage.setItem('pc.concord.active','2');
+control('cc-discovery').click();
+PCConcord.render();PCConcord.backgroundRender();
+const repaired=JSON.parse(localStorage.getItem('pc.concord.invites'));
+if(repaired.length!==2||repaired[0].channels[0].id!=='real-channel'||localStorage.getItem('pc.concord.active')!=='1')throw new Error('saved duplicate repair lost hydration or selected-room index');
+if(PCConcord.uniqueRooms([...repaired,duplicateRoom,hydratedDuplicate]).length!==2)throw new Error('repeated membership/relay replay recreated a duplicate');
 
 // A relay/deferred callback can render after the user has opened Code. It must not own the shared
 // feed any more, nor restart Concord's live work or shell classes.

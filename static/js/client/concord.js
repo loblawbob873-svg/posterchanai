@@ -108,8 +108,15 @@
   let liveWarned='';   // the last live-sync failure reported — see refreshActiveChannel
   let resumeRequested=false;
   let actionDismissOff=null;
-  function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); return Array.isArray(v)?v:[]; }catch(_){ return []; } }
-  function save(v){ try{ localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50),(key,value)=>key==='icon'&&/^blob:/i.test(String(value||''))?'':value)); }catch(_){} }
+  function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); if(!Array.isArray(v))return []; const clean=uniqueRooms(v);if(clean.length!==v.length){preserveRoomSelection(v,clean);writeRooms(clean);}return clean; }catch(_){ return []; } }
+  function writeRooms(v){try{localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50),(key,value)=>key==='icon'&&/^blob:/i.test(String(value||''))?'':value));}catch(_){}}
+  function save(v){const clean=uniqueRooms(v);preserveRoomSelection(v,clean);v.splice(0,v.length,...clean);writeRooms(v);}
+  function preserveRoomSelection(before,after){
+    const selected=state.community==null?null:before[state.community];
+    if(selected){const index=after.findIndex(room=>sameRoom(room,selected));if(index>=0)state.community=index;}
+    const remembered=Number(localStorage.getItem('pc.concord.active')||0),room=before[remembered];
+    if(room){const index=after.findIndex(item=>sameRoom(item,room));if(index>=0)localStorage.setItem('pc.concord.active',String(index));}
+  }
   function scrollKey(){ const room=state.community==null?null:saved()[state.community]; return `${room&&(room.communityId||room.naddr||room.url)||'home'}:${state.channel||'general'}`; }
   function composerKey(room,channel){return `${room&&(room.communityId||room.naddr||room.url)||'home'}:${channel||'general'}`;}
   function captureComposer(){
@@ -215,6 +222,56 @@
   function removeMessageRow(id){ const box=document.querySelector('.cc-messages'),row=[...document.querySelectorAll('.cc-message[data-message-id]')].find(el=>el.dataset.messageId===id); if(!box||!row)return false; const key=scrollKey(),st=readScroll(key),top=box.scrollTop,height=box.scrollHeight,above=(Number(row.offsetTop)||0)+(Number(row.offsetHeight)||0)<=top; row.remove(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ if(!box.isConnected)return; const lost=Math.max(0,height-box.scrollHeight); box.scrollTop=st.pinned!==false?box.scrollHeight:(above?Math.max(0,top-lost):top);st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st); }); return true; }
   function roomName(r,i){ return (r&&r.name)||`Encrypted community ${i+1}`; }
   function roomIdentity(room){ return String(room&&(room.communityId||room.naddr||room.url)||''); }
+  function communityKey(room){const id=String(room&&room.communityId||''),bundleId=String(room&&room.cord&&room.cord.bundle&&room.cord.bundle.community_id||'');return !id||/^naddr1/i.test(id)?bundleId||id:id;}
+  function inviteKey(room){
+    const parts=inviteParts(room&&room.url);if(!parts)return '';
+    // Relay hints and the hosting domain are routing, not identity. Keep the secret in the
+    // comparison: one signer can publish separate encrypted bundles at the same address.
+    let address=parts.naddr.toLowerCase(),secret=parts.secret;
+    try{
+      const parsed=window.PosterCord&&window.PosterCord.inviteDetails(parts.url);
+      if(parsed&&parsed.linkSigner){
+        address=parsed.linkSigner;
+        // inviteDetails validates the complete CORD-05 fragment. Version 4 ends in its
+        // 16-byte token; preceding bytes contain relay hints which can change on repost.
+        // Retain opaque secrets for unknown formats instead of guessing their token layout.
+        if(secret.length<=4096){const bytes=atob(secret.replace(/-/g,'+').replace(/_/g,'/'));
+          if(bytes.charCodeAt(0)===4&&bytes.length>=18)secret=Array.from(bytes.slice(-16),c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');}
+      }
+    }catch(_){}
+    return address+'#'+secret;
+  }
+  function roomInviteKeys(room){return [room,...(room&&room.inviteAliases||[]).map(url=>({url}))].map(inviteKey).filter(Boolean);}
+  function sameRoom(a,b){
+    if(!a||!b)return false;
+    const ac=communityKey(a),bc=communityKey(b);
+    if(ac&&bc){if(ac===bc)return true;if(!/^naddr1/i.test(ac)&&!/^naddr1/i.test(bc))return false;}
+    const ak=roomInviteKeys(a),bk=roomInviteKeys(b);
+    if(ak.length&&bk.length)return ak.some(key=>bk.includes(key));
+    return !!roomIdentity(a)&&roomIdentity(a)===roomIdentity(b);
+  }
+  function mergeRoom(a,b){
+    // Prefer hydrated channel/control state over an announcement's placeholder #general.
+    const richness=room=>room&&room.cord&&room.cord.bundle?(room.cord.hydrated?3:room.cord.armadaList?1:2):0;
+    const first=richness(a)>richness(b)?b:a,last=first===a?b:a;
+    const merged={...first,...last};
+    if(a.cord||b.cord)merged.cord={...(first.cord||{}),...(last.cord||{})};
+    const aId=communityKey(a),bId=communityKey(b),id=!aId||/^naddr1/i.test(aId)?bId||aId:aId;if(id)merged.communityId=id;
+    const aliases=new Map();
+    for(const url of [merged.url,a.url,b.url,...(a.inviteAliases||[]),...(b.inviteAliases||[])].filter(Boolean)){const key=inviteKey({url})||url;if(!aliases.has(key))aliases.set(key,url);}
+    if(aliases.size>1)merged.inviteAliases=[...aliases.values()];else delete merged.inviteAliases;
+    return merged;
+  }
+  function uniqueRooms(rows){
+    const result=[];
+    for(const row of rows||[]){if(!row||typeof row!=='object')continue;let room=row,index=result.findIndex(other=>sameRoom(other,room));
+      if(index<0){result.push(room);continue;}
+      room=mergeRoom(result[index],room);result[index]=room;
+      // Hydration can bridge an old invite-only row and a membership row with a community id.
+      for(let j=result.length-1;j>index;j--)if(sameRoom(result[j],room)){room=mergeRoom(result[j],room);result[index]=room;result.splice(j,1);}
+    }
+    return result;
+  }
   function notificationRoute(room,channel,message){
     return 'concord:'+encodeURIComponent(roomIdentity(room))+':'+
       encodeURIComponent(String(channel||'general'))+':'+encodeURIComponent(messageId(message));
@@ -1041,9 +1098,9 @@
   }
   function recoverOwnedInvite(p,item){
     const viewer=p.viewer?p.viewer():{};
-    if(!item||!viewer.pubkey||item.source.pubkey!==viewer.pubkey||recoveredOwnedInvites.has(item.naddr))return;
+    if(!item||!viewer.pubkey||item.source.pubkey!==viewer.pubkey||recoveredOwnedInvites.has(inviteKey(item)))return;
     if(membershipReadFor!==viewer.pubkey){
-      if(!pendingOwnedInvites.some(x=>x&&x.naddr===item.naddr))pendingOwnedInvites.push(item);
+      if(!pendingOwnedInvites.some(x=>sameRoom(x,item)))pendingOwnedInvites.push(item);
       return;
     }
     /* An announcement is not membership. Owners commonly announce the invite once and later leave
@@ -1051,9 +1108,9 @@
      * into a joined room after an explicit leave. An intentional Join clears this ledger only
      * after its replacement membership document publishes successfully. */
     if(wasLocallyLeft(viewer.pubkey,item))return;
-    recoveredOwnedInvites.add(item.naddr);
+    recoveredOwnedInvites.add(inviteKey(item));
     const rooms=saved();
-    if(rooms.some(r=>r.naddr===item.naddr||r.url===item.url))return;
+    if(rooms.some(r=>sameRoom(r,item)))return;
     rooms.push({url:item.url,naddr:item.naddr,name:item.name,description:item.description||'',channels:[{name:'general',private:false}],local:false});
     save(rooms);
   }
@@ -1061,7 +1118,7 @@
     if(discoveryStarted||state.community!=null||!p.relaySubscribe)return; discoveryStarted=true;
     discoveryAbortController=typeof AbortController==='function'?new AbortController():null;
     const signal=discoveryAbortController&&discoveryAbortController.signal;
-    const bySigner=new Map();
+    const listings=[];
     /* Some relay pools replay their in-memory result set synchronously from subscribe(). Calling
      * render() from each callback re-entered the launch render (or replaced the home DOM hundreds
      * of times in one task), leaving Concord apparently frozen. Coalesce discovery paint to the
@@ -1070,7 +1127,7 @@
     /* Public cards are summaries of their announcement event. Do not hydrate every invite merely
        because it scrolled into Discover: that multiplied 24 cards by every bootstrap/control relay
        (including legacy Ditto invites). Full bootstrap is reserved for the explicit Join action. */
-    const onEvent=ev=>{ for(const item of discoverInvites(ev.content,ev)){ const old=bySigner.get(item.naddr); if(!old||Number(ev.created_at)>Number(old.source.created_at))bySigner.set(item.naddr,item); recoverOwnedInvite(p,item); } discovered=[...bySigner.values()].sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at)); paintDiscovery(); };
+    const onEvent=ev=>{if(signal&&signal.aborted)return;for(const item of discoverInvites(ev.content,ev)){const index=listings.findIndex(old=>sameRoom(old,item));if(index<0)listings.push(item);else if(Number(ev.created_at)>Number(listings[index].source.created_at))listings[index]=mergeRoom(listings[index],item);recoverOwnedInvite(p,item);}discovered=uniqueRooms(listings).sort((a,b)=>Number(b.source.created_at)-Number(a.source.created_at));paintDiscovery();};
     const onEose=()=>{ discoveryLoaded=true; paintDiscovery(); };
     const filters=[{kinds:[1],search:'armada.buzz/invite',limit:100},{kinds:[1],search:'poster.place/invite',limit:100}];
     /* `p.relaySubscribe` answers a subId STRING, and stopDiscovery below can only close
@@ -1212,7 +1269,7 @@
   }
   function foldNip29History(events,p,groupId){const scoped=events.filter(e=>(e.tags||[]).some(t=>t[0]==='h'&&t[1]===groupId)).sort((a,b)=>Number(a.created_at)-Number(b.created_at)),deletions=[],deleted=new Set(),byId=new Map(),reactions=[];for(const e of scoped){if(e.kind===5){deletions.push(e);continue;}if(e.kind===7){reactions.push(e);continue;}if(![9,10,11,12,1111].includes(e.kind))continue;const pr=p.profOf?p.profOf(e.pubkey):{};byId.set(e.id,{id:e.id,pubkey:e.pubkey,by:pr.display_name||pr.name||e.pubkey.slice(0,12)+'…',text:e.content,at:Number(e.created_at)*1000,kind:e.kind,tags:e.tags||[],reactions:{},reactionIds:{},remote:true});}const reactionById=new Map(reactions.map(e=>[e.id,e]));for(const deletion of deletions)for(const t of deletion.tags||[])if(t[0]==='e'){const target=byId.get(t[1])||reactionById.get(t[1]);if(target&&target.pubkey===deletion.pubkey)deleted.add(t[1]);}for(const id of deleted)byId.delete(id);for(const e of reactions){if(deleted.has(e.id))continue;const target=((e.tags||[]).find(t=>t[0]==='e')||[])[1],m=byId.get(target);if(!m)continue;const emoji=e.content==='+'?'👍':e.content||'👍';(m.reactions[emoji]||(m.reactions[emoji]=[])).push(e.pubkey);(m.reactionIds[emoji]||(m.reactionIds[emoji]={}))[e.pubkey]=e.id;}for(const m of byId.values())if(m.kind===1111){const target=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(target)m.reply={id:target.id,by:target.by,text:target.text};}return [...byId.values()].sort((a,b)=>a.at-b.at);}
   async function nip29History(p,room){const events=await nip29RelayQuery(p,room.relay,[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],limit:500}],10000);return foldNip29History(events,p,room.groupId);}
-  async function hydrateNip29Room(p,index){const rooms=saved(),room=rooms[index];if(!room||room.protocol!=='nip29')return;const messages=await nip29History(p,room),storeId=channelStoreId(room,'general');markRemoteStore(storeId);saveTestMessages(storeId,messages);room.nip29Hydrated=true;rooms[index]=room;save(rooms);if(state.community===index)backgroundRender();}
+  async function hydrateNip29Room(p,index){const rooms=saved(),room=rooms[index];if(!room||room.protocol!=='nip29')return;const messages=await nip29History(p,room),storeId=channelStoreId(room,'general');markRemoteStore(storeId);saveTestMessages(storeId,messages);room.nip29Hydrated=true;const latest=saved(),at=latest.findIndex(item=>sameRoom(item,room));if(at<0)return;latest[at]={...latest[at],nip29Hydrated:true};save(latest);if(sameRoom(latest[state.community],room))backgroundRender();}
   async function membershipEvents(p,pubkey,{external=true,legacyRecovery=false,signal=null}={}){
     /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
        relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
@@ -1461,7 +1518,7 @@
       for(const e of live){
         if(state.community!=null&&!localOnly)return;
         const current=e.current||{},url=inviteRefUrl(e.invite_ref),
-              i=rooms.findIndex(r=>r.communityId===e.community_id||r.url===url);
+              i=rooms.findIndex(r=>sameRoom(r,{communityId:e.community_id,url}));
         // Armada's vault `current` is a CONTROL SNAPSHOT (owner/root/relays/name), not the complete
         // join bundle. Passing it to inspectControl rejects with "invalid Concord join material";
         // the catch used to `continue`, silently hiding every otherwise valid Armada membership on
@@ -2092,7 +2149,7 @@
       if(await applyRoomIconMetadata(room,info,loadKey,seed))changed=true;
       const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
       if(channels.length)assign('channels',channels);
-      if(changed){rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>backgroundRender());}
+      if(changed){const latest=saved(),at=latest.findIndex(item=>sameRoom(item,room));if(at>=0){latest[at]=mergeRoom(latest[at],room);save(latest);preserveChatScroll(()=>backgroundRender());}}
     }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
   }
   function stopLiveSync(){ if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
@@ -2115,8 +2172,8 @@
     discoveryOpen=false;localStorage.setItem('pc.concord.active',String(index));state.thread=null;state.community=index;state.channel='general';mobileChatOpen=!!inDrawer;mobileDrawerOpen=!!inDrawer;
     render();enterChatBottom();
     try{
-      if(room.url&&(!room.cord||!room.cord.bundle)){room={...room,...await hydrateInvite(p,room.url)};rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity);if(at<0)return false;rooms[at]=room;save(rooms);index=at;if(roomIdentity(rooms[state.community])===identity){state.community=at;render();}}
-      if(room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,index,identity);
+      if(room.url&&(!room.cord||!room.cord.bundle)){room=mergeRoom(room,await hydrateInvite(p,room.url));rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity||sameRoom(item,room));if(at<0)return false;const selected=rooms[state.community];rooms[at]=room;save(rooms);index=rooms.findIndex(item=>sameRoom(item,room));if(sameRoom(selected,room)){state.community=index;render();}}
+      if(room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,index,roomIdentity(room));
       else if(room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,index);
       room=saved()[state.community];const liveChannel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general'));
       if(room&&liveChannel)startChatLive(p,room,liveChannel);
@@ -2370,13 +2427,29 @@
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community],viewerPk=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,viewerPk).filter(pk=>pk!==viewerPk); if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
-    const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>x.naddr===v.naddr); if(i<0)a.push(room);else a[i]={...a[i],...room}; save(a); state.community=i<0?a.length-1:i; state.channel='general'; render(); await persistArmadaMembership(p,room);
+    const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
       /* Joining is already the user's request to enter this room.  Waiting for a later channel click
        * left the placeholder #general on screen with no id, icon or history, so a successful Armada
        * invite looked like an empty broken community until somebody switched away and back. */
       await hydrateRoomStreams(p,state.community); enterChatBottom(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
     $$('[data-cc-server]').forEach(b=>b.onclick=()=>{const i=+b.dataset.ccServer,inDrawer=mobileChatOpen&&mobileDrawerOpen;void activateJoinedRoom(p,i,inDrawer);});
-    $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{ const v=discovered[+b.dataset.ccDiscover]; if(!v)return; const a=saved(); let i=a.findIndex(x=>x.naddr===v.naddr); if(i<0){a.push(v);i=a.length-1;} save(a); state.community=i; state.channel='general'; render(); enterChatBottom(); p.toast('fetching and decrypting community…'); try{ a[i]={...a[i],...await hydrateInvite(p,v.url)}; save(a); await persistArmadaMembership(p,a[i]); await hydrateRoomStreams(p,i); p.toast('community joined'); }catch(e){ p.toast('could not load community: '+(e&&e.message||e)); }finally{if(state.community===i)enterChatBottom();} });
+    $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{
+      const v=discovered[+b.dataset.ccDiscover];if(!v)return;
+      const a=saved();let i=a.findIndex(x=>sameRoom(x,v));if(i<0){a.push(v);i=a.length-1;}
+      save(a);i=a.findIndex(x=>sameRoom(x,v));state.community=i;state.channel='general';render();enterChatBottom();
+      p.toast('fetching and decrypting community…');
+      try{
+        const hydrated=await hydrateInvite(p,v.url),latest=saved(),selected=latest[state.community],at=latest.findIndex(x=>sameRoom(x,v));
+        // A second join, membership refresh, or Leave can finish during invite I/O.
+        if(at<0)return;
+        latest[at]=mergeRoom(latest[at],hydrated);save(latest);
+        const joined=latest.findIndex(x=>sameRoom(x,hydrated));
+        if(sameRoom(selected,v))state.community=joined;
+        else if(selected)state.community=latest.findIndex(x=>sameRoom(x,selected));
+        await persistArmadaMembership(p,latest[joined]);await hydrateRoomStreams(p,joined);p.toast('community joined');
+      }catch(e){p.toast('could not load community: '+(e&&e.message||e));}
+      finally{if(sameRoom(saved()[state.community],v))enterChatBottom();}
+    });
     $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; state.thread=null; replyTarget=null; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(); });
     $$('[data-cc-star]').forEach(b=>b.onclick=e=>{ if(e&&e.stopPropagation)e.stopPropagation(); const room=saved()[state.community],name=b.dataset.ccStar; if(!room||!name)return; setChannelStarred(room,name,!channelStarred(room,name)); render(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
@@ -2539,7 +2612,7 @@
     close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

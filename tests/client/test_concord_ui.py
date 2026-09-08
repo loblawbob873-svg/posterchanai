@@ -429,7 +429,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'for(const ev of candidates)' in CONCORD
     assert "opened=decoded(url,[ev])" in CONCORD
     assert 'kinds:[13302]' in CONCORD and 'kinds:[33302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
-    assert 'window.PosterCordReader' in CONCORD and 'hydrateRoomStreams(p,i)' in CONCORD
+    assert 'window.PosterCordReader' in CONCORD and 'hydrateRoomStreams(p,joined)' in CONCORD
     assert 'kinds:[1059]' in CONCORD and 'reader.inspectChat' in CONCORD
     assert 'reader.createChatWrap' in CONCORD and 'await p.relayPublishTo(relays,made.wrap)' in CONCORD
     assert 'scrollChatBottom()' in CONCORD
@@ -658,7 +658,8 @@ def test_all_joined_community_metadata_repaints_live_without_moving_chat():
     assert "assign('name'" in block and "assign('description'" in block
     assert "await applyRoomIconMetadata(room,info,loadKey,seed)" in block
     assert 'const roomIconRefs=new Map()' in CONCORD
-    assert 'rooms[selected.index]=room;save(rooms);preserveChatScroll(()=>backgroundRender())' in block
+    assert 'latest=saved(),at=latest.findIndex(item=>sameRoom(item,room))' in block
+    assert 'save(latest);preserveChatScroll(()=>backgroundRender())' in block
     assert 'scrollChatBottom' not in block
 
 
