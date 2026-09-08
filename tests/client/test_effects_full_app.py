@@ -57,7 +57,7 @@ class Handler(SimpleHTTPRequestHandler):
             super().do_GET()
 INIT=r'''
 window.__errors=[];onerror=(m)=>__errors.push(m);
-window.__requests=[];window.__sockets=[];window.__published=[];window.__publishOK=false;window.__nextConversation=41;
+window.__requests=[];window.__chatRequests=[];window.__sockets=[];window.__published=[];window.__publishOK=false;window.__nextConversation=41;
 const origFetch=window.fetch.bind(window);
 window.fetch=async function(url,opts={}){
  const u=String(url);__requests.push([u,opts.method||'GET']);
@@ -75,7 +75,7 @@ class FixtureSocket extends EventTarget{
  static OPEN=1;static CONNECTING=0;static CLOSING=2;static CLOSED=3;
  constructor(url){super();this.url=String(url);this.readyState=0;__sockets.push(this);setTimeout(()=>{this.readyState=1;this.fire('open',{});},10)}
  fire(type,data){const e=type==='message'?new MessageEvent(type,{data:JSON.stringify(data)}):new Event(type);this['on'+type]?.(e);this.dispatchEvent(e)}
- send(raw){const m=JSON.parse(raw);if(!Array.isArray(m))return;
+ send(raw){const m=JSON.parse(raw);if(!Array.isArray(m)){__chatRequests.push(m);return;}
  if(m[0]==='REQ')setTimeout(()=>{for(const ev of window.__events||[]){if(m.slice(2).some(f=>(!f.kinds||f.kinds.includes(ev.kind))&&(!f.ids||f.ids.includes(ev.id))&&(!f.authors||f.authors.includes(ev.pubkey))))this.fire('message',['EVENT',m[1],ev]);}this.fire('message',['EOSE',m[1]]);},15);
  if(m[0]==='EVENT'){__published.push(m[1]);setTimeout(()=>this.fire('message',['OK',m[1].id,__publishOK,'fixture reply']),15);}}
  close(){this.readyState=3;this.fire('close',{})}
@@ -124,6 +124,8 @@ async def main(width,existing_chat,native_window=False):
                     else:
                         assert float(geometry['padding'].removesuffix('px'))>=62, 'phone navigation clearance must remain'
                 await check_geometry('initial')
+                await b.js("__aiComposer.value='Make a fixture image';document.querySelector('#ai-send').click()")
+                await b.until("__chatRequests.some(x=>x.content?.includes('Make a fixture image'))")
                 if width>820 and not native_window:
                     await b.js("__aiWindow.querySelector('[data-w=max]').click()")
                     await asyncio.sleep(.3)
@@ -136,7 +138,7 @@ async def main(width,existing_chat,native_window=False):
                     await check_geometry('restored')
                     assert await b.js("document.querySelector('#ai-input')===__aiComposer && __aiComposer.value==='Preserve draft'")
                 assert await b.js("(()=>{const b=document.querySelector('#ai-back-social'),r=b.getBoundingClientRect(),bar=b.closest('.ai-bar');return !b.hidden&&r.width>60&&r.left>=0&&r.right<=innerWidth&&bar.scrollWidth<=bar.clientWidth+1})()")
-                await b.js("__sockets.findLast(s=>s.url.includes('/api/ws/chat/')).fire('message',{type:'response',data:{type:'generated_image',image:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1sAAAAASUVORK5CYII='}})")
+                await b.js("__sockets.findLast(s=>s.url.includes('/api/ws/chat/')&&s.readyState===1).fire('message',{type:'response',data:{type:'generated_image',image:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1sAAAAASUVORK5CYII='}})")
                 await b.until("!!document.querySelector('.ai-reply-fx')")
                 await b.js("document.querySelector('.ai-reply-fx').click()")
                 await b.until("__published.some(e=>e.kind===1) && !document.querySelector('.ai-reply-fx').disabled")
