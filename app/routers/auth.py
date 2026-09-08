@@ -1140,3 +1140,13 @@ def rrule_to_human(rrule: str) -> str:
         result = rrule  # Fallback to raw if unknown
 
     return result
+
+
+@router.get("/reminder-notifications")
+def reminder_notifications(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Delivered reminders survive missed sockets and are private to the authenticated account."""
+    from app.models import Reminder
+    from app.services.reminder_service import notification_record
+    rows = (db.query(Reminder).filter(Reminder.user_id == user.id, Reminder.status == "done")
+            .order_by(Reminder.delivered_at.desc(), Reminder.id.desc()).limit(200).all())
+    return {"items": [notification_record(row) for row in rows]}

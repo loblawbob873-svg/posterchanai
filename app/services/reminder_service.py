@@ -252,6 +252,19 @@ def _get_or_create_reminders_chat(db: Session, user_id: int) -> Conversation:
     return chat
 
 
+def notification_record(reminder: Reminder) -> dict:
+    """Stable, owner-filtered notification history shared by live delivery and reload."""
+    def stamp(value):
+        return value.replace(tzinfo=timezone.utc).isoformat() if value else None
+    return {
+        "reminder_id": reminder.id,
+        "content": f"⏰ Reminder: {reminder.text}",
+        "due_at": stamp(reminder.due_at),
+        "delivered_at": stamp(reminder.delivered_at or reminder.due_at),
+        "route": "calendar" if reminder.text.startswith("📅 ") else "notifications",
+    }
+
+
 async def deliver(db: Session, reminder: Reminder) -> None:
     """Deliver a fired reminder: always to the web UI, plus Telegram if configured."""
     user = db.query(User).filter(User.id == reminder.user_id).first()
@@ -270,8 +283,7 @@ async def deliver(db: Session, reminder: Reminder) -> None:
         from app.routers.chat import manager
         await manager.send_json(user.id, {
             "type": "reminder",
-            "content": body,
-            "reminder_id": reminder.id,
+            **notification_record(reminder),
             "conversation_id": chat.id,
         })
     except Exception as e:
@@ -293,7 +305,8 @@ async def deliver(db: Session, reminder: Reminder) -> None:
             from app.services.nostr import nostr_service
             pk = nostr_service.to_pubkey_hex(npub)
             rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all() if pk else []
-            payload = {"title": "⏰ Reminder", "body": reminder.text, "type": "reminder"}
+            payload = {"title": "⏰ Reminder", "body": reminder.text, "type": "reminder",
+                       **notification_record(reminder), "view": notification_record(reminder)["route"]}
             for row in rows:
                 from app.services.direct_push_service import subscription_dict
                 sub = subscription_dict(row)

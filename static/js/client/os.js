@@ -8011,14 +8011,17 @@
         /* THE POST OPENS IN THE DESKTOP, NOT IN THE MENU. Calling openThread here would render a
            thread inside a 380px popup that closes on blur — the shell is where a post is read. */
         if(inPopup){
-          if(n.dataset.prof) send('profile:' + n.dataset.prof);
+          if(n.dataset.route==='calendar') send('view:calendar');
+          else if(n.dataset.route) send('view:notifications');
+          else if(n.dataset.prof) send('profile:' + n.dataset.prof);
           else if(n.dataset.open) send('thread:' + n.dataset.open);
           else shut();
           return;
         }
         hideNoti();
         try{
-          if(n.dataset.prof) PC().openProfile(n.dataset.prof);
+          if(n.dataset.route) window.PCOpenNotificationRoute(n.dataset.route);
+          else if(n.dataset.prof) PC().openProfile(n.dataset.prof);
           else if(n.dataset.open) PC().openThread(n.dataset.open);
         }catch(_){}
       };

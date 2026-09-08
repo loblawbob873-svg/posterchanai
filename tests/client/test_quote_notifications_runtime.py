@@ -21,6 +21,7 @@ const quote=QUOTE,ME={pubkey:quote.tags[0][3]},LOGO='logo';
 let events=[quote], muted=false, lastToast='', lastOS, alerts=true;
 const notificationAllowed=type=>{assert.equal(type,'quotes');return alerts;};
 const Store={all:()=>events},_followSeeded=false,isMutedAuthor=()=>muted;
+const _reminderRows=()=>[];
 const _notifTs=e=>e.created_at,profOf=()=>({name:'Ditto author'}),_tipNote=()=>null;
 const isReply=()=>false,emojiName=(pk,n)=>n,enc=s=>s,_notifSaid=()=>'',_notifCtx=()=>'',timeAgo=()=>'';
 const notifToast=s=>lastToast=s,osNotify=(t,b,o)=>lastOS={t,b,o};

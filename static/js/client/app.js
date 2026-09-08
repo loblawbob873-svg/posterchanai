@@ -4996,6 +4996,8 @@
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
       watchNotifications(); watchDeletions(); startCallSignaling();
+      hydrateReminderNotifications();
+      if(!_reminderPoll)_reminderPoll=setInterval(()=>hydrateReminderNotifications(),60000);
       // Folder sync: attach the watchers for any folder this device maps. Deliberately NOT a timer —
       // the adapter notifies, and shouldSync decides whether that is worth a sweep right now. On a
       // platform with no watcher (Android's SAF has none worth having) this is a no-op and sync
@@ -25142,6 +25144,62 @@
     t.onclick=()=>{ go(); t.remove(); };
     $('#toast-root').appendChild(t); setTimeout(()=>t.remove(),5000);
   }
+  // Reminder history is not a Nostr event. Keep it separate from Store, scoped to both the
+  // account and instance (numeric reminder IDs belong to one backend). The backend is authoritative
+  // for missed deliveries; this bounded cache also works offline and across native popup windows.
+  const _reminderLoads=new Map();
+  let _reminderPoll=null, _reminderEpochOwner='', _reminderEpochAt=0;
+  function _reminderOwner(){ return ME&&ME.pubkey ? _instanceBase()+':'+ME.pubkey : ''; }
+  function _reminderRows(owner=_reminderOwner()){
+    if(!owner)return [];
+    try{const rows=JSON.parse(localStorage.getItem('pc_reminder_history:'+owner)||'[]');
+      return Array.isArray(rows)?rows.filter(x=>x&&x.type==='reminder'&&typeof x.id==='string'&&Number.isFinite(x.created_at)).slice(0,200):[];
+    }catch(_){return [];}
+  }
+  function _rememberReminder(data,owner=_reminderOwner(),live=false){
+    if(!owner||owner!==_reminderOwner()||!data)return false;
+    const rid=String(data.reminder_id||'');
+    const due=String(data.due_at||'');
+    // Older servers have no stable occurrence metadata: still show their alert, but don't invent
+    // a durable identity from wall-clock arrival time and duplicate it on reconnect.
+    if(!rid||!due||!Number.isFinite(Date.parse(due)))return false;
+    const id='reminder:'+rid+':'+new Date(due).toISOString();
+    const rows=_reminderRows(owner), previous=rows.find(x=>x.id===id);
+    const row={type:'reminder',id,alerted:live||!!(previous&&previous.alerted),created_at:Math.floor(Date.parse(data.delivered_at||due)/1000),
+      content:String(data.content||'Reminder').slice(0,10000),route:data.route==='calendar'?'calendar':'notifications'};
+    if(!Number.isFinite(row.created_at))return false;
+    const next=[row,...rows.filter(x=>x.id!==id)].sort((a,b)=>b.created_at-a.created_at).slice(0,200);
+    try{localStorage.setItem('pc_reminder_history:'+owner,JSON.stringify(next));}catch(_){}
+    return live ? !(previous&&previous.alerted) : !previous;
+  }
+  function _remindersChanged(){
+    try{bumpNotif();renderNotificationsSoon();loadNotifs();}catch(_){}
+  }
+  async function hydrateReminderNotifications(){
+    const owner=_reminderOwner();if(!owner||GUEST||_standalone())return;
+    if(_reminderEpochOwner!==owner){_reminderEpochOwner=owner;_reminderEpochAt=Date.now();_reminderLoads.delete(owner);}
+    const epoch=_reminderEpochAt;
+    const current=()=>owner===_reminderOwner()&&_reminderEpochOwner===owner&&_reminderEpochAt===epoch&&_reminderLoads.get(owner)===state;
+    const old=_reminderLoads.get(owner);
+    if(old&&(old.pending||Date.now()-old.at<30000))return;
+    const state={pending:true,at:Date.now()};_reminderLoads.set(owner,state);
+    try{
+      await ensureAiSession();if(!current())return;
+      const r=await _fetchTimeout('/api/auth/reminder-notifications',{credentials:'include',
+        headers:_aiToken?{'Authorization':'Bearer '+_aiToken}:{}},10000);
+      if(!r.ok)throw new Error('reminder history unavailable');
+      const data=await r.json();if(!current())return;
+      if(!data||!Array.isArray(data.items))throw new Error('invalid reminder history');
+      let changed=false;for(const row of data.items.slice(0,200)){
+        changed=_rememberReminder(row,owner)||changed;
+        // The AI conversation socket closes outside AI. Polling is the quiet fallback: alert only
+        // occurrences delivered while this account was active, never old startup history imports.
+        if(Date.parse(row.delivered_at||row.due_at)>=epoch)reminderAlert(row.content,row);
+      }
+      if(changed)_remindersChanged();
+    }catch(_){/* Keep cached history; the next poll/open retries without discarding it. */}
+    finally{state.pending=false;}
+  }
   function notifList(){
     // THIS list is the gate that decides what a notification even is — subscribing to a kind and giving it
     // a row renderer is not enough, because everything still has to survive this filter. 1621/1617 (NIP-34
@@ -25160,6 +25218,7 @@
     // live subscription), so pin it as history — never at the re-save time. ONLY after a seed that actually
     // read the follower list, else an early/cold render would persist a pin we can't yet stand behind.
     if(_followSeeded) for(const e of evs){ if(e.kind===3) _followTsOld(e.pubkey, e.created_at); }
+    evs.push(..._reminderRows());
     evs.sort((a,b)=>_notifTs(b)-_notifTs(a));
     // dedupe follows by author — a follower re-saving their contact list shouldn't show "followed you" repeatedly
     const seen3=new Set(); const out=[];
@@ -25314,9 +25373,11 @@
   // filter-owned cursor so its tab can ask the relay directly instead of requiring 25 already-loaded
   // zaps before the first "Load more" button can exist.
   let _notifZapUntil = 0, _notifZapDone = false;
-  const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports']];
+  const _NOTIF_TABS = [['all','All'],['mentions','@ Mentions'],['reactions','♥ Reactions'],['zaps','⚡ Zaps'],['follows','🫂 Follows'],['reports','🚩 Reports'],['reminders','Reminders']];
   function _notifMatch(e){
+    if(e.type==='reminder')return _notifFilter==='all'||_notifFilter==='reminders';
     switch(_notifFilter){
+      case 'reminders': return false;
       case 'mentions': return (e.kind===1 && !_tipNote(e)) || e.kind===1111 || e.kind===1621 || e.kind===1617;   // incl. chat + community replies + git issues/patches; a tip note belongs in Zaps, not here
       case 'reactions': return e.kind===7||e.kind===6;
       case 'zaps': return e.kind===9735 || !!_tipNote(e);   // Lightning zaps + BCH/Monero address tips share the ⚡ tab
@@ -25392,6 +25453,7 @@
   }
 
   function renderNotifications(){
+    hydrateReminderNotifications();
     if(_notifRT){ clearTimeout(_notifRT); _notifRT=null; }   // a direct render satisfies any pending one
     const feed=$('#feed');
     const all=notifGrouped(notifList().filter(_notifMatch));
@@ -25417,11 +25479,11 @@
     if(_notifScrollTop){ _notifScrollTop=false; feed.scrollTop=0; }
     { const un=$('#upd-notif',feed); if(un && !_updApplying) un.onclick=applyUpdate; }
     $$('.ntab',feed).forEach(b=> b.onclick=()=>{ _notifFilter=b.dataset.nf; _notifShown=25; renderNotifications(); });
-    list.forEach(e=>{ if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
+    list.forEach(e=>{ if(e.type==='reminder')return; if(e.type==='group') e.events.forEach(x=>needProfile(x.pubkey)); else needProfile(e.kind===9735?(zapSender(e)||e.pubkey):e.pubkey); });
     markNotifsRead();
     // row opens the post; avatar opens the sender's profile (stop the row handler firing too). EXCLUDE the
     // updater row (.upd-notif) — it keeps its own applyUpdate handler and has no post/profile to open.
-    feed.querySelectorAll('.notif:not(.upd-notif)').forEach(n=> n.onclick=()=> n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open));
+    feed.querySelectorAll('.notif:not(.upd-notif)').forEach(n=> n.onclick=()=> n.dataset.route ? openOsNotificationRoute(n.dataset.route) : n.dataset.prof ? renderProfileView(n.dataset.prof) : openThread(n.dataset.open));
     feed.querySelectorAll('.notif-av').forEach(a=> a.onclick=(ev)=>{ ev.stopPropagation(); renderProfileView(a.dataset.pk); });
     const more=$('#notif-more'); if(more) more.onclick=async ()=>{
       _notifShown+=25;
@@ -25525,6 +25587,7 @@
     return `<div class="notif-said">${applyEmojis(enc(t.slice(0,220)), e)}${t.length>220?'…':''}</div>`;
   }
   function notifHtml(e){
+    if(e.type==='reminder')return `<div class="notif reminder-notif" data-route="${e.route==='calendar'?'calendar':'notifications'}"><div class="notif-body"><b>${e.route==='calendar'?'Calendar reminder':'Reminder'}</b><div class="notif-said">${enc(e.content)}</div><span class="muted small">${enc(new Date(e.created_at*1000).toLocaleString())}</span></div></div>`;
     if(e.type==='group'){
       const first=e.events[0];
       // Group by PERSON, not by event: one user reacting twice (two emojis on the same post) was
@@ -30957,20 +31020,22 @@
     const wsBase = _serverOrigin().replace(/^http/, 'ws');
     const tok = _aiToken || _cookie('access_token');
     let opened=false;
+    const owner=_reminderOwner();
     const ws=new WebSocket(`${wsBase}/api/ws/chat/${id}`+(tok?`?token=${encodeURIComponent(tok)}`:''));
     _ai.ws=ws;
-    ws.onopen=()=>{ opened=true; _ai.wsBroken=false; clearTimeout(_ai.wsWatch); const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ ws.send(JSON.stringify(p)); }catch(_){} } };
-    ws.onmessage=e=>{ let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
+    const current=()=>owner===_reminderOwner() && _ai.ws===ws;
+    ws.onopen=()=>{ if(!current())return; opened=true; _ai.wsBroken=false; clearTimeout(_ai.wsWatch); const q=_ai.pending||[]; _ai.pending=[]; for(const p of q){ try{ ws.send(JSON.stringify(p)); }catch(_){} } };
+    ws.onmessage=e=>{ if(!current())return; let d; try{ d=JSON.parse(e.data); }catch(_){ return; } aiHandle(d); };
     // No keepalive on this WS: a slow effect/image/video generation can outlast an idle/proxy timeout
     // and the socket closes mid-flight. The server still finishes + PERSISTS the reply, so its live push
     // was lost and the answer only appeared after a manual refresh ("sometimes I never get an update").
     // If a reply was pending, pull it in (below). Idle drops need nothing — aiWsSend reconnects on send.
-    ws.onclose=()=>{ if(_ai.ws===ws && _ai.awaiting && VIEW==='ai' && _ai.convId===id) aiRecover(id); };
+    ws.onclose=()=>{ if(current() && _ai.awaiting && VIEW==='ai' && _ai.convId===id) aiRecover(id); };
     // If the socket can't even OPEN — e.g. a CDN/proxy that drops the WS upgrade (Cloudflare over
     // HTTP/3 does this) — a queued message would sit forever and never send. After a grace period,
     // fall back to plain HTTP (POST /api/chat/send) so the command still runs + persists. Every later
     // send then goes straight over HTTP too, until a socket actually opens again (self-heals).
-    _ai.wsWatch = setTimeout(()=>{ if(!opened){ _ai.wsBroken=true; aiHttpFlush(id); } }, 6000);
+    _ai.wsWatch = setTimeout(()=>{ if(current() && !opened){ _ai.wsBroken=true; aiHttpFlush(id); } }, 6000);
   }
   // WS upgrade failed → run any queued payloads over plain HTTP (the endpoint persists exactly like the
   // WS), then re-render the conversation so the reply shows. Used transparently when the socket won't open.
@@ -31333,7 +31398,7 @@
       aiAddMessage('assistant', `<span class="ai-err">⚠ ${enc(d.message||'error')}</span>`);
       _ai.streamEl=null; _ai.streamBuf=''; _ai.awaiting=false;
     } else if(d.type==='reminder'){
-      reminderAlert((d.content!=null?d.content:(d.data&&d.data.content))||'Reminder');   // fired reminder → popup + sound
+      reminderAlert((d.content!=null?d.content:(d.data&&d.data.content))||'Reminder',d.data?{...d.data,...d}:d);   // fired reminder → popup + sound
     } else if(d.type==='agent_progress'){
       _agentProgress(d.step, d.max, d.node);   // live "working… step N/M" pill for a long run
     } else if(d.type==='agent_done'){
@@ -31379,6 +31444,7 @@
    * system notification that does nothing is worse than not having sent it. */
   function openOsNotificationRoute(route){
     const value=String(route||'');
+    if(value==='calendar'){switchView('calendar');return true;}
     if(value.startsWith('post:')){openThread(value.slice(5));return true;}
     if(value.startsWith('concord:')){
       const bits=value.slice(8).split(':').map(x=>{try{return decodeURIComponent(x);}catch(_){return '';}});
@@ -31436,31 +31502,28 @@
     }catch(_){ return null; }
   }
 
-  // A reminder fired (pushed over the chat WS) — full-screen pulsing card + a beep, like the old UI.
-  function reminderAlert(text){
-    try{
-      const ac=new (window.AudioContext||window.webkitAudioContext)();
-      [0,0.18,0.36].forEach(t=>{ const o=ac.createOscillator(),g=ac.createGain(); o.connect(g); g.connect(ac.destination);
-        o.type='sine'; o.frequency.value=880; g.gain.setValueAtTime(0.001,ac.currentTime+t); g.gain.exponentialRampToValueAtTime(0.25,ac.currentTime+t+0.02);
-        g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+t+0.15); o.start(ac.currentTime+t); o.stop(ac.currentTime+t+0.16); });
-    }catch(_){}
-    osNotify('⏰ Reminder', text, { tag:'pc-reminder' });
-    /* …and through the desktop's own notification path, so a reminder behaves like every other
-     * arrival there: a card in the corner, the chime, and a row in the centre. The full-screen
-     * overlay below still appears — a reminder is the one thing that SHOULD interrupt — but it is
-     * dismissed in a second and the card is what is left to find afterwards. */
+  // Store every delivery before applying interruption preferences. Silencing an alert must never
+  // erase its Notification centre history, and repeated delivery of one occurrence must not ring again.
+  function reminderAlert(text,data={}){
+    const fresh=_rememberReminder({...data,content:text},_reminderOwner(),true);
+    _remindersChanged();
+    if(data.reminder_id&&data.due_at&&!fresh)return;
+    if(!notificationAllowed('reminders'))return;
+    const route=data.route==='calendar'?'calendar':'notifications';
+    osNotify('⏰ Reminder', text, { tag:'pc-reminder-'+String(data.reminder_id||''),type:'reminders',route });
     try{ if(window.PCOS && PCOS.isOn() && PCOS.osToast)
-           PCOS.osToast('⏰ <b>Reminder</b> — ' + enc(String(text||'').replace(/<[^>]+>/g,'').slice(0,120)), LOGO); }catch(_){}
+           PCOS.osToast('<b>Reminder</b> — '+enc(String(text||'').slice(0,120)),LOGO,()=>openOsNotificationRoute(route)); }catch(_){}
     const ex=document.getElementById('reminderOverlay'); if(ex) ex.remove();
     const ov=document.createElement('div'); ov.id='reminderOverlay';
     ov.style.cssText='position:fixed;inset:0;z-index:600;display:grid;place-items:center;padding:24px;background:rgba(4,2,12,.8);backdrop-filter:blur(4px)';
     ov.innerHTML=`<div class="reminder-card"><div style="font-size:42px">⏰</div><h2 style="margin:10px 0">Reminder</h2>
       <div style="font-size:18px;margin-bottom:20px">${aiFormat(String(text||''))}</div>
-      <button class="btn btn-neon" id="reminderDismiss">Dismiss</button></div>`;
+      <button class="btn btn-neon" id="reminderOpen">${route==='calendar'?'Open Calendar':'Open Notifications'}</button> <button class="btn btn-ghost" id="reminderDismiss">Dismiss</button></div>`;
     const close=()=>ov.remove();
     ov.addEventListener('click',e=>{ if(e.target===ov) close(); });
     document.body.appendChild(ov);
     const b=ov.querySelector('#reminderDismiss'); if(b) b.onclick=close;
+    const open=ov.querySelector('#reminderOpen');if(open)open.onclick=()=>{close();openOsNotificationRoute(route);};
   }
   // Markdown + the backend's custom inline markup the old web UI rendered: !video[](url), !audio[](url),
   // ![](url) images, links, and magnet/.torrent → an "add torrent" action. So command outputs
@@ -37923,7 +37986,7 @@
     /* The desktop's notification centre renders the SAME rows the Notifications view does, through
      * the same notifHtml, so the two can never drift apart in appearance or in what counts as a
      * notification (notifList is the gate that decides that — see the comment on it). */
-    notifItems: (n) => { try{ return notifGrouped(notifList().filter(_notifMatch)).slice(0, n || 30); }
+    notifItems: (n) => { hydrateReminderNotifications(); try{ return notifGrouped(notifList().filter(_notifMatch)).slice(0, n || 30); }
                          catch(_){ return []; } },
     /* …but the tray's COUNT must never be derived from that list's length: it is sliced, so past the
      * slice the length is a constant and every arrival adds nothing. This is the same function the
