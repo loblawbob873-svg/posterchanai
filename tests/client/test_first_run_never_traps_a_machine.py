@@ -78,3 +78,24 @@ def test_the_button_exists_in_the_shipped_ui():
     ui = (ROOT / "static" / "js" / "client" / "osfirstrunui.js").read_text(encoding="utf-8")
     assert 'data-fr="nonet"' in ui, "the network step has no way past it"
     assert "pc_fr_network_skipped" in ui, "the choice is not recorded, so it is asked again"
+
+
+def test_the_network_step_keeps_looking(  ):
+    """The screen says "this step will pass by itself" — something has to make that true.
+
+    `net.status()` was read ONCE, inside readWorld()'s startup window. After that the step only ever
+    re-listed WIFI: "Scan again" called stepNetwork() directly, which cannot notice a cable. A first
+    boot racing NetworkManager, a switch negotiating, or a USB NIC binding late therefore left an
+    ethernet-only machine on an empty list with nothing to click, while the machine was online.
+    """
+    ui = (ROOT / "static" / "js" / "client" / "osfirstrunui.js").read_text(encoding="utf-8")
+    step = ui[ui.index("async function stepNetwork"):]
+    step = step[:step.index("\n  async function")] if "\n  async function" in step else step
+    assert "net.status()" in step, "the step never re-checks whether the machine came online"
+    assert "setInterval" in step, "nothing watches; the promise in the copy is not kept"
+    assert "clearInterval" in step, "the watcher outlives the card it belongs to"
+    # Scan again must re-read the MACHINE, not only the air.
+    assert 'data-fr="rescan"' in step and "onclick = () => run()" in step, \
+        "Scan again only re-lists wifi, which cannot help a wired machine"
+    # And status must be consulted somewhere other than the single startup read.
+    assert ui.count("net.status()") >= 2, "connectivity is still read exactly once"

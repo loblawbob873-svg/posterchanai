@@ -44,6 +44,7 @@
   /* The network step's own 'not now'. See stepState(): without it this screen is the only one that
    * can hold a machine for ever, and it holds the machine that most needs a way past it. */
   const KEY_NETWORK_SKIP = 'pc_fr_network_skipped';
+  let _netWatch = 0;
   const get = (k) => { try{ return localStorage.getItem(k); }catch(_){ return null; } };
   const set = (k, v) => { try{ localStorage.setItem(k, v); }catch(_){} };
 
@@ -233,7 +234,32 @@
       `<div class="osfr-list" id="osfr-wifi"><div class="spinner"></div></div>`,
       `<button class="btn btn-ghost small" data-fr="rescan">Scan again</button>
        <button class="btn btn-ghost small" data-fr="nonet">Continue without a network</button>`);
-    card.querySelector('[data-fr="rescan"]').onclick = () => stepNetwork(false);
+    /* Scan again RE-READS THE MACHINE, not just the air. It called stepNetwork() directly, which
+     * re-lists wifi and nothing else — so on a box that had come online since the wizard started,
+     * the only button that looked like it might help could not possibly help. run() reads the world
+     * again, and a machine that is now online simply moves on. */
+    card.querySelector('[data-fr="rescan"]').onclick = () => run();
+
+    /* AND IT WATCHES, because the copy above promises this step "will pass by itself" and nothing
+     * made that true. `net.status()` is read ONCE, inside readWorld()'s startup window; after that
+     * this screen only ever re-listed WIFI. A cable that comes up a second after that window closes
+     * — a first boot racing NetworkManager, a switch negotiating, a USB NIC binding late — left an
+     * ethernet-only machine sitting on an empty list with nothing to click. The machine was online
+     * and the wizard never looked again. Reported as "no wifi listed" from a desktop whose ethernet
+     * was working perfectly.
+     *
+     * Cheap and self-cancelling: one nmcli read every two seconds, only while this card is on
+     * screen, and it stops the moment the card is replaced. */
+    try{ clearInterval(_netWatch); }catch(_){}
+    _netWatch = setInterval(async () => {
+      if(!_el || !_el.contains(card)){ try{ clearInterval(_netWatch); }catch(_){} _netWatch = 0; return; }
+      let s = null;
+      try{ s = await net.status(); }catch(_){ return; }
+      if(s && s.online){
+        try{ clearInterval(_netWatch); }catch(_){} _netWatch = 0;
+        run();
+      }
+    }, 2000);
     /* THE WAY OUT. An ethernet-only machine whose NIC NetworkManager has not brought up sees an
      * empty wifi list and, before this, nothing else at all — the wizard covers the desktop and
      * there is no terminal in front of it. Recording the skip rather than faking `online` keeps
