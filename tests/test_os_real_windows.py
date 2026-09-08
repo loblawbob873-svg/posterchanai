@@ -513,3 +513,36 @@ def test_opening_an_app_asks_for_a_real_window_first():
     assert "if(real){ _openedReal = true; return null; }" in body, (
         "a refused window must fall back to the in-page frame, and a successful one must say so")
     assert "if(!direct){" in body, "a managed re-open must not be turned into a toplevel"
+
+
+@pytest.mark.parametrize('size',[(780,520),(1280,900),(2400,1800),(3797,2458),(1900,2700)])
+def test_direct_native_open_uses_launcher_measured_size(size):
+    got=run_js('''
+      const calls=[], hints=[];
+      const {w,api}=make({pcWM:{},PCOS:{windowOpenHint(view){hints.push(view);return SIZE;}},
+        open(url,target,features){calls.push(features);return {};}});
+      api.open('global');
+      out.calls=calls;out.hints=hints;
+    '''.replace('SIZE',json.dumps(dict(zip(('width','height'),size)))))
+    assert got['calls']==[f'width={size[0]},height={size[1]}']
+    assert got['hints']==['global']
+
+
+def test_native_explicit_size_and_missing_helper_fallback_are_preserved():
+    got=run_js('''
+      const calls=[];let hints=0;
+      const {w,api}=make({pcWM:{},PCOS:{windowOpenHint(){hints++;return {width:2000,height:1600};}},
+        open(url,target,features){calls.push(features);return {};}});
+      const opts={width:900,height:600};api.open('global','Social',opts);
+      api.open('global','Social',{width:800});
+      w.PCOS={windowOpenHint(){throw Error('not ready')}};api.open('global');
+      delete w.PCOS;api.open('global');
+      out.calls=calls;out.hints=hints;out.opts=opts;
+    ''')
+    assert got['calls']==['width=900,height=600','width=800,height=1600','width=1100,height=760','width=1100,height=760']
+    assert got['hints']==1
+    assert got['opts']=={'width':900,'height':600}
+
+
+def test_native_size_api_exports_existing_launcher_helper():
+    assert 'windowOpenHint: _windowOpenHint' in OS_JS

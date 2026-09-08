@@ -152,7 +152,18 @@
      * monitor (or a click one frame earlier) already created the singleton. It also returns a
      * navigated Social window before the compositor snapshot catches up. */
     routeExisting(view);
-    const o = opts || {};
+    const o = Object.assign({}, opts || {});
+    // Direct opens use the same measured app size as icon/Start launches.
+    // Explicit pop-out dimensions remain authoritative.
+    if(!o.width || !o.height){
+      try{
+        const hint = root.PCOS && root.PCOS.windowOpenHint && root.PCOS.windowOpenHint(view);
+        if(hint){
+          if(!o.width)o.width=hint.width;
+          if(!o.height)o.height=hint.height;
+        }
+      }catch(_){}
+    }
     const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''));
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron
      * child takes its geometry from them. sway may place it elsewhere and that is fine: it is the
