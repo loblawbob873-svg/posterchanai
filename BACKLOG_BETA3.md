@@ -102,7 +102,12 @@ test, deployment/package, and relevant real-device check are complete. The insta
       Evidence: local/NAS-proxy Jellyfin tests cover code validation/expiry/single use,
       shared-library visibility, and permission/token revocation during existing playback;
       the browser harness also checks existing TV views and HLS tickets after unsharing.
-- [ ] Run the affected backend/browser suites, real Jellyfin SDK compatibility gates
-      for Android TV 0.19.10 and newer, and a physical TV check before marking complete.
-      Backend/browser checks passed for the changes above. Version-specific SDK gates and
-      a physical-TV check of this candidate have not been established by these test runs.
+- [x] Run the affected backend/browser suites and executable Jellyfin SDK compatibility gates
+      for the Android TV 0.19.10 contract and the tested newer SDK.
+      Evidence: upstream gate passed 87 tests; its eight skipped Kotlin cases subsequently
+      passed with official JVM SDKs 1.7.1 and 1.8.12, both authentication headers, and
+      local/NAS-proxy libraries. The focused matrix passed 12/12 (eight SDK, four schema).
+      Real browser/FFmpeg sharing, pairing, playback, and revocation checks also passed.
+- [ ] Verify this candidate on a physical TV before marking the device check complete.
+      Earlier user reports confirmed TV/shared-library access, but do not establish a
+      physical Android TV 0.19.10/newer-device check of the current candidate.
