@@ -275,7 +275,7 @@ def test_the_apk_can_raise_a_notification_at_all():
     i = APPJS.index("function osNotify(")
     # Slice the whole helper rather than a fixed character budget. Deep-link routing adds fields to
     # the native call but must not make this test lose sight of the browser fallback below it.
-    body = APPJS[i:APPJS.index("\n  // A reminder fired", i)]
+    body = APPJS[i:APPJS.index("\n  function reminderAlert(", i)]
     assert "_capPlugin('PosterChanPush', 'notify')" in body, (
         "osNotify still relies on window.Notification, which does nothing in a WebView")
     assert body.index("_capPlugin('PosterChanPush'") < body.index("window.Notification"), (
