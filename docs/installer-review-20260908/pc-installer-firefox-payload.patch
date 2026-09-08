@@ -1,0 +1,69 @@
+--- a/os/gentoo.sh
++++ b/os/gentoo.sh
+@@ -3277,10 +3277,10 @@
+ 		done
+ 
+ 		# /opt is commonly where a builder accumulates SDKs and unrelated server applications.  The
+-		# one payload a PosterChanOS image needs is /opt/posterchan; exclude every sibling explicitly
+-		# so that directory remains available to the image self-check below.
++		# required desktop payloads are PosterChan and Gentoo's prebuilt Firefox. Keep these exact
++		# trees; unrelated SDK/server siblings must not leak into a public image.
+ 		for F in /opt/*; do
+-			[[ -e "$F" && "$F" != /opt/posterchan ]] && EXCLUDES+=("${F#/}")
++			[[ -e "$F" && "$F" != /opt/posterchan && "$F" != /opt/firefox ]] && EXCLUDES+=("${F#/}")
+ 		done
+ 
+ 		# The account files, rewritten. Everything below uid 1000 stays — root and the system users
+@@ -3752,6 +3752,11 @@
+ 			|| MISSING="$MISSING /opt/posterchan"
+ 		echo "$LS" | grep -qx "squashfs-root/usr/local/bin/posterchan" \
+ 			|| MISSING="$MISSING /usr/local/bin/posterchan"
++		# The launcher and Portage records can survive a missing /opt/firefox tree. Check the
++		# packed output itself, not the builder's disk, before this image can be published.
++		for F in usr/bin/firefox-bin opt/firefox/firefox-bin opt/firefox/libxul.so; do
++			printf '%s\n' "$LS" | grep -qx "squashfs-root/$F" || MISSING="$MISSING /$F"
++		done
+ 		# The welcome screen cannot configure wifi without the daemon, and launching getty before it
+ 		# is ready creates the exact same visible failure as omitting it.
+ 		echo "$LS" | grep -qx "squashfs-root/usr/lib/systemd/system/NetworkManager.service" \
+--- /dev/null
++++ b/tests/test_livecd_firefox_payload.py
+@@ -0,0 +1,38 @@
++"""A clean ISO keeps its required browser payload and rejects a wrapper-only image."""
++import os
++from pathlib import Path
++import subprocess
++
++SOURCE = Path(os.environ.get('PC_FIREFOX_INSTALLER_SOURCE', Path(__file__).resolve().parents[1] / 'os/gentoo.sh'))
++
++
++def test_clean_image_keeps_firefox_but_excludes_private_opt_siblings(tmp_path):
++    source = SOURCE.read_text()
++    start = source.index('\t\tfor F in /opt/*; do')
++    block = source[start:source.index('\n\t\tdone', start)+len('\n\t\tdone')]
++    # Redirect only the filesystem root, executing the real exclusion predicate and loop.
++    block = block.replace('/opt', str(tmp_path / 'opt'))
++    (tmp_path / 'opt').mkdir()
++    for name in ('posterchan', 'firefox', 'firefox-private', 'android-sdk', 'private-server'):
++        (tmp_path / 'opt' / name).mkdir()
++    result = subprocess.run(['bash', '-c', 'EXCLUDES=();\n' + block + '\nprintf "%s\\n" "${EXCLUDES[@]}"'],
++                            capture_output=True, text=True, timeout=10)
++    assert result.returncode == 0, result.stderr
++    excluded = {Path(line).name for line in result.stdout.splitlines()}
++    assert excluded == {'firefox-private', 'android-sdk', 'private-server'}
++
++
++def test_final_image_rejects_missing_firefox_binary_or_library():
++    source = SOURCE.read_text()
++    marker = 'for F in usr/bin/firefox-bin opt/firefox/firefox-bin opt/firefox/libxul.so; do'
++    assert marker in source, 'Final squashfs gate never verifies the Firefox payload'
++    start = source.index(marker)
++    block = source[start:source.index('\n\t\tdone', start)+len('\n\t\tdone')]
++    assert source.index('LS="$(unsquashfs -l') < start < source.index('if [[ -n "$MISSING" ]]', start)
++    paths = ('usr/bin/firefox-bin', 'opt/firefox/firefox-bin', 'opt/firefox/libxul.so')
++    for absent in (None, *paths):
++        listing = '\n'.join('squashfs-root/' + p for p in paths if p != absent)
++        result = subprocess.run(['bash', '-c', 'MISSING="";\n' + block + '\nprintf "%s" "$MISSING"'],
++                                env={**os.environ, 'LS': listing}, capture_output=True, text=True, timeout=10)
++        assert result.returncode == 0, result.stderr
++        assert result.stdout.strip() == ('/' + absent if absent else '')

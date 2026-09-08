@@ -16,6 +16,11 @@ For Firefox, preserve the required `/opt/firefox` payload while retaining exclus
 
 The isolated review clone is `/tmp/pc-installer-findings-review-20260908`, based on `252b43ffef856301de89e203c5538afaf660b6a4`.
 
+Durable review copies are in [installer-review-20260908](installer-review-20260908/).
+These are unapplied patch artifacts, not changes to the installer. The installer owner should
+review them against their current work before applying the four-findings patch followed by the
+Firefox patch. The `/tmp` paths below identify the original validation artifacts.
+
 - `/tmp/pc-installer-four-findings.patch` addresses findings 1–4 in `os/gentoo.sh`, `scripts/check_scratch_install_vm.py`, and new `tests/test_installer_followup_regressions.py`. Fourteen runtime cases use temporary paths and mocked downloads/chroot: original source **11 failed / 3 passed**; patched source **14 passed**. No packages or host `/etc` are modified by these tests.
 - `/tmp/pc-session-switch-parity.patch` is a **separate helper parity change already integrated in `f8aac8f4b`**; do not apply it again. It aligns `os/bin/pc-session-switch` with the packaged helper reviewed in `5650237b7`, retaining authentication/provisioning checks and avoiding restart only when both identity and console autologin user already match. It includes eight runtime cases across both copies. Adjacent checks passed **139 tests, 52 subtests**.
 - The combined isolated adjacent suite passed **197 tests, 58 subtests**. Logs: `/tmp/pc-installer-findings-red.log`, `/tmp/pc-session-switch-parity-tests.log`, and `/tmp/pc-installer-findings-parity-green.log`. Patch reverse-applicability checks, shell syntax checks, and `git diff --check` passed.
