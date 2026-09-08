@@ -123,43 +123,31 @@ Start this work only after the existing stabilization backlog and agent handoff.
       publication, retries, duplicate actions, account switches, reload hydration,
       and synchronization across devices. Review before deployment.
 
-## After the LiveUSB ships — NVIDIA Quadro P1000 support
+## NVIDIA Quadro P1000 — DONE 2026-09-08
 
-Requested 2026-09-08. The P1000 is Pascal (GP107). Do this only once the current ISO
-has shipped and been confirmed on real hardware.
+Implemented in `848f68258`. `x11-drivers/nvidia-drivers` is in POSTERCHANOS_PACKAGES,
+pinned by `>=x11-drivers/nvidia-drivers-581` in package.mask with NVIDIA-r2 accepted in
+package.license. Built and verified on the build host: 580.173.02, all five modules in
+/lib/modules/6.18.43-gentoo-dist-bin/video/.
 
-IT IS MOSTLY JUST `emerge nvidia-drivers` ON THE BUILD HOST. A kernel module is built
-against the KERNEL, not against the hardware, so the laptop having no NVIDIA card does
-not matter: the module is built for `6.18.43-gentoo-dist-bin`, mksquashfs packs
-/lib/modules into the image, it sits unused on AMD machines and loads on the P1000. The
-live initramfs is already built `--no-hostonly --conf /dev/null` (liveCD's dracut call),
-so it inherits none of the build host's policy and is not hostonly-trimmed. The GPU
-driver loads after switch_root from the squashfs, so it need not be in the initramfs at
-all unless we want early KMS.
+Three things a future session will be tempted to "fix" and must not:
 
-- [ ] Pin `x11-drivers/nvidia-drivers` to the **580** branch and VERIFY that pin against the
-      Gentoo tree rather than from memory: 580 is understood to be the terminal branch for
-      Maxwell/Pascal/Volta, with later branches dropping them, so an unpinned `-uDN @world`
-      would eventually pull a driver that does not support this card.
-- [ ] ACCEPT_LICENSE for NVIDIA's licence — no PosterChanOS install sets one today, and
-      emerge refuses without it.
-- [ ] `nvidia-drm.modeset=1` on the kernel command line. Wayfire is wlroots and without
-      modeset the compositor gets no output; the symptom is a black screen, indistinguishable
-      from every other black screen this project has produced. The live `append=` string is
-      built in liveCD; the installed one in bootloader().
-- [ ] Keep the module in step with kernel upgrades (dist-kernel subslot / @module-rebuild),
-      or the first kernel update leaves the machine with no driver.
-- [ ] NOUVEAU: check what the package already does before writing our own rule —
-      nvidia-drivers ships its own modprobe policy, so we may need nothing. What exists in
-      our tree is NOT a blacklist: `os/gentoo.sh:484` appends `omit_drivers+=" nouveau "` to
-      /etc/dracut.conf, which keeps it out of the INITRAMFS only, and it sits inside the LUKS
-      key-rotation function as a side effect of encrypted-boot setup. It also never reaches
-      the live image, whose dracut runs with `--conf /dev/null`. Whatever we add must be
-      conditional on the proprietary driver being installed and modesetting: blacklisting
-      unconditionally leaves every NVIDIA machine with no driver at all, because nouveau is
-      the only one in the image today and one ISO boots every machine.
-- [ ] Watch the image size — nvidia-drivers is a few hundred MB on an image that is 3.2 GB.
-- [ ] Test on the real P1000, not only in a VM. QEMU cannot reproduce a proprietary driver
+1. THE PIN IS LOad-BEARING, not caution. nvidia-drivers picks the right branch itself by
+   reading the card's device id from supported-gpus.json — but that check loops over
+   `grep -l 0x10de /sys/bus/pci/devices/*/vendor`, and the machine that BUILDS this image
+   has no NVIDIA card. It finds nothing, sets no NV_LEGACY_MASK, and portage would install
+   a branch that cannot drive the hardware the image is for. We write the pin because the
+   mechanism that would otherwise write it is blind on a build host.
+2. NO nouveau BLACKLIST AND NO `nvidia-drm.modeset=1` OF OUR OWN. The ebuild's
+   /etc/modprobe.d/nvidia.conf already carries both. A second copy is exactly how the live
+   getty override and its gate drifted apart and stopped every ISO build for a day.
+3. PRE-MAXWELL IS DELIBERATELY UNSUPPORTED. 580 covers Maxwell (2014) through current, so
+   blacklisting nouveau costs nothing on anything that new — but a Kepler or Fermi card
+   booting this image gets nouveau blacklisted with no working replacement, i.e. a black
+   screen. Raised with the owner 2026-09-08 and ruled: those users can deal with their own
+   super-old hardware. Do NOT add a conditional blacklist to "fix" this; it was decided.
+
+- [ ] Remaining: confirm on the real P1000. QEMU cannot reproduce a proprietary driver
       failing to modeset, exactly as it could not reproduce the 30-second network-online wait.
 
 ## Final follow-up requested 2026-09-08: private Monero zap announcement choice
