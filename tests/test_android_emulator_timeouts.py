@@ -176,7 +176,8 @@ def test_emulator_crashpad_evidence_is_uploaded_for_host_process_failures():
 
 
 def test_emulator_console_survives_background_shell_and_action_teardown():
-    assert WORKFLOW.count('touch /tmp/pc-emulator-console.txt') == 2
+    assert WORKFLOW.count('pre-emulator-launch-script: bash scripts/android_emulator_preflight.sh') == 2
+    assert 'touch "${PC_EMULATOR_CONSOLE:-/tmp/pc-emulator-console.txt}"' in (ROOT/'scripts/android_emulator_preflight.sh').read_text()
     options = [line for line in WORKFLOW.splitlines() if 'emulator-options:' in line]
     assert len(options) == 2
     assert all('-stdouterr-file /tmp/pc-emulator-console.txt' in line for line in options)
@@ -196,7 +197,7 @@ def test_actual_prelaunch_guards_renderer_experiment_build(tmp_path,version,acce
     boots=[s for s in flow['jobs']['emulator']['steps'] if s.get('uses','').startswith('reactivecircus/android-emulator-runner@')]
     assert len(boots)==2
     sdk=tmp_path/'sdk';binary=sdk/'emulator/emulator.pc-real';binary.parent.mkdir(parents=True)
-    binary.write_text('#!/bin/sh\nprintf "%s\\n" "$FIXTURE_VERSION"\n')
+    binary.write_text('#!/bin/sh\ncase " $* " in *" -no-window "*) ;; *) echo "missing libpulse in GUI QEMU" >&2; exit 127;; esac\nprintf "%s\\n" "$FIXTURE_VERSION"\n')
     binary.chmod(0o755)
     entry=binary.parent/'emulator'
     entry.write_bytes(binary.read_bytes() if tampered else (ROOT/'scripts/android_emulator_supervisor.sh').read_bytes())
@@ -204,8 +205,20 @@ def test_actual_prelaunch_guards_renderer_experiment_build(tmp_path,version,acce
     for i,boot in enumerate(boots):
         console=tmp_path/f'console-{i}.txt'
         script=boot['with']['pre-emulator-launch-script'].replace('/tmp/pc-emulator-console.txt',str(console))
-        result=subprocess.run(['bash','-c',script],cwd=ROOT,env={**os.environ,'ANDROID_HOME':str(sdk),'FIXTURE_VERSION':version},capture_output=True,text=True,timeout=5)
+        result=subprocess.run(['bash','-c',script],cwd=ROOT,env={**os.environ,'ANDROID_HOME':str(sdk),'FIXTURE_VERSION':version,'PC_EMULATOR_CONSOLE':str(console)},capture_output=True,text=True,timeout=5)
         assert (result.returncode==0)==accepted,result.stdout+result.stderr
-        assert console.exists()==accepted
+        assert console.exists(),'failure evidence file must exist even when preflight refuses the boot'
         assert '-wipe-data' in boot['with']['emulator-options']
         assert '-no-snapshot ' in boot['with']['emulator-options']
+
+
+def test_failed_prelaunch_cannot_turn_into_successful_device_verdict(tmp_path):
+    """The action ignores hook failure; exercise the actual mandatory commands too."""
+    import yaml
+    boots=[s for s in yaml.safe_load(WORKFLOW)['jobs']['emulator']['steps'] if s.get('uses','').startswith('reactivecircus/android-emulator-runner@')]
+    for i,boot in enumerate(boots):
+        command=boot['with']['script'].replace('/tmp/pc-instrumented-status',str(tmp_path/'instrumented-status')).replace('/tmp/pc-device-status',str(tmp_path/'device-status'))
+        result=subprocess.run(['bash','-c',command],cwd=ROOT,env={**os.environ,'ANDROID_HOME':str(tmp_path/'missing-sdk'),'PC_EMULATOR_CONSOLE':str(tmp_path/'console')},capture_output=True,text=True,timeout=5)
+        assert result.returncode!=0
+        status=tmp_path/('instrumented-status' if i==0 else 'device-status')
+        assert status.exists() and status.read_text().strip()!='0'
