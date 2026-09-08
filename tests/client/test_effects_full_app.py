@@ -115,6 +115,26 @@ async def main(width,existing_chat,native_window=False):
                 await asyncio.sleep(2)
                 await b.until("!!document.querySelector('#fxs-close')")
                 await b.js("document.querySelector('#fxs-close').click()")
+                await b.js("window.__aiWindow=document.querySelector('.ai-chat').closest('.osw');window.__aiNode=document.querySelector('.ai-chat');window.__aiComposer=document.querySelector('#ai-input')")
+                async def check_geometry(stage):
+                    geometry=await b.js("""(()=>{const chat=__aiNode,compose=chat.querySelector('.ai-compose'),feed=chat.parentElement,body=feed.closest('.osw-body')||feed;const rect=e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:r.height,cls:e.className}};return {chat:rect(chat),compose:rect(compose),input:rect(__aiComposer),send:rect(chat.querySelector('#ai-send')),feed:rect(feed),body:rect(body),padding:getComputedStyle(compose).paddingBottom}})()""")
+                    assert abs(geometry['body']['bottom']-geometry['compose']['bottom'])<25,geometry
+                    if width>820 or native_window:
+                        assert abs(geometry['body']['bottom']-geometry['send']['bottom'])<30,(stage,geometry)
+                    else:
+                        assert float(geometry['padding'].removesuffix('px'))>=62, 'phone navigation clearance must remain'
+                await check_geometry('initial')
+                if width>820 and not native_window:
+                    await b.js("__aiWindow.querySelector('[data-w=max]').click()")
+                    await asyncio.sleep(.3)
+                    await check_geometry('maximized')
+                    await b.js("__aiComposer.value='Preserve draft';document.querySelector('.os-icon[data-view=notes]').click()")
+                    await asyncio.sleep(.2)
+                    await check_geometry('parked')
+                    await b.js("__aiWindow.querySelector('.osw-bar').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}))")
+                    await asyncio.sleep(.2)
+                    await check_geometry('restored')
+                    assert await b.js("document.querySelector('#ai-input')===__aiComposer && __aiComposer.value==='Preserve draft'")
                 assert await b.js("(()=>{const b=document.querySelector('#ai-back-social'),r=b.getBoundingClientRect(),bar=b.closest('.ai-bar');return !b.hidden&&r.width>60&&r.left>=0&&r.right<=innerWidth&&bar.scrollWidth<=bar.clientWidth+1})()")
                 await b.js("__sockets.findLast(s=>s.url.includes('/api/ws/chat/')).fire('message',{type:'response',data:{type:'generated_image',image:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1sAAAAASUVORK5CYII='}})")
                 await b.until("!!document.querySelector('.ai-reply-fx')")
@@ -148,6 +168,7 @@ def test_full_app_effects(width,existing_chat):
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome is required')
-def test_native_window_bootstrap_effects_return():
+@pytest.mark.parametrize('width', [1440, 780])
+def test_native_window_bootstrap_effects_return(width):
     # Real pcwin URL/adoption/route guards; no Electron compositor or shared opener.
-    asyncio.run(main(1440,False,native_window=True))
+    asyncio.run(main(width,False,native_window=True))
