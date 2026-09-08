@@ -15,6 +15,13 @@ public final class SmsReactions {
         {"emphasize","‼️","Emphasized","Removed an emphasis from"},
         {"question","❓","Questioned","Removed a question mark from"}
     };
+    /** Exact interoperable fallback text; text is content, never normalized or truncated. */
+    public static String format(String kind, boolean remove, String text) {
+        if (text == null || text.isEmpty()) throw new IllegalArgumentException("Missing reaction text");
+        for (String[] form : FORMS) if (form[0].equals(kind))
+            return form[remove ? 3 : 2] + " “" + text + "”";
+        throw new IllegalArgumentException("Unknown reaction kind");
+    }
     public static final class Parsed {
         public final String kind, emoji, operation, text;
         Parsed(String[] form, String op, String text) {

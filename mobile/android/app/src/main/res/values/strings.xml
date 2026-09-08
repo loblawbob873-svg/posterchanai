@@ -175,4 +175,14 @@
     <string name="tel_text_number">Send a text</string>
     <string name="sms_notifications_disabled">Text notifications are disabled. Tap to enable alerts.</string>
     <string name="tel_return_call">Return to call</string>
+    <string name="sms_react">React to message</string>
+    <string name="sms_reaction_remove">Remove your reaction</string>
+    <string name="sms_reaction_you">You</string>
+    <string name="sms_reaction_failed">Could not send reaction. Check the conversation before retrying.</string>
+    <string name="sms_reaction_heart">Love</string>
+    <string name="sms_reaction_like">Like</string>
+    <string name="sms_reaction_dislike">Dislike</string>
+    <string name="sms_reaction_laugh">Laugh</string>
+    <string name="sms_reaction_emphasize">Emphasize</string>
+    <string name="sms_reaction_question">Question</string>
 </resources>

@@ -127,6 +127,13 @@ class IconSprite(unittest.TestCase):
                 continue
             src = open(path, encoding="utf-8").read()
             if path.endswith(".java"):
+                if os.path.basename(path) == "SmsReactions.java":
+                    # This exact wire-format table describes message reactions. The requested
+                    # emoji content is not a navigation/action icon; scan all other literals.
+                    table = re.search(r'private static final String\[\]\[\] FORMS = \{.*?\n    \};', src, re.S)
+                    self.assertIsNotNone(table, "Reaction wire table moved: review content classification")
+                    self.assertEqual(len(re.findall(r'\{"', table.group(0))), 6)
+                    src = src[:table.start()] + src[table.end():]
                 src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
                 src = re.sub(r"//[^\n]*", " ", src)
                 shown = re.findall(r'"((?:[^"\\]|\\.)*)"', src)

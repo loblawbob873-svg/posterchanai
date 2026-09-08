@@ -57,6 +57,16 @@ public final class SmsSender {
      * the platform to resolve the address instead can mint a second thread for the same person.
      */
     public static Result send(Context ctx, String address, String body, long threadId) {
+        return send(ctx, address, body, threadId, false);
+    }
+
+    /** Reactions require a durable pending row so a second action cannot repeat an in-flight send. */
+    static Result sendStored(Context ctx, String address, String body, long threadId) {
+        return send(ctx, address, body, threadId, true);
+    }
+
+    private static Result send(Context ctx, String address, String body, long threadId,
+                               boolean requireStored) {
         Result r = new Result();
         if (address == null || address.trim().isEmpty()) { r.error = "no number"; return r; }
         if (body == null || body.isEmpty()) { r.error = "nothing to send"; return r; }
@@ -85,6 +95,10 @@ public final class SmsSender {
                                      threadId)
                 : null;
         r.stored = r.row != null;
+        if (requireStored && !r.stored) {
+            r.error = "Could not save the pending reaction. Nothing was sent.";
+            return r;
+        }
 
         try {
             SmsManager sms = manager(ctx);

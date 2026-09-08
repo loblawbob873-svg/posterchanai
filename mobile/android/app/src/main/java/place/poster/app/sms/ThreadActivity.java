@@ -312,19 +312,22 @@ public class ThreadActivity extends PcActivity {
         }, "pc-sms-context").start();
     }
 
+    private long reloadGeneration;
     private void reload() {
+        final long generation = ++reloadGeneration;
         final long id = threadId;
+        final String peer = address;
         new Thread(new Runnable() {
             @Override public void run() {
                 // BOTH PROVIDERS — see Messages. Texts and picture messages are one
                 // conversation and always have been; read from SmsStore alone this screen
                 // showed a thread with its pictures missing and no gap to say so.
-                final List<SmsMsg> rows = Messages.thread(ThreadActivity.this, id, 500);
+                final SmsReactionThread history = reactionHistory(id, peer);
                 main.post(new Runnable() {
                     @Override public void run() {
-                        if (id != threadId) return;
+                        if (id != threadId || generation != reloadGeneration) return;
                         boolean atEnd = list.getLastVisiblePosition() >= adapter.getCount() - 2;
-                        adapter.set(rows);
+                        adapter.set(history);
                         restoreAttachmentDraft();
                         // Only follow the conversation down when the person was ALREADY at the
                         // bottom. Yanking somebody out of what they were reading because a message
@@ -764,11 +767,58 @@ public class ThreadActivity extends PcActivity {
         } catch (Throwable ignored) { }
     }
 
+    private static final java.util.Set<String> reactionSends =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+
+    private SmsReactionThread reactionHistory(long id, String peer) {
+        List<SmsMsg> rows = Messages.thread(this, id, 501);
+        boolean complete = rows.size() < 501 && !SmsStore.refused()
+                && !MmsStore.refused() && !MmsStore.capped() && ids().length == 1;
+        return new SmsReactionThread(rows, complete, id, peer);
+    }
+
+    private void reactionMenu(final SmsMsg m) {
+        AlertDialog picker = SmsReactionViews.picker(this, adapter.history, m,
+                (kind, remove) -> sendReaction(m, kind, remove));
+        if (picker != null) picker.show();
+    }
+
+    private void sendReaction(final SmsMsg shown, final String kind, final boolean remove) {
+        final long id = threadId;
+        final String peer = address;
+        final String key = id + ":" + SmsReactionThread.id(shown);
+        if (!HasRole.sms(this) || !reactionSends.add(key)) return;
+        new Thread(() -> {
+            String error = null;
+            try {
+                SmsReactionThread fresh = reactionHistory(id, peer);
+                if (id != threadId || !peer.equals(address) || !fresh.canReact(shown)) return;
+                SmsReactions.Chip own = fresh.own(shown);
+                if (remove ? own == null || !kind.equals(own.kind)
+                        : own != null && kind.equals(own.kind)) return;
+                SmsSender.Result result = SmsSender.sendStored(this, peer,
+                        SmsReactions.format(kind, remove, shown.body), id);
+                if (!result.ok) error = result.error;
+            } catch (Throwable failure) {
+                error = getString(R.string.sms_reaction_failed);
+            } finally {
+                reactionSends.remove(key);
+                final String problem = error;
+                main.post(() -> {
+                    if (id != threadId || !peer.equals(address)) return;
+                    if (problem != null) say(problem);
+                    reload();
+                });
+            }
+        }, "pc-sms-reaction").start();
+    }
+
     private void messageMenu(final SmsMsg m) {
         if (m == null) return;
         try {
             // OUTBOX includes both in-flight and delivery-unknown submissions. Replaying
             // either can send the same picture again even when the bubble still says Sending.
+            final boolean react = adapter.history != null && adapter.history.canReact(m);
             final boolean retry = retryableMms(m);
             final CharSequence[] actions = retry
                     ? new CharSequence[]{ getString(R.string.sms_retry_send),
@@ -776,10 +826,15 @@ public class ThreadActivity extends PcActivity {
                                           getString(R.string.sms_delete_msg) }
                     : new CharSequence[]{ getString(R.string.sms_copy),
                                           getString(R.string.sms_delete_msg) };
+            final java.util.List<CharSequence> menu = new ArrayList<>();
+            if (react) menu.add(getString(R.string.sms_react));
+            java.util.Collections.addAll(menu, actions);
             new AlertDialog.Builder(this)
-                .setItems(actions,
+                .setItems(menu.toArray(new CharSequence[0]),
                     new android.content.DialogInterface.OnClickListener() {
                         @Override public void onClick(android.content.DialogInterface d, int w) {
+                            if (react && w == 0) { reactionMenu(m); return; }
+                            if (react) w--;
                             if (retry && w == 0) { retryMms(m); return; }
                             int action = retry ? w - 1 : w;
                             if (action == 0) {
@@ -944,7 +999,10 @@ public class ThreadActivity extends PcActivity {
     private final class Msgs extends BaseAdapter {
         private List<SmsMsg> rows = new ArrayList<SmsMsg>();
 
-        void set(List<SmsMsg> r) { rows = r; notifyDataSetChanged(); }
+        SmsReactionThread history;
+        void set(SmsReactionThread value) {
+            history = value; rows = value.visible; notifyDataSetChanged();
+        }
         SmsMsg at(int i) { return i >= 0 && i < rows.size() ? rows.get(i) : null; }
 
         @Override public int getCount() { return rows.size(); }
@@ -972,6 +1030,9 @@ public class ThreadActivity extends PcActivity {
             SmsLinks.bind(text, bubbleText(m));
             text.setLinkTextColor(pal.accent);
             drawParts(attachments, m);
+            SmsReactionViews.bind(v.findViewById(R.id.pc_b_reactions), history, m, pal,
+                    original -> new AlertDialog.Builder(ThreadActivity.this).setMessage(original)
+                            .setPositiveButton(android.R.string.ok, null).show());
             text.setTextColor(pal.text);
             wrap.setBackground(Skin.bubble(ThreadActivity.this, pal, mine));
             // The bubble hugs its side and stops well short of the far edge, so a thread reads as a
