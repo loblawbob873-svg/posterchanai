@@ -682,3 +682,31 @@ def test_the_caps_still_bind_on_mainnet(mainnet_client):
 def assigned_wallet_fixture_members(monkeypatch):
     from tests.member_fixtures import allow_keys
     allow_keys(monkeypatch,'a'*64,'b'*64,'c'*64)
+
+
+@pytest.mark.parametrize("network,address", [("stagenet", ADDRESS), ("mainnet", MAINNET)])
+def test_unlimited_wallet_sends_03_repeatedly_without_old_caps(client, monkeypatch, rpc_calls, network, address):
+    """The reported 0.3 XMR send and cumulative sends above 0.5 must reach RPC once each."""
+    monkeypatch.setenv("MONERO_WALLET_TRANSFER_CAP_XMR", "0")
+    monkeypatch.setenv("MONERO_WALLET_DAILY_CAP_XMR", "0")
+    monkeypatch.setenv("MONERO_WALLET_NETWORK", network)
+    for amount in ("0.3", "0.3", "1.0"):
+        before = len(rpc_calls)
+        prepared = client.post("/api/wallet/xmr/transfer/prepare", json={"address": address, "amount": amount})
+        assert prepared.status_code == 200, prepared.text
+        assert len(rpc_calls) == before
+        token = prepared.json()["confirmation"]
+        confirmed = client.post("/api/wallet/xmr/transfer/confirm", json={"confirmation": token})
+        assert confirmed.status_code == 200, confirmed.text
+        assert rpc_calls[-1][1]["destinations"][0]["amount"] == svc.xmr_to_atomic(amount)
+        replay = client.post("/api/wallet/xmr/transfer/confirm", json={"confirmation": token})
+        assert replay.status_code == 400
+        assert len(rpc_calls) == before + 1
+
+
+def test_unlimited_wallet_still_rejects_zero_and_negative_amounts(client, monkeypatch, rpc_calls):
+    monkeypatch.setenv("MONERO_WALLET_TRANSFER_CAP_XMR", "0")
+    monkeypatch.setenv("MONERO_WALLET_DAILY_CAP_XMR", "0")
+    for amount in ("0", "-0.3"):
+        assert client.post("/api/wallet/xmr/transfer/prepare", json={"address": ADDRESS, "amount": amount}).status_code == 400
+    assert not rpc_calls

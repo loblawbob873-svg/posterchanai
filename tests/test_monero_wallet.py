@@ -318,7 +318,7 @@ def test_the_enable_switch_is_an_allowlist_so_nothing_ambiguous_turns_a_hot_wall
     ({"spend_ledger_path": ":memory:"}, "durable"),
     ({"spend_ledger_path": ""}, "durable"),
     ({"transfer_cap_atomic": 2, "daily_cap_atomic": 1}, "caps"),
-    ({"transfer_cap_atomic": 0}, "caps"),
+    ({"transfer_cap_atomic": -1}, "caps"),
     ({"url": "http://127.0.0.1:38083/json_rpc?x=1"}, "loopback"),
     ({"url": "http://127.0.0.1:38083/"}, "port and /json_rpc"),
 ])
@@ -570,3 +570,16 @@ class TheWalletComesBackByItself(unittest.TestCase):
     def test_the_manual_retry_still_exists(self):
         """A person asking is still allowed to ask immediately, rather than waiting out a backoff."""
         self.assertIn("by('mw-retry').onclick=()=>render(true)", self.SRC)
+
+
+def test_default_wallet_has_no_spending_caps(monkeypatch):
+    monkeypatch.setattr(settings_store, "get", lambda name, default="": default)
+    monkeypatch.delenv("MONERO_WALLET_TRANSFER_CAP_XMR", raising=False)
+    monkeypatch.delenv("MONERO_WALLET_DAILY_CAP_XMR", raising=False)
+    cfg = WalletConfig.from_env()
+    assert cfg.transfer_cap_atomic == cfg.daily_cap_atomic == 0
+
+
+@pytest.mark.parametrize("transfer,daily", [(0, 0), (0, 100), (100, 0)])
+def test_optional_caps_validate_independently(transfer, daily):
+    config(transfer_cap_atomic=transfer, daily_cap_atomic=daily).validate()

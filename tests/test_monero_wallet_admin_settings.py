@@ -312,7 +312,7 @@ def test_turning_the_switch_off_in_the_panel_takes_the_wallet_down(store, saved,
 
 
 @pytest.mark.parametrize("bad,key", [
-    ("0", "monero_wallet_transfer_cap_xmr"),
+    ("-1", "monero_wallet_transfer_cap_xmr"),
     ("-1", "monero_wallet_daily_cap_xmr"),
     ("abc", "monero_wallet_transfer_cap_xmr"),
     ("0.0000000000001", "monero_wallet_daily_cap_xmr"),
@@ -338,3 +338,16 @@ def test_no_wallet_setting_is_readable_without_an_admin_session():
         assert key not in client_source, f"{key} is reachable from an unauthenticated route"
     assert "get_admin_user" in (ROOT / "app" / "routers" / "admin.py").read_text(
         encoding="utf-8")[:40000]
+
+
+def test_persisted_zero_caps_override_legacy_environment(store, saved, monkeypatch):
+    monkeypatch.setenv("MONERO_WALLET_ENABLED", "1")
+    monkeypatch.setenv("MONERO_WALLET_RPC_USER", "posterchan")
+    monkeypatch.setenv("MONERO_WALLET_RPC_PASSWORD", "secret")
+    monkeypatch.setenv("MONERO_WALLET_TRANSFER_CAP_XMR", "0.1")
+    monkeypatch.setenv("MONERO_WALLET_DAILY_CAP_XMR", "0.5")
+    admin_router.update_settings(SettingsUpdate(settings={
+        "monero_wallet_transfer_cap_xmr": "0", "monero_wallet_daily_cap_xmr": "0",
+    }), DB(), object())
+    wallet = MoneroWallet()
+    assert wallet.config.transfer_cap_atomic == wallet.config.daily_cap_atomic == 0

@@ -89,8 +89,8 @@ class WalletConfig:
                 username=setting("monero_wallet_rpc_user", "MONERO_WALLET_RPC_USER", ""),
                 password=setting("monero_wallet_rpc_password", "MONERO_WALLET_RPC_PASSWORD", ""),
                 network=setting("monero_wallet_network", "MONERO_WALLET_NETWORK", "stagenet").lower(),
-                transfer_cap_atomic=xmr_to_atomic(setting("monero_wallet_transfer_cap_xmr", "MONERO_WALLET_TRANSFER_CAP_XMR", "0.1")),
-                daily_cap_atomic=xmr_to_atomic(setting("monero_wallet_daily_cap_xmr", "MONERO_WALLET_DAILY_CAP_XMR", "0.5")),
+                transfer_cap_atomic=cap_to_atomic(setting("monero_wallet_transfer_cap_xmr", "MONERO_WALLET_TRANSFER_CAP_XMR", "0")),
+                daily_cap_atomic=cap_to_atomic(setting("monero_wallet_daily_cap_xmr", "MONERO_WALLET_DAILY_CAP_XMR", "0")),
                 timeout_seconds=timeout,
                 spend_ledger_path=setting("monero_wallet_spend_ledger", "MONERO_WALLET_SPEND_LEDGER", "data/monero_wallet_spend.sqlite3"),
             )
@@ -119,7 +119,9 @@ class WalletConfig:
             raise WalletError("Wallet RPC URL must include a port and /json_rpc")
         if not self.username or not self.password:
             raise WalletError("Wallet RPC authentication is required")
-        if not (0 < self.transfer_cap_atomic <= self.daily_cap_atomic):
+        if (self.transfer_cap_atomic < 0 or self.daily_cap_atomic < 0
+                or (self.transfer_cap_atomic and self.daily_cap_atomic
+                    and self.transfer_cap_atomic > self.daily_cap_atomic)):
             raise WalletError("Invalid wallet spending caps")
         if not (0.5 <= self.timeout_seconds <= 30):
             raise WalletError("Wallet RPC timeout must be between 0.5 and 30 seconds")
@@ -136,6 +138,13 @@ def _xmr_env(name: str, default: str) -> int:
     except (InvalidOperation, OverflowError, ValueError):
         raise WalletError(f"Invalid {name}")
     return atomic
+
+
+def cap_to_atomic(value: str) -> int:
+    """Zero disables an optional operator cap; payment amounts must still be positive."""
+    if value.strip() == "0":
+        return 0
+    return xmr_to_atomic(value)
 
 
 def xmr_to_atomic(value: str) -> int:
@@ -432,7 +441,7 @@ class PendingTransfer:
 
 
 class TransferGate:
-    """One-use confirmations backed by a durable, conservative rolling daily cap."""
+    """One-use confirmations with optional operator caps and durable spend accounting."""
 
     def __init__(self) -> None:
         self._pending: dict[str, PendingTransfer] = {}
@@ -472,7 +481,7 @@ class TransferGate:
             db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM monero_spend_attempts WHERE at <= ?", (now - 86400,))
             spent = int(db.execute("SELECT COALESCE(SUM(amount_atomic), 0) FROM monero_spend_attempts").fetchone()[0])
-            if spent + amount > wallet.config.daily_cap_atomic:
+            if wallet.config.daily_cap_atomic and spent + amount > wallet.config.daily_cap_atomic:
                 raise WalletError("Amount exceeds the daily spending cap")
             db.execute("INSERT INTO monero_spend_attempts(at, user_id, amount_atomic) VALUES (?, ?, ?)", (now, user_id, amount))
             db.commit()
@@ -487,7 +496,9 @@ class TransferGate:
 
     async def prepare(self, wallet: MoneroWallet, user_id: int, address: str, amount_atomic: int) -> tuple[str, float]:
         validate_address(address, wallet.config.network)
-        if amount_atomic > wallet.config.transfer_cap_atomic:
+        if amount_atomic <= 0:
+            raise WalletError("Amount must be positive")
+        if wallet.config.transfer_cap_atomic and amount_atomic > wallet.config.transfer_cap_atomic:
             raise WalletError("Amount exceeds the per-transfer spending cap")
         now = time.time()
         async with self._lock:
@@ -496,7 +507,7 @@ class TransferGate:
             # accounting would let several accounts multiply the operator's intended limit.
             spent = self._durable_spent(wallet, now)
             pending = sum(p.amount_atomic for p in self._pending.values())
-            if spent + pending + amount_atomic > wallet.config.daily_cap_atomic:
+            if wallet.config.daily_cap_atomic and spent + pending + amount_atomic > wallet.config.daily_cap_atomic:
                 raise WalletError("Amount exceeds the daily spending cap")
             token = secrets.token_urlsafe(32)
             expires = now + 90
