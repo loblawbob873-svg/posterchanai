@@ -2384,7 +2384,12 @@ async function openPopupWindow(e, kind, rect, arg){
   const extra = String(arg == null ? '' : arg).slice(0, 8192);
   try{ await p.loadURL(APP_URL + '?pcpopup=' + encodeURIComponent(k)
                        + (extra ? '&pcarg=' + encodeURIComponent(extra) : '')); }
-  catch(err){ closePopupWindow(); return false; }
+  catch(err){
+    // Destroying a superseded popup rejects its pending local load. It no longer owns
+    // the menu slot, so its failure must not close the replacement the user just opened.
+    if(_popupWin === p) closePopupWindow();
+    return false;
+  }
   return true;
 }
 /* WAYLAND GIVES A CLIENT NO SAY IN WHERE ITS WINDOW GOES, and this is the whole reason this
