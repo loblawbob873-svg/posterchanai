@@ -783,6 +783,18 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertLess(body.index('"usr/local/share d 755'),
                         body.index('"usr/local/share/posterchanos d 755'))
 
+    def test_the_image_carries_no_machine_specific_identity(self):
+        """An ISO must not name the disk of the machine it was built on.
+
+        partitionDetection reads /etc/disk with `head -1` when /tmp/disk is absent, so a shipped
+        copy proposes the BUILD host's disk to somebody installing on different hardware. Observed
+        on a real install: /etc/disk said "vda" (the build VM) above the operator's "nvme0n1".
+        RSYNC_EXCLUDES has excluded this file from snapshots for the same reason for far longer."""
+        body = self._fn("liveCD")
+        excl = body[body.index("local EXCLUDES=("):body.index(")", body.index("local EXCLUDES=("))]
+        for path in ("etc/fstab", "etc/machine-id", "etc/crypttab", "etc/disk"):
+            self.assertIn(path, excl, f"{path} would ship inside the image")
+
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""

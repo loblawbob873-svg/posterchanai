@@ -3115,6 +3115,14 @@ liveCD() {
 		var/log/journal .snapshots
 		boot efi
 		etc/fstab etc/machine-id etc/crypttab etc/dracut.conf.d
+		# AND etc/disk, WHICH NAMES A DISK ON THE MACHINE THE IMAGE WAS BUILT FROM.
+		# partitionDetection reads it (`head -1`) whenever /tmp/disk is absent, so an ISO carrying
+		# the build host's copy proposes THAT disk to somebody installing on different hardware.
+		# Seen on a real install: /etc/disk on the live system read "vda" -- the build VM's virtio
+		# disk -- with the operator's actual "nvme0n1" appended below it. RSYNC_EXCLUDES has
+		# excluded this file from snapshots since long before the ISO existed, for exactly this
+		# reason; the squash simply never learned it.
+		etc/disk
 	)
 	# PosterChanOS uses qemu:///session, so its VM disks live in each user's private home instead of
 	# /var/lib/libvirt. A personal rescue image may keep the rest of /home; it must still not quietly

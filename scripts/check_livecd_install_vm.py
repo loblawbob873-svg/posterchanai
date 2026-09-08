@@ -100,7 +100,7 @@ class Serial:
         time.sleep(0.15)
 
 
-def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus):
+def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus, usb=False):
     args = ["qemu-system-x86_64", "-machine", "q35,accel=kvm:tcg", "-cpu", "max",
             "-m", str(memory), "-smp", str(cpus), "-display", "none", "-no-reboot",
             "-drive", f"file={disk},if=virtio,format=qcow2",
@@ -110,11 +110,29 @@ def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus):
         args[1:1] = ["-drive", f"if=pflash,format=raw,unit=0,readonly=on,file={code}",
                      "-drive", f"if=pflash,format=raw,unit=1,file={vars_copy}"]
     if iso:
-        args += ["-drive", f"file={iso},media=cdrom,readonly=on", "-boot", "order=d"]
+        if usb:
+            # A USB STICK IS NOT A CD, AND THE DIFFERENCE IS WHERE THE KERNEL LIVES.
+            #
+            # Attached as a cdrom the image is /dev/sr0, an iso9660 device that dracut mounts at
+            # /run/initramfs/live and that blkid reports as iso9660. Written to a stick it is a
+            # PARTITIONED disk: the iso9660 filesystem is on the whole device, hidden from blkid by
+            # the protective MBR grub-mkrescue writes so one file boots BIOS and UEFI, and the
+            # contents are reachable through the hfsplus partition. liveISOinstall looks for its
+            # kernel through exactly that machinery, so the cdrom path exercised the one medium on
+            # which it cannot fail -- and shipped an installer that told a user booted from USB
+            # "No kernel found on this live medium".
+            #
+            # readonly=off deliberately: a real stick is writable, and mounting one read-write is
+            # part of what the installer's search has to cope with.
+            args += ["-drive", f"file={iso},if=none,id=pcusb,format=raw",
+                     "-device", "qemu-xhci,id=xhci",
+                     "-device", "usb-storage,bus=xhci.0,drive=pcusb,bootindex=0"]
+        else:
+            args += ["-drive", f"file={iso},media=cdrom,readonly=on", "-boot", "order=d"]
     return args
 
 
-def install(iso, disk, serial_dir, evidence, timeout, memory, cpus):
+def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
     code, vars_src = ovmf()
     if not code:
         print("SKIP  no OVMF firmware on this host; a BIOS guest would not test the bootloader")
@@ -123,7 +141,7 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus):
     shutil.copyfile(vars_src, vars_copy)
     sock = Path(serial_dir, "console.sock")
     log = open(Path(evidence, "install-console.log"), "w", encoding="utf-8")
-    proc = subprocess.Popen(qemu_args(disk, iso, sock, code, vars_copy, memory, cpus),
+    proc = subprocess.Popen(qemu_args(disk, iso, sock, code, vars_copy, memory, cpus, usb),
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     try:
         for _ in range(100):
@@ -195,6 +213,9 @@ def main():
     ap.add_argument("--cpus", type=int, default=4)
     ap.add_argument("--timeout", type=int, default=3600)
     ap.add_argument("--evidence-dir", default="")
+    ap.add_argument("--usb", action="store_true",
+                    help="attach the ISO as a USB disk instead of a CD-ROM — the medium people "
+                         "actually boot, and the only one on which the live-medium search can fail")
     ap.add_argument("--keep-disk", action="store_true",
                     help="leave the installed qcow2 behind for check_livecd_vm.py --disk")
     args = ap.parse_args()
