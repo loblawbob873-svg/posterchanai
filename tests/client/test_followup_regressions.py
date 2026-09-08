@@ -125,4 +125,9 @@ setTimeout(()=>{{document.querySelector('#result').textContent=JSON.stringify({{
     assert len(result['calls']) == 2 and result['calls'][1]['url'].endswith('/preview'), result
     assert json.loads(result['calls'][1]['body'])['exempt_fediverse'] is False
     assert not result['disabled'] and not result['unsafe']
-    assert ('Preview unavailable' if fail else '1 Live Streaming grants') in result['status']
+    if fail:
+        assert 'Preview unavailable' in result['status']
+    else:
+        assert 'Remove access from 1 accounts' in result['status']
+        assert '1 streaming' in result['status']
+        assert 'restore access for 0 accounts' in result['status']
