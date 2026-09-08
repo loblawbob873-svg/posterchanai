@@ -122,9 +122,19 @@ def qemu_args(disk, iso, serial_path, code, vars_copy, memory, cpus, usb=False):
             # which it cannot fail -- and shipped an installer that told a user booted from USB
             # "No kernel found on this live medium".
             #
-            # readonly=off deliberately: a real stick is writable, and mounting one read-write is
-            # part of what the installer's search has to cope with.
-            args += ["-drive", f"file={iso},if=none,id=pcusb,format=raw",
+            # WRITABLE TO THE GUEST, NEVER TO THE FILE. A real stick is writable and mounting one
+            # read-write is part of what the installer's search has to cope with -- but the file
+            # here is the artifact under test, and a guest that can write to it can change the
+            # bytes we are about to publish. `snapshot=on` opens the ISO READ-ONLY and puts the
+            # guest's writes in a throwaway overlay: the guest sees a writable stick, the image
+            # cannot be altered by its own test.
+            #
+            # It is also the difference between running and not running. An ISO built under sudo is
+            # root-owned 644, so opening it read-write is EACCES for the user qemu runs as, and the
+            # gate died on a bare ConnectionRefusedError from the console socket -- qemu had already
+            # exited saying "Could not open ...: Permission denied". The cdrom branch never hit it
+            # because it passes readonly=on.
+            args += ["-drive", f"file={iso},if=none,id=pcusb,format=raw,snapshot=on",
                      "-device", "qemu-xhci,id=xhci",
                      "-device", "usb-storage,bus=xhci.0,drive=pcusb,bootindex=0"]
         else:
@@ -152,7 +162,21 @@ def install(iso, disk, serial_dir, evidence, timeout, memory, cpus, usb=False):
                       + (proc.stderr.read() or "")[-300:])
                 return 1
             time.sleep(0.1)
-        con = Serial(sock, log)
+        # THE SOCKET EXISTING IS NOT QEMU LISTENING. qemu creates the path and can still exit
+        # before accepting -- a bad -drive is exactly that shape -- and connecting then raises
+        # ConnectionRefusedError, a traceback that names the socket and not the cause. Ask the
+        # process what happened instead of guessing from the socket.
+        if proc.poll() is not None:
+            print("FAIL  qemu exited before accepting a console connection: "
+                  + (proc.stderr.read() or "")[-300:])
+            return 1
+        try:
+            con = Serial(sock, log)
+        except OSError as exc:
+            proc.kill()
+            print(f"FAIL  could not attach to the guest console ({exc}): "
+                  + (proc.stderr.read() or "")[-300:])
+            return 1
         # THE SHELL, not a login prompt. `live` is password-locked on purpose; the image autologins
         # it on the serial console, and if that override is missing this is where it shows up.
         at = con.expect(r"live@[-a-z0-9]+", timeout)

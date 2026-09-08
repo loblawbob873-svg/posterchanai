@@ -145,3 +145,24 @@ def test_the_usb_guest_is_a_partitioned_stick_not_a_cdrom(tmp_path):
     disc = " ".join(MOD.qemu_args("d.qcow2", "x.iso", "s.sock", None, None, 4096, 4, False))
     assert "usb-storage" in stick and "media=cdrom" not in stick
     assert "media=cdrom" in disc and "usb-storage" not in disc
+
+
+def test_the_usb_stick_cannot_rewrite_the_image_under_test(tmp_path):
+    """The guest gets a writable stick; the ISO file itself must stay untouched.
+
+    Without snapshot=on qemu opens the ISO read-WRITE, so the guest can alter the artifact the
+    run is meant to certify — and an ISO built under sudo is root-owned 644, which makes that
+    open fail outright with EACCES. The gate then died on a bare ConnectionRefusedError from the
+    console socket, naming the socket instead of the permission denial qemu had printed.
+    """
+    stick = " ".join(MOD.qemu_args("d.qcow2", "x.iso", "s.sock", None, None, 4096, 4, True))
+    drive = next(a for a in stick.split() if a.startswith("file=x.iso"))
+    assert "snapshot=on" in drive, drive
+    assert "readonly=on" not in drive, "the guest must still SEE a writable stick"
+
+
+def test_a_dead_qemu_is_reported_not_raised():
+    """A -drive qemu rejects leaves the socket path present and nothing listening."""
+    assert SRC.count("proc.poll() is not None") >= 2, (
+        "only the socket-absent case checks whether qemu is still alive")
+    assert "could not attach to the guest console" in SRC
