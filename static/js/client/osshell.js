@@ -965,26 +965,40 @@
       catch(e){ toast(String((e && e.message) || e)); }
       closePop(); refresh();
     });
+    let actionPending = false;
     d.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+      if(actionPending) return;
+      actionPending = true;
+      b.disabled = true;
       const act = b.dataset.act;
-      /* ASKED FIRST, and only for the two that lose what is open. Sleep does not, so confirming it
-       * is a dialog between somebody and closing their laptop. */
-      if(act === 'reboot' || act === 'poweroff'){
+      try{
+        // The native popup owns this question. Closing it before confirmation destroys
+        // the renderer; a body-level dialog is also hidden by the popup's isolation CSS.
+        if(act === 'reboot' || act === 'poweroff'){
+          const app = APP();
+          if(!app.uiConfirm) throw new Error('cannot confirm on this build');
+          const ok = await app.uiConfirm(act === 'reboot' ? 'Restart this computer?'
+                                                        : 'Shut down this computer?',
+                              { ok: act === 'reboot' ? 'Restart' : 'Shut down', danger: true, owner: d });
+          if(!ok) return;
+        }
+        const result = await p[act]();
+        if(result && result.ok === false) throw new Error(result.error || 'Power action was refused');
         closePop();
-        let ok = false;
-        const app = APP();
-        try{
-          /* NO CONFIRM MEANS NO SHUTDOWN, and it says which. Reading a missing dialog as "they said
-           * no" is what made these two buttons do nothing at all. */
-          if(!app.uiConfirm){ toast('cannot confirm on this build'); return; }
-          ok = await app.uiConfirm(act === 'reboot' ? 'Restart this computer?'
-                                                    : 'Shut down this computer?',
-                                   { ok: act === 'reboot' ? 'Restart' : 'Shut down', danger: true });
-        }catch(_){ ok = false; }
-        if(!ok) return;
+      }catch(e){
+        // Keep authorization/dispatch errors readable inside the still-open native surface.
+        let error = d.querySelector('.os-power-error');
+        if(!error){
+          error = document.createElement('p');
+          error.className = 'os-pop-b os-power-error';
+          error.setAttribute('role', 'alert');
+          d.appendChild(error);
+        }
+        error.textContent = String((e && e.message) || e);
+      }finally{
+        actionPending = false;
+        b.disabled = false;
       }
-      closePop();
-      try{ await p[act](); }catch(e){ toast(String((e && e.message) || e)); }
     });
   }
 
