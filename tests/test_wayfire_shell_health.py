@@ -43,6 +43,11 @@ class WayfireStub:
                 while len(body) < size:
                     body += client.recv(size - len(body))
                 method = json.loads(body)["method"]
+                # Actual Wayfire always supplies output-local view bounds and output size.
+                for row in self.outputs + self.views:
+                    geometry = row.setdefault("geometry", {})
+                    for key, value in {"x": 0, "y": 0, "width": 32, "height": 32}.items():
+                        geometry.setdefault(key, value)
                 if method == "list-methods":
                     result = {"methods": ["window-rules/list-outputs", "window-rules/list-views",
                                            "window-rules/configure-view", "window-rules/focus-view"]}
@@ -577,9 +582,11 @@ def test_startup_ignores_app_windows_but_requires_every_shell(monkeypatch):
     import runpy
     module = runpy.run_path(str(HEALTH))
     layout = module['shell_layout']
-    outputs = [{'id': 1}, {'id': 2}]
+    outputs = [{'id': n, 'geometry': {'x': 0, 'y': 0, 'width': 32, 'height': 32}}
+               for n in (1, 2)]
     shells = [{'pid': 42, 'app-id': 'place.poster.desktop', 'output-id': n,
-               'title': 'PosterChan · Nostr'} for n in (1, 2)]
+               'title': 'PosterChan · Nostr',
+               'geometry': {'x': 0, 'y': 0, 'width': 32, 'height': 32}} for n in (1, 2)]
     views = shells + [dict(shells[0], title='PosterChan Window — global'),
                       dict(shells[1], title='PosterChan Window — terminal'),
                       dict(shells[1], title='PosterChan Popup')]
@@ -657,9 +664,11 @@ def test_startup_marker_survives_display_resolution_and_fractional_scale(
 def test_startup_app_exclusion_does_not_accept_another_process_or_duplicate_shell(monkeypatch):
     import runpy
     layout = runpy.run_path(str(HEALTH))['shell_layout']
-    outputs = [{'id': 1}, {'id': 2}]
+    outputs = [{'id': n, 'geometry': {'x': 0, 'y': 0, 'width': 32, 'height': 32}}
+               for n in (1, 2)]
     primary = {'pid': 42, 'app-id': 'place.poster.desktop', 'output-id': 1,
-               'title': 'PosterChan · Nostr'}
+               'title': 'PosterChan · Nostr',
+               'geometry': {'x': 0, 'y': 0, 'width': 32, 'height': 32}}
     secondary = dict(primary, **{'output-id': 2})
     views = [primary, secondary, dict(primary, title='PosterChan Window — Social')]
     monkeypatch.setitem(layout.__globals__, 'request',

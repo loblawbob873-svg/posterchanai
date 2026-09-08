@@ -1,8 +1,11 @@
 #!/usr/bin/python3
 """Small fail-closed Wayfire session probe used before the desktop is declared ready."""
 import json
+import math
 import os
 import shutil
+import secrets
+import stat
 import socket
 import struct
 import subprocess
@@ -80,6 +83,9 @@ def shell_layout(pid):
               and str(row.get("app-id") or row.get("app_id") or row.get("app") or "") in APP_IDS
               and "Popup" not in str(row.get("title") or "")
               and not str(row.get("title") or "").startswith("PosterChan Window")]
+    exact = [row for row in shells if row.get("title") == "PosterChan Desktop"]
+    if exact:
+        shells = exact
     if not output_ids or len(shells) != len(output_ids):
         return None
     if any(int(row.get("pid") or 0) != pid for row in shells):
@@ -88,6 +94,20 @@ def shell_layout(pid):
                          else row.get("output_id", -1)) for row in shells}
     if owned_outputs != output_ids:
         return None
+    for shell in shells:
+        output = next(row for row in outputs if int(row["id"]) == int(
+            shell.get("output-id") if shell.get("output-id") is not None else shell.get("output_id", -1)))
+        expected, actual = output.get("geometry"), shell.get("geometry")
+        try:
+            bounds = [float(actual[key]) for key in ("x", "y", "width", "height")]
+            size = [float(expected[key]) for key in ("width", "height")]
+            if (not all(math.isfinite(value) for value in bounds + size)
+                    or min(bounds[2:] + size) <= 0
+                    or abs(bounds[0]) > 2 or abs(bounds[1]) > 2
+                    or any(abs(bounds[i + 2] - size[i]) > 2 for i in (0, 1))):
+                return None
+        except (KeyError, TypeError, ValueError):
+            return None
     return outputs, shells
 
 
@@ -169,6 +189,62 @@ def output_is_off(name):
     return enabled.get(name) is False
 
 
+def owned_capture(shell, target):
+    """Read the exact mapped view, never the other application covering its output."""
+    if not shell or not shell.get("id") or not shell.get("pid"):
+        return False
+    try:
+        methods = request("list-methods").get("methods", [])
+    except Exception:
+        methods = []
+    if "view-shot/capture" in methods:
+        try:
+            request("view-shot/capture", {"view-id": int(shell["id"]), "file": target})
+            return os.path.isfile(target)
+        except Exception:
+            return False
+    # Older compositor configs may lack view-shot. Ask the owning Electron process for a NEW
+    # renderer readback, not a reusable JSON-ready claim or a screenshot from an earlier start.
+    pid, view_id = int(shell["pid"]), int(shell["id"])
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    if not os.path.isabs(runtime):
+        return False
+    directory = os.path.join(runtime, "posterchan-shell-health-" + str(pid))
+    try:
+        info = os.lstat(directory)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            return False
+    except OSError:
+        return False
+    nonce = secrets.token_hex(16)
+    request_file = os.path.join(directory, "request-" + str(view_id) + ".json")
+    response = os.path.join(directory, str(view_id) + "-" + nonce + ".png")
+    temporary = request_file + "." + nonce
+    try:
+        with open(temporary, "x", encoding="ascii") as stream:
+            os.chmod(temporary, 0o600)
+            json.dump({"pid": pid, "viewId": view_id, "nonce": nonce}, stream)
+        os.replace(temporary, request_file)
+        end = time.monotonic() + 2
+        while time.monotonic() < end:
+            try:
+                info = os.lstat(response)
+                if (stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                        and not info.st_mode & 0o077 and 8 <= info.st_size <= 1024 * 1024):
+                    shutil.copyfile(response, target)
+                    return True
+            except FileNotFoundError:
+                pass
+            time.sleep(.05)
+    except (OSError, ValueError):
+        pass
+    finally:
+        for file in (temporary, request_file, response):
+            try: os.unlink(file)
+            except OSError: pass
+    return False
+
+
 def rendered(outputs, shells):
     grim = os.environ.get("PC_GRIM", "grim")
     capture_timeout = float(os.environ.get("PC_GRIM_TIMEOUT", "10"))
@@ -241,6 +317,12 @@ def rendered(outputs, shells):
                 print(f"pc-wayfire-health: {name} is powered off; not judged", file=sys.stderr)
                 skipped.append(name)
                 continue
+            if which is None and shell and owned_capture(shell, target):
+                if has_marker(target, PRIMARY_MARKER): which = "primary"
+                elif has_marker(target, SECONDARY_MARKER): which = "secondary"
+                if which is not None:
+                    print(f"pc-wayfire-health: {name} verified owned renderer; output may be occluded",
+                          file=sys.stderr)
             if which is None:
                 preserved = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"),
                                          "posterchan-health-" + name + ".png")
@@ -271,7 +353,12 @@ def rendered(outputs, shells):
 
 def healthy(pid):
     layout = shell_layout(pid)
-    return bool(layout and rendered(layout[0], layout[1]))
+    if not layout or not rendered(layout[0], layout[1]):
+        return False
+    current = shell_layout(pid)
+    def identities(value):
+        return {(row.get("id"), row.get("output-id", row.get("output_id"))) for row in value[1]}
+    return bool(current and identities(current) == identities(layout))
 
 
 def process_alive(pid):

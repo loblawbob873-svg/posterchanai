@@ -690,6 +690,11 @@ function writeCrashReport(text) {
  */
 function armHealthMarkerRetirement(target){
   const ready = process.env.PC_WAYFIRE_READY_FILE || '';
+  const stopCapture = require('./shell-health-capture').armShellHealthCapture(target, {
+    runtime: process.env.XDG_RUNTIME_DIR,
+    viewId: () => { for(const record of _shellSurfaces.values())
+      if(record.browser === target) return Number(record.conId); return null; }
+  });
   let done = false;
   /* SENT, AND SENT AGAIN AFTER EVERY LOAD. The ready file can appear before the renderer has run
    * its preload, and an ipc message with no listener yet is simply dropped — measured: the log said
@@ -701,13 +706,13 @@ function armHealthMarkerRetirement(target){
   const retire = (why) => {
     if(done) return;
     done = true;
-    clearInterval(poll); clearTimeout(cap);
+    clearInterval(poll); clearTimeout(cap); stopCapture();
     tell();
     try{ target.webContents.on('did-finish-load', tell); }catch(_){ }
     try{ console.log('health marker retired (' + why + ')'); }catch(_){ }
   };
   const poll = setInterval(() => {
-    if(target.isDestroyed()) { clearInterval(poll); clearTimeout(cap); return; }
+    if(target.isDestroyed()) { clearInterval(poll); clearTimeout(cap); stopCapture(); return; }
     if(!ready) return;
     try{ if(fs.existsSync(ready)) retire('the shell was declared ready'); }catch(_){ }
   }, 500);
