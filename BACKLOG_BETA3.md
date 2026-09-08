@@ -122,3 +122,42 @@ Start this work only after the existing stabilization backlog and agent handoff.
 - [ ] Test ownership checks, preservation of the original post, failed/partial relay
       publication, retries, duplicate actions, account switches, reload hydration,
       and synchronization across devices. Review before deployment.
+
+## After the LiveUSB ships — NVIDIA Quadro P1000 support
+
+Requested 2026-09-08. The P1000 is Pascal (GP107). Do this only once the current ISO
+has shipped and been confirmed on real hardware.
+
+IT IS MOSTLY JUST `emerge nvidia-drivers` ON THE BUILD HOST. A kernel module is built
+against the KERNEL, not against the hardware, so the laptop having no NVIDIA card does
+not matter: the module is built for `6.18.43-gentoo-dist-bin`, mksquashfs packs
+/lib/modules into the image, it sits unused on AMD machines and loads on the P1000. The
+live initramfs is already built `--no-hostonly --conf /dev/null` (liveCD's dracut call),
+so it inherits none of the build host's policy and is not hostonly-trimmed. The GPU
+driver loads after switch_root from the squashfs, so it need not be in the initramfs at
+all unless we want early KMS.
+
+- [ ] Pin `x11-drivers/nvidia-drivers` to the **580** branch and VERIFY that pin against the
+      Gentoo tree rather than from memory: 580 is understood to be the terminal branch for
+      Maxwell/Pascal/Volta, with later branches dropping them, so an unpinned `-uDN @world`
+      would eventually pull a driver that does not support this card.
+- [ ] ACCEPT_LICENSE for NVIDIA's licence — no PosterChanOS install sets one today, and
+      emerge refuses without it.
+- [ ] `nvidia-drm.modeset=1` on the kernel command line. Wayfire is wlroots and without
+      modeset the compositor gets no output; the symptom is a black screen, indistinguishable
+      from every other black screen this project has produced. The live `append=` string is
+      built in liveCD; the installed one in bootloader().
+- [ ] Keep the module in step with kernel upgrades (dist-kernel subslot / @module-rebuild),
+      or the first kernel update leaves the machine with no driver.
+- [ ] NOUVEAU: check what the package already does before writing our own rule —
+      nvidia-drivers ships its own modprobe policy, so we may need nothing. What exists in
+      our tree is NOT a blacklist: `os/gentoo.sh:484` appends `omit_drivers+=" nouveau "` to
+      /etc/dracut.conf, which keeps it out of the INITRAMFS only, and it sits inside the LUKS
+      key-rotation function as a side effect of encrypted-boot setup. It also never reaches
+      the live image, whose dracut runs with `--conf /dev/null`. Whatever we add must be
+      conditional on the proprietary driver being installed and modesetting: blacklisting
+      unconditionally leaves every NVIDIA machine with no driver at all, because nouveau is
+      the only one in the image today and one ISO boots every machine.
+- [ ] Watch the image size — nvidia-drivers is a few hundred MB on an image that is 3.2 GB.
+- [ ] Test on the real P1000, not only in a VM. QEMU cannot reproduce a proprietary driver
+      failing to modeset, exactly as it could not reproduce the 30-second network-online wait.

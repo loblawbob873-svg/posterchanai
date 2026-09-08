@@ -258,6 +258,7 @@ media-libs/mesa media-libs/vulkan-loader dev-util/vulkan-tools \
 sys-apps/xdg-desktop-portal gui-libs/xdg-desktop-portal-wlr sys-apps/xdg-desktop-portal-gtk \
 media-video/obs-studio \
 sec-keys/openpgp-keys-gentoo-release dev-vcs/git \
+x11-drivers/nvidia-drivers \
 net-vpn/tor gui-apps/swayidle"
 # net-misc/networkmanager (nmcli, the whole network tray), app-admin/sudo, sys-apps/systemd
 # (systemctl: sleep, reboot, power profiles) and sys-apps/util-linux (`script`, which IS the local
@@ -299,6 +300,27 @@ BUILD_SERVER_ADDRESS="nas.lan"
 BUILD_PATH="/raid/gentoo-desktop.lan"
 RSYNC_EXCLUDES=" --exclude=-/var/lib/containers --exclude=/var/lib/containerd --exclude=/var/lib/docker --exclude=/var/lib/flatpak --exclude=/home --exclude=/var/lib/pleroma/uploads --exclude=/var/lib/distfiles --exclude=/var/lib/owncloud --exclude=/etc/disk --exclude=/etc/mtab --exclude=/swap --exclude=@swap --exclude=/mnt --exclude=/snapshots --exclude=/backup --exclude=/raid --exclude=/var/tmp/* --exclude=/tmp/* --exclude=/var/lib/libvirt/* --exclude=/var/cache --exclude=/var/notmpfs --exclude=/var/lib/systemd/coredump/* --exclude=/var/cache/* --exclude=/.snapshots/* --exclude=/sys/* --exclude=/dev/* --exclude=/proc/* --exclude=/run/*"
 #Add Masked Packages to the Array
+# NVIDIA'S LICENCE AND ITS BRANCH, BECAUSE NEITHER CAN BE LEFT TO CHANCE HERE.
+#
+# The licence: portage refuses nvidia-drivers outright without it, and the failure is a
+# resolution error in the middle of a package set, not a message about a licence.
+LICENSED_PACKAGES=("x11-drivers/nvidia-drivers NVIDIA-r2")
+#
+# The pin: 580 is the last branch supporting Maxwell/Pascal/Volta, which is what makes it the
+# WIDEST branch for a product where one image boots every machine -- a Quadro P1000 (Pascal,
+# GP107) through to current cards. nvidia-drivers has its own safety net for this: it reads the
+# installed card's device id out of supported-gpus.json and tells you to mask anything newer.
+# THAT NET CANNOT FIRE HERE. It loops over `grep -l 0x10de /sys/bus/pci/devices/*/vendor`, and
+# the machine that builds this image has no NVIDIA card at all, so it finds nothing, sets no
+# NV_LEGACY_MASK, and would quietly install a branch that does not drive the hardware the image
+# is FOR. The pin is written by us because the mechanism that would otherwise write it is blind
+# on a build host.
+#
+# nouveau needs no rule of ours: the package ships /etc/modprobe.d/nvidia.conf carrying
+# `blacklist nouveau` (and nova_core). Nor does modesetting: the same file sets
+# `options nvidia-drm modeset=1`, which is what wlroots needs and what the ebuild says is now
+# the default. Adding either by hand would be a second copy of a rule upstream already owns.
+PINNED_PACKAGES=(">=x11-drivers/nvidia-drivers-581")
 MASKED_PACKAGES+=(www-apps/jellyfin-bin app-admin/vaultwarden dev-util/nvidia-cuda-toolkit www-apps/radicale www-apps/vaultwarden-web www-apps/radicale net-misc/owncloud-client net-libs/libre-graph-api-cpp-qt-client media-video/obs-studio net-misc/sunshine dev-util/sh net-misc/moonlight app-admin/bitwarden-desktop-bin net-im/element-desktop-bin net-misc/nyx net-libs/stem sys-libs/libudev-compat dev-libs/nss dev-libs/libappindicator media-video/ffmpeg games-util/game-device-udev-rules games-util/steam-launcher net-im/telegram-desktop-bin)
 MASKED_PACKAGES+=(=gui-wm/gamescope-3.16.25-r1)
 
@@ -601,6 +623,36 @@ unmaskPackages() {
 		mv -- "$keyword_legacy" "$keyword_path/00-local" || return 1
 	fi
 	mkdir -p -- "$keyword_path" || return 1
+	# The licence and branch-pin files, written the same way and for the same reason: own ONE
+	# file each, never touch what an operator put beside it. Both are directories in portage,
+	# so a plain file left by an older install is migrated to 00-local rather than deleted.
+	local policy_path policy_legacy policy_tmp policy_dir
+	for policy_dir in package.license package.mask; do
+		policy_path="/etc/portage/$policy_dir"
+		if [ -f "$policy_path" ]; then
+			[ -L "$policy_path" ] && { echo "Cannot migrate symlinked $policy_path" >&2; return 1; }
+			policy_legacy=$(mktemp "${policy_path}.XXXXXX") || return 1
+			mv -- "$policy_path" "$policy_legacy" || return 1
+			if ! mkdir -- "$policy_path"; then
+				mv -- "$policy_legacy" "$policy_path"
+				return 1
+			fi
+			mv -- "$policy_legacy" "$policy_path/00-local" || return 1
+		fi
+		mkdir -p -- "$policy_path" || return 1
+		policy_tmp=$(mktemp "$policy_path/.posterchan-managed.XXXXXX") || return 1
+		if [ "$policy_dir" = package.license ]; then
+			printf '%s\n' "${LICENSED_PACKAGES[@]}" >"$policy_tmp"
+		else
+			printf '%s\n' "${PINNED_PACKAGES[@]}" >"$policy_tmp"
+		fi
+		if ! { chmod 0644 "$policy_tmp" \
+			&& mv -f -- "$policy_tmp" "$policy_path/posterchan-managed"; }; then
+			rm -f -- "$policy_tmp"
+			echo "Could not write $policy_path/posterchan-managed" >&2
+			return 1
+		fi
+	done
 	keyword_tmp=$(mktemp "$keyword_path/.posterchan-managed.XXXXXX") || return 1
 	if { for i in "${MASKED_PACKAGES[@]}"; do printf '%s ~amd64\n' "$i"; done; } >"$keyword_tmp" \
 		&& chmod 0644 "$keyword_tmp" && mv -f -- "$keyword_tmp" "$keyword_path/posterchan-managed"; then
@@ -3336,7 +3388,21 @@ FSTAB
 		# Autologin as the live user. Same file the installed system uses, rewritten rather than
 		# removed — deleting it gives a login prompt for an account with no password set.
 		mkdir -p "$WORK/gettyd"
-		printf '[Unit]\nWants=NetworkManager.service network-online.target\nAfter=NetworkManager.service network-online.target\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
+		# THE LIVE SESSION ORDERS AFTER NetworkManager STARTING, AND DELIBERATELY NOT AFTER
+		# network-online.target -- which is the opposite of what the INSTALLED system wants.
+		#
+		# An installed machine has stored connections, so waiting for an address costs nothing and
+		# buys a first-run wizard that can see the network (19daf8142). A live USB has NO stored
+		# connection: the Welcome screen is what configures wifi. Ordering its getty after
+		# network-online.target therefore waits for an address that only the desktop it is blocking
+		# can obtain -- `nm-online -s -q` times out after 30 SECONDS and only then does anything
+		# appear. Measured on real hardware: "30 seconds of flashing" plymouth, every boot, on the
+		# first image ever built after that commit.
+		#
+		# posterchan-live-network.service already carries the ordering that IS right here: it
+		# requires NetworkManager to be ACTIVE and runs Before=getty@tty1.service, so nmcli works
+		# by the time Welcome asks.
+		printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
 			>"$WORK/gettyd/override.conf"
 		# AND THE SAME ON THE SERIAL CONSOLE, or this disc cannot be installed without a monitor.
 		#
@@ -3797,7 +3863,7 @@ DESKTOP
 				| sed -n "s/.*--autologin \([^ ]*\).*/\1/p" | head -1)"
 			NET_ORDER="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
 				etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null \
-				| grep -cE '^After=.*network-online\.target')"
+				| grep -cE '^After=.*NetworkManager\.service')"
 			PW="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" etc/passwd 2>/dev/null \
 				| grep -c "^$SESS_USER:")"
 			echo "image: autologin=$WHO passwd-has-$SESS_USER=$PW net-order=$NET_ORDER" >>"$LOG" 2>/dev/null
@@ -3810,7 +3876,7 @@ DESKTOP
 				return
 			fi
 			if [[ "$NET_ORDER" -lt 1 ]]; then
-				_lcd_fail "The image autologins as '$WHO' but its getty is not ordered after network-online.target, so the desktop would start before the machine has an address — the ISO was not made."
+				_lcd_fail "The image autologins as '$WHO' but its getty is not ordered after NetworkManager.service, so Welcome could run before nmcli can answer — the ISO was not made."
 				return
 			fi
 		fi
