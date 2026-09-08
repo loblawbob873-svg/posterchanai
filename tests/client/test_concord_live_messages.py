@@ -32,7 +32,7 @@ class MessagesArriveLive(unittest.TestCase):
         src = open(CONCORD, encoding="utf-8").read()
         tick = src[src.index("async function refreshActiveChannel("):]
         tick = tick[:tick.index("async function refreshRoomMetadata(")]
-        self.assertIn("startChatLive(p,room,channel)", tick,
+        self.assertIn("startChatLive(p,active,activeChannel)", tick,
                       "the live tick no longer arms the message subscription")
 
     def test_leaving_the_view_closes_the_stream(self):

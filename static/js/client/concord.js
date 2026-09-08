@@ -2222,7 +2222,26 @@
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');
     if(liveBusy||state.community==null||(!foreground&&!parked))return; liveBusy=true;
-    try{ const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;if(!room||!channel||!bundle||!reader)return; const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);if(!controlWraps)return; const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],{timeout:6000,max:8,signal:ownRoomReads(roomIdentity(room)),purpose:'concord room live '+loadKey,minInterval:60000});await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);startChatLive(p,room,channel);await absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps||[],storeId);}catch(e){
+    try{
+      const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),
+        bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
+      if(!room||!channel||!bundle||!reader)return;
+      const owner=deliveryOwner(p),identity=roomIdentity(room),
+        stillOwned=()=>deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity);
+      const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);
+      if(!controlWraps)return;
+      const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),
+        since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),
+        wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],
+          {timeout:6000,max:8,signal:ownRoomReads(identity),purpose:'concord room live '+loadKey,minInterval:60000});
+      if(!stillOwned())return;
+      await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);
+      if(!stillOwned())return;
+      // A completed old-room refresh can fill its own history, but cannot replace the current live stream.
+      const active=saved()[state.community],activeChannel=active&&(active.channels||[]).find(c=>c.name===(state.channel||'general'));
+      if(roomIdentity(active)===identity&&activeChannel&&activeChannel.id===channel.id)startChatLive(p,active,activeChannel);
+      await absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps||[],storeId);
+    }catch(e){
       /* SAY IT ONCE PER CHANNEL, NOT EVERY FOUR SECONDS.
        *
        * This tick runs on a timer, so a condition that persists — a control stream the relay has
