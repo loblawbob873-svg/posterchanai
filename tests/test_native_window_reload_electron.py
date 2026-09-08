@@ -3,6 +3,13 @@ import subprocess
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 
+def _missing_runtime(reason):
+    import os
+    import pytest
+    if os.environ.get('PC_REQUIRE_NATIVE_IPC_TEST') == '1':
+        pytest.fail(reason)
+    pytest.skip(reason)
+
 def test_real_electron_sync_reply_survives_native_child_reload(tmp_path):
     """A real sendSync reply is sent at assignment, unlike an ordinary JS fixture property."""
     import os
@@ -13,7 +20,7 @@ def test_real_electron_sync_reply_survives_native_child_reload(tmp_path):
                   ROOT.parent.parent/'desktop/node_modules/electron/dist/electron']
     electron = next((p for p in candidates if p.is_file()), None)
     if electron is None:
-        pytest.skip('Electron runtime is required for native IPC lifecycle coverage')
+        _missing_runtime('Electron runtime is required for native IPC lifecycle coverage')
     main = Path(os.environ.get('PC_NATIVE_MAIN_SOURCE',ROOT/'desktop/main.js')).read_text()
     handler = main[main.index("ipcMain.on('pc:window:context'"):main.index('/* ── THE COMPOSITOR', main.index("ipcMain.on('pc:window:context'"))]
     pre = (ROOT/'desktop/preload.js').read_text()
@@ -61,31 +68,36 @@ app.whenReady().then(async()=>{
         script=script.replace(name,json.dumps(value))
     script=script.replace('HANDLER',handler)
     entry=tmp_path/'main.js';entry.write_text(script)
-    if not all(shutil.which(binary) for binary in ('wayfire','Xwayland')):
-        pytest.skip('Wayfire and Xwayland are required for the isolated Electron display')
+    xvfb=shutil.which('Xvfb')
+    if not xvfb and not all(shutil.which(binary) for binary in ('wayfire','Xwayland')):
+        _missing_runtime('Xvfb or Wayfire plus Xwayland is required for the isolated Electron display')
     runtime=tmp_path/'runtime';runtime.mkdir(mode=0o700)
     config=tmp_path/'wayfire.ini';config.write_text('[core]\nplugins = ipc ipc-rules\nxwayland = false\n')
     env={**os.environ,'XDG_RUNTIME_DIR':str(runtime),'WLR_BACKENDS':'headless','WLR_HEADLESS_OUTPUTS':'1','WLR_RENDERER':'pixman','GDK_BACKEND':'wayland'}
     for key in ('ELECTRON_RUN_AS_NODE','WAYLAND_DISPLAY','DISPLAY','WAYFIRE_SOCKET','DBUS_SESSION_BUS_ADDRESS'):
         env.pop(key,None)
     with (tmp_path/'compositor.log').open('w') as log:
-        compositor=subprocess.Popen(['wayfire','-c',str(config)],env=env,stdout=log,stderr=log,start_new_session=True)
+        compositor=None
         native=None
         xserver=None
         try:
-            deadline=time.monotonic()+10
-            while not [p for p in runtime.glob('wayland-*') if not p.name.endswith('.lock')]:
-                assert compositor.poll() is None,(tmp_path/'compositor.log').read_text()
-                assert time.monotonic()<deadline,'fixture compositor failed to start'
-                time.sleep(.05)
-            env['WAYLAND_DISPLAY']=next(p.name for p in runtime.glob('wayland-*') if not p.name.endswith('.lock'))
+            if not xvfb:
+                compositor=subprocess.Popen(['wayfire','-c',str(config)],env=env,stdout=log,stderr=log,start_new_session=True)
+                deadline=time.monotonic()+10
+                while not [p for p in runtime.glob('wayland-*') if not p.name.endswith('.lock')]:
+                    assert compositor.poll() is None,(tmp_path/'compositor.log').read_text()
+                    assert time.monotonic()<deadline,'fixture compositor failed to start'
+                    time.sleep(.05)
+                env['WAYLAND_DISPLAY']=next(p.name for p in runtime.glob('wayland-*') if not p.name.endswith('.lock'))
             readfd,writefd=os.pipe()
-            xserver=subprocess.Popen(['Xwayland','-displayfd',str(writefd),'-nolisten','tcp','-ac','-noreset','-shm'],env=env,pass_fds=(writefd,),stdout=log,stderr=log,start_new_session=True)
+            command=([xvfb,'-displayfd',str(writefd),'-screen','0','1280x800x24','-nolisten','tcp','-ac','-noreset'] if xvfb else
+                     ['Xwayland','-displayfd',str(writefd),'-nolisten','tcp','-ac','-noreset','-shm'])
+            xserver=subprocess.Popen(command,env=env,pass_fds=(writefd,),stdout=log,stderr=log,start_new_session=True)
             os.close(writefd)
             try:
-                assert select.select([readfd],[],[],10)[0], 'isolated Xwayland did not start'
+                assert select.select([readfd],[],[],10)[0], 'isolated X display did not start'
                 display=os.read(readfd,32).decode().strip()
-                assert display.isdigit(), 'invalid isolated Xwayland display'
+                assert display.isdigit(), 'invalid isolated X display display'
             finally:os.close(readfd)
             env['DISPLAY']=':'+display
             env['GDK_BACKEND']='x11'
@@ -93,6 +105,7 @@ app.whenReady().then(async()=>{
             try:stdout,stderr=native.communicate(timeout=25)
             except subprocess.TimeoutExpired as error:
                 raise AssertionError((error.stdout or b'').decode(errors='replace')+'\n'+(error.stderr or b'').decode(errors='replace')) from error
+            (tmp_path/'electron.log').write_text(stdout+'\n'+stderr)
             assert native.returncode==0,stdout+'\n'+stderr
             assert 'REAL_NATIVE_RELOAD_PASS' in stdout
         finally:

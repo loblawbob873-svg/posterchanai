@@ -27,6 +27,7 @@ on:
       - 'templates/client.html'
       - 'scripts/client_shell.py'
       - '.github/workflows/desktop.yml'
+      - 'tests/test_native_window_reload_electron.py'
   workflow_dispatch:
 
 # One build per branch at a time, newest wins — a burst of pushes otherwise starves the
@@ -213,6 +214,23 @@ jobs:
           done
           echo "::error::npm ci failed three times"
           exit 1
+
+      # A real sendSync assignment sends the reply immediately. A plain JS event stub
+      # cannot detect a premature null reply that turns an app reload into a desktop.
+      - name: Verify real native window reload IPC
+        if: matrix.name == 'linux'
+        timeout-minutes: 5
+        shell: bash
+        env:
+          PC_REQUIRE_NATIVE_IPC_TEST: '1'
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv
+          python3 -m venv "$RUNNER_TEMP/native-ipc-venv"
+          "$RUNNER_TEMP/native-ipc-venv/bin/pip" install pytest==8.3.5
+          "$RUNNER_TEMP/native-ipc-venv/bin/python" -m pytest --noconftest -o addopts= tests/test_native_window_reload_electron.py -q -rA
 
       - name: Build
         working-directory: desktop
