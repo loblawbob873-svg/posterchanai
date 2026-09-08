@@ -12,6 +12,7 @@ executables=(
   /opt/posterchan/resources/tor/tor/tor
   /usr/local/bin/posterchan
   /usr/local/bin/update-posterchan
+  /usr/local/bin/pc-compositor-session
   /usr/local/bin/pc-shell-start-wayfire
   /usr/local/bin/pc-shell-restart
   /usr/local/bin/pc-provision-user
@@ -38,7 +39,7 @@ done
   echo "session-switch sudo rule has an unsafe mode" >&2; exit 1;
 }
 
-for command in sway foot firefox-bin virsh qemu-system-x86_64; do
+for command in wayfire foot firefox-bin virsh qemu-system-x86_64; do
   command -v "$command" >/dev/null || { echo "first-run core command is missing: $command" >&2; exit 1; }
 done
 # A package-owned wrapper can survive while the ISO excludes its /opt/firefox payload.
@@ -64,7 +65,13 @@ autologin_user="$(sed -n 's/^ExecStart=.*--autologin \([^ ]*\).*/\1/p' \
   echo "tty1 autologin does not name an installed account" >&2; exit 1;
 }
 autologin_home="$(getent passwd "$autologin_user" | cut -d: -f6)"
-grep -q 'exec sway' "$autologin_home/.bash_profile"
+check_login_profile(){
+  grep -Eq '^[[:space:]]*exec[[:space:]]+/usr/local/bin/pc-compositor-session[[:space:]]*$' "$1" || {
+    echo "Autologin profile does not start the packaged compositor session: $1" >&2
+    return 1
+  }
+}
+check_login_profile "$autologin_home/.bash_profile"
 
 printf 'Installed core package gate passed: %s; %s; autologin %s\n' \
   "$desktop" "$shell" "$autologin_user"

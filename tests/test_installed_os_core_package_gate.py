@@ -26,7 +26,9 @@ def test_gate_covers_update_first_run_and_security_critical_modes():
     assert source.count("sudoers.d/") >= 2 and "440" in source
     assert "posterchan-update.lock" in source
     assert "emaint sync -r posterchan" in source
-    assert "exec sway" in source and "autologin_user" in source
+    assert "pc-compositor-session" in source and "autologin_user" in source
+    assert "for command in wayfire foot" in source
+    assert "exec sway" not in source
     assert 'getent passwd "$autologin_user"' in source
     # PosterChanOS installs Gentoo's prebuilt www-client/firefox-bin package.  It intentionally
     # exposes /usr/bin/firefox-bin rather than relying on a distribution-specific `firefox` alias.
@@ -53,3 +55,24 @@ def test_firefox_gate_executes_payload_not_just_the_surviving_wrapper(tmp_path):
         assert (result.returncode == 0) == ok, result.stderr
         if not ok:
             assert 'Installed Firefox' in result.stderr
+
+
+def test_login_gate_requires_the_packaged_compositor_entrypoint(tmp_path):
+    source = GATE.read_text()
+    start = source.index('check_login_profile(){')
+    function = source[start:source.index('\n}\n', start)+3]
+    profile = tmp_path / '.bash_profile'
+    for content, ok in (
+        ('if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then\n  exec /usr/local/bin/pc-compositor-session\nfi\n', True),
+        ('exec sway\n', False),
+        ('# exec /usr/local/bin/pc-compositor-session\n', False),
+        ('exec /usr/local/bin/pc-compositor-session-obsolete\n', False),
+    ):
+        profile.write_text(content)
+        result = subprocess.run(['bash', '-c', function + '\ncheck_login_profile "$1"', 'check', str(profile)],
+                                capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == ok, result.stderr
+    # The wrapper itself must also pass executable/Portage ownership checks, not just be named.
+    executables = source[source.index('executables=('):source.index('for file in')]
+    assert '/usr/local/bin/pc-compositor-session' in executables
+    assert '/usr/local/bin/pc-shell-start-wayfire' in executables
