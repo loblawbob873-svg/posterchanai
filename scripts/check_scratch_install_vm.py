@@ -91,7 +91,7 @@ class Serve(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         target = Path(self.root, self.path.lstrip("/")).resolve()
-        if not str(target).startswith(str(self.root.resolve())) or not target.is_file():
+        if not target.is_relative_to(self.root.resolve()) or not target.is_file():
             self.send_error(404)
             return
         data = target.read_bytes()

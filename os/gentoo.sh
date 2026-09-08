@@ -585,13 +585,30 @@ unmaskPackages() {
 		echo "$NAME $ARGS"> /etc/portage/package.use/$FILE_NAME
 	done
 
-	# TRUNCATE, THEN APPEND. `>>` on every run turned this file into the same list over and over --
-	# measured on the test laptop, three identical copies of all 23 atoms. Harmless to portage and
-	# not harmless to a person reading it to find out what this machine unmasks and why.
-	: >/etc/portage/package.accept_keywords
-	for i in "${MASKED_PACKAGES[@]}"; do
-		echo "$i ~amd64" >>/etc/portage/package.accept_keywords
-	done
+	# Own one keyword file; never erase entries an operator put in the shared configuration.
+	local keyword_path=/etc/portage/package.accept_keywords keyword_legacy keyword_tmp
+	if [ -f "$keyword_path" ]; then
+		if [ -L "$keyword_path" ]; then
+			echo "Cannot migrate symlinked keyword file: $keyword_path" >&2
+			return 1
+		fi
+		keyword_legacy=$(mktemp "${keyword_path}.XXXXXX") || return 1
+		mv -- "$keyword_path" "$keyword_legacy" || return 1
+		if ! mkdir -- "$keyword_path"; then
+			mv -- "$keyword_legacy" "$keyword_path"
+			return 1
+		fi
+		mv -- "$keyword_legacy" "$keyword_path/00-local" || return 1
+	fi
+	mkdir -p -- "$keyword_path" || return 1
+	keyword_tmp=$(mktemp "$keyword_path/.posterchan-managed.XXXXXX") || return 1
+	if { for i in "${MASKED_PACKAGES[@]}"; do printf '%s ~amd64\n' "$i"; done; } >"$keyword_tmp" \
+		&& chmod 0644 "$keyword_tmp" && mv -f -- "$keyword_tmp" "$keyword_path/posterchan-managed"; then
+		:
+	else
+		rm -f -- "$keyword_tmp"
+		return 1
+	fi
 
 }
 
@@ -2020,7 +2037,6 @@ PROFILE
 	#
 	# Success is checked by looking for the FILES, not by trusting emerge's exit code — a package
 	# that installs nothing useful exits 0.
-	if [ -f "${TARGET}/etc/portage/repos.conf/posterchan.conf" ]; then
 	# RUN IT WHERE THE FILES ARE. This function is called BOTH ways — from the installer on the live
 	# system with TARGET pointing at the new root, and from inside the chroot during finalize, where
 	# TARGET is empty and the new root is simply `/`. A bare `chroot $TARGET` is a broken command in
@@ -2037,6 +2053,7 @@ PROFILE
 	else
 		_in() { chroot "$TARGET" /bin/bash -c "$1"; }
 	fi
+	if [ -f "${TARGET}/etc/portage/repos.conf/posterchan.conf" ]; then
 		echo -e "\033[1;33mSyncing the PosterChanOS overlay\033[0m"
 		# KEPT, NOT DISCARDED. `>/dev/null 2>&1` on all three of these turned "the overlay is not
 		# reachable" into a sentence with no evidence behind it -- and it was printed on a run where
@@ -2129,6 +2146,9 @@ PROFILE
 		rm -f "$1"
 		return 1
 	}
+	# A previous attempt may have cached an HTML response. Validate before cache reuse too.
+	_pc_keep_if "$APPTAR" 28b52ffd "the cached tarball" || true
+	_pc_keep_if "$APPIMG" 7f454c46 "the cached AppImage" || true
 	if [ ! -s "$APPTAR" ]; then
 		curl -sSfL --retry 3 --connect-timeout 20 -o "$APPTAR" "$PP/PosterChan-linux-x64.tar.zst" \
 			2>>"$FETCHLOG" || true
@@ -3257,10 +3277,10 @@ FSTAB
 		done
 
 		# /opt is commonly where a builder accumulates SDKs and unrelated server applications.  The
-		# one payload a PosterChanOS image needs is /opt/posterchan; exclude every sibling explicitly
-		# so that directory remains available to the image self-check below.
+		# required desktop payloads are PosterChan and Gentoo's prebuilt Firefox. Keep these exact
+		# trees; unrelated SDK/server siblings must not leak into a public image.
 		for F in /opt/*; do
-			[[ -e "$F" && "$F" != /opt/posterchan ]] && EXCLUDES+=("${F#/}")
+			[[ -e "$F" && "$F" != /opt/posterchan && "$F" != /opt/firefox ]] && EXCLUDES+=("${F#/}")
 		done
 
 		# The account files, rewritten. Everything below uid 1000 stays — root and the system users
@@ -3732,6 +3752,11 @@ DESKTOP
 			|| MISSING="$MISSING /opt/posterchan"
 		echo "$LS" | grep -qx "squashfs-root/usr/local/bin/posterchan" \
 			|| MISSING="$MISSING /usr/local/bin/posterchan"
+		# The launcher and Portage records can survive a missing /opt/firefox tree. Check the
+		# packed output itself, not the builder's disk, before this image can be published.
+		for F in usr/bin/firefox-bin opt/firefox/firefox-bin opt/firefox/libxul.so; do
+			printf '%s\n' "$LS" | grep -qx "squashfs-root/$F" || MISSING="$MISSING /$F"
+		done
 		# The welcome screen cannot configure wifi without the daemon, and launching getty before it
 		# is ready creates the exact same visible failure as omitting it.
 		echo "$LS" | grep -qx "squashfs-root/usr/lib/systemd/system/NetworkManager.service" \
@@ -3772,12 +3797,20 @@ DESKTOP
 				| sed -n "s/.*--autologin \([^ ]*\).*/\1/p" | head -1)"
 			NET_ORDER="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
 				etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null \
-				| grep -c '^After=NetworkManager.service$')"
+				| grep -cE '^After=.*network-online\.target')"
 			PW="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" etc/passwd 2>/dev/null \
 				| grep -c "^$SESS_USER:")"
-			echo "image: autologin=$WHO passwd-has-$SESS_USER=$PW" >>"$LOG" 2>/dev/null
-			if [[ "$WHO" != "$SESS_USER" || "$PW" -lt 1 || "$NET_ORDER" -lt 1 ]]; then
+			echo "image: autologin=$WHO passwd-has-$SESS_USER=$PW net-order=$NET_ORDER" >>"$LOG" 2>/dev/null
+			# EACH CONDITION NAMES ITSELF. These three fail for unrelated reasons and the message
+			# used to report only the first two — so an ordering failure printed a healthy
+			# "autologin=live, passwd-has-live=1" and blamed the pseudo-file trap, which is a
+			# different bug with a different fix.
+			if [[ "$WHO" != "$SESS_USER" || "$PW" -lt 1 ]]; then
 				_lcd_fail "The image would log in as '${WHO:-nobody}' and its /etc/passwd has ${PW} such account. That is a login prompt, not a desktop — the ISO was not made. (mksquashfs ignores a pseudo-file whose path exists in the source; see pseudoput.)"
+				return
+			fi
+			if [[ "$NET_ORDER" -lt 1 ]]; then
+				_lcd_fail "The image autologins as '$WHO' but its getty is not ordered after network-online.target, so the desktop would start before the machine has an address — the ISO was not made."
 				return
 			fi
 		fi
