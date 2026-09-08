@@ -431,7 +431,7 @@ def test_tv_camel_case_quick_connect_and_playback_requests(api):
 
 
 @pytest.mark.parametrize("auth_header", ["X-Emby-Authorization", "Authorization"])
-@pytest.mark.parametrize("sdk_version", [None, "1.7.1", "1.8.12"], ids=["schema", "sdk-1.7.1", "sdk-1.8.12"])
+@pytest.mark.parametrize("sdk_version", [None, "1.7.1", "1.8.12", "1.9.0"], ids=["schema", "sdk-1.7.1", "sdk-1.8.12", "sdk-1.9.0"])
 def test_kotlin_tv_startup_and_playback_contract(api, auth_header, sdk_version, tmp_path):
     """Kotlin deserialization requires fields that the JavaScript SDK tolerates omitting."""
     from pathlib import Path
