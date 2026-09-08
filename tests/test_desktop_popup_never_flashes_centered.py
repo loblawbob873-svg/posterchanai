@@ -85,3 +85,35 @@ def test_the_shield_has_a_floor_because_the_latch_is_set_before_the_attempt():
     # One reveal path, so a placement that arrives after the floor cannot re-insert or double-remove.
     assert body.count("removeInsertedCSS") == 2, body
     assert "if(placed) return;" in body
+
+
+def test_focus_is_asked_for_not_inferred_from_a_flag_wayfire_never_sets():
+    """`outputs().find(o => o.focused)` is always undefined on Wayfire.
+
+    `window-rules/list-outputs` answers name/id/geometry and nothing else, so normalizeOutput can
+    only ever set focused:false. Two decisions read that flag — which surface owns a Start/popup
+    gesture, and which output's ORIGIN is added to a popup's coordinates — so on two monitors every
+    menu was delivered to the first surface and placed on the leftmost screen, whichever screen the
+    person was on. Reported as "start menu and taskbar widgets are not popping up in the appropriate
+    place" on a 2x3840x2560 desktop.
+
+    Both backends must answer one question, and main.js must ASK it rather than scan for the flag.
+    """
+    root = Path(__file__).resolve().parents[1] / "desktop"
+    wayfire = (root / "wm-wayfire.js").read_text(encoding="utf-8")
+    sway = (root / "wm.js").read_text(encoding="utf-8")
+    main = (root / "main.js").read_text(encoding="utf-8")
+
+    assert "async focusedOutputName()" in wayfire, "the Wayfire backend cannot report focus"
+    assert "window-rules/get-focused-output" in wayfire, "focus is not read from the compositor"
+    assert "async focusedOutputName()" in sway, "the sway backend lost the shared question"
+
+    # Both decision points must call it. Either alone leaves half the bug in place: the gesture
+    # reaches the right surface but the window is placed on the wrong screen, or the reverse.
+    assert main.count("focusedOutputName()") >= 2, \
+        "a decision still infers focus from a flag one compositor never sets"
+
+    # And the hot path must stay pure IPC — outputs() runs once per pointer frame while dragging.
+    outs = wayfire[wayfire.index("async outputs()"):]
+    outs = outs[:outs.index("\n  ")] if "\n  " in outs else outs
+    assert "_randr" not in outs, "outputs() now spawns wlr-randr on the drag path"

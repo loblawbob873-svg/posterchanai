@@ -1676,7 +1676,14 @@ async function forwardShellTick(ev){
   const broadcast=payload==='pc:start:close'||payload.indexOf('pc:popup-closed:')===0;
   if(ev && !broadcast){
     try{
-      const focusedOutput=(await wm().outputs()).find(x=>x&&x.focused);
+      /* ASK FOR THE FOCUSED OUTPUT, do not look for a flag that one backend never sets.
+       * Wayfire's list-outputs carries geometry and nothing else, so `.find(x=>x.focused)` was
+       * always undefined here and every gesture fell through to targets[0] -- the first surface,
+       * i.e. monitor 1 -- whichever screen the person was actually on. */
+      const _fname=await wm().focusedOutputName().catch(()=>'');
+      const _outs=await wm().outputs();
+      const focusedOutput=(_fname&&_outs.find(x=>x&&String(x.name)===String(_fname)))
+                          ||_outs.find(x=>x&&x.focused);
       const active=(await wm().workspaces()).find(x=>x && x.focused);
       let owned=focusedOutput&&targets.filter(target=>{
         const scope=_shellScopes.get(target.webContents.id);
@@ -2313,7 +2320,13 @@ async function openPopupWindow(e, kind, rect, arg){
   try{
     const outs = await wm().outputs();
     const mine = scope && outs.find(o => o && o.name === scope.output);
-    const focused = outs.find(o => o && o.focused);
+    /* Same reason as the gesture-owner lookup above: `o.focused` is never true on Wayfire, so
+     * without asking explicitly this guard never fired (both surfaces raced to open, and the
+     * loser's closePopupWindow() ate the winner's menu) and `box` fell back to a rect whose
+     * ORIGIN put the flyout on the leftmost screen. */
+    const fname = await wm().focusedOutputName().catch(() => '');
+    const focused = (fname && outs.find(o => o && String(o.name) === String(fname)))
+                    || outs.find(o => o && o.focused);
     if(mine && focused && mine.name !== focused.name) return false;   // the focused surface opens it
     const box = (mine && mine.rect) || (focused && focused.rect);
     if(box){ originX = Math.round(box.x) || 0; originY = Math.round(box.y) || 0; }

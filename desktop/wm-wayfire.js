@@ -237,6 +237,25 @@ class WayfireWM{
   async outputs(){const r=await this._send('window-rules/list-outputs');const rows=(Array.isArray(r)?r:r&&r.outputs||[]).map(normalizeOutput);
     for(const row of rows)row.work=workAreaFor(this._work,row.rect);
     this._rememberOrigins(rows);return rows;}
+  /* WHICH OUTPUT HAS FOCUS -- one IPC call, and the reason the menus opened on the wrong screen.
+   *
+   * `window-rules/list-outputs` answers name/id/geometry and NOTHING else, so normalizeOutput can
+   * only ever set focused:false. Everything that asked `outputs().find(o => o.focused)` therefore
+   * got undefined on this compositor: the gesture-owner resolution in main.js fell through to
+   * targets[0] and delivered every Start press to the FIRST surface, and openPopupWindow lost both
+   * its "only the focused surface opens it" guard and the output ORIGIN it adds to the popup's
+   * coordinates. On two monitors that is a start menu that opens on the other screen.
+   *
+   * Kept separate from outputs() on purpose: outputs() runs once per pointer frame while a window
+   * is dragged, and this is needed only where a gesture is being attributed. Pure IPC either way --
+   * no wlr-randr, which is what outputsDetailed() pays for. */
+  async focusedOutputName(){
+    try{
+      const f = await this._send('window-rules/get-focused-output');
+      return String(((f && (f.info || f)) || {}).name || '');
+    }catch(_){ return ''; }
+  }
+
   /* THE HOT PATH STAYS PURE IPC. `outputs()` runs inside place/snap/move — once per pointer frame
    * while a window is dragged — so it must never spawn a process. Only the display SETTINGS read
    * pays for wlr-randr, through this second method; desktop/displays.js asks for it by name and

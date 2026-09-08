@@ -342,6 +342,13 @@ class WM {
     return rows;
   }
   workspaces(){ return this._send(MSG.GET_WORKSPACES, ''); }
+  /* Sway's own IPC already marks the focused output, so this is a read of what outputs() returns.
+   * It exists so main.js can ask ONE question of either backend -- see wm-wayfire.js, where the
+   * answer needs a second IPC call because list-outputs does not carry focus. */
+  async focusedOutputName(){
+    try{ const o = (await this.outputs()).find(x => x && x.focused); return String((o && o.name) || ''); }
+    catch(_){ return ''; }
+  }
 
   async assignShell(id, assignment){
     const shellDisplays=require('./shell-displays.js');
