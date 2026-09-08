@@ -19,7 +19,9 @@ public final class MmsSendReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context ctx, Intent intent) {
         if (intent == null || !ACTION_SENT.equals(intent.getAction())) return;
         final PendingResult pending = goAsync();
-        final int result = getResultCode();
+        // goAsync() detaches the receiver's result; getResultCode() on the receiver now
+        // returns 0. Read the retained PendingResult so success/failure is not lost.
+        final int result = pending.getResultCode();
         new Thread(() -> {
             try {
                 String value = intent.getStringExtra("content_uri");
