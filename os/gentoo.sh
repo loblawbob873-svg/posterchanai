@@ -3797,12 +3797,20 @@ DESKTOP
 				| sed -n "s/.*--autologin \([^ ]*\).*/\1/p" | head -1)"
 			NET_ORDER="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" \
 				etc/systemd/system/getty@tty1.service.d/override.conf 2>/dev/null \
-				| grep -c '^After=NetworkManager.service$')"
+				| grep -cE '^After=.*network-online\.target')"
 			PW="$(unsquashfs -cat "$WORK/iso/LiveOS/squashfs.img" etc/passwd 2>/dev/null \
 				| grep -c "^$SESS_USER:")"
-			echo "image: autologin=$WHO passwd-has-$SESS_USER=$PW" >>"$LOG" 2>/dev/null
-			if [[ "$WHO" != "$SESS_USER" || "$PW" -lt 1 || "$NET_ORDER" -lt 1 ]]; then
+			echo "image: autologin=$WHO passwd-has-$SESS_USER=$PW net-order=$NET_ORDER" >>"$LOG" 2>/dev/null
+			# EACH CONDITION NAMES ITSELF. These three fail for unrelated reasons and the message
+			# used to report only the first two — so an ordering failure printed a healthy
+			# "autologin=live, passwd-has-live=1" and blamed the pseudo-file trap, which is a
+			# different bug with a different fix.
+			if [[ "$WHO" != "$SESS_USER" || "$PW" -lt 1 ]]; then
 				_lcd_fail "The image would log in as '${WHO:-nobody}' and its /etc/passwd has ${PW} such account. That is a login prompt, not a desktop — the ISO was not made. (mksquashfs ignores a pseudo-file whose path exists in the source; see pseudoput.)"
+				return
+			fi
+			if [[ "$NET_ORDER" -lt 1 ]]; then
+				_lcd_fail "The image autologins as '$WHO' but its getty is not ordered after network-online.target, so the desktop would start before the machine has an address — the ISO was not made."
 				return
 			fi
 		fi
