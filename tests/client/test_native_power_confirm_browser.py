@@ -48,3 +48,21 @@ def test_native_power_dispatch_failure_stays_visible_and_retryable():
         assert await b.js('__windowCloses') == 0
         assert await b.js("!document.querySelector('[data-act=reboot]').disabled")
     asyncio.run(with_browser('hang','?pcpopup=tray',check,POWER))
+
+
+@pytest.mark.parametrize('action',['reboot','poweroff'])
+def test_actual_tray_power_tile_reaches_owned_confirmation(action):
+    async def check(b):
+        await b.until("!!document.querySelector('[data-os=power]')")
+        pos=await b.js("(()=>{const r=document.querySelector('[data-os=power]').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()")
+        await b.call('Input.dispatchMouseEvent',dict(type='mousePressed',button='left',clickCount=1,**pos))
+        await b.call('Input.dispatchMouseEvent',dict(type='mouseReleased',button='left',clickCount=1,**pos))
+        await b.until("!!document.querySelector('[data-act='+"+repr(action)+"+']')")
+        assert await b.js('__windowCloses')==0
+        await b.js("document.querySelector('[data-act='+"+repr(action)+"+']').click()")
+        await b.until("!!document.querySelector('.uiconfirm')")
+        assert await b.js("document.querySelector('.uiconfirm').getBoundingClientRect().height>0")
+        assert await b.js('__powerCalls.length')==0
+        await b.js("document.querySelector('[data-uc=\"0\"]').click()")
+        assert await b.js('__windowCloses')==0
+    asyncio.run(with_browser('hang','?pcpopup=tray',check,POWER))
