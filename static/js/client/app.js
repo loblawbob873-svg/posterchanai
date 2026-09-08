@@ -29917,9 +29917,11 @@
     // elsewhere) over "the newest row", which is not the same thing once you have several chats.
     const _last=_aiLastConv();
     const _has=(convs||[]).some(c=>c.id===_last);
-    if(_has) aiOpenConversation(_last);
-    else if(convs && convs.length) aiOpenConversation(convs[0].id);
-    else aiNewConversation();
+    // aiMount must finish this load before consuming an Effects handoff. In a fresh
+    // account the automatic first chat otherwise races the Effects chat creation.
+    if(_has) return aiOpenConversation(_last);
+    else if(convs && convs.length) return aiOpenConversation(convs[0].id);
+    else return aiNewConversation();
   }
   async function aiNewConversation(stillWanted){
     try{
