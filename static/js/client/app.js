@@ -33579,7 +33579,8 @@
         syncRelays();
         const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
         const on=$('#set-relays-on').checked;
-        const relayChanged = on!==!!ClientSettings.get('relaysEnabled') || JSON.stringify(urls)!==JSON.stringify(userRelays());
+        // Disabled controls may contain seeded fallback URLs; saving another tab must not reconnect.
+        const relayChanged = on!==!!ClientSettings.get('relaysEnabled') || (on && JSON.stringify(urls)!==JSON.stringify(userRelays()));
         if(relayChanged){
           needReload=true;
           /* The private libraries have to follow, or the vault reads empty on the new relay and the
