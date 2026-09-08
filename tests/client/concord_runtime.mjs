@@ -62,9 +62,12 @@ const relayFixtures=filters=>{
 };
 
 globalThis.window = globalThis;
-const concordEnvelopeCache=new Map();
+const concordEnvelopeCache=new Map(),pendingDeliveryCache=new Map();
 window.PCConcordCache={
   MAX_ICON_BYTES:5*1024*1024,
+  async getDeliveries(key){return [...(pendingDeliveryCache.get(key)||new Map()).values()];},
+  async putDelivery(key,event){if(!pendingDeliveryCache.has(key))pendingDeliveryCache.set(key,new Map());pendingDeliveryCache.get(key).set(event.id,event);},
+  async completeDelivery(key,id,history){const event=pendingDeliveryCache.get(key)?.get(id);if(event){await this.put(history,[event]);pendingDeliveryCache.get(key).delete(id);}},
   async get(key){return concordEnvelopeCache.get(key)||[];},
   async page(key,{limit}={}){const events=concordEnvelopeCache.get(key)||[];return{events:events.slice(-Number(limit||300))};},
   async put(key,events){concordEnvelopeCache.set(key,[...(concordEnvelopeCache.get(key)||[]),...(events||[])]);},
@@ -109,6 +112,7 @@ relayClose:id=>{if(typeof id!=='string')throw new Error('relayClose got a '+type
   relayQuery:async filters=>relayFixtures(filters),
   relayQueryFrom:async(relays,filters,options={})=>{calls.queryTargets.push([...relays]);calls.queryOptions=(calls.queryOptions||[]).concat(options);return relayFixtures(filters);},
   relayUrls:()=>['wss://relay.example'], signTemplate:async template=>template,
+  relayPublishRoom:async(relays,event)=>({ok:!!await window.__PC.relayPublishTo(relays,event),accepted:1,uncertain:false,msg:''}),
   relayPublish:async()=>({ok:true}), relayPublishTo:async(relays,event)=>{calls.publishTargets.push([...relays]);calls.wraps.push(event);return 1;},
   publish:async()=>({}),
   switchView:()=>{ throw new Error('Communities tab used the desktop app router'); },
@@ -147,8 +151,9 @@ globalThis.document = {
 const concordSource=process.argv[2]
   ? new URL(`file://${process.cwd()}/${process.argv[2].replace(/^\/+/, '')}`)
   : new URL('../../static/js/client/concord.js', import.meta.url);
-vm.runInThisContext(fs.readFileSync(concordSource, 'utf8'),
+vm.runInThisContext(fs.readFileSync(concordSource, 'utf8').replace('window.PCConcord={','window.__concordStore={get:testMessages,set:saveTestMessages};window.PCConcord={'),
                     {filename:'concord.js'});
+const messageData={get:key=>JSON.stringify(window.__concordStore.get(key.slice('pc.concord.test.'.length))),set:(key,value)=>window.__concordStore.set(key.slice('pc.concord.test.'.length),JSON.parse(value))};
 const exactRoomRelays=PCConcord.roomRelays({relays:['wss://relay.poster.place']});
 if(JSON.stringify(exactRoomRelays)!==JSON.stringify(['wss://relay.poster.place']))
   throw new Error('room relay was polluted with global Concord defaults: '+JSON.stringify(exactRoomRelays));
@@ -567,7 +572,7 @@ let prevented=false;
 input.onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
 if(prevented || data.has('pc.concord.test.'+rooms[0].naddr)) throw new Error('plain Enter sent a message');
 await input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){prevented=true;}});
-const messages=JSON.parse(data.get('pc.concord.test.'+rooms[0].naddr));
+const messages=JSON.parse(messageData.get('pc.concord.test.'+rooms[0].naddr));
 if(!prevented || messages.length!==1 || messages[0].text!=='hello concord' || messages[0].by!=='Test User')
   throw new Error('Ctrl+Enter send flow failed');
 
@@ -581,10 +586,10 @@ input.value='race once';
 const racing=input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
 await new Promise(resolve=>setTimeout(resolve,0));
 const raceKey='pc.concord.test.'+rooms[0].naddr;
-const whilePending=JSON.parse(data.get(raceKey));
+const whilePending=JSON.parse(messageData.get(raceKey));
 whilePending.push({id:'e'.repeat(64),by:'Test User',pubkey:'a'.repeat(64),text:'race once',
                    at:2345,kind:9,tags:[],reactions:{},remote:true});
-data.set(raceKey,JSON.stringify(whilePending));
+messageData.set(raceKey,JSON.stringify(whilePending));
 if(!releaseRace) throw new Error('publish race was not held');
 releaseRace();
 await racing;
@@ -592,7 +597,7 @@ PosterCordReader.createChatWrap=async(_bundle,_wraps,_channel,text,_author,_sign
   calls.lastChat={text,tags,kind};
   return {rumorId:'f'.repeat(64),wrap:{kind:1059},ms:3456};
 };
-const afterRace=JSON.parse(data.get(raceKey));
+const afterRace=JSON.parse(messageData.get(raceKey));
 if(afterRace.filter(m=>m.id==='e'.repeat(64)).length!==1)
   throw new Error('relay echo duplicated optimistic message');
 PCConcord.render();
@@ -602,16 +607,16 @@ if((feed.innerHTML.match(new RegExp('data-message-id="'+'e'.repeat(64)+'"','g'))
 // Message actions stay collapsed until the user activates the post.  Reactions
 // must not be permanently repeated beside every message on touch layouts.
 const permanentId='e'.repeat(64);
-let acted=JSON.parse(data.get(raceKey)).find(m=>m.id===permanentId);
+let acted=JSON.parse(messageData.get(raceKey)).find(m=>m.id===permanentId);
 const actionTrigger=dollars('[data-cc-actions]').find(b=>b.dataset.ccActions===permanentId);
 if(!actionTrigger)throw new Error('rendered message has no collapsed action trigger');
 if(dollars('[data-cc-quick-react]').length)
   throw new Error('rendered message still exposes permanent quick-reaction controls');
 // Treat the permanent fixture as another member's post for the reply-participant assertion.
 acted.pubkey='b'.repeat(64); acted.by='Other User';
-const afterReaction=JSON.parse(data.get(raceKey));
+const afterReaction=JSON.parse(messageData.get(raceKey));
 afterReaction[afterReaction.findIndex(m=>m.id===permanentId)]=acted;
-data.set(raceKey,JSON.stringify(afterReaction));
+messageData.set(raceKey,JSON.stringify(afterReaction));
 
 PCConcord.render();
 /* COUNTED FROM HERE, not from zero. The earlier click above is allowed to place a call now that the
@@ -710,13 +715,13 @@ if(!calls.publishTargets.slice(publishesBeforeReply).some(relays=>JSON.stringify
 replaceComposerOnWrite=false;
 
 PCConcord.render();
-const sent=JSON.parse(data.get(raceKey)).find(m=>m.text.startsWith('thread response'));
+const sent=JSON.parse(messageData.get(raceKey)).find(m=>m.text.startsWith('thread response'));
 const deletion=dollars('[data-cc-delete]').find(b=>b.dataset.ccDelete===sent?.id);
 if(!deletion)throw new Error('own rendered message has no delete control');
 window.__PC.uiConfirm=async()=>true;
 await deletion.onclick();
 if(calls.lastChat?.kind!==5 || !calls.lastChat.tags.some(t=>t[0]==='e'&&t[1]===sent.id) ||
-   JSON.parse(data.get(raceKey)).some(m=>m.id===sent.id))
+   JSON.parse(messageData.get(raceKey)).some(m=>m.id===sent.id))
   throw new Error('delete did not publish a tombstone and remove the message');
 
 control('cc-back-channels').click();
@@ -729,7 +734,7 @@ control('cc-drawer-backdrop').click();
 if(feed.innerHTML.includes('drawer-open'))
   throw new Error('mobile channel drawer backdrop did not close it');
 data.set('pc.concord.seen.'+rooms[0].naddr+':general','1');
-data.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
+messageData.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
 PCConcord.render();
 if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') ||
    !calls.mentions[0].opts.route.startsWith('concord:'+encodeURIComponent(rooms[0].naddr)+':general:'))
@@ -763,7 +768,7 @@ if(!calls.toasts.some(x=>x==='community joined')) throw new Error('hydrated join
 // callback must still publish an encrypted kind-9735 Armada receipt after that UI chooses an amount.
 const zapRoom=JSON.parse(data.get('pc.concord.invites'))[0],zapTarget='b'.repeat(64),zapMessage='zap-target';
 data.set('pc.concord.active','0');
-data.set('pc.concord.test.'+zapRoom.naddr,JSON.stringify([{id:zapMessage,by:'Other User',pubkey:zapTarget,text:'zap me',at:3,kind:9}]));
+messageData.set('pc.concord.test.'+zapRoom.naddr,JSON.stringify([{id:zapMessage,by:'Other User',pubkey:zapTarget,text:'zap me',at:3,kind:9}]));
 PCConcord.__testState({community:0,channel:'general'});
 let lightningPays=0,concordTipTarget='',concordLightning=null;
 window.__PC.payPrivateConcordZap=async(pk,sats)=>{if(pk!==zapTarget||sats!==21)throw new Error('Lightning zap target/amount changed');lightningPays++;return{amountMsats:21000,bolt11:'ln-fixture',preimage:'1'.repeat(64)};};

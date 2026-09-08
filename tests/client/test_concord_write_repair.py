@@ -26,3 +26,8 @@ def test_repair_never_silently_posts_to_another_named_channel():
 
 def test_sent_wrap_is_cached_under_the_repaired_channel_id():
     assert "envelopeCacheKey(loadKey,writeChannel.id)" in _publish()
+
+
+def test_pending_delivery_carries_the_repaired_channel_identity():
+    assert "channelId:writeChannel.id" in _publish()
+    assert "cache.completeDelivery(key,d.made.wrap.id,envelopeCacheKey(d.loadKey,d.channelId))" in SRC

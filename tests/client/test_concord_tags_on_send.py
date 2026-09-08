@@ -88,7 +88,7 @@ class TheSendPathCarriesTheTags(unittest.TestCase):
         send = self._send()
         self.assertRegex(send, r"extraTags=\[[^\]]*\.\.\.mentionTags",
                          "mention tags are built and then not included in the published event")
-        self.assertIn("publishCordMessage(p,room,state.channel,text,extraTags", send,
+        self.assertIn("publishCordMessage(p,room,sendChannel,text,extraTags", send,
                       "extraTags no longer reaches the publisher")
 
 

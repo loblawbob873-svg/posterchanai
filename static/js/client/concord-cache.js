@@ -6,7 +6,7 @@
  */
 (function(root){
   'use strict';
-  const DB='posterchan-concord-v1', STORE='envelopes', ICONS='icons', VERSION=3,
+  const DB='posterchan-concord-v1', STORE='envelopes', ICONS='icons', DELIVERIES='deliveries', VERSION=4, MAX_PENDING=64, MAX_PENDING_BYTES=4*1024*1024,
     MAX_PER_STREAM=5000, MAX_EVENT_BYTES=65536, MAX_TOTAL_BYTES=32*1024*1024,
     MAX_ICON_BYTES=5*1024*1024, MAX_ICON_TOTAL_BYTES=20*1024*1024, MAX_ICONS=64;
   let dbPromise=null;
@@ -14,7 +14,7 @@
   function done(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(tx.error||new Error('IndexedDB transaction failed'));});}
   function open(){
     if(dbPromise)return dbPromise;
-    dbPromise=new Promise((resolve,reject)=>{const q=indexedDB.open(DB,VERSION);q.onupgradeneeded=()=>{const db=q.result,s=db.objectStoreNames.contains(STORE)?q.transaction.objectStore(STORE):db.createObjectStore(STORE,{keyPath:'key'});if(!s.indexNames.contains('stream'))s.createIndex('stream','stream',{unique:false});if(!s.indexNames.contains('streamCreated'))s.createIndex('streamCreated',['stream','created'],{unique:false});if(!db.objectStoreNames.contains(ICONS))db.createObjectStore(ICONS,{keyPath:'key'});};q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error||new Error('Concord cache unavailable'));/* A VERSIONED DATABASE THAT ANOTHER TAB HOLDS OPEN AT AN OLDER VERSION BLOCKS FOR EVER, and
+    dbPromise=new Promise((resolve,reject)=>{const q=indexedDB.open(DB,VERSION);q.onupgradeneeded=()=>{const db=q.result,s=db.objectStoreNames.contains(STORE)?q.transaction.objectStore(STORE):db.createObjectStore(STORE,{keyPath:'key'});if(!s.indexNames.contains('stream'))s.createIndex('stream','stream',{unique:false});if(!s.indexNames.contains('streamCreated'))s.createIndex('streamCreated',['stream','created'],{unique:false});if(!db.objectStoreNames.contains(ICONS))db.createObjectStore(ICONS,{keyPath:'key'});if(!db.objectStoreNames.contains(DELIVERIES))db.createObjectStore(DELIVERIES,{keyPath:'key'});};q.onsuccess=()=>{q.result.onversionchange=()=>{q.result.close();dbPromise=null;};resolve(q.result);};q.onerror=()=>reject(q.error||new Error('Concord cache unavailable'));/* A VERSIONED DATABASE THAT ANOTHER TAB HOLDS OPEN AT AN OLDER VERSION BLOCKS FOR EVER, and
    with no handler this promise simply never settles: every icon read and every envelope read
    awaits it until the page is closed, with nothing thrown and nothing logged. A second window
    — or the desktop shell and a browser tab on the same profile — is enough. Rejecting turns
@@ -37,6 +37,26 @@
     if(!out.id||out.content.length>MAX_EVENT_BYTES)return null;
     const size=new TextEncoder().encode(JSON.stringify(out)).byteLength;
     return size<=MAX_EVENT_BYTES?{event:out,size}:null;
+  }
+  // Pending sends are not history: normal history eviction must never discard retry ciphertext.
+  // Admission and completion use one readwrite transaction so two windows cannot bypass quota,
+  // or commit an ACK while leaving a pending record that resurrects after reload.
+  async function getDeliveries(stream){const db=await open(),tx=db.transaction(DELIVERIES,'readonly'),completion=done(tx),[rows]=await Promise.all([request(tx.objectStore(DELIVERIES).getAll()),completion]);return rows.filter(r=>r.stream===String(stream)).map(r=>r.event);}
+  async function putDelivery(stream,ev){
+    stream=String(stream||'');const safe=envelope(ev);if(!safe||!stream||stream.length>2048)throw new Error('invalid encrypted pending delivery');
+    const db=await open(),tx=db.transaction(DELIVERIES,'readwrite'),completion=done(tx),s=tx.objectStore(DELIVERIES),key=stream+'\u0000'+safe.event.id;
+    let failure='';const q=s.getAll();q.onsuccess=()=>{const rows=q.result,old=rows.find(r=>r.key===key);
+      if(old){if(JSON.stringify(old.event)!==JSON.stringify(safe.event)){failure='pending delivery identity conflict';tx.abort();}return;}
+      if(rows.length>=MAX_PENDING||rows.reduce((n,r)=>n+r.size,0)+safe.size>MAX_PENDING_BYTES){failure='pending delivery storage is full; resolve an earlier send first';tx.abort();return;}
+      s.put({key,stream,event:safe.event,size:safe.size});};
+    try{await completion;}catch(e){throw new Error(failure||e.message||'pending delivery storage failed');}
+    return true;
+  }
+  async function completeDelivery(stream,id,historyStream){
+    const db=await open(),tx=db.transaction([DELIVERIES,STORE],'readwrite'),completion=done(tx),pending=tx.objectStore(DELIVERIES),key=String(stream)+'\u0000'+String(id),q=pending.get(key);
+    q.onsuccess=()=>{const row=q.result;if(!row)return;const event=row.event,history=String(historyStream);
+      tx.objectStore(STORE).put({key:history+'\u0000'+event.id,stream:history,id:event.id,created:eventTime(event),event,size:row.size});pending.delete(key);};
+    await completion;await put(String(historyStream),[]);return true;
   }
   async function all(stream){
     const db=await open(),tx=db.transaction(STORE,'readonly'),completion=done(tx),[rows]=await Promise.all([request(tx.objectStore(STORE).index('stream').getAll(String(stream))),completion]);
@@ -73,6 +93,10 @@
      show its icons on the first draw however warm the cache was. One pass, one repaint. */
   async function allIcons(){const db=await open(),tx=db.transaction(ICONS,'readonly'),completion=done(tx),[rows]=await Promise.all([request(tx.objectStore(ICONS).getAll()),completion]);return (rows||[]).filter(r=>r&&r.bytes&&r.bytes.byteLength<=MAX_ICON_BYTES&&/^image\/(png|jpeg|gif|webp)$/.test(String(r.mime||'')));}
   async function dropIcon(key){const db=await open(),tx=db.transaction(ICONS,'readwrite'),completion=done(tx);tx.objectStore(ICONS).delete(String(key));await completion;}
-  async function dropRoom(prefix){prefix=String(prefix);const db=await open(),read=db.transaction(STORE,'readonly'),readDone=done(read),[rows]=await Promise.all([request(read.objectStore(STORE).getAll()),readDone]),keys=[];for(const row of rows){let room='';try{const parsed=JSON.parse(row.stream);if(Array.isArray(parsed))room=String(parsed[0]||'');}catch(_){}if(room===prefix||(!room&&(row.stream===prefix||row.stream.startsWith(prefix+':')||row.stream.startsWith(prefix+'/'))))keys.push(row.key);}const tx=db.transaction([STORE,ICONS],'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const key of keys)s.delete(key);tx.objectStore(ICONS).delete(prefix);await completion;return true;}
-  root.PCConcordCache={DB,STORE,ICONS,MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,put,get,page,drop,putIcon,getIcon,allIcons,dropIcon,dropRoom,_reset(){dbPromise=null;}};
+  async function dropRoom(prefix){prefix=String(prefix);const db=await open(),read=db.transaction(STORE,'readonly'),readDone=done(read),[rows]=await Promise.all([request(read.objectStore(STORE).getAll()),readDone]),keys=[];for(const row of rows){let room='';try{const parsed=JSON.parse(row.stream);if(Array.isArray(parsed))room=String(parsed[0]||'');}catch(_){}if(room===prefix||(!room&&(row.stream===prefix||row.stream.startsWith(prefix+':')||row.stream.startsWith(prefix+'/'))))keys.push(row.key);}const tx=db.transaction([STORE,ICONS],'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const key of keys)s.delete(key);tx.objectStore(ICONS).delete(prefix);await completion;
+    const pendingRead=db.transaction(DELIVERIES,'readonly'),pendingDone=done(pendingRead),[pendingRows]=await Promise.all([request(pendingRead.objectStore(DELIVERIES).getAll()),pendingDone]);
+    const pendingKeys=pendingRows.filter(row=>{try{return JSON.parse(row.stream)[0]===prefix;}catch(_){return false;}}).map(row=>row.key);
+    if(pendingKeys.length){const clear=db.transaction(DELIVERIES,'readwrite'),cleared=done(clear);for(const key of pendingKeys)clear.objectStore(DELIVERIES).delete(key);await cleared;}
+    return true;}
+  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries,putDelivery,completeDelivery,MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,put,get,page,drop,putIcon,getIcon,allIcons,dropIcon,dropRoom,_reset(){dbPromise=null;}};
 })(typeof window==='undefined'?globalThis:window);
