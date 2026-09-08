@@ -111,3 +111,14 @@ test, deployment/package, and relevant real-device check are complete. The insta
 - [ ] Verify this candidate on a physical TV before marking the device check complete.
       Earlier user reports confirmed TV/shared-library access, but do not establish a
       physical Android TV 0.19.10/newer-device check of the current candidate.
+
+## After stabilization and agent handoff — undo a Nostr repost
+
+Requested 2026-09-08; "unboot" is interpreted as unboost (undo the user's own repost).
+Start this work only after the existing stabilization backlog and agent handoff.
+
+- [ ] Verify the applicable Nostr event/deletion contracts and existing client support.
+- [ ] Add an undo-repost action with accurate pending, success, and failure states.
+- [ ] Test ownership checks, preservation of the original post, failed/partial relay
+      publication, retries, duplicate actions, account switches, reload hydration,
+      and synchronization across devices. Review before deployment.
