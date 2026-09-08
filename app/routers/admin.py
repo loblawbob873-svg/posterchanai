@@ -1747,11 +1747,14 @@ async def relay_access_policy_preview(data: RelayAccessPolicyRequest, db: Sessio
                                 admin: User = Depends(get_admin_user)):
     from app.services import relay_access_policy as policy
     try:
-        targets, _, summary = await policy.plan(db, data.exempt_fediverse)
+        targets, grants, summary = await policy.preview(db, data.exempt_fediverse)
+        actions = [('restore', u) for u in grants] + [('revoke', u) for u in targets]
         return {**summary, 'affected_accounts': [
-            {'name': u.username, 'npub': u.nostr_npub, 'ai': bool(u.can_ai),
-             'blossom': bool(u.can_blossom), 'streaming': bool(u.can_stream)}
-            for u in targets[:100]], 'accounts_not_shown': max(0, len(targets) - 100)}
+            {'name': u.username, 'npub': u.nostr_npub, 'action': action,
+             'ai': bool(u.can_ai), 'blossom': bool(u.can_blossom),
+             'image': bool(u.can_image), 'music': bool(u.can_music),
+             'streaming': bool(u.can_stream)}
+            for action, u in actions[:100]], 'accounts_not_shown': max(0, len(actions) - 100)}
     except ValueError as e:
         raise HTTPException(409, str(e))
 

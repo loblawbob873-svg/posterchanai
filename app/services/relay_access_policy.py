@@ -23,17 +23,20 @@ def configuration():
 
 
 
-async def plan(db, exempt_fediverse=True):
+async def _plan(db, exempt_fediverse=True):
     from app.services.nostr_relay.thread import _parse_nip05
     settings.hydrate_from_db(db)
     if not settings.is_hydrated():
         raise ValueError("Relay settings are still loading; no permissions were changed")
+    from app.services.instance_membership import _configuration
+    profile_config = _configuration()
     domain = (settings.get("nostr_relay_nip05_domain", "") or "").strip().lower()
     registry = settings.get("nostr_relay_nip05_names", "") or ""
     names, _ = _parse_nip05(registry, "")
     if not domain or not names:
         raise ValueError("Configure a NIP-05 domain and registered names before running this policy")
     registered = {pk.lower() for pk in names.values()}
+    qualified_keys = set()
     keep = set()
     users = db.query(User).all()
     # Infrastructure identities are not consumer access grants.
@@ -65,7 +68,7 @@ async def plan(db, exempt_fediverse=True):
         # Bound the whole preview as well as concurrency. No SQL writes occur until every
         # answer is known; a slow relay cannot leave a request/transaction open indefinitely.
         async with asyncio.timeout(45):
-            results = await asyncio.gather(*(check(pk) for pk in sorted(registered - keep)),
+            results = await asyncio.gather(*(check(pk) for pk in sorted(registered)),
                                            return_exceptions=True)
     except TimeoutError:
         raise HTTPException(503, 'Profile verification timed out; no permissions were changed')
@@ -75,39 +78,86 @@ async def plan(db, exempt_fediverse=True):
         pk, qualified = result
         if qualified:
             keep.add(pk)
-    if (registry != (settings.get('nostr_relay_nip05_names', '') or '') or
-            domain != (settings.get('nostr_relay_nip05_domain', '') or '').strip().lower()):
+            qualified_keys.add(pk)
+    if profile_config != _configuration():
         raise HTTPException(503, 'Instance identity settings changed; retry without changing permissions')
     whitelist = set(blossom_service._whitelist_pubkeys(db))
     removed = whitelist - keep
     targets = [u for u in users if u.nostr_npub and ns.to_pubkey_hex(u.nostr_npub) not in keep
                and (u.can_ai or u.can_blossom or u.can_stream or ns.to_pubkey_hex(u.nostr_npub) in removed
                     or (u.nostr_nsec and not u.access_revoked))]
+    grants = [u for u in users if u.nostr_npub and ns.to_pubkey_hex(u.nostr_npub) in qualified_keys
+              and (u.access_revoked or not all(getattr(u, field) for field in GRANT_FIELDS))]
+    added = qualified_keys - whitelist
     summary = {"domain": domain, "accounts": len(targets),
                "ai": sum(bool(u.can_ai) for u in targets),
                "blossom": sum(bool(u.can_blossom) for u in targets),
                "streaming": sum(bool(u.can_stream) for u in targets),
-               "whitelist": len(removed)}
-    return targets, whitelist - removed, summary
+               "whitelist": len(removed), "granted_accounts": len(grants),
+               "whitelist_added": len(added),
+               **{"granted_" + field.removeprefix("can_"): sum(not bool(getattr(u, field)) for u in grants)
+                  for field in GRANT_FIELDS}}
+    return targets, (whitelist - removed) | qualified_keys, summary, grants, profile_config
+
+
+GRANT_FIELDS = ("can_ai", "can_blossom", "can_image", "can_music", "can_stream")
+
+
+async def plan(db, exempt_fediverse=True):
+    targets, whitelist, summary, _, _ = await _plan(db, exempt_fediverse)
+    return targets, whitelist, summary
+
+
+async def preview(db, exempt_fediverse=True):
+    """Return both actions from one verified profile snapshot, without any writes."""
+    targets, _, summary, grants, _ = await _plan(db, exempt_fediverse)
+    return targets, grants, summary
 
 
 async def run(db, exempt_fediverse=True):
     async with _lock:
-        targets, keep, summary = await plan(db, exempt_fediverse)
+        targets, keep, summary, grants, profile_config = await _plan(db, exempt_fediverse)
+        from app.services.instance_membership import _configuration
+        from fastapi import HTTPException
+        def verify_config():
+            if profile_config != _configuration():
+                raise HTTPException(503, 'Instance identity settings changed; retry reconciliation')
         # Persist each revocation to the authoritative relay before changing its read-cache.
         # A failed write leaves a visible error and is retried on the next run.
         for u in targets:
+            verify_config()
             previous = u.can_ai, u.can_blossom, u.can_stream, u.access_revoked
             u.can_ai = u.can_blossom = u.can_stream = False
             u.access_revoked = True
-            with db.no_autoflush:
-                ok = await users_store.sync_user(db, u, force=True)
+            try:
+                with db.no_autoflush:
+                    ok = await users_store.sync_user(db, u, force=True)
+            except Exception:
+                ok = False
             if not ok:
                 u.can_ai, u.can_blossom, u.can_stream, u.access_revoked = previous
                 db.rollback()
                 raise RuntimeError("Account synchronization failed; some revocations may have completed")
             db.commit()
-        if summary['whitelist']:
+        for u in grants:
+            verify_config()
+            previous = tuple(getattr(u, field) for field in GRANT_FIELDS) + (u.access_revoked,)
+            for field in GRANT_FIELDS:
+                setattr(u, field, True)
+            u.access_revoked = False
+            try:
+                with db.no_autoflush:
+                    ok = await users_store.sync_user(db, u, force=True)
+            except Exception:
+                ok = False
+            if not ok:
+                for field, value in zip(GRANT_FIELDS + ("access_revoked",), previous):
+                    setattr(u, field, value)
+                db.rollback()
+                raise RuntimeError("Account synchronization failed; some access changes may have completed")
+            db.commit()
+        verify_config()
+        if summary['whitelist'] or summary['whitelist_added']:
             value = '\n'.join(ns.npub_of(pk) for pk in sorted(keep))
             if await settings.write_through(db, {"blossom_whitelist": value}) != 1:
                 raise RuntimeError("Whitelist synchronization failed; account revocations completed")

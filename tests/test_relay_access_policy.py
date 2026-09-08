@@ -40,7 +40,9 @@ def world(monkeypatch):
 def test_preview_preserves_local_fediverse_admin_and_peer(world):
     targets,keep,result=asyncio.run(policy.plan(world.db))
     assert targets==[world.users[2]]
-    assert result==dict(domain='poster.place',accounts=1,ai=1,blossom=1,streaming=1,whitelist=1)
+    assert result==dict(domain='poster.place',accounts=1,ai=1,blossom=1,streaming=1,whitelist=1,
+                        granted_accounts=0,whitelist_added=0,granted_ai=0,granted_blossom=0,
+                        granted_image=0,granted_music=0,granted_stream=0)
     assert keep==set(world.keys)-{world.keys[2]}
     assert world.users[2].can_ai
 
@@ -203,3 +205,142 @@ def test_registry_change_during_preview_cannot_revoke_a_new_member(world, monkey
     assert exc.value.status_code==503
     policy.users_store.sync_user.assert_not_awaited()
     assert all(u.can_ai for u in world.users)
+
+
+def test_qualified_profile_restores_all_requested_grants_and_real_blossom_access(world, monkeypatch):
+    user = world.users[0]
+    for field in policy.GRANT_FIELDS: setattr(user, field, False)
+    user.can_video = False
+    user.access_revoked = True
+    world.db.commit()
+    monkeypatch.setattr(policy.blossom_service, '_whitelist_pubkeys', lambda db: set())
+    monkeypatch.setattr(policy.blossom_service, '_operator_pubkeys', lambda db: set())
+    assert not policy.blossom_service.is_pubkey_allowed(world.db, world.keys[0])
+    preview = asyncio.run(policy.plan(world.db))[2]
+    assert preview['granted_accounts'] == 1 and preview['whitelist_added'] == 1
+    assert all(preview['granted_' + f.removeprefix('can_')] == 1 for f in policy.GRANT_FIELDS)
+    assert user.access_revoked and not user.can_blossom  # preview must not grant
+    captured = []
+    async def sync(db, row, force=False):
+        captured.append((row.id, tuple(getattr(row, f) for f in policy.GRANT_FIELDS), row.access_revoked, force))
+        return True
+    monkeypatch.setattr(policy.users_store, 'sync_user', sync)
+    result = asyncio.run(policy.run(world.db))
+    assert result['granted_accounts'] == 1
+    world.db.expire_all()
+    assert all(getattr(user, f) for f in policy.GRANT_FIELDS) and not user.access_revoked
+    assert not user.can_video  # no unrelated permission expansion
+    assert (user.id, (True,) * 5, False, True) in captured
+    assert policy.blossom_service.is_pubkey_allowed(world.db, world.keys[0])
+    writes = policy.settings.write_through.await_args_list
+    assert any('blossom_whitelist' in call.args[1] and ns.npub_of(world.keys[0]) in call.args[1]['blossom_whitelist'] for call in writes)
+    assert ns.npub_of(world.keys[0]) in world.config['blossom_whitelist']
+
+
+def test_requalified_account_is_granted_once_and_unqualified_never_granted(world, monkeypatch):
+    user = world.users[0]
+    user.can_ai = user.can_blossom = user.can_stream = False
+    user.access_revoked = True
+    world.db.commit()
+    first = asyncio.run(policy.run(world.db))
+    assert first['granted_accounts'] == 1
+    second = asyncio.run(policy.run(world.db))
+    assert second['granted_accounts'] == 0
+    assert not world.users[2].can_ai and world.users[2].access_revoked
+
+
+def test_profile_outage_aborts_restoration_as_well_as_revocation(world, monkeypatch):
+    from app.services import instance_membership
+    from fastapi import HTTPException
+    user = world.users[0]
+    user.can_ai = user.can_blossom = False
+    user.access_revoked = True
+    world.db.commit()
+    monkeypatch.setattr(instance_membership, 'status', AsyncMock(side_effect=HTTPException(503, 'Offline')))
+    with pytest.raises(HTTPException): asyncio.run(policy.run(world.db))
+    assert not user.can_ai and not user.can_blossom and user.access_revoked
+    policy.users_store.sync_user.assert_not_awaited()
+    policy.settings.write_through.assert_not_awaited()
+
+
+def test_failed_authoritative_grant_restores_previous_permissions(world, monkeypatch):
+    user = world.users[0]
+    user.can_ai = user.can_blossom = user.can_stream = False
+    user.access_revoked = True
+    world.db.commit()
+    async def sync(db, row, force=False): return row.id != user.id
+    monkeypatch.setattr(policy.users_store, 'sync_user', sync)
+    with pytest.raises(RuntimeError): asyncio.run(policy.run(world.db))
+    world.db.expire_all()
+    assert not user.can_ai and not user.can_blossom and not user.can_stream and user.access_revoked
+    assert 'blossom_whitelist' not in world.config
+
+
+def test_unregistered_profile_claim_never_gets_grants(world, monkeypatch):
+    outsider = world.users[2]
+    outsider.can_ai = outsider.can_blossom = outsider.can_stream = False
+    outsider.access_revoked = True
+    world.db.commit()
+    from app.services import instance_membership
+    status = AsyncMock(return_value={'qualified': True})
+    monkeypatch.setattr(instance_membership, 'status', status)
+    asyncio.run(policy.run(world.db))
+    assert status.await_args.args == (world.keys[0],)
+    assert not outsider.can_ai and not outsider.can_blossom and outsider.access_revoked
+
+
+@pytest.mark.parametrize('setting,value', [('nostr_relay_upstream_relays','wss://changed.test'),('nostr_relay_port','4052')])
+def test_profile_source_config_change_aborts_all_access_changes(world, monkeypatch, setting, value):
+    from app.services import instance_membership
+    from fastapi import HTTPException
+    async def changed(*args, **kwargs):
+        world.config[setting] = value
+        return {'qualified': True}
+    monkeypatch.setattr(instance_membership, 'status', changed)
+    with pytest.raises(HTTPException): asyncio.run(policy.run(world.db))
+    policy.users_store.sync_user.assert_not_awaited()
+    policy.settings.write_through.assert_not_awaited()
+
+
+def test_raised_authority_failure_does_not_leave_granted_cache(world, monkeypatch):
+    user = world.users[0]
+    user.can_ai = user.can_blossom = False
+    user.access_revoked = True
+    world.db.commit()
+    async def sync(db, row, force=False):
+        if row.id == user.id: raise RuntimeError('Relay unavailable')
+        return True
+    monkeypatch.setattr(policy.users_store, 'sync_user', sync)
+    with pytest.raises(RuntimeError): asyncio.run(policy.run(world.db))
+    world.db.expire_all()
+    assert not user.can_ai and not user.can_blossom and user.access_revoked
+
+
+def test_admin_preview_lists_restorations_and_revocations_from_one_snapshot_without_writes(world):
+    import httpx
+    from fastapi import FastAPI
+    from app.routers.admin import router
+    from app.auth import get_admin_user
+    from app.database import get_db
+    from app.services import instance_membership
+    user = world.users[0]
+    user.can_ai = user.can_blossom = user.can_image = user.can_music = user.can_stream = False
+    user.access_revoked = True
+    world.db.commit()
+    app = FastAPI(); app.include_router(router)
+    app.dependency_overrides[get_db] = lambda: world.db
+    app.dependency_overrides[get_admin_user] = lambda: world.users[3]
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
+            response = await client.post('/api/admin/relay-access-policy/preview',json={'enabled':True,'exempt_fediverse':True})
+            assert response.status_code == 200
+            body = response.json()
+            actions = {item['name']: item['action'] for item in body['affected_accounts']}
+            assert actions == {user.username:'restore', world.users[2].username:'revoke'}
+            assert body['granted_accounts'] == 1 and body['accounts'] == 1
+            assert body['accounts_not_shown'] == 0
+    asyncio.run(go())
+    instance_membership.status.assert_awaited_once_with(world.keys[0], force=True)
+    policy.users_store.sync_user.assert_not_awaited()
+    policy.settings.write_through.assert_not_awaited()
+    assert not user.can_blossom and user.access_revoked

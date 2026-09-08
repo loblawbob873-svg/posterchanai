@@ -1290,7 +1290,7 @@ setTimeout(() => {
     const status = document.getElementById('access-policy-status');
     const affected = document.getElementById('access-policy-affected');
     const buttons = ['preview', 'run', 'save'].map(k => document.getElementById('access-policy-' + k));
-    const describe = d => `${d.domain}: ${d.accounts} accounts; ${d.ai} AI grants, ${d.blossom} Blossom grants, ${d.streaming || 0} Live Streaming grants, ${d.whitelist} whitelist entries.`;
+    const describe = d => `${d.domain}: restore access for ${d.granted_accounts || 0} accounts (${d.granted_ai || 0} AI, ${d.granted_blossom || 0} Blossom, ${d.granted_image || 0} image, ${d.granted_music || 0} music, ${d.granted_stream || 0} streaming; ${d.whitelist_added || 0} whitelist additions). Remove access from ${d.accounts} accounts (${d.ai} AI, ${d.blossom} Blossom, ${d.streaming || 0} streaming; ${d.whitelist} whitelist removals).`;
     let loaded = false, loading = null, busy = false;
     const edited = new Set();
     for (const input of [enabled, fedi]) input.addEventListener('change', () => edited.add(input));
@@ -1322,9 +1322,11 @@ setTimeout(() => {
         affected.replaceChildren();
         for (const account of data.affected_accounts || []) {
             const row = document.createElement('li');
-            const grants = [['ai', 'AI'], ['blossom', 'Blossom'], ['streaming', 'Live Streaming']]
-                .filter(([key]) => account[key]).map(([, label]) => label);
-            row.textContent = `${account.name || account.npub}: ${grants.join(', ') || 'stored access'}`;
+            const restoring = account.action === 'restore';
+            const grants = restoring ? ['AI', 'Blossom', 'image generation', 'music', 'Live Streaming']
+                : [['ai', 'AI'], ['blossom', 'Blossom'], ['streaming', 'Live Streaming']]
+                    .filter(([key]) => account[key]).map(([, label]) => label);
+            row.textContent = `${restoring ? 'Restore' : 'Revoke'} ${account.name || account.npub}: ${grants.join(', ') || 'stored access'}`;
             affected.append(row);
         }
         if (data.accounts_not_shown) {
