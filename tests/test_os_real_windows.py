@@ -267,13 +267,35 @@ def test_a_window_boots_the_client_but_never_the_desktop():
     """STAGE 2. A window runs the real client — that is what makes its view byte-identical to the
     web — but it must not `PCOS.restore()`, which turns the page into the windowed shell. Doing
     that inside a window would draw a whole second desktop, icons and taskbar, inside it."""
-    boot = APP_JS[APP_JS.index("  async function boot(){"):]
-    boot = boot[:boot.index("// ---------- auth UI ----------")]
-    assert "PCOSWin.isWindow()" in boot and "_asWindow = true" in boot
-    restore = [l for l in boot.splitlines() if "PCOS.restore()" in l]
-    assert restore, "the desktop restore has moved — re-read this test"
-    assert all("!_asWindow" in l for l in restore), (
-        "a window would restore the desktop shell inside itself: " + restore[0].strip()[:90])
+    # Execute both restore branches rather than requiring the guard and call to share
+    # a line. Native shell boot now restores before the remote config request settles.
+    begin = APP_JS.index("  async function boot(){")
+    boot = APP_JS[begin:APP_JS.index("    // Custom branding", begin)] + "\n}"
+    script = r"""
+const assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
+const source=fs.readFileSync(0,'utf8');
+(async()=>{
+ for(const bundled of [false,true])for(const isWindow of [false,true]){
+  let restored=0,adopted=0,releases;
+  const request=new Promise(resolve=>releases=resolve);
+  const ctx={BUNDLED:bundled,CFG:{},pcShell:{},
+   PCOSWin:{isWindow:()=>isWindow,adopt:()=>adopted++},
+   PCOS:{restore:()=>restored++,navChanged(){}},
+   _standalone:()=>false,_cfgCached:()=>({relay_url:'wss://cached'}),_cfgCache(){},
+   applyInstanceGating(){},_wireOsLogo(){},fetch:()=>request,setTimeout,clearTimeout,console};
+  ctx.window=ctx;vm.createContext(ctx);vm.runInContext(source+';globalThis.run=boot;',ctx);
+  const pending=ctx.run();
+  assert.equal(adopted,isWindow?1:0);
+  assert.equal(restored,bundled&&!isWindow?1:0,'early restore must never claim an app window');
+  releases({ok:true,json:async()=>({relay_url:'wss://fresh'})});await pending;
+  assert.equal(restored,isWindow?0:1,'final restore must never claim an app window');
+ }
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+    result = subprocess.run([NODE, "-e", script], input=boot, text=True,
+                            capture_output=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+
 
 
 def test_a_window_lands_on_the_view_it_was_opened_for():
