@@ -117,6 +117,8 @@ _OWNED = (
     # "everything", which restarts the relay and drops every connected Nostr client for a change that
     # cannot affect it.
     ("app/services/calendar_notify_service.py", (APP,)),
+    # Reminder delivery runs in app.main; command/torrent consumers share app/worker roles.
+    ("app/services/reminder_service.py", (APP, WORKER)),
     ("app/services/mail_notify_service.py", (WORKER,)),   # the poller runs in the worker only
     ("app/services/mail_store.py", (APP,)),
     ("app/services/mail_sync.py", (APP,)),

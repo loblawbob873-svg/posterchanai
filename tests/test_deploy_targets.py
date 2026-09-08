@@ -10,6 +10,7 @@ The asymmetry that shapes every case below: OVER-restarting costs an outage you 
 UNDER-restarting ships code that is running nowhere, and presents as "the fix didn't work" with no
 error in any log. So anything unrecognised must map to everything.
 """
+import ast
 import importlib.util
 import os
 import unittest
@@ -23,6 +24,29 @@ _spec.loader.exec_module(dt)
 
 
 class Mapping(unittest.TestCase):
+    def test_reminder_importers_and_release_paths_spare_relay_and_media(self):
+        # Audit real imports without starting app schedulers, opening user DBs or making requests.
+        importers=set()
+        for path in (Path(REPO)/'app').rglob('*.py'):
+            tree=ast.parse(path.read_text(encoding='utf-8'))
+            for node in ast.walk(tree):
+                if isinstance(node,ast.ImportFrom) and (
+                    node.module=='app.services.reminder_service' or
+                    node.module=='app.services' and any(alias.name=='reminder_service' for alias in node.names)):
+                    importers.add(path.relative_to(REPO).as_posix())
+        self.assertEqual(importers,{
+            'app/main.py','app/routers/auth.py','app/routers/telegram/callbacks_misc.py',
+            'app/services/command_service/bill.py','app/services/command_service/productivity.py',
+            'app/services/libtorrent_service.py',
+        }, 'A new reminder consumer needs a deployment-role review')
+        release_paths=['app/routers/admin.py','app/routers/auth.py',
+            'app/services/relay_access_policy.py','app/services/reminder_service.py',
+            'static/js/client/app.js','static/js/client/concord.js','desktop/main.js',
+            'mobile/android/app/src/main/java/com/posterchan/app/ThreadActivity.java']
+        self.assertEqual(set(dt.units_for(release_paths)),{dt.APP,dt.WORKER})
+        self.assertEqual(set(dt.units_for(['app/services/reminder_service.py'])),{dt.APP,dt.WORKER})
+        self.assertEqual(set(dt.units_for(['app/services/not_yet_owned.py'])),set(dt.ALL))
+
     def test_membership_and_cleanup_only_restart_their_app_and_worker_consumers(self):
         for name in ('instance_membership', 'instance_welcome', 'relay_access_policy'):
             self.assertEqual(set(dt.units_for(['app/services/'+name+'.py'])), {dt.APP, dt.WORKER})
