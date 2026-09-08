@@ -795,6 +795,23 @@ class PosterChanOSProfile(unittest.TestCase):
         for path in ("etc/fstab", "etc/machine-id", "etc/crypttab", "etc/disk"):
             self.assertIn(path, excl, f"{path} would ship inside the image")
 
+    def test_the_session_waits_for_the_network_to_be_online_not_merely_started(self):
+        """`After=NetworkManager.service` is "after NM has begun", which is not the same thing.
+
+        NM answers in milliseconds; DHCP takes seconds. So the desktop — and the first-run wizard
+        inside it — started before the machine had an address, and readWorld() asks net.status() in
+        a loop that BREAKS on the first successful ANSWER rather than the first ONLINE one. It
+        captured online:false and showed "Join a network" to somebody whose cable was plugged in,
+        on a machine that reported enp37s0:ethernet:connected seconds later.
+
+        Every getty override the installer writes must order after network-online.target, which
+        pulls NetworkManager-wait-online.service."""
+        got = [l for l in self.src.splitlines() if "Wants=NetworkManager.service" in l]
+        self.assertTrue(got, "the installer no longer orders the session after NetworkManager")
+        for line in got:
+            self.assertIn("network-online.target", line,
+                          "a session is ordered after NM STARTING, not after the machine is online")
+
     def test_native_steam_is_supported_on_first_boot(self):
         """The regular PosterChanOS ISO is a gaming desktop, so native Steam and its real runtime
         dependencies must be installed without forcing a nested Gamescope compositor."""

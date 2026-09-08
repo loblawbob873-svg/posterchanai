@@ -996,7 +996,15 @@ if [ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ]; then
 	exec /usr/local/bin/pc-compositor-session
 fi
 POSTERCHAN_PROFILE
-	printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin posterchan --noclear %%I $TERM\n' \
+	# ONLINE, NOT MERELY STARTED. `After=NetworkManager.service` orders this after NM has BEGUN, and
+	# NM answers in milliseconds while DHCP takes seconds -- so the desktop, and the first-run
+	# wizard inside it, came up before the machine had an address. readWorld() then asks
+	# `net.status()` in a loop that BREAKS on the first successful ANSWER rather than the first
+	# ONLINE one, so it captured online:false and showed "Join a network" to somebody whose cable
+	# was already plugged in. Measured on that machine: the same NIC reports
+	# enp37s0:ethernet:connected and `nmcli general` says running:connected:full seconds later.
+	# network-online.target pulls NetworkManager-wait-online.service, which is already enabled.
+	printf '[Unit]\nWants=NetworkManager.service network-online.target\nAfter=NetworkManager.service network-online.target\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin posterchan --noclear %%I $TERM\n' \
 		>"$TARGET/etc/systemd/system/getty@tty1.service.d/override.conf"
 	# Wi-Fi is boot-critical. Enable it explicitly in the completed target rather than relying only
 	# on the earlier services loop, which may have been interrupted before finalization.
@@ -1874,7 +1882,7 @@ posterchanShell() {
 		# The desktop asks NetworkManager on its first frame. multi-user services and getty otherwise
 		# start in parallel, so a fast SSD can launch the welcome screen before nmcli has a D-Bus
 		# service and falsely report that the computer has no network hardware.
-		printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' \
+		printf '[Unit]\nWants=NetworkManager.service network-online.target\nAfter=NetworkManager.service network-online.target\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' \
 			"$SHELL_USER" >"$GETTY_DIR/override.conf"
 		cat >"${TARGET}/home/$SHELL_USER/.bash_profile" <<-'PROFILE'
 [[ -f ~/.bashrc ]] && . ~/.bashrc
@@ -3308,7 +3316,7 @@ FSTAB
 		# Autologin as the live user. Same file the installed system uses, rewritten rather than
 		# removed — deleting it gives a login prompt for an account with no password set.
 		mkdir -p "$WORK/gettyd"
-		printf '[Unit]\nWants=NetworkManager.service\nAfter=NetworkManager.service\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
+		printf '[Unit]\nWants=NetworkManager.service network-online.target\nAfter=NetworkManager.service network-online.target\n[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin live --noclear %%I $TERM\n' \
 			>"$WORK/gettyd/override.conf"
 		# AND THE SAME ON THE SERIAL CONSOLE, or this disc cannot be installed without a monitor.
 		#
