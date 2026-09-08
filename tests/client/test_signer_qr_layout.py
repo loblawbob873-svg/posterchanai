@@ -12,6 +12,8 @@ def bundled_assets():
 @pytest.mark.parametrize('width,height,scale', [(1440,900,1),(1024,768,1),(960,540,2),(390,844,1),(320,640,1)])
 def test_phone_signer_qr_stays_inside_panel(width,height,scale):
     async def check(b):
+        await desktop.login(b)
+        await b.until("document.readyState==='complete' && PCOS.isOn()")
         await b.call('Emulation.setDeviceMetricsOverride',dict(width=width,height=height,deviceScaleFactor=scale,mobile=False))
         # Select the production phone-signer pane; replace only the handshake image payload.
         await b.js("""__PC.showAuth();
