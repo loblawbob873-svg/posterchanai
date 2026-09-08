@@ -9354,6 +9354,7 @@ var PosterCordReader = (() => {
     inspectChat: () => inspectChat,
     inspectWebxdc: () => inspectWebxdc,
     inspectWebxdcSignals: () => inspectWebxdcSignals,
+    inspectGuestbook: () => inspectGuestbook,
     inspectControl: () => inspectControl
   });
   init_define_import_meta_env();
@@ -26623,6 +26624,92 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const folded = foldControlState(openControlWraps(wraps || [], groups), community.id, community.owner);
     return { community, groups, folded, channels: channelsView(community, folded) };
   }
+  // CORD-02 guestbook: derived transport identities stay internal, never member profiles.
+  function guestbookGroups(bundle){
+    const community=runtime(bundle);
+    return community.heldRoots.map(root=>({...groupKeyCached('concord/guestbook',root.key,community.id,root.epoch),epoch:root.epoch}));
+  }
+  const guestbookOpenedMemo=new Map();
+  function openGuestbook(bundle,wraps){
+    const community=runtime(bundle),groups=guestbookGroups(bundle),byPk=new Map(groups.map(g=>[g.pk,g])),events=[],seen=new Map();
+    for(const wrap of (wraps||[]).slice(0,10000)){
+      const group=wrap&&byPk.get(wrap.pubkey);if(!group||wrap.kind!==1059)continue;
+      const key=community.owner+':'+community.idHex+':'+group.pk+':'+bytesToHex2(sha256(new TextEncoder().encode(JSON.stringify([wrap.id,wrap.sig,wrap.created_at,wrap.tags,wrap.content]))));
+      let parsed=guestbookOpenedMemo.get(key);
+      if(parsed===undefined){
+        parsed=null;
+        try{
+          if(!verifyEvent2(JSON.parse(JSON.stringify(wrap))))continue;
+          const opened=openWrap(wrap,group);
+          if(opened.sealKind!==KIND_SEAL_ENCRYPTED)continue;
+          uniqueTag(opened.tags,'ms');
+          if(!Number.isSafeInteger(opened.ms)||opened.ms<0)continue;
+          const base={id:opened.rumorId,author:opened.author,at:opened.ms,epoch:group.epoch};
+          if(opened.kind===3306&&(opened.content==='join'||opened.content==='leave'))parsed={...base,type:opened.content,member:opened.author};
+          if(opened.kind===3309){
+            const target=uniqueTag(opened.tags,'p');uniqueTag(opened.tags,'vac');
+            if(HEX64.test(target||''))parsed={...base,type:'kick',member:target.toLowerCase(),citation:citationFromTags(opened.tags)};
+          }
+          if(opened.kind===3312){
+            const tags=opened.tags.filter(t=>t[0]==='snap'),tag=tags[0];
+            if(tags.length===1&&tag.length>=4&&HEX64.test(tag[1])&&/^[1-9][0-9]*$/.test(tag[2])&&/^[1-9][0-9]*$/.test(tag[3])&&Number(tag[2])<=Number(tag[3])&&Number(tag[3])<=4294967295){
+              const members=JSON.parse(opened.content);
+              if(Array.isArray(members)&&members.length<=400)parsed={...base,type:'snapshot',members:[...new Set(members.filter(p=>typeof p==='string'&&HEX64.test(p)).map(p=>p.toLowerCase()))]};
+            }
+          }
+        }catch(_){parsed=null;}
+        if(guestbookOpenedMemo.size>=10000)guestbookOpenedMemo.delete(guestbookOpenedMemo.keys().next().value);
+        guestbookOpenedMemo.set(key,parsed);
+      }
+      if(parsed){const prior=seen.get(parsed.id);if(prior===undefined){seen.set(parsed.id,events.length);events.push(parsed);}else if(events[prior].epoch<parsed.epoch)events[prior]=parsed;}
+    }
+    return {community,groups,events};
+  }
+  function guestbookCanKick(community,folded,event){
+    if(event.member===community.owner||folded.banned.has(event.author))return false;
+    if(event.author===community.owner)return true;
+    if(!citationSatisfied(folded,community.id,event.author,event.citation)||!hasPermission(folded.roster,event.author,Permissions.KICK))return false;
+    const actor=highestPosition(folded.roster,event.author),target=highestPosition(folded.roster,event.member);
+    return actor!==undefined&&(target===undefined||actor<target);
+  }
+  function foldGuestbookMembers(events,{owner,banned,bannedAt,grantees,observed,now,snapshotAuthority=null}){
+    const valid=events.filter(e=>e.at<=now+3600000),states=new Map();
+    const apply=(pk,next)=>{const prev=states.get(pk);if(!prev||next.at>prev.at||next.at===prev.at&&(next.firsthand&&!prev.firsthand||next.firsthand===prev.firsthand&&next.id<prev.id))states.set(pk,next);};
+    for(const e of valid){
+      if(e.type==='join'||e.type==='leave'||e.type==='kick')apply(e.member,{verdict:e.type==='join'?'joined':e.type,at:e.at,id:e.id,epoch:e.epoch,firsthand:true});
+      if(e.type==='snapshot'&&e.author===snapshotAuthority)for(const pk of e.members)apply(pk,{verdict:'joined',at:e.at,id:e.id,epoch:e.epoch,firsthand:false});
+    }
+    const live=valid.reduce((max,e)=>e.epoch>max?e.epoch:max,0n),snapshots=valid.filter(e=>e.type==='snapshot'&&e.author===snapshotAuthority&&e.epoch===live);
+    let refound=null;
+    if(snapshots.length){
+      const base=new Set(snapshots.flatMap(e=>e.members)),cut=Math.min(...snapshots.map(e=>e.at));refound={base,cut};
+      for(const [pk,st] of states)if(st.verdict==='joined'&&!base.has(pk)&&(st.epoch<live||st.at<cut))states.set(pk,{...st,verdict:'refounded',at:cut});
+    }
+    const blocked=(pk,at)=>banned.has(pk)||bannedAt.has(pk)&&at<=bannedAt.get(pk)*1000,members=new Set();
+    for(const [pk,st]of states)if(st.verdict==='joined'&&!blocked(pk,st.at))members.add(pk);
+    const activity=new Map();
+    for(const row of observed||[])if(row&&HEX64.test(row.pubkey||'')&&Number.isSafeInteger(row.at)&&row.at>=0&&row.at<=now+3600000)activity.set(row.pubkey.toLowerCase(),Math.max(activity.get(row.pubkey.toLowerCase())||0,row.at));
+    for(const pk of grantees||[])if(!activity.has(pk))activity.set(pk,0);
+    for(const [pk,at]of activity){
+      const st=states.get(pk);
+      if(blocked(pk,at)||refound&&at!==0&&!refound.base.has(pk)&&at<=refound.cut||st&&st.verdict!=='joined'&&at<=st.at)continue;
+      members.add(pk);
+    }
+    if(!banned.has(owner))members.add(owner);
+    return [...members].sort();
+  }
+  function inspectGuestbook(bundle,controlWraps,wraps,observed=[],now=Date.now()){
+    const {community,groups,events}=openGuestbook(bundle,wraps),{folded}=control(bundle,controlWraps);
+    const transport=new Set([...groups.map(g=>g.pk),...controlGroups(community).map(g=>g.pk),...channelsView(community,folded).flatMap(ch=>ch.streams.map(s=>s.group.pk))]);
+    const usable=events.filter(e=>(e.type!=='kick'||guestbookCanKick(community,folded,e))&&(e.type!=='snapshot'||e.epoch>0n));
+    // Match Vector's owner fallback when no verified epoch-minter record is available.
+    // The owner is community-bound; an invite's raw refounder field is not authority.
+    // Epoch zero never authorizes snapshots, including old held-root envelopes.
+    const snapshotAuthority=community.rootEpoch>0n?community.owner:null;
+    const members=foldGuestbookMembers(usable,{owner:community.owner,banned:folded.banned,bannedAt:folded.bannedAt,grantees:folded.roster.grants.filter(g=>g.roleIds.length).map(g=>g.member),observed,now,snapshotAuthority});
+    return {members:members.filter(pk=>pk===community.owner||!transport.has(pk)),guestbookEvents:events.length,snapshotEvents:events.filter(e=>e.type==='snapshot').length,snapshotAuthorityAvailable:!!snapshotAuthority,rootEpoch:Number(community.rootEpoch),complete:false};
+  }
+
   function inspectControl(bundle, wraps) {
     const { community, groups, folded, channels } = control(bundle, wraps);
     return {
@@ -26631,6 +26718,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       icon: folded.metadata?.picture || folded.metadata?.icon || "",
       relays: community.relays,
       controlPubkeys: groups.map((g) => g.pk),
+      guestbookPubkeys: guestbookGroups(bundle).map(g=>g.pk),
       banned: [...folded.banned],
       members: [...new Set(folded.roster.grants.filter(g => g.roleIds.length && !folded.banned.has(g.member)).map(g => g.member))],
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))

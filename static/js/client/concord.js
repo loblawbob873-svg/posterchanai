@@ -429,10 +429,38 @@
    * The invite's community-bound owner and authenticated message authors are known participants;
    * a stream read does not provide a complete membership roster. Never offer group keys as
    * profiles, mention recipients or call targets, including keys copied into legacy member lists. */
-  var _partsCache=new Map();
+  var _partsCache=new Map(),roomGuestbooks=new Map(),guestbookViewer='';
+  function ownGuestbookViewer(owner){if(guestbookViewer!==owner){roomGuestbooks.clear();guestbookViewer=owner;}}
+  async function refreshGuestbookMembers(p,room,controls){
+    const reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
+    if(!reader||!reader.inspectGuestbook||!bundle)return;
+    const owner=deliveryOwner(p),identity=roomIdentity(room),loadKey=room.communityId||room.naddr,key=owner+'\n'+identity,material=JSON.stringify(bundle),controlIds=JSON.stringify(cordControlStamp(controls));
+    ownGuestbookViewer(owner);
+    const current=()=>roomGuestbooks.get(key)===entry&&deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity&&r.cord&&JSON.stringify(r.cord.bundle)===material)&&JSON.stringify(cordControlStamp(roomControls.get(loadKey)))===controlIds;
+    const previous=roomGuestbooks.get(key);
+    if(previous&&previous.material===material&&previous.controlIds===controlIds&&(previous.pending||Date.now()-previous.started<60000))return;
+    const entry={owner,bundle,controls,material,controlIds,wraps:previous&&previous.material===material?previous.wraps:[],pending:true,started:Date.now()};
+    if(roomGuestbooks.size>=100)roomGuestbooks.delete(roomGuestbooks.keys().next().value);
+    roomGuestbooks.set(key,entry);
+    const cacheKey=envelopeCacheKey(loadKey,'guestbook:'+owner);
+    try{
+      const cached=await cachedEnvelopes(cacheKey);if(!current())return;
+      entry.wraps=mergeEnvelopes(entry.wraps,cached);entry.projection=null;
+      if(cached.length)preserveChatScroll(()=>backgroundRender());
+      const seed=reader.inspectControl(bundle,controls),plane=typeof cordPlaneContext==='function'?cordPlaneContext(p,bundle,controls,room):null;
+      // Older readers/transports must not silently query a private plane with the user's AUTH.
+      if(!plane||!seed.guestbookPubkeys||!seed.guestbookPubkeys.length)return;
+      const wraps=await queryEnvelopeHistory(p,roomRelays(bundle),seed.guestbookPubkeys,entry.wraps,{plane,purpose:'concord guestbook '+loadKey});
+      if(!current())return;
+      entry.wraps=wraps;entry.projection=null;
+      await cacheEnvelopes(cacheKey,wraps.filter(e=>!cached.some(old=>old.id===e.id)));
+      if(current())preserveChatScroll(()=>backgroundRender());
+    }catch(e){if(current())console.warn('Concord member history unavailable',e);}
+    finally{entry.pending=false;}
+  }
   function roomParticipants(room,viewerPubkey=''){
-    const fromMessages=channelsOf(room).flatMap(channel=>
-      testMessages(channelStoreId(room,channel.name)).map(message=>message&&message.pubkey));
+    ownGuestbookViewer(viewerPubkey);
+    const observed=channelsOf(room).flatMap(channel=>testMessages(channelStoreId(room,channel.name))).filter(Boolean),fromMessages=observed.map(message=>message.pubkey);
     let owner='',grantees=[],banned=new Set(),transport=new Set(channelsOf(room).flatMap(channel=>channel.streamPubkeys||[]).map(pk=>String(pk).toLowerCase()));
     try{
       const loadKey=room&&(room.communityId||room.naddr),bundle=room&&room.cord&&room.cord.bundle,
@@ -444,11 +472,17 @@
         else{
           // inspectControl validates the owner's binding to this community before trusting it.
           const view=reader.inspectControl(bundle,wraps||[]);
-          known={owner:bundle.owner||'',members:(view&&view.members)||[],banned:(view&&view.banned)||[],transport:[...(view&&view.controlPubkeys||[]),
+          known={owner:bundle.owner||'',members:(view&&view.members)||[],banned:(view&&view.banned)||[],transport:[...(view&&view.controlPubkeys||[]),...(view&&view.guestbookPubkeys||[]),
             ...((view&&view.channels)||[]).flatMap(channel=>channel.streamPubkeys||[])]};
           _partsCache.clear();_partsCache.set(loadKey,{bundle,wraps,known});
         }
         owner=known.owner;grantees=known.members;banned=new Set(known.banned);for(const pk of known.transport)transport.add(String(pk).toLowerCase());
+        const guestbook=roomGuestbooks.get(viewerPubkey+'\n'+roomIdentity(room));
+        if(guestbook&&guestbook.owner===viewerPubkey&&guestbook.material===JSON.stringify(bundle)&&guestbook.controlIds===JSON.stringify(cordControlStamp(wraps))&&reader.inspectGuestbook){
+          const activity=observed.map(m=>({pubkey:m.pubkey,at:Number(m.at)})),signature=JSON.stringify(activity);
+          if(!guestbook.projection||guestbook.activity!==signature){guestbook.projection=reader.inspectGuestbook(bundle,wraps||[],guestbook.wraps,activity);guestbook.activity=signature;}
+          return guestbook.projection.members;
+        }
       }
     }catch(_){ /* Visible message authors remain available while metadata is unavailable. */ }
     const valid=pk=>typeof pk==='string'&&/^[0-9a-f]{64}$/i.test(pk);
@@ -1795,7 +1829,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);if(!currentOwner())return;
-      const applyControl=wraps=>{if(!currentOwner())return 0;const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
+      const applyControl=wraps=>{if(!currentOwner())return 0;const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
@@ -2367,7 +2401,7 @@
         seed=reader.inspectControl(bundle,[]),relays=roomRelays(bundle),
         cachedWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),wraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cachedWraps,{signal:roomIdentity(room)===roomReadIdentity&&roomReadAbortController?roomReadAbortController.signal:null,purpose:'concord room metadata '+loadKey,minInterval:60000}),freshWraps=wraps.filter(ev=>!cachedWraps.some(old=>old.id===ev.id)),
         info=reader.inspectControl(bundle,wraps||[]);
-      await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),freshWraps);roomControls.set(loadKey,wraps||[]);
+      await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),freshWraps);roomControls.set(loadKey,wraps||[]);void refreshGuestbookMembers(p,room,wraps||[]);
       let changed=false;
       const assign=(key,value)=>{if(value!==undefined&&JSON.stringify(room[key])!==JSON.stringify(value)){room[key]=value;changed=true;}};
       assign('name',info.name||room.name); assign('description',info.description===undefined?room.description:info.description);
