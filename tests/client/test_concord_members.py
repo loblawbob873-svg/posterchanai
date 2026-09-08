@@ -62,7 +62,7 @@ def test_the_candidate_list_is_cached_per_control_generation():
     fn = CONCORD[CONCORD.index("function roomParticipants(room,viewerPubkey=''){"):]
     fn = fn[:fn.index("\n  function ")]
     assert "_partsCache" in fn
-    assert "wraps&&wraps.length" in fn, "the cache key ignores new control wraps, so it goes stale"
+    assert "hit.wraps===wraps" in fn and "hit.bundle===bundle" in fn, "changed control material must invalidate the cache"
 
 
 def test_message_authors_are_never_lost():
@@ -71,4 +71,4 @@ def test_message_authors_are_never_lost():
     fn = CONCORD[CONCORD.index("function roomParticipants(room,viewerPubkey=''){"):]
     fn = fn[:fn.index("\n  function ")]
     assert "fromMessages" in fn
-    assert "catch(_){ known=[]; }" in fn, "a throwing control view is not contained"
+    assert "catch(_)" in fn, "a throwing control view is not contained"

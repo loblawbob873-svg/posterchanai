@@ -1,14 +1,4 @@
-/* @-MENTION CANNOT COMPLETE SOMEBODY THE ROOM WILL NOT NAME.
- *
- * Reported as "Concord: user tagging still not working, I want to @ tab autocomplete and it
- * notifies the user properly". Tab was already bound and the `p`/`P` tags were already published —
- * both correct. The candidate list was the problem: `roomParticipants` read MESSAGE AUTHORS and
- * nothing else, so a member who had not posted (or whose posts were not in the loaded history) did
- * not exist as far as the autocomplete was concerned. There was nobody to complete to.
- *
- * The room's control document knows: `controlPubkeys` are its admins, and each channel's
- * `streamPubkeys` are the keys allowed to write there. This drives the real function.
- */
+/* Known human participants drive profiles, mentions and calls; CORD transport keys never do. */
 import fs from 'fs';
 import vm from 'vm';
 const src = fs.readFileSync(new URL('../../static/js/client/concord.js', import.meta.url), 'utf8');
@@ -29,7 +19,7 @@ const api = window.PCConcord;
 
 const ME = 'a'.repeat(64), TALKER = 'b'.repeat(64), QUIET = 'c'.repeat(64), ADMIN = 'd'.repeat(64);
 const ROOM = {communityId:'cid-1', channels:[{name:'general', id:'c1'}],
-              cord:{bundle:{fake:true}}};
+              cord:{bundle:{fake:true,owner:ADMIN}}};
 
 /* A member who has posted: the store is what `testMessages` reads. */
 localStorage.setItem('pc.concord.test.cid-1',
@@ -38,17 +28,18 @@ localStorage.setItem('pc.concord.test.cid-1',
 const before = api.roomParticipants(ROOM, ME);
 if (!before.includes(TALKER)) throw new Error('a member who posted is missing: ' + JSON.stringify(before));
 
-/* THE ROOM'S OWN MEMBER LIST. Nobody here has posted; before this change none of them could be
-   @-mentioned, shown in Members, or called. */
+/* The group keys are deliberately NOT human identities. The validated owner can be known
+   without posting, while a quiet person is not inferred from shared stream material. */
 window.PosterCordReader = {
   inspectControl: () => ({ controlPubkeys:[ADMIN],
-                           channels:[{id:'c1', name:'general', streamPubkeys:[QUIET, TALKER]}] }),
+                           channels:[{id:'c1', name:'general', streamPubkeys:[QUIET]}] }),
 };
 const after = api.roomParticipants(ROOM, ME);
 for (const [who, pk] of [['the viewer', ME], ['a member who posted', TALKER],
-                         ['a member who has never posted', QUIET], ['an admin', ADMIN]]) {
+                         ['the community owner', ADMIN]]) {
   if (!after.includes(pk)) throw new Error(who + ' is not offerable: ' + JSON.stringify(after));
 }
+if(after.includes(QUIET))throw new Error('transport group offered as a human member');
 if (new Set(after).size !== after.length) throw new Error('duplicates: ' + JSON.stringify(after));
 
 /* A ROOM WHOSE CONTROL VIEW THROWS must still name the people visibly talking in it — losing them
@@ -72,7 +63,7 @@ if (!bare.includes(ME)) throw new Error('no reader means no participants at all'
  * called. */
 window.PosterCordReader = {
   inspectControl: () => ({ controlPubkeys:[ADMIN],
-                           channels:[{id:'c1', name:'general', streamPubkeys:[QUIET, TALKER]}] }),
+                           channels:[{id:'c1', name:'general', streamPubkeys:[QUIET]}] }),
 };
 const ROOM4 = {...ROOM, communityId:'cid-4'};
 const parts = api.roomParticipants(ROOM4, ME);
@@ -86,8 +77,8 @@ if (!byName.includes(NAMED)) throw new Error('a typed display name tags nobody: 
 
 /* A member with NO profile: the picker's own label is a 12-character pubkey prefix, so that is what
    the user sees and can retype. This is the exact case that used to resolve to nothing. */
-const byPrefix = api.typedMentionRecipients('ping @' + QUIET.slice(0,12), parts, profOf);
-if (!byPrefix.includes(QUIET)) throw new Error('a typed pubkey-prefix handle tags nobody: ' + JSON.stringify(byPrefix));
+const byPrefix = api.typedMentionRecipients('ping @' + ADMIN.slice(0,12), parts, profOf);
+if (!byPrefix.includes(ADMIN)) throw new Error('a typed pubkey-prefix handle tags nobody: ' + JSON.stringify(byPrefix));
 
 /* Somebody who is not in the room must not be taggable by guessing a name. */
 const stranger = api.typedMentionRecipients('hi @Ada_Lovelace', parts, profOf);

@@ -425,51 +425,35 @@
    * cache page used during cold launch. */
   const MAX_PAINTED_MESSAGES=300;
   function paintedMessages(room){const all=activeMessages(room).filter(m=>!m.delivery||m.delivery==='sent'||m.pubkey===deliveryOwner(PC()));return all.length>MAX_PAINTED_MESSAGES?all.slice(-MAX_PAINTED_MESSAGES):all;}
-  /* WHO IS IN THIS ROOM — the people it KNOWS about, not only the ones who have spoken.
-   *
-   * This read message authors and nothing else, so a member who had not posted (or whose posts were
-   * not in the loaded history) did not exist: they were absent from the Members pane, absent from
-   * the call picker, and — the reported one — impossible to @-mention, because the autocomplete had
-   * no candidate to offer. "Concord: user tagging still not working, I want to @ tab autocomplete
-   * and it notifies the user properly": Tab and the `p`/`P` tags were both already there and both
-   * already correct. There was simply nobody in the list to complete TO.
-   *
-   * The room's own control document carries the answer: `controlPubkeys` are its admins and each
-   * channel's `streamPubkeys` are the keys allowed to write to it. Message authors stay in the set
-   * — a room whose control view has not loaded yet must not lose the people who are visibly talking
-   * in it — so this only ever ADDS.
-   *
-   * Cached per control-view generation because `drawMentions` calls it on every keystroke, and
-   * `inspectControl` re-walks the wraps each time. */
-  /* `var`, not `const`: `roomParticipants` is a hoisted function declaration and is reachable from
-   * render paths that run before this line would have been evaluated. A `const` there is in its
-   * temporal dead zone at that moment, so the first call throws ReferenceError — and the callers
-   * (the call picker, the Members pane, the mention list) all swallow or propagate that as "no
-   * participants", which looks exactly like the bug this cache was added to speed up. */
+  /* CORD control/chat stream pubkeys identify shared transport groups, not people.
+   * The invite's community-bound owner and authenticated message authors are known participants;
+   * a stream read does not provide a complete membership roster. Never offer group keys as
+   * profiles, mention recipients or call targets, including keys copied into legacy member lists. */
   var _partsCache=new Map();
   function roomParticipants(room,viewerPubkey=''){
     const fromMessages=channelsOf(room).flatMap(channel=>
       testMessages(channelStoreId(room,channel.name)).map(message=>message&&message.pubkey));
-    let known=[];
+    let owner='',transport=new Set(channelsOf(room).flatMap(channel=>channel.streamPubkeys||[]).map(pk=>String(pk).toLowerCase()));
     try{
-      const loadKey=room&&(room.communityId||room.naddr),
-            bundle=room&&room.cord&&room.cord.bundle,
-            reader=window.PosterCordReader,
-            wraps=loadKey?roomControls.get(loadKey):null;
+      const loadKey=room&&(room.communityId||room.naddr),bundle=room&&room.cord&&room.cord.bundle,
+            reader=window.PosterCordReader,wraps=loadKey?roomControls.get(loadKey):null;
       if(reader&&reader.inspectControl&&bundle&&loadKey){
-        const gen=loadKey+':'+((wraps&&wraps.length)||0), hit=_partsCache.get(gen);
-        if(hit) known=hit;
+        const hit=_partsCache.get(loadKey);
+        let known;
+        if(hit&&hit.bundle===bundle&&hit.wraps===wraps)known=hit.known;
         else{
+          // inspectControl validates the owner's binding to this community before trusting it.
           const view=reader.inspectControl(bundle,wraps||[]);
-          known=[...(view&&view.controlPubkeys||[])];
-          for(const channel of (view&&view.channels)||[])
-            for(const pk of (channel&&channel.streamPubkeys)||[]) known.push(pk);
-          _partsCache.clear();                 // one room's view at a time; this is a keystroke path
-          _partsCache.set(gen,known);
+          known={owner:bundle.owner||'',transport:[...(view&&view.controlPubkeys||[]),
+            ...((view&&view.channels)||[]).flatMap(channel=>channel.streamPubkeys||[])]};
+          _partsCache.clear();_partsCache.set(loadKey,{bundle,wraps,known});
         }
+        owner=known.owner;for(const pk of known.transport)transport.add(String(pk).toLowerCase());
       }
-    }catch(_){ known=[]; }
-    return [...new Set([viewerPubkey,...known,...fromMessages].filter(Boolean))];
+    }catch(_){ /* Visible message authors remain available while metadata is unavailable. */ }
+    const valid=pk=>typeof pk==='string'&&/^[0-9a-f]{64}$/i.test(pk);
+    return [...new Set([viewerPubkey,owner,...fromMessages].filter(valid).map(pk=>pk.toLowerCase()))]
+      .filter(pk=>pk===String(owner).toLowerCase()||!transport.has(pk));
   }
   function mentionAliases(profile,pubkey,fallback=''){
     const aliases=new Set([profile&&profile.display_name,profile&&profile.name,fallback,pubkey]
@@ -2435,8 +2419,8 @@
       (p.switchMessagesTab||p.switchView)('messages');
     if(current){
       const conversation=p.$('.cc-conversation');
-      if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header><b>Members</b><span>${memberPks.length}</span></header><div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div></aside>`);
-      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">Tap a member to view their profile. Right-click or hold for more options.</p><div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog"><div class="cc-join-card"><h2>Community settings</h2><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><label class="cc-label" for="cc-channel-visibility">#${p.enc(state.channel||'general')} visibility</label><select class="input cc-visibility-select" id="cc-channel-visibility"><option value="public"${channelPrivate?'':' selected'}>Public — all community members</option><option value="private"${channelPrivate?' selected':''}>Private — invited members only</option></select><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save">Save changes</button></div></div></div>`);
+      if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from this community’s owner and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header><div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div></aside>`);
+      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from the community owner and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p><div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog"><div class="cc-join-card"><h2>Community settings</h2><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><label class="cc-label" for="cc-channel-visibility">#${p.enc(state.channel||'general')} visibility</label><select class="input cc-visibility-select" id="cc-channel-visibility"><option value="public"${channelPrivate?'':' selected'}>Public — all community members</option><option value="private"${channelPrivate?' selected':''}>Private — invited members only</option></select><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save">Save changes</button></div></div></div>`);
       const settingsActions=p.$('#cc-settings-dialog .cc-join-actions');
       if(settingsActions&&settingsActions.insertAdjacentHTML)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost danger" id="cc-leave-community">Leave community</button>');
     }
