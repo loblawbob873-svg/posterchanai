@@ -922,7 +922,7 @@ public class ThreadActivity extends PcActivity {
         host.removeAllViews();
         for (final SmsPart p : m.parts) {
             if (p.ct != null && p.ct.toLowerCase().startsWith("video/")) {
-                Button play = new Button(this); play.setText("▶  " + (p.name.isEmpty() ? "Play video" : p.name));
+                Button play = new Button(this); play.setText(p.name.isEmpty() ? "Play video" : "Play " + p.name);
                 play.setAllCaps(false); play.setOnClickListener(v -> showVideo(p)); host.addView(play); continue;
             }
             if (p.ct == null || !p.ct.toLowerCase().startsWith("image/")) continue;
