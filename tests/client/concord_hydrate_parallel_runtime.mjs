@@ -167,3 +167,21 @@ if (asked.length < CHANNELS.length)
 }
 
 console.log('concord hydrate parallel runtime ok');
+
+// An account switch during the initial control-cache read must not decode or persist A's
+// membership into B's same-community entry when the delayed read eventually finishes.
+{
+  let release,enteredResolve,owner=KEY(7),chatReads=0;
+  const entered=new Promise(r=>enteredResolve=r),previousCache=window.PCConcordCache;
+  window.PCConcordCache={get:async()=>{enteredResolve();return new Promise(r=>release=r);}};
+  const oldInspect=window.PosterCordReader.inspectChat;
+  window.PosterCordReader.inspectChat=async()=>{chatReads++;return{messages:[]};};
+  store['pc.concord.invites']=JSON.stringify([{...ROOM,communityId:'owner-race',naddr:'owner-race'}]);
+  const job=api.hydrateRoomStreams({...p,viewer:()=>({pubkey:owner})},0);
+  await entered;owner=KEY(8);
+  const replacement={...ROOM,name:'New owner membership',communityId:'owner-race',naddr:'owner-race',cord:{bundle:{...BUNDLE,owner:KEY(8)}}};
+  store['pc.concord.invites']=JSON.stringify([replacement]);release([{id:'old-controls',kind:1059}]);await job;
+  if(chatReads)throw new Error('old account membership reached chat decryption after cache wait');
+  if(JSON.stringify(JSON.parse(store['pc.concord.invites']))!==JSON.stringify([replacement]))throw new Error('old hydration replaced new owner membership');
+  window.PCConcordCache=previousCache;window.PosterCordReader.inspectChat=oldInspect;
+}

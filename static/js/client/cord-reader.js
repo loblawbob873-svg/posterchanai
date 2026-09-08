@@ -26430,10 +26430,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
   var zapVerdicts = /* @__PURE__ */ new Map();
   var ZAP_VERDICT_CAP = 8192;
-  var deletedReactionIds = /* @__PURE__ */ new Set();
-  var DELETED_REACTION_CAP = 8192;
   function foldTimeline(opened, moderation) {
     const byId = /* @__PURE__ */ new Map();
+    // Deletion remains scoped to this authenticated fold; a target ID alone cannot
+    // authorize a tombstone without matching the target author below.
     const deletes = /* @__PURE__ */ new Map();
     const edits = /* @__PURE__ */ new Map();
     const reactions = /* @__PURE__ */ new Map();
@@ -26451,13 +26451,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
           if (!authors) deletes.set(target, authors = /* @__PURE__ */ new Map());
           const cite = citationFromTags(ev.tags);
           if (cite || !authors.has(ev.author)) authors.set(ev.author, { citation: cite, ms: ev.ms });
-          const kTag = ev.tags.find(([n]) => n === "k")?.[1];
-          if (kTag === String(KIND_REACTION)) {
-            if (deletedReactionIds.size >= DELETED_REACTION_CAP) {
-              deletedReactionIds.delete(deletedReactionIds.values().next().value);
-            }
-            deletedReactionIds.add(target);
-          }
         }
         continue;
       }
@@ -26472,7 +26465,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       if (ev.kind === KIND_REACTION) {
         const target = eTargetOf(ev);
         if (!target || !ev.content) continue;
-        if (deletedReactionIds.has(ev.rumorId)) continue;
         const key = reactionContentKey(ev.content);
         const url2 = ev.tags.find((t) => t[0] === "emoji")?.[2];
         let byEmoji = reactions.get(target);
@@ -26572,11 +26564,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         byId.set(id, { ...msg, content: best.content, tags });
       }
     }
+    const deletedMessageIds = [];
     for (const [id, msg] of byId) {
       const deleters = deletes.get(id);
       if (!deleters) continue;
       const deleted = deleters.has(msg.author) || moderation && [...deleters].some(([d, act]) => moderation.canDelete(d, msg.author, act));
-      if (deleted) byId.delete(id);
+      if (deleted) { byId.delete(id); deletedMessageIds.push(id); }
     }
     for (const [id, ev] of calendarById) {
       const deleters = deletes.get(id);
@@ -26599,14 +26592,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const zaps = /* @__PURE__ */ new Map();
     const claimedHashes = /* @__PURE__ */ new Set();
     zapCandidates.sort((a, b) => a.ms !== b.ms ? a.ms - b.ms : a.entry.id < b.entry.id ? -1 : 1);
-    for (const { target, hash: hash2, entry } of zapCandidates) {
+    for (const { target, hash: hash2, entry, ms } of zapCandidates) {
       if (claimedHashes.has(hash2)) continue;
       claimedHashes.add(hash2);
       let list = zaps.get(target);
       if (!list) zaps.set(target, list = []);
-      list.push(entry);
+      list.push({...entry,paymentId:hash2,ms});
     }
     return {
+      deletions: [...deletes].map(([id,authors])=>[id,[...authors.keys()]]),
+      deletedMessageIds,
       messages: [...byId.values()].sort((a, b) => a.ms !== b.ms ? a.ms - b.ms : a.rumorId < b.rumorId ? -1 : 1),
       reactions,
       zaps,
@@ -26672,8 +26667,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const { channels } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not readable with this membership");
-    const timeline = foldTimeline(await openChatBatch(chatWraps || [], channel));
+    const events = await openChatBatch(chatWraps || [], channel), timeline = foldTimeline(events);
     return {
+      deletions: timeline.deletions,
+      reactionTimes: events.filter(ev=>ev.kind===KIND_REACTION).map(ev=>[ev.rumorId,ev.ms]),
+      deletedMessageIds: timeline.deletedMessageIds,
       messages: timeline.messages.map((m) => ({ id: m.rumorId, pubkey: m.author, text: m.content, at: m.ms, kind: m.kind, tags: m.tags })),
       reactions: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.keys()]])]),
       reactionIds: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.entries()]])]),

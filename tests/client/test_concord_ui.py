@@ -592,8 +592,8 @@ def test_room_history_reads_pool_and_external_relays_without_erasing_cached_mess
     assert 'async function cordQuery(' in CONCORD
     assert 'if(p.relayQuery)jobs.push' in CONCORD
     assert 'if(p.relayQueryFrom)jobs.push' in CONCORD
-    assert 'const storeId=channelStoreId(room,channel.name);markRemoteStore(storeId);const prior=testMessages(storeId)' in CONCORD
-    assert 'mergeRelayMessages(prior,msgs)' in CONCORD
+    assert 'mergeCordTimeline(testMessages(storeId),opened,p,' in CONCORD
+    assert 'mergeRelayMessages(prior.map(m=>({...m})),incoming)' in CONCORD
     assert 'since,limit:500' in CONCORD
 
 

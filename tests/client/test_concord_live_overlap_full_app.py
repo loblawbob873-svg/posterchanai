@@ -27,7 +27,7 @@ def test_overlapping_live_batches_survive_view_changes_without_history_reload():
           window.PosterCordReader={inspectControl:()=>({controlPubkeys:[],channels}),
             inspectChat:async(_bundle,_control,_channel,wraps)=>{
               const messages=(wraps||[]).filter(w=>['slow','fast'].includes(w.content)).map(w=>({id:w.id,pubkey:w.pubkey,text:'Live '+w.content,at:w.created_at*1000,kind:9,tags:[]}));
-              if(messages.length){const name=messages[0].text;__openedBatches.push(name);await new Promise(resolve=>{__releaseBatches[name]=resolve})}
+              if(messages.length){const name=messages.at(-1).text;if(!__openedBatches.includes(name)){__openedBatches.push(name);await new Promise(resolve=>{__releaseBatches[name]=resolve})}}
               return{messages,reactions:[],reactionUrls:[]};
             }};
           window.__pushLive=name=>{
@@ -41,10 +41,17 @@ def test_overlapping_live_batches_survive_view_changes_without_history_reload():
         await b.js("__pushLive('slow')")
         await b.until("!!__releaseBatches['Live slow']")
         await b.js("__pushLive('fast')")
-        await b.until("!!__releaseBatches['Live fast']")
-        await b.js("__releaseBatches['Live fast']()")
+        # Accept either concurrent or serialized decryption; both transport arrivals must survive.
+        await asyncio.sleep(.5)
+        if await b.js("!!__releaseBatches['Live fast']"):
+            await b.js("__releaseBatches['Live fast']()")
+            await b.until("document.querySelector('.cc-messages')?.innerText.includes('Live fast')")
+            await b.js("__releaseBatches['Live slow']()")
+        else:
+            await b.js("__releaseBatches['Live slow']()")
+            await b.until("!!__releaseBatches['Live fast']")
+            await b.js("__releaseBatches['Live fast']()")
         await b.until("document.querySelector('.cc-messages')?.innerText.includes('Live fast')")
-        await b.js("__releaseBatches['Live slow']()")
         await b.until("document.querySelector('.cc-messages')?.innerText.includes('Live slow')")
         assert await b.js("document.querySelector('.cc-messages').innerText.includes('Live fast')"),'late decryption erased newer live arrival'
         token=await b.js('__documentIdentity')

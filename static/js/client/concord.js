@@ -1784,28 +1784,29 @@
   async function hydrateRoomStreams(p,index,expectedIdentity=''){
     const rooms=saved(),room=rooms[index],reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
     if(!room||!bundle||!reader)return;
-    const loadKey=room.communityId||room.naddr,identity=roomIdentity(room);
-    if(roomLoads.has(loadKey))return roomLoads.get(loadKey);
+    const loadKey=room.communityId||room.naddr,identity=roomIdentity(room),owner=deliveryOwner(p),jobKey=owner+'\n'+loadKey;
+    const currentOwner=()=>deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity);
+    if(roomLoads.has(jobKey))return roomLoads.get(jobKey);
     const job=(async()=>{
       /* Membership refresh and Leave can finish while relay history is in flight. Persist by room
        * identity, never the numeric array slot captured before an await, or a slow response can
        * overwrite another community or resurrect one the user left. */
-      const persistRoom=()=>{const latest=saved(),at=latest.findIndex(item=>roomIdentity(item)===identity);if(at<0)return false;latest[at]={...latest[at],...room,cord:{...(latest[at].cord||{}),...(room.cord||{})}};save(latest);return true;};
+      const persistRoom=()=>{if(!currentOwner())return false;const latest=saved(),at=latest.findIndex(item=>roomIdentity(item)===identity);if(at<0)return false;latest[at]={...latest[at],...room,cord:{...(latest[at].cord||{}),...(room.cord||{})}};save(latest);return true;};
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
-      let controlWraps=await cachedEnvelopes(controlKey);
-      const applyControl=wraps=>{const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
+      let controlWraps=await cachedEnvelopes(controlKey);if(!currentOwner())return;
+      const applyControl=wraps=>{if(!currentOwner())return 0;const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
          * set does not carry is refused with "channel is not readable with this membership" — and
          * readChat is the one place that re-derives the id by NAME before giving up. Calling the
          * reader raw here is what made hydration the only path in this file without that repair. */
+        if(!currentOwner())return;
         const opened=await readChat(p,reader,bundle,controlWraps||[],room,channel,wraps||[]);
-        const reactions=new Map(opened.reactions||[]),reactionIds=new Map(opened.reactionIds||[]),reactionUrls=new Map(opened.reactionUrls||[]),zaps=new Map(opened.zaps||[]),msgs=(opened.messages||[]).map(m=>{ const pr=p.profOf?p.profOf(m.pubkey):{},rs={},ri={},ru={}; for(const [emoji,people] of reactions.get(m.id)||[])rs[emoji]=people;for(const [emoji,entries] of reactionIds.get(m.id)||[])ri[emoji]=Object.fromEntries(entries);for(const [emoji,url] of reactionUrls.get(m.id)||[])ru[emoji]=url; return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:rs,reactionIds:ri,reactionUrls:ru,zaps:zaps.get(m.id)||[],remote:true}; });
-        const msgById=new Map(msgs.map(m=>[m.id,m])); for(const m of msgs){if(m.kind!==1111)continue;const parentId=((m.tags||[]).find(t=>t[0]==='e')||[])[1],parent=msgById.get(parentId);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text};}
-        const storeId=channelStoreId(room,channel.name);markRemoteStore(storeId);const prior=testMessages(storeId);
-        const next=mergeRelayMessages(prior,msgs).sort((a,b)=>Number(a.at)-Number(b.at));
+        if(!currentOwner())return;
+        const storeId=channelStoreId(room,channel.name);markRemoteStore(storeId);
+        const next=mergeCordTimeline(testMessages(storeId),opened,p,deliveryOwner(p)+'\n'+storeId);
         saveTestMessages(storeId,next);
         /* A MENTION IN A CHANNEL YOU ARE NOT LOOKING AT IS STILL A MENTION.
          *
@@ -1912,7 +1913,9 @@
       }
       try{
       const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
+      if(!currentOwner())return;
       controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
+      if(!currentOwner())return;
       const channelCount=applyControl(controlWraps);
       if(!channelCount){
         /* SAY WHAT WAS ACTUALLY MEASURED. "the control stream returned no readable channels" is
@@ -1929,9 +1932,11 @@
       }
       const selected=state.channel||'general',networkOrder=[...room.channels].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
       const fetchChannel=async channel=>{
+        if(!currentOwner())return;
         const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),
           wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached),
           fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
+        if(!currentOwner())return;
         await cacheEnvelopes(cacheKey,fetched);await applyChannel(channel,wraps);
       };
       /* THE CHANNEL ON SCREEN FIRST — it is the only one anybody is waiting for.
@@ -1998,6 +2003,7 @@
        * caller toast "could not refresh room history" on a condition nobody can act on, over and
        * over, which is exactly how this was reported from the phone. What the room could not read
        * is recorded in `stalled` and shown where it belongs. */
+      if(!currentOwner())return;
       room.cord.hydrated=true;hydratedRoomViews.add(identity);if(!persistRoom())return;
       /* A relay answer may return after the reader chose another community. Persisting the fetched
        * room is still useful, but repainting/scrolling the new room is not. Notification launches
@@ -2014,7 +2020,7 @@
         if(cachedChannelCount&&cachedHistoryRendered){console.warn('Concord room refresh failed; using cached history',e);return;}
         throw e;
       }
-    })().finally(()=>roomLoads.delete(loadKey)); roomLoads.set(loadKey,job); return job;
+    })().finally(()=>roomLoads.delete(jobKey)); roomLoads.set(jobKey,job); return job;
   }
   async function publishCordNative(p,room,channelName,text,extraTags=[],kind=9,onPrepared){
     const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
@@ -2244,14 +2250,71 @@
       await absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps,storeId);
     }catch(e){ console.warn('Concord live message failed',e); }
   }
+  function mergeCordTimeline(prior,opened,p,scope){
+    const owner=deliveryOwner(p);
+    if(mergeCordTimeline.owner!==owner){mergeCordTimeline.owner=owner;mergeCordTimeline.deleted=new Map();}
+    const tombstones=mergeCordTimeline.deleted,deletes=new Map((opened.deletions||[]).map(([id,authors])=>[id,new Set(authors)])),old=new Map(prior.map(m=>[messageId(m),m]));
+    const incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{},before=old.get(m.id),edited=tags=>Number(((tags||[]).find(t=>t[0]==='edited')||[])[1]||0),keepEdit=before&&edited(before.tags)>edited(m.tags);return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:keepEdit?before.text:m.text,at:m.at,kind:m.kind,tags:keepEdit?before.tags:m.tags||[],remote:true};});
+    const merged=mergeRelayMessages(prior.map(m=>({...m})),incoming),byId=new Map(merged.map(m=>[messageId(m),m]));
+    for(const [id,m] of byId){
+      const key=scope+'\n'+id;
+      if(deletes.get(id)?.has(m.pubkey)||tombstones.get(key)===m.pubkey){tombstones.set(key,m.pubkey);byId.delete(id);}
+    }
+    while(tombstones.size>5000)tombstones.delete(tombstones.keys().next().value);
+    const reactionTimes=new Map(opened.reactionTimes||[]),reactionIds=new Map(opened.reactionIds||[]),urls=new Map(opened.reactionUrls||[]);
+    for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;
+      m.reactions={...(m.reactions||{})};m.reactionIds={...(m.reactionIds||{})};m.reactionTimes={...(m.reactionTimes||{})};m.reactionUrls={...(m.reactionUrls||{})};
+      for(const [emoji,people] of groups){m.reactions[emoji]=[...new Set([...(m.reactions[emoji]||[]),...people])];}
+      for(const [emoji,entries] of reactionIds.get(target)||[]){const ids={...(m.reactionIds[emoji]||{})};for(const [pubkey,id] of entries){const previous=ids[pubkey],at=reactionTimes.get(id)||0;if(!previous||at>=(m.reactionTimes[previous]||0)){ids[pubkey]=id;m.reactionTimes[id]=at;}}m.reactionIds[emoji]=ids;}
+      for(const [emoji,url] of urls.get(target)||[])m.reactionUrls[emoji]=url;
+    }
+    // Absence from a bounded history page is not a removal. A signed delete must match the
+    // stored reaction author and exact rumor ID before removing that person's contribution.
+    for(const m of byId.values()){
+      m.reactions={...(m.reactions||{})};m.reactionIds={...(m.reactionIds||{})};m.reactionUrls={...(m.reactionUrls||{})};
+      for(const [emoji,entries] of Object.entries(m.reactionIds)){const ids={...entries};for(const [pubkey,id] of Object.entries(ids)){
+        const key=scope+'\n'+id;if(deletes.get(id)?.has(pubkey)||tombstones.get(key)===pubkey){tombstones.set(key,pubkey);delete ids[pubkey];m.reactions[emoji]=(m.reactions[emoji]||[]).filter(pk=>pk!==pubkey);}
+      }m.reactionIds[emoji]=ids;if(!(m.reactions[emoji]||[]).length){delete m.reactions[emoji];delete m.reactionIds[emoji];delete m.reactionUrls[emoji];}}
+    }
+    while(tombstones.size>5000)tombstones.delete(tombstones.keys().next().value);
+    for(const [target,list] of opened.pollVotes||[]){const m=byId.get(target);if(!m)continue;const votes=new Map((m.votes||[]).map(v=>[v.pubkey,v]));for(const v of list)if(!votes.has(v.pubkey)||Number(v.ms)>=Number(votes.get(v.pubkey).ms))votes.set(v.pubkey,v);m.votes=[...votes.values()];}
+    const claims=new Map();for(const [target,m] of byId)for(const z of m.zaps||[])claims.set(z.id,{target,z});
+    for(const [target,list] of opened.zaps||[])if(byId.has(target))for(const z of list)claims.set(z.id,{target,z});
+    const paid=new Set();for(const m of byId.values())m.zaps=[];
+    for(const {target,z} of [...claims.values()].sort((a,b)=>Number(a.z.ms||0)-Number(b.z.ms||0)||String(a.z.id).localeCompare(String(b.z.id)))){
+      const proof=z.paymentId||z.id;if(paid.has(proof))continue;paid.add(proof);byId.get(target).zaps.push(z);
+    }
+    for(const m of byId.values()){if(m.kind!==1111)continue;const parent=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text};}
+    return [...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at));
+  }
   async function absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps,storeId){
     const owner=deliveryOwner(p),roomId=roomIdentity(room);
-    const opened=await readChat(p,reader,bundle,controlWraps,room,channel,wraps||[]);
+    // Serialize folds of one store: an older decrypt must not replace newer reaction state.
+    const pending=absorbChatWraps.pending||(absorbChatWraps.pending=new Map()),key=owner+'\n'+storeId;
+    const run=async()=>{
+    if(deliveryOwner(p)!==owner||!saved().some(r=>roomIdentity(r)===roomId))return;
+    // History plus incremental events supplies the author context for reactions, edits and deletes.
+    // The reader memoizes successful decrypts; replaying this bounded encrypted cache does not
+    // repeat signature/decryption work for every event on each live batch.
+    const cached=await cachedEnvelopes(envelopeCacheKey(room.communityId||room.naddr,channel.id));
+    if(deliveryOwner(p)!==owner||!saved().some(r=>roomIdentity(r)===roomId))return;
+    // Keep the same bounded envelope context when IndexedDB is unavailable. Only encrypted
+    // wraps live here, and an account transition discards the previous owner's context.
+    if(absorbChatWraps.historyOwner!==owner){absorbChatWraps.historyOwner=owner;absorbChatWraps.history=new Map();}
+    const history=absorbChatWraps.history;
+    for(const ev of [...cached,...(wraps||[])])history.set(key+'\n'+ev.id,{key,ev});
+    while(history.size>5000)history.delete(history.keys().next().value); // existing per-stream cache bound
+    const complete=[...history.values()].filter(item=>item.key===key).map(item=>item.ev);
+    const opened=await readChat(p,reader,bundle,controlWraps,room,channel,complete);
     if(deliveryOwner(p)!==owner||!saved().some(r=>roomIdentity(r)===roomId))return;
     // Another live batch or history refresh may have committed while decryption was pending.
     // Merge into the current store after the await, so late completion cannot erase newer arrivals.
-    const prior=testMessages(storeId),incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{};return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:m.text,at:m.at,kind:m.kind,tags:m.tags||[],reactions:{},remote:true};}),merged=mergeRelayMessages(prior,incoming),byId=new Map(merged.map(m=>[messageId(m),m])); let changed=JSON.stringify(merged)!==JSON.stringify(prior),urlGroups=new Map(opened.reactionUrls||[]),zapGroups=new Map(opened.zaps||[]); /* POLL ANSWERS RIDE WITH THE POLL. They are sealed in the channel's own wraps, so nothing  * outside this stream can count them — a public kind-1018 query finds nothing here. */ for(const [target,list] of opened.pollVotes||[]){const m=byId.get(target);if(!m)continue; if(JSON.stringify(m.votes||[])!==JSON.stringify(list)){m.votes=list;changed=true;}} for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;const next={},nextUrls={};for(const [emoji,people] of groups)next[emoji]=people;for(const [emoji,url] of urlGroups.get(target)||[])nextUrls[emoji]=url;if(JSON.stringify(m.reactions||{})!==JSON.stringify(next)||JSON.stringify(m.reactionUrls||{})!==JSON.stringify(nextUrls)){m.reactions=next;m.reactionUrls=nextUrls;changed=true;}} for(const [target,zaps] of zapGroups){const m=byId.get(target);if(m&&JSON.stringify(m.zaps||[])!==JSON.stringify(zaps)){m.zaps=zaps;changed=true;}} if(changed){const next=[...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at)),viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
-    
+    const prior=testMessages(storeId),next=mergeCordTimeline(prior,opened,p,key);
+    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
+
+    };
+    const task=(pending.get(key)||Promise.resolve()).then(run,run);pending.set(key,task);
+    try{await task;}finally{if(pending.get(key)===task)pending.delete(key);}
   }
   async function refreshActiveChannel(p){
     const foreground=document.body.classList.contains('concord-view'),parked=window.PCOS&&PCOS.isOn&&PCOS.isOn()&&PCOS.parkedSlot&&PCOS.parkedSlot('concord');

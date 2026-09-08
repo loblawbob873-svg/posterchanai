@@ -63,7 +63,7 @@ def test_only_verified_reader_tallies_reach_the_ui():
     assert "zaps: [...timeline.zaps]" in view
     assert "verifyZapRumor" in READER
     assert "claimedHashes.has" in READER
-    assert "new Map(opened.zaps||[])" in CONCORD
+    assert "for(const [target,list] of opened.zaps||[])" in CONCORD
     assert "zapSummary(p,m)" in CONCORD
 
 

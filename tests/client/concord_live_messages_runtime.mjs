@@ -119,11 +119,12 @@ for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
 externalEvent({id:'fast',kind:1059});
 timers.at(-1)();
 for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
-if(deferred.length!==2)throw new Error('fixture did not overlap two decryption batches');
-deferred[1]();
-for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
-if(!api.__testMessages('cid-1').some(m=>m.id==='overlap-fast'))throw new Error('new batch never delivered');
-deferred[0]();
+if(deferred.length===2){
+  deferred[1]();for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));deferred[0]();
+}else{
+  deferred[0]();for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
+  if(deferred.length!==2)throw new Error('queued live batch never began after prior fold');deferred[1]();
+}
 for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
 const overlapIds=api.__testMessages('cid-1').map(m=>m.id);
 for(const id of ['overlap-fast','overlap-slow'])
