@@ -60,16 +60,22 @@ ok('and the surfaces it shares a process with do not set it either',!/\bsandbox\
 const bgOwnerAt=preload.indexOf('const backgroundOwner');
 if(bgOwnerAt<0) throw new Error('backgroundOwner not declared');
 const bgWinAt=preload.indexOf('const _isWindowDoc');
-const bgStart=(bgWinAt>=0 && bgWinAt<bgOwnerAt) ? bgWinAt : bgOwnerAt;
+const bgContextAt=preload.indexOf('const windowContext');
+const bgStart=bgContextAt>=0 && bgContextAt<bgOwnerAt ? bgContextAt :
+  (bgWinAt>=0 && bgWinAt<bgOwnerAt) ? bgWinAt : bgOwnerAt;
 const bgEnd=preload.indexOf(';', bgOwnerAt)+1;
 const bgSrc=preload.slice(bgStart,bgEnd)+'\nreturn backgroundOwner;';
-const bg=(search,argv)=>new Function('location','process',bgSrc)(
-  {search}, {argv});
+const bg=(search,argv,context=null)=>new Function('location','process','isOurPage','ipcRenderer',bgSrc)(
+  {search}, {argv}, true, {sendSync:channel=>{if(channel!=='pc:window:context')throw Error('unexpected IPC');return context;}});
 ok('the primary surface still owns background work',bg('',['electron'])===true);
 ok('a secondary monitor surface still does not',
    bg('',['electron','--pc-secondary-surface'])===false);
 ok('a WINDOW never does, even opened from the primary surface',
    bg('?pcwin=terminal',['electron'])===false);
+ok('a reloaded native window stays excluded after its query was consumed',
+   bg('',['electron'],{role:'app',view:'terminal'})===false);
+ok('an unrelated host context does not turn the desktop into a child',
+   bg('',['electron'],{role:'desktop',view:''})===true);
 
 /* ---- 3. A window must not build a desktop inside itself. -------------------------------------
  * It is a same-origin child, so it reads the same remembered `osMode` and it is over MIN_WIDTH on
