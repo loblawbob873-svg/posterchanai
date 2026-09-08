@@ -5,10 +5,9 @@
  * Firefox, Telegram, and every other native client.  wl-clipboard is part of the OS image, so use
  * it as the compositor-facing bridge on Wayland and keep Electron as the portable fallback.
  *
- * wl-copy normally forks a selection-owning daemon.  Spawn is given ONLY stdin/out/err below;
- * Node marks every other descriptor close-on-exec, so the daemon cannot inherit Electron's HTTP,
- * CDP, or instance-lock sockets.  This is deliberately unlike the old screenshot implementation
- * that leaked the desktop's listening descriptors into a long-lived wl-copy process.
+ * wl-copy forks a selection-owning daemon. Chromium can leave descriptors inheritable despite
+ * Node's stdio options, so close unrelated descriptors BEFORE exec wl-copy. Its daemon must not
+ * keep a dead desktop's CDP/HTTP listening sockets or instance locks alive.
  */
 'use strict';
 
@@ -27,7 +26,14 @@ function writeWaylandText(text, deps) {
       /* Offer the baseline type understood by both GTK Firefox and Qt Telegram.  Wayland MIME
        * offers are exact strings: advertising only text/plain;charset=utf-8 leaves clients that
        * enumerate text/plain with no compatible-looking target, even though the bytes are UTF-8. */
-      child = start(bin, ['--type', 'text/plain'], {
+      // Bash supports high-numbered descriptors; /bin/sh may be dash, which does not.
+      // No redirection on the loop: saving stderr at a high FD would get that copy closed too.
+      const closeInherited =
+        'for __fd in /proc/$$/fd/[0-9]*; do __n=${__fd##*/}; ' +
+        'case "$__n" in \'\'|*[!0-9]*) continue;; esac; ' +
+        '[ "$__n" -le 2 ] || eval "exec $__n>&-"; done; unset __fd __n';
+      child = start('/bin/bash', ['-c', `${closeInherited}; exec "$@"`,
+        'posterchan-clipboard', bin, '--type', 'text/plain'], {
         stdio: ['pipe', 'ignore', 'ignore'],
         windowsHide: true,
       });

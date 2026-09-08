@@ -13,7 +13,7 @@ def run_node(source):
     return json.loads(out)
 
 
-def test_wayland_write_is_bounded_and_does_not_inherit_desktop_descriptors():
+def test_wayland_write_preserves_mime_and_pipes():
     result = run_node(r"""
 const C=require('./desktop/clipboard.js');
 let call, input='';
@@ -26,7 +26,7 @@ C.writeWaylandText('native-copy', {spawn:(bin,args,opts)=>{call={bin,args,opts};
 """)
     assert result["ok"] is True
     assert result["input"] == "native-copy"
-    assert result["call"]["args"] == ["--type", "text/plain"]
+    assert result["call"]["args"][-3:] == ["wl-copy", "--type", "text/plain"]
     assert result["call"]["opts"]["stdio"] == ["pipe", "ignore", "ignore"]
 
 
