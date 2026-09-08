@@ -762,7 +762,7 @@ function createWindow(assignment) {
      * sway correctly allocated 1920x1080 but Electron kept submitting its requested 1280x860
      * buffer, leaving black strips on the right and bottom. The shell is still immovable and Sway
      * controls its geometry; resizable here means "honour the compositor", not user window chrome. */
-    ...(SHELL_MODE ? { kiosk: false, resizable: true, movable: false } : {}),
+    ...(SHELL_MODE ? { kiosk: false, resizable: true, movable: false, title: 'PosterChan Desktop' } : {}),
     icon: path.join(__dirname, 'icon.png'),
     // Started by the login item: come up HIDDEN rather than showing and then hiding, which is a
     // window flashing on screen at every boot — the thing that makes people turn autostart off.
@@ -803,6 +803,7 @@ function createWindow(assignment) {
     if (!cfg.maximized && !created.isMinimized()) cfg.bounds = created.getNormalBounds();
     saveCfg();
   };
+  if(SHELL_MODE) created.on('page-title-updated', e => e.preventDefault());
   created.on('close', remember);
   /* Close means HIDE while the tray is holding the app open — otherwise closing the window ends the
    * process and, with it, the folder sync the tray exists to keep running. Guarded on the tray
@@ -2064,6 +2065,12 @@ async function reconcileShellDisplays(){
     /* The desktop starts underneath, not merely once something has been focused. A surface that is
      * assigned while an application is already up (a shell restart, a monitor hotplug, an update)
      * otherwise sits over that application until the next focus event — see sinkShellOnFocus. */
+    if(typeof wm().protectShellViews === 'function'){
+      // Capabilities belong to exact reconciled surfaces, never to the shared application ID.
+      // An older compositor keeps its existing geometry repair until its plugin is upgraded.
+      try{ await wm().protectShellViews(Array.from(_shellSurfaces.values(), r=>Number(r.conId))); }
+      catch(e){ console.warn('[shell protection]', (e && e.message) || e); }
+    }
     sinkShellSurfaces();
   })().catch(e => {
       console.warn('[shell displays]', (e && e.message) || e);

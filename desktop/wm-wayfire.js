@@ -368,6 +368,11 @@ class WayfireWM{
    * `wm-actions/send-to-back` is the lever, and it is ONE-SHOT, not a sticky state: measured,
    * send-to-back followed by a focus put the shell straight back on top. So it is re-issued from
    * main.js on every focus of a shell surface rather than being set once at assignment. */
+  protectShellViews(ids){
+    if(!Array.isArray(ids) || ids.length>64 || ids.some(id=>!Number.isSafeInteger(id)||id<=0||id>0xffffffff))
+      return Promise.reject(new Error('Invalid desktop surface IDs'));
+    return this._send('posterchan-shell/set-views',{pid:process.pid,ids:[...new Set(ids)]});
+  }
   keepBelow(id,on){return this._send('wm-actions/send-to-back',{'view_id':Number(id),state:on!==false});}
   /* A PICTURE OF ONE VIEW, NOT OF THE SCREEN WHERE THAT VIEW HAPPENS TO BE.
    *

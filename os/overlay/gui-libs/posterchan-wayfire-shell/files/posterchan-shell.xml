@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<wayfire>
+  <plugin name="posterchan-shell">
+    <_short>PosterChan desktop protection</_short>
+    <_long>Disable interactive movement and resize only for registered desktop surfaces.</_long>
+  </plugin>
+</wayfire>
