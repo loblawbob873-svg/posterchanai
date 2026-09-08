@@ -24,6 +24,7 @@
  */
 (function(){
   const KEY = 'pc_outbox';
+  const DELIVERED_KEY = 'pc_outbox_delivered';
   const MAX = 200;                    // hard cap; a queue longer than this is a bug, not a use case
   const MAX_AGE = 7 * 86400;          // a week-old reaction arriving out of nowhere is noise — expire it
   const MAX_TRIES = 5;                // see flush(): past this an entry is poison, not merely unlucky
@@ -73,6 +74,18 @@
     // failing; it is the single place the safety rule lives.
     canQueue(kind){ return QUEUEABLE.has(Number(kind)); },
 
+    delivered(){
+      try{return JSON.parse(localStorage.getItem(DELIVERED_KEY)||'[]').filter(x=>x&&x.ev&&Date.now()-x.at<MAX_AGE*1000);}catch(_){return [];}
+    },
+    confirm(id){
+      const item=items.find(x=>x.ev.id===id);if(!item)return false;
+      const receipts=this.delivered().filter(x=>x.ev.id!==id);
+      receipts.push({ev:item.ev,at:Date.now()});
+      try{localStorage.setItem(DELIVERED_KEY,JSON.stringify(receipts.slice(-MAX)));}catch(_){}
+      this.remove(id);
+      try{window.dispatchEvent(new CustomEvent('pc:outbox-delivered',{detail:{ev:item.ev}}));}catch(_){}
+      return true;
+    },
     count(){ return items.length; },
     list(){ return items.slice(); },
     has(id){ return items.some(it => it.ev.id === id); },
@@ -116,7 +129,7 @@
     // expected to evict them from the local store as well: the event was saved optimistically at compose
     // time, so dropping it from the queue alone would leave it sitting in the timeline looking posted with
     // nothing left that will ever send it — the silent divergence this whole feature exists to avoid.
-    async flush(){
+    async flush(onlyId){
       if (_flushing || !items.length) return { sent: 0, dropped: [], sentIds: [] };
       if (!window.Relay || Relay.status !== 'ok') return { sent: 0, dropped: [], sentIds: [] };
       _flushing = true;
@@ -124,11 +137,17 @@
       // anything that was waiting on them — a draft kept as the recovery copy, above all.
       let sent = 0; const dropped = [], sentIds = [];
       try{
+        const owner=window.__PC&&typeof __PC.me==='function'?(__PC.me()||{}).pubkey:null;
         for (const it of items.slice()){
+          if(onlyId&&it.ev.id!==onlyId)continue;
+          // A native sibling can hold another account's cached queue. Its session/policy
+          // route must never be used to send that account's event.
+          if(window.__PC && (!owner || it.ev.pubkey!==owner))continue;
+          if(window.__PC && ((__PC.me()||{}).pubkey!==owner))break;
           if (!window.Relay || Relay.status !== 'ok') break;   // went away mid-drain → stop, keep the rest
           let r = null;
           try{ r = await Relay.publish(it.ev); }catch(_){ r = null; }
-          if (r && r.ok){ this.remove(it.ev.id); sent++; sentIds.push(it.ev.id); continue; }
+          if (r && r.ok){ this.confirm(it.ev.id); sent++; sentIds.push(it.ev.id); continue; }
           /* A STRIKE IS A REFUSAL, NOT A BAD MOMENT.
            *
            * MAX_TRIES exists for an event the relay will never accept — the wrong kind, a bad

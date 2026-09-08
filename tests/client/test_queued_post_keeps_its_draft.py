@@ -52,8 +52,12 @@ class QueuedDraftTests(unittest.TestCase):
         src = _src()
         flush = src[src.index("function _flushOutbox()"):]
         flush = flush[:flush.index("\n  }")]
-        self.assertIn("sentIds", flush, "the flush no longer clears drafts for what it sent")
-        self.assertIn("Drafts.remove", flush)
+        self.assertIn("_reconcileDeliveredDrafts()", flush)
+        delivery = src[src.index("function _reconcileDraftDelivery("):src.index("function _reconcileDeliveredDrafts()")]
+        self.assertIn("Drafts.remove", delivery)
+        self.assertIn("ev.pubkey!==ME.pubkey", delivery)
+        self.assertIn("_queuedDraftMatches", delivery)
+        self.assertIn("pc:outbox-delivered", src)
         # The dropped branch takes the MAPPING (so a later event id cannot collide with a stale
         # entry) and must not remove the draft itself.
         drop = flush[flush.index("dropped.forEach"):]

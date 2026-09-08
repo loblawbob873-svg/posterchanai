@@ -5966,8 +5966,8 @@
    * and the report that found this came after an app restart. */
   const _QD_KEY = 'pc_draft_queued';
   function _qDrafts(){ try{ return JSON.parse(localStorage.getItem(_QD_KEY) || '{}') || {}; }catch(_){ return {}; } }
-  function _qDraftSet(evId, draftId){
-    try{ const m=_qDrafts(); m[evId]=draftId; localStorage.setItem(_QD_KEY, JSON.stringify(m)); }catch(_){}
+  function _qDraftSet(evId, draftId, owner, snapshot){
+    try{ const m=_qDrafts(); m[evId]={id:draftId,owner:owner||(ME&&ME.pubkey),snapshot:snapshot||_draftSnapshot(Drafts.get(draftId))}; localStorage.setItem(_QD_KEY, JSON.stringify(m)); }catch(_){}
   }
   function _qDraftTake(evId){
     try{
@@ -5975,20 +5975,51 @@
       const d=m[evId]; delete m[evId]; localStorage.setItem(_QD_KEY, JSON.stringify(m)); return d;
     }catch(_){ return undefined; }
   }
+  function _draftSnapshot(d){
+    return JSON.stringify([d&&d.text||'',d&&d.reply||'',d&&d.replyPk||'',d&&d.quote||'',!!(d&&d.cw),d&&d.cwReason||'']);
+  }
+  function _queuedDraftMatches(entry,d,ev){
+    if(!d)return false;
+    if(entry&&entry.snapshot)return entry.snapshot===_draftSnapshot(d);
+    // Legacy maps stored only a draft id. Never erase an edited recovery copy.
+    const tags=Array.isArray(ev.tags)?ev.tags:[];
+    const warning=tags.find(t=>t[0]==='content-warning');
+    if(!!d.cw!==!!warning || (d.cw&&String(d.cwReason||'')!==String(warning[1]||'')))return false;
+    const replies=tags.filter(t=>t[0]==='e'),quotes=tags.filter(t=>t[0]==='q');
+    if(d.reply?!replies.some(t=>t[1]===d.reply):replies.length>0)return false;
+    if(d.replyPk&&!tags.some(t=>t[0]==='p'&&t[1]===d.replyPk))return false;
+    if(d.quote?!quotes.some(t=>t[1]===d.quote):quotes.length>0)return false;
+    let content=d.text||'';
+    if(d.quote){const o=Store.get(d.quote);content=_appendQuoteNevent(content,d.quote,(o&&o.pubkey)||'');}
+    return content===ev.content;
+  }
+  function _reconcileDraftDelivery(ev){
+    if(!ev||!ME||ev.pubkey!==ME.pubkey)return false;
+    const m=_qDrafts(),entry=m[ev.id];if(entry===undefined)return false;
+    if(entry&&entry.owner&&entry.owner!==ME.pubkey)return false;
+    const id=typeof entry==='string'?entry:entry.id;
+    const d=Drafts.get(id);
+    _qDraftTake(ev.id);
+    if(!_queuedDraftMatches(entry,d,ev))return false;
+    Drafts.remove(id);
+    return true;
+  }
+  function _reconcileDeliveredDrafts(){
+    let changed=false;
+    if(window.Outbox&&Outbox.delivered)for(const receipt of Outbox.delivered())changed=_reconcileDraftDelivery(receipt.ev)||changed;
+    return changed;
+  }
+  window.addEventListener('pc:outbox-delivered',e=>{if(_reconcileDraftDelivery(e.detail&&e.detail.ev)&&VIEW==='drafts')renderDrafts();});
+  window.addEventListener('storage',e=>{if(e.key==='pc_outbox_delivered'&&_reconcileDeliveredDrafts()&&VIEW==='drafts')renderDrafts();});
   function _flushOutbox(){
     if(!window.Outbox || !Outbox.count()) return;
     setTimeout(()=>{ Outbox.flush().then(res=>{
       const sent = (res && res.sent) || 0, dropped = (res && res.dropped) || [];
       // A queued post that has now gone out takes its draft with it.
-      let clearedDrafts = 0;
-      ((res && res.sentIds) || []).forEach(evId=>{
-        const d = _qDraftTake(evId);
-        try{ if(d !== undefined && Drafts.get(d)){ Drafts.remove(d); clearedDrafts++; } }catch(_){}
-      });
+      _reconcileDeliveredDrafts();
       // A DROPPED one keeps its draft — that copy is the only place the text still exists — but the
       // mapping goes, so a later event id can never collide with a stale entry.
       dropped.forEach(evId=>{ _qDraftTake(evId); });
-      if(clearedDrafts && VIEW==='drafts'){ try{ renderDrafts(); }catch(_){} }
       if(!sent && !dropped.length) return;
       // An item the relay kept refusing is now gone from the queue, so it must go from the local store too
       // — left there it would sit in the timeline looking posted with nothing that will ever send it. And
@@ -15750,14 +15781,18 @@
       this._save(out); return dead.size; },
     // Sync to/from a single encrypted Nostr event (kind-30078 pcai:drafts under the storage key),
     // so drafts written on one device appear on another. Push is debounced.
-    _sync(a){ if(typeof ME==='undefined'||!ME) return; clearTimeout(this._t); this._t=setTimeout(async()=>{
+    _sync(a){ if(typeof ME==='undefined'||!ME) return; const owner=ME.pubkey; clearTimeout(this._t); this._t=setTimeout(async()=>{
+      if(!ME||ME.pubkey!==owner)return;
       try{ const auth=await selfProof();
+        if(!ME||ME.pubkey!==owner)return;
         await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:ME.pubkey,auth:auth,drafts:a})}); }catch(_){} }, 900); },
-    async pull(){ if(typeof ME==='undefined'||!ME) return;
+          body:JSON.stringify({pubkey:owner,auth:auth,drafts:a})}); }catch(_){} }, 900); },
+    async pull(){ if(typeof ME==='undefined'||!ME) return; const owner=ME.pubkey;
       try{ const auth=await selfProof();
+        if(!ME||ME.pubkey!==owner)return;
         const r=await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:ME.pubkey,auth:auth})}).then(r=>r.json());
+          body:JSON.stringify({pubkey:owner,auth:auth})}).then(r=>r.json());
+        if(!ME||ME.pubkey!==owner)return;
         if(r && r.ok && Array.isArray(r.drafts)){
           // union by id, newest ts wins — never drops a draft made offline on either device
           const map={}; [...r.drafts, ...this.all()].forEach(d=>{ if(d&&d.id&&(!map[d.id]||(d.ts||0)>=(map[d.id].ts||0))) map[d.id]=d; });
@@ -15916,6 +15951,7 @@
     });
   }
   function renderDrafts(){
+    _reconcileDeliveredDrafts();
     const feed=$('#feed'); const list=Drafts.live();
     const draftsHtml = list.length ? list.map(d=>{
       const ctx = d.reply?'<span class="muted small">↩ reply</span>' : d.quote?'<span class="muted small">❝ quote</span>' : '';
@@ -15987,13 +16023,17 @@
       return (content && content.trim() ? content.trim()+'\n\n' : '')+nev;
     }catch(_){ return content; }
   }
+  const _draftSending=new Map();
   async function sendDraft(id, btn){
     /* Acknowledge the CLICK before anything that can block. Publishing goes through the signer, and
      * a remote signer can legitimately take a while (or never answer), so without this the button
      * sat inert with no toast and no spinner — reported as "click send, nothing happens". */
     if(btn){ btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = 'sending…'; }
     const _done = () => { if(btn && btn.isConnected){ btn.disabled = false; btn.textContent = btn.dataset.label || 'Send ▶'; } };
-    try{ return await _sendDraft(id); }
+    const key=((ME&&ME.pubkey)||'')+':'+id;
+    let pending=_draftSending.get(key);
+    if(!pending){pending=_sendDraft(id).finally(()=>{if(_draftSending.get(key)===pending)_draftSending.delete(key);});_draftSending.set(key,pending);}
+    try{ return await pending; }
     finally{ _done(); }
   }
   async function _sendDraft(id){
@@ -16001,6 +16041,23 @@
     // Never fail silently: a Send that does nothing, with no message, is indistinguishable from a broken app.
     if(!d){ toast('couldn’t find that draft — reload and try again'); return; }
     if(!(d.text||'').trim()){ toast('that draft is empty'); return; }
+    const owner=ME&&ME.pubkey,snapshot=_draftSnapshot(d);
+    _reconcileDeliveredDrafts();if(!Drafts.get(id))return;
+    const mappings=Object.entries(_qDrafts()).filter(([,entry])=>entry&&(typeof entry==='string'?entry:entry.id)===id && (!entry.owner||entry.owner===owner));
+    for(const [eventId,entry] of mappings){
+      let ev=window.Outbox&&Outbox.list().find(x=>x.ev.id===eventId)?.ev;
+      if(!ev)ev=Store.get(eventId);
+      if(!ev){try{ev=await fetchEvent(eventId);}catch(_){}}
+      if(!ME||ME.pubkey!==owner)return;
+      if(!ev||ev.pubkey!==owner||!ev.sig){toast('Could not confirm the earlier delivery. Reconnect and retry; your draft is kept.');return;}
+      if(!_queuedDraftMatches(entry,Drafts.get(id),ev)){toast('An earlier version is still pending. Discard its pending copy before sending these edits.');return;}
+      if(!Outbox.has(eventId))Outbox.add(ev);
+      try{Relay.reviveStale();}catch(_){}
+      const result=await Outbox.flush(eventId);
+      if(!result.sent)toast('Still waiting for the relay; your draft is kept.');
+      if(VIEW==='drafts')renderDrafts();
+      return;
+    }
     let tags=[]; let content=d.text;
     if(d.reply){ const o=Store.get(d.reply); tags=replyTags(o, d.reply, d.replyPk); }
     if(d.quote){ const o=Store.get(d.quote); const qpk=(o&&o.pubkey)||''; tags.push(['q', d.quote, CFG.relay_url||'', qpk]); if(qpk)tags.push(['p',qpk]); content=_appendQuoteNevent(content, d.quote, qpk); }
@@ -16010,10 +16067,10 @@
     // it is the recovery path (the user retries from here), so its text is never lost.
     try{
       const r=await publish(replyKindFor(d.reply?Store.get(d.reply):null), content, tags);
-      if(r && r.ok){ Drafts.remove(id); toast('posted'); }   // failure toast + kept draft handled by publish()
+      if(r && r.ok){ if(ME&&ME.pubkey===owner&&_draftSnapshot(Drafts.get(id))===snapshot)Drafts.remove(id); toast('posted'); }   // failure toast + kept draft handled by publish()
       // Queued, not sent: keep the draft as the recovery copy, but remember which event it became so
       // the flush can retire it once the relay actually takes it (see _qDrafts).
-      else if(r && r.queued && r.ev) _qDraftSet(r.ev.id, id);
+      else if(r && r.queued && r.ev) _qDraftSet(r.ev.id, id, owner, snapshot);
       if(VIEW==='drafts') renderDrafts();
     }
     catch(e){ toast('post failed: '+((e&&e.message)||e)); }   // signing failed → nothing was created; keep the draft

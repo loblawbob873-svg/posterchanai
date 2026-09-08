@@ -305,7 +305,12 @@
         try { fn(this.status); } catch(e){ console.warn(e); }
       }
     },
-    _connReady(){
+    _connReady(conn){
+      // A stalled delivery may replace its exact socket once. Keep the original signed event
+      // and deadline; reopening must not require another signer request or a second post id.
+      if(conn && this._conns.get(conn.url)===conn)for(const w of this._okWaiters.values()){
+        if(w.recoverUrls && w.recoverUrls.delete(conn.url))conn._send(['EVENT',w.event]);
+      }
       if (!this._ready){ this._ready = true; if (this.onReady) try { this.onReady(); } catch(e){ console.warn(e); } }
       else if (this.onReconnect){ try { this.onReconnect(); } catch(e){ console.warn(e); } }   // reconnect: re-hydrate one-shot data
     },
@@ -379,7 +384,7 @@
         if(conn.trusted && wireEv && wireEv.id){
           const ack = this._okWaiters.get(wireEv.id);
           if(ack){ this._okWaiters.delete(wireEv.id); ack.settle({ ok:true, msg:'relay echo' }); }
-          try{ if(window.Outbox && Outbox.has(wireEv.id)) Outbox.remove(wireEv.id); }catch(_){}
+          try{ if(window.Outbox && Outbox.has(wireEv.id)){ if(Outbox.confirm)Outbox.confirm(wireEv.id);else Outbox.remove(wireEv.id); } }catch(_){}
         }
         const sub = this._subs.get(m[1]); if (!sub || !sub.onEvent) return;
         const ev = this._normTags(m[2]); if (!ev || sub.seen.has(ev.id)) return;   // dedup across relays
@@ -656,6 +661,9 @@
                                                 res({ ok:false, msg: w.why || 'timeout' }); } }, timeout);
         this._okWaiters.set(event.id, w);
         // How many relays were actually written to, so "every one of them refused" is answerable.
+        const deliverySockets=[...this._conns.values()].filter(c=>c.ws&&c.ws.readyState===1)
+          .map(c=>({conn:c, socket:c.ws, received:c._lastRx}));
+        w.deliverySockets=deliverySockets;
         w.sent = this._send(['EVENT', event]) || 0;
         /* An EVENT can be committed while its separate OK frame is lost (observed on the desktop
          * relay under load). Waiting the full eight seconds then queueing the already-published note
@@ -665,7 +673,27 @@
          * publishes never pay for the REQ: their OK clears this timer. */
         if(w.sent) confirmT=setTimeout(()=>{
           if(settled) return;
-          try{ this.query([{ids:[event.id], limit:1}], Math.min(1800, Math.max(300, timeout-800))).catch(()=>{}); }
+          try{ this.query([{ids:[event.id], limit:1}], Math.min(1800, Math.max(300, timeout-800))).then(found=>{
+            if(settled || found.complete)return;
+            // OPEN is only a browser flag. No reply to the delivery or its confirmation is
+            // stronger evidence than the 30-second idle threshold, even just after resume.
+            // Touch only the managed socket that stayed completely silent; never reset a
+            // healthy relay merely because it refused or did not store this particular event.
+            for(const snapshot of deliverySockets){
+              const c=snapshot.conn;
+              if(!c.trusted || this._conns.get(c.url)!==c || c.ws!==snapshot.socket ||
+                 !c.ws || c.ws.readyState!==1 || c._lastRx!==snapshot.received)continue;
+              // Several drafts may be waiting on this same dead transport. Carry every
+              // still-pending event that was actually sent on that exact socket to its replacement.
+              for(const pending of this._okWaiters.values()){
+                if(!(pending.deliverySockets||[]).some(s=>s.conn===c&&s.socket===snapshot.socket))continue;
+                if(!pending.recoverUrls)pending.recoverUrls=new Set();
+                pending.recoverUrls.add(c.url);
+              }
+              c._teardownSocket();clearTimeout(c._rt);c._backoff=600;
+              try{c._open();}catch(_){}
+            }
+          }).catch(()=>{}); }
           catch(_){}
         }, Math.min(700, Math.max(100, timeout/3)));
       });
