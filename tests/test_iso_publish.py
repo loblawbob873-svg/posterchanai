@@ -85,7 +85,7 @@ def test_successful_publish_writes_checksum_after_verified_iso(tmp_path):
         "echo ssh \"$@\" >> \"$PC_TEST_LOG\"\n"
         "case \"$2\" in\n"
         "  sha256sum*) printf '%s  staged.iso\\n' \"$PC_TEST_SHA\";;\n"
-        "  awk*) printf '%s\\n' \"$PC_TEST_SHA\";;\n"
+        "  cut*) printf '%s\\n' \"$PC_TEST_SHA\";;\n"
         "esac\n"
     )
     os.chmod(bindir / "scp", 0o755)
