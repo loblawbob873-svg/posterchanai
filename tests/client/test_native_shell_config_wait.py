@@ -74,14 +74,16 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync('static/js/client/os.js','utf8');
 const begin=source.indexOf('  function renderStartPopup(){');
 const body=source.slice(begin,source.indexOf('\n  /* THE NOTIFICATION CENTRE',begin));
+const scanStart=source.indexOf('  function _scanStartMachineApps(');
+const scan=source.slice(scanStart,source.indexOf('  function toggleStart(',scanStart));
 let detectReady,menu=null,toggles=0,refreshes=[];
 const input={value:'',selectionStart:0,selectionEnd:0},host={isConnected:true};
 const ctx={window:null,document:{body:{classList:{add(){}}},addEventListener(){}},
- PCOSShell:{detect:()=>new Promise(r=>detectReady=r)},popupHost:()=>host,
+ PCOSShell:{detect:()=>new Promise(r=>detectReady=r),available:()=>false},popupHost:()=>host,
  _menuInPopup:false,root:null,startOpen:false,
  $:(selector)=>selector==='#os-startmenu'?menu:selector==='#os-q'?input:null,
  _repaintStart:q=>refreshes.push(q),toggleStart(){toggles++;menu={};},console};
-ctx.window=ctx;vm.createContext(ctx);vm.runInContext(body+'; globalThis.render=renderStartPopup;',ctx);
+ctx.window=ctx;vm.createContext(ctx);vm.runInContext(scan+body+'; globalThis.render=renderStartPopup;',ctx);
 (async()=>{
  ctx.render();assert.equal(toggles,1);
  input.value='firefox';input.selectionStart=2;input.selectionEnd=5;
@@ -92,6 +94,35 @@ ctx.window=ctx;vm.createContext(ctx);vm.runInContext(body+'; globalThis.render=r
  assert.deepEqual(refreshes,['firefox','firefox']);
  assert.equal(ctx.document.activeElement,input);assert.equal(input.value,'firefox');
  assert.equal(input.selectionStart,2);assert.equal(input.selectionEnd,5);
+})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+    result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True,
+                            capture_output=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_local_app_scan_waits_for_detection_and_ignores_closed_menu():
+    script = r"""
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('static/js/client/os.js','utf8');
+const begin=source.indexOf('  function _scanStartMachineApps(');
+const scan=source.slice(begin,source.indexOf('  function toggleStart(',begin));
+let available=false,calls=0,finish;
+const q={value:'fi'},painted=[];
+const ctx={window:null,PCOSShell:{available:()=>available,allApps(force){assert.equal(force,true);calls++;return new Promise(r=>finish=r);}},
+ $:()=>q,_machineApps:null};
+ctx.window=ctx;vm.createContext(ctx);vm.runInContext(scan+';globalThis.scan=_scanStartMachineApps;',ctx);
+(async()=>{
+ const menu={isConnected:true};ctx.scan(menu,x=>painted.push(x));assert.equal(calls,0);
+ available=true;ctx.scan(menu,x=>painted.push(x));ctx.scan(menu,x=>painted.push(x));assert.equal(calls,1);
+ q.value='firefox';const list=[{id:'firefox.desktop',name:'Firefox'}];finish(list);await new Promise(setImmediate);
+ assert.equal(ctx._machineApps,list);assert.deepEqual(painted,['firefox']);
+ const closed={isConnected:true};ctx.scan(closed,x=>painted.push(x));assert.equal(calls,2);closed.isConnected=false;
+ finish([{id:'obsolete.desktop'}]);await new Promise(setImmediate);
+ assert.equal(ctx._machineApps,list,'a closed menu must not replace the current machine app list');
+ assert.deepEqual(painted,['firefox']);
+ const reopened={isConnected:true};ctx.scan(reopened,x=>painted.push(x));assert.equal(calls,3,'new opening must rescan');
+ finish(list);await new Promise(setImmediate);
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """
     result = subprocess.run(["node", "-e", script], cwd=ROOT, text=True,

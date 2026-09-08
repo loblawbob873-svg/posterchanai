@@ -8513,6 +8513,21 @@
       .catch(() => { startOpen = false; drawBar(); });
     drawBar();
   }
+  // Native discovery may finish after the menu first paints. One scan per opening,
+  // shared by the immediate and deferred paths, keeps local apps visible without
+  // replacing the search input or letting an old menu update a newer one.
+  function _scanStartMachineApps(menu, paint){
+    if(!menu || !menu.isConnected || menu._pcMachineScan ||
+       !window.PCOSShell || !PCOSShell.available()) return;
+    menu._pcMachineScan = true;
+    try{
+      Promise.resolve(PCOSShell.allApps(true)).then(list => {
+        if(!menu.isConnected) return;
+        _machineApps = list;
+        paint(($('#os-q', menu) || {}).value || '');
+      }, () => {});
+    }catch(_){}
+  }
   function toggleStart(force){
     /* Every handler in the menu below ends with `toggleStart(false)`. In the window that means the
        window — stated once here rather than at ~15 call sites. */
@@ -8762,23 +8777,9 @@
       });
     };
     paint('');
-    /* The scan runs ONCE per menu opening and repaints when it answers. Not awaited before the first
-     * paint: the menu must appear the instant it is asked for, and the client's own screens — which
-     * are what most people came for — are already in the list above. */
-    try{
-      if(window.PCOSShell && PCOSShell.available()){
-        /* FORCE A NEW MACHINE SCAN EACH TIME THE MENU OPENS. `machineApps` intentionally caches
-         * within one open menu so typing does not walk /usr/share repeatedly, but carrying that
-         * cache across openings means an app installed moments ago is invisible until PosterChan
-         * itself restarts. Telegram installed successfully and then did not exist in Start. */
-        PCOSShell.allApps(true).then(list => {
-          const q = ($('#os-q', menu) || {}).value || '';
-          if(!menu.isConnected) return;
-          _machineApps = list;
-          paint(q);
-        }, () => {});
-      }
-    }catch(_){}
+    // A fresh .desktop scan each opening discovers programs installed since the last menu.
+    // If compositor detection is still pending, renderStartPopup starts it when detection settles.
+    _scanStartMachineApps(menu, paint);
     /* The community counters USED to hang off the bottom of this menu — they live in the sidebar,
      * which the desktop hides, and the start menu was the only surface that existed at the time.
      * They have moved to the network flyout (netStatsHtml), where they belong: every one of them is
@@ -9872,7 +9873,10 @@
           if(!host.isConnected) return;
           const menu = $('#os-startmenu', host);
           if(menu){
-            if(_repaintStart) _repaintStart(($('#os-q', menu) || {}).value || '');
+            if(_repaintStart){
+              _scanStartMachineApps(menu, _repaintStart);
+              _repaintStart(($('#os-q', menu) || {}).value || '');
+            }
           }else{
             startOpen = false;
             toggleStart(true);
