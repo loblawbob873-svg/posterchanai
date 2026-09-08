@@ -3130,6 +3130,9 @@ ipcMain.handle('pc:host:list', (e, dir) => { fsGuard(e); return hostfs().list(St
 ipcMain.handle('pc:host:roots', (e) => { fsGuard(e); return hostfs().roots(); });
 ipcMain.handle('pc:host:notify', (e, options) => {
   fsGuard(e);
+  // PosterChanOS owns its notification centre; avoid activating a second D-Bus popup daemon.
+  // Standalone desktop apps retain their platform notifications and click routing.
+  if(SHELL_MODE) return true;
   const o=options&&typeof options==='object'?options:{},Notification=electron.Notification;
   if(!Notification||!Notification.isSupported())return false;
   const owner=BrowserWindow.fromWebContents(e.sender)||win,route=String(o.route||'notifications').slice(0,220);
