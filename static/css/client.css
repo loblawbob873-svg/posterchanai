@@ -7716,6 +7716,13 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;
   transition:none!important}
 .os-root.os-fx-off .osw:not(.osw-document),.os-root.os-fx-off .osw-bar{background:var(--panel)}
+/* Low power covers nested app chrome, flyouts and the macOS menu material too.
+   Keep content filters (for example hidden sensitive images) intact. */
+.os-root.os-fx-off,.os-root.os-fx-off *,.os-root.os-fx-off::before,.os-root.os-fx-off::after,
+.os-root.os-fx-off *::before,.os-root.os-fx-off *::after{
+  -webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.os-root.os-fx-off .os-noti,.os-root.os-fx-off::before{box-shadow:none!important}
+.os-root.os-fx-off .osw:not(.osw-document){background:linear-gradient(var(--panel),var(--panel)),var(--bg)}
 @media(prefers-reduced-motion:reduce){.os-root.os-fx .osw{transition:none}}
 /* Optional macOS desktop experience. It remains presentation-only (changing it never recreates an
    app), but it is a DESKTOP layout, not three coloured buttons: a top menu material, floating Dock,

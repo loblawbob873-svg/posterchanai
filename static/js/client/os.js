@@ -52,7 +52,7 @@
 
   const MIN_WIDTH = 1024;          // below this the desktop is not offered at all
   const KEY = 'osMode';            // ClientSettings: remembered across sessions
-  const FX_KEY = 'osCompositing';  // full, or off/low-power; presentation only
+  const FX_KEY = 'osCompositing';  // auto, full, or off/low-power; presentation only
   const STYLE_KEY = 'osDesktopStyle'; // posterchan or optional mac; presentation only
   const TASKBAR = 48;
   const SNAP = 8;                  // edge gutter when tiling
@@ -184,9 +184,16 @@
     applyUiScale();
   }
   try{ applyUiScale(); }catch(_){}
+  function desktopEffectsMode(){
+    const mode=settings().get(FX_KEY,'auto');
+    return mode==='full'||mode==='off' ? mode : 'auto';
+  }
   function applyDesktopEffects(){
     if(!root) return;
-    const full=settings().get(FX_KEY,'full')!=='off';
+    const mode=desktopEffectsMode();
+    // any-pointer still detects a tablet when a mouse is attached; viewport width does not.
+    const touch=window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches;
+    const full=mode==='full'||(mode==='auto'&&!touch);
     root.classList.toggle('os-fx',full);
     root.classList.toggle('os-fx-off',!full);
   }
@@ -2304,7 +2311,7 @@
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
         <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Choose PosterChan's desktop or a complete macOS-style layout with a menu bar, floating Dock, launcher and matching windows.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
         <section class="os-setting-row os-set-control"><div><b>Display scale</b><span>How large text and controls are drawn in PosterChan. A 4K-class monitor starts at 125% so it is readable at its native resolution &mdash; the screens themselves stay at 100%, which is what keeps games sharp and full speed.</span></div><select data-ui-scale aria-label="Display scale">${UI_SCALE_CHOICES.map(n=>`<option value="${n}" ${n===uiScaleEffective()?'selected':''}>${Math.round(n*100)}%</option>`).join('')}</select></section>
-        <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Shadows, restrained transparency and short visual transitions. This never changes window focus or placement.</span></div><select data-window-effects aria-label="Window effects"><option value="full" ${settings().get(FX_KEY,'full')!=='off'?'selected':''}>Modern</option><option value="off" ${settings().get(FX_KEY,'full')==='off'?'selected':''}>Low power / off</option></select></section></section>
+        <section class="os-setting-row os-set-control"><div><b>Window effects</b><span>Automatic uses low power on touch devices. Modern adds shadows, transparency and visual transitions.</span></div><select data-window-effects aria-label="Window effects"><option value="auto" ${desktopEffectsMode()==='auto'?'selected':''}>Automatic</option><option value="full" ${desktopEffectsMode()==='full'?'selected':''}>Modern</option><option value="off" ${desktopEffectsMode()==='off'?'selected':''}>Low power / off</option></select></section></section>
         ${[['sound','volume','Sound','Output, input, and application volume.','Open sound controls'],
            ['network','wifi','Network','Wi-Fi and wired network connections.','Open network controls'],
            ['bluetooth','bluetooth','Bluetooth','Discover, pair, and manage nearby devices.','Open Bluetooth controls']].map(([key,ic,title,desc,action])=>`
@@ -2437,7 +2444,7 @@
         try{ window.dispatchEvent(new Event('resize')); }catch(_){}
       };
       const effects=host.querySelector('[data-window-effects]');if(effects)effects.onchange=()=>{
-        settings().set(FX_KEY,effects.value==='off'?'off':'full');applyDesktopEffects();
+        settings().set(FX_KEY,['full','off'].includes(effects.value)?effects.value:'auto');applyDesktopEffects();
       };
       const desktopStyle=host.querySelector('[data-desktop-style]');if(desktopStyle)desktopStyle.onchange=()=>{
         settings().set(STYLE_KEY,desktopStyle.value==='mac'?'mac':'posterchan');applyDesktopStyle();
