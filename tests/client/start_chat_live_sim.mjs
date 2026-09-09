@@ -9,7 +9,14 @@ const src = fs.readFileSync(new URL('../../static/js/client/concord.js', import.
 const a = src.indexOf('  function startChatLive(p,room,channel){');
 if (a < 0) throw new Error('startChatLive moved');
 const b = src.indexOf('\n  }\n', a) + 4;
-const body = src.slice(a, b);
+const helper = name => {
+  const start=src.indexOf('  function '+name+'(');
+  if(start<0)throw new Error(name+' moved');
+  return src.slice(start,src.indexOf('\n',start));
+};
+const ownerStart=src.indexOf('  const deliveryOwner=');
+if(ownerStart<0)throw new Error('deliveryOwner moved');
+const body = src.slice(ownerStart,src.indexOf('\n',ownerStart))+'\n'+helper('cordControlStamp')+'\n'+helper('chatLiveKey')+'\n'+src.slice(a, b);
 
 const calls = [];
 const Relay = {
@@ -28,11 +35,11 @@ const channel = { id: 'ch1', name: 'general', streamPubkeys: ['aa'.repeat(32)] }
 const state = "let chatSub=null,chatSubKey='',chatBuffer=[],chatFlush=null;\n";
 const fn = new Function(
   'window', 'roomIdentity', 'stopChatLive', 'roomRelays', 'flushChatLive', 'console',
-  'setTimeout', 'Math', 'Date', 'Number', 'String',
+  'setTimeout', 'Math', 'Date', 'Number', 'String', 'roomControls',
   state + body + '\nreturn startChatLive;')(
     { Relay }, (r) => String(r && r.communityId || ''), () => {},
     (bundle) => (bundle && bundle.relays) || [], () => {}, console,
-    setTimeout, Math, Date, Number, String);
+    setTimeout, Math, Date, Number, String, new Map());
 
 /* The extracted function closes over its own copies of the module-level state, which is exactly
    what is wanted here: this measures one arming, not the latch. */
