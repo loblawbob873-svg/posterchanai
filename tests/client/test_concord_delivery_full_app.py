@@ -14,8 +14,10 @@ def bundled_assets():
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
-def test_concord_rejected_room_send_is_visible_and_retry_does_not_sign_again():
+@pytest.mark.parametrize("width",[1280,390])
+def test_concord_rejected_room_send_is_visible_and_retry_does_not_sign_again(width):
     async def check(b):
+        await b.call("Emulation.setDeviceMetricsOverride",{"width":width,"height":850,"deviceScaleFactor":1,"mobile":width<600})
         await desktop.login(b)
         await b.js(r'''(()=>{
           const room={name:'Delivery fixture',communityId:'c'.repeat(64),naddr:'fixture-community',
@@ -30,21 +32,32 @@ def test_concord_rejected_room_send_is_visible_and_retry_does_not_sign_again():
           __PC.switchMessagesTab('concord');
         })()''')
         await b.until("!!document.querySelector('#cc-input')")
+        # ON MOBILE THE CONVERSATION IS A SEPARATE PANE, so open the room the way a tap does.
+        # `.cc-conversation` is `display:none` under max-width:820px until `.cc-app` carries
+        # `show-chat`; without that the message renders into a pane with no box at all and every
+        # geometry assertion below measures zero — which says nothing about the check mark.
+        await b.js("""(()=>{const app=document.querySelector('.cc-app');
+          if(app&&!app.classList.contains('show-chat')){const ch=document.querySelector('.cc-channel');if(ch)ch.click();}
+          return true;})()""")
+        await b.until("getComputedStyle(document.querySelector('.cc-conversation')).display!=='none'")
         await b.js("document.querySelector('#cc-input').value='Visible failed room send';document.querySelector('#cc-input').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#cc-send').click()")
         await b.until("!!document.querySelector('[data-cc-retry-delivery]') || !!window.__concordSignError")
         assert not await b.js("window.__concordSignError||null")
         assert await b.js("[...document.querySelectorAll('.cc-delivery-status')].some(x=>x.innerText==='Not sent')")
+        assert not await b.js("!!document.querySelector('.cc-delivery-confirmed')"),'failure must not show confirmation'
         assert await b.js("document.querySelector('#cc-input').value===''"),'failed signed send restored blind-new-send draft'
         assert await b.js('__concordSigns')==1
         first=await b.js("JSON.stringify(__published.find(e=>e.kind===1059))")
         assert first and first!='null'
         await b.js("__publishOK=true;document.querySelector('[data-cc-retry-delivery]').click()")
-        await b.until("[...document.querySelectorAll('.cc-delivery-status')].some(x=>x.innerText==='Sent')")
-        assert await b.js("""(()=>{const status=[...document.querySelectorAll('.cc-delivery-status')].find(x=>x.textContent==='Sent');
-          if(!status||status.getAttribute('role')!=='status')return false;
-          const css=getComputedStyle(status),rect=status.getBoundingClientRect();
-          return css.position==='absolute'&&css.overflow==='hidden'&&css.clip!=='auto'&&rect.width<=1&&rect.height<=1;
-        })()"""),'successful delivery label must remain accessible without visible text or layout space'
+        await b.until("!!document.querySelector('.cc-delivery-confirmed')")
+        assert await b.js("""(()=>{const status=document.querySelector('.cc-delivery-confirmed');
+          if(!status||status.getAttribute('role')!=='status'||status.getAttribute('aria-label')!=='Sent'||status.title!=='Sent')return false;
+          const rect=status.getBoundingClientRect(),body=status.closest('.cc-message-body').getBoundingClientRect();
+          return !status.textContent.trim()&&status.querySelectorAll('use[href="#i-check"]').length===1&&
+            !!document.querySelector('symbol#i-check')&&rect.width>5&&rect.width<=16&&rect.height<=16&&
+            rect.right<=body.right+1&&status.scrollWidth<=status.clientWidth+1;
+        })()"""),'confirmed delivery must show one visible, accessible check without wrapping or a Sent text label'
         assert await b.js('__concordSigns')==1,'retry invoked signer again'
         assert await b.js("JSON.stringify(__published.filter(e=>e.kind===1059).at(-1))")==first
         assert await b.js("![...Object.values(localStorage)].some(x=>String(x).includes('Visible failed room send'))")
