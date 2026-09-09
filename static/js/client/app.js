@@ -14467,15 +14467,22 @@
         $('#xmr-copy',root).onclick=()=>{ tell.engaged=true; copyValue(addr, 'address copied', 'Copy the Monero address:'); };
         { const s=$('#xmr-sent',root);
           if(quiet)quiet.onchange=()=>{if(s)s.title=quiet.checked?'Close without posting a zap':'Post a public tip note crediting them';};
+          /* "Do not post this zap" SUPPRESSES THE POST AND NOTHING ELSE. `xmrLastAmt` is what
+             pre-fills the next tip sheet on every route, and on THIS one — the wallet is theirs,
+             not ours — it is the only trace of the payment the app keeps at all; both wallet
+             routes write it from `onSent` whatever the choice was. Skipping it under the quiet
+             branch made "your usual amount" depend on a privacy checkbox: 0.01 sent quietly was
+             forgotten, the same 0.01 through either wallet remembered, and nothing said why. */
+          const remember=a=>{ if(a){ ClientSettings.set('xmrLastAmt', a); _prefTouched.add('xmrTip'); saveClientPrefsNostr({ xmrTip: a }); } };
           if(s) s.onclick=async()=>{ if(tell.posted||(ME&&ME.pubkey)!==viewer)return;const a=amtVal();
-          if(!mayPost()){tell.posted=true;closeModal();return;}
+          if(!mayPost()){remember(a);tell.posted=true;closeModal();return;}
           const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
           const proof=(($('#xmr-prf',root)||{}).value||'').trim();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
           if(proof && !txid){ toast('a proof also needs its transaction id'); return; }
           if((txid||proof) && !a && !await uiConfirm('Post without the amount? Enter it in the amount box so people see how much you tipped.')) return;
           if(tell.posted||!mayPost())return;
-          if(a){ ClientSettings.set('xmrLastAmt', a); _prefTouched.add('xmrTip'); saveClientPrefsNostr({ xmrTip: a }); }   // remember + sync the amount to Nostr (follows across devices)
+          remember(a);   // remember + sync the amount to Nostr (follows across devices)
           tell.posted=true;   // told them here — the dismissal must not ask again
           closeModal(); _postXmrTipNote(noteId, pk, a, addr, txid, proof); }; }
       });
