@@ -616,6 +616,12 @@ class PushSubscription(Base):
     last_seen = Column(DateTime, nullable=True)
     p256dh = Column(String(255), nullable=True)                # client public key (base64url) — Web Push only
     auth = Column(String(255), nullable=True)                  # auth secret (base64url) — Web Push only
+    # WHICH notifications this device wants, as a JSON object of the app's toggle names.
+    # The real preferences are in a kind-30078 doc encrypted to the user's own key, which this node
+    # CANNOT read — so the client mirrors them here, per DEVICE, and the push watcher consults this.
+    # NULL means "never configured" and is deliberately read as "send everything" (app.services
+    # .push_prefs fails open: a silenced alert is indistinguishable from a dropped one).
+    prefs = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

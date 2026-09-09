@@ -20,6 +20,7 @@ from app.database import get_db
 from app.models import PushSubscription
 from app.services import push_service
 from app.services import direct_push_service
+from app.services import push_prefs
 from app.services.nostr import event as nostr_event
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,43 @@ async def subscribe(request: Request, db: Session = Depends(get_db)):
                                 p256dh=p256dh, auth=auth))
     db.commit()
     return {"ok": True}
+
+
+@router.post("/prefs")
+async def set_prefs(request: Request, db: Session = Depends(get_db)):
+    """Mirror the app's notification toggles onto this account's push devices.
+
+    The toggles themselves live in a kind-30078 document encrypted to the user's own key, so this
+    node cannot read them and the push watcher would otherwise have to send everything — which it
+    did. The client is the only party that can read that document, so it is the one that tells us.
+
+    Authenticated exactly like /subscribe: without it, knowing somebody's npub would be enough to
+    switch their notifications off, and a silenced alert is invisible to the person it belonged to.
+    """
+    body = await request.json()
+    pubkey = (body.get("pubkey") or "").strip().lower()
+    if not nostr_event.verify_self_auth(body.get("auth") or "", pubkey, "push-prefs"):
+        return {"ok": False, "error": "auth required"}
+    prefs = push_prefs.clean(body.get("prefs"))
+    rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pubkey)
+    # NAMING THE DEVICE IS THE WHOLE POINT. These preferences are per-device on purpose — a phone
+    # set to mentions-only must not silence the same events on a desktop — so a caller says which
+    # of its owner's devices it is: `device_id` for the native transport, `endpoint` for Web Push
+    # (whose rows carry no device id). Neither given is an explicit "all my devices".
+    device_id = (body.get("device_id") or "").strip()
+    endpoint = (body.get("endpoint") or "").strip()
+    if device_id:
+        if not _DEVICE_ID.fullmatch(device_id):
+            return {"ok": False, "error": "invalid device_id"}
+        rows = rows.filter(PushSubscription.device_id == device_id)
+    elif endpoint:
+        rows = rows.filter(PushSubscription.endpoint == endpoint)
+    updated = 0
+    for row in rows.all():
+        row.prefs = json.dumps(prefs)
+        updated += 1
+    db.commit()
+    return {"ok": True, "devices": updated}
 
 
 @router.post("/direct/register")

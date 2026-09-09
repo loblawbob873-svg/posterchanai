@@ -17525,7 +17525,8 @@
   // Account-scoped alert preferences. Pending field edits survive reload and delayed relay replies.
   const _NOTIFICATION_TYPES = [['email','Email'],['dm','Direct messages'],['likes','Likes and reactions'],
     ['replies','Replies'],['quotes','Quote posts'],['mentions','Mentions'],['reposts','Reposts'],
-    ['zaps','Zaps and tips'],['concord','Concord mentions'],['reminders','Reminders']];
+    ['zaps','Zaps and tips'],['concord','Concord mentions'],['channels','Chat rooms'],
+    ['reminders','Reminders']];
   const _NOTIFICATION_SOUNDS = ['chime','soft','bright','off'];
   function _notificationOwner(){ return (ME && ME.pubkey)||''; }
   function _notificationClean(value){
@@ -17541,6 +17542,66 @@
   }
   function _notificationStore(owner,state){
     localStorage.setItem('pc_notification_prefs:'+owner,JSON.stringify(state));
+  }
+  /* PUSH PREFERENCES ARE A SECOND, PER-DEVICE SET — and the separation is the feature.
+   *
+   * The set above is account-wide and syncs over kind-30078, which is right for "what interrupts me
+   * in the app" and wrong for a phone: turning likes off on the phone silenced them on the desktop
+   * too, because one list governed both. These live in localStorage on the device that owns them,
+   * never sync, and are mirrored to that device's OWN PushSubscription row (POST /api/push/prefs,
+   * scoped by device_id/endpoint) — so a desktop cannot be affected by a phone's choices.
+   *
+   * DEFAULT ON, like the in-app set: an unset preference has to mean "send", because a silenced
+   * alert is indistinguishable from a lost one. app/services/push_prefs.py fails open for the same
+   * reason at the other end. */
+  function _pushPrefKey(owner=_notificationOwner()){ return 'pc_push_prefs:'+owner; }
+  function _pushPrefState(owner=_notificationOwner()){
+    let raw={};try{raw=JSON.parse(localStorage.getItem(_pushPrefKey(owner))||'{}')||{};}catch(_){}
+    const out={};
+    for(const [key] of _NOTIFICATION_TYPES)if(typeof raw[key]==='boolean')out[key]=raw[key];
+    return out;
+  }
+  function pushPreference(key){
+    const v=_pushPrefState()[key];
+    return v===undefined ? true : v;
+  }
+  function setPushPreference(key,value){
+    const owner=_notificationOwner();if(!owner)return false;
+    if(!_NOTIFICATION_TYPES.some(([k])=>k===key))return false;
+    const next={..._pushPrefState(owner),[key]:!!value};
+    try{localStorage.setItem(_pushPrefKey(owner),JSON.stringify(next));}catch(_){}
+    _paintNotificationSettings();
+    _mirrorPushPrefsSoon(owner);
+    return true;
+  }
+  /* One signature per settings session, not one per toggle. Flipping five switches would otherwise
+   * be five signer prompts on a NIP-46/Amber account, which is how a preference screen becomes
+   * something people back out of. */
+  let _pushMirrorTimer=null;
+  function _mirrorPushPrefsSoon(owner=_notificationOwner()){
+    clearTimeout(_pushMirrorTimer);
+    _pushMirrorTimer=setTimeout(()=>{void mirrorPushPrefs(owner);},2500);
+  }
+  async function mirrorPushPrefs(owner=_notificationOwner()){
+    try{
+      if(!owner || owner!==_notificationOwner() || _standalone())return false;
+      const state=await pushState();
+      if(state!=='on')return false;      // nothing registered here — nothing to scope them to
+      const body={pubkey:owner,prefs:_pushPrefState(owner)};
+      /* SAY WHICH DEVICE. Unscoped, the server applies them to every device of the account, which
+       * would put the desktop's push back under the phone's choices — the exact thing this split
+       * exists to prevent. */
+      const P=_pushPlugin();
+      if(P){ try{ const ep=String(((await P.getEndpoint())||{}).endpoint||'');
+                  const bits=ep.split(':'); if(bits[0]==='direct'&&bits[2])body.device_id=bits[2]; }catch(_){} }
+      else { try{ const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();
+                  if(sub&&sub.endpoint)body.endpoint=sub.endpoint; }catch(_){} }
+      if(!body.device_id && !body.endpoint)return false;   // never fall back to "all my devices"
+      const auth=await sign(27235,'push-prefs',[['p',owner]]);
+      const r=await fetch('/api/push/prefs',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({...body,auth:btoa(JSON.stringify(auth))})}).then(x=>x.json()).catch(()=>null);
+      return !!(r&&r.ok);
+    }catch(_){ return false; }
   }
   function notificationPreference(key){
     const state=_notificationState(),v={...state.values,...state.dirty}[key];
@@ -17602,6 +17663,23 @@
       <label class="fld">App arrival sound<select class="input" id="us-notification-sound">${_NOTIFICATION_SOUNDS.map(sound=>`<option value="${sound}"${notificationPreference('sound')===sound?' selected':''}>${sound==='off'?'Silent':sound[0].toUpperCase()+sound.slice(1)}</option>`).join('')}</select></label>
       <div class="set-actions"><button class="btn btn-ghost small" id="us-notification-preview">Preview sound</button><button class="btn btn-ghost small" id="us-notification-sync">Sync now</button></div>
       <div class="muted small" id="us-notification-sync-state" role="status"></div>
+
+      <div id="us-push-section" hidden>
+        <div class="set-title small">Push notifications on this device</div>
+        <p class="muted small">What reaches you when the app is CLOSED. Kept on this device and never
+          synced, so a phone set to mentions only leaves every other device exactly as it is — these
+          are a separate answer from the app alerts above.</p>
+        ${_NOTIFICATION_TYPES.map(([key,label])=>`<label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">${label}<label class="switch"><input type="checkbox" data-push-type="${key}" ${pushPreference(key)?'checked':''}><span class="slider"></span></label></label>`).join('')}
+        <div class="muted small" id="us-push-sync-state" role="status"></div>
+      </div>
+
+      ${_standalone()?'':`
+      <div class="set-title small">Where else they go</div>
+      <p class="muted small">Delivery outside this app. These belong to your account on this instance.</p>
+      <label class="fld">Notify me on Telegram about <span class="muted small">(comma list: news,downloads,mentions,inbox)</span><input class="input" id="us-tg-notif" value="${enc(s.telegram_notifications||'')}"></label>
+      <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Telegram<label class="switch"><input type="checkbox" id="us-social-notif" ${s.social_notif_enabled?'checked':''}><span class="slider"></span></label></label>
+      <div class="muted small">Linking and unlinking Telegram itself stays under the Telegram tab.</div>`}
+
       <p class="muted small">Phone calls, carrier texts and Android background notification channels use your phone’s notification settings.</p>
       ${window.Capacitor?'<button class="btn btn-ghost small" id="us-notification-android">Open Android app settings</button>':''}
     </div>`;
@@ -17609,6 +17687,9 @@
   function _paintNotificationSettings(){
     const pane=$('[data-notification-owner]');if(!pane || pane.dataset.notificationOwner!==_notificationOwner())return;
     $$('[data-notification-type]',pane).forEach(el=>el.checked=notificationPreference(el.dataset.notificationType));
+    // The per-device push set hydrates from ITS OWN store, never from the synced one — reading the
+    // account values into these boxes is how the two would quietly become one list again.
+    $$('[data-push-type]',pane).forEach(el=>el.checked=pushPreference(el.dataset.pushType));
     const sound=$('#us-notification-sound',pane);if(sound)sound.value=notificationPreference('sound');
     const status=$('#us-notification-sync-state',pane);if(status)status.textContent=Object.keys(_notificationState().dirty).length?'Saved on this device. Waiting to sync.':'Saved.';
   }
@@ -17618,6 +17699,19 @@
     $$('[data-notification-type]',pane).forEach(el=>el.onchange=()=>{
       if(owner===_notificationOwner())setNotificationPreference(el.dataset.notificationType,el.checked);
     });
+    $$('[data-push-type]',pane).forEach(el=>el.onchange=()=>{
+      if(owner!==_notificationOwner())return;
+      setPushPreference(el.dataset.pushType,el.checked);
+      const st=$('#us-push-sync-state',pane);if(st)st.textContent='Saved on this device. Telling the server…';
+    });
+    /* REVEALED ONLY WHERE PUSH EXISTS. pushState() is async and the pane is built synchronously, so
+     * the section ships hidden: offering "what reaches you when the app is closed" on a device that
+     * has never registered for push is a control that cannot do anything. */
+    void (async()=>{ try{
+      const section=$('#us-push-section',pane);if(!section)return;
+      const on=(await pushState())==='on';
+      if(owner===_notificationOwner())section.hidden=!on;
+    }catch(_){} })();
     $('#us-notification-sound',pane).onchange=event=>{if(owner===_notificationOwner())setNotificationPreference('sound',event.target.value);};
     $('#us-notification-preview',pane).onclick=()=>{if(owner===_notificationOwner())notificationSound(true);};
     $('#us-notification-sync',pane).onclick=()=>{if(owner===_notificationOwner())_syncNotificationPreferences(owner);};
@@ -32625,6 +32719,10 @@
       }catch(_){}
       toast('Could not start notifications'+((r&&r.error)?': '+r.error:'')); return;
     }
+    /* Tell the server what THIS phone wants before anything can be delivered to it. A device with
+     * no preferences on file receives everything (push_prefs fails open, deliberately), so without
+     * this the first thing a freshly-registered phone does is exactly what the user turned off. */
+    void mirrorPushPrefs(ME.pubkey);
     // Now say whether the OS will actually let any of it through. Being force-stopped by a battery
     // setting silences push AND password autofill, and reports nothing.
     try{ const b=await P.batteryStatus();
@@ -32658,6 +32756,10 @@
       return false;
     }
     toast('🔔 Push notifications on');
+    /* A device that has just registered has no preferences on the server yet, so it would receive
+     * everything until the next toggle happened to mirror them. Send what this device already
+     * believes, now. */
+    void mirrorPushPrefs(ME.pubkey);
     return true;
   }
   /* Send a real notification the whole way round — server → push service → this device.
@@ -33436,8 +33538,8 @@
             ${s.telegram_chat_id?'<button class="btn btn-ghost small" id="us-tg-unlink" style="color:var(--danger)">Unlink Telegram</button>':''}
           </div>
           <div id="us-tg-keybox" class="muted small"></div>
-          <label class="fld">Notify me about <span class="muted small">(comma list: news,downloads,mentions,inbox)</span><input class="input" id="us-tg-notif" value="${enc(s.telegram_notifications||'')}"></label>
-          <label class="fld" style="flex-direction:row;justify-content:space-between;align-items:center">Relay notifications to Telegram<label class="switch"><input type="checkbox" id="us-social-notif" ${s.social_notif_enabled?'checked':''}><span class="slider"></span></label></label>
+          <div class="muted small">What Telegram notifies you about now lives under
+            <b>Notifications</b>, with everything else that decides when you are interrupted.</div>
         </div>
         <div class="us-pane" data-pane="social">
           ${typeof s.fedi_only==='boolean' ? `

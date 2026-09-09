@@ -12,7 +12,8 @@ import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.services import push_service, settings_store
+from app.services import push_service
+from app.services import push_prefs, settings_store
 from app.services.direct_push_service import subscription_dict
 from app.services.nostr import relay
 from app.services.nostr.quotes import quote_pubkeys
@@ -203,10 +204,12 @@ async def _poll_channels():
             room = await _channel_name(cid)
             body = (ev.get("content") or "").strip().replace("\n", " ")[:80] or "New message"
             payload = {"title": f"💬 {room or 'Chat'}", "body": f"{name or 'Someone'}: {body}",
-                       "eid": eid, "author": author, "chan": cid}
+                       "eid": eid, "author": author, "chan": cid, "type": "channels"}
             for pk in recips:
                 _chan_last[(pk, cid)] = mono
                 for s in by_pk[pk]:
+                    if not push_prefs.allows(s.prefs, "channels"):
+                        continue
                     ok = await asyncio.to_thread(
                         push_service.send,
                         subscription_dict(s), payload)
@@ -264,8 +267,17 @@ async def _poll():
             name = await _name_for(author)
             dead = []
             for pk in recips:
-                payload = {"title": "PosterChan", "body": _title(ev, name, pk), "eid": eid, "author": author}
+                # WHICH KIND OF NOTIFICATION THIS IS, decided the same way _title words it. The
+                # in-app gate only ever governed alerts the OPEN client raised for itself, so a
+                # closed phone buzzed for every like, repost and zap whatever the toggles said.
+                ntype = push_prefs.push_type(ev, pk)
+                payload = {"title": "PosterChan", "body": _title(ev, name, pk), "eid": eid,
+                           "author": author, "type": ntype}
                 for s in by_pk[pk]:
+                    # Per DEVICE: a phone and a laptop may want different things, and the row is
+                    # where the client mirrored the answer to. Unset means send (see push_prefs).
+                    if not push_prefs.allows(s.prefs, ntype):
+                        continue
                     ok = await asyncio.to_thread(
                         push_service.send,
                         subscription_dict(s), payload)
