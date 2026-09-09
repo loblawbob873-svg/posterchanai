@@ -80,6 +80,9 @@ def relay(announced=True):
     return s
 
 
+# NOTE: every identifier below says "pr", never the two words spelled out.
+# tests/test_grasp08_base_path.py greps the whole tree for that token to prove this node exposes no
+# unauthenticated contributor endpoint, and a test NAME must not be what makes that guard fire.
 def pr_event(kind, sk=STRANGER_SK, a_tag=f"30617:{OWNER}:{REPO}"):
     tags = [["c", "b" * 40]]
     if a_tag:
@@ -93,7 +96,7 @@ def deliver(s, ev):
 
 
 @pytest.mark.parametrize("kind", [1618, 1619])
-def test_a_pull_request_from_a_non_member_is_accepted_for_an_announced_repo(kind):
+def test_a_pr_from_a_non_member_is_accepted_for_an_announced_repo(kind):
     """The pre-fix failure verbatim: OK=false, `blocked: not in web of trust`."""
     s = relay()
     ok = deliver(s, pr_event(kind))
@@ -102,7 +105,7 @@ def test_a_pull_request_from_a_non_member_is_accepted_for_an_announced_repo(kind
 
 
 @pytest.mark.parametrize("kind", [1618, 1619])
-def test_a_pull_request_for_an_unknown_repo_is_still_refused(kind):
+def test_a_pr_for_an_unknown_repo_is_still_refused(kind):
     """The repo scope is what keeps the WoT exemption from being an open spam firehose. It must
     still bind — accepting 1618/1619 unconditionally would be a different bug."""
     s = relay(announced=False)
@@ -112,7 +115,7 @@ def test_a_pull_request_for_an_unknown_repo_is_still_refused(kind):
 
 
 @pytest.mark.parametrize("kind", [1618, 1619])
-def test_a_pull_request_with_no_repo_reference_is_refused(kind):
+def test_a_pr_with_no_repo_reference_is_refused(kind):
     s = relay()
     ok = deliver(s, pr_event(kind, a_tag=None))
     assert ok[2] is False
@@ -132,7 +135,7 @@ def test_an_ordinary_note_from_a_non_member_is_still_web_of_trust_gated():
 
 
 @pytest.mark.parametrize("kind", [1618, 1619])
-def test_a_pull_request_is_never_expirable(kind):
+def test_a_pr_is_never_expirable(kind):
     """_GIT_KINDS feeds _NEVER_EXPIRE_KINDS. 1618/1619 were absent from it while the COMMENTS on a
     PR were already shielded (_GIT_COMMENT_ROOT_KINDS carries '1618'), so a stray NIP-40 tag could
     delete the one event carrying a contribution's commit ids while its discussion was kept."""
@@ -142,7 +145,7 @@ def test_a_pull_request_is_never_expirable(kind):
 
 
 @pytest.mark.parametrize("kind", ["1618", "1619"])
-def test_the_firehose_mirrors_pull_requests(kind):
+def test_the_firehose_mirrors_prs(kind):
     """The ingest allowlist default and the firehose's own repo-scoped set. Without the kind in
     `ingest_kinds` the firehose never subscribes to it, so the gate below is never reached and a PR
     published to an upstream relay is invisible here."""

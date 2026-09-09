@@ -52,6 +52,25 @@ def _relay_from_public_base(public_base: str) -> str:
     return "%s://%s/relay" % ("wss" if pu.scheme == "https" else "ws", pu.netloc)
 
 
+def announce_relay_url() -> str:
+    """The relay a kind-30617 announcement must name in its `relays` tag, resolved once.
+
+    GRASP-01 makes this tag part of acceptance ("MUST reject git repository announcements that do
+    not list the service in both `clone` and `relays` tags"), and ngit publishes the kind-30618 repo
+    state THERE — a repo announced without it is clonable and NOT pushable, failing with "state
+    event failed to reach any git server relay" while the git side is perfectly healthy.
+
+    There are two producers of a 30617 in this codebase (the git host's `create`, and
+    /api/git/announce) and one of them was missing the tag entirely. This is the one expression both
+    resolve it with, so a fix to one is a fix to both. Explicit `client_relay_url` wins; otherwise it
+    is derived from the public base, since this node's relay is served at /relay on the same host
+    that fronts /git.
+    """
+    from app.services import settings_store
+    explicit = (settings_store.get("client_relay_url", "") or "").strip()
+    return explicit or _relay_from_public_base(settings_store.get("git_server_public_base", "") or "")
+
+
 def _read_config() -> dict:
     """Read the git-host settings from the Nostr datastore (same mechanism the relay uses). The DSN
     is reused from the relay setting (same Postgres `posterchan_relay` the hook reads)."""
@@ -90,6 +109,9 @@ def _read_config() -> dict:
             # ("state event failed to reach any git server relay") even though the git side is fine.
             # Explicit setting wins; otherwise derive from the public base, since this node's relay is
             # served at /relay on the same host that fronts /git (https://x/git -> wss://x/relay).
+            # Resolved by announce_relay_url() above so the two 30617 producers cannot disagree —
+            # spelled out here because this dict is built inside a subprocess whose settings_store
+            # is hydrated by the `g` closure above, not by a fresh session.
             "relay_url": g("client_relay_url", "") or _relay_from_public_base(g("git_server_public_base", "")),
             "allowlist": g("git_server_allowlist", ""),
             "repo_max_mb": gi("git_server_repo_max_mb", 512),
