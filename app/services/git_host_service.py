@@ -317,9 +317,75 @@ def repo_head(owner_hex: str, repo_id: str) -> str:
     return (r.stdout or "").strip()
 
 
+def head_from_state(owner_hex: str, repo_id: str) -> str:
+    """The HEAD the repo's SIGNED kind-30618 declares, if that branch now exists here — else "".
+
+    GRASP-01: "MUST set repository HEAD per repo state announcement as soon as the git data related
+    to that branch has been received." We never read it: `adopt_head_if_unborn` picked
+    main/master/first-alphabetically BY CONVENTION, so a project whose declared default is `develop`
+    got `master` — a wrong answer given confidently to every reader that asks the repo for its
+    default branch (the web Git UI's browse ref, the 30618 witness we then publish, `git clone`'s
+    symref advertisement).
+
+    The state is read through the SAME primitives the push hook authorizes with — the recursive
+    maintainer set, then `select_authorized_state`, which re-verifies the BIP-340 signature here and
+    takes the newest maintainer-signed candidate — so a stranger's 30618 cannot move HEAD any more
+    than it can move a branch.
+
+    "as soon as the git data … has been received" is the load-bearing clause and it is why the ref
+    must EXIST before we point at it: setting HEAD to a branch we do not have reproduces exactly the
+    unborn-HEAD bug this module already had to fix once.
+
+    Best-effort by construction: no DSN, no psycopg2, an unreachable database or no state event all
+    return "" and leave the caller on its convention. HEAD is metadata — refusing to serve a repo
+    because we could not read a preference would be a far worse failure than a stale default.
+    """
+    rid = sanitize_repo_id(repo_id)
+    dsn = os.environ.get("GRASP_PG_DSN", "")
+    if not rid or not dsn:
+        return ""
+    try:
+        import psycopg2
+        from app.services import git_auth
+        conn = psycopg2.connect(dsn, connect_timeout=5)
+        try:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("SET statement_timeout = 4000")
+            maints = git_auth.load_maintainers(conn, owner_hex, rid)
+            state = git_auth.select_authorized_state(
+                git_auth.load_state_events(conn, owner_hex, rid, maints), maints)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.info("[git-host] could not read a declared HEAD for %s/%s (%s)", owner_hex[:12], rid, e)
+        return ""
+    if not state:
+        return ""
+    want = ""
+    for t in state.get("tags") or []:
+        if len(t) >= 2 and t[0] == "HEAD":
+            # NIP-34 writes it as `ref: refs/heads/x`; accept a bare refname too, since the tag is
+            # produced by whichever client signed the state.
+            want = str(t[1]).strip()
+            want = want[4:].strip() if want.startswith("ref:") else want
+            break
+    if not want.startswith("refs/heads/") or ".." in want or want != want.strip():
+        return ""
+    return want if want in repo_refs(owner_hex, rid) else ""
+
+
 def adopt_head_if_unborn(owner_hex: str, repo_id: str) -> str:
-    """Point HEAD at a real branch when the repo's default branch was never born. Returns the ref
-    HEAD ends up on ("" if unchanged/unknown).
+    """Point HEAD at the branch the repo should default to. Returns the ref HEAD ends up on ("" if
+    unchanged/unknown).
+
+    TWO SOURCES, IN ORDER. First the SIGNED 30618's declared HEAD (`head_from_state`), which is what
+    GRASP-01 requires and which OVERRIDES an already-born HEAD — a maintainer-signed state event is
+    an instruction, not a hint, and it is the only way a project can ever change its default branch
+    here (there is no endpoint for it). Then, only if no state declares one, the convention below.
+
+    The function keeps its name because the convention half is still exactly what it says: an
+    unborn HEAD adopted from what was pushed.
 
     `git init --bare` stamps HEAD from the SERVER's init.defaultBranch (master here), so a repo whose
     first push is `main` is left with HEAD -> refs/heads/master, a branch that does not exist. Clones
@@ -336,8 +402,15 @@ def adopt_head_if_unborn(owner_hex: str, repo_id: str) -> str:
         return ""
     refs = repo_refs(owner_hex, rid)
     head = repo_head(owner_hex, rid)
+    declared = head_from_state(owner_hex, rid)
+    if declared and declared != head:
+        r = _git(d, "symbolic-ref", "HEAD", declared, check=False)
+        if r.returncode == 0:
+            logger.info("[git-host] HEAD of %s/%s set to %s per its signed 30618",
+                        owner_hex[:12], rid, declared)
+            return declared
     if head and head in refs:
-        return ""                     # already born — leave it alone
+        return ""                     # already born and nothing declared otherwise — leave it alone
     heads = sorted(r for r in refs if r.startswith("refs/heads/"))
     if not heads:
         return ""                     # empty repo: HEAD stays as-is until something is pushed
@@ -482,6 +555,106 @@ def maybe_gc(owner_hex: str, repo_id: str, *, force: bool = False) -> bool:
     except Exception as e:
         logger.debug("[git-host] gc %s failed: %s", key, e)
         return False
+
+
+#: GRASP-01: "SHOULD delete and MAY garbage collect these refs if no corresponding git PR event or
+#: git PR update event, with a `c` tag that matches the ref tip, is accepted by relay with 20
+#: minutes." The grace is the spec's number; the sweep interval is ours.
+NOSTR_REF_GRACE_SECONDS = 20 * 60
+
+
+def nostr_refs(owner_hex: str, repo_id: str) -> dict:
+    """{refs/nostr/<event-id>: (sha, age_seconds)} for one repo.
+
+    Age comes from the ref's own committer date, NOT from the file mtime: a `git gc` rewrites
+    packed-refs and would reset every mtime at once, silently granting the whole namespace a fresh
+    20 minutes. `%(creatordate:unix)` is the object's date, which nothing on this side rewrites."""
+    rid = sanitize_repo_id(repo_id)
+    d = repo_dir(owner_hex, rid) if rid else None
+    if not d or not os.path.isdir(d):
+        return {}
+    r = _git(d, "for-each-ref", "--format=%(refname) %(objectname) %(creatordate:unix)",
+             "refs/nostr/", check=False)
+    now = int(time.time())
+    out = {}
+    for line in (r.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        name, sha, when = parts
+        try:
+            age = now - int(when)
+        except ValueError:
+            age = 0
+        out[name] = (sha, max(age, 0))
+    return out
+
+
+def reap_nostr_refs(conn=None, *, grace: int = NOSTR_REF_GRACE_SECONDS) -> dict:
+    """Delete every `refs/nostr/<event-id>` older than `grace` that no PR event claims.
+
+    THE REF IS AN UNAUTHENTICATED WRITE BY DESIGN — that is what makes a pull request possible from
+    somebody who is not a maintainer, and it is also why the namespace needs a sweeper rather than a
+    quota alone. A ref is KEPT when the relay holds a valid kind-1618/1619 with that event id whose
+    `c` tags include the ref's current tip; otherwise, once it is past the grace, it goes.
+
+    FAIL-CLOSED HERE MEANS KEEP, not delete: with no database, no psycopg2 or an unreachable relay we
+    cannot tell an unclaimed ref from a claimed one, and deleting on "I could not ask" would throw
+    away contributors' work every time Postgres blinked. Deletion needs positive evidence of absence,
+    which is the same rule the folder-sync deletion guard and the Blossom store scan already state:
+    "could not ask" is never "missing".
+    """
+    dsn = os.environ.get("GRASP_PG_DSN", "")
+    close_after = False
+    if conn is None:
+        if not dsn:
+            return {"swept": 0, "deleted": 0, "kept": 0, "skipped": "no relay DSN"}
+        try:
+            import psycopg2
+            conn = psycopg2.connect(dsn, connect_timeout=5)
+            conn.autocommit = True
+            close_after = True
+        except Exception as e:
+            logger.info("[git-host] nostr-ref reaper: no relay DB (%s) — keeping every ref", e)
+            return {"swept": 0, "deleted": 0, "kept": 0, "skipped": str(e)}
+    from app.services import git_auth
+    swept = deleted = kept = 0
+    try:
+        for r in list_repos():
+            refs = nostr_refs(r["owner"], r["repo_id"])
+            if not refs:
+                continue
+            stale = {name: v for name, v in refs.items() if v[1] >= grace}
+            if not stale:
+                kept += len(refs)
+                continue
+            ids = [git_auth.nostr_ref_event_id(n) for n in stale]
+            claims = git_auth.load_pr_events_for_tips(conn, [i for i in ids if i])
+            d = repo_dir(r["owner"], r["repo_id"])
+            for name, (sha, _age) in stale.items():
+                swept += 1
+                eid = git_auth.nostr_ref_event_id(name)
+                ev = claims.get(eid)
+                if ev is not None and sha.lower() in git_auth.pr_commit_tips(ev):
+                    kept += 1
+                    continue
+                # `update-ref -d <ref> <sha>` is a compare-and-swap: a contributor who re-pushed the
+                # branch a moment ago keeps it, instead of losing a ref this sweep already decided
+                # about from a stale read.
+                res = _git(d, "update-ref", "-d", name, sha, check=False)
+                if res.returncode == 0:
+                    deleted += 1
+                    logger.info("[git-host] reaped %s in %s/%s (no PR event claims %s)",
+                                name, r["owner"][:12], r["repo_id"], sha[:12])
+    except Exception as e:
+        logger.warning("[git-host] nostr-ref reaper failed (%s) — refs kept", e)
+    finally:
+        if close_after:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return {"swept": swept, "deleted": deleted, "kept": kept}
 
 
 def reap_all(total_cap_gb: float) -> dict:

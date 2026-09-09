@@ -140,6 +140,46 @@ the push died with `400 Bad request syntax` (worked around per-node with
 hands `git-http-backend` a real `CONTENT_LENGTH`. Receive-pack needs the whole pack anyway, so
 spooling costs nothing in practice; `_MAX_BODY` (2 GiB) is enforced while de-framing.
 
+## GRASP-01 conformance on the git host
+
+What a stock **ngit v3** client needs from this service, and where each piece lives.
+
+- **A repository is created because we ACCEPTED its announcement.** `ngit init` publishes the
+  kind-30617 and then polls `info/refs` (`check_git_server_ready`, ngit-cli
+  `src/lib/accept_maintainership.rs:401`) waiting for the repo to exist — there is no provisioning
+  call anywhere in ngit. `git_host_main.py:_autoprovision` runs on that probe: it reads the owner's
+  own 30617, requires it to name this service in `clone`, applies the acceptance policy, and creates
+  the bare repo. Scoped to the smart-HTTP endpoints, so no browse route can allocate disk.
+  - **`git_server_accept_policy`** — `local-or-wot` (default), `local`, `wot`, `allowlist`, `any`.
+    This is a POLICY, not a reading of the spec: GRASP-01 requires serving a repo for each accepted
+    announcement and leaves the resource question to the operator, to be stated in NIP-11
+    `repo_acceptance_criteria`. **Keep that string in step with this setting.** `any` is an open
+    disk-allocation primitive — the size caps are enforced at push time, in the hook.
+  - `git_server_auto_provision` turns it off entirely.
+- **The maintainer ACL is the RECURSIVE set.** `git_auth.load_maintainers` walks each maintainer's
+  own 30617 for the same identifier, honouring NIP-34 role tags (`M` lead, `m` co-maintainer, `o`
+  moderator, with timestamp history) and a member's own departure. Transcribed from ngit-cli 3.0.0
+  because neither GRASP-01 nor NIP-34 defines the term; see the comments in `git_auth.py` for the
+  file:line map, the two deliberate divergences, and the ONE thing we did not adopt (ngit's stricter
+  mutual-confirmation `confirmed_maintainers`, which would refuse this deployment's own operator key).
+- **HEAD comes from the signed 30618** (`git_host_service.head_from_state`), not from guessing
+  main/master, and only once the branch it names actually exists here.
+- **`refs/nostr/<event-id>` pushes are accepted** (`git_auth.decide_nostr_ref`) — the transport a
+  pull request's code travels over, from somebody who is not a maintainer and can never appear in a
+  signed 30618. Rejected when a PR event exists naming a different tip; accepted provisionally when
+  no event has arrived yet, and swept by the reaper. **The reaper** (`reap_nostr_refs`, a 300s thread
+  in the git host) deletes an unclaimed ref after the spec's 20 minutes and KEEPS everything when it
+  cannot reach the relay.
+- **Percent-encoded identifiers** are decoded before `sanitize_repo_id`, never after. An identifier
+  that is not a legal slug once decoded (spaces, emoji) is still refused — supporting those needs an
+  on-disk naming scheme, which is a migration, not a regex change.
+- **The clone URL in a browser serves a page** (GRASP-01 SHOULD) linking to the web client and to
+  nostr git clients, with a real 404 page for a repo we do not host. Read-gated like a clone, and
+  forwarded by `git_proxy` — the proxy is the second place every route has to be added.
+
+Not on this side, and owned elsewhere: the relay's kind acceptance (1618/1619 and friends), NIP-11
+`supported_grasps`/`repo_acceptance_criteria`/`curation`, purgatory, and GRASP-02/03/05/06.
+
 ## Private repos — READ gate (security-critical)
 
 A repo can be marked **private** at create time (`private=true`; default configurable via

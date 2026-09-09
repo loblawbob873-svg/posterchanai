@@ -79,8 +79,11 @@ async def run():
         print("git-http-backend missing"); return 1
 
     tmp = tempfile.mkdtemp(prefix="grasp_proxy_")
-    ghs.GIT_PROJECT_ROOT = os.path.join(tmp, "git_repos")
-    os.makedirs(ghs.GIT_PROJECT_ROOT, exist_ok=True)
+    # Via the ENV VAR, never a module attribute: git_project_root() is lazy and reads
+    # GRASP_GIT_PROJECT_ROOT / upload_path / a default, so an attribute assignment silently
+    # leaves the test writing into the live repo store.
+    os.environ["GRASP_GIT_PROJECT_ROOT"] = os.path.join(tmp, "git_repos")
+    os.makedirs(os.environ["GRASP_GIT_PROJECT_ROOT"], exist_ok=True)
 
     owner_sk = (11).to_bytes(32, "big")
     reader_sk = (22).to_bytes(32, "big")

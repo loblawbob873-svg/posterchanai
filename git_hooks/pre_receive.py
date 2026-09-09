@@ -134,9 +134,17 @@ def main():
                 _fail("malformed ref line")
             old, new, ref = parts
             nff = _is_non_fast_forward(gitdir, old, new)
+            # GRASP-01 `refs/nostr/<event-id>`: the PR event, if the relay already has it. Fetched
+            # per ref and ONLY for that namespace, so an ordinary push pays nothing — a normal push
+            # is many ref lines and this would otherwise be a query each.
+            pr_event = None
+            _eid = git_auth.nostr_ref_event_id(ref)
+            if _eid:
+                pr_event = git_auth.load_event_by_id(conn, _eid)
             ok, reason = git_auth.decide_push_ref(
                 ref, old, new, maintainers, state_events,
-                allow_force=allow_force, is_non_fast_forward=nff, nip98_signer=nip98_signer)
+                allow_force=allow_force, is_non_fast_forward=nff, nip98_signer=nip98_signer,
+                pr_event=pr_event)
             if not ok:
                 _fail(reason)
             else:
