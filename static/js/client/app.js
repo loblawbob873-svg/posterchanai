@@ -4995,6 +4995,7 @@
       restoreMediaServer();   // restore the synced media server (kind-10063/10096) — must run AFTER the
                               // relay is connected (this fires on onReady), else the query returns nothing
       restoreClientPrefsNostr();   // restore Nostr-synced client prefs (data-saver / tap-to-load images)
+      seedRelaysFromNip65();  // the user's OWN published relay list joins this device's — additive, never a replacement
       setTimeout(()=>{ try{ Drafts.pull(); }catch(_){} }, 1200);   // local drafts already painted; sync off the critical path
       Promise.allSettled([fetchFollows(), fetchMutes(), fetchPins(), fetchBookmarks(), fetchMyProfile()])
         .then(()=>{ if(!GUEST && ['home','global','notifications','messages','bookmarks'].includes(VIEW)){ try{ renderView(true); }catch(_){} } });
@@ -5668,13 +5669,94 @@
    * choice.  Recognise only that complete fingerprint; any genuinely edited list remains theirs. */
   const LEGACY_AUTO_RELAYS = ['wss://relay.poster.place/', 'wss://nos.lol/', 'wss://relay.primal.net/',
                               'wss://nostr.mom/', 'wss://offchain.pub/', 'wss://relay.ditto.pub/'];
+  /* ONE SHOT, AND IT MUST STAY ONE SHOT.
+   *
+   * This ran on EVERY connectRelays(), so somebody who deliberately chose exactly these six in this
+   * order had the list deleted at boot, re-entered it, and lost it again on the next launch — with
+   * no way to say "I meant it". Repairing an old build's accident is a one-time repair; a permanent
+   * veto over a list the user saved is not ours to hold. The marker is set whatever the outcome, so
+   * a list that matches the fingerprint LATER is a choice and is left alone. */
   function _dropLegacyAutoRelays(){
-    if(!ClientSettings.get('relaysEnabled')) return false;
+    if(ClientSettings.get('legacyAutoRelaysCleared')) return false;
+    if(!ClientSettings.get('relaysEnabled')){ ClientSettings.set('legacyAutoRelaysCleared', true); return false; }
     const got=userRelays().map(normalizeRelay);
     const old=LEGACY_AUTO_RELAYS.map(normalizeRelay);
+    ClientSettings.set('legacyAutoRelaysCleared', true);
     if(got.length!==old.length || got.some((u,i)=>u!==old[i])) return false;
     ClientSettings.set('relays', []); ClientSettings.set('relaysEnabled', false);
     return true;
+  }
+
+  /* THE SAVED RELAY LIST IS THE USER'S. WE ONLY EVER ADD TO IT.
+   *
+   * One rule, and it was broken in both directions at once. We PUBLISHED kind 10002 out of this
+   * device's localStorage and never READ the user's own — so somebody arriving with a list from
+   * Amethyst or Damus saw our single default, and the first Save that touched the relay controls
+   * replaced their list GLOBALLY. That is the replaceable-list wipe that already cost a follows
+   * list once. Meanwhile _dropLegacyAutoRelays above deleted a saved list on every boot.
+   *
+   * `_nip65Confirmed` is the whole safety argument: it separates "they have published no relay
+   * list" from "no relay answered". A REQ that nobody EOSE'd is the second, and a publish built on
+   * that reading is exactly how the wipe happens. Only a COMPLETE answer sets it. */
+  let _nip65Confirmed = false;
+
+  /* NIP-65 `r` tags are ["r", url] or ["r", url, "read"|"write"]. BOTH markers are kept: this list
+   * is what the client DIALS, and a relay somebody reads from is one we must be able to read from
+   * too. Same URL rule the payment-target resolver applies — wss only, no embedded credentials. */
+  function _relayTagUrls(ev){
+    return (ev && Array.isArray(ev.tags) ? ev.tags : [])
+      .filter(t=>Array.isArray(t) && t[0]==='r' && t[1])
+      .map(t=>String(t[1]).trim())
+      /* A SCHEME WE DO NOT SPEAK IS NOT A RELAY TO NORMALIZE. normalizeRelay's job is to default a
+       * BARE HOST to wss://, so handed "https://x" it prepends anyway and yields
+       * "wss://https://x" — which then parses as a perfectly good wss URL whose host is "https",
+       * passes every check below, and gets dialled. Reject a foreign scheme before that. */
+      .filter(u=>!/:\/\//.test(u) || /^wss?:\/\//i.test(u))
+      .map(normalizeRelay)
+      .filter(u=>{ try{ const v=new URL(u);
+        return v.protocol==='wss:' && !v.username && !v.password && !v.hash; }catch(_){ return false; } });
+  }
+
+  /* Set up the relays from the user's OWN published list, additively. Never subtracts, never
+   * publishes, and does nothing at all when it could not get a straight answer. */
+  async function seedRelaysFromNip65(){
+    try{
+      if(GUEST || !ME || !ME.pubkey || !window.Relay || !Relay.query) return false;
+      // Retry like restoreMediaServer(): a first REQ over a slow link EOSEs empty while the event
+      // exists, and treating that as "no relay list" is the failure this function exists to avoid.
+      let evs=null;
+      for(let attempt=0; attempt<3; attempt++){
+        if(attempt>0) await new Promise(r=>setTimeout(r, 500*attempt));
+        evs=await Relay.query([{authors:[ME.pubkey],kinds:[10002],limit:1}]);
+        if(evs && evs.complete===true) break;
+      }
+      if(!evs || evs.complete!==true) return false;   // could not ask: change nothing, publish nothing
+      _nip65Confirmed = true;
+      const mine=evs.filter(e=>{ try{
+          return e && e.kind===10002 && e.pubkey===ME.pubkey && NostrTools.verifyEvent(e);
+        }catch(_){ return false; } })
+        .sort((a,b)=>b.created_at-a.created_at||String(a.id).localeCompare(String(b.id)))[0];
+      const found=_relayTagUrls(mine);
+      if(!found.length) return false;
+      const have=userRelays().map(normalizeRelay).filter(Boolean);
+      const merged=[...new Set([...have, ...found])];
+      /* THE SWITCH IS A SEPARATE CHOICE FROM THE LIST, and turning it on is only ours to do when
+       * there is no configuration to override. Somebody who switched their relays OFF meant it;
+       * re-enabling at every login is this very bug with the sign reversed — us deciding for them.
+       * With a list already saved we still ADD to it, and their relays are there when they ask. */
+      const enabled=!!ClientSettings.get('relaysEnabled'), enable=enabled || !have.length;
+      if(merged.length===have.length && enabled===enable) return false;   // the steady state
+      ClientSettings.set('relays', merged);
+      if(enable) ClientSettings.set('relaysEnabled', true);
+      /* THE SETTINGS PANE CACHES ITS ROWS ONCE PER SESSION (_nostrPrefsLoaded). If it loaded before
+       * this answer arrived, those rows are the PRE-seed list — and the next Save writes them back,
+       * removing exactly what was just added. Re-point them at the merged list. */
+      try{ if(_nostrPrefsLoaded){ _setRelays=merged.slice(); drawRelayRows(); } }catch(_){}
+      // Only redial when the pool actually changes: with the switch off, connectRelays() reads no
+      // user list at all and this would be a reconnect that alters nothing.
+      if(enable) connectRelays();   // dial what we just learned; the pool is rebuilt, the page is not
+      return true;
+    }catch(_){ return false; }
   }
   function defaultRelays(){
     const own = (CFG && CFG.relay_url) ? [String(CFG.relay_url)] : [];
@@ -33962,7 +34044,16 @@
         // Save button covers every settings pane, so it may publish kind 10002 ONLY when the relay
         // controls themselves differ from their saved local baseline. A dedicated "Save & reload"
         // above remains the explicit force-publish route for someone intentionally restoring a list.
-        try{ if(relayChanged && on && urls.length) await publish(10002,'',urls.map(u=>['r',u])); }catch(_){}
+        /* …and it may go out ONLY when we have confirmed what is already published. A kind-10002
+         * write replaces the user's global relay list, including relays this device has never seen;
+         * "no relay answered" is not "they have none". Refusing is visible rather than silent,
+         * because a save that quietly did half of what it said is the worse failure. */
+        try{
+          if(relayChanged && on && urls.length){
+            if(_nip65Confirmed) await publish(10002,'',urls.map(u=>['r',u]));
+            else toast('relays saved on this device — not published, because your existing relay list could not be read');
+          }
+        }catch(_){}
       }
       if($('input[name=media-mode]')){
         const { enabled, url } = _mediaChoice();
