@@ -238,3 +238,40 @@ def test_server_side_datastore_authenticates_and_replays_private_write():
     assert auth["kind"] == 22242 and auth["pubkey"] == event["pubkey"]
     assert ["challenge", "challenge"] in auth["tags"]
     assert sum(frame[0] == "EVENT" for frame in ws.sent) == 2
+
+
+def test_auth_survives_a_proxy_that_strips_the_relays_path_prefix():
+    """The GRASP endpoint every repo announcement publishes is a PREFIX on a shared host.
+
+    `wss://poster.place/git` reaches the relay as Host `poster.place` at path `/` — nginx has
+    already eaten the prefix — so comparing paths judged the client against a URL it was never
+    handed, and every NIP-42-gated read on that endpoint failed. Reading the encrypted kind-10318
+    private repo list is one of them, which is why `ngit repo edit --private` refused to touch a
+    repo whose announcement listed only the GRASP relay while an otherwise identical repo that
+    also listed `wss://relay.poster.place` went through.
+
+    A path the server DID observe is still evidence, so a genuinely different mount is refused,
+    and so is a different host — NIP-42's domain match is the floor, not nothing.
+    """
+    sk = bytes.fromhex("21" * 32)
+    conn = object()
+    srv = server()
+    srv._auth_challenges[conn] = "c"
+    srv._auth_pubkeys[conn] = set()
+
+    srv._relay_urls[conn] = "wss://poster.place/"
+    behind_proxy = signed(sk, 22242, [["relay", "wss://poster.place/git"], ["challenge", "c"]], "")
+    srv._on_auth(conn, behind_proxy)
+    assert srv.sent[-1][1] == ["OK", behind_proxy["id"], True, ""], srv.sent[-1]
+
+    srv._auth_pubkeys[conn] = set()
+    srv._relay_urls[conn] = "wss://poster.place/relay"
+    wrong_mount = signed(sk, 22242, [["relay", "wss://poster.place/git"], ["challenge", "c"]], "")
+    srv._on_auth(conn, wrong_mount)
+    assert srv.sent[-1][1][0:3] == ["OK", wrong_mount["id"], False]
+
+    srv._relay_urls[conn] = "wss://poster.place/"
+    wrong_host = signed(sk, 22242, [["relay", "wss://evil.example/git"], ["challenge", "c"]], "")
+    srv._on_auth(conn, wrong_host)
+    assert srv.sent[-1][1][0:3] == ["OK", wrong_host["id"], False]
+    assert srv._auth_pubkeys[conn] == set()

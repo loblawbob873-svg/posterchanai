@@ -922,13 +922,32 @@ class RelayServer:
 
     @staticmethod
     def _same_relay_url(got: str, expected: str) -> bool:
-        """NIP-42 permits URL normalization; compare scheme/host/port/path, ignoring a final slash."""
+        """NIP-42 permits URL normalization; compare host, and the path only when we observed one.
+
+        A PROXY THAT MOUNTS THIS RELAY UNDER A PREFIX STRIPS THE PREFIX BEFORE WE SEE IT, so a
+        path comparison judges the client against a URL the client was never handed. That is not
+        hypothetical: `wss://poster.place/git` — the endpoint the repo announcements themselves
+        publish, and the one every GRASP client is told to use — reaches the relay as Host
+        `poster.place` at path `/`, so an AUTH event correctly signed for `.../git` was refused
+        with "AUTH relay URL does not match". Everything gated on NIP-42 then failed on that
+        endpoint alone: reading the encrypted kind-10318 private repo list is what ngit does
+        before it will touch a private announcement, so `ngit repo edit --private` died with
+        "none of its write relays were read successfully: authentication failed" for a repo whose
+        announcement listed only the GRASP endpoint, and succeeded for one that happened to list
+        `wss://relay.poster.place` beside it. Two repos, one reachable relay, opposite outcomes.
+
+        So the path is evidence only when the server actually has it. NIP-42 explicitly allows
+        domain-based matching, which is what remains, and the per-connection random challenge —
+        which the client must echo back — is what actually stops an AUTH event being replayed
+        here. The scheme is ignored for the same class of reason: a proxy terminates TLS, so the
+        relay may observe `ws` while the client correctly signs `wss`.
+        """
         try:
             a, b = urlsplit(got), urlsplit(expected)
-            # NIP-42 explicitly permits domain-based matching. Reverse proxies terminate TLS, so
-            # the relay process may observe ws while the client correctly signs wss (or vice versa
-            # on a direct LAN URL); scheme equality would reject that legitimate deployment.
-            return (a.netloc.lower(), a.path.rstrip("/")) == (b.netloc.lower(), b.path.rstrip("/"))
+            if a.netloc.lower() != b.netloc.lower():
+                return False
+            got_path, seen_path = a.path.strip("/"), b.path.strip("/")
+            return not got_path or not seen_path or got_path == seen_path
         except Exception:
             return False
 

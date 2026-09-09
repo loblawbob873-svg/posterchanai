@@ -279,6 +279,22 @@
   //: other. Roughly a fingertip; well above the border/rounding overlaps that are pure accident.
   const SLIVER = 64;
 
+  /*: …AND HOW MUCH OF THE COVERING WINDOW HAS TO BE OVER THE APP.
+   *
+   * The sliver alone is an ABSOLUTE test, and the comment above promises a proportional one: it
+   * asks "how much of THAT window is blocked" and then only ever checks 64 pixels. So two large
+   * windows lapping at a CORNER by 64x64 — a fraction of a percent of either — parked the whole
+   * app underneath. Reported as "if you focus a window, all the other windows hide" and "firefox
+   * and social seem like they are on different virtual desktops", which is exactly what parking
+   * looks like from the outside: the surface goes to the scratchpad, which IS another workspace.
+   *
+   * Both halves now have to hold. The sliver still rejects incidental laps, and this rejects a
+   * genuine but SMALL overlap, where parking the entire app costs far more than the band of the
+   * focused window that Firefox draws over. Every case the file already argued for is unchanged:
+   * a dialog inside Firefox, a narrow palette, and a window working over Telegram all sit wholly
+   * over the app, so their fraction is 1.0. */
+  const COVER_FRACTION = 0.5;
+
   /** Does `w` cover enough of the rectangle it sits over to be worth parking the app underneath? */
   function coversMoreThanASliver(nativeRect, w){
     if(!overlaps(nativeRect, w)) return false;
@@ -288,7 +304,9 @@
                - Math.max(nativeRect.top, w.top);
     // A window smaller than the slop in one axis can never overlap by more than it is, so judge it
     // against its own size instead — otherwise a narrow palette could never park anything.
-    return wide >= Math.min(SLIVER, w.width) && tall >= Math.min(SLIVER, w.height);
+    if(!(wide >= Math.min(SLIVER, w.width) && tall >= Math.min(SLIVER, w.height))) return false;
+    const own = Math.max(1, (Number(w.width) || 0) * (Number(w.height) || 0));
+    return (wide * tall) / own >= COVER_FRACTION;
   }
 
   function stashPlan(items, htmlWins){

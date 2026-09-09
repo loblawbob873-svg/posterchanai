@@ -79,6 +79,32 @@ def test_a_window_lapping_telegrams_edge_does_not_take_telegram_off_the_screen()
         "a 38px lap still parks the whole of Telegram — this is the frozen-screenshot report")
 
 
+def test_two_big_windows_lapping_at_a_corner_do_not_hide_each_other():
+    """THE SECOND REPORT, and the one the absolute threshold could never have caught.
+
+    "if you focus a window, all the other windows hide", and "firefox and social seem like they are
+    on different virtual desktops" — which is what parking looks like from the outside, because the
+    scratchpad IS another workspace.
+
+    Two large windows overlapping at a CORNER by 100x100 is a fraction of a percent of either, and
+    the sliver rule alone said 100 >= 64 in both axes and parked the whole of Firefox. The comment
+    beside the rule always claimed to ask "how much of THAT window is blocked"; it now does.
+    """
+    social = {"left": 0, "top": 0, "width": 1600, "height": 1200}
+    firefox = {"left": 1500, "top": 1100, "width": 2000, "height": 1500}
+    assert parked([(5, firefox)], [(9, social)]) == set(), (
+        "a corner lap parks the whole app — this is the 'all the other windows hide' report")
+
+
+def test_a_window_mostly_over_an_app_still_parks_it():
+    """The opposite error, and the reason this is a FRACTION and not "never park". A DOM frame
+    cannot rise above a floating Wayland surface, so a window genuinely sitting over an app has to
+    park it or the app draws straight through the window you just clicked."""
+    over = {"left": 1400, "top": 1000, "width": 1200, "height": 900}
+    firefox = {"left": 1500, "top": 1100, "width": 2000, "height": 1500}
+    assert parked([(5, firefox)], [(9, over)]) == {0}
+
+
 def test_a_dialog_inside_a_maximised_firefox_still_parks_it():
     """THE OPPOSITE ERROR, and the reason the threshold is not measured against the native window.
     A 400x300 dialog covers about 2% of a maximised Firefox. Judged that way Firefox would stay on
