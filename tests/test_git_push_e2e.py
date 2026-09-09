@@ -84,8 +84,11 @@ def main():
 
     conn = psycopg2.connect(DSN)
     tmp = tempfile.mkdtemp(prefix="grasp_e2e_")
-    ghs.GIT_PROJECT_ROOT = os.path.join(tmp, "git_repos")
-    os.makedirs(ghs.GIT_PROJECT_ROOT, exist_ok=True)
+    # Via the ENV VAR, never a module attribute: git_project_root() is lazy and reads
+    # GRASP_GIT_PROJECT_ROOT / upload_path / a default, so an attribute assignment silently
+    # leaves the test writing into the live repo store.
+    os.environ["GRASP_GIT_PROJECT_ROOT"] = os.path.join(tmp, "git_repos")
+    os.makedirs(os.environ["GRASP_GIT_PROJECT_ROOT"], exist_ok=True)
 
     owner_sk = secrets.token_bytes(32)
     owner_hex = bip340.pubkey_from_seckey(owner_sk).hex()

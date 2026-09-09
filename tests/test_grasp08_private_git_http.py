@@ -234,7 +234,10 @@ def test_the_answer_is_cached_so_a_clone_costs_one_indexed_read(monkeypatch, cfg
 
 @pytest.fixture
 def repo_store(tmp_path, monkeypatch):
-    monkeypatch.setattr(ghs, "GIT_PROJECT_ROOT", str(tmp_path), raising=False)
+    # `git_project_root()` is LAZY and reads GRASP_GIT_PROJECT_ROOT FIRST — it has to, so the
+    # hook subprocesses resolve the same root the server served from. Assigning the module
+    # attribute does NOTHING, and a store test that does it writes into the LIVE repo store.
+    monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
     return tmp_path
 
 

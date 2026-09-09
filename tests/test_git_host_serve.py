@@ -8,7 +8,7 @@ Proves, WITHOUT Postgres:
   3. a PRIVATE repo: anonymous upload-pack -> 401 (no refs leaked); a valid NIP-98 header from an
      allowlisted reader -> 200; a non-allowlisted signer -> 401.
 
-Uses a temp GIT_PROJECT_ROOT (no DB); the private read gate is exercised with pg_dsn="" so the
+Uses a temp GRASP_GIT_PROJECT_ROOT (no DB); the private read gate is exercised with pg_dsn="" so the
 readers allowlist alone gates (production injects the DSN + folds in maintainers).
 """
 
@@ -115,7 +115,11 @@ def main():
     test_supervisor_gate()
 
     tmp = tempfile.mkdtemp(prefix="grasp_test_")
-    ghs.GIT_PROJECT_ROOT = tmp   # redirect repo root for this test (module attr read at call time)
+    # THE COMMENT THIS REPLACES SAID "module attr read at call time". IT IS NOT: git_project_root()
+    # reads GRASP_GIT_PROJECT_ROOT, then the upload_path setting, then a default — it never looks
+    # at a module attribute. So this test wrote pubrepo.git and privrepo.git into the LIVE store at
+    # /var/lib/posterchanai/git_repos for its whole life, under the pubkey of secret key 11.
+    os.environ["GRASP_GIT_PROJECT_ROOT"] = tmp
 
     owner_sk = (11).to_bytes(32, "big")
     reader_sk = (22).to_bytes(32, "big")

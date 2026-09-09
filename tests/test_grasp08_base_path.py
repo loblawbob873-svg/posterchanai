@@ -75,7 +75,10 @@ def test_the_announced_clone_url_keeps_the_base_path(tmp_path, monkeypatch):
     """(1) THE ONE THAT ACTUALLY REACHES OTHER PEOPLE. The clone URL in a 30617 is what every other
     client — ngit, gitworkshop, a plain `git clone` — uses to reach the repo, so a base path dropped
     here is a repo nobody outside this node can fetch. Driven through the real host over HTTP."""
-    monkeypatch.setattr(ghs, "GIT_PROJECT_ROOT", str(tmp_path), raising=False)
+    # `git_project_root()` is LAZY and reads GRASP_GIT_PROJECT_ROOT FIRST — it has to, so the
+    # hook subprocesses resolve the same root the server served from. Assigning the module
+    # attribute does NOTHING, and a store test that does it writes into the LIVE repo store.
+    monkeypatch.setenv("GRASP_GIT_PROJECT_ROOT", str(tmp_path))
     npub = nostr_service.npub_of(OWNER)
     monkeypatch.setattr(gh, "_CONFIG", {
         "pg_dsn": "", "public_base": BASE, "allowlist": npub, "relay_url": "",
