@@ -97,7 +97,15 @@ def _read_config() -> dict:
             "allow_force": gb("git_server_allow_force", True),
             "nip98_push": gb("git_server_nip98_push", True),
             "default_private": gb("git_server_default_private", False),
-            "read_skew": 300,
+            # NIP-98 READ-GATE STRICTNESS. GRASP-08 fixes both of these: `created_at` within 60
+            # seconds, and a `method` tag of GET. They are the DEFAULTS here rather than literals,
+            # because the looser values were not arbitrary — the 300s window predates
+            # `scripts/git-credential-nostr` and covers a HAND-MADE `http.extraHeader` reused across
+            # several commands (documented in docs/GIT_OVER_NOSTR.md as the working https read path),
+            # which a 60s window makes a one-minute token. An operator whose client needs the old
+            # behaviour sets the key; nobody has to patch the host to get their clone back.
+            "read_skew": gi("git_server_read_skew", 60),
+            "read_require_method": gb("git_server_read_require_method", True),
             "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get(
                 "NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
         }

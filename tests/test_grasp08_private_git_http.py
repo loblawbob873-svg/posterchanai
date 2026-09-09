@@ -285,3 +285,116 @@ def test_unreadable_metadata_on_an_existing_repo_is_still_deny_by_default(repo_s
                         lambda o, r_: {"private": True, "readers": []})   # what an unreadable one returns
     monkeypatch.setattr(gh._Handler, "_announced_private", lambda self, o, r_: False)
     assert _handler()._read_gate_ok(OWNER, "pubrepo") is False
+
+
+# --------------------------------------------------------------------- NIP-98 to GRASP-08 spec
+#
+# GRASP-08 spells the read credential out: repository-scoped, `method` tag GET, ONE credential
+# covering every endpoint of a Smart HTTP operation, `created_at` within 60 seconds. Two of those
+# three are now enforced; the third (`u` equal to the canonical repository URL) is deliberately NOT,
+# and the last test in this block says why.
+
+import base64                                          # noqa: E402
+import json as _json                                   # noqa: E402
+import time as _time                                   # noqa: E402
+
+READER_SK = (55).to_bytes(32, "big")
+READER_HEX = bip340.pubkey_from_seckey(READER_SK).hex()
+_URL = "https://example.test/git/%s/privrepo.git/info/refs" % OWNER
+
+
+def _nip98(method="GET", age=0, url=_URL, sk=READER_SK, basic=False):
+    ev = build_event(sk, git_auth.NIP98_KIND, "", tags=[["u", url], ["method", method]],
+                     created_at=int(_time.time()) - age)
+    tok = base64.b64encode(_json.dumps(ev).encode()).decode()
+    if basic:
+        # The same signed token as the PASSWORD half of HTTP Basic, which is the only envelope
+        # libgit2 can produce (it runs credential helpers, which return username/password).
+        return "Basic " + base64.b64encode(("npub:" + tok).encode()).decode()
+    return "Nostr " + tok
+
+
+@pytest.fixture
+def private_repo(repo_store, monkeypatch, cfg):
+    ghs.create_repo(OWNER, "privrepo", private=True, readers=[READER_HEX])
+    monkeypatch.setattr(gh._Handler, "_announced_private", lambda self, o, r_: False)
+
+    def _gate(auth, **conf):
+        gh._CONFIG.update(conf)
+        h = _handler()
+        h.headers = {"Authorization": auth}
+        return h._read_gate_ok(OWNER, "privrepo")
+
+    return _gate
+
+
+def test_a_credential_whose_method_tag_is_not_GET_is_refused(private_repo):
+    """GRASP-08 names the method: GET. It was not checked at all before (require_method=False), so a
+    header minted for the write route — `<id>.git/edit`, method POST, whose `u` contains the read
+    needle — was accepted as a read credential."""
+    assert private_repo(_nip98(method="POST")) is False
+    assert private_repo(_nip98(method="GET")) is True
+
+
+def test_the_method_tag_is_compared_to_GET_not_to_this_REQUEST_s_verb(private_repo):
+    """This is what makes the check safe to turn on, and it is GRASP-08's "one credential covering
+    all endpoints of a Smart HTTP operation": a clone sends ONE static header for the info/refs GET
+    and the upload-pack POST. Compared to the request's own verb, the second half of every clone
+    would 401 — which is exactly why the check used to be off."""
+    gh._priv_cache.clear()
+    h = _handler()
+    h.command = "POST"                      # the upload-pack POST, carrying the clone's GET token
+    h.headers = {"Authorization": _nip98(method="GET")}
+    gh._CONFIG.update({"read_skew": 60, "read_require_method": True})
+    assert h._read_gate_ok(OWNER, "privrepo") is True
+
+
+def test_the_freshness_window_is_60_seconds(private_repo):
+    """GRASP-08's number. The old 300s window predates `scripts/git-credential-nostr`, which mints a
+    fresh token per request and so never needed it."""
+    assert private_repo(_nip98(age=30), read_skew=60) is True
+    assert private_repo(_nip98(age=120), read_skew=60) is False
+
+
+def test_60_seconds_is_the_DEFAULT_when_the_key_is_absent(repo_store, monkeypatch, cfg):
+    """The subprocess's own fallback has to agree with `_read_config`'s default, or a host started
+    from an older sidecar quietly keeps the 300s window."""
+    ghs.create_repo(OWNER, "privrepo", private=True, readers=[READER_HEX])
+    monkeypatch.setattr(gh._Handler, "_announced_private", lambda self, o, r_: False)
+    gh._CONFIG.pop("read_skew", None)
+    gh._CONFIG.pop("read_require_method", None)
+    h = _handler()
+    h.headers = {"Authorization": _nip98(age=120)}
+    assert h._read_gate_ok(OWNER, "privrepo") is False
+
+
+def test_an_operator_can_widen_the_window_without_patching_the_host(private_repo):
+    """The looser values were not arbitrary: docs/GIT_OVER_NOSTR.md documents a HAND-MADE
+    `http.extraHeader` reused across several commands as the working https read path, and 60s makes
+    that a one-minute token. `git_server_read_skew` is the way back, so nobody edits the host."""
+    assert private_repo(_nip98(age=120), read_skew=300) is True
+
+
+def test_an_operator_can_also_turn_the_method_check_off(private_repo):
+    assert private_repo(_nip98(method="POST"), read_require_method=False) is True
+
+
+def test_the_BASIC_envelope_still_works(private_repo):
+    """libgit2 only attempts a scheme the server advertises and gives up on `Nostr` alone rather
+    than calling a credential helper — a constraint of the TRANSPORT, not of any ngit version, so a
+    v3 client on it behaves the same. The "password" is the same signed NIP-98 event and every check
+    on this path still applies to it; an ordinary password fails (tests/test_git_push_auth.py)."""
+    assert private_repo(_nip98(basic=True)) is True
+    assert private_repo(_nip98(method="POST", basic=True)) is False, "the envelope weakens nothing"
+
+
+def test_the_u_tag_is_still_matched_as_a_substring_and_that_is_deliberate(private_repo):
+    """NOT tightened to the canonical URL, and this test exists so the reason is recorded rather than
+    rediscovered. Three legitimate readers an equality check refuses: the maintainer-alias path,
+    where ngit derives one clone URL per maintainer key and the owner segment is NOT the hosting
+    owner; a proxy node (or any node reached by another hostname), where `public_base` is empty or
+    different; and the owner segment being accepted as npub OR hex. The binding is per-repo either
+    way, and the ACL is per-repo, so this grants nothing across owners."""
+    other_host = "http://nas.lan:3053/%s/privrepo.git/git-upload-pack" % OWNER
+    assert private_repo(_nip98(url=other_host)) is True
+    assert private_repo(_nip98(url="https://example.test/git/%s/other.git" % OWNER)) is False

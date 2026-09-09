@@ -173,13 +173,19 @@ def verify_nip98(header: str | None, method: str | None, repo_path_needle: str,
       - the `u` tag's path CONTAINS `repo_path_needle` (binds the header to THIS repo — blocks
         cross-repo replay). For push we pass "<id>.git/git-receive-pack" (also blocks reusing a
         read-scoped upload-pack header to authorize a write); for read we pass "<id>.git";
-      - created_at within ±max_skew of now (the replay window);
+      - created_at within ±max_skew of now (the replay window; GRASP-08 says 60s, which is the
+        default on both gates now — `git_server_read_skew` widens it for a client that needs it);
       - the signer pubkey is in `allowed`.
 
-    require_method=False is used for the READ gate: a `git clone` sends the SAME static
-    `http.extraHeader` for both the info/refs GET and the upload-pack POST, so we can't demand the
-    method tag match both — the repo binding + freshness + access-set membership are the guard, over
-    TLS. Push keeps require_method=True (writes are higher-stakes).
+    THE `method` ARGUMENT IS WHAT THE TAG MUST SAY, not what the request did. The read gate passes
+    the literal "GET" with require_method=True — GRASP-08's "one credential covering all endpoints of
+    a Smart HTTP operation, method tag GET" — because a `git clone` sends the SAME static
+    `http.extraHeader` for the info/refs GET and the upload-pack POST, so comparing the tag to the
+    request's verb would 401 the second half of every clone. (It is also what
+    `scripts/git-credential-nostr` has always signed: git hands a credential helper no method to
+    echo, so it emits `method: GET` unconditionally.) `require_method=False` remains available for an
+    operator whose client signs something else — `git_server_read_require_method`. Push passes the
+    real verb, matched exactly (writes are higher-stakes).
 
     allow_basic=True additionally accepts the SAME base64 event carried as the password half of an
     `Authorization: Basic <b64 user:pass>` header, so any client that can only do username/password

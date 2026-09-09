@@ -357,11 +357,35 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 log.warning("[git-host] private read ACL DB read failed (%s) -> deny", e)
                 return False   # fail-closed: can't confirm ACL -> no read
-        # Read gate: bind the header to this repo path; don't require method (a clone reuses one
-        # static header across the info/refs GET + upload-pack POST). Wider freshness window than push.
+        # Read gate. GRASP-08 spells the credential out: repository-scoped, `method` tag GET, ONE
+        # credential covering every endpoint of a Smart HTTP operation, `created_at` within 60s.
+        #
+        # THE METHOD TAG IS COMPARED TO THE LITERAL "GET", NEVER TO THIS REQUEST'S VERB, and that
+        # distinction is the whole reason this can be tightened at all. A clone sends the same static
+        # header for the info/refs GET and the upload-pack POST — demanding it match the request
+        # would 401 the second half of every clone, which is exactly why the check used to be off
+        # entirely. Comparing it to GET is what the spec means by "one credential covering all
+        # endpoints", and it is what `scripts/git-credential-nostr` has always signed (measured: it
+        # emits [["u", url], ["method", "GET"]] unconditionally, since git hands a credential helper
+        # no method to echo).
+        #
+        # `allow_basic` STAYS. The constraint is libgit2's, not any ngit version's: it only attempts
+        # a scheme the server advertises and gives up on `Nostr` alone rather than calling a
+        # credential helper, so a v3 client on the same transport behaves the same way. It is not
+        # password auth either — the "password" is that same base64 NIP-98 event, verified below by
+        # every check on this path.
+        #
+        # The `u` tag is still matched as a SUBSTRING (`<id>.git`) rather than against a canonical
+        # URL, deliberately — see docs/GIT_OVER_NOSTR.md. Three things make an equality check refuse
+        # legitimate readers: the maintainer-alias path resolves a DIFFERENT owner segment to the
+        # hosting owner (ngit derives one clone URL per maintainer key), `public_base` is empty on a
+        # proxy node and on any node reached by another hostname, and the owner segment is accepted
+        # as npub OR hex. The binding is per-repo either way, and the ACL is per-repo, so a header
+        # for another owner's same-named repo already grants nothing it did not grant before.
         needle = "%s.git" % repo_id
-        signer = git_auth.verify_nip98(header, None, needle, allowed,
-                                       max_skew=_CONFIG.get("read_skew", 300), require_method=False,
+        signer = git_auth.verify_nip98(header, "GET", needle, allowed,
+                                       max_skew=int(_CONFIG.get("read_skew", 60)),
+                                       require_method=bool(_CONFIG.get("read_require_method", True)),
                                        allow_basic=True)
         if signer:
             log.info("[git-host] private read granted %s -> %s/%s", signer[:12], owner_hex[:12], repo_id)
