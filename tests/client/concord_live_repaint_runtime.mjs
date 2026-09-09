@@ -89,4 +89,14 @@ pane.innerHTML='';
 assert.equal(context.patchMessageList(),false,'never paint into a window somebody else is using');
 assert.equal(pane.innerHTML,'');
 
+/* 5. TWO LIVE PATHS, ONE SCREEN — a fix to one of them is half a fix. NIP-29 rooms flush through
+ *    flushChatLive's own branch and Cord rooms through absorbChatWraps; both must reach the paint,
+ *    which they do by both going through backgroundRender(). */
+for(const [name,from,to] of [
+    ['the NIP-29 live path','  async function flushChatLive(','  function mergeCordTimeline('],
+    ['the Cord live path','  async function absorbChatWraps(','  async function refreshActiveChannel(']]){
+  const body=code.slice(code.indexOf(from),code.indexOf(to));
+  assert(body.includes('backgroundRender()'),name+' never reaches the paint');
+}
+
 console.log('concord live repaint keeps the composer and still draws the message');
