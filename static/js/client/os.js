@@ -3923,7 +3923,10 @@
        library.  Closing that window (or changing between Classic and Desktop) must leave the live
        audio element, queue and Android media session alone.  The old stopMusic call made the exact
        background-player path look dead after entering Desktop.  Reopening Music reconnects to the
-       same player; an explicit Pause remains the way to stop playback. */
+       same player; an explicit Pause remains the way to stop playback.
+       ONE EXCEPTION, immediately below: a person closing the LAST surface that could have paused
+       it. That is not this rule being weakened — it is the case this rule never covered, and it is
+       why "I closed Music player and I hear music still" was reportable at all. */
     try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}
     /* A PERSON CLOSED THE LAST THING THAT COULD STOP IT.
      *
@@ -9224,7 +9227,10 @@
              * closes a window the same way the mouse does, onClose hooks and all. */
             else if(p === 'pc:close'){
               const w=wins.find(x=>x.el.classList.contains('focused'));
-              if(w) closeWin(w);
+              // …and it is a PERSON pressing it, so it carries the same intent the ✕ does. On this
+              // desktop the compositor owns Alt+F4, which makes this the most-used of the human
+              // close paths and the easiest one to leave behind.
+              if(w) closeWin(w, { user:true });
             }
             /* $mod+Down, the one arrow that did nothing. Left, Right and Up have snapped and
              * maximised since this session grew window bindings; Down was never bound, so three

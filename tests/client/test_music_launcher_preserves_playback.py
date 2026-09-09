@@ -1,5 +1,6 @@
 """Opening PosterChan screens must not turn navigation into a music transport command."""
 
+import re
 from pathlib import Path
 
 
@@ -48,8 +49,32 @@ def test_android_home_and_launcher_tiles_reuse_the_live_webview():
 
 
 def test_closing_desktop_music_window_does_not_kill_background_playback():
+    """Closing a frame is not "stop the music" — EXCEPT when the frame was the last thing that
+    could have stopped it, which is the one case the desktop has no answer for (there is no
+    floating player under `html.os-on`). See tests/client/test_music_desktop_controls.py.
+
+    This test went VACUOUS when that exception was added: it only asked whether the OLD blanket
+    `stopMusic` call was absent, so it passed while playback was being killed by a different call
+    on a path it never looked at. A test that cannot fail for the thing it is named after is worse
+    than no test, because it reads as coverage. It asserts the narrow rule now, so a future blanket
+    pause — the regression it was written to prevent — still turns it red.
+    """
     os_src = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
     start = os_src.index("function closeWin(w, opts)")
     body = os_src[start:os_src.index("\n  function minimise", start)]
     assert "PC().stopMusic" not in body
     assert "PC().syncPlayer" in body
+    # Playback may only be ended by the three conditions together. Any unconditional pause here —
+    # or one that drops a condition — is the background-player regression coming back.
+    # Comments in here discuss stopMusic at length; CODE is what runs. Strip the prose first, or
+    # this counts the explanation of the old bug as a second way to cause it.
+    code = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+    code = re.sub(r"//[^\n]*", "", code)
+    stops = [line for line in code.splitlines()
+             if ".close()" in line or ".pause()" in line or "stopMusic" in line]
+    assert len(stops) == 1, "exactly one place in closeWin may end playback: " + repr(stops)
+    guard = body[:body.index(stops[0])].rsplit("if(", 1)[-1]
+    for condition in ("opts.user", "doc:music", "__music", "!musicSurface()"):
+        assert condition in guard, (
+            "closing a window ends playback without checking " + condition + " — a handoff, a "
+            "native reconcile or a folder cleanup would then stop the music")

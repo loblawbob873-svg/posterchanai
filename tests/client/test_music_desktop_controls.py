@@ -61,7 +61,8 @@ def test_every_human_close_says_so_and_nothing_else_does():
     human = ["else if(a === 'close') closeWin(w, { user:true });",          # the title-bar button
              "{label:'Close', run:()=>closeWin(w, { user:true })}",         # the window menu
              "{label:'Close',run:()=>closeWin(running, { user:true })},",   # the taskbar menu
-             "closeWin(f, { user:true }); return; }"]                       # Ctrl+W / Alt+W
+             "closeWin(f, { user:true }); return; }",                       # Ctrl+W / Alt+W
+             "if(w) closeWin(w, { user:true });"]                            # Alt+F4 via pc:close
     for site in human:
         assert site in OS_JS, "a human close path stopped saying so: " + site
     assert OS_JS.count("user:true") == len(human), \
