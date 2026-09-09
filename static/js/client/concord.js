@@ -51,11 +51,25 @@
     const subscriptions=[],relayCap=Math.max(1,Math.min(4,Number(options.max)||4)),planeLimit=Math.floor(8/relayCap);
     // At most eight live sockets. Reader streams are current-first; archived epochs beyond
     // this budget remain covered by the bounded sequential history refresh.
+    /* ONE UNREADABLE AUTHOR MUST NOT SILENCE THE ROOM — the live half of the same rule as cordQuery.
+     *
+     * `cordPlaneAuth` throws for an author whose plane key this membership does not hold, and that
+     * throw used to tear down EVERY subscription already made and propagate. So a partially granted
+     * membership got no live stream at all: history would load and then nothing new ever arrived,
+     * which reads as "I have to switch rooms to see new messages" — switching rooms rebuilds the
+     * subscription and briefly works, so it looks like a refresh bug rather than an access one.
+     *
+     * Skip the authors we cannot authenticate as, keep the streams we can, and only fail when
+     * nothing at all could be subscribed. */
+    let firstFailure=null;
     try{for(const filter of filters)for(const author of [...new Set(filter.authors||[])]){
       if(subscriptions.length>=planeLimit)break;
-      const authScope=cordPlaneAuth(p,plane,author,relays);
+      let authScope;
+      try{ authScope=cordPlaneAuth(p,plane,author,relays); }
+      catch(err){ firstFailure=firstFailure||err; continue; }
       subscriptions.push(R.subscribeFrom(relays,[{...filter,authors:[author]}],{...options,max:relayCap,authScope}));
     }}catch(e){subscriptions.forEach(stop=>stop());throw e;}
+    if(!subscriptions.length&&firstFailure){throw firstFailure;}
     const stop=()=>subscriptions.forEach(close=>close());
     stop.publish=event=>subscriptions.reduce((n,sub)=>n+(sub.publish?sub.publish(event):0),0);
     stop.hasTargets=subscriptions.some(sub=>sub.hasTargets);
