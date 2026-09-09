@@ -1272,8 +1272,51 @@ class RelayServer:
         n = await self.store.count_filtered(filters, protect_nip78=True)
         self._send(conn, ["COUNT", sub_id, {"count": n}])
 
+    #: GRASP-08 git kinds. 30617 is the repository announcement, 30618 its state.
+    GIT_KINDS = (30617, 30618)
+
+    @staticmethod
+    def _is_private_repo_event(ev: dict) -> bool:
+        """GRASP-08: a repository is private when its announcement carries ["private","true"].
+
+        Read off the EVENT rather than from any local flag, because the announcement is the thing a
+        client publishes and the thing another relay replicates — a server-side flag says nothing
+        about an event that arrived from elsewhere."""
+        if int(ev.get("kind", 0)) not in RelayServer.GIT_KINDS:
+            return False
+        for t in ev.get("tags", []):
+            if isinstance(t, list) and len(t) >= 2 and t[0] == "private" and str(t[1]).lower() == "true":
+                return True
+        return False
+
+    @staticmethod
+    def _repo_readers(ev: dict) -> set:
+        """Who may read a private repo's events: its author plus its declared maintainers.
+
+        This is the SAME access set the git side already enforces over HTTP (owner ∪ 30617
+        maintainers). Keeping one definition is the point — a repo whose bytes are refused but
+        whose metadata is served is not private, and two different answers to "who may read this"
+        is how that happens."""
+        who = {str(ev.get("pubkey", ""))}
+        for t in ev.get("tags", []):
+            if isinstance(t, list) and len(t) >= 2 and t[0] == "maintainers":
+                who.update(str(x) for x in t[1:] if x)
+        return {x for x in who if x}
+
     def _can_serve_event(self, conn, ev: dict) -> bool:
-        return int(ev.get("kind", 0)) not in (78, 30078) or self._nip78_owner(conn, ev.get("pubkey", ""))
+        kind = int(ev.get("kind", 0))
+        if kind in (78, 30078):
+            return self._nip78_owner(conn, ev.get("pubkey", ""))
+        # PRIVATE GIT METADATA IS STILL PRIVATE DATA.
+        #
+        # The git HTTP side has refused unauthorised clones of a private repo for a long time, and
+        # 401s before git-http-backend runs so refs never leak. The EVENTS were never covered: the
+        # 30617 announcement and 30618 state were served to anyone who asked this relay, so a
+        # private repo was private in its bytes and public in its name, structure, maintainers and
+        # activity. GRASP-08 makes the relay half explicit, and this is that half.
+        if self._is_private_repo_event(ev):
+            return bool(self._repo_readers(ev) & self._auth_pubkeys.get(conn, set()))
+        return True
 
     # --- NIP-77 negentropy --------------------------------------------------
 
