@@ -317,9 +317,75 @@ def repo_head(owner_hex: str, repo_id: str) -> str:
     return (r.stdout or "").strip()
 
 
+def head_from_state(owner_hex: str, repo_id: str) -> str:
+    """The HEAD the repo's SIGNED kind-30618 declares, if that branch now exists here — else "".
+
+    GRASP-01: "MUST set repository HEAD per repo state announcement as soon as the git data related
+    to that branch has been received." We never read it: `adopt_head_if_unborn` picked
+    main/master/first-alphabetically BY CONVENTION, so a project whose declared default is `develop`
+    got `master` — a wrong answer given confidently to every reader that asks the repo for its
+    default branch (the web Git UI's browse ref, the 30618 witness we then publish, `git clone`'s
+    symref advertisement).
+
+    The state is read through the SAME primitives the push hook authorizes with — the recursive
+    maintainer set, then `select_authorized_state`, which re-verifies the BIP-340 signature here and
+    takes the newest maintainer-signed candidate — so a stranger's 30618 cannot move HEAD any more
+    than it can move a branch.
+
+    "as soon as the git data … has been received" is the load-bearing clause and it is why the ref
+    must EXIST before we point at it: setting HEAD to a branch we do not have reproduces exactly the
+    unborn-HEAD bug this module already had to fix once.
+
+    Best-effort by construction: no DSN, no psycopg2, an unreachable database or no state event all
+    return "" and leave the caller on its convention. HEAD is metadata — refusing to serve a repo
+    because we could not read a preference would be a far worse failure than a stale default.
+    """
+    rid = sanitize_repo_id(repo_id)
+    dsn = os.environ.get("GRASP_PG_DSN", "")
+    if not rid or not dsn:
+        return ""
+    try:
+        import psycopg2
+        from app.services import git_auth
+        conn = psycopg2.connect(dsn, connect_timeout=5)
+        try:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("SET statement_timeout = 4000")
+            maints = git_auth.load_maintainers(conn, owner_hex, rid)
+            state = git_auth.select_authorized_state(
+                git_auth.load_state_events(conn, owner_hex, rid, maints), maints)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.info("[git-host] could not read a declared HEAD for %s/%s (%s)", owner_hex[:12], rid, e)
+        return ""
+    if not state:
+        return ""
+    want = ""
+    for t in state.get("tags") or []:
+        if len(t) >= 2 and t[0] == "HEAD":
+            # NIP-34 writes it as `ref: refs/heads/x`; accept a bare refname too, since the tag is
+            # produced by whichever client signed the state.
+            want = str(t[1]).strip()
+            want = want[4:].strip() if want.startswith("ref:") else want
+            break
+    if not want.startswith("refs/heads/") or ".." in want or want != want.strip():
+        return ""
+    return want if want in repo_refs(owner_hex, rid) else ""
+
+
 def adopt_head_if_unborn(owner_hex: str, repo_id: str) -> str:
-    """Point HEAD at a real branch when the repo's default branch was never born. Returns the ref
-    HEAD ends up on ("" if unchanged/unknown).
+    """Point HEAD at the branch the repo should default to. Returns the ref HEAD ends up on ("" if
+    unchanged/unknown).
+
+    TWO SOURCES, IN ORDER. First the SIGNED 30618's declared HEAD (`head_from_state`), which is what
+    GRASP-01 requires and which OVERRIDES an already-born HEAD — a maintainer-signed state event is
+    an instruction, not a hint, and it is the only way a project can ever change its default branch
+    here (there is no endpoint for it). Then, only if no state declares one, the convention below.
+
+    The function keeps its name because the convention half is still exactly what it says: an
+    unborn HEAD adopted from what was pushed.
 
     `git init --bare` stamps HEAD from the SERVER's init.defaultBranch (master here), so a repo whose
     first push is `main` is left with HEAD -> refs/heads/master, a branch that does not exist. Clones
@@ -336,8 +402,15 @@ def adopt_head_if_unborn(owner_hex: str, repo_id: str) -> str:
         return ""
     refs = repo_refs(owner_hex, rid)
     head = repo_head(owner_hex, rid)
+    declared = head_from_state(owner_hex, rid)
+    if declared and declared != head:
+        r = _git(d, "symbolic-ref", "HEAD", declared, check=False)
+        if r.returncode == 0:
+            logger.info("[git-host] HEAD of %s/%s set to %s per its signed 30618",
+                        owner_hex[:12], rid, declared)
+            return declared
     if head and head in refs:
-        return ""                     # already born — leave it alone
+        return ""                     # already born and nothing declared otherwise — leave it alone
     heads = sorted(r for r in refs if r.startswith("refs/heads/"))
     if not heads:
         return ""                     # empty repo: HEAD stays as-is until something is pushed
