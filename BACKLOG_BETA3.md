@@ -152,12 +152,20 @@ Three things a future session will be tempted to "fix" and must not:
 
 ## Final follow-up requested 2026-09-08: private Monero zap announcement choice
 
-- [ ] At the end of the Monero zap form, add an optional checkbox labelled "Do not post this zap".
+- [x] At the end of the Monero zap form, add an optional checkbox labelled "Do not post this zap".
   When selected, send the authorized payment without publishing a social post tagging the recipient.
   Preserve the existing announcement behavior when unchecked. Keep this task at the end of the
   backlog, after current stabilization and the earlier deferred work.
-- [ ] Add behavior tests for both checkbox states, payment failure, ambiguous payment responses,
+  On all THREE tip routes (`confirmDialog` + `meSendDialog` in `monero-wallet.js`, the external
+  QR/URI sheet in `app.js`); the choice reaches app.js as `onSent(amount, txid, {doNotPost})` and
+  gates `_postXmrTipNote` alone. It suppresses the PUBLIC POST and nothing else — the wallet's own
+  transaction record, the balance refresh and the remembered tip amount happen either way.
+- [x] Add behavior tests for both checkbox states, payment failure, ambiguous payment responses,
   and retries; changing this option must never send a second payment. Review before deployment.
+  `tests/client/test_quiet_monero_zap_runtime.py` (28 cases) drives the shipped handlers with every
+  payment and publish intercepted. The choice is READ ONCE, before the money request, and the send
+  is locked by then — so moving it mid-flight decides nothing and cannot re-enter the send, and an
+  ambiguous ("may have been sent") answer leaves the sheet unusable for a retry in either state.
 
 ## Final follow-up requested 2026-09-08: connect the desktop to a TV
 

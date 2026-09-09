@@ -18,7 +18,9 @@ let ME={pubkey:'a'.repeat(64)};const GUEST=false,_TIP_DWELL_MS=10000;
 const profOf=()=>({name:'recipient'}),Store={get:()=>null},isXmrAddr=s=>s===ADDR;
 const xmrOf=()=>ADDR,_notePaymentXmr=()=>'',_paymentAddress=async()=>ADDR;
 const enc=String,qrImg=()=>'<img alt="fixture QR">',xmrPresets=()=>[],_xmrFeePct=()=>0;
-const _prefTouched=new Set(),ClientSettings={get:()=>'',set(){}},saveClientPrefsNostr=()=>{};
+const _prefTouched=new Set(),prefsLocal=[],prefsNostr=[];
+const ClientSettings={get:()=>'',set(k,v){prefsLocal.push([k,String(v)])}};
+const saveClientPrefsNostr=patch=>{prefsNostr.push(patch)};
 const publicPosts=[];const publish=async(kind,content,tags)=>{publicPosts.push({kind,content,tags});return{ok:true}};
 const NT=()=>({nip19:{npubEncode:pk=>'npub-fixture-'+pk}});
 const toast=window.__PC.toast,modal=window.__PC.modal;
@@ -146,3 +148,46 @@ def test_external_account_change_during_confirmation_does_not_post():
     sheet.querySelector('#xmr-txid').value='d'.repeat(64);let release;answer=new Promise(r=>release=r);
     const pending=button.onclick();await tick();assert.equal(questions,1);ME={pubkey:'c'.repeat(64)};
     release(true);await pending;assert.equal(publicPosts.length,0);assert.equal(payments().length,0);''')
+
+
+@pytest.mark.parametrize('route',['node','user'])
+@pytest.mark.parametrize('quiet',[False,True])
+def test_forcing_the_choice_over_mid_flight_changes_nothing_and_pays_once(route,quiet):
+    """THE INVARIANT THE TASK IS ABOUT. The announcement choice is read ONCE, before the money
+    request goes out, and the send is already locked by then. So a choice moved while the transfer
+    is in the air — a disabled box is still settable from script, and an ambiguous send leaves the
+    sheet on screen for as long as somebody stares at it — decides nothing and, above all, cannot
+    re-enter the send. Read after the await instead and BOTH directions break: a quiet zap
+    announces, and a loud one goes silent."""
+    run(f'''const {{choice,button}}=await openRoute({json.dumps(route)},{json.dumps(quiet)});
+    paymentMode='hold';const pending=button.onclick();await tick();assert(releasePayment);
+    choice.checked=!choice.checked;                       // the user changes their mind mid-transfer
+    releasePayment();await pending;await settleDismiss();
+    assert.equal(payments().length,1,'a changed choice re-entered the send');
+    assert.equal(publicPosts.length,{0 if quiet else 1},'the choice captured at the press is what counts');''')
+
+
+@pytest.mark.parametrize('route',['node','user','external'])
+def test_a_quiet_zap_still_remembers_the_amount_it_sent(route):
+    """THE CHECKBOX SUPPRESSES THE POST AND NOTHING ELSE. `xmrLastAmt` is the payer's own record on
+    the non-custodial route — there is no wallet here to hold a transaction — and it is what
+    pre-fills the next tip on every route. Skipping it under "do not post" made the amount box
+    depend on a privacy choice: tip 0.01 quietly and the next sheet has forgotten it, while the same
+    0.01 through either wallet is remembered."""
+    run(f'''const {{button}}=await openRoute({json.dumps(route)},true);await button.onclick();await settleDismiss();
+    assert.equal(publicPosts.length,0,'a quiet zap posted');
+    assert(prefsLocal.some(([k,v])=>k==='xmrLastAmt'&&v==='0.01'),'the amount was not remembered: '+JSON.stringify(prefsLocal));
+    assert(prefsNostr.some(p=>p&&p.xmrTip==='0.01'),'the amount did not sync: '+JSON.stringify(prefsNostr));''')
+
+
+def test_a_plain_wallet_send_is_not_a_zap_and_offers_no_announcement_choice():
+    """The wallet screen's own Send opens the SAME confirm dialog with no `onSent` — there is no
+    recipient to credit and nothing would ever be published, so an announcement checkbox there is a
+    control that does nothing. `tipPostChoice` is keyed on the tip callback for exactly that."""
+    run('''assert.equal(await window.PCMoneroWallet.openSend(),true);
+    const sheet=modals.at(-1);assert(sheet,'the send sheet opened');
+    sheet.querySelector('#mw-to').value=ADDR;sheet.querySelector('#mw-amount').value='0.01';
+    sheet.querySelector('#mw-review').onclick();const confirm=modals.at(-1);
+    assert.match(confirm.html,/cannot be reversed/,'this is the confirm dialog');
+    assert(!/quiet-zap|Do not post this zap/.test(confirm.html),'a plain send offered a zap choice');
+    assert.equal(publicPosts.length,0);''')
