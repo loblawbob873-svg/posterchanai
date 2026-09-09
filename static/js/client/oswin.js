@@ -152,6 +152,34 @@
     catch(_){ return false; }
   }
 
+  /* A WINDOW MAY NOT BE OPENED BIGGER THAN THE SCREEN IT OPENS ON.
+   *
+   * Wayland gives a client NO SAY in where its toplevel goes — xdg-shell has no positioning, which
+   * is the whole reason main.js has to ask the compositor to move the start menu after it maps — and
+   * Wayfire centres a window it is given no position for. So a window wider or taller than the
+   * output does not merely overflow: it hangs off BOTH edges, with no title bar left on screen to
+   * drag it back by. That is "social on desktop is some weird window that is half off the monitor".
+   *
+   * Two ways an oversized ask gets here and this is the one place both go through. `_windowOpenHint`
+   * measures the desk (and is now expressed in the same pixels this call takes — see osnative.js
+   * `windowOpenSize`); `popOut` passes the in-page frame's own rectangle, which belongs to whichever
+   * monitor that frame was on. And the 1100x760 default below is itself already off the screen on a
+   * 1024x600 machine, i.e. exactly where a misplaced window is hardest to recover.
+   *
+   * `screen.availWidth/availHeight` is the display's work area in the units `window.open` features
+   * are expressed in, so there is no conversion to get wrong. A screen that cannot be measured
+   * imposes no ceiling — a guessed bound would be worse than none. */
+  function fitToScreen(width, height){
+    let w = Math.max(360, Math.round(Number(width) || 0) || 1100);
+    let h = Math.max(240, Math.round(Number(height) || 0) || 760);
+    let aw = 0, ah = 0;
+    try{ aw = Math.round(Number(root.screen && root.screen.availWidth) || 0);
+         ah = Math.round(Number(root.screen && root.screen.availHeight) || 0); }catch(_){ }
+    if(aw > 0) w = Math.min(w, aw);
+    if(ah > 0) h = Math.min(h, ah);
+    return { width: w, height: h };
+  }
+
   function open(view, label, opts){
     if(!enabled()) return null;
     if(!routable(view)) return null;
@@ -175,8 +203,8 @@
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron
      * child takes its geometry from them. sway may place it elsewhere and that is fine: it is the
      * window manager now, which is the entire point of this change. */
-    const features = 'width=' + Math.max(360, Math.round(o.width || 1100)) +
-                     ',height=' + Math.max(240, Math.round(o.height || 760));
+    const size = fitToScreen(o.width || 1100, o.height || 760);
+    const features = 'width=' + size.width + ',height=' + size.height;
     let win = null;
     try{ win = root.open(url, '_blank', features); }catch(_){ win = null; }
     if(!win) return null;

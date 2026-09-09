@@ -1764,16 +1764,22 @@
    *
    * The cascade index counts the windows this desktop already opened, so the second Files window
    * still steps clear of the first exactly as an in-page one does. */
-  let _shellBox = null;          // this surface's compositor rectangle; set by adoptAll
+  /* THE BOUND IS THIS RENDERER'S OWN VIEWPORT, AND IT IS DELIBERATELY NOT THE COMPOSITOR RECTANGLE.
+   *
+   * The shell fills its output, so its CSS viewport IS that output's usable area expressed in the
+   * pixels `window.open` takes. The shell's rectangle as the COMPOSITOR reports it describes the
+   * same area in different units — the right currency for `pcWM.place`, and the wrong one for a
+   * window size. This used to record it (`_shellBox`) and multiply the size by the ratio between
+   * the two, which asked for a window thousands of pixels wider than the screen on any scaled
+   * display; see osnative.js `windowOpenSize`. Nothing here needs it, so nothing here keeps it. */
   function _windowOpenHint(view){
     try{
       if(!NAT() || typeof NAT().windowOpenSize !== 'function') return null;
       const opened = nativeTasks.filter(r => r && r.own).length + wins.length;
       const visual = window.visualViewport;
-      const scale = NAT().scaleFrom(_shellBox,
-        visual && visual.width > 0 ? visual.width : window.innerWidth,
-        visual && visual.height > 0 ? visual.height : window.innerHeight);
-      return NAT().windowOpenSize(place(opened, view), zf(), scale);
+      const cssW = visual && visual.width > 0 ? visual.width : window.innerWidth;
+      const cssH = visual && visual.height > 0 ? visual.height : window.innerHeight;
+      return NAT().windowOpenSize(place(opened, view), zf(), { width: cssW, height: cssH });
     }catch(_){ return null; }
   }
 
@@ -3713,15 +3719,8 @@
         shellId = Number(snap && snap.shellId);
       }else list = await pcWM.windows();
     }catch(_){ return false; }
-    /* THE ONE RECTANGLE MEASURABLE IN BOTH COORDINATE SYSTEMS AT ONCE, kept for openApp.
-     * `_natShell` is nsync's and nsync returns immediately unless a native app is HOSTED, which is
-     * off by default — so on an ordinary machine nothing ever recorded the shell's compositor
-     * rectangle, and a new window had no way to convert a size in page pixels into the compositor's
-     * units. See _windowOpenHint. */
     if(Number.isFinite(shellId)){
-      const me = list.find(x => Number(x && x.id) === shellId);
-      if(me && me.rect && me.rect.width > 0 && me.rect.height > 0) _shellBox = me.rect;
-      /* AND WHETHER SOMEBODY ELSE HOLDS THE KEYBOARD. A Settings frame keeps its `focused` class
+      /* WHETHER SOMEBODY ELSE HOLDS THE KEYBOARD. A Settings frame keeps its `focused` class
        * for as long as it is open — clicking Firefox is not something this renderer ever sees — so
        * without this the desktop would stay entitled to sit above every application from the moment
        * one utility window was opened until it was closed. The compositor's own answer settles it,
@@ -10208,6 +10207,14 @@
                    * rather than inferred from a rendered desktop. */
                   __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d),
                   __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),
+                  /* WHERE AND HOW BIG A WINDOW OPENS, and the compositor rectangle the size
+                     hint is derived against. Both are exposed for the same reason as __layout: a
+                     window that opens partly off the monitor is not an error anywhere — it is a
+                     window you have to drag back before you can use it — and the only honest way
+                     to check it is to run the shipped arithmetic against real output sizes.
+                     `__setShellBox` is the one piece a page cannot fake: it is normally recorded
+                     by adoptAll from the compositor's own snapshot. */
+                  __place: (i, view) => place(i, view),
                   __sameAppWindow: sameAppWindow,
                   __handoffIdentity: handoffIdentity,
                   __handoffDocumentKind: handoffDocumentKind,

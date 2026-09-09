@@ -122,41 +122,40 @@ def test_a_new_window_opens_at_the_size_the_desktop_chose_for_it(tmp_path):
     1983x1831. `openApp` asked for a toplevel with `{}`, so `place()` (the whole measure-the-desk,
     shape-per-app decision) reached nothing on the machine it was written for.
 
-    This RUNS the shipped conversion, because the numbers are the point: three coordinate systems
-    (layout px, the zoomed page, compositor units) and an answer that must not silently become the
-    fallback again."""
+    THE THIRD ARGUMENT USED TO BE `scaleFrom()` AND IS NOW THE USABLE AREA, and this test asserted
+    that multiplication as if it were the rule. It was not: the answer's only consumer is
+    `window.open`'s feature pixels, which Electron reads as DIP, and Electron applies the compositor
+    scale itself — so multiplying here opened Social a third of the way off a scaled monitor. That
+    is `tests/test_desktop_window_opens_on_screen.py`, which measures it against real output sizes.
+    What survives here is the half this test was really about: a decent size reaches the window at
+    all, rather than silently becoming the 1100x760 fallback."""
     script = tmp_path / "open-size.js"
     script.write_text(textwrap.dedent(f"""
       const NAT=require({json.dumps(str(ROOT / 'static/js/client/osnative.js'))});
-      // `place()` for a 'wide' app on the measured desk, in LAYOUT pixels, and the shell's own
-      // window measured in both systems at once exactly as scaleFrom() derives it.
-      const shell={{x:0,y:0,width:3072,height:2048}};
-      const scale=NAT.scaleFrom(shell,3072,2048);
-      const half=NAT.scaleFrom(shell,3840,2560);            // the same desk read at 1.25x
+      // `place()` for a 'wide' app on the measured desk, in LAYOUT pixels, and the usable area of
+      // the output it is opening on, in the page's own pixels.
+      const desk={{width:3072,height:2048}};
       console.log(JSON.stringify({{
-        wide:NAT.windowOpenSize({{w:2520,h:1900}},1,scale),
-        scaled:NAT.windowOpenSize({{w:2520,h:1900}},1,half),
-        zoomed:NAT.windowOpenSize({{w:1260,h:950}},2,scale),
-        nothing:NAT.windowOpenSize({{w:0,h:0}},1,scale),
-        silly:NAT.windowOpenSize({{w:4,h:3}},1,scale),
-        noScale:NAT.windowOpenSize({{w:2520,h:1900}},1,null)}}));
+        wide:NAT.windowOpenSize({{w:2520,h:1900}},1,desk),
+        zoomed:NAT.windowOpenSize({{w:1260,h:950}},2,desk),
+        clamped:NAT.windowOpenSize({{w:4000,h:3000}},1,desk),
+        nothing:NAT.windowOpenSize({{w:0,h:0}},1,desk),
+        silly:NAT.windowOpenSize({{w:4,h:3}},1,desk),
+        noBounds:NAT.windowOpenSize({{w:2520,h:1900}},1,null)}}));
     """), encoding="utf-8")
     run = subprocess.run(["node", str(script)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     got = json.loads(run.stdout)
 
     assert got["wide"] == {"width": 2520, "height": 1900}
-    # The renderer measuring itself at 1.25x is the same desk; the answer converts rather than
-    # doubling, which is the trap `mapRect` already carries a comment about.
-    assert got["scaled"] == {"width": 2016, "height": 1520}
     assert got["zoomed"] == {"width": 2520, "height": 1900}
+    # The bound is a CEILING — a window bigger than the screen is the reported bug, not a request.
+    assert got["clamped"] == {"width": 3072, "height": 2048}
     # A size that could not be worked out must fall through to oswin.js's own default, never to a
     # window a few pixels across.
     assert got["nothing"] is None and got["silly"] is None
-    # No shell rectangle yet (nothing native has ever been hosted, so nsync never recorded one) is
-    # the ordinary state of this machine: fall back to the page's own pixels, which is what popOut
-    # has always passed — never to the 1100x760 fallback.
-    assert got["noScale"] == {"width": 2520, "height": 1900}
+    # No measurable area imposes no ceiling: a guessed bound places windows worse than no rule.
+    assert got["noBounds"] == {"width": 2520, "height": 1900}
 
 
 def test_open_app_hands_that_size_to_the_window_it_opens():
