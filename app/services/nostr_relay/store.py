@@ -241,12 +241,18 @@ def retired_kind_reason(kind: int):
 _PRUNE_CHUNK = 20000
 
 # NIP-34 git-over-nostr events — a repo's source of truth (announcement 30617, repo state 30618,
-# patches 1617, issues 1621, replies/PRs 1622, issue-status 1623, and status 1630-1633). These are
+# patches 1617, PULL REQUESTS 1618 and PR updates 1619, issues 1621, replies 1622, issue-status 1623,
+# and status 1630-1633). These are
 # the collaboration record; losing one loses code/history that isn't reconstructable from the WoT
 # firehose. They are DELIBERATELY absent from _PRUNABLE_KINDS (so age/bridge/count-cap prunes never
 # touch them — kept forever), and are also exempted from the NIP-40 expiration sweep below so a stray
 # `expiration` tag can't quietly delete a repo. NEVER add any of these to _PRUNABLE_KINDS.
-_GIT_KINDS = (30617, 30618, 1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633)
+# 1618/1619 were absent here while _GIT_COMMENT_ROOT_KINDS below already shielded the COMMENTS on a
+# PR — the children of an event the parent set forgot. The consequence was that a PR, once accepted,
+# stayed deletable by a stray NIP-40 `expiration` tag (_NEVER_EXPIRE_KINDS is built from this tuple),
+# so the one event carrying a contribution's commit ids could quietly disappear while its discussion
+# was kept forever.
+_GIT_KINDS = (30617, 30618, 1617, 1618, 1619, 1621, 1622, 1623, 1630, 1631, 1632, 1633)
 assert not (set(_GIT_KINDS) & set(_PRUNABLE_KINDS)), "git kinds must never be prunable"
 
 # A NIP-22 comment (kind 1111) whose ROOT is a NIP-34 issue (1621) / patch (1617) / PR (1618) is the

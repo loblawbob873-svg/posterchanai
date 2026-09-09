@@ -1127,13 +1127,24 @@ class RelayServer:
             # verified above and these are kept forever (store._GIT_KINDS). Patches/issues (1617/1621/…)
             # stay WoT-gated until repo-scoped acceptance lands, so this isn't an open spam firehose.
             pass
-        elif kind in (1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633):
-            # NIP-34 git COLLABORATION: patch (1617), issue (1621), replies (1622/1623), status
+        elif kind in (1617, 1618, 1619, 1621, 1622, 1623, 1630, 1631, 1632, 1633):
+            # NIP-34 git COLLABORATION: patch (1617), PULL REQUEST (1618) and PR UPDATE (1619),
+            # issue (1621), replies (1622/1623), status
             # (1630-1633). Accept from ANY author, but ONLY when the event a-tags a repo whose PUBLIC
             # announcement (30617) is on THIS relay — so issues/patches show up in the client for repos
             # this relay knows about (incl. a repo HOSTED on a peer node, since scoping is by the
             # announcement, not by who hosts it), without opening an unbounded spam firehose. Private
             # repos have no 30617, so they're never matched (no title/content leak). Signature verified above.
+            #
+            # 1618/1619 ARE THE DEFAULT CONTRIBUTION PATH FOR EVERY ngit v3 CLIENT and were missing
+            # from this tuple: they fell through to the WoT gate below and were refused
+            # `blocked: not in web of trust`. GRASP-01 makes them a MUST ("MUST accept other events
+            # that tag ... accepted git repository announcements"), and ngit v3 fetches collaboration
+            # events EXCLUSIVELY from the relays a repository declares — so for a repo naming us, a
+            # refused PR does not exist anywhere. `ngit send` / `git push pr/<branch>` defaults to the
+            # PR kind whenever the repo has a GRASP server, i.e. the one path we refused was the only
+            # one a stock client takes. They carry the same `a` tag as a patch, so they are scoped by
+            # exactly the same repo lookup and open no new spam surface.
             if _wot and not await self._collab_for_known_repo(ev):
                 self._refuse(conn, eid, ev, "blocked: git patch/issue references an unknown repo")
                 return
