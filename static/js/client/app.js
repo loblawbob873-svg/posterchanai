@@ -15904,7 +15904,10 @@
    * relay, a target we cannot check) keeps the receipt, because "could not ask" is never "it landed". */
   function _repostReceiptSpent(key,value){
     if(!value)return null;
-    if(!value.targets.every(e=>_repostDeleted(e)))return value;
+    // A THROW HERE IS "COULD NOT ASK", so it must keep the receipt. Its caller's catch returns null,
+    // which reads as no receipt at all — the button would go back to offering a repost while a signed
+    // deletion nobody acknowledged is still the outstanding request. Answered here, it cannot.
+    try{ if(!value.targets.every(e=>_repostDeleted(e)))return value; }catch(_){ return value; }
     try{localStorage.removeItem(key);}catch(_){}
     _repostReceiptMemo.delete(key);return null;
   }
