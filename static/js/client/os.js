@@ -10212,8 +10212,8 @@
                      window that opens partly off the monitor is not an error anywhere — it is a
                      window you have to drag back before you can use it — and the only honest way
                      to check it is to run the shipped arithmetic against real output sizes.
-                     `__setShellBox` is the one piece a page cannot fake: it is normally recorded
-                     by adoptAll from the compositor's own snapshot. */
+                     The compositor rectangle is deliberately NOT among them any more: the size
+                     hint is derived against this renderer's own viewport, which a test can set. */
                   __place: (i, view) => place(i, view),
                   __sameAppWindow: sameAppWindow,
                   __handoffIdentity: handoffIdentity,
