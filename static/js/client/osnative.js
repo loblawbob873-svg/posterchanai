@@ -66,22 +66,37 @@
    * in-page frame (which does pass a size) were 1910x1487 and 1983x1831. Reported as "its not
    * opening windows at a decent size, we fixed this before on the old sway".
    *
-   * THREE COORDINATE SYSTEMS, and this is the conversion between them. `place()` answers in LAYOUT
-   * pixels (it divides the measured desk by the body zoom, see its own comment); `zoom` turns those
-   * into the visual CSS pixels the page is actually drawn in; and `scale` — the shell's own window
-   * measured in both systems at once, exactly as scaleFrom() derives it for native placement —
-   * turns those into the compositor units an Electron window is created in.
+   * TWO COORDINATE SYSTEMS, NOT THREE, AND THIS IS THE CONVERSION BETWEEN THEM. `place()` answers in
+   * LAYOUT pixels (it divides the measured desk by the body zoom, see its own comment) and `zoom`
+   * turns those into the visual CSS pixels the page is actually drawn in. That is where the answer
+   * STOPS, because that is the space its only consumer is expressed in: it travels through
+   * `PCOSWin.open` into `window.open(url, '_blank', 'width=…')`, whose feature pixels are CSS
+   * pixels, and Electron maps those onto a BrowserWindow's width/height, which are DIP. `popOut` —
+   * the other caller of that same parameter — passes `getBoundingClientRect()` straight through, so
+   * this is the space both callers already have to agree on.
    *
-   * A missing scale falls back to the zoom alone rather than to nothing: that is what popOut has
-   * always passed, so the worst case is the size that already ships for the ⧈ button, never the
-   * 1100x760 fallback. A zero or absurd result is refused, because a window opened at 8 pixels is
-   * worse than one opened at the default. */
-  function windowOpenSize(rect, zoom, scale){
+   * IT USED TO MULTIPLY BY THE COMPOSITOR SCALE AS WELL, and that is "social on desktop is some
+   * weird window that is half off the monitor". `scaleFrom()` is the shell's own window measured in
+   * Wayfire's units over its CSS viewport — the right conversion for `mapRect`, which hands a
+   * rectangle to `pcWM.place`, and the wrong one here, because Electron applies that factor itself
+   * (main.js's `placePopupWindow` derives the same ratio as `sx`/`sy` when it converts a popup's
+   * requested size BACK for the client). On an output where the two agree the factor is 1 and
+   * nothing shows; on a HiDPI or fractionally-scaled one the window is created that many times too
+   * large in each axis. Measured with the shipped arithmetic on a 3840x2160 desk whose compositor
+   * rectangle is twice the renderer's viewport: 6436x3710. Wayland gives a client no say in where
+   * its toplevel goes, so the compositor centres that and 1298px hang off each side.
+   *
+   * `bounds` is the usable area of the output the window opens on, in those same CSS pixels, and it
+   * is a CEILING: a window that fits is passed through untouched. A zero or absurd result is
+   * refused, because a window opened at 8 pixels is worse than one opened at the default. */
+  function windowOpenSize(rect, zoom, bounds){
     const z = Number(zoom) > 0 ? Number(zoom) : 1;
-    const sx = scale && Number(scale.x) > 0 ? Number(scale.x) : 1;
-    const sy = scale && Number(scale.y) > 0 ? Number(scale.y) : 1;
-    const w = Math.round((Number(rect && rect.w) || 0) * z * sx);
-    const h = Math.round((Number(rect && rect.h) || 0) * z * sy);
+    let w = Math.round((Number(rect && rect.w) || 0) * z);
+    let h = Math.round((Number(rect && rect.h) || 0) * z);
+    const bw = Math.round(Number(bounds && bounds.width) || 0);
+    const bh = Math.round(Number(bounds && bounds.height) || 0);
+    if(bw > 0) w = Math.min(w, bw);
+    if(bh > 0) h = Math.min(h, bh);
     if(!(w >= 200) || !(h >= 150) || w > 32000 || h > 32000) return null;
     return { width: w, height: h };
   }
