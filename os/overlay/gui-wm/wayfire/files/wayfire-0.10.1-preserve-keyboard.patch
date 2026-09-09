@@ -1,0 +1,21 @@
+--- a/src/core/seat/seat.cpp
++++ b/src/core/seat/seat.cpp
+@@ -388,12 +388,15 @@
+ 
+             priv->keyboards.erase(it, priv->keyboards.end());
+ 
+-            if (current_kbd_destroyed && priv->keyboards.size())
++            // The wlroots keyboard can differ from current_keyboard (for example after
++            // adding a device which has not sent a key). Reassert the surviving selection
++            // after removal so new clients receive its keymap before modifier events.
++            if (current_kbd_destroyed || !priv->current_keyboard)
+             {
+-                priv->set_keyboard(priv->keyboards.front().get());
++                priv->set_keyboard(priv->keyboards.empty() ? nullptr : priv->keyboards.front().get());
+             } else
+             {
+-                priv->set_keyboard(nullptr);
++                priv->set_keyboard(priv->current_keyboard);
+             }
+         }
+ 
