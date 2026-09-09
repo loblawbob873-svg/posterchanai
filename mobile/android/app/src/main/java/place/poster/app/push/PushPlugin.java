@@ -234,6 +234,12 @@ public class PushPlugin extends Plugin {
         String tag = call.getString("tag", null);
         String route = call.getString("route", "notifications");
         try {
+            /* SAY THAT THE CLIENT SPOKE FOR THIS DM, so the blind server push does not say it again
+             * a few seconds later. Recorded BEFORE the draw, not after: `show` can throw, and a
+             * notification the client believes it raised is exactly the one the push must not
+             * duplicate. See ClientNotified — the record only ever suppresses, never creates, and a
+             * phone with no running client never writes one. */
+            if ("dm".equals(type) || "pc-dm".equals(tag)) ClientNotified.dm(System.currentTimeMillis());
             PushEventService.show(getContext(), title, body, type, tag, route);
             call.resolve();
         } catch (Throwable t) {

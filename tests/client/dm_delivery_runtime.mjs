@@ -3,12 +3,17 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const src=fs.readFileSync(process.argv[2] || new URL('../../static/js/client/app.js',import.meta.url),'utf8');
 const shipped=src.slice(src.indexOf('  let _dmWatching='),src.indexOf('  // Unwrap a NIP-17 gift wrap'));
-function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date}={}){
+function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date,ready=true}={}){
   const subs=[],received=[],tried=new Set(),timers=[];
   const ctx=vm.createContext({console:{warn(){},info(){}},Map,Set,Date:clock,Promise,
     setInterval(fn){timers.push(fn);}, ME:{pubkey:'self'},signer:{nip17unwrap:true,mode},_dmLoaded:false,_dmUnread:0,
     _wrapTried:tried,MUTED:new Set(),VIEW:'home',
-    Relay:{subscribe(filters,handlers){subs.push({filters,...handlers});},query},
+    /* `ready` is what the HISTORY read waits for. A REQ written to a CONNECTING socket is dropped
+       by relay.js `_send`, and Messages is the view most often opened into that window (a launcher
+       tile lands the instant pc-app-ready fires, the same turn connectRelays() was called in). The
+       live subscriptions above deliberately do NOT wait — they re-arm themselves on connect. */
+    Relay:{subscribe(filters,handlers){subs.push({filters,...handlers});},query,
+           ready:async()=>ready},
     DmCache:{pullShared:pull,pushShared:async()=>{}},Store:{byKind:()=>[],saveEvent:()=>false},
     ingestDM:()=>false,ingestWrap:ingest|| (async(ev,live)=>{received.push({ev,live});tried.add(ev.id);}),
     bumpDm(){},_dmNotify(){},_scheduleDmRefresh(){},renderMessages(){},recountDmUnread(){}
@@ -46,6 +51,19 @@ function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date
   fail=false;await x.ensureDMs();assert.equal(x.ctx._dmLoaded,true);assert.equal(x.subs.length,2);
   x.subs[1].onEose();await x.subs[1].onEvent({id:'after-retry'});assert.equal(x.received.length,1);
 }
+// No socket yet: the live subscriptions still go up, and the one-shot history read is DEFERRED
+// rather than fired into nothing and then latched as "loaded".
+{
+  let asked=0;
+  const x=setup({ready:false,query:async()=>{asked++;return [];}});
+  await x.ensureDMs();
+  assert.equal(asked,0,'the history REQ went out on a socket that cannot answer');
+  assert.equal(x.ctx._dmLoaded,false,'"could not ask" was recorded as "you have no messages"');
+  assert.equal(x.subs.length,2,'live delivery must not wait for the socket it re-arms on');
+  x.subs[1].onEose();await x.subs[1].onEvent({id:'arrived-before-the-socket-settled'});
+  assert.equal(x.received.length,1,'a DM arriving during the gap was dropped');
+}
+
 // The historical queue bounds signer work; new DMs bypass that queue and old duplicates disappear.
 {
   const releases=[],seen=[],done=new Set();let active=0,peak=0;

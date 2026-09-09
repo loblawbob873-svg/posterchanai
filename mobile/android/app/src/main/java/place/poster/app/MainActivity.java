@@ -47,6 +47,28 @@ public class MainActivity extends BridgeActivity {
         // If Android consequently routes HOME to this ordinary launcher activity, repair the
         // person's persisted choice immediately so the next Home press returns to the native desk.
         place.poster.app.home.HomeRoles.repairOptedInLauncher(this);
+        /* A NOTIFICATION'S DEEP LINK IS FRESH WHEN IT IS DELIVERED, not when it was built.
+         *
+         * A tile parks its request itself, a moment before starting this activity. A NOTIFICATION
+         * cannot: its PendingIntent is assembled when the notification is posted and tapped whenever
+         * the person gets round to it. The stamp it carries is therefore the posting time, and
+         * HomePlugin.consumeLaunchView — rightly — throws away an extra older than a minute. So
+         * every notification tapped after the first minute opened the app on whatever screen it had
+         * been left on: "clicking a DM notification does not bring me to the DM screen". Invisible
+         * from a warm app, because onNewIntent below hands the view over directly and never looks at
+         * the stamp.
+         *
+         * `deliver` re-parks it stamped NOW, and refuses the two shapes that are a replay rather
+         * than a press: a resume from Recents, and a recreate (rotation, or the render-process
+         * recovery further down) re-running this method against the original launch intent. */
+        try {
+            Intent launch = getIntent();
+            place.poster.app.home.LaunchView.deliver(
+                    launch == null ? "" : launch.getStringExtra(place.poster.app.home.HomeActivity.EXTRA_VIEW),
+                    launch == null ? 0 : launch.getFlags(),
+                    savedInstanceState != null,
+                    System.currentTimeMillis());
+        } catch (Throwable ignored) { }
         registerPlugin(ScreenSharePlugin.class);
         registerPlugin(ShareTargetPlugin.class);
         registerPlugin(Nip55Plugin.class);
@@ -358,9 +380,15 @@ public class MainActivity extends BridgeActivity {
         // the half Android never freezes. No payload — the client still consumes the parked request
         // itself, so there is one consumer and no second path to disagree with it.
         try {
-            place.poster.app.home.HomePlugin.announceLaunchView(
-                intent == null ? "" : intent.getStringExtra(
-                    place.poster.app.home.HomeActivity.EXTRA_VIEW));
+            String want = intent == null ? "" : intent.getStringExtra(
+                    place.poster.app.home.HomeActivity.EXTRA_VIEW);
+            // Park it too, stamped NOW. The announcement is the fast path and carries the payload
+            // itself, but a page still booting has no listener yet, and then the parked copy is what
+            // `land` reads a moment later. A notification's own EXTRA_VIEW_AT is its POSTING time,
+            // so without this the fallback has already expired in the notification shade.
+            place.poster.app.home.LaunchView.deliver(want, intent == null ? 0 : intent.getFlags(),
+                    false, System.currentTimeMillis());
+            place.poster.app.home.HomePlugin.announceLaunchView(want);
         } catch (Throwable ignored) { }
     }
 

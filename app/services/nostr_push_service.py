@@ -482,9 +482,23 @@ async def _dm_handler(ev: dict):
         # the feature. Naming a kind-4 sender is safe (its author IS the sender) and worth doing; a
         # gift wrap gets "Someone", and the client fills in the detail once it opens and decrypts.
         who = await _name_for(author) if kind == 4 else ""
+        # `view` IS THE TAP TARGET, and without it this notification opened Notifications.
+        # PushEventService.deliver derives its deep link from `eid` (a post) or `view` (a screen) and
+        # falls back to "notifications" when neither is present — which is every DM push ever sent,
+        # because a gift wrap has no post to open and nothing here named a screen. Reported as
+        # "clicking a DM notification does not bring me to the DM screen": the app came forward on
+        # Notifications, which is a real screen, so nothing looked broken.
+        #
+        # `tag` IS WHY THIS IS ONE NOTIFICATION AND NOT TWO. Android keys a notification on
+        # (tag, id). This push and the one the CLIENT raises once it has decrypted the wrap are two
+        # stages of knowledge about the SAME message — "Someone sent you a message" and then
+        # "Alice sent you a DM" — and they landed side by side because this one had no tag (posted
+        # under "msg") and the client's carries "pc-dm". Sharing the tag makes the named one REPLACE
+        # the blind one. The other ordering (the client got there first) is handled on the device by
+        # ClientNotified, which drops a generic push a live client has already spoken for.
         payload = {"title": "💬 New message",
                    "body": f"{who} sent you a message" if who else "Someone sent you a message",
-                   "type": "dm"}
+                   "type": "dm", "view": "messages", "tag": "pc-dm"}
         for subs in targets.values():
             for sub in subs:
                 await asyncio.to_thread(push_service.send, sub, payload)
