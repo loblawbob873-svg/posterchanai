@@ -13509,9 +13509,10 @@
     const liked = myReaction(ev.id);
     const hasNoteXmr = isXmrAddr(xmrForNote(ev));
     const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey)));
+    const _rtAct = _repostAction(ev.id, counts.iRt);
     return `<div class="acts">
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
-          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="${_repostActionTitle(ev.id,counts.iRt)}">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
+          <button class="act rt ${counts.iRt?'on':''}${_rtAct.pending?' rt-unconfirmed':''}" data-a="repost" title="${_rtAct.label}" aria-label="${_rtAct.label}">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="${liked?'remove your reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
@@ -15893,11 +15894,35 @@
   function _ownReposts(id,owner){
     return Store.query([{kinds:[6,16],authors:[owner],'#e':[id]}]).filter(e=>e.pubkey===owner&&e.id!==id&&(e.kind===6||e.kind===16)&&_repostVerified(e)&&!_repostDeleted(e));
   }
+  /* A RECEIPT IS EVIDENCE OF AN UNFINISHED REQUEST, NEVER A PERMANENT MODE.
+   *
+   * The receipt exists for the lost-ACK case: the deletion was signed and sent, the answer never came
+   * back, so the retry must re-send THAT event rather than sign a second one. But nothing ever retired
+   * it on the one outcome that is not a failure — the deletion landing anyway, seen later as a verified
+   * kind-5 arriving from a relay or from another device. The receipt then outlives the undo it
+   * describes, and two things stay wrong for ever with nothing on screen to say so: the button reads
+   * "retry undo repost" about work that is done, and — because the receipt branch is checked BEFORE the
+   * repost branch — that post can never be reposted again. One stale key, and a button that has one job
+   * does the other one, silently, for the life of the account.
+   *
+   * So it is spent by EVIDENCE, not by a timer: every target it names carries a verified same-author
+   * deletion. That is exactly the condition under which re-sending would be a no-op, and it is the same
+   * proof the rest of this file uses to decide a repost is undone. Anything short of it (an unread
+   * relay, a target we cannot check) keeps the receipt, because "could not ask" is never "it landed". */
+  function _repostReceiptSpent(key,value){
+    if(!value)return null;
+    // A THROW HERE IS "COULD NOT ASK", so it must keep the receipt. Its caller's catch returns null,
+    // which reads as no receipt at all — the button would go back to offering a repost while a signed
+    // deletion nobody acknowledged is still the outstanding request. Answered here, it cannot.
+    try{ if(!value.targets.every(e=>_repostDeleted(e)))return value; }catch(_){ return value; }
+    try{localStorage.removeItem(key);}catch(_){}
+    _repostReceiptMemo.delete(key);return null;
+  }
   function _repostUndoReceipt(key,id,owner,privateEvent){
     try{
       const raw=localStorage.getItem(key),context=id+':'+owner+':'+privateEvent,memo=_repostReceiptMemo.get(key);
       if(!raw){_repostReceiptMemo.delete(key);return null;}
-      if(memo&&memo.raw===raw&&memo.context===context)return memo.value;
+      if(memo&&memo.raw===raw&&memo.context===context)return _repostReceiptSpent(key,memo.value);
       const saved=JSON.parse(raw),deletion=saved&&saved.deletion,targets=saved&&saved.targets;
       if(!deletion||!Array.isArray(targets)||!targets.length||deletion.pubkey!==owner||deletion.kind!==5||deletion.content!==''||!_repostVerified(deletion)||_fediOnlyEvent(deletion)!==privateEvent)return null;
       if(!targets.every(e=>e.pubkey===owner&&(e.kind===6||e.kind===16)&&e.id!==id&&e.tags.some(t=>t[0]==='e'&&t[1]===id)&&_fediOnlyEvent(e)===privateEvent&&_repostVerified(e)))return null;
@@ -15906,13 +15931,20 @@
       if(!deletion.tags.every(t=>['e','k'].includes(t[0])||(t[0]==='client-mode'&&t[1]==='fedi-only')||(t[0]==='client'&&t.length===2&&t[1]==='PosterChan AI')))return null;
       const value={deletion,targets};
       if(_repostReceiptMemo.size>=64)_repostReceiptMemo.delete(_repostReceiptMemo.keys().next().value);
-      _repostReceiptMemo.set(key,{raw,context,value});return value;
+      _repostReceiptMemo.set(key,{raw,context,value});return _repostReceiptSpent(key,value);
     }catch(_){return null;}
   }
-  function _repostActionTitle(id,reposted){
-    if(ME&&[false,true].some(privateEvent=>_repostUndoReceipt('pc_repost_undo_'+ME.pubkey+':'+id+(privateEvent?':private':':public'),id,ME.pubkey,privateEvent)))return 'retry undo repost';
-    return reposted?'undo your repost':'repost';
+  function _repostUndoPending(id){
+    return !!(ME&&[false,true].some(privateEvent=>_repostUndoReceipt('pc_repost_undo_'+ME.pubkey+':'+id+(privateEvent?':private':':public'),id,ME.pubkey,privateEvent)));
   }
+  /* Both callers want the label AND the pending flag, and each answer costs two localStorage reads.
+   * Asked separately that is six synchronous reads per card per draw on a 200-card timeline, for a
+   * key that is almost always absent — so the pair is resolved once and handed back together. */
+  function _repostAction(id,reposted){
+    const pending=_repostUndoPending(id);
+    return {pending,label:pending?'retry undo repost':(reposted?'undo your repost':'repost')};
+  }
+  function _repostActionTitle(id,reposted){ return _repostAction(id,reposted).label; }
   async function doRepost(id,pk,btn){
     if(!ME||GUEST){_guestPrompt();return;}
     const owner=ME.pubkey,key=owner+':'+id,current=()=>ME&&ME.pubkey===owner;
@@ -34926,7 +34958,17 @@
     _ixT=null;
     const owner=ME&&ME.pubkey,ids=[...new Set($$('.note[data-id]').map(n=>n.dataset.id))].slice(0,200);
     if(!ids.length) return;
-    try{ const evs=await Relay.query([{ kinds:[1,6,16,7,9735], '#e':ids, limit:600 }]);
+    /* A POPULAR POST CROWDS YOU OUT OF YOUR OWN ANSWER, and the repost button is the one place that
+     * costs something. The filter below asks for up to 600 engagement events across up to 200 notes —
+     * so on a busy thread the single event that decides whether this button says "repost" or "undo your
+     * repost", YOUR OWN kind-6, is competing for a slot with every stranger's reaction and zap and can
+     * simply not be in the page. It then reads as "you have not reposted this", which on a second
+     * device is not a cosmetic wrong number: the next click publishes a SECOND repost of a post you
+     * already reposted, and the undo you wanted is not even on offer. Asking for your own separately
+     * costs one extra filter in the SAME REQ and cannot be truncated by anybody else's traffic. */
+    const _cf=[{ kinds:[1,6,16,7,9735], '#e':ids, limit:600 }];
+    if(owner) _cf.push({ kinds:[6,16,7], authors:[owner], '#e':ids, limit:300 });
+    try{ const evs=await Relay.query(_cf);
       if((ME&&ME.pubkey)!==owner)return;
       let any=false; for(const e of evs){ if(Store.saveEvent(e)){ any=true; needProfile(e.pubkey); } }
       // The global deletion subscription is bounded. Ask specifically about the reposts now
@@ -34956,7 +34998,11 @@
       const setN=(a,v)=>{ const s=n.querySelector('.act[data-a="'+a+'"] .n'); if(s) s.textContent=v||''; };
       setN('reply',c.replies); setN('repost',c.reposts); setN('react',c.reactions); setN('zap',c.zaps?fmtSats(c.zaps):'');
       const rk=n.querySelector('.act[data-a="react"]'); if(rk){ rk.classList.toggle('on',!!mr); rk.title=mr?'remove your reaction':'react'; const ic=rk.querySelector('.react-ic'); if(ic) ic.innerHTML=(mr||REACT_ICON); }
-      const rt=n.querySelector('.act[data-a="repost"]'); if(rt){rt.classList.toggle('on',c.iRt);rt.title=_repostActionTitle(id,c.iRt);}
+      /* `title` is a HOVER tooltip: on a phone — where most of this is read — it is not shown at all,
+       * and a screen reader announces the icon, not the state. An undo that was signed and never
+       * acknowledged has to be legible without a mouse, so the same one string is also the accessible
+       * name, and an unconfirmed one carries a class the stylesheet can mark. */
+      const rt=n.querySelector('.act[data-a="repost"]'); if(rt){const _ra=_repostAction(id,c.iRt);rt.classList.toggle('on',c.iRt);rt.title=_ra.label;rt.setAttribute('aria-label',_ra.label);rt.classList.toggle('rt-unconfirmed',_ra.pending);}
       const zp=n.querySelector('.act[data-a="zap"]'); if(zp) zp.classList.toggle('on',!!c.zaps);
       const bm=n.querySelector('.act[data-a="bookmark"]'); if(bm) bm.classList.toggle('on',BOOKMARKS.has(id));
     });

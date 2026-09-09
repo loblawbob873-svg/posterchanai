@@ -35,6 +35,63 @@ async function run(){let count=0;
  {const h=setup(),c=h.ctx,o=h.event(1),attack=h.event(5,[['e',o.id]],h.other);c.Store.saveEvent(o);c.Store.removeEvent(o.id);let removed=0;c.document.querySelectorAll=()=>[{remove(){removed++},closest(){return this}}];c._applyDeletion(attack);assert.equal(removed,0);count++;}
  // Cached checks avoid repeated signatures but mutations never inherit prior validity.
  {const h=setup(),c=h.ctx,o=h.event(1),a=h.event(6,[['e',o.id]]),d=h.event(5,[['e',a.id]]);for(const e of[o,a,d])c.Store.saveEvent(e);const original=c.NostrTools.verifyEvent;let checks=0;c.NostrTools={...c.NostrTools,verifyEvent:e=>{checks++;return original(e)}};for(let i=0;i<20;i++)assert(c._repostDeleted(a));assert.equal(checks,1);const stored=c.Store.get(d.id);stored.content='changed';assert.equal(c._repostDeleted(a),false);count++;}
+
+ // A RECEIPT IS SPENT BY EVIDENCE. A lost ACK writes one; the deletion landing anyway (from a relay,
+ // or another device) retires it. Left standing, the button says "retry undo repost" about finished
+ // work AND that post can never be reposted again, because the receipt branch is checked first.
+ {const h=setup(),c=h.ctx,o=h.event(1),a=h.event(6,[['e',o.id]]);for(const e of[o,a])c.Store.saveEvent(e);
+  c.Relay.publish=async ev=>{h.sends.push(ev);return {ok:false}};
+  await c.doRepost(o.id,o.pubkey,h.button());
+  const deletion=h.sends[0],receiptKey='pc_repost_undo_'+h.owner+':'+o.id+':public';
+  assert.equal(c._repostActionTitle(o.id,true),'retry undo repost','an unconfirmed undo must still offer its retry');
+  assert(h.storage.has(receiptKey),'the signed deletion is kept for the retry');
+  // The undo lands after all: the same signed request comes back over the wire.
+  c.Store.saveEvent(deletion);c._applyDeletion(deletion);
+  assert(!c.Store.has(a.id));assert(c.Store.has(o.id));
+  assert.equal(c._repostActionTitle(o.id,false),'repost','a landed undo must stop advertising a retry');
+  assert.equal(c._repostUndoPending(o.id),false);
+  assert(!h.storage.has(receiptKey),'the spent receipt is dropped, not kept for ever');
+  // ...and the button is a REPOST button again, not a second copy of a deletion nobody asked for.
+  c.Relay.publish=async ev=>{h.sends.push(ev);return {ok:true}};
+  await c.doRepost(o.id,o.pubkey,h.button());
+  assert.equal(h.sends[1].kind,6,'the next click must repost, never re-send the spent deletion');
+  count++;}
+ // The same check must not fire early: a receipt whose target carries NO deletion is still the retry.
+ {const h=setup(),c=h.ctx,o=h.event(1),a=h.event(6,[['e',o.id]]);for(const e of[o,a])c.Store.saveEvent(e);
+  c.Relay.publish=async ev=>{h.sends.push(ev);return {ok:false}};
+  await c.doRepost(o.id,o.pubkey,h.button());
+  const foreign=h.event(5,[['e',a.id]],h.other);c.Store.saveEvent(foreign);   // somebody else's tombstone proves nothing
+  assert.equal(c._repostUndoPending(o.id),true);
+  assert(h.storage.has('pc_repost_undo_'+h.owner+':'+o.id+':public'));
+  count++;}
+ // YOUR OWN REPOST MUST NOT COMPETE WITH STRANGERS FOR A SLOT. The engagement fetch is capped, so on a
+ // busy post the one event that decides repost-vs-undo can be missing — and the next click then
+ // publishes a SECOND repost of a post this account already reposted, from another device.
+ {const h=setup(),c=h.ctx,o=h.event(1),mine=h.event(6,[['e',o.id]]);c.Store.saveEvent(o);
+  let callback,asked=[];c.setTimeout=fn=>{callback=fn;return 1};c.$$=()=>[{dataset:{id:o.id}}];c.NO_IMAGES=false;
+  vm.runInContext('let _ixT=null;'+part('  function hydrateCounts(){','  function decorateCounts(){'),c);
+  // A relay under load answers the crowded filter with nothing and the author-scoped one with the truth.
+  c.Relay.query=async filters=>{asked.push(filters);
+    if(filters[0].kinds[0]===5)return [];
+    return filters.some(f=>Array.isArray(f.authors)&&f.authors.includes(h.owner))?[mine]:[];};
+  c.hydrateCounts();await callback();
+  assert(asked[0].some(f=>Array.isArray(f.authors)&&f.authors.includes(h.owner)&&f.kinds.includes(6)),
+         'the count fetch must ask for THIS account\'s own reposts in its own filter');
+  assert(c.Store.has(mine.id),'the own repost the crowded filter dropped still arrives');
+  assert.equal(c.countsFor(o.id).iRt,true,'so the button offers the undo instead of a second repost');
+  count++;}
+ // The state has to be legible without a mouse: `title` is a hover tooltip and a phone has no hover.
+ {const h=setup(),c=h.ctx,o=h.event(1),a=h.event(6,[['e',o.id]]);for(const e of[o,a])c.Store.saveEvent(e);
+  c.Relay.publish=async ev=>{h.sends.push(ev);return {ok:false}};
+  await c.doRepost(o.id,o.pubkey,h.button());
+  const cls=new Set(),attrs={},btn={classList:{toggle:(n,on)=>{on?cls.add(n):cls.delete(n)}},setAttribute:(k,v)=>{attrs[k]=v},title:''};
+  const note={dataset:{id:o.id},querySelector:sel=>sel.includes('"repost"')?btn:null};
+  Object.assign(c,{$$:()=>[note],myReaction:()=>null,BOOKMARKS:new Set(),observeCelebrations(){},fmtSats:String});
+  vm.runInContext(part('  function decorateCounts(){','  function timeAgo(ts)'),c);
+  c.decorateCounts();
+  assert.equal(attrs['aria-label'],'retry undo repost','the accessible name must carry the state, not just the tooltip');
+  assert(cls.has('rt-unconfirmed'),'an unconfirmed undo is marked on the element, not only in a tooltip');
+  count++;}
  console.log(JSON.stringify({passed:count}));
 }
 run().catch(e=>{console.error(e);process.exitCode=1});

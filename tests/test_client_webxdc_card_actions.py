@@ -84,7 +84,12 @@ def _node(script):
 
 
 def _render(fn_name):
-    src = STUBS + _func("_repostUndoReceipt") + "\n" + _func("_repostActionTitle") + "\n" + _func("actsRow") + "\n" + _func("webxdcFileCard") + "\n"
+    # Everything actsRow reaches for, by name. The repost button asks whether an undo of THIS post is
+    # still unconfirmed, and that answer is three hops deep — a missing hop is a ReferenceError inside
+    # actsRow, i.e. a card that renders as nothing at all, which is exactly what these tests measure.
+    src = (STUBS + _func("_repostUndoReceipt") + "\n" + _func("_repostUndoPending") + "\n"
+           + _func("_repostAction") + "\n" + _func("_repostActionTitle") + "\n"
+           + _func("actsRow") + "\n" + _func("webxdcFileCard") + "\n")
     return _node(src + f"""
       const ev = {{ id:'e1', pubkey:'pk1', kind:1063, created_at:1, content:'a game',
                    tags:[['m','application/x-webxdc'],['url','https://h/a.xdc'],['webxdc','g1']] }};

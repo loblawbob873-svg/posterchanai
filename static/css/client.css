@@ -2152,6 +2152,10 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 :root[data-theme] .act:hover{background:var(--panel);color:var(--text);text-shadow:none}
 :root[data-theme] .act.on{background:var(--panel2);color:var(--text);box-shadow:inset 0 0 0 1px var(--line);text-shadow:none}
 :root[data-theme] .act.on::before{box-shadow:none}
+/* An undo that was signed and never acknowledged. Deliberately a DASHED outline and not a colour:
+   the state is "we do not know", so it must not look like either the engaged .act.on or a plain
+   button. It uses the same token the engaged style does, so it themes with everything else. */
+.act.rt-unconfirmed{box-shadow:none;outline:1px dashed var(--line);outline-offset:-1px}
 .act .react-ic,.act .tipbolt{display:inline-flex;align-items:center;flex:0 0 auto}   /* centre the react/zap glyphs like the direct-child svg icons */
 .act .n{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600}
 
