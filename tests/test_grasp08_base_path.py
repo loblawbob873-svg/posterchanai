@@ -136,7 +136,12 @@ def test_the_relays_tag_is_not_derived_from_the_git_base_path_and_that_is_a_DEPL
 def test_we_expose_no_grasp06_pull_request_endpoints():
     """(4). Nothing to preserve a base path in — recorded so the next reader does not go looking."""
     import subprocess
-    hits = subprocess.run(["grep", "-rniE", "grasp-?06|pull_request", "--include=*.py", _ROOT],
-                          capture_output=True, text=True).stdout
-    hits = [ln for ln in hits.splitlines() if "test_grasp08_base_path" not in ln]
-    assert not hits, hits
+    # ASK GIT WHAT IS OURS. A recursive grep of the checkout also reads venv-unified/ and every
+    # .recovery worktree, so this failed the day huggingface_hub grew a `merge_pull_request`
+    # export — a dependency's API deciding whether OUR endpoint audit passes.
+    tracked = subprocess.run(["git", "ls-files", "-z", "*.py"], cwd=_ROOT,
+                             capture_output=True, text=True).stdout.split("\0")
+    tracked = [f for f in tracked if f and "test_grasp08_base_path" not in f]
+    hits = subprocess.run(["grep", "-niE", "grasp-?06|pull_request", "--"] + tracked,
+                          cwd=_ROOT, capture_output=True, text=True).stdout
+    assert not hits.splitlines(), hits

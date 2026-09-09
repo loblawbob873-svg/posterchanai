@@ -609,11 +609,13 @@ class _Handler(BaseHTTPRequestHandler):
         # emits [["u", url], ["method", "GET"]] unconditionally, since git hands a credential helper
         # no method to echo).
         #
-        # `allow_basic` STAYS. The constraint is libgit2's, not any ngit version's: it only attempts
-        # a scheme the server advertises and gives up on `Nostr` alone rather than calling a
-        # credential helper, so a v3 client on the same transport behaves the same way. It is not
-        # password auth either — the "password" is that same base64 NIP-98 event, verified below by
-        # every check on this path.
+        # `allow_basic` STAYS, but NOT because ngit needs it — MEASURED, ngit 3.0.0 sends
+        # `Authorization: Nostr <b64>` itself and never touches a credential helper. What needs it
+        # is PLAIN GIT over the https clone URL, whose only way to attach anything is a credential
+        # helper, and a helper can return nothing but a username/password pair — which is exactly
+        # what `scripts/git-credential-nostr` is for. Dropping it would silently take https away
+        # from every client that is not ngit. It is not password auth either: the "password" is
+        # that same base64 NIP-98 event, verified below by every check on this path.
         #
         # The `u` tag is still matched as a SUBSTRING (`<id>.git`) rather than against a canonical
         # URL, deliberately — see docs/GIT_OVER_NOSTR.md. Three things make an equality check refuse
