@@ -3778,6 +3778,34 @@ DESKTOP
 		fi
 	done
 
+	# ---------------------------------------------------------------- is Steam on this build host
+	#
+	# ASKED BEFORE THE PACK, NOT AFTER IT. A LiveUSB is a COPY of this machine -- `install-live`
+	# writes the squashfs onto the disk rather than emerging anything -- so whatever Steam this
+	# image will ever have is whatever is installed here, right now. Discovering that after a
+	# half-hour pack and a twenty-minute ISO is discovering it too late to do anything but start
+	# again.
+	#
+	# NOT FATAL, and deliberately so. `installSteam` calls Steam "one application on top of" the
+	# desktop and the start menu already shows it only when the binary exists, so a rescue disc
+	# built from a box that never wanted it is a legitimate image. What is NOT legitimate is
+	# finding out by accident: the verdict is printed, named, and carries the one command that
+	# fixes it. The image-side gate below is the other half -- it is fatal, because a host that
+	# HAS Steam and an image that does not means the payload was stripped on the way in, which is
+	# the Firefox failure with a different name.
+	local HOST_STEAM=0
+	if portageq has_version / games-util/steam-launcher 2>/dev/null; then
+		HOST_STEAM=1
+		echo "build host has games-util/steam-launcher" >>"$LOG" 2>/dev/null
+	else
+		echo "build host has NO games-util/steam-launcher" >>"$LOG" 2>/dev/null
+		echo
+		echo -e "${COLOR_YELLOW}Steam is not installed on this machine, so this image will not carry it.${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}A LiveUSB is a copy of this system — install it first if it should ship:${COLOR_RESET}"
+		echo -e "${COLOR_YELLOW}    sudo gentoo.sh steam${COLOR_RESET}"
+		echo
+	fi
+
 	# ---------------------------------------------------------------- squash it
 	echo -e "${COLOR_YELLOW}Packing the filesystem — this is the slow part.${COLOR_RESET}"
 	echo
@@ -3823,6 +3851,27 @@ DESKTOP
 		for F in usr/bin/firefox-bin opt/firefox/firefox-bin opt/firefox/libxul.so; do
 			printf '%s\n' "$LS" | grep -qx "squashfs-root/$F" || MISSING="$MISSING /$F"
 		done
+		# STEAM IS A LAUNCHER PLUS A 32-BIT RUNTIME, AND THE LAUNCHER ALONE IS WORTHLESS.
+		#
+		# `/usr/bin/steam` is a 40-line bash wrapper and `steam.desktop` is a text file: both
+		# survive an image that cannot run Steam at all, so an existence check on the obvious
+		# names proves nothing. What Steam actually needs is the OTHER ABI. The client Valve
+		# ships is `ELF 32-bit LSB pie executable, Intel i386` asking for `/lib/ld-linux.so.2`,
+		# so without the 32-bit loader and libc it does not start -- it cannot even be exec'd --
+		# and without 32-bit libGL every game draws nothing. Measured inside a booted image:
+		# `ldd` on the unpacked bootstrap resolves all six of its libraries out of /usr/lib,
+		# which on this merged-usr layout IS the 32-bit libdir (/usr/lib64 is the 64-bit one).
+		#
+		# ONLY WHEN THE HOST HAS IT. This is the packed output being compared against the
+		# machine it was packed from, exactly like the Firefox payload above: the question is
+		# "did the image keep what this host has", never "must every image ship Steam".
+		if [[ "$HOST_STEAM" = 1 ]]; then
+			for F in usr/bin/steam usr/lib/steam/bin_steam.sh \
+				usr/lib/steam/bootstraplinux_ubuntu12_32.tar.xz \
+				usr/lib/ld-linux.so.2 usr/lib/libc.so.6 usr/lib/libGL.so.1; do
+				printf '%s\n' "$LS" | grep -qx "squashfs-root/$F" || MISSING="$MISSING /$F"
+			done
+		fi
 		# The welcome screen cannot configure wifi without the daemon, and launching getty before it
 		# is ready creates the exact same visible failure as omitting it.
 		echo "$LS" | grep -qx "squashfs-root/usr/lib/systemd/system/NetworkManager.service" \

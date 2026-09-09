@@ -249,6 +249,14 @@ CHECKS = {
     # the other heavy gates.
     "check_livecd_vm":                 dict(group="ui", secs=900, serial=True,
                                             why="the image reaches a desktop and keeps it"),
+    # Reads a built ISO and answers whether Steam would work on the machine it installs -- the
+    # launcher AND the 32-bit runtime Valve's i386 client cannot start without. Neither gate above
+    # covers it: one proves the image boots to a desktop and the other proves the installer runs,
+    # and both are green on an image whose Steam is a menu entry that does nothing. No VM, no root
+    # and no extraction -- it lists the squashfs where it lies inside the ISO -- so it is seconds,
+    # not minutes, and it skips like the two above when there is no image to read.
+    "check_iso_steam_payload":         dict(group="ui", secs=900,
+                                            why="a built ISO carries a Steam that can run"),
     # THE BUILD, not the deployer. `check_livecd_install_vm` copies an already-built live image onto
     # a disk; this one starts from a stock Gentoo ISO and an empty disk and runs the installer's
     # from-scratch path -- stage3, portage against our mirror, @world, the kernel, the PosterChanOS

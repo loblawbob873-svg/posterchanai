@@ -136,12 +136,20 @@ def test_the_relays_tag_is_not_derived_from_the_git_base_path_and_that_is_a_DEPL
 def test_we_expose_no_grasp06_pull_request_endpoints():
     """(4). Nothing to preserve a base path in — recorded so the next reader does not go looking."""
     import subprocess
-    # ASK GIT WHAT IS OURS. A recursive grep of the checkout also reads venv-unified/ and every
-    # .recovery worktree, so this failed the day huggingface_hub grew a `merge_pull_request`
-    # export — a dependency's API deciding whether OUR endpoint audit passes.
-    tracked = subprocess.run(["git", "ls-files", "-z", "*.py"], cwd=_ROOT,
-                             capture_output=True, text=True).stdout.split("\0")
-    tracked = [f for f in tracked if f and "test_grasp08_base_path" not in f]
+    # ASK GIT WHAT IS OURS, AND ONLY WHERE AN ENDPOINT CAN BE DEFINED.
+    #
+    # This is an audit of the routes this node SERVES, so it reads the code that can serve one. Two
+    # widenings were both wrong: a recursive grep of the checkout also read venv-unified/, so it
+    # failed the day huggingface_hub exported `merge_pull_request` — a dependency's API deciding
+    # whether our endpoint audit passes — and grepping every tracked .py then failed on the phrase
+    # appearing as PROSE in another test's assertion message. Neither is an endpoint. A test that
+    # goes red for a word in a sentence teaches people to widen the exclusion list, which is how an
+    # audit quietly stops auditing.
+    where = ["app", "git_host_main.py"]
+    tracked = subprocess.run(["git", "ls-files", "-z", "--"] + where,
+                             capture_output=True, text=True, cwd=_ROOT).stdout.split("\0")
+    tracked = [f for f in tracked if f.endswith(".py")]
+    assert tracked, "the audit found no source to read — it would pass about nothing"
     hits = subprocess.run(["grep", "-niE", "grasp-?06|pull_request", "--"] + tracked,
                           cwd=_ROOT, capture_output=True, text=True).stdout
     assert not hits.splitlines(), hits
