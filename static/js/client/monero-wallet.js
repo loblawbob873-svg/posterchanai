@@ -486,16 +486,26 @@
       if(!stopped)setTimeout(tick,250);
     };tick();
   }
+  function tipPostChoice(opts){
+    return typeof opts.onSent==='function'
+      ? '<label class="mw-check"><input type="checkbox" id="mw-quiet-zap"> Do not post this zap</label>'
+      : '';
+  }
   function confirmDialog(pay,opts){
-    PC.modal('<div class="mw-modal"><h3>Confirm payment</h3><div class="mw-confirm"><span>Send</span><strong>'+esc(pay.amount)+' XMR</strong><span>To</span><code>'+esc(pay.address)+'</code></div><label class="mw-check"><input type="checkbox" id="mw-understand"> I understand this Monero transaction cannot be reversed.</label><button class="btn btn-neon full" id="mw-confirm" disabled>Send now</button><a class="btn btn-ghost full" id="mw-external" href="'+esc(uri(pay.address,pay.amount,opts.name||''))+'">Open external wallet instead</a></div>',r=>{
-      const check=r.querySelector('#mw-understand'),button=r.querySelector('#mw-confirm'); check.onchange=()=>button.disabled=!check.checked;
+    PC.modal('<div class="mw-modal"><h3>Confirm payment</h3><div class="mw-confirm"><span>Send</span><strong>'+esc(pay.amount)+' XMR</strong><span>To</span><code>'+esc(pay.address)+'</code></div><label class="mw-check"><input type="checkbox" id="mw-understand"> I understand this Monero transaction cannot be reversed.</label>'+tipPostChoice(opts)+'<button class="btn btn-neon full" id="mw-confirm" disabled>Send now</button><a class="btn btn-ghost full" id="mw-external" href="'+esc(uri(pay.address,pay.amount,opts.name||''))+'">Open external wallet instead</a></div>',r=>{
+      let paymentLocked=false;
+      const check=r.querySelector('#mw-understand'),button=r.querySelector('#mw-confirm'); check.onchange=()=>button.disabled=paymentLocked||!check.checked;
       button.onclick=async()=>{
+        if(paymentLocked||button.disabled||!check.checked)return;
+        paymentLocked=true;
+        const quiet=r.querySelector('#mw-quiet-zap'),doNotPost=!!(quiet&&quiet.checked);
+        if(quiet)quiet.disabled=true;
         button.disabled=true;button.textContent='Sending…';
         try{
           const made=await request('/api/wallet/xmr/transfer/prepare',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({address:pay.address,amount:pay.amount,description:pay.note||''})});
           const out=await request('/api/wallet/xmr/transfer/confirm',{method:'POST',headers:{'Accept':'application/json','Content-Type':'application/json'},body:JSON.stringify({confirmation:made.confirmation})});
           PC.closeModal();PC.toast('ɱ payment sent'); checkedAt=0;
-          if(typeof opts.onSent==='function')opts.onSent(pay.amount,out.txid||out.tx_hash||'');
+          if(typeof opts.onSent==='function')opts.onSent(pay.amount,out.txid||out.tx_hash||'',{doNotPost});
           if(PC.VIEW==='wallet')render(true);
         }catch(e){
           /* NEVER SAY "NOT SENT" ABOUT A TIMEOUT. Measured with real money: the wallet was given a
@@ -505,7 +515,9 @@
              as an unknown and must not invite a retry. */
           const msg = (e && e.message) || String(e);
           const unsure = /may have been sent|did not answer in time/i.test(msg);
-          button.disabled = unsure; button.textContent = unsure ? 'Check your history' : 'Send now';
+          paymentLocked=unsure;
+          if(quiet)quiet.disabled=unsure;
+          button.disabled = unsure||!check.checked; button.textContent = unsure ? 'Check your history' : 'Send now';
           PC.toast(unsure ? msg : ('payment not sent: ' + msg));
         }
       };
@@ -868,6 +880,7 @@
             + '% of a tip sent from your wallet here. Sending from your own wallet costs nothing '
             + '\u2014 use the link below.</p>'
           : '')
+      + tipPostChoice(opts)
       + '<button class="btn btn-neon full" id="mw-me-send">Send tip</button>'
       + '<a class="btn btn-ghost full" id="mw-me-external" href="' + esc(uri(opts.address, '', opts.name || '')) + '">Use an external wallet instead</a>'
       + '</div>', r => {
@@ -898,6 +911,7 @@
         restate();
         const go = r.querySelector('#mw-me-send');
         go.onclick = async () => {
+          if(go.disabled)return;
           const val = String((r.querySelector('#mw-me-amt') || {}).value || '').trim();
           if(!(amount(val) > 0)){ PC.toast('enter an amount greater than zero'); return; }
           if(amount(val) > amount(s.unlocked_balance)){
@@ -909,6 +923,8 @@
               : ('only ' + have + ' XMR is available to send right now'));
             return;
           }
+          const quiet=r.querySelector('#mw-quiet-zap'),doNotPost=!!(quiet&&quiet.checked);
+          if(quiet)quiet.disabled=true;
           go.disabled = true; go.textContent = 'Sending…';
           try{
             const out = await request('/api/wallet/xmr/me/pay', {method:'POST',
@@ -916,11 +932,12 @@
               body: JSON.stringify({payments:[{address:opts.address, amount:val}]})});
             PC.closeModal(); PC.toast('\u0271 tip sent');
             _meAt = 0;                                    // the balance just changed
-            if(typeof opts.onSent === 'function') opts.onSent(val, (out.tx_hash_list||[])[0] || '');
+            if(typeof opts.onSent === 'function') opts.onSent(val, (out.tx_hash_list||[])[0] || '',{doNotPost});
           }catch(e){
             // Same rule as the node wallet's send: a timeout is an unknown, not a failure.
             const msg = (e && e.message) || String(e);
             const unsure = /may have been sent|did not answer in time/i.test(msg);
+            if(quiet)quiet.disabled=unsure;
             go.disabled = unsure; go.textContent = unsure ? 'Check your history' : 'Send tip';
             PC.toast(unsure ? msg : ('tip not sent: ' + msg));
           }

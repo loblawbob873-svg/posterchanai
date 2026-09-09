@@ -14275,7 +14275,8 @@
       // After the modal has gone, so this is not a dialog stacked on a dialog.
       setTimeout(async ()=>{
         try{
-          if(await uiConfirm(opts.ask, { ok:'Yes — tell them', cancel:'Not yet' })) opts.onYes();
+          if(opts.shouldAsk&&!opts.shouldAsk())return;
+          if(await uiConfirm(opts.ask, { ok:'Yes — tell them', cancel:'Not yet' })&&(!opts.shouldAsk||opts.shouldAsk())) opts.onYes();
         }catch(_){}
       }, 80);
     });
@@ -14311,12 +14312,13 @@
            two lists of "your usual tip" would drift the first time somebody edited one. The last
            amount sent is offered the same way it is below. */
         presets:xmrPresets(), amount:ClientSettings.get('xmrLastAmt','')||'',
-        onSent:(amount, txid)=>{
+        onSent:(amount, txid, delivery={})=>{
+          if((ME&&ME.pubkey)!==viewer)return;
           // Remember it here too, so tipping from the built-in wallet feeds the same memory the
           // external flow writes — otherwise your usual amount depends on which path you took.
           try{ if(amount){ ClientSettings.set('xmrLastAmt', String(amount)); _prefTouched.add('xmrTip');
                            saveClientPrefsNostr({ xmrTip: String(amount) }); } }catch(_){ }
-          _postXmrTipNote(noteId, pk, amount, addr, txid||'', '');
+          if(!delivery.doNotPost)_postXmrTipNote(noteId, pk, amount, addr, txid||'', '');
         }
       };
       /* THREE PATHS, IN THIS ORDER, AND EVERY ONE OF THEM MAY DECLINE.
@@ -14327,6 +14329,7 @@
       if(_xmrWallet && await _xmrWallet.tip(_tipOpts)) return;
       if(_xmrWallet && _xmrWallet.meTip && await _xmrWallet.meTip(_tipOpts)) return;
     }catch(_){}
+    if((ME&&ME.pubkey)!==viewer)return;
     const name=enc(p.name||p.display_name||'anon');
     const uri=a=>'monero:'+addr+(a?('?tx_amount='+encodeURIComponent(a)):'');
     /* THE THIRD PATH SAID NOTHING ABOUT THE FEE, AND IT IS THE ONE EVERY DECLINE FALLS INTO.
@@ -14355,6 +14358,7 @@
         <p class="muted small">Optional — makes the tip publicly verifiable. In your wallet run <code>get_tx_proof &lt;txid&gt; ${enc(addr.slice(0,10))}…</code> and paste both below; anyone can then confirm the payment with <code>check_tx_proof</code>.</p>
         <input class="input" id="xmr-txid" placeholder="transaction id (64 hex)" autocomplete="off" spellcheck="false">
         <textarea class="input" id="xmr-prf" rows="2" placeholder="tx proof signature (OutProofV…)" spellcheck="false"></textarea></details>`}
+      ${GUEST?'':'<label class="mw-check"><input type="checkbox" id="xmr-quiet-zap"> Do not post this zap</label>'}
       <div class="row" style="gap:8px;margin-top:8px"><button class="btn btn-cyan small" id="xmr-copy">Copy address</button><span class="spacer"></span>${GUEST?'':`<button class="btn btn-neon small" id="xmr-sent" title="post a public tip note crediting them"><svg class="ic b-ic" aria-hidden="true"><use href="#i-check"></use></svg>I sent it</button>`}</div>`,
       root=>{
         const amtEl=$('#xmr-amt',root), qrBox=$('#xmr-qr',root), openBtn=$('#xmr-open',root);
@@ -14367,21 +14371,27 @@
         const sync=()=>{ openBtn.href=uri(amtVal()); };
         sync(); renderQr();
         // Closing this having (probably) paid must not be the silent path — see _tipTellOnDismiss.
+        const quiet=$('#xmr-quiet-zap',root),mayPost=()=>!(quiet&&quiet.checked)&&(ME&&ME.pubkey)===viewer;
         const tell=_tipTellOnDismiss(root, {
+          shouldAsk:mayPost,
           ask: 'Did you send the Monero tip? They are only told if you post the tip note — Monero '
              + 'payments are private, so nothing else can tell them.',
-          onYes: ()=> _postXmrTipNote(noteId, pk, amtVal(), addr, '', ''),
+          onYes: ()=> mayPost()&&_postXmrTipNote(noteId, pk, amtVal(), addr, '', ''),
         });
         amtEl.addEventListener('input',()=>{ sync(); renderQr(); });
         $$('.xmr-preset',root).forEach(b=> b.onclick=()=>{ amtEl.value=b.dataset.amt; sync(); renderQr(); });   // one-tap amount
         openBtn.addEventListener('click',()=>{ tell.engaged=true; });
         $('#xmr-copy',root).onclick=()=>{ tell.engaged=true; copyValue(addr, 'address copied', 'Copy the Monero address:'); };
-        { const s=$('#xmr-sent',root); if(s) s.onclick=async()=>{ const a=amtVal();
+        { const s=$('#xmr-sent',root);
+          if(quiet)quiet.onchange=()=>{if(s)s.title=quiet.checked?'Close without posting a zap':'Post a public tip note crediting them';};
+          if(s) s.onclick=async()=>{ if(tell.posted||(ME&&ME.pubkey)!==viewer)return;const a=amtVal();
+          if(!mayPost()){tell.posted=true;closeModal();return;}
           const txid=(($('#xmr-txid',root)||{}).value||'').trim().toLowerCase();
           const proof=(($('#xmr-prf',root)||{}).value||'').trim();
           if(txid && !/^[0-9a-f]{64}$/.test(txid)){ toast('txid should be 64 hex characters'); return; }
           if(proof && !txid){ toast('a proof also needs its transaction id'); return; }
           if((txid||proof) && !a && !await uiConfirm('Post without the amount? Enter it in the amount box so people see how much you tipped.')) return;
+          if(tell.posted||!mayPost())return;
           if(a){ ClientSettings.set('xmrLastAmt', a); _prefTouched.add('xmrTip'); saveClientPrefsNostr({ xmrTip: a }); }   // remember + sync the amount to Nostr (follows across devices)
           tell.posted=true;   // told them here — the dismissal must not ask again
           closeModal(); _postXmrTipNote(noteId, pk, a, addr, txid, proof); }; }
