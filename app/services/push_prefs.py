@@ -80,6 +80,20 @@ def allows(prefs, kind_type: str) -> bool:
     return data.get(kind_type) is not False
 
 
+def allows_row(sub, kind_type: str) -> bool:
+    """`allows` for a subscription ROW, reading the column defensively.
+
+    Not defensive programming for its own sake: `_poll` catches every exception at its top level, so
+    an AttributeError here does not skip one device — it ABORTS THE WHOLE POLL and nobody on the
+    node is notified at all, silently, for as long as the condition lasts. A row from a node that
+    has not run the migration yet, or any stand-in that never had the column, would do it.
+
+    Reading a preference must never be able to cost more than the preference itself, which is the
+    same rule the fail-open default in `allows` exists for.
+    """
+    return allows(getattr(sub, "prefs", None), kind_type)
+
+
 def clean(value) -> dict:
     """The subset of a client-supplied object worth storing: known types, booleans only.
 

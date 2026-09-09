@@ -193,21 +193,33 @@ def test_an_upgrade_removes_the_dangerous_binding_instead_of_adding_it():
 
 # ── THE OTHER HALF: WHAT THE SHELL DOES WITH THE TICK ───────────────────────────────────────────
 
+def _close_branch():
+    """The pc:close branch, sliced to its own closing brace.
+
+    NOT a fixed byte window. This read `[:400]` and went red the day the branch gained a comment —
+    the code was correct and the test was measuring in the wrong unit, which is the same trap
+    already recorded against relayUrls() in test_extension_bookmarks."""
+    js = OS_JS.read_text(encoding="utf-8")
+    start = js.index("else if(p === 'pc:close')")
+    return js[start:js.index("\n            }", start)]
+
+
 def test_the_shell_closes_its_focused_window_through_the_ordinary_close_path():
     """Same function as the ✕, the context menu and Ctrl+W — so the key runs onClose hooks, hands
     back the feed and kills a paired native app exactly as the mouse does."""
-    js = OS_JS.read_text(encoding="utf-8")
-    branch = js[js.index("else if(p === 'pc:close')"):][:400]
+    branch = _close_branch()
     assert "wins.find(x=>x.el.classList.contains('focused'))" in branch
-    assert "closeWin(w)" in branch
+    assert "closeWin(w" in branch, "the key must close through the ordinary path, not a bespoke one"
+    # …and it must carry the same INTENT as the mouse, or a person pressing Alt+F4 on the Music
+    # window is not recognised as a person and the music plays on with nothing left to stop it.
+    # See tests/client/test_music_desktop_controls.py.
+    assert "user:true" in branch
 
 
 def test_no_focused_window_is_a_no_op():
     """Alt+F4 on a bare desktop must do NOTHING. Every renderer sees the tick, so the one with no
     focused window has to stay silent — the same rule the move-output branch relies on."""
-    js = OS_JS.read_text(encoding="utf-8")
-    branch = js[js.index("else if(p === 'pc:close')"):][:400]
-    assert re.search(r"if\(w\)\s*closeWin\(w\)", branch), (
+    assert re.search(r"if\(w\)\s*closeWin\(w[,)]", _close_branch()), (
         "the close branch acts without checking there IS a focused window")
 
 

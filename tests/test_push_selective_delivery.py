@@ -111,6 +111,23 @@ def test_silencing_one_type_does_not_silence_the_rest(monkeypatch):
     assert [p["type"] for _, p in sent] == ["reposts"]
 
 
+def test_a_row_with_no_prefs_column_at_all_does_not_abort_the_whole_poll(monkeypatch):
+    """`_poll` catches every exception at its top level, so an AttributeError reading the column
+    does not skip ONE device — it silences the entire node, for everybody, until the condition
+    goes away. A row from a node that has not run the migration yet would do it.
+
+    Found by test_quote_notifications, which builds its devices as SimpleNamespace: reading
+    `s.prefs` threw, the poll aborted, and NOBODY was notified.
+    """
+    import types
+    bare = types.SimpleNamespace(pubkey=PK, endpoint="https://push.example/bare",
+                                 transport="webpush", device_id=None, p256dh="p", auth="a")
+    ok = _Sub(PK, "https://push.example/ok")
+    sent = _run_poll(monkeypatch, [bare, ok], [_event(7)])
+    assert sorted(e for e, _ in sent) == ["https://push.example/bare", "https://push.example/ok"], (
+        "one row without the column must not cost every other device its notification")
+
+
 @pytest.mark.parametrize("stored", [None, "", "garbage", "{}"])
 def test_a_device_that_never_configured_anything_still_gets_everything(monkeypatch, stored):
     """The old behaviour is the default, deliberately. Shipping this must not silence a soul who

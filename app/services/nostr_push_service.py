@@ -208,7 +208,7 @@ async def _poll_channels():
             for pk in recips:
                 _chan_last[(pk, cid)] = mono
                 for s in by_pk[pk]:
-                    if not push_prefs.allows(s.prefs, "channels"):
+                    if not push_prefs.allows_row(s, "channels"):
                         continue
                     ok = await asyncio.to_thread(
                         push_service.send,
@@ -276,7 +276,7 @@ async def _poll():
                 for s in by_pk[pk]:
                     # Per DEVICE: a phone and a laptop may want different things, and the row is
                     # where the client mirrored the answer to. Unset means send (see push_prefs).
-                    if not push_prefs.allows(s.prefs, ntype):
+                    if not push_prefs.allows_row(s, ntype):
                         continue
                     ok = await asyncio.to_thread(
                         push_service.send,
