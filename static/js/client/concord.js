@@ -69,23 +69,47 @@
     if(plane&&window.PosterCordReader&&window.PosterCordReader.createPlaneAuth){
       if(!p.relayQueryFrom)throw new Error('Concord plane transport unavailable');
       const byId=new Map();
+      // Authors this membership cannot authenticate as; reported, never silently treated as empty.
+      const unreadablePlanes=new Set();
       // One author per socket: relays may require every queried author to authenticate.
       // Sequential planes also bound fan-out to the explicit relay cap.
+      /* ONE UNREADABLE AUTHOR MUST NOT BLANK THE ROOM.
+       *
+       * `cordPlaneAuth` throws when this membership does not hold that author's plane key, and it
+       * was called inside this loop with nothing catching it — so a single un-held stream key
+       * aborted the WHOLE history: every other author, and all six pagination pages above. The
+       * room then rendered empty with nothing saying why, which is exactly what a partially
+       * granted membership looks like from the outside.
+       *
+       * The generic branch below has always been tolerant (Promise.allSettled, throwing only when
+       * EVERY job failed). This makes the plane branch match that contract: read what we are
+       * entitled to read, remember what we could not, and only fail when nothing succeeded. */
       for(const filter of filters){
         const page=new Map();
-        for(const author of [...new Set(filter.authors||[])]){
-          const authScope=cordPlaneAuth(p,plane,author,relays);
-          const events=await p.relayQueryFrom(relays,[{...filter,authors:[author]}],
-            {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope});
+        const authors=[...new Set(filter.authors||[])];
+        let firstFailure=null,succeeded=0;
+        for(const author of authors){
+          let authScope;
+          try{ authScope=cordPlaneAuth(p,plane,author,relays); }
+          catch(err){ firstFailure=firstFailure||err; unreadablePlanes.add(author); continue; }
+          let events;
+          try{
+            events=await p.relayQueryFrom(relays,[{...filter,authors:[author]}],
+              {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope});
+          }catch(err){ firstFailure=firstFailure||err; continue; }
+          succeeded++;
           if(!plane.current())return [];
           for(const ev of events||[])if(ev&&ev.id)page.set(ev.id,ev);
         }
+        if(authors.length&&!succeeded&&firstFailure)throw firstFailure;
         // Preserve the combined filter's global limit. Otherwise an ancient epoch's
         // first page can move the shared cursor past an unread newer epoch's tail.
         const ordered=[...page.values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(b.id).localeCompare(String(a.id))),
           limit=Number.isSafeInteger(filter.limit)&&filter.limit>0?filter.limit:ordered.length;
         for(const ev of ordered.slice(0,limit))byId.set(ev.id,ev);
       }
+      if(unreadablePlanes.size)cordQuery.lastUnreadablePlanes=[...unreadablePlanes];
+      else cordQuery.lastUnreadablePlanes=[];
       return [...byId.values()];
     }
     if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
