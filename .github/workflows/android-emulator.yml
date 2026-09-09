@@ -146,6 +146,8 @@ jobs:
 
       # The action can continue after a failed prelaunch hook. Repeat the same preflight in
       # each mandatory verdict command so a guard failure cannot become a green device status.
+      # Match the lifecycle-tested ANGLE/SwiftShader path after instrumentation host SIGSEGV
+      # on direct SwiftShader (run 34293553040). Controlled renderer experiment, not an app fix.
       # Run native regressions before the separate lifecycle boot can lose its emulator.
       # Both cold boots remain mandatory; this does not convert lifecycle failure to a pass.
       - name: Run instrumented checks on a fresh emulator
@@ -158,7 +160,7 @@ jobs:
           ram-size: 1536M
           force-avd-creation: false
           pre-emulator-launch-script: bash scripts/android_emulator_preflight.sh
-          emulator-options: -no-snapshot -wipe-data -no-window -gpu swiftshader -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
+          emulator-options: -no-snapshot -wipe-data -no-window -gpu swangle -feature -Vulkan -noaudio -no-boot-anim -camera-back none -stdouterr-file /tmp/pc-emulator-console.txt
           disable-animations: true
           script: |
             bash scripts/android_emulator_preflight.sh && timeout --kill-after=30s 25m bash scripts/android_instrumented.sh; b=$?; echo "$b" > /tmp/pc-instrumented-status; exit "$b"

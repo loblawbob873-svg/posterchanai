@@ -87,8 +87,9 @@ def test_composer_focus_precondition_comes_from_native_webview_input():
 def test_emulator_uses_supported_gles_renderer_in_every_boot():
     options=[line for line in WORKFLOW.splitlines() if 'emulator-options:' in line]
     assert len(options)==2
-    assert '-gpu swiftshader -feature -Vulkan' in options[0]
+    assert '-gpu swangle -feature -Vulkan' in options[0]
     assert '-gpu swangle -feature -Vulkan' in options[1]
+    assert options[0].strip() == options[1].strip(), 'both mandatory cold boots use the same tested graphics path'
     assert 'swiftshader_indirect' not in WORKFLOW
 
 
