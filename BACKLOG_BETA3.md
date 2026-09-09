@@ -158,3 +158,16 @@ Three things a future session will be tempted to "fix" and must not:
   backlog, after current stabilization and the earlier deferred work.
 - [ ] Add behavior tests for both checkbox states, payment failure, ambiguous payment responses,
   and retries; changing this option must never send a second payment. Review before deployment.
+
+## Final follow-up requested 2026-09-08: connect the desktop to a TV
+
+- [ ] After the existing backlog, verify and improve plug-and-play TV video and audio over
+  HDMI/DisplayPort, including USB-C adapters where supported. Connecting a TV should provide a
+  usable picture and TV audio without restarting the desktop or requiring terminal commands.
+- [ ] Verify resolution, refresh rate, scaling, overscan, mirrored/extended displays, and reachable
+  taskbar/widgets. Preserve the built-in display and saved display preferences on disconnect.
+- [ ] Verify HDMI/DisplayPort audio discovery, sensible automatic routing, a clear manual output
+  choice, volume/mute, and video/audio playback together. Respect an explicitly selected output.
+- [ ] Add regression tests for hot-plug, unplug/replug, TV power cycles, suspend/resume, and missing
+  or delayed display/audio capabilities. Review the changes and test on a real TV; simulated
+  display/audio tests alone do not establish working picture and sound on hardware.
