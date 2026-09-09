@@ -22,11 +22,16 @@ name: Android emulator checks
 # It runs on the same triggers as the APK build, plus workflow_dispatch so it can be pointed at a
 # branch while a fix is being written rather than after it ships.
 
+# THE GATE'S OWN RUNNER SCRIPTS TRIGGER IT. They did not, so a change to
+# scripts/android_instrumented.sh — the file that decides what is installed, what is run and what
+# evidence is kept — shipped without the gate ever executing it once. Measured: 3e5198431 changed
+# only that script and no emulator run started, which reads exactly like a green build.
 on:
   push:
     branches: [ main, master ]
     paths:
       - 'mobile/**'
+      - 'scripts/android_*.sh'
       - 'scripts/client_shell.py'
       - 'templates/client.html'
       - 'static/js/client/**'
@@ -35,6 +40,7 @@ on:
     branches: [ main, master ]
     paths:
       - 'mobile/**'
+      - 'scripts/android_*.sh'
       - 'scripts/client_shell.py'
       - 'templates/client.html'
       - '.github/workflows/android-emulator.yml'

@@ -41,3 +41,13 @@ def test_the_evidence_is_uploaded_where_the_report_already_goes():
     assert "/tmp/pc-androidtest" in WORKFLOW
     for name in ("logcat-instrumented-full.txt", "logcat-instrumented-crash.txt"):
         assert f"/tmp/pc-androidtest/{name}" in SCRIPT
+
+
+def test_the_gate_runs_when_its_own_runner_scripts_change():
+    """A change to the script that decides what is installed, run and kept must not ship untested.
+
+    Measured: 3e5198431 changed only `scripts/android_instrumented.sh`, the workflow's path filter
+    did not list it, and no emulator run started — which is indistinguishable from a green build.
+    """
+    assert "scripts/android_*.sh" in WORKFLOW
+    assert WORKFLOW.count("scripts/android_*.sh") >= 2, "push AND pull_request"
