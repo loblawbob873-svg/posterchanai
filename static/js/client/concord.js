@@ -261,9 +261,58 @@
         backgroundFocusHost=active;
         active.addEventListener('focusout',()=>{backgroundFocusHost=null;setTimeout(()=>{if(backgroundRenderPending)backgroundRender();},0);},{once:true,capture:true});
       }
+      /* WHAT MUST SURVIVE IS THE COMPOSER, NOT THE WHOLE SCREEN. Deferring everything meant a
+       * message that arrived while somebody was typing was decrypted, merged, saved — and not
+       * drawn until they sent something or changed room. Paint the messages now; the deferred
+       * full render still follows on focusout for the rail, the member list and the unread marks. */
+      try{ patchMessageList(); }catch(e){ console.warn('Concord message repaint failed',e); }
       return false;
     }
     backgroundRenderPending=false;backgroundFocusHost=null;render();return true;
+  }
+  /* REPAINT THE MESSAGES WITHOUT REPLACING THE COMPOSER.
+   *
+   * Reported as "new concord room messages are only appearing after I send or switch rooms". The
+   * cursor sitting in the message box is the ordinary state of somebody in a chat, and that is
+   * exactly the state backgroundRender() refuses to paint in — so the live stream was invisible
+   * for as long as you were typing, and both of those actions cured it only because both repaint.
+   *
+   * The refusal itself is right: render() rebuilds the whole workspace, a replaced textarea loses
+   * focus, and on Android that closes the soft keyboard mid-sentence. So this replaces the ONE pane
+   * the new message belongs to and leaves the composer, its text, its selection and the keyboard
+   * untouched. It is not a second source of truth — the same messagesPaneHtml() render() uses. */
+  function patchMessageList(){
+    const p=PC();
+    if(!p||typeof p.isView!=='function'||!p.isView('concord'))return false;
+    /* The same ownership proof render() demands. On the windowed desktop #feed belongs to whichever
+     * window is focused, so an unowned paint writes over the app somebody is actually looking at. */
+    if(window.PCOS&&PCOS.isOn&&PCOS.isOn()&&
+       (!PCOS.ownsFeedView||!PCOS.ownsFeedView('concord')))return false;
+    if(state.community==null)return false;
+    const current=saved()[state.community];
+    if(!current)return false;
+    const scroller=document.querySelector('.cc-messages');
+    if(!scroller||scroller.isConnected===false)return false;
+    /* Focus inside the pane itself — an open reaction picker, a poll button being pressed — is the
+     * same loss this function exists to avoid, one level down. Leave it to the full render. */
+    const active=document.activeElement;
+    if(active&&scroller.contains&&scroller.contains(active))return false;
+    const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},
+      me=profile.display_name||profile.name||(profile.nip05&&p.niceNip05(profile.nip05))||
+        (viewer.npub?viewer.npub.slice(0,12)+'\u2026':'You'),
+      messages=(current.local||current.cord||current.protocol==='nip29')?paintedMessages(current):[];
+    /* The same read rule render() applies. Without it a channel you are reading and typing into
+     * grows an unread mark, because the only thing that clears it is the paint being skipped. */
+    const narrow=!!(window.matchMedia&&window.matchMedia('(max-width:820px)').matches);
+    if(conversationIsVisible(narrow,mobileChatOpen,mobileDrawerOpen))markRead(current,state.channel||'general');
+    scroller.innerHTML=messagesPaneHtml(p,messages,current,viewer,me);
+    if(p.hydrateLinkCards)p.hydrateLinkCards(scroller);
+    wireRoomMedia(p);
+    hydrateEncryptedAttachments(messages);
+    hydrateWebxdcCards(current);
+    bindMessages();
+    restoreChatScroll();
+    return true;
   }
   function handoffState(){ const room=state.community==null?null:saved()[state.community],key=scrollKey(),scroll=readScroll(key); return {room:room&&(room.communityId||room.naddr||room.url)||'',channel:state.channel||'general',mobileChatOpen:!!mobileChatOpen,mobileDrawerOpen:!!mobileDrawerOpen,scroll:{top:Number(scroll.top)||0,height:Number(scroll.height)||0,pinned:scroll.pinned!==false}}; }
   function acceptHandoff(value){ const v=value&&typeof value==='object'?value:{},rooms=saved(),i=rooms.findIndex(room=>(room.communityId||room.naddr||room.url)===String(v.room||'')); state.community=i>=0?i:(rooms.length?Math.max(0,Math.min(Number(localStorage.getItem('pc.concord.active'))||0,rooms.length-1)):null);state.channel=String(v.channel||'general').slice(0,80);mobileChatOpen=!!v.mobileChatOpen;mobileDrawerOpen=!!v.mobileDrawerOpen;if(state.community!=null&&v.scroll){const key=scrollKey(),st={top:Math.max(0,Number(v.scroll.top)||0),height:Math.max(0,Number(v.scroll.height)||0),pinned:v.scroll.pinned!==false};writeScroll(key,st);} }
@@ -2351,24 +2400,6 @@
       if(gates.length)void Promise.any(gates).catch(e=>{if(chatSubKey===key)console.warn('Concord live room subscription is unconfirmed; leaving it open',e);});
     }catch(e){ chatSubKey='';console.warn('Concord live room subscription failed',e); }
   }
-  /* IS THE CHAT ON SCREEN ANYWHERE? Not the same question as "is the full-page Concord view active".
-   *
-   * On the windowed desktop Concord lives in an OS window, and `body.concord-view` is only set when
-   * it is the active full-page view. The two live-message paths below gated their REPAINT on that
-   * class alone, so in a window the arriving message was decrypted, merged and SAVED — and never
-   * painted. It then appeared the next time anything else rendered, which is why it looked like
-   * "new messages only show up after I send or switch rooms": both of those repaint.
-   *
-   * refreshActiveChannel already knew better and asked foreground-OR-parked; the render gate did
-   * not. Same question, one answer. */
-  function chatOnScreen(){
-    if(document.body.classList.contains('concord-view'))return true;
-    // Read through `window` throughout rather than the bare global: the alias only exists in a
-    // browser document, and this predicate decides whether a message is ever shown.
-    try{ const os=window.PCOS;
-         return !!(os&&os.isOn&&os.isOn()&&os.parkedSlot&&os.parkedSlot('concord')); }
-    catch(_){ return false; }
-  }
   async function flushChatLive(p,key){
     const wraps=chatBuffer;chatBuffer=[];
     if(!wraps.length||chatSubKey!==key)return;
@@ -2390,7 +2421,7 @@
       }
       if(!merged)return;
       const prior=testMessages(storeId);
-      if(JSON.stringify(merged)!==JSON.stringify(prior)){saveTestMessages(storeId,merged);if(chatOnScreen())preserveChatScroll(()=>backgroundRender());}
+      if(JSON.stringify(merged)!==JSON.stringify(prior)){saveTestMessages(storeId,merged);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());}
       return;
     }
     const bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
@@ -2463,7 +2494,7 @@
     // Another live batch or history refresh may have committed while decryption was pending.
     // Merge into the current store after the await, so late completion cannot erase newer arrivals.
     const prior=testMessages(storeId),next=mergeCordTimeline(prior,opened,p,key);
-    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(chatOnScreen())preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
+    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
 
     };
     const task=(pending.get(key)||Promise.resolve()).then(run,run);pending.set(key,task);
@@ -2590,6 +2621,34 @@
   }
   function wake(){resumeRequested=true;}
   let socialEmojisWarmed = false;
+  /* THE MESSAGES PANE, BUILT ONCE AND PAINTED BY TWO PAINTERS.
+   *
+   * render() below draws the whole workspace, which REPLACES the composer — and a replaced
+   * textarea loses focus, which on Android closes the soft keyboard mid-sentence. That is why
+   * backgroundRender() defers a repaint while somebody is typing. Deferring the WHOLE paint is
+   * what made arriving messages invisible until the next send or room switch, so patchMessageList()
+   * repaints exactly this pane and leaves the composer where it is. One builder, so the two paints
+   * can never disagree about what a message looks like. */
+  function messagesPaneHtml(p,messages,current,viewer,me){
+    const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
+    return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list">${(()=>{
+          /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
+           *
+           * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
+           * a thread id that is momentarily stale — history reloaded, the room re-hydrated, a live
+           * batch replacing the list. Rendered literally that is a community with no messages in
+           * it, which is indistinguishable from the community being gone. Reported as "my
+           * posterchan concord community just disappeared", and it was mine, from the threads work
+           * an hour earlier.
+           *
+           * An empty thread view is treated as "no thread": fall back to the channel and drop the
+           * filter, so the worst case is losing your place rather than losing the room. */
+          if(!state.thread) return messages;
+          const _t=threadView(messages,state.thread);
+          if(!_t.length){ state.thread=null; return messages; }
+          return _t;
+        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_replies=(threadIndex(messages).get(mid)||[]).length,_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply?`<div class="cc-message-reply"><b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${_replies&&!state.thread?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&m.pubkey===viewer.pubkey?'':'hidden'}" title="Delete message">⌫</button></div></div></article>`;}).join('')}</div>`:`<div class="cc-welcome"><div class="cc-welcome-hash">#</div><h2>Welcome to #${p.enc(state.channel||'general')}</h2><p>${current&&current.local?'This local test room lets you validate the chat UI before publishing or joining a relay community.':'This is the start of this encrypted channel.'}</p></div>`)}`;
+  }
   function render(){
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
     // the old workspace may still fire, but it observes false and cannot paint twice.
@@ -2657,7 +2716,6 @@
       recipients:new Map(draft.mentionRecipients||[])}:{choices:[],index:0,recipients:new Map()};
     const channelPrivate=!!(currentChannel&&currentChannel.private);
     const messages=current&&(current.local||current.cord||current.protocol==='nip29')?paintedMessages(current):[];
-    const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
     const ownerPk=String((current&&current.cord&&current.cord.bundle&&(current.cord.bundle.owner||current.cord.bundle.creator_npub))||''),
       isOwner=!!ownerPk&&ownerPk===viewer.pubkey,banned=new Set(current&&current.banned||[]),
       memberPks=current?roomParticipants(current,viewer.pubkey).filter(pk=>!banned.has(pk)):[];
@@ -2673,23 +2731,7 @@
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
-        <div class="cc-messages">${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list">${(()=>{
-          /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
-           *
-           * `threadView` answers [] for a root it cannot find, and a repaint can easily happen with
-           * a thread id that is momentarily stale — history reloaded, the room re-hydrated, a live
-           * batch replacing the list. Rendered literally that is a community with no messages in
-           * it, which is indistinguishable from the community being gone. Reported as "my
-           * posterchan concord community just disappeared", and it was mine, from the threads work
-           * an hour earlier.
-           *
-           * An empty thread view is treated as "no thread": fall back to the channel and drop the
-           * filter, so the worst case is losing your place rather than losing the room. */
-          if(!state.thread) return messages;
-          const _t=threadView(messages,state.thread);
-          if(!_t.length){ state.thread=null; return messages; }
-          return _t;
-        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_replies=(threadIndex(messages).get(mid)||[]).length,_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply?`<div class="cc-message-reply"><b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${_replies&&!state.thread?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&m.pubkey===viewer.pubkey?'':'hidden'}" title="Delete message">⌫</button></div></div></article>`;}).join('')}</div>`:`<div class="cc-welcome"><div class="cc-welcome-hash">#</div><h2>Welcome to #${p.enc(state.channel||'general')}</h2><p>${current&&current.local?'This local test room lets you validate the chat UI before publishing or joining a relay community.':'This is the start of this encrypted channel.'}</p></div>`)}</div>
+        <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="Message #${p.enc(state.channel||'general')}" ${state.community==null?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join hidden" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join a Concord community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div></div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
@@ -2853,6 +2895,16 @@
       input.onkeydown=e=>{ const enter=e.key==='Enter'||e.code==='Enter'; if(mentionChoices.length){ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();mentionIndex=(mentionIndex+(e.key==='ArrowDown'?1:-1)+mentionChoices.length)%mentionChoices.length;syncMentionState();drawMentions();return;} if(e.key==='Tab'||(enter&&!e.ctrlKey&&!e.metaKey)){e.preventDefault();acceptMention();return;} if(e.key==='Escape'){e.preventDefault();closeMentions();return;} } if(enter&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); return send.onclick(); } };
     }
     const replyCancel=$('#cc-reply-cancel'); if(replyCancel)replyCancel.onclick=()=>{ replyTarget=null; render(); };
+    bindMessages();
+  }
+  /* THE MESSAGE ROWS BIND SEPARATELY FROM THE WORKSPACE AROUND THEM.
+   *
+   * Everything above stays put across a partial repaint — the rail, the channel list, the
+   * composer — so only these handlers have to be re-attached when patchMessageList() replaces the
+   * pane. Split out rather than copied: a second copy of a delete or zap handler is a second copy
+   * that can drift from the one render() uses. */
+  function bindMessages(){
+    const p=PC(), $=p.$, $$=p.$$;
     const closeMessageActions=()=>{$$('.cc-message.cc-actions-open').forEach(x=>{x.classList.remove('cc-actions-open');const t=x.querySelector('[data-cc-actions]');if(t)t.setAttribute('aria-expanded','false');});const picker=document.querySelector('.cc-reaction-picker');if(picker)picker.remove();reactionTarget=null;};
     if(actionDismissOff){actionDismissOff();actionDismissOff=null;}
     const dismissPointer=e=>{if(!(e.target&&e.target.closest&&e.target.closest('.cc-message-actions,.cc-reaction-picker,.emoji-pop')))closeMessageActions();};
