@@ -967,6 +967,12 @@ class RelayServer:
             if expected and not self._same_relay_url(self._tag_value(ev, "relay"), expected):
                 why = "invalid: AUTH relay URL does not match"
         if why:
+            # SAY WHICH URL WAS COMPARED TO WHICH. A refused AUTH is invisible from the server side
+            # otherwise, and the client sees only "does not match" — which is how one stripped proxy
+            # prefix read as a per-repository curse for a whole day.
+            logger.warning("[nostr-relay] AUTH refused (%s) signed-for=%r observed=%r",
+                        why, self._tag_value(ev, "relay") if isinstance(ev, dict) else "",
+                        self._relay_urls.get(conn, ""))
             self._send(conn, ["OK", eid, False, why])
             return
         self._auth_pubkeys.setdefault(conn, set()).add(ev["pubkey"])
