@@ -106,6 +106,11 @@ async def proxy_git_request(request: Request, repo_path: str) -> StreamingRespon
     # `edit`/`delete`/`create` are POSTs the host authorizes against the relay's maintainer ACL —
     # the identical check a push goes through — so they forward on the same terms.
     _BROWSE = ("/raw/", "/download/", "/tree/", "/log/", "/commit/", "/archive/", "/paths/")
+    # The bare clone URL is on this list because the hosting node now serves a LANDING PAGE
+    # there (GRASP-01 SHOULD). Forwarding it grants nothing new — it is read-gated on the far
+    # side exactly like a clone — and leaving it off is the same omission that once made the
+    # proxy forward clone and push while 404ing every browse route: the proxy is a second
+    # place every route has to be added.
     if not (repo_path.endswith("/info/refs")
             or repo_path.endswith("/git-upload-pack")
             or repo_path.endswith("/git-receive-pack")
@@ -116,6 +121,7 @@ async def proxy_git_request(request: Request, repo_path: str) -> StreamingRespon
             or repo_path.endswith(".git/edit")
             or repo_path.endswith(".git/delete")
             or repo_path.endswith(".git/create")
+            or repo_path.endswith(".git") or repo_path.endswith(".git/")
             or any((".git" + seg) in repo_path for seg in _BROWSE)):
         raise HTTPException(status_code=404, detail="not a git smart-HTTP endpoint")
 

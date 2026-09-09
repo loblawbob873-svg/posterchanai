@@ -183,8 +183,17 @@ def _parse_repo_path(path: str):
             break
     if git_i is None or git_i == 0:
         return None
-    owner_seg = segs[git_i - 1]
-    id_seg = segs[git_i][:-4]
+    owner_seg = unquote(segs[git_i - 1])
+    # PERCENT-DECODE THE IDENTIFIER. The GRASP path is
+    # `/<npub>/<percent-encoded-identifier>.git`, and ngit v3 percent-encodes reserved characters in
+    # both `nostr://` clone URLs and GRASP HTTP paths (CHANGELOG line 487), so a repo whose id needed
+    # any encoding at all 404'd here — we read the raw segment.
+    #
+    # DECODING IS SAFE ONLY BECAUSE `sanitize_repo_id` RUNS AFTER IT, and that order is the whole
+    # argument: `%2F` decodes to `/` and `%2E%2E` to `..`, which is precisely the traversal the
+    # sanitizer exists to refuse. Decode first, validate second — never the reverse, and never by
+    # relaxing the filesystem allowlist to accommodate a decoded character.
+    id_seg = unquote(segs[git_i][:-4])
     rest = "/".join(segs[git_i + 1:])       # e.g. "info/refs" or "git-upload-pack"
     owner_hex = ghs.owner_hex_from_npub(owner_seg)
     repo_id = ghs.sanitize_repo_id(id_seg)
@@ -420,6 +429,76 @@ class _Handler(BaseHTTPRequestHandler):
                 _prov_deny.clear()
             _prov_deny[key] = time.monotonic() + _PROV_TTL
         return False
+
+    def _serve_landing(self, owner_hex: str, repo_id: str, *, found: bool):
+        """GRASP-01 SHOULD: "serve a webpage at the same endpoint linking to git nostr client(s) …
+        and a 404 page for repositories it doesn't host."
+
+        `GET https://poster.place/git/<npub>/<id>.git` answered a JSON 404 — the clone URL is the one
+        address a repository has that people actually paste to each other, and pasting it into a
+        browser said the repo did not exist. We DO have a repo page, at `/r/<npub>/<repo-id>` on the
+        app, which is also the only route that builds a link preview; this page's job is to send a
+        human there and to name the clients that can open a `nostr://` remote.
+
+        Deliberately a static string with no template engine and no network: this runs in the git
+        subprocess, which exists so that nothing here can touch the app's event loop. Everything
+        interpolated is already constrained — `repo_id` has passed `sanitize_repo_id`
+        ([a-z0-9._-]) and the npub is derived from validated hex — and is HTML-escaped anyway,
+        because "it cannot contain a quote" is exactly the assumption the 30617 share-card had to
+        learn not to make.
+        """
+        import html
+        npub = _npub_or_hex(owner_hex)
+        base = (_CONFIG.get("public_base", "") or "").rstrip("/")
+        clone = "%s/%s/%s.git" % (base, npub, repo_id) if base else ""
+        e = html.escape
+        title = "%s/%s" % (npub[:12] + "…", repo_id) if found else "repository not found"
+        if found:
+            body = (
+                "<h1>%s</h1>" % e(repo_id) +
+                "<p class=sub>A git repository hosted on this GRASP server.</p>" +
+                ("<h2>Clone</h2><pre>git clone %s</pre>" % e(clone) if clone else "") +
+                ("<pre>ngit clone nostr://%s/%s</pre>" % (e(npub), e(repo_id))) +
+                "<h2>Browse</h2><p><a href=\"/r/%s/%s\">Open this repository in the web client</a>"
+                "</p>" % (e(npub), e(repo_id)) +
+                "<h2>Nostr git clients</h2><ul>"
+                "<li><a href=\"https://gitworkshop.dev\" rel=noreferrer>gitworkshop.dev</a></li>"
+                "<li><a href=\"https://ngit.dev\" rel=noreferrer>ngit</a> — "
+                "<code>ngit</code> and <code>git-remote-nostr</code></li></ul>")
+        else:
+            body = ("<h1>Repository not found</h1>"
+                    "<p class=sub>This server does not host <code>%s</code> for <code>%s</code>.</p>"
+                    "<p>A GRASP server creates a repository when it accepts its announcement, so a "
+                    "repo appears here once its kind-30617 has been published to this service's "
+                    "relay and accepted.</p>"
+                    "<h2>Nostr git clients</h2><ul>"
+                    "<li><a href=\"https://gitworkshop.dev\" rel=noreferrer>gitworkshop.dev</a></li>"
+                    "<li><a href=\"https://ngit.dev\" rel=noreferrer>ngit</a></li></ul>"
+                    % (e(repo_id), e(npub)))
+        page = ("<!doctype html><meta charset=utf-8>"
+                "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
+                "<title>%s</title><style>"
+                "body{font:15px/1.6 system-ui,sans-serif;max-width:44rem;margin:3rem auto;padding:0 1rem;"
+                "color:#1a1a1a;background:#fafafa}"
+                "@media(prefers-color-scheme:dark){body{color:#e8e8e8;background:#141414}"
+                "a{color:#7fb3ff}pre{background:#1f1f1f}}"
+                "h1{font-size:1.6rem;margin:0}h2{font-size:1rem;margin:2rem 0 .4rem;"
+                "text-transform:uppercase;letter-spacing:.06em;opacity:.65}"
+                ".sub{opacity:.7;margin:.3rem 0 0}"
+                "pre{background:#ececec;padding:.7rem .9rem;border-radius:6px;overflow-x:auto}"
+                "ul{padding-left:1.1rem}</style>%s") % (e(title), body)
+        data = page.encode("utf-8")
+        status = 200 if found else 404
+        try:
+            self.send_response(status)
+            self._send_cors()
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _announced_private(self, owner_hex: str, repo_id: str) -> bool:
         """GRASP-08: does this repo's OWN kind-30617 announcement carry ["private","true"]?
@@ -692,6 +771,11 @@ class _Handler(BaseHTTPRequestHandler):
                 # a git client is ever waiting on the answer.
                 return self._deny(404, "no such repo")
             elif not _wants_service(parsed.path, parsed.query, method):
+                # "…and a 404 page for repositories it doesn't host." A real page, with the 404
+                # status kept: only for the bare clone URL, so every other route (and every git
+                # client) still gets the plain machine-readable refusal it expects.
+                if method == "GET" and rest in ("", "/"):
+                    return self._serve_landing(owner_hex, repo_id, found=False)
                 return self._deny(404, "no such repo")
         # RAW single-file read (README + file browsing in the client's repo view):
         #   GET /<owner>/<id>.git/raw/<ref>/<path>  ->  `git show <ref>:<path>`
@@ -755,6 +839,13 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._deny(401, "authentication required (private repo)", auth=True)
             return self._serve_log(owner_hex, repo_id,
                                    rest[4:] if rest.startswith("log/") else "", parsed.query)
+        # THE CLONE URL IN A BROWSER. `GET /<owner>/<id>.git` with no sub-path is not a smart-HTTP
+        # request (no `service=`), so no git client depends on what it returns — and it is the one
+        # address of a repository that people paste to each other. It answered a JSON 404.
+        if method == "GET" and rest in ("", "/"):
+            if not self._read_gate_ok(owner_hex, repo_id):
+                return self._deny(401, "authentication required (private repo)", auth=True)
+            return self._serve_landing(owner_hex, repo_id, found=True)
         service = _wants_service(parsed.path, parsed.query, method)
         if service is None:
             return self._deny(404, "not found")

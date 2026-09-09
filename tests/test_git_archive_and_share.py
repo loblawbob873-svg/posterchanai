@@ -376,6 +376,14 @@ def test_og_meta_always_has_a_title_and_a_description():
     "npub1x/demo.git/edit",
     "npub1x/demo.git/create",
     "npub1x/demo.git/delete",
+    # The BARE clone URL. It used to be on the reject list below, correctly, because the hosting node
+    # answered it with a JSON 404 and forwarding it bought nothing. GRASP-01 SHOULD-serves a landing
+    # page there now ("a webpage at the same endpoint linking to git nostr client(s)"), so it is a
+    # real route and the proxy is the second place every route has to be added — the exact omission
+    # that once made the proxy forward clone and push while 404ing every browse route. Read-gated on
+    # the hosting node like all the rest, so forwarding it grants nothing a clone did not.
+    "npub1x/demo.git",
+    "npub1x/demo.git/",
 ])
 def test_proxy_forwards_every_route_the_host_serves(path, monkeypatch):
     """A proxy node that forwards a clone but 404s the browse API is a repo you can copy and cannot
@@ -410,7 +418,8 @@ def test_proxy_forwards_every_route_the_host_serves(path, monkeypatch):
 @pytest.mark.parametrize("path", [
     "example.com/anything",
     "npub1x/demo.git/../../etc/passwd",
-    "npub1x/demo.git",
+    "npub1x/demo.git/../../../secrets",
+    "npub1x/demo.gitextra",
     "",
 ])
 def test_proxy_is_still_not_an_open_proxy(path, monkeypatch):
