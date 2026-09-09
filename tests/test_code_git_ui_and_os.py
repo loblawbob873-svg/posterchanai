@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import subprocess
 
 
@@ -6,7 +7,10 @@ ROOT = Path(__file__).parents[1]
 CODE = (ROOT / "static/js/client/code.js").read_text()
 CSS = (ROOT / "static/css/client.css").read_text()
 SHELL = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
-NGIT = (ROOT / "os/overlay/dev-vcs/ngit/ngit-2.6.3.ebuild").read_text()
+# Located by GLOB, never by version: this file used to name ngit-2.6.3.ebuild, so a bump renamed
+# the ebuild out from under the test and the test went red for the bump rather than for a bug.
+NGIT_EBUILD = sorted((ROOT / "os/overlay/dev-vcs/ngit").glob("ngit-*.ebuild"))[-1]
+NGIT = NGIT_EBUILD.read_text()
 
 
 def test_code_has_a_complete_source_control_surface():
@@ -21,10 +25,46 @@ def test_posterchanos_installs_ngit_and_the_git_remote_helper_automatically():
     assert "dobin ngit git-remote-nostr" in NGIT
     assert "x86_64-unknown-linux-gnu.2.17" in NGIT
     assert "-> ${P}.tar.gz" in NGIT
-    manifest = (ROOT / "os/overlay/dev-vcs/ngit/Manifest").read_text().split()
-    assert manifest[:2] == ["DIST", "ngit-2.6.3.tar.gz"]
-    assert int(manifest[2]) > 1_000_000
-    assert len(manifest[4]) == 128 and len(manifest[6]) == 128
+    assert 'RESTRICT="mirror"' in NGIT, (
+        "our Gentoo mirror is an rsync of Gentoo's distfiles and has never held a file that is not "
+        "in the Gentoo tree, so a mirror fetch is a guaranteed 404")
+
+
+def test_posterchanos_ships_ngit_v3_or_newer():
+    """v3 is the release with GRASP-08 private repositories, CI and maintainer roles — the whole
+    point of this branch. Every PosterChanOS machine gets ngit as an RDEPEND of the shell, so
+    shipping v2 there means the OS cannot use the features the server now implements."""
+    version = NGIT_EBUILD.stem.split("-", 1)[1]
+    assert int(version.split(".")[0]) >= 3, "PosterChanOS still vendors ngit %s" % version
+
+
+def test_every_overlay_manifest_names_a_tarball_an_ebuild_actually_asks_for():
+    """A Manifest that has drifted from its ebuild is WORSE than a missing one: the download
+    succeeds and portage then rejects what it just fetched — "VERIFY FAILED! Reason: Insufficient
+    data for checksum verification" — which reads as a corrupt mirror, not as a stale file. That is
+    the exact way a version bump breaks, since renaming the ebuild changes ${P} and nothing else
+    notices. So this checks the whole overlay, not just ngit."""
+    for manifest in (ROOT / "os/overlay").rglob("Manifest"):
+        pn = manifest.parent.name
+        # A package NAME contains dashes too (posterchan-desktop), so the version is what is left
+        # after the directory's own name — never `split("-", 1)`.
+        # ...and a Gentoo REVISION is not part of the distfile name: wayfire-0.10.1-r1.ebuild
+        # fetches wayfire-0.10.1.tar.xz, because ${PV} is the upstream version and ${PVR} is not.
+        names = {re.sub(r"-r\d+$", "", e.stem[len(pn) + 1:])
+                 for e in manifest.parent.glob("*.ebuild") if e.stem.startswith(pn + "-")}
+        for line in manifest.read_text().splitlines():
+            parts = line.split()
+            if not parts or parts[0] != "DIST":
+                continue
+            assert len(parts) >= 7 and parts[2].isdigit() and int(parts[2]) > 1_000, line
+            assert len(parts[4]) == 128 and len(parts[6]) == 128, (
+                "BLAKE2B/SHA512 must both be present and full length: %s" % line)
+            # Matched on the VERSION, not on `${P}.tar.gz`: an ebuild may keep upstream's own
+            # filename (steam-launcher fetches `steam_${PV}.tar.gz` with no `->` rename), and the
+            # thing that actually goes stale on a bump is the version.
+            assert any(v in parts[1] for v in names), (
+                "%s lists %s, but no ebuild beside it asks for that version (%s)"
+                % (manifest, parts[1], sorted(names) or "no ebuilds"))
 
 
 def test_git_ui_uses_json_api_not_shell_text():

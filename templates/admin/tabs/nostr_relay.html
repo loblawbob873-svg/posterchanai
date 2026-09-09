@@ -554,6 +554,14 @@
             <label for="nostr_relay_contact">Contact</label>
             <input type="text" id="nostr_relay_contact" name="nostr_relay_contact" placeholder="mailto:admin@…">
         </div>
+        <div class="form-group">
+            <label for="nostr_relay_supported_grasps">Supported GRASPs</label>
+            <input type="text" id="nostr_relay_supported_grasps" name="nostr_relay_supported_grasps" placeholder="empty = claim none">
+            <small>Advertised to git-over-nostr clients as <code>supported_grasps</code>, e.g.
+            <code>GRASP-01 GRASP-08</code>. Claiming one claims every MUST in it — a capability that
+            isn't there costs a client a failed push and a wrong diagnosis, so this is empty until
+            the node earns it.</small>
+        </div>
     </fieldset>
 
     <style>

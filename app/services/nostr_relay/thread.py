@@ -24,6 +24,7 @@ import subprocess
 from websockets.asyncio.server import serve
 
 from app.services.nostr import nostr_service
+from app.services import git_acceptance
 from .store import RelayStore, _RETIRED_KINDS
 from .wot import WotGate
 from .server import RelayServer, _git_comment_root
@@ -52,12 +53,13 @@ def _fh_mark(eid: str) -> None:
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 # --- GRASP git-over-nostr (P3): repo-SCOPED collaboration acceptance ---------------------------
-# Patches (1617) / issues (1621) / replies (1622/1623) / status (1630-1633) are accepted from ANY
+# Patches (1617) / PULL REQUESTS (1618) and PR updates (1619) / issues (1621) / replies (1622/1623)
+# / status (1630-1633) are accepted from ANY
 # author — but ONLY when they reference a repo THIS node actually hosts (an `a` tag 30617:<owner>:<id>
 # whose bare repo exists on disk, AND is not a PRIVATE repo — private repos never use the public Nostr
 # flow). 30618 (repo state) is scoped to a hosted repo by its own d-tag/pubkey. This keeps the WoT
 # exemption from becoming an open spam firehose. Announcements (30617) stay broadly public (Discover).
-_GIT_COLLAB_KINDS = frozenset({30618, 1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633})
+_GIT_COLLAB_KINDS = frozenset({30618, 1617, 1618, 1619, 1621, 1622, 1623, 1630, 1631, 1632, 1633})
 _GIT_REPOS_DIR = os.path.join(_REPO_ROOT, "data", "git_repos")
 _HOSTED_CACHE: dict = {}          # (owner_hex, repo_id) -> (is_hosted_public: bool, expires_at)
 _HOSTED_TTL = 30.0                 # cheap filesystem stat, cached so it's not per-event
@@ -401,7 +403,7 @@ def _read_config() -> dict:
             # 10005 is the NIP-51 "public chats" join list. Each node's push watcher reads it to decide
             # whose devices to notify about a channel message, so a list published on one node has to
             # reach the others or that user gets chat pushes from one node only.
-            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,21,22,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,10133,2003,2004,30000,30001,30003,30023,30311,34235,30017,30018,30617,30618,1617,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
+            "ingest_kinds": [int(k) for k in (g("nostr_relay_ingest_kinds", "0,1,3,5,6,7,21,22,1063,1068,1111,9735,10000,10001,10002,10003,10005,10007,10050,10063,10133,2003,2004,30000,30001,30003,30023,30311,34235,30017,30018,30617,30618,1617,1618,1619,1621,1622,1623,1630,1631,1632,1633,31922,31923,31924,31925")
                              .replace(" ", "").split(",")) if k.strip().lstrip("-").isdigit() and int(k) not in range(40,45)],
             "author_batch": gi("nostr_relay_author_batch", 200),
             # Politeness / anti-blast: pace upstream requests and outbox publishes so we don't
@@ -461,6 +463,13 @@ def _read_config() -> dict:
             # inject their defaults, resetting a single-relay NIP-65 list. WoT gate still
             # enforces writes at runtime either way.
             "advertise_restricted_writes": gb("nostr_relay_advertise_restricted_writes", False),
+            # GRASP-01 NIP-11. `supported_grasps` is empty by default and only an operator can fill
+            # it — see the comment at server._supported_grasps for why claiming one is not free.
+            "supported_grasps": g("nostr_relay_supported_grasps", ""),
+            # The repository ACCEPTANCE POLICY, not a sentence about it: the NIP-11 prose is
+            # rendered from this same value the provisioning gate enforces, so the advertisement
+            # cannot drift from the rule. See app/services/git_acceptance.py.
+            "repo_acceptance": g(git_acceptance.SETTING, git_acceptance.DEFAULT),
             # protocol limits
             "max_message_size": _MAX_MESSAGE_SIZE,
             "max_subs_per_conn": _MAX_SUBS_PER_CONN,

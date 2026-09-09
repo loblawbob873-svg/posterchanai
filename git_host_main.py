@@ -132,6 +132,22 @@ _ALIAS_MAX = 512               # bounded: reachable by any caller with any repo 
 _alias_cache: dict = {}
 _alias_lock = threading.Lock()
 
+# Announced-privacy cache: (owner_hex, repo_id) -> (expiry_monotonic, bool). See _announced_private.
+#
+# TTL is 60s, not the alias map's 300s, because the cached answer that can HURT is "public": that is
+# the window in which a repo whose owner has just re-announced it private is still served to
+# strangers. A minute bounds it while still keeping a clone — which makes many requests a second —
+# to one indexed read. Only ever populated for a repo that EXISTS on disk (the read gate runs after
+# the repo_exists/alias resolution), so an anonymous caller cannot mint entries for made-up names the
+# way a path-keyed cache would.
+#
+# ERRORS ARE NOT CACHED. Failing closed already costs a database blip every read on the node; caching
+# the failure would turn a one-second blip into a minute of 401s for every public repo we host.
+_PRIV_TTL = 60.0
+_PRIV_MAX = 512
+_priv_cache: dict = {}
+_priv_lock = threading.Lock()
+
 
 def _pick_ref(path_ref: str, query: str) -> str:
     """The effective ref: `?ref=` wins over the path segment (a slashed branch name can't live in a
@@ -244,6 +260,67 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _announced_private(self, owner_hex: str, repo_id: str) -> bool:
+        """GRASP-08: does this repo's OWN kind-30617 announcement carry ["private","true"]?
+
+        WHY THE LOCAL FLAG IS NOT THE SOURCE OF TRUTH ANY MORE. Before GRASP-08, "private" here meant
+        "created with private=true and therefore NEVER announced" — app/routers/git.py refuses to
+        publish a 30617 for one, and publish_state_witness skips it. GRASP-08 says the opposite: a
+        private repo IS announced, tagged ["private","true"], and clients publish its events only to
+        the relays that announcement names. The two models disagree about the same repository, and
+        where they disagree the disk flag is the one that can be wrong: `POST /<id>.git/create`
+        defaults `private` to false, so an ngit v3 user who provisions a private repo here and then
+        announces it privately gets a repo that is private in its announcement and WORLD-CLONABLE on
+        disk. Nothing logs that, because from the host's side every request is a legitimate read of a
+        public repo.
+
+        Hence a UNION: either signal saying private makes the repo private. Not an intersection and
+        not a preference — both of those let the weaker signal cancel the stronger, which is the
+        shape that leaks. The relay half (nostr_relay/server.py) already reads the same tag through
+        the same predicate (git_auth.event_says_private), so the two doors answer "who may read
+        this" from one definition.
+
+        FAIL-CLOSED, and it costs something. A database error is answered PRIVATE — the same stance
+        `_read_gate_ok`, `_is_wot_member` and `repo_private_meta` already take, and the only safe one:
+        "I could not ask whether this repo is private" is not "this repo is public". The price is
+        that a Postgres outage 401s public clones too, where before it only 401'd private ones. The
+        60s cache above is what bounds it; there is no answer that keeps public repos serving during
+        an outage without also serving private ones.
+
+        NO DSN is a different answer from an error, deliberately: a node with no relay database holds
+        no 30617 at all, so there is no announcement to consult rather than one we failed to read —
+        the same reading `_maintainers` takes when it falls back to {owner}.
+        """
+        if not _CONFIG.get("pg_dsn"):
+            return False
+        key = (owner_hex, repo_id)
+        now = time.monotonic()
+        with _priv_lock:
+            hit = _priv_cache.get(key)
+            if hit and hit[0] > now:
+                return hit[1]
+        try:
+            import psycopg2
+            conn = psycopg2.connect(_CONFIG["pg_dsn"], connect_timeout=5)
+            try:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute("SET statement_timeout = 4000")
+                private = git_auth.load_announced_private(conn, owner_hex, repo_id)
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning("[git-host] announced-privacy read failed for %s/%s (%s) -> treat as private",
+                        owner_hex[:12], repo_id, e)
+            return True
+        with _priv_lock:
+            if len(_priv_cache) >= _PRIV_MAX:
+                _priv_cache.clear()
+            _priv_cache[key] = (now + _PRIV_TTL, private)
+        if private:
+            log.info("[git-host] %s/%s is private by its 30617 announcement", owner_hex[:12], repo_id)
+        return private
+
     def _read_gate_ok(self, owner_hex: str, repo_id: str) -> bool:
         """PRIVATE-repo READ authorization (clone/pull). Public repos: always True (fast path, no DB).
 
@@ -253,7 +330,10 @@ class _Handler(BaseHTTPRequestHandler):
         on denial (the caller 401s before git-http-backend runs, so refs never leak).
         """
         meta = ghs.repo_private_meta(owner_hex, repo_id)
-        if not meta.get("private"):
+        # PRIVACY IS THE UNION OF THE TWO SIGNALS, NEVER EITHER ONE ALONE. `or` short-circuits, so a
+        # locally-private repo still costs no announcement read; see _announced_private for why the
+        # second signal exists at all.
+        if not (meta.get("private") or self._announced_private(owner_hex, repo_id)):
             return True   # public: anonymous clone as before
         header = self.headers.get("Authorization", "")
         if not header:
@@ -277,11 +357,35 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 log.warning("[git-host] private read ACL DB read failed (%s) -> deny", e)
                 return False   # fail-closed: can't confirm ACL -> no read
-        # Read gate: bind the header to this repo path; don't require method (a clone reuses one
-        # static header across the info/refs GET + upload-pack POST). Wider freshness window than push.
+        # Read gate. GRASP-08 spells the credential out: repository-scoped, `method` tag GET, ONE
+        # credential covering every endpoint of a Smart HTTP operation, `created_at` within 60s.
+        #
+        # THE METHOD TAG IS COMPARED TO THE LITERAL "GET", NEVER TO THIS REQUEST'S VERB, and that
+        # distinction is the whole reason this can be tightened at all. A clone sends the same static
+        # header for the info/refs GET and the upload-pack POST — demanding it match the request
+        # would 401 the second half of every clone, which is exactly why the check used to be off
+        # entirely. Comparing it to GET is what the spec means by "one credential covering all
+        # endpoints", and it is what `scripts/git-credential-nostr` has always signed (measured: it
+        # emits [["u", url], ["method", "GET"]] unconditionally, since git hands a credential helper
+        # no method to echo).
+        #
+        # `allow_basic` STAYS. The constraint is libgit2's, not any ngit version's: it only attempts
+        # a scheme the server advertises and gives up on `Nostr` alone rather than calling a
+        # credential helper, so a v3 client on the same transport behaves the same way. It is not
+        # password auth either — the "password" is that same base64 NIP-98 event, verified below by
+        # every check on this path.
+        #
+        # The `u` tag is still matched as a SUBSTRING (`<id>.git`) rather than against a canonical
+        # URL, deliberately — see docs/GIT_OVER_NOSTR.md. Three things make an equality check refuse
+        # legitimate readers: the maintainer-alias path resolves a DIFFERENT owner segment to the
+        # hosting owner (ngit derives one clone URL per maintainer key), `public_base` is empty on a
+        # proxy node and on any node reached by another hostname, and the owner segment is accepted
+        # as npub OR hex. The binding is per-repo either way, and the ACL is per-repo, so a header
+        # for another owner's same-named repo already grants nothing it did not grant before.
         needle = "%s.git" % repo_id
-        signer = git_auth.verify_nip98(header, None, needle, allowed,
-                                       max_skew=_CONFIG.get("read_skew", 300), require_method=False,
+        signer = git_auth.verify_nip98(header, "GET", needle, allowed,
+                                       max_skew=int(_CONFIG.get("read_skew", 60)),
+                                       require_method=bool(_CONFIG.get("read_require_method", True)),
                                        allow_basic=True)
         if signer:
             log.info("[git-host] private read granted %s -> %s/%s", signer[:12], owner_hex[:12], repo_id)

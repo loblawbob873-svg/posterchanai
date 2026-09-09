@@ -29,6 +29,21 @@
             <small>npubs allowed to create repos (one per line/comma). Empty ⇒ admins only.</small>
         </div>
         <div class="form-group">
+            <label for="git_repo_acceptance">Repository acceptance policy</label>
+            <select id="git_repo_acceptance" name="git_repo_acceptance">
+                <option value="account_or_wot">An account on this node, or the relay's web of trust</option>
+                <option value="wot">The relay's web of trust only</option>
+                <option value="account">An account on this node only</option>
+                <option value="allowlist">The allowlist above only</option>
+                <option value="open">Anyone (subject to the size caps)</option>
+                <option value="closed">Nobody — an operator creates every repository</option>
+            </select>
+            <small>Who may cause a repository to exist here. GRASP-01 requires the service to
+            publish this rule, so the relay's NIP-11 document renders its
+            <code>repo_acceptance_criteria</code> sentence from this same value — there is nowhere
+            to advertise a policy the gate does not enforce.</small>
+        </div>
+        <div class="form-group">
             <label for="git_server_repo_max_mb">Per-repo size cap (MB)</label>
             <input type="text" id="git_server_repo_max_mb" name="git_server_repo_max_mb" placeholder="512">
             <small>Enforced in the pre-receive hook; a push over cap is rejected.</small>

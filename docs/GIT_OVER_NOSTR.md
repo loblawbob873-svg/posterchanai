@@ -144,7 +144,25 @@ spooling costs nothing in practice; `_MAX_BODY` (2 GiB) is enforced while de-fra
 
 A repo can be marked **private** at create time (`private=true`; default configurable via
 `git_server_default_private`). Private metadata is stored **on disk** (git config `pcai.private` /
-`pcai.readers` + `grasp.json`) so the subprocess reads it without a DB hit.
+`pcai.readers` + `grasp.json`).
+
+- **Privacy is the UNION of two signals, never the intersection** (GRASP-08). A repo is private if
+  the disk flag says so **OR** its own kind-30617 announcement carries `["private","true"]`. The two
+  models genuinely disagree: ours makes a repo private by NEVER ANNOUNCING IT (empty
+  `announcement_addr`, `publish_state_witness` skips it), GRASP-08 announces it publicly WITH the
+  private tag and restricts by relay NIP-42 + NIP-98. Where they disagree the DISK flag is the half
+  that can be wrong — `POST /<id>.git/create` defaults `private` to false, so an ngit v3 user who
+  provisions a private repo here and announces it privately would otherwise get a repo that is
+  private in its announcement and world-clonable over HTTP. `git_auth.event_says_private` is the ONE
+  predicate both this gate and the relay's `_can_serve_event` read the tag through.
+- **A missing announcement never makes a repo public** — that is the shape our own private repos
+  have. `repo_private_meta`'s older rule (repo dir exists, metadata indeterminate → private) still
+  comes through the union untouched.
+- **The announcement read costs a DB hit for repos the disk flag calls public**, which the "public
+  reads hit no DB at all" note above no longer holds for, and it **fails closed**: a database we
+  cannot ask is answered *private*, so a Postgres outage 401s public clones too. A 60s per-repo cache
+  bounds it (a clone makes many requests a second and pays one read) and failures are never cached.
+  No DSN is a different answer — a node with no relay database holds no 30617 to consult.
 
 - **Read (clone/pull) requires auth.** For a private repo, `git-upload-pack` (both the
   `GET info/refs?service=git-upload-pack` and the `POST git-upload-pack`) is gated in
@@ -237,10 +255,25 @@ signed 30618 reaching nas through `wss://poster.place/git`, and anonymous `info/
   nodes have separate event stores, so a 30618 published only to `relay.poster.place` (server1) is
   invisible to nas. List the hosting node's relay (`ws://nas.lan:3052`) in the repo's relays or
   pushes fail to authorize.
-- The NIP-98 header is re-verified (BIP-340 sig, `u` bound to this repo, created_at freshness). The
-  method tag is **not** required for reads (a `git clone` reuses one static `http.extraHeader` across
-  the info/refs GET + the upload-pack POST); the repo binding + freshness + access-set membership are
-  the guard, over TLS. Read freshness window is 300s (push stays 60s — writes are higher-stakes).
+- The NIP-98 header is re-verified (BIP-340 sig, `u` bound to this repo, created_at freshness), and
+  the read gate follows GRASP-08's credential rules: the `method` tag must say **GET** and
+  `created_at` must be within **60s**.
+  **The method tag is compared to the literal `GET`, never to the request's own verb** — that is
+  GRASP-08's "one credential covering all endpoints of a Smart HTTP operation", and it is what makes
+  the check safe to enforce at all: a `git clone` reuses one static `http.extraHeader` across the
+  info/refs GET and the upload-pack POST, so matching the verb would 401 the second half of every
+  clone. `scripts/git-credential-nostr` has always signed `method: GET` (git hands a credential
+  helper no method to echo).
+  Both values are DEFAULTS, not literals: `git_server_read_skew` (300 restores the old window — a
+  hand-made `http.extraHeader` reused across several commands is otherwise a one-minute token) and
+  `git_server_read_require_method` (false restores the old no-check behaviour). Push stays at its own
+  `write_skew` with the real verb matched exactly.
+- The **`u` tag is matched as a substring** (`<id>.git`), deliberately NOT against a canonical
+  repository URL. Three legitimate readers an equality check would refuse: the maintainer-alias path
+  (ngit derives one clone URL per maintainer key, so the owner segment is not the hosting owner), a
+  proxy node or any node reached by a different hostname (`public_base` empty or different), and the
+  owner segment being accepted as npub OR hex. The binding is per-repo and the ACL is per-repo, so it
+  grants nothing across owners.
 - **Not announced.** A private repo publishes **no** public 30617/30618 and is excluded from the
   relay's repo-scoped collaboration acceptance — its title/content never reach the public relay.
   Discovery is via the admin-gated `/api/git/repos` listing only.

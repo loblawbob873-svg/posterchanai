@@ -20,6 +20,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
+from app.services import git_acceptance
 from .langfilter import blocked_language, blocked_word
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 from .store import retired_kind_reason as _retired_kind_reason
@@ -137,6 +138,21 @@ def _broadcastable(ev, cfg=None) -> bool:
             if cfg and cfg.get("backup_datastore") and d.startswith(_BACKUP_NS):
                 continue
             return False
+    # GRASP-08: A PRIVATE REPOSITORY'S ANNOUNCEMENT MUST NOT LEAVE THE RELAYS IT NAMES.
+    #
+    # `_can_serve_event` refuses a private 30617/30618 to any reader who has not NIP-42-authenticated
+    # as the owner or a maintainer — but that gate only exists HERE. A 30617 is an ordinary
+    # replaceable event as far as this function is concerned (not 30078, not a draft, no `nofederate`
+    # tag), so without this clause the outbox would re-broadcast it to every upstream public relay,
+    # where nothing enforces any of it: the repo's name, its maintainer set and its whole activity
+    # would then be readable by anyone, permanently, from ~20 relays somebody else runs, with our own
+    # relay still correctly answering "auth-required". Federating it is the one action that makes the
+    # gate meaningless, and it is the reason announcing a private repo is not safe until this holds.
+    #
+    # GRASP-08 says the same thing from the client's side: related events go only to the repo's
+    # declared relays. This is the server-side half of that rule.
+    if RelayServer._is_private_repo_event(ev):
+        return False
     # Opt-out marker: e.g. game bots tag the mid-game move boards so only the opening + final post
     # federate to the wider network (the middle plays stay local-only — anti-spam).
     if any(t and len(t) >= 1 and t[0] == "nofederate" for t in ev.get("tags", [])):
@@ -169,6 +185,61 @@ def _git_comment_root(ev: dict):
         if len(t) >= 2 and t[0] == "E" and isinstance(t[1], str) and len(t[1]) == 64:
             return t[1]
     return None
+
+
+
+def _supported_grasps(raw) -> list:
+    """GRASP-01's `supported_grasps`, normalised to the spec's `GRASP-XX` spelling.
+
+    An operator types what the node supports; they should not also have to type it in a shape.
+    "1, 8" / "grasp-8" / "GRASP-01" all mean the same thing and all come out as `GRASP-01`,
+    `GRASP-08`. ngit compares case-insensitively, but the spec fixes the format and an auditor or a
+    stricter client is entitled to it. Anything that names no GRASP number is dropped rather than
+    passed through — a malformed entry in a capability array is worse than a missing one, because a
+    client that cannot parse the array may discard the whole document.
+
+    Always returns a list, so the key is present (as "a string array") even when empty.
+    """
+    out, seen = [], set()
+    for tok in str(raw or "").replace(",", " ").split():
+        t = tok.strip().upper()
+        if t.startswith("GRASP-"):
+            t = t[6:]
+        elif t.startswith("GRASP"):
+            t = t[5:]
+        if not t.isdigit():
+            continue
+        name = "GRASP-%02d" % int(t)
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _curation_summary(c) -> str:
+    """A brief, TRUE summary of the curation this node applies beyond generic spam prevention — or
+    "" when it applies none, in which case GRASP-01 requires the key to be omitted entirely.
+
+    Built from the filters that are actually configured rather than from a fixed sentence, because
+    the sentence is what a person reads before deciding whether their events will survive here, and
+    every one of these is operator-toggleable at runtime. A stock relay with the web-of-trust gate
+    off and no word/language/bridge filters correctly says nothing at all.
+    """
+    parts = []
+    if c.get("wot_enabled", True):
+        parts.append("publishing is limited to authors inside this relay's web of trust "
+                     "(git repository announcements and repo-scoped collaboration events excepted)")
+    if c.get("blocked_words"):
+        parts.append("notes containing operator-listed words are rejected")
+    if c.get("blocked_langs"):
+        parts.append("notes in operator-listed languages are rejected")
+    if c.get("block_bridged"):
+        parts.append("bridged (NIP-48 proxy) content is rejected")
+    if c.get("blocked_relays"):
+        parts.append("accounts on operator-listed bridge relays are rejected")
+    if not parts:
+        return ""
+    return "; ".join(parts) + "."
 
 
 def _event_expiration(ev: dict):
@@ -481,6 +552,27 @@ class RelayServer:
             "supported_nips": [1, 2, 9, 11, 17, 22, 23, 40, 42, 44, 45, 50, 59, 65, 77, 78],
             # Concord is a CORD family rather than a NIP, so advertise it separately.
             "concord": {"cords": [1, 2, 3, 4, 5, 6, 7, 8], "giftwrap_streams": True},
+            # GRASP-01 NIP-11 MUST (1): "MUST list each supported GRASP under `supported_grasps` in
+            # format `GRASP-XX` eg `GRASP-01` as a string array" (grasp.git 01.md @ f35b4f9a4ed2).
+            # This is the ONLY capability surface a git-over-nostr client has: ngit v3 reads exactly
+            # this key and nothing else (`relay_information.rs`), so a service that omits it cannot
+            # be identified as a GRASP service at all — which is what we looked like until now.
+            #
+            # It is EMPTY BY DEFAULT and that is a statement, not an oversight. Claiming a GRASP is
+            # claiming every MUST in it, and GRASP-01 still has outstanding ones here: pushes to
+            # `refs/nostr/<event-id>` are refused, HEAD is chosen by convention rather than read
+            # from the signed 30618, the maintainer set is resolved one level rather than
+            # recursively, and we accept announcements that do not name this service (which is
+            # GRASP-05's MAY, and GRASP-05 in turn requires GRASP-02, which we do not implement).
+            # An advertised capability that is not there costs a client a failed push and a wrong
+            # diagnosis; an absent one costs it a fallback. The operator flips the setting when the
+            # node earns it.
+            "supported_grasps": _supported_grasps(c.get("supported_grasps")),
+            # GRASP-01 NIP-11 MUST (2): the acceptance rule in prose. Rendered from the POLICY the
+            # provisioning gate enforces (app/services/git_acceptance.py), never typed twice — two
+            # copies of one rule go stale silently, leaving the document promising a policy nobody
+            # implements while a client is refused for a reason it says does not apply.
+            "repo_acceptance_criteria": git_acceptance.criteria_text(c.get("repo_acceptance")),
             "limitation": {
                 "max_message_length": c.get("max_message_size", 262144),
                 "max_subscriptions": c.get("max_subs_per_conn", 20),
@@ -494,6 +586,17 @@ class RelayServer:
         # Off by default so single-relay setups stick; flip on to be honest to spam clients.
         if c.get("advertise_restricted_writes", False):
             doc["limitation"]["restricted_writes"] = True
+        # GRASP-01 NIP-11 MUST (3): "MUST list brief summary of curation policy under `curation` if
+        # events are curated beyond generic SPAM prevention; otherwise `curation` MUST be ommitted".
+        # BOTH halves are normative, so this key is computed and not constant: a node running no
+        # filters must omit it entirely, and a node running the web-of-trust publish gate must not
+        # pretend that gate is generic spam prevention. It is not — it refuses a stranger's post on
+        # the strength of who follows them, which is exactly the "curation eg. WoT, whitelist, user
+        # bans and banned topics" the spec names. Being silent about it is what makes the refusal
+        # unexplainable from the outside.
+        _cur = _curation_summary(c)
+        if _cur:
+            doc["curation"] = _cur
         if icon:
             doc["icon"] = icon
             doc["banner"] = icon
@@ -1112,13 +1215,24 @@ class RelayServer:
             # verified above and these are kept forever (store._GIT_KINDS). Patches/issues (1617/1621/…)
             # stay WoT-gated until repo-scoped acceptance lands, so this isn't an open spam firehose.
             pass
-        elif kind in (1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633):
-            # NIP-34 git COLLABORATION: patch (1617), issue (1621), replies (1622/1623), status
+        elif kind in (1617, 1618, 1619, 1621, 1622, 1623, 1630, 1631, 1632, 1633):
+            # NIP-34 git COLLABORATION: patch (1617), PULL REQUEST (1618) and PR UPDATE (1619),
+            # issue (1621), replies (1622/1623), status
             # (1630-1633). Accept from ANY author, but ONLY when the event a-tags a repo whose PUBLIC
             # announcement (30617) is on THIS relay — so issues/patches show up in the client for repos
             # this relay knows about (incl. a repo HOSTED on a peer node, since scoping is by the
             # announcement, not by who hosts it), without opening an unbounded spam firehose. Private
             # repos have no 30617, so they're never matched (no title/content leak). Signature verified above.
+            #
+            # 1618/1619 ARE THE DEFAULT CONTRIBUTION PATH FOR EVERY ngit v3 CLIENT and were missing
+            # from this tuple: they fell through to the WoT gate below and were refused
+            # `blocked: not in web of trust`. GRASP-01 makes them a MUST ("MUST accept other events
+            # that tag ... accepted git repository announcements"), and ngit v3 fetches collaboration
+            # events EXCLUSIVELY from the relays a repository declares — so for a repo naming us, a
+            # refused PR does not exist anywhere. `ngit send` / `git push pr/<branch>` defaults to the
+            # PR kind whenever the repo has a GRASP server, i.e. the one path we refused was the only
+            # one a stock client takes. They carry the same `a` tag as a patch, so they are scoped by
+            # exactly the same repo lookup and open no new spam surface.
             if _wot and not await self._collab_for_known_repo(ev):
                 self._refuse(conn, eid, ev, "blocked: git patch/issue references an unknown repo")
                 return
@@ -1272,8 +1386,52 @@ class RelayServer:
         n = await self.store.count_filtered(filters, protect_nip78=True)
         self._send(conn, ["COUNT", sub_id, {"count": n}])
 
+    #: GRASP-08 git kinds. 30617 is the repository announcement, 30618 its state.
+    GIT_KINDS = (30617, 30618)
+
+    @staticmethod
+    def _is_private_repo_event(ev: dict) -> bool:
+        """GRASP-08: a repository is private when its announcement carries ["private","true"].
+
+        Read off the EVENT rather than from any local flag, because the announcement is the thing a
+        client publishes and the thing another relay replicates — a server-side flag says nothing
+        about an event that arrived from elsewhere."""
+        if int(ev.get("kind", 0)) not in RelayServer.GIT_KINDS:
+            return False
+        # ONE definition of the tag predicate, shared with the git HTTP read gate
+        # (git_host_main.py:_announced_private) — see git_auth.event_says_private. Two hand-written
+        # copies is how a repo ends up refused at one door and served at the other.
+        from app.services import git_auth
+        return git_auth.event_says_private(ev)
+
+    @staticmethod
+    def _repo_readers(ev: dict) -> set:
+        """Who may read a private repo's events: its author plus its declared maintainers.
+
+        This is the SAME access set the git side already enforces over HTTP (owner ∪ 30617
+        maintainers). Keeping one definition is the point — a repo whose bytes are refused but
+        whose metadata is served is not private, and two different answers to "who may read this"
+        is how that happens."""
+        who = {str(ev.get("pubkey", ""))}
+        for t in ev.get("tags", []):
+            if isinstance(t, list) and len(t) >= 2 and t[0] == "maintainers":
+                who.update(str(x) for x in t[1:] if x)
+        return {x for x in who if x}
+
     def _can_serve_event(self, conn, ev: dict) -> bool:
-        return int(ev.get("kind", 0)) not in (78, 30078) or self._nip78_owner(conn, ev.get("pubkey", ""))
+        kind = int(ev.get("kind", 0))
+        if kind in (78, 30078):
+            return self._nip78_owner(conn, ev.get("pubkey", ""))
+        # PRIVATE GIT METADATA IS STILL PRIVATE DATA.
+        #
+        # The git HTTP side has refused unauthorised clones of a private repo for a long time, and
+        # 401s before git-http-backend runs so refs never leak. The EVENTS were never covered: the
+        # 30617 announcement and 30618 state were served to anyone who asked this relay, so a
+        # private repo was private in its bytes and public in its name, structure, maintainers and
+        # activity. GRASP-08 makes the relay half explicit, and this is that half.
+        if self._is_private_repo_event(ev):
+            return bool(self._repo_readers(ev) & self._auth_pubkeys.get(conn, set()))
+        return True
 
     # --- NIP-77 negentropy --------------------------------------------------
 

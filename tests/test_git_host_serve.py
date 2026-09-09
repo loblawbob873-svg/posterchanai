@@ -89,17 +89,17 @@ def _serve_in_thread(config):
     return httpd, port
 
 
-def _get(url, header=None):
+def _get(url, header=None, want_headers=False):
     req = urllib.request.Request(url)
     if header:
         req.add_header("Authorization", header)
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status, r.read()
+            return (r.status, r.read(), r.headers) if want_headers else (r.status, r.read())
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return (e.code, e.read(), e.headers) if want_headers else (e.code, e.read())
     except Exception as e:
-        return 0, str(e).encode()
+        return (0, str(e).encode(), {}) if want_headers else (0, str(e).encode())
 
 
 def nip98_header(sk, method, url):
@@ -150,6 +150,17 @@ def main():
     print("   anon -> HTTP %d (%d bytes)" % (code_anon, len(body_anon)))
     check("private: anonymous clone -> 401", code_anon == 401)
     check("private: 401 leaks NO refs", b"refs/heads/main" not in body_anon)
+
+    # THE 401 MUST ADVERTISE BOTH SCHEMES, and that is not cosmetic. libgit2 (ngit's transport, and
+    # plain git's) only attempts a scheme the server offers: with `Nostr` alone it gives up instead
+    # of calling a credential helper, so a private repo becomes unreadable to every client that
+    # cannot emit `Authorization: Nostr` itself. `Basic` here advertises an ENVELOPE for the same
+    # signed NIP-98 event (git_auth.verify_nip98 allow_basic) — the host accepts no passwords.
+    _c, _b, _h = _get(purl, want_headers=True)
+    _schemes = [v.split()[0].lower() for v in _h.get_all("WWW-Authenticate", [])]
+    check("private 401 advertises the Nostr scheme", "nostr" in _schemes)
+    check("private 401 also advertises Basic (libgit2 attempts only what it is offered)",
+          "basic" in _schemes)
 
     h_reader = nip98_header(reader_sk, "GET", purl)
     code_r, body_r = _get(purl, header=h_reader)

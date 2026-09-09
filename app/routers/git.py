@@ -216,6 +216,18 @@ async def announce_repo(request: Request, user: User = Depends(get_instance_user
         a_tags.append(["description", str(body["description"])])
     if clone:
         a_tags.append(["clone", clone])
+    # GRASP-01 makes `relays` part of a 30617's ACCEPTANCE ("MUST reject git repository
+    # announcements that do not list the service in both `clone` and `relays` tags"), and ngit
+    # publishes the kind-30618 repo state to the relays named here — so a repo announced without
+    # this tag is clonable and NOT pushable, aborting with "state event failed to reach any git
+    # server relay" while the git side is perfectly healthy. This route built the announcement
+    # without it; the git host's own `create` (git_host_main.py) got it right, which is exactly the
+    # shape that hides — one of two producers of the same event, and only the unused one is correct.
+    # Both now resolve the URL through the same git_http_service.announce_relay_url().
+    from app.services import git_http_service
+    _relays = git_http_service.announce_relay_url()
+    if _relays:
+        a_tags.append(["relays", _relays])
     a_tags.append(["maintainers", owner_hex])
     ann = build_event(seckey, 30617, "", tags=a_tags)
 

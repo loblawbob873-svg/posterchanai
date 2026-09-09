@@ -52,6 +52,25 @@ def _relay_from_public_base(public_base: str) -> str:
     return "%s://%s/relay" % ("wss" if pu.scheme == "https" else "ws", pu.netloc)
 
 
+def announce_relay_url() -> str:
+    """The relay a kind-30617 announcement must name in its `relays` tag, resolved once.
+
+    GRASP-01 makes this tag part of acceptance ("MUST reject git repository announcements that do
+    not list the service in both `clone` and `relays` tags"), and ngit publishes the kind-30618 repo
+    state THERE — a repo announced without it is clonable and NOT pushable, failing with "state
+    event failed to reach any git server relay" while the git side is perfectly healthy.
+
+    There are two producers of a 30617 in this codebase (the git host's `create`, and
+    /api/git/announce) and one of them was missing the tag entirely. This is the one expression both
+    resolve it with, so a fix to one is a fix to both. Explicit `client_relay_url` wins; otherwise it
+    is derived from the public base, since this node's relay is served at /relay on the same host
+    that fronts /git.
+    """
+    from app.services import settings_store
+    explicit = (settings_store.get("client_relay_url", "") or "").strip()
+    return explicit or _relay_from_public_base(settings_store.get("git_server_public_base", "") or "")
+
+
 def _read_config() -> dict:
     """Read the git-host settings from the Nostr datastore (same mechanism the relay uses). The DSN
     is reused from the relay setting (same Postgres `posterchan_relay` the hook reads)."""
@@ -90,6 +109,9 @@ def _read_config() -> dict:
             # ("state event failed to reach any git server relay") even though the git side is fine.
             # Explicit setting wins; otherwise derive from the public base, since this node's relay is
             # served at /relay on the same host that fronts /git (https://x/git -> wss://x/relay).
+            # Resolved by announce_relay_url() above so the two 30617 producers cannot disagree —
+            # spelled out here because this dict is built inside a subprocess whose settings_store
+            # is hydrated by the `g` closure above, not by a fresh session.
             "relay_url": g("client_relay_url", "") or _relay_from_public_base(g("git_server_public_base", "")),
             "allowlist": g("git_server_allowlist", ""),
             "repo_max_mb": gi("git_server_repo_max_mb", 512),
@@ -97,7 +119,15 @@ def _read_config() -> dict:
             "allow_force": gb("git_server_allow_force", True),
             "nip98_push": gb("git_server_nip98_push", True),
             "default_private": gb("git_server_default_private", False),
-            "read_skew": 300,
+            # NIP-98 READ-GATE STRICTNESS. GRASP-08 fixes both of these: `created_at` within 60
+            # seconds, and a `method` tag of GET. They are the DEFAULTS here rather than literals,
+            # because the looser values were not arbitrary — the 300s window predates
+            # `scripts/git-credential-nostr` and covers a HAND-MADE `http.extraHeader` reused across
+            # several commands (documented in docs/GIT_OVER_NOSTR.md as the working https read path),
+            # which a 60s window makes a one-minute token. An operator whose client needs the old
+            # behaviour sets the key; nobody has to patch the host to get their clone back.
+            "read_skew": gi("git_server_read_skew", 60),
+            "read_require_method": gb("git_server_read_require_method", True),
             "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get(
                 "NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),
         }

@@ -241,12 +241,18 @@ def retired_kind_reason(kind: int):
 _PRUNE_CHUNK = 20000
 
 # NIP-34 git-over-nostr events — a repo's source of truth (announcement 30617, repo state 30618,
-# patches 1617, issues 1621, replies/PRs 1622, issue-status 1623, and status 1630-1633). These are
+# patches 1617, PULL REQUESTS 1618 and PR updates 1619, issues 1621, replies 1622, issue-status 1623,
+# and status 1630-1633). These are
 # the collaboration record; losing one loses code/history that isn't reconstructable from the WoT
 # firehose. They are DELIBERATELY absent from _PRUNABLE_KINDS (so age/bridge/count-cap prunes never
 # touch them — kept forever), and are also exempted from the NIP-40 expiration sweep below so a stray
 # `expiration` tag can't quietly delete a repo. NEVER add any of these to _PRUNABLE_KINDS.
-_GIT_KINDS = (30617, 30618, 1617, 1621, 1622, 1623, 1630, 1631, 1632, 1633)
+# 1618/1619 were absent here while _GIT_COMMENT_ROOT_KINDS below already shielded the COMMENTS on a
+# PR — the children of an event the parent set forgot. The consequence was that a PR, once accepted,
+# stayed deletable by a stray NIP-40 `expiration` tag (_NEVER_EXPIRE_KINDS is built from this tuple),
+# so the one event carrying a contribution's commit ids could quietly disappear while its discussion
+# was kept forever.
+_GIT_KINDS = (30617, 30618, 1617, 1618, 1619, 1621, 1622, 1623, 1630, 1631, 1632, 1633)
 assert not (set(_GIT_KINDS) & set(_PRUNABLE_KINDS)), "git kinds must never be prunable"
 
 # A NIP-22 comment (kind 1111) whose ROOT is a NIP-34 issue (1621) / patch (1617) / PR (1618) is the
@@ -270,7 +276,33 @@ _PRUNABLE_SQL = ("(kind IN (%s) AND NOT (kind = 1111 AND id IN "
 # than by attack: NIP-37 (Draft Events) recommends stamping `expiration: now + 90 days`, so a note
 # written or touched by any other client following that convention would quietly disappear 90 days
 # later, from the relay that holds the only copy. Kept regardless, at ingest and in the sweep.
-_NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078,)
+# GRASP-08 private-repository DISCOVERY list (NIP-51, kind 10318). Its `g` tags are ALL private
+# items — each a JSON array NIP-44-encrypted to the list's author — naming the relays a user's
+# private repositories live on. It is REPLACEABLE, so there is exactly one per person and the newest
+# wins: lose it and the owner has no index of where their private repos ARE. That is the same class
+# of loss as 30078 (this app's own datastore) and it is why 30078 is in this tuple, with the same
+# accidental trigger — NIP-37 recommends stamping `expiration: now + 90 days`, so any client
+# following that convention on a list would take somebody's private repos off the map three months
+# later, from the relay holding the only copy. It is already outside _PRUNABLE_KINDS (every prune
+# rule in this file is gated on _PRUNABLE_SQL or _RETIRED_SQL, so no cleaner can reach it); this
+# closes the one path that could.
+# Kinds that must NEVER take the `tie_direct` shortcut below (see the addressable-replaceable
+# branch in _add_event_sync). That shortcut hands a same-second tie to the LAST direct write instead
+# of to the lowest event id NIP-01 specifies, which is right for a person saving one document twice
+# in a second and wrong for anything two parties must agree on independently.
+#
+# A repo announcement (30617) and a repo state (30618) are exactly that: `git_auth.decide_push_ref`
+# authorises a push by SHA-equality against the newest maintainer-signed 30618, and reads the
+# maintainer set off the 30617 — so both are an AUTHORISATION input, and the relay resolving a tie
+# differently from the client means `pre-receive` deciding against a state the pusher considers
+# superseded. ngit v3 honours the lower-event-ID tie-break and grinds nonces to avoid same-second
+# collisions, so the practical window is small; the cost when it opens is a push refused (or
+# allowed) for a reason neither side can see. Conformance wins here, and the rapid-save argument
+# does not apply: a tie needs two pushes to the SAME repo in the SAME second.
+_STRICT_TIE_KINDS = (30617, 30618)
+
+_GRASP_PRIVATE_LIST_KIND = 10318
+_NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078, _GRASP_PRIVATE_LIST_KIND)
 assert not (set(_NEVER_EXPIRE_KINDS) & set(_PRUNABLE_KINDS)), "never-expire kinds must never be prunable"
 
 # The retired rule is the ONLY rule in this file that deletes by kind alone — no age, no origin, no
@@ -537,7 +569,8 @@ class RelayStore:
                     # manifests, measured six-a-second on a real account. Scoped to origin='direct'
                     # replacing origin='direct': mirrored copies still settle by the spec, so two
                     # nodes syncing each other cannot flip-flop.
-                    tie_direct = (row["created_at"] == created and origin == "direct"
+                    tie_direct = (kind not in _STRICT_TIE_KINDS
+                                  and row["created_at"] == created and origin == "direct"
                                   and str(row["origin"] if "origin" in row.keys() else "") == "direct")
                     if older or tie_lost or tie_direct:
                         self._delete_sync(conn, row["id"])
