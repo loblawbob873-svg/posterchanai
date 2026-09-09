@@ -79,9 +79,12 @@ def _cache_put(key: str, val: dict):
     _CACHE[key] = (time.time(), val)
 
 
-def _require_ai(user: User):
-    """Same gate as chat. Admins always; everyone else needs the admin-granted flag."""
-    if not (getattr(user, "is_admin", False) or getattr(user, "can_ai", False)):
+async def _require_ai(user: User):
+    """Same gate as chat — literally: one predicate in app/services/nip05_access.py, so this copy
+    cannot drift from auth.get_ai_user again. Admins; the admin-granted flag; or a confirmed
+    instance member (a NIP-05 this node granted AND published)."""
+    from app.services import nip05_access
+    if not await nip05_access.ai_allowed(user):
         raise HTTPException(status_code=403, detail="AI access not enabled — request access and an admin will approve.")
 
 
@@ -638,7 +641,7 @@ async def summarize_link(
     current_user: User = Depends(get_search_member),
 ):
     """Summarize one result's page."""
-    _require_ai(current_user)
+    await _require_ai(current_user)
     url = (req.url or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="No URL given.")
@@ -686,7 +689,7 @@ async def overview(
     the page choose what the model reads, and the search is cached upstream anyway — this costs a
     request and removes a whole class of "the overview said something no engine returned".
     """
-    _require_ai(current_user)
+    await _require_ai(current_user)
     q = (req.q or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="No query given.")

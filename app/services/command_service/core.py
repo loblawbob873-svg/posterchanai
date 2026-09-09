@@ -534,6 +534,20 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
             return True
         return bool(getattr(u, attr, True))
 
+    async def _user_may(self, attr: str) -> bool:
+        """The capability gate proper: the per-user flag above, OR a confirmed instance member.
+
+        A member holds a NIP-05 name THIS NODE granted and has published that exact address, so
+        `geni`/`musicgeni`/`voice` follow the grant instead of waiting on a per-user column an admin
+        (or the 15-minute access reconcile) has to set — and someone who has never signed in before
+        has no row for either of those to set. ADDITIVE only: `_user_has_capability` is still asked
+        first and still decides every case it can, so nothing that passes today can start failing.
+        """
+        if self._user_has_capability(attr):
+            return True
+        from app.services import nip05_access
+        return await nip05_access.user_is_member(self.user)
+
     async def _execute_command_inner(
         self,
         command: str,
@@ -558,7 +572,7 @@ class CommandService(_BillMixin, _SearchMixin, _GenMixin, _MediaMixin, _Torrents
 
         # Per-user feature access gate (Admin → Users). Admins + bot listeners are exempt.
         _cap = self._CAPABILITY_BY_COMMAND.get(command)
-        if _cap and not self._user_has_capability(_cap[0]):
+        if _cap and not await self._user_may(_cap[0]):
             return {"type": "text",
                     "content": f"⛔ You don't have access to {_cap[1]} on this server. "
                                f"Ask an admin to enable it for your account."}

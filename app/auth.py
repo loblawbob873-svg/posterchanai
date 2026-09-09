@@ -257,10 +257,15 @@ def get_admin_user(current_user: User = Depends(get_current_user),
     )
 
 
-def get_ai_user(current_user: User = Depends(get_current_user)) -> User:
-    """Gate AI features: admins always pass; everyone else needs the admin-granted `can_ai` flag.
-    Nostr-signup users start without it and request access (admin approves) — see the can_ai flow."""
-    if not (current_user.is_admin or getattr(current_user, "can_ai", False)):
+async def get_ai_user(current_user: User = Depends(get_current_user)) -> User:
+    """Gate AI features: admins always pass; so does the admin-granted `can_ai` flag; so does a
+    confirmed instance member (a NIP-05 name THIS NODE granted, published in their own profile).
+    Nostr-signup users start without the flag and request access (admin approves) — see the can_ai
+    flow — but a member no longer has to wait for that, or for the 15-minute access reconcile.
+
+    The membership clause is ADDITIVE and never denies: see app/services/nip05_access.py."""
+    from app.services import nip05_access
+    if not await nip05_access.ai_allowed(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="AI access not enabled for this account — request access and an admin will approve."

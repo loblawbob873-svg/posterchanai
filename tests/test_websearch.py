@@ -604,13 +604,24 @@ class RouterTests(unittest.TestCase):
         return svc
 
     def test_ai_gate_matches_chat(self):
+        """Literally the same predicate as chat now (nip05_access.ai_allowed), so this copy cannot
+        drift from auth.get_ai_user. It is ASYNC — a plain call returns a coroutine nobody awaits,
+        which raises nothing and admits everybody, so the await here is the assertion."""
         for user, ok in ((_User(), False), (_User(can_ai=True), True), (_User(is_admin=True), True)):
             if ok:
-                W._require_ai(user)
+                run(W._require_ai(user))
             else:
                 with self.assertRaises(HTTPException) as e:
-                    W._require_ai(user)
+                    run(W._require_ai(user))
                 self.assertEqual(e.exception.status_code, 403)
+
+    def test_ai_gate_admits_a_confirmed_nip05_member(self):
+        """A member of this instance (a NIP-05 name the node granted AND published) needs no
+        `can_ai` tick — the same rule the chat gate applies."""
+        from app.services import nip05_access
+        user = _User()
+        with mock.patch.object(nip05_access, "user_is_member", mock.AsyncMock(return_value=True)):
+            run(W._require_ai(user))
 
     def test_overview_cites_the_results_it_was_given(self):
         results = [{"title": f"R{i}", "url": f"https://e.com/{i}", "content": f"c{i}"} for i in (1, 2, 3)]

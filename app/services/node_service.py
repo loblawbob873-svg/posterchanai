@@ -111,8 +111,20 @@ def user_allowed(db: Session, user: Optional["User"]) -> bool:
 
 
 def has_ai_access(user: Optional["User"]) -> bool:
-    """AI features are gated by admin OR the admin-granted `can_ai` flag (mirrors auth.get_ai_user)."""
-    return bool(user is not None and (getattr(user, "is_admin", False) or getattr(user, "can_ai", False)))
+    """AI features are gated by admin OR the admin-granted `can_ai` flag OR confirmed instance
+    membership (mirrors auth.get_ai_user / nip05_access.ai_allowed).
+
+    SYNC, so the membership half is the positive-only cache peek rather than a fresh check: this is
+    only ever reached from inside a request the real AI gate has already admitted, which is what
+    warms it. A cold cache reads as "not known", never as "denied" — the caller
+    (`sandbox_allowed`) then answers exactly what it answered before this clause existed.
+    """
+    if user is None:
+        return False
+    if getattr(user, "is_admin", False) or getattr(user, "can_ai", False):
+        return True
+    from app.services import nip05_access
+    return nip05_access.is_member_cached(nip05_access.user_pubkey(user))
 
 
 def sandbox_allowed(db: Session, user: Optional["User"]) -> bool:

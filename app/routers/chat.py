@@ -766,7 +766,8 @@ async def chat_send(
     streaming niceties (intent tools, live token stream) stay WS-only.
     """
     user = current_user
-    if not (getattr(user, "is_admin", False) or getattr(user, "can_ai", False)):
+    from app.services import nip05_access
+    if not await nip05_access.ai_allowed(user):
         raise HTTPException(status_code=403, detail="AI access not enabled")
     conversation_id = req.conversation_id
     conversation = db.query(Conversation).options(joinedload(Conversation.messages)).filter(
@@ -1208,9 +1209,11 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             await websocket.send_json({"type": "error", "message": "Please log in again"})
             await websocket.close(code=4001)
             return
-        # AI gate: admins always; everyone else needs the admin-granted can_ai flag (Nostr-signup
-        # users start gated and request access). Enforced here so the UI gate isn't the only check.
-        if not (getattr(user, "is_admin", False) or getattr(user, "can_ai", False)):
+        # AI gate: admins always; the admin-granted can_ai flag; or a confirmed instance member
+        # (a NIP-05 this node granted AND published) — ONE predicate, app/services/nip05_access.py.
+        # Enforced here so the UI gate isn't the only check.
+        from app.services import nip05_access
+        if not await nip05_access.ai_allowed(user):
             await websocket.send_json({"type": "error", "message": "AI access not enabled — request access and an admin will approve."})
             await websocket.close(code=4003)
             return

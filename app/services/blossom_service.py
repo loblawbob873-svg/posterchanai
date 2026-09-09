@@ -415,6 +415,27 @@ def is_pubkey_allowed(db: Session, pubkey_hex: str) -> bool:
     return bool(u and (getattr(u, "is_admin", False) or getattr(u, "can_blossom", False)))
 
 
+async def is_pubkey_allowed_async(db: Session, pubkey_hex: str) -> bool:
+    """`is_pubkey_allowed`, plus: a confirmed instance member may upload.
+
+    A member is a pubkey THIS NODE granted a NIP-05 name to (`nostr_relay_nip05_names`) who has
+    published that exact address in their signed profile — the one predicate in
+    `app/services/nip05_access.py`, shared with the AI/image/music gates.
+
+    This is why it is a SEPARATE, ADDITIVE clause and NOT a write to `blossom_whitelist`: that list
+    is shared, an admin edits it by hand, and this project has already lost it once by rewriting it
+    from a stale read. Membership is resolved per request from the registry that already exists, so
+    nothing here ever writes a list, and a registry this process cannot read costs a member their
+    membership clause — never anybody else their entry.
+
+    Every caller must keep the sync check as the primary; this only ever ADDS.
+    """
+    if is_pubkey_allowed(db, pubkey_hex):
+        return True
+    from app.services import nip05_access
+    return await nip05_access.is_member(pubkey_hex)
+
+
 def verify_auth(authorization: str, action: str, sha256: str | None = None) -> str:
     """Verify a Blossom `Authorization: Nostr <base64-event>` header (BUD-01 §auth).
 

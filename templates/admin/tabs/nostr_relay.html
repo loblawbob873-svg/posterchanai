@@ -407,6 +407,12 @@
             <small>Domain used for the <code>name@domain</code> auto-assigned to new web-client signups. Leave blank to use the host the client was served from.</small>
         </div>
         <div class="form-group">
+            <label for="nip05_grants_access">
+                <input type="checkbox" id="nip05_grants_access" name="nip05_grants_access"> A NIP-05 identity granted here gives access to this node's features
+            </label>
+            <small>On (the default): anyone you granted a name above who has <strong>published that exact address in their own profile</strong> may use AI chat, image generation, music generation and Blossom uploads — no per-user tick in Admin → Users, no waiting for the access reconcile. The grant above is the authority; the profile only confirms they claimed it. Off: each account needs its own permissions.</small>
+        </div>
+        <div class="form-group">
             <label for="nostr_relay_nip05_relays">Advertised relays</label>
             <textarea id="nostr_relay_nip05_relays" name="nostr_relay_nip05_relays" rows="4" placeholder="wss://nos.lol/&#10;wss://relay.damus.io/"></textarea>
             <small>Relay URLs returned for every identity above (NIP-05 <code>relays</code> hint), one per line. Blank = omit the hint.</small>

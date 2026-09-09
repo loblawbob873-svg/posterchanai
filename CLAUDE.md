@@ -441,6 +441,37 @@ would have handled it fine).
 
 ## Notable features
 
+- **A GRANTED NIP-05 IS THE ENTITLEMENT — one predicate, four gates** (`app/services/nip05_access.py`;
+  switch `nip05_grants_access`, Admin → Nostr Relay → NIP-05 identity server, **ON** by default).
+  AI chat, image generation (`geni`), music generation (`musicgeni`/`voice`) and Blossom uploads were
+  four unrelated mechanisms — a `can_ai` column, a `can_image` column, a `can_music` column and the
+  shared `blossom_whitelist` setting — reconciled only by the 15-minute `relay_access_policy` batch.
+  Measured on poster.place: of the **78** accounts holding a name this node granted AND publishing it,
+  **15 were refused AI, image and music**, every one because they had no `User` row for the batch to
+  grant anything to; Blossom was the only gate they passed, and only because the batch had written
+  them into the whitelist. Now every gate asks the same question — `is_member()` = the node's own
+  registry (`nostr_relay_nip05_names`) **AND** `instance_membership` confirming the signed kind-0
+  publishes that exact address — the same predicate `relay_access_policy` reconciles on and the same
+  one Mail/News/Git/Office/Files/Web Search already require, so a member is a member everywhere and
+  the gate cannot disagree with the reconcile.
+  **THE PROFILE CLAIM IS NOT PROOF AND READING IT AS PROOF IS A PRIVILEGE ESCALATION.** Anyone can
+  write `nip05: alice@poster.place` into their own profile; the entitlement therefore comes from the
+  server-side registry THIS NODE writes, and the profile is only ever the second half of the test.
+  `is_granted()` deliberately never opens a kind-0.
+  **IT CAN ONLY EVER GRANT.** Every gate is written `<existing check> or <membership>`, so a user who
+  passes today passes regardless, an already-authorized user never pays the check, and every failure
+  path — settings unhydrated, relay unreachable, membership busy — resolves to False, i.e. to exactly
+  the behaviour that shipped before. Never turn it into a denial: an unreadable registry would lock
+  every member out of their own instance. Same reason a blank `nip05_grants_access` reads as **ON**
+  (`get_bool` maps `""` to False, and a blank row would switch every member off node-wide silently).
+  **It writes NOTHING** — in particular not `blossom_whitelist`, which is shared, hand-edited and has
+  already been lost once to a rewrite from a stale read; membership is resolved per request instead.
+  Wiring: `auth.get_ai_user` (now async) + `chat.py` ×2 + `websearch._require_ai` + `node_service.
+  has_ai_access` (sync → the positive-only `is_member_cached` peek) for AI; `CommandService._user_may`
+  for image/music/voice; `blossom_service.is_pubkey_allowed_async` for uploads — and `/client/
+  blossom-access` reports through the SAME async gate, because saying "no" about an upload that would
+  succeed makes the client silently divert the user's media to nostr.build.
+  `tests/test_nip05_grants_access.py`.
 - **Music generation** (`musicgeni` command; `app/services/music_local.py` + `music_service.py` +
   `music_factory.py`): text-to-song with **ACE-Step 1.5, NATIVE in-process** — same as video gen, on
   the app's own venv/torch/GPU lock. There is no `acestep.service`, no second venv, no HTTP hop

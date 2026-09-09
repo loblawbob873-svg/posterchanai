@@ -3498,10 +3498,13 @@ def _whitelist_hex(db: Session) -> set:
 async def blossom_access_status(pubkey: str, db: Session = Depends(get_db)):
     """Blossom upload status for a pubkey.
       * `allowed`     — can it ACTUALLY upload to the built-in server? Mirrors the real gate
-                        (blossom_service.is_pubkey_allowed: whitelist OR admin/can_blossom OR
-                        operator/bot/DVM keys). The client uses this to decide built-in vs the
-                        nostr.build fallback — so an admin who was never explicitly whitelisted is
-                        no longer wrongly diverted to nostr.build.
+                        (blossom_service.is_pubkey_allowed_async: whitelist OR admin/can_blossom OR
+                        operator/bot/DVM keys OR a confirmed instance NIP-05 member). The client uses
+                        this to decide built-in vs the nostr.build fallback — so an admin who was
+                        never explicitly whitelisted is no longer wrongly diverted to nostr.build,
+                        and neither is a member the upload endpoint would in fact accept. It MUST
+                        mirror the real gate: report "no" about an upload that would succeed and the
+                        client silently sends the user's media to a third party instead.
       * `whitelisted` — raw membership of the `blossom_whitelist` setting, for the admin Grant/Revoke
                         toggle (which manages that list specifically)."""
     h = nostr_service.to_pubkey_hex(pubkey)
@@ -3511,7 +3514,7 @@ async def blossom_access_status(pubkey: str, db: Session = Depends(get_db)):
     return JSONResponse({
         "ok": True,
         "whitelisted": h in _whitelist_hex(db),
-        "allowed": blossom_service.is_pubkey_allowed(db, h),
+        "allowed": await blossom_service.is_pubkey_allowed_async(db, h),
     })
 
 

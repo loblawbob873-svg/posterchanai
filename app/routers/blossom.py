@@ -268,7 +268,7 @@ async def upload(request: Request, db: Session = Depends(get_db)):
     except ValueError as e:
         return _err(401, str(e))
 
-    if not blossom_service.is_pubkey_allowed(db, pubkey):
+    if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
         return _err(403, "not authorized to upload (needs the can_blossom privilege)")
 
     # Per-user quota — AFTER authorization, so someone who may not upload at all gets a plain 403
@@ -333,7 +333,7 @@ async def upload_requirements(request: Request, db: Session = Depends(get_db)):
             blossom_service.verify_auth, request.headers.get("authorization", ""), "upload")
     except ValueError as e:
         return Response(status_code=401, headers={**_CORS, "X-Reason": str(e)})
-    if not blossom_service.is_pubkey_allowed(db, pubkey):
+    if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
         return Response(status_code=403, headers={**_CORS, "X-Reason": "not authorized to upload"})
     return Response(status_code=200, headers=_CORS)
 
@@ -564,7 +564,7 @@ async def delete_blob(sha256: str, request: Request, db: Session = Depends(get_d
     owns = blossom_service.is_owner(db, sha, pubkey)
     is_admin = False
     if not owns:
-        if not blossom_service.is_pubkey_allowed(db, pubkey):
+        if not await blossom_service.is_pubkey_allowed_async(db, pubkey):
             return _err(403, "not authorized to delete this blob")
         from app.models import User
         u = db.query(User).filter(User.nostr_npub == nostr_service.npub_of(pubkey)).first()

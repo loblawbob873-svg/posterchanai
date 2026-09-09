@@ -739,6 +739,11 @@ class SettingsResponse(BaseModel):
     )
     nostr_relay_nip05_relays: Optional[str] = "wss://relay.poster.place"
     nostr_relay_nip05_domain: Optional[str] = None
+    # Whether a NIP-05 identity this node GRANTED entitles its holder (once they publish that exact
+    # address) to the node's features — AI chat, image gen, music gen, Blossom uploads. One switch
+    # for the one predicate in app/services/nip05_access.py. Declared here or it never hydrates and
+    # the checkbox would post `false` over the stored value on the next Save.
+    nip05_grants_access: Optional[bool] = True
     nostr_relay_pg_dsn: Optional[str] = None
     nostr_relay_prune_interval_sec: Optional[str] = None
     # Built-in Blossom media server (BUD-01/02). Served by the app at /blossom (front with TLS).
