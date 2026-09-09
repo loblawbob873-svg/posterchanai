@@ -1017,6 +1017,46 @@ would have handled it fine).
   worker cannot serve the navigation of the page it needs to ask. Trade of one shared origin: apps can
   read each other's localStorage (keys are namespaced in the bridge — a collision guard, not a
   boundary); `pc_webxdc_wildcard` upgrades a node that has a wildcard. See `docs/WEBXDC.md`.
+- **Undo a repost** (`doRepost` in `static/js/client/app.js`; the ↻ button on any card): the repost
+  button is a TOGGLE. With one of your own kind-6/16 reposts of that post it publishes a **NIP-09
+  kind-5** naming exactly those event ids (`e` tags plus a `k` per kind), and it says
+  *"Repost deletion requested"* — never "deleted", because a kind-5 is a REQUEST and every relay that
+  already has the repost may go on serving it. Public and fedi-only reposts are two SEPARATE deletions
+  (`client-mode: fedi-only`), since visibility belongs to the signed target and not to the mode the
+  undo is clicked in. Locally the repost is dropped from the counts, the timeline (`_repostDeleted`,
+  read at `buildCounts`/`_noteHtml`/`isMutedView`) and the notifications; the ORIGINAL post is never
+  touched — `_applyDeletion` still refuses any `e` tag whose target is not the deleter's own.
+  **Evidence is signed, and every branch here has to answer the same question three ways.**
+  (1) A deletion only counts if it verifies (`_repostVerified`: the id is recomputed from the current
+  fields before a bounded signature cache is consulted — a mutable Store object and NostrTools' own
+  cached flag are not proof), so a stranger's kind-5, or a forged one wearing your pubkey, can neither
+  hide your repost nor the post under it. (2) Nothing is marked undone before it goes out: the
+  signature is taken, the local removal is DEFERRED (`publish(..., {deferLocal:true})`) and only an
+  accepted publish removes anything — the latch-before-the-attempt shape this repo keeps rediscovering.
+  A partial failure says *"Some undo requests are not confirmed — retry undo; your original post is
+  unchanged"* and leaves the repost where it is. (3) The retry re-sends the SAME signed deletion from a
+  localStorage receipt rather than signing a second one, because the failure it exists for is a LOST
+  ACK, where the first request may well have landed.
+  **The receipt is spent by EVIDENCE, never by a timer, and that was the bug the second pass fixed.**
+  Nothing retired it on the one outcome that is not a failure — the deletion landing anyway, seen later
+  as a verified kind-5 arriving from a relay or another device. It then outlived the undo it describes,
+  and two things stayed wrong for ever with nothing on screen to say so: the button read "retry undo
+  repost" about finished work, and — because the receipt branch is checked BEFORE the repost branch —
+  **that post could never be reposted again**. `_repostReceiptSpent` drops it once every target it names
+  carries a verified deletion, which is exactly the condition under which re-sending would be a no-op.
+  **The count fetch asks for your own engagement in its own filter.** `hydrateCounts` pulls up to 600
+  events across up to 200 notes, so on a busy thread YOUR kind-6 — the one event that decides whether
+  this button says "repost" or "undo your repost" — competes for a slot with every stranger's reaction
+  and zap. Missing, it reads as "you have not reposted this", and on a SECOND DEVICE the next click
+  publishes a second repost of a post you already reposted while the undo is not even on offer. An
+  author-scoped filter rides the same REQ and cannot be truncated by anybody else's traffic.
+  **State is legible without a mouse**: `title` is a hover tooltip and a phone has no hover, so the
+  same string is the `aria-label` and an unconfirmed undo carries `.rt-unconfirmed` (a dashed outline,
+  deliberately neither the engaged `.act.on` look nor a plain button — the state is "we do not know").
+  `tests/client/unboost_runtime.cjs` runs the SHIPPED publish/count/render/deletion code under node
+  against real signed events (16 scenarios: ownership, forged and foreign tombstones, partial and
+  private/public splits, account switches mid-signer and mid-ACK, reload hydration, duplicate clicks,
+  spent and unspent receipts); `tests/client/test_unboost_full_app.py` drives the real bundled UI.
 - **Notes** (`static/js/client/notes.js` + `joplin.js`; sidebar → Notes, ☰ More on mobile): private
   encrypted note taking, offline-first. **ONE kind-30078 event PER NOTE** (`d=pcai:note:<id>`,
   folders `pcai:notefolder:<id>`, both tagged `l=pcai-notes` so the library is one indexed
