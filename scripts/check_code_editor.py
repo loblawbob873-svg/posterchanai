@@ -128,7 +128,7 @@ NATIVE_GIT = r"""(async () => {
     writeText: async () => ({mtime:5}),
     gitStatus: async () => ({branch:'master',origin:'local',nostr:false,
       files:dirty?[{xy:' M',path:'changed.js'}]:[]}),
-    gitDiff: async () => ({diff:'diff --git a/changed.js b/changed.js\n+const changed = true;'}),
+    gitDiff: async () => ({diff:'diff --git a/changed.js b/changed.js\n--- a/changed.js\n+++ b/changed.js\n@@ -1,2 +1,2 @@\n const keep = 1;\n-const changed = false;\n+const changed = true;'}),
     gitAction: async (_root, action, paths) => {
       window.__gitActions.push({action,paths}); if(action==='restore') dirty=false; return {ok:true};
     },
@@ -145,15 +145,40 @@ NATIVE_GIT = r"""(async () => {
   for(let i=0;i<60 && !((document.querySelector('.pcc-git-diff')||{}).textContent||'').includes('+const');i++)
     await new Promise(r=>setTimeout(r,25));
   const diff = (document.querySelector('.pcc-git-diff')||{}).textContent||'';
+
+  /* A diff LINE opens the file at that line. `+const changed = true;` is new line 2, so the caret
+     must land after the first line of the buffer — not at 0, which is where every failed attempt
+     leaves it and which looks identical to a click that did nothing. */
+  const plus = [...document.querySelectorAll('[data-diff-line]')]
+    .find(b => (b.textContent||'').includes('+const changed = true;'));
+  const clickableLines = document.querySelectorAll('[data-diff-line]').length;
+  if(plus) plus.click();
+  for(let i=0;i<80 && !document.querySelector('#pcc-ta');i++) await new Promise(r=>setTimeout(r,25));
+  const ta = document.querySelector('#pcc-ta');
+  const caret = ta ? ta.selectionStart : -1;
+  const leftGit = !document.querySelector('[data-git-diff="changed.js"]');
+
+  document.querySelector('[data-code-view="git"]').click();
+  for(let i=0;i<60 && !document.querySelector('[data-git-restore="changed.js"]');i++)
+    await new Promise(r=>setTimeout(r,25));
   const restore = document.querySelector('[data-git-restore="changed.js"]');
   if(restore) restore.click();
+  /* The destructive action asks first, and what it asks is the point: it must name the file and
+     say that the lines are committed nowhere. Answering is a click on the named button. */
+  for(let i=0;i<80 && !document.querySelector('.uiconfirm');i++) await new Promise(r=>setTimeout(r,25));
+  const box = document.querySelector('.uiconfirm');
+  const confirmText = box ? (box.querySelector('.uiconfirm-msg')||{}).textContent||'' : '';
+  const confirmOk = box ? ((box.querySelector('[data-uc="1"]')||{}).textContent||'') : '';
+  const confirmDanger = !!(box && box.querySelector('[data-uc="1"].btn-danger'));
+  if(box) box.querySelector('[data-uc="1"]').click();
   for(let i=0;i<60 && !document.body.textContent.includes('Working tree clean');i++)
     await new Promise(r=>setTimeout(r,25));
   const clean = document.body.textContent.includes('Working tree clean');
   const diffClosed = !document.querySelector('.pcc-git-diff');
   document.querySelector('[data-code-view="explorer"]').click();
   await new Promise(r=>setTimeout(r,80));
-  return {opened, diff, clean, diffClosed,
+  return {opened, diff, clean, diffClosed, clickableLines, caret, leftGit,
+    confirmText, confirmOk, confirmDanger,
     explorerBack:!!document.querySelector('[data-file="/tmp/my-project/changed.js"]'),
     actions:window.__gitActions};
 })()"""
@@ -435,6 +460,24 @@ async def drive(url):
             else:
                 if "+const changed = true;" not in native.get("diff", ""):
                     problems.append(("native-git-diff", "clicking a modified file did not show its patch"))
+                if not native.get("clickableLines"):
+                    problems.append(("native-git-diff", "no line of the patch was clickable"))
+                if native.get("caret", 0) <= 0:
+                    problems.append(("native-git-diff",
+                                     "clicking a changed line opened the file at the very top "
+                                     f"instead of at the change (caret {native.get('caret')})"))
+                if not native.get("leftGit"):
+                    problems.append(("native-git-diff", "the patch stayed mounted over the file it opened"))
+                # A destructive action that says nothing about what it loses is the thing this
+                # dialog exists to stop, so the check reads the sentence and not just the click.
+                ct = native.get("confirmText") or ""
+                if "changed.js" not in ct or "committed nowhere" not in ct:
+                    problems.append(("native-git-restore",
+                                     f"discard did not say what it would lose: {ct[:140]!r}"))
+                if native.get("confirmOk") != "Discard changes" or not native.get("confirmDanger"):
+                    problems.append(("native-git-restore",
+                                     "discard was offered as an ordinary OK button: "
+                                     f"{native.get('confirmOk')!r}"))
                 if not native.get("clean") or not native.get("diffClosed"):
                     problems.append(("native-git-restore", "discard did not clean the tree and close the stale diff"))
                 if not native.get("explorerBack"):

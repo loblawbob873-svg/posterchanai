@@ -436,7 +436,15 @@ async function gitAction(root,action,paths,message){
     if(tracked)await _git(root,['restore','--staged','--worktree','--'].concat(restorePaths));
     else {const top=(await _git(root,['rev-parse','--show-toplevel'])).trim(),abs=path.resolve(top,p);
       if(abs!==top&&!abs.startsWith(top+path.sep))throw new Error('invalid Git path');
-      fs.rmSync(abs,{recursive:true,force:true});}
+      /* ONE FILE, THE ONE THAT WAS NAMED. Discarding an untracked path is the only branch here
+         that destroys bytes nothing has ever stored, so it must not be able to take more than the
+         row somebody confirmed. `rmSync(..., {recursive:true})` would delete a whole tree, and
+         porcelain listing files rather than directories is a property of the CALLER — the node
+         route already refuses a directory outright and this is the same refusal, so the two halves
+         of one feature cannot answer the same click differently. */
+      let st=null; try{ st=fs.lstatSync(abs); }catch(_){ st=null; }
+      if(st&&st.isDirectory())throw new Error('Refusing to discard a directory');
+      if(st)fs.rmSync(abs,{force:true});}
     }
   }
   else if(action==='commit'){if(!String(message||'').trim())throw new Error('write a commit message');await _git(root,['commit','-m',String(message).slice(0,5000)]);}

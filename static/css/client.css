@@ -9765,7 +9765,23 @@ audio.sms-att-img{min-width:220px}
 .pcc-diff-view>header{display:flex;align-items:center;gap:10px;min-height:38px;padding:0 10px;border-bottom:1px solid var(--line)}
 .pcc-diff-view>header b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pcc-diff-view>header span{color:var(--muted);font-size:11px}
 .pcc-diff-view>header button{margin-left:auto;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer}
-.pcc-git-diff{flex:1;min-height:0;margin:0;padding:12px 16px;overflow:auto;background:var(--bg);color:var(--text);font:12px/1.5 var(--mono);white-space:pre;tab-size:4}
+.pcc-git-diff{flex:1;min-height:0;margin:0;padding:8px 0;overflow:auto;background:var(--bg);color:var(--text);font:12px/1.5 var(--mono);tab-size:4}
+/* A ROW IS A BUTTON, so it must reset every button default: a browser centres its text, shrinks it
+   to the form font and gives it a width, none of which a line of code survives. `white-space:pre`
+   plus `width:max-content` on a row (not on the block) is what keeps one long line scrolling the
+   whole patch sideways instead of wrapping in the middle of an expression. */
+.pcc-dl{display:flex;align-items:flex-start;gap:10px;width:max-content;min-width:100%;margin:0;padding:0 16px;
+  border:0;background:none;color:inherit;font:inherit;text-align:left;white-space:pre}
+button.pcc-dl{cursor:pointer}
+button.pcc-dl:hover{background:rgba(var(--accent-rgb),.14)}
+button.pcc-dl:focus-visible{outline:2px solid var(--neon);outline-offset:-2px}
+.pcc-dn{flex:none;width:44px;text-align:right;color:var(--muted);opacity:.7;-webkit-user-select:none;user-select:none}
+.pcc-dl code{font:inherit;background:none;padding:0;color:inherit}
+.pcc-dl-add{background:rgba(60,190,120,.13)}.pcc-dl-add code{color:#57d98a}
+.pcc-dl-del{background:rgba(230,80,90,.13)}.pcc-dl-del code{color:#f4818b}
+.pcc-dl-hunk code{color:var(--neon)}.pcc-dl-hunk{background:var(--panel2)}
+.pcc-dl-meta code,.pcc-dl-note code{color:var(--muted)}
+.pcc-git-danger{color:var(--danger,#f4818b)}
 
 /* ---- drag handles ---- */
 .pcc-grip{flex:none;background:transparent;position:relative;z-index:2}

@@ -232,6 +232,123 @@
    * Said out loud in the status bar rather than left as a mystery. */
   const HL_MAX = 120 * 1024;
 
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // Unified diffs — pure, DOM-free, tested under node beside the highlighter.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+
+  /* A DIFF ROW IS ONLY CLICKABLE IF IT KNOWS WHICH LINE OF THE FILE IT IS.
+   *
+   * A hunk header carries the new-file start (`@@ -a,b +c,d @@`) and nothing after it repeats that
+   * number, so the line a row belongs to is only knowable by WALKING: context and `+` rows advance
+   * the counter, `-` rows do not (they describe a line that is no longer in the file), and a
+   * `\ No newline at end of file` marker describes the row above rather than a line of its own.
+   * Getting that walk wrong is not visible in the picture — the diff still reads perfectly — it
+   * shows up as a click that lands a few lines off, every time, and further off the further down
+   * the file you click. Which is why this is a pure function with the walk under test rather than
+   * an offset computed in the middle of a click handler.
+   *
+   * A `-` row is given the position it was deleted FROM, i.e. the next surviving line. There is no
+   * honest alternative: the text it shows is not in the file any more, so the only place to put the
+   * caret is where it used to be.
+   */
+  function parseDiff(text){
+    const src = String(text == null ? '' : text);
+    const raw = src.split('\n');
+    // `split` on a trailing newline leaves one empty element that is not a row of anything.
+    if(raw.length && raw[raw.length - 1] === '') raw.pop();
+    const rows = [];
+    let nl = 0, inHunk = false;
+    for(const line of raw){
+      const at = /^@@+ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if(at){ nl = parseInt(at[1], 10); inHunk = true; rows.push({ type:'hunk', text:line, line:nl }); continue; }
+      if(!inHunk){ rows.push({ type:'meta', text:line, line:0 }); continue; }
+      const c = line.charAt(0);
+      if(c === '\\'){ rows.push({ type:'note', text:line, line:0 }); continue; }
+      if(c === '+'){ rows.push({ type:'add', text:line, line:nl }); nl++; continue; }
+      if(c === '-'){ rows.push({ type:'del', text:line, line:nl }); continue; }
+      if(c === ' ' || line === ''){ rows.push({ type:'ctx', text:line, line:nl }); nl++; continue; }
+      // Anything else ends the hunk — a multi-file patch's next header line.
+      inHunk = false; rows.push({ type:'meta', text:line, line:0 });
+    }
+    return rows;
+  }
+
+  /* Added/removed counts, from the SAME walk the rows come from — a second scanner would be a
+   * second opinion about the same bytes and the two would drift. The `+++`/`---` file headers are
+   * meta rows here and can never be counted as content, which a naive `startsWith('+')` gets wrong
+   * by exactly one line in each direction for every file in the patch.
+   */
+  function diffCounts(text){
+    let added = 0, removed = 0;
+    for(const r of parseDiff(text)){
+      if(r.type === 'add') added++;
+      else if(r.type === 'del') removed++;
+    }
+    return { added, removed };
+  }
+
+  /* ══ WHAT A DISCARD COSTS, MEASURED BEFORE IT IS OFFERED ══
+   *
+   * "Discard every change to X? This cannot be undone." was one sentence for three different acts,
+   * and it was wrong about two of them:
+   *
+   *   - an UNTRACKED file is not "changed" at all. Discarding it DELETES it — the desktop bridge
+   *     and the node route both unlink the resolved path — and there has never been a stored copy,
+   *     so there is nothing anywhere to restore from. The dialog said "discard changes" about the
+   *     permanent removal of a whole file somebody had just written.
+   *   - a STAGED edit is thrown away too (the restore takes the index and the working tree), which
+   *     somebody who staged deliberately does not expect: staging reads as "kept".
+   *
+   * So the question is not "are you sure", it is Folder Sync's question: CAN THIS BE BROUGHT BACK,
+   * and from where. That is answered per file from the porcelain code plus the file's own diff, and
+   * the answer is stated in the dialog before anything is touched.
+   *
+   * THE THIRD ANSWER IS "COULD NOT ASK". A diff that failed to load is not an empty diff: if the
+   * measurement did not happen the dialog must say so and must not print a count, because a
+   * confident "3 lines" about a file nothing read is exactly the sentence that makes somebody
+   * click. Same rule as the drive check — "the store said no" and "the store could not be asked"
+   * are different answers.
+   */
+  function discardPlan(o){
+    o = o || {};
+    const path = String(o.path || '');
+    const xy = (String(o.xy || '  ') + '  ').slice(0, 2);
+    const untracked = xy === '??';
+    const staged = !untracked && xy[0] !== ' ' && xy[0] !== '?';
+    const measured = !!o.measured;
+    const c = measured ? diffCounts(o.diff) : null;
+    const n = c ? c.added + c.removed : 0;
+    const plan = { path, xy, untracked, staged, measured,
+                   added: c ? c.added : null, removed: c ? c.removed : null,
+                   ok: '', danger: true, lines: [] };
+    if(untracked){
+      plan.ok = 'Delete file';
+      plan.lines.push('Discard DELETES “' + path + '” from this computer.');
+      plan.lines.push(measured && c.added
+        ? 'Nothing has ever stored a copy, so its ' + c.added + ' line' + (c.added === 1 ? '' : 's')
+          + ' cannot be brought back from the repository or from anywhere else.'
+        : 'Nothing has ever stored a copy, so nothing can bring it back.');
+    }else{
+      plan.ok = 'Discard changes';
+      plan.lines.push('Discard rewrites “' + path + '” with the version in the last commit.');
+      if(measured){
+        plan.lines.push(n
+          ? c.added + ' added and ' + c.removed + ' removed line' + (n === 1 ? '' : 's')
+            + ' are committed nowhere, so they cannot be brought back.'
+          : 'Nothing in this file differs from the last commit.');
+      }
+      if(staged) plan.lines.push('The staged copy goes too — staging is not a backup.');
+    }
+    if(!measured){
+      plan.ok = 'Discard anyway';
+      plan.lines.push('PosterChan could not read what this would lose'
+        + (o.error ? ' (' + String(o.error) + ')' : '') + ', so it cannot tell you what goes.');
+    }
+    plan.message = plan.lines.join('\n\n');
+    return plan;
+  }
+
   window.PCCodeHL = { highlight, langOf, esc, RULES, HL_MAX };
 
   // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -489,6 +606,18 @@
       }catch(e){ status((e && e.message) || (action + ' failed'), 'err'); }
     }
 
+    /* ONE transport for a diff, used by the pane AND by the discard measurement. Two callers
+     * fetching the same patch by two routes is how a dialog ends up describing something other
+     * than what the pane is showing. Returns `{text, ok, error}` — `ok:false` is "could not ask",
+     * which is never the same answer as an empty diff. */
+    async function fetchDiff(path){
+      try{
+        const d=S.hostRoot&&window.pcHost&&pcHost.gitDiff ? await pcHost.gitDiff(S.hostRoot,path)
+          : await api('/git/diff?path='+encodeURIComponent(path));
+        return {text:(d&&d.diff)||'', ok:true, error:''};
+      }catch(e){ return {text:'', ok:false, error:(e&&e.message)||String(e)}; }
+    }
+
     /* Diff requests can resolve out of order, and changing back to Explorer does not cancel fetch.
      * Only the latest still-visible request may own the editor pane; otherwise a slow diff for A
      * replaces a newer B diff, or reappears over the editor after Explorer was selected. */
@@ -496,16 +625,106 @@
     async function loadGitDiff(path){
       const seq=++_gitDiffSeq;
       S.gitDiff={path,text:'',error:'',busy:true}; paint();
-      try{
-        const d=S.hostRoot&&window.pcHost&&pcHost.gitDiff ? await pcHost.gitDiff(S.hostRoot,path)
-          : await api('/git/diff?path='+encodeURIComponent(path));
-        if(seq!==_gitDiffSeq || !S.gitOpen) return false;
-        S.gitDiff={path,text:d.diff||'',error:'',busy:false};
-      }catch(e){
-        if(seq!==_gitDiffSeq || !S.gitOpen) return false;
-        S.gitDiff={path,text:'',error:e.message||String(e),busy:false};
-      }
+      const r=await fetchDiff(path);
+      if(seq!==_gitDiffSeq || !S.gitOpen) return false;
+      S.gitDiff={path,text:r.ok?r.text:'',error:r.ok?'':r.error,busy:false};
       paint();return true;
+    }
+
+    /* A SOURCE CONTROL PATH IS RELATIVE TO THE REPOSITORY, AND THE EDITOR OPENS SOMETHING ELSE.
+     *
+     * The native bridge answers with an absolute repository root and reads absolute paths; the node
+     * route answers with a root relative to the configured workspace and reads workspace-relative
+     * paths. Handing either one the bare porcelain path opens the wrong file whenever the folder
+     * somebody picked is not itself the top of the repository — silently, because a path that does
+     * not resolve reads as "could not open that file", which looks like a permissions problem. */
+    function gitFilePath(rel){
+      const p=String(rel||''); if(!p) return '';
+      const g=S.git||{};
+      if(S.hostRoot){
+        const base=String(g.root||S.hostRoot).replace(/\/+$/,'');
+        return base ? base+'/'+p : p;
+      }
+      const base=String(g.repo||'').replace(/^\/+|\/+$/g,'');
+      return base ? base+'/'+p : p;
+    }
+
+    /* Put the caret on a 1-based line. Answers the 0-based row it chose, or -1.
+     *
+     * The offset is computed from the BUFFER, never from the DOM, because at the moment this runs
+     * the textarea usually does not exist: the pane is still showing the patch and the paint that
+     * mounts the editor happens afterwards. `S` is what every repaint paints from, so a position
+     * written anywhere else is lost by the very next render — the rule the header states. */
+    function gotoLine(n){
+      const d=doc(); if(!d||typeof d.text!=='string') return -1;
+      const lines=d.text.split('\n');
+      const idx=Math.max(0,Math.min(lines.length-1,(Number(n)||1)-1));
+      let off=0; for(let i=0;i<idx;i++) off+=lines[i].length+1;
+      d.sel={s:off,e:off+(lines[idx]||'').length};
+      save();
+      return idx;
+    }
+
+    /* And SCROLL there, which can only be done once the textarea is mounted — a caret set on line
+     * 400 of a file displayed from line 1 is a selection nobody can see, which is indistinguishable
+     * from a click that did nothing. Line height is a CSS fact (`.pcc-layer` is `white-space:pre`,
+     * so one line is exactly one line tall), so the arithmetic is exact rather than an estimate. */
+    function scrollToLine(idx){
+      const ta=$('#pcc-ta'), d=doc();
+      if(!ta||!d||idx<0) return;
+      let lh=0;
+      try{ lh=parseFloat(getComputedStyle(ta).lineHeight)||0; }catch(_){}
+      if(!lh) lh=ta.scrollHeight/Math.max(1,(ta.value.match(/\n/g)||[]).length+1);
+      // Three lines of lead-in, so the line lands in the reading position rather than hard against
+      // the top edge, where it reads as the beginning of the file.
+      d.scroll=Math.max(0,(idx-3)*lh);
+      ta.scrollTop=d.scroll;
+      syncScroll();
+      save();
+    }
+
+    /* Clicking a line of a diff opens the file THERE. Source Control is left behind on purpose:
+     * the person asked to look at the code, and leaving the patch mounted over the editor is the
+     * stale-pane failure the discard path already had to be taught about. */
+    async function openDiffAt(rel, line){
+      const target=gitFilePath(rel);
+      if(!target){ status('That change has no file to open','err'); return false; }
+      const ok=await openPath(target);
+      if(!ok) return false;
+      S.gitOpen=false; cancelGitDiff();
+      await hydrate(doc());
+      const idx=gotoLine(line);
+      if(inView()) paint();
+      restoreCaret();
+      scrollToLine(idx);
+      save(true);
+      return true;
+    }
+
+    /* THE DESTRUCTIVE ACTION MEASURES WHAT IT WOULD LOSE BEFORE IT ASKS.
+     *
+     * See `discardPlan`. The order here is the whole point: read the patch, build the sentence from
+     * what came back, and only then open the dialog. A confirmation written before the measurement
+     * can only be generic, and a generic confirmation on a routine action is a confirmation people
+     * click. If the read fails, the dialog says so and offers "Discard anyway" — refusing outright
+     * would strand somebody whose repository is fine and whose diff simply timed out. */
+    async function discardFile(path){
+      const row=((S.git&&S.git.files)||[]).find(f=>f.path===path);
+      /* Read FRESH, never from the patch already on screen. That one was fetched when somebody
+       * clicked the file, and the file can have been edited and saved in this very editor since —
+       * a dialog that describes the older patch understates exactly the work it is about to
+       * destroy, and it does so on the reading somebody is most likely to trust. */
+      const r=await fetchDiff(path);
+      const plan=discardPlan({path,xy:row&&row.xy,diff:r.text,measured:r.ok,error:r.error});
+      if(!await uiConfirm(plan.message,{ok:plan.ok,cancel:'Keep it',danger:true})) return false;
+      /* Clear the diff BEFORE gitAct: gitAct finishes by loadGit(), and loadGit's paint is the
+       * final repaint for this action. Clearing it afterwards changed state but left the old diff
+       * visibly mounted until somebody clicked Explorer or another file. The disk restore had
+       * succeeded while Code still showed the discarded patch — exactly the kind of stale UI
+       * that makes a destructive Source Control button impossible to trust. */
+      if(S.gitDiff && S.gitDiff.path===path) cancelGitDiff();
+      await gitAct('restore',[path]);
+      return true;
     }
 
     /* A DOCUMENT THAT IS NOT A FILE ON THIS NODE.
@@ -561,19 +780,25 @@
       return true;
     }
 
+    /* Answers WHETHER it opened. A caller that goes on to do something to the buffer — the diff's
+     * "open this line" is the one that exists today — must not act on the tab that happened to be
+     * active when the open failed, which is what an unconditional `undefined` had it doing. */
     async function openPath(path){
       if(S.hostRoot) return openHostFile({path});
       const at = S.open.findIndex(d => d.path === path);
-      if(at >= 0){ S.active = at; save(); paint(); return; }
+      if(at >= 0){ S.active = at; save(); paint(); return true; }
       status('Opening ' + path + '…');
+      let ok = false;
       try{
         const f = await api('/file?path=' + encodeURIComponent(path));
         S.open.push({ path: f.path, lang: f.lang || langOf(f.path), text: f.text, disk: f.text,
                       mtime: f.mtime || 0, sel: { s: 0, e: 0 }, scroll: 0 });
         S.active = S.open.length - 1;
         status('');
+        ok = true;
       }catch(e){ status(e.message || 'Could not open that file', 'err'); }
       save(); paint();
+      return ok;
     }
 
     /* A buffer restored from localStorage with `text:null` was too big to persist — it is clean, so
@@ -746,8 +971,18 @@
       return out.join('');
     }
 
+    // Has a folder actually been chosen? On a packaged desktop nothing is open until somebody picks
+    // one — deliberately, so Code cannot come up sitting in PosterChan's own checkout.
+    const noFolder = () => !!(window.pcHost && window.pcHost.pickDirectory) && !S.hostRoot;
+
     function treeHtml(){
       if(S.treeErr) return '<div class="pcc-note err">' + enc(S.treeErr) + '</div>';
+      /* "This folder is empty" was drawn for BOTH an empty folder and no folder at all, and the two
+       * need opposite things from the reader: one is a fact about a project, the other is the app
+       * waiting to be told which project. Nothing on the screen distinguished them, so a fresh
+       * install looked like a broken tree. */
+      if(noFolder()) return '<div class="pcc-note">No folder is open.<br><br>' +
+        '<button class="btn btn-neon small" id="pcc-open-empty">Open Folder…</button></div>';
       if(!S.tree.length) return '<div class="pcc-note">This folder is empty</div>';
       return S.tree.map(e => {
         const path = e.path || (S.cwd ? S.cwd + '/' + e.name : e.name);
@@ -767,17 +1002,57 @@
       return '<div class="pcc-git-head"><b>' + enc(g.branch||'Git') + '</b><small>' +
         (g.nostr?'Nostr remote · built in':enc(g.origin||'local repository')) + '</small></div>' +
         '<div class="pcc-git-actions"><button data-git-act="pull">Pull</button><button data-git-act="push">Push</button></div>' +
-        (files.length?files.map(f=>'<div class="pcc-git-file"><button data-git-diff="'+enc(f.path)+'"><code>'+enc(f.xy)+'</code><span>'+enc(f.path)+'</span></button><button title="'+(f.xy[0]!==' '?'Unstage':'Stage')+'" data-git-act="'+(f.xy[0]!==' '?'unstage':'stage')+'" data-git-path="'+enc(f.path)+'">'+(f.xy[0]!==' '?'−':'+')+'</button><button title="Discard changes" aria-label="Discard changes in '+enc(f.path)+'" data-git-restore="'+enc(f.path)+'">↶</button></div>').join(''):'<div class="pcc-note">Working tree clean</div>') +
+        (files.length?files.map(f=>'<div class="pcc-git-file"><button data-git-diff="'+enc(f.path)+'"><code>'+enc(f.xy)+'</code><span>'+enc(f.path)+'</span></button><button title="'+(f.xy[0]!==' '?'Unstage':'Stage')+'" data-git-act="'+(f.xy[0]!==' '?'unstage':'stage')+'" data-git-path="'+enc(f.path)+'">'+(f.xy[0]!==' '?'−':'+')+'</button><button class="pcc-git-danger" title="'+(f.xy==='??'?'Delete file':'Discard changes')+'" aria-label="'+(f.xy==='??'?'Delete untracked file ':'Discard changes in ')+enc(f.path)+'" data-git-restore="'+enc(f.path)+'">'+(f.xy==='??'?'🗑':'↶')+'</button></div>').join(''):'<div class="pcc-note">Working tree clean</div>') +
         '<div class="pcc-git-commit"><input id="pcc-git-message" placeholder="Commit message" maxlength="5000"><button data-git-act="commit">Commit</button></div>';
+    }
+
+    /* THE DIFF IS A LIST OF PLACES IN A FILE, so every row that has a place is a button that goes
+     * there. It used to be one escaped <pre>: correct, unreadable at a glance, and — the part
+     * that mattered — a dead end. Somebody looking at a change they wanted to fix had to read a
+     * line number off a hunk header, count rows down from it, switch to Explorer, find the file in
+     * the tree and scroll to it. Everything needed to do that in one click was already on screen.
+     *
+     * Rows are BUTTONS, not one click handler on the block: a diff is exactly the surface where
+     * somebody selects text in order to copy it, and a block-level handler turns the end of every
+     * such drag into a navigation. Meta and "no newline" rows stay inert — they name no line.
+     *
+     * One element per line means a patch is BOUNDED the way the highlighter is (see HL_MAX): a
+     * whole-repository diff truncated at half a megabyte is tens of thousands of rows, and building
+     * that many nodes to answer one click is the same trade the colouring already refuses. The cut
+     * is SAID, never silent — a patch that quietly stops halfway reads as a smaller change than it
+     * is, which on this screen is the one misreading that matters.
+     */
+    const DIFF_ROW_MAX = 4000;
+
+    function diffRowsHtml(text){
+      const all = parseDiff(text);
+      const rows = all.slice(0, DIFF_ROW_MAX);
+      const cut = all.length - rows.length;
+      return rows.map(r => {
+        const cls = 'pcc-dl pcc-dl-' + r.type;
+        if(r.type === 'meta' || r.type === 'note' || !r.line)
+          return '<div class="' + cls + '"><span class="pcc-dn"></span><code>' + enc(r.text) + '</code></div>';
+        const t = r.type === 'del'
+          ? 'Open line ' + r.line + ', where this line used to be'
+          : 'Open line ' + r.line;
+        return '<button class="' + cls + '" data-diff-line="' + r.line + '" title="' + enc(t) + '">' +
+               '<span class="pcc-dn">' + (r.type === 'del' ? '' : r.line) + '</span>' +
+               '<code>' + enc(r.text) + '</code></button>';
+      }).join('') + (cut ? '<div class="pcc-dl pcc-dl-meta"><span class="pcc-dn"></span><code>' +
+        enc('… ' + cut + ' more lines in this patch — open the file to read the rest') +
+        '</code></div>' : '');
     }
 
     function diffHtml(){
       const d=S.gitDiff;
       if(!d) return editorHtml();
-      const body=d.busy?'Loading diff…':d.error?d.error:(d.text||'No changes to display');
-      return '<section class="pcc-diff-view" aria-label="Diff for '+enc(d.path)+'">' +
-        '<header><b>'+enc(d.path)+'</b><span>Working Tree</span><button id="pcc-diff-close" title="Close diff" aria-label="Close diff">×</button></header>' +
-        '<pre class="pcc-git-diff">'+enc(body)+'</pre></section>';
+      const head = '<section class="pcc-diff-view" aria-label="Diff for '+enc(d.path)+'">' +
+        '<header><b>'+enc(d.path)+'</b><span>'+(d.busy?'Loading…':'Click a line to open it')+'</span>' +
+        '<button id="pcc-diff-close" title="Close diff" aria-label="Close diff">×</button></header>';
+      if(d.busy) return head + '<div class="pcc-note"><div class="spinner"></div></div></section>';
+      if(d.error) return head + '<div class="pcc-note err">'+enc(d.error)+'</div></section>';
+      if(!d.text) return head + '<div class="pcc-note">No changes to display</div></section>';
+      return head + '<div class="pcc-git-diff" id="pcc-diffbody">'+diffRowsHtml(d.text)+'</div></section>';
     }
 
     function activityHtml(){
@@ -822,7 +1097,8 @@
       const d = doc();
       const eng = d ? (S.engines[d.lang] || (d.lang === 'json' ? 'json' : '')) : '';
       return '<div class="pcc-bar">' +
-        '<button class="btn btn-ghost pcc-b" id="pcc-open-folder">Change Working Directory</button>' +
+        '<button class="btn btn-ghost pcc-b" id="pcc-open-folder">' +
+          (noFolder() ? 'Open Folder…' : 'Change Working Directory') + '</button>' +
         '<button class="btn btn-neon pcc-b" id="pcc-save"' + (d && dirty(d) ? '' : ' disabled') + '>Save</button>' +
         '<button class="btn btn-ghost pcc-b" id="pcc-fmt"' + (d && eng ? '' : ' disabled') + ' title="' +
           (eng ? 'Beautify with ' + enc(eng) : 'No formatter on this node for this language') + '">Format</button>' +
@@ -1057,6 +1333,7 @@
       });
 
       on('#pcc-save', 'click', saveDoc);
+      on('#pcc-open-empty', 'click', () => { const b=$('#pcc-open-folder'); if(b) b.click(); });
       on('#pcc-open-folder', 'click', async()=>{
         const h=window.pcHost;
         if(h&&h.pickDirectory){
@@ -1093,18 +1370,18 @@
       document.querySelectorAll('[data-git-diff]').forEach(b=>b.addEventListener('click',async()=>{
         await loadGitDiff(b.dataset.gitDiff);
       }));
-      document.querySelectorAll('[data-git-restore]').forEach(b=>b.addEventListener('click',async()=>{
-        const path=b.dataset.gitRestore;
-        if(!await uiConfirm('Discard every change to “'+path+'”?\n\nThis cannot be undone.')) return;
-        /* Clear the diff BEFORE gitAct: gitAct finishes by loadGit(), and loadGit's paint is the
-         * final repaint for this action. Clearing it afterwards changed state but left the old diff
-         * visibly mounted until somebody clicked Explorer or another file. The disk restore had
-         * succeeded while Code still showed the discarded patch — exactly the kind of stale UI
-         * that makes a destructive Source Control button impossible to trust. */
-        if(S.gitDiff && S.gitDiff.path===path) cancelGitDiff();
-        await gitAct('restore',[path]);
+      document.querySelectorAll('[data-git-restore]').forEach(b=>b.addEventListener('click',()=>{
+        discardFile(b.dataset.gitRestore);
       }));
       on('#pcc-diff-close','click',()=>{cancelGitDiff();paint();});
+      // ONE delegated listener over the whole patch — the rows are rebuilt by every repaint, and a
+      // per-row binding leaves the ones drawn by the next paint dead.
+      const diffBody=$('#pcc-diffbody');
+      if(diffBody) diffBody.addEventListener('click',(ev)=>{
+        const b=ev.target.closest&&ev.target.closest('[data-diff-line]');
+        if(!b||!S.gitDiff) return;
+        openDiffAt(S.gitDiff.path, Number(b.getAttribute('data-diff-line'))||1);
+      });
 
       const ta = $('#pcc-ta');
       if(ta){
@@ -1269,6 +1546,15 @@
       _missingPathError: missingPathError,
       _loadGitDiff: loadGitDiff,
       _cancelGitDiff: cancelGitDiff,
+      _openDiffAt: openDiffAt,
+      _discardFile: discardFile,
+      _gitFilePath: gitFilePath,
+      _gotoLine: gotoLine,
+      _scrollToLine: scrollToLine,
+      _parseDiff: parseDiff,
+      _diffCounts: diffCounts,
+      _discardPlan: discardPlan,
+      _diffRowsHtml: diffRowsHtml,
       _highlight: highlight,
       _langOf: langOf,
     };

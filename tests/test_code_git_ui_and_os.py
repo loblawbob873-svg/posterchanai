@@ -138,8 +138,9 @@ def test_changed_file_diff_requests_cannot_repaint_out_of_order():
 
 def test_each_changed_file_has_a_confirmed_discard_action():
     assert 'data-git-restore="' in CODE
-    assert "Discard every change" in CODE
+    assert "discardFile(b.dataset.gitRestore)" in CODE
     assert "await gitAct('restore',[path])" in CODE
+    assert "grid-template-columns:minmax(0,1fr) 36px 36px" in CSS
 
 
 def test_discard_closes_the_visible_diff_before_the_git_refresh_repaints():
@@ -148,10 +149,70 @@ def test_discard_closes_the_visible_diff_before_the_git_refresh_repaints():
     ``gitAct`` ends with ``loadGit`` and therefore a repaint.  The matching diff must be cleared
     before that awaited action, otherwise no later paint reflects the cleared state.
     """
-    handler = CODE[CODE.index("document.querySelectorAll('[data-git-restore]')"):]
-    handler = handler[:handler.index("on('#pcc-diff-close'")]
-    assert handler.index("cancelGitDiff()") < handler.index("await gitAct('restore',[path])")
-    assert "grid-template-columns:minmax(0,1fr) 36px 36px" in CSS
+    body = CODE[CODE.index("async function discardFile("):]
+    body = body[:body.index("\n    }\n")]
+    assert body.index("cancelGitDiff()") < body.index("await gitAct('restore',[path])")
+
+
+def test_a_discard_says_what_it_loses_and_whether_anything_can_bring_it_back():
+    """DELETION IS CHECKED, NOT COUNTED — Source Control's half of the rule.
+
+    One sentence used to cover three different acts and described none of them: an untracked file
+    is DELETED and nothing has ever held a copy; a staged edit is thrown away with the working
+    copy; and a diff that failed to load is not an empty diff.  The dialog now answers *can this
+    be brought back, and from where* from a measurement taken before it opens.
+    """
+    assert "function discardPlan(" in CODE
+    # Measured, then asked — never the other way round.
+    body = CODE[CODE.index("async function discardFile("):]
+    body = body[:body.index("\n    }\n")]
+    assert body.index("discardPlan({") < body.index("uiConfirm(")
+    assert "danger:true" in body, "a destructive action was offered as an ordinary OK button"
+    run = subprocess.run(
+        ["node", str(ROOT / "tests/client/code_discard_safety_sim.js")],
+        cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "code discard safety runtime: ok" in run.stdout
+
+
+def test_diff_lines_are_clickable_and_open_the_file_at_the_change():
+    assert 'data-diff-line="' in CODE
+    assert "function parseDiff(" in CODE
+    assert "async function openDiffAt(" in CODE
+    # Delegated, because the rows are rebuilt by every repaint.
+    assert "const diffBody=$('#pcc-diffbody')" in CODE
+    assert ".pcc-dl" in CSS and ".pcc-dn" in CSS
+    run = subprocess.run(
+        ["node", str(ROOT / "tests/client/code_diff_click_sim.js")],
+        cwd=ROOT, capture_output=True, text=True, timeout=30,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "code diff click runtime: ok" in run.stdout
+
+
+def test_a_desktop_with_no_folder_open_says_so_rather_than_drawing_an_empty_tree():
+    """"This folder is empty" was drawn for both an empty folder and no folder at all.
+
+    They need opposite things from the reader — one is a fact about a project, the other is the app
+    waiting to be told which project — so a fresh install read as a broken tree.
+    """
+    assert "const noFolder = () =>" in CODE
+    assert "No folder is open." in CODE
+    assert "id=\"pcc-open-empty\"" in CODE
+    assert "'Open Folder…' : 'Change Working Directory'" in CODE
+
+
+def test_no_code_control_is_bound_without_a_null_check():
+    """``root.querySelector('.x').onclick = …`` throws when the markup moves, and takes every
+    control bound BELOW it with no error anywhere — the failure `tests/client/
+    test_sync_card_bindings.py` exists for.  Code binds through the null-checked ``on()`` helper,
+    through ``querySelectorAll().forEach``, or through a delegated listener on a container it
+    null-checks first."""
+    assert not re.search(r"querySelector\([^)]*\)\s*\.\s*on[a-z]+\s*=", CODE)
+    for holder in ("#pcc-side", "#pcc-tabs", "#pcc-diffbody"):
+        i = CODE.index("$('%s')" % holder)
+        assert "if(" in CODE[i - 60:i + 120], holder
 
 
 def test_background_terminal_and_code_keep_their_full_height_layout():
