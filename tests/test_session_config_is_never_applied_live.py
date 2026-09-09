@@ -90,32 +90,34 @@ class TestUpdateDefersTheLiveConfig(unittest.TestCase):
 class TestTheSessionAppliesItAtStartup(unittest.TestCase):
     """The other half: deferring is only safe if something later actually applies it."""
 
-    def test_the_pending_config_is_applied_before_wayfire_is_started(self):
+    def test_the_pending_config_is_handled_before_wayfire_is_started(self):
+        """The staged config must be dealt with before the compositor reads anything.
+
+        The pattern is BUILT now (`"._cfg[0-9][0-9][0-9][0-9]_" + source.name`) rather than
+        written out against wayfire.ini, so match the constructed prefix; the ordering guarantee
+        is unchanged."""
         body = SESSION.read_text(encoding="utf-8")
         launch = body.index('wayfire -c "$session_cfg"')
-        apply_at = body.index("._cfg[0-9][0-9][0-9][0-9]_wayfire.ini")
+        apply_at = body.index("._cfg[0-9][0-9][0-9][0-9]_")
         self.assertLess(apply_at, launch,
-                        "the pending config is applied after wayfire has already read the old one")
+                        "the pending config is handled after wayfire has already read the old one")
 
-    def test_it_really_moves_the_file(self):
-        """Run the loop itself, so a glob that matches nothing cannot pass as 'applied'."""
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        etc = tmp / "etc"
-        etc.mkdir()
-        (etc / "wayfire.ini").write_text("old\n")
-        (etc / "._cfg0000_wayfire.ini").write_text("new\n")
+    def test_it_never_overwrites_the_installed_config(self):
+        """THE OLD BEHAVIOUR WAS REMOVED ON PURPOSE, and this is what replaced it.
+
+        The launcher used to move portage's staged `._cfg0000_wayfire.ini` over
+        /etc/wayfire.ini at startup — a package default silently replacing the user's live
+        config, and a root-owned pending file deciding what the session ran. It now merges only
+        the required plugins it can prove are installed and trusted into the SESSION-PRIVATE
+        copy, and leaves /etc alone. Asserting the move would be asserting the regression."""
         body = SESSION.read_text(encoding="utf-8")
-        start = body.index("\t\tfor pending in /etc/._cfg")
-        end = body.index("\t\twayfire -c ", start)
-        loop = textwrap.dedent(body[start:end]).replace("/etc/", str(etc) + "/")
-        script = tmp / "apply.sh"
-        script.write_text("set -u\n" + loop)
-        subprocess.run(["sh", str(script)], check=True, capture_output=True, text=True, timeout=60)
-        self.assertEqual((etc / "wayfire.ini").read_text(), "new\n")
-        self.assertFalse((etc / "._cfg0000_wayfire.ini").exists())
-        self.assertEqual((etc / "wayfire.ini.pre-update").read_text(), "old\n",
-                         "the previous config was not kept beside it")
+        self.assertNotIn("for pending in /etc/._cfg", body,
+                         "the launcher is applying staged config over the installed file again")
+        block = body[body.index("session_cfg="):body.index('wayfire -c "$session_cfg"')]
+        # It writes the session copy, never the source it read.
+        self.assertIn("os.replace(temporary, destination)", block)
+        self.assertIn("destination.with_name", block)
+        self.assertNotIn("os.replace(temporary, source)", block)
 
 
 class TestTheCompositorReadsACopy(unittest.TestCase):
@@ -149,21 +151,24 @@ class TestTheCompositorReadsACopy(unittest.TestCase):
         body = SESSION.read_text(encoding="utf-8")
         block = body[body.index("session_cfg="):body.index("wayfire -c ")]
         self.assertIn("/etc/wayfire.ini", block)
-        self.assertIn("cp -f", block)
+        # Prepared by the python merge step now, not `cp -f`; the source is still read each start.
+        self.assertIn("source.read_text()", block)
 
     def test_a_failed_copy_still_starts_a_desktop(self):
         """A full or read-only runtime dir must not be the reason somebody has no session."""
         body = SESSION.read_text(encoding="utf-8")
         block = body[body.index("session_cfg="):body.index("wayfire -c ")]
-        self.assertIn("if ! cp", block)
+        self.assertIn("if ! python3 - ", block)
         self.assertIn('session_cfg="${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}"', block)
 
     def test_the_pending_apply_still_runs_first(self):
         """Both halves, in the only order that works: apply what portage staged, then copy."""
         body = SESSION.read_text(encoding="utf-8")
-        self.assertLess(body.index("._cfg[0-9][0-9][0-9][0-9]_wayfire.ini"),
-                        body.index("session_cfg="),
-                        "the copy is taken before the staged config is applied to the source")
+        # The pending merge moved INSIDE the preparation step, so it now follows session_cfg=
+        # and precedes the launch. What matters is that it happens before wayfire reads anything.
+        self.assertLess(body.index("._cfg[0-9][0-9][0-9][0-9]_"),
+                        body.index('wayfire -c "$session_cfg"'),
+                        "the staged config is merged after wayfire has already started")
 
 
 class TestThePackagedCopiesAgree(unittest.TestCase):
