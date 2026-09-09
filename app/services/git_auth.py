@@ -273,42 +273,228 @@ def event_says_private(event) -> bool:
     return False
 
 
-# --------------------------------------------------------------------------- Postgres reads
-# One indexed query each; no scans (see the JOIN on event_tags(tag,value) + events(kind,pubkey)).
+# --------------------------------------------------------------------------- NIP-34 role tags
+#
+# THE RECURSIVE MAINTAINER SET IS DEFINED BY AN IMPLEMENTATION, NOT BY A SPEC, AND THIS IS THAT
+# IMPLEMENTATION READ AND TRANSCRIBED.
+#
+# GRASP-01 says a server "MUST accept pushes ... respecting the recursive maintainer set" and defines
+# the term nowhere; NIP-34 defines only a flat `maintainers` tag. ngit v3 is where the real rule
+# lives, so the functions below are a transcription of ngit-cli 3.0.0 (cloned and read, not guessed):
+#
+#   src/lib/repo_ref.rs:492  role_entry_is_active
+#   src/lib/repo_ref.rs:243  role_boundaries
+#   src/lib/repo_ref.rs:556  active_maintainer_projection
+#   src/lib/repo_ref.rs:611  announcement_author_declines_maintainership
+#   src/lib/client.rs:2121   get_repo_ref_from_cache_with_selected_recovery  (the discovery loop)
+#
+# A ROLE TAG is ["M"|"m"|"o", <pubkey>, <boundary>...] -- `M` lead, `m` co-maintainer, `o` moderator
+# -- whose boundaries are unix timestamps alternating start, end, start, end. An entry is ACTIVE when
+# it carries NO boundaries (active from the beginning) or an ODD number of them (an interval opened
+# and never closed). `defer` is accepted ONLY as the final value in an end position; any other
+# non-numeric boundary makes the record invalid, and an invalid record grants nothing.
+#
+# Moderators (`o`) are deliberately NOT maintainers: per NIP-34 they can never reach the state-event
+# authority checks. They are still WALKED, because their own announcement is where their
+# acknowledgement or departure is recorded.
 
-def load_maintainers(conn, owner_hex: str, repo_id: str) -> set:
-    """Maintainer ACL for 30617:<owner_hex>:<repo_id>. Reads ONLY the owner's own announcement
-    (WHERE pubkey=owner) so a forged 30617 from another pubkey (a different addressable coordinate)
-    can't inject maintainers. The announcement's signature is re-verified. Returns owner ∪ maintainers.
+_ROLE_TAGS = ("M", "m", "o")
 
-    Owner is ALWAYS a maintainer even with no announcement (the URL npub owns the path)."""
-    maints = {owner_hex}
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT e.raw, e.created_at FROM events e "
-            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND t.value = %s "
-            "WHERE e.kind = %s AND e.pubkey = %s "
-            "ORDER BY e.created_at DESC LIMIT 4",
-            (repo_id, ANNOUNCE_KIND, owner_hex))
-        rows = cur.fetchall()
-    for row in rows:
-        raw = row[0]
+
+def _role_entry_active(tag) -> bool:
+    """ngit `role_entry_is_active` + `role_boundaries`: no boundaries, or an odd (unclosed) number of
+    them, with `defer` legal only as the last value in an end position. Invalid -> not active, which
+    is the fail-closed direction: an unparseable role record must not grant authority."""
+    raw = list(tag[2:])
+    for i, value in enumerate(raw):
+        if value == "defer":
+            if not (i % 2 == 1 and i + 1 == len(raw)):
+                return False                      # `defer` anywhere else invalidates the record
+            continue
         try:
-            ev = json.loads(raw)
-        except (ValueError, TypeError):
+            int(value)
+        except (TypeError, ValueError):
+            return False                          # a non-numeric boundary invalidates the record
+    return len(raw) == 0 or len(raw) % 2 == 1
+
+
+def announcement_roles(event) -> tuple:
+    """(maintainers, moderators) named by a 30617's ACTIVE role tags, as hex sets.
+
+    When ANY role tag is present the deprecated `maintainers` tag is IGNORED (ngit
+    `repo_ref.rs:73-76`) -- an announcement carrying both is speaking the new language, and merging
+    the two would resurrect a maintainer whose role entry has been closed."""
+    maints, mods, saw_role = set(), set(), False
+    for tag in event.get("tags") or []:
+        if not (isinstance(tag, list) and len(tag) >= 2 and tag[0] in _ROLE_TAGS):
             continue
-        if ev.get("pubkey") != owner_hex:      # belt-and-suspenders: only the owner's announcement
+        saw_role = True
+        if not _role_entry_active(tag):
             continue
-        if not verify_event(ev):               # re-verify — never trust the DB row's validity
+        h = _norm_hex(tag[1])
+        if not h:
             continue
-        for tag in ev.get("tags") or []:
-            if len(tag) >= 2 and tag[0] == "maintainers":
-                for pk in tag[1:]:             # NIP-34 packs multiple pubkeys in one tag
+        (mods if tag[0] == "o" else maints).add(h)
+    if not saw_role:
+        for tag in event.get("tags") or []:
+            if isinstance(tag, list) and len(tag) >= 2 and tag[0] == "maintainers":
+                for pk in tag[1:]:                # NIP-34 packs multiple pubkeys in one tag
                     h = _norm_hex(pk)
                     if h:
                         maints.add(h)
-        break                                  # newest VALID owner-signed announcement wins
-    return maints
+    return maints, mods
+
+
+def author_declines_maintainership(event) -> bool:
+    """ngit `announcement_author_declines_maintainership`: the author's OWN announcement outranks
+    anybody else's assignment of them. True when at least one role tag names the author and none of
+    those is an ACTIVE `M`/`m` entry -- they closed their self-role (left) or acknowledged only
+    moderatorship.
+
+    An author named by NO role tag has NOT declined: they are implicitly a maintainer for the
+    repository's whole history, which is what keeps a legacy `maintainers`-tag repo working.
+
+    This is the only rule in the walk that REMOVES authority, so it is also the only one whose
+    absence is a security bug rather than an inconvenience: without it, somebody who resigned keeps
+    push access for ever."""
+    author = str(event.get("pubkey", ""))
+    has_entry = has_active_maint = False
+    for tag in event.get("tags") or []:
+        if not (isinstance(tag, list) and len(tag) >= 2 and tag[0] in _ROLE_TAGS):
+            continue
+        if _norm_hex(tag[1]) != author:
+            continue
+        has_entry = True
+        if tag[0] != "o" and _role_entry_active(tag):
+            has_active_maint = True
+    return has_entry and not has_active_maint
+
+
+def announcement_urls(event, tag_name: str) -> list:
+    """Every value of a repeated 30617 tag (`clone` or `relays`), which NIP-34 allows to be packed
+    several-per-tag as well as repeated. Used to answer "does this announcement name THIS service?",
+    which GRASP-01 makes the condition of accepting a repository."""
+    out = []
+    for tag in event.get("tags") or []:
+        if isinstance(tag, list) and len(tag) >= 2 and tag[0] == tag_name:
+            for v in tag[1:]:
+                if isinstance(v, str) and v.strip():
+                    out.append(v.strip())
+    return out
+
+
+# --------------------------------------------------------------------------- Postgres reads
+# One indexed query each; no scans (see the JOIN on event_tags(tag,value) + events(kind,pubkey)).
+
+#: How many times the maintainer walk may expand. GRASP-01 says "recursive" and supplies NO bound;
+#: neither does NIP-34, and ngit's own loop simply runs to a fixpoint over a LOCAL cache where the
+#: cost is zero. Here every round is a Postgres read per newly discovered pubkey, reached from an
+#: UNAUTHENTICATED clone, so it needs a ceiling. 6 is a delegation chain six deep -- far past anything
+#: a real project has -- and the walk stops early at its own fixpoint, which is the normal case.
+_MAINTAINER_MAX_ROUNDS = 6
+_MAINTAINER_MAX_PUBKEYS = 64        # and a hard cap on the set, so one hostile announcement listing
+#                                     thousands of pubkeys cannot turn a clone into thousands of reads
+
+
+def load_announcement(conn, pubkey_hex: str, repo_id: str):
+    """The newest VALID kind-30617 that `pubkey_hex` signed for `repo_id`, or None.
+
+    NIP-01 addressable-event rules: only an author's latest announcement speaks for them (ngit
+    reduces to `latest_announcement_per_author` for exactly this reason -- a stale version can keep an
+    ended role active or hide a departure). The signature is re-verified here rather than trusting the
+    row, and the author is re-checked, so a poisoned `events` row cannot speak for anybody."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT e.raw FROM events e "
+            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND t.value = %s "
+            "WHERE e.kind = %s AND e.pubkey = %s "
+            "ORDER BY e.created_at DESC LIMIT 4",
+            (repo_id, ANNOUNCE_KIND, pubkey_hex))
+        rows = cur.fetchall()
+    for row in rows:
+        try:
+            ev = json.loads(row[0])
+        except (ValueError, TypeError):
+            continue
+        if ev.get("pubkey") != pubkey_hex:     # belt-and-suspenders: the row must be this author's
+            continue
+        if not verify_event(ev):               # re-verify -- never trust the DB row's validity
+            continue
+        return ev                              # newest VALID announcement by this author wins
+    return None
+
+
+def load_maintainers(conn, owner_hex: str, repo_id: str) -> set:
+    """THE maintainer ACL for `<repo_id>` rooted at `owner_hex` -- the RECURSIVE set GRASP-01 requires.
+
+    Transcribed from ngit-cli 3.0.0 `src/lib/client.rs:2121`
+    (`get_repo_ref_from_cache_with_selected_recovery`), because GRASP-01 says "respecting the
+    recursive maintainer set" and defines it nowhere, and NIP-34 defines only a flat tag. The walk:
+
+      1. seed: the URL owner is both DISCOVERED and a MAINTAINER;
+      2. for every discovered pubkey, read their own latest 30617 for this same identifier;
+      3. ONLY an announcement whose author is ALREADY IN `maintainers` expands anything -- its
+         maintainers join both sets, its moderators join `discovered` alone (a moderator assigns
+         nobody; their announcement is consulted solely for their own self-entries);
+      4. repeat to a fixpoint;
+      5. then drop every author whose OWN latest announcement declines maintainership -- a closed
+         self-role, or an acknowledgement of moderatorship only.
+
+    RULE 3 IS THE WHOLE SECURITY ARGUMENT, and it is what the old one-level version was protecting by
+    reading `WHERE pubkey = owner` only. Recursion does not weaken it: a stranger's 30617 at a
+    DIFFERENT coordinate still injects nothing, because their announcement is only ever consulted
+    after somebody already trusted named them. Authority flows outward from the owner and can never
+    flow inward.
+
+    ONE DELIBERATE DIVERGENCE FROM ngit: the owner is kept unconditionally, so step 5 cannot remove
+    them. ngit is resolving "who speaks for this repository" across the network; we are answering
+    "who may write into THIS directory", and the npub in the URL is the directory. Letting an
+    announcement lock the owner out of their own path would leave a repo on disk that nobody can push
+    to and no recovery short of an operator with a shell.
+
+    Bounded by `_MAINTAINER_MAX_ROUNDS`/`_MAINTAINER_MAX_PUBKEYS`: this runs from an unauthenticated
+    clone and the spec supplies no ceiling. Fail-closed as before -- a read that raises propagates to
+    a caller that denies."""
+    maintainers = {owner_hex}
+    discovered = {owner_hex}
+    announcements = {}
+    for _round in range(_MAINTAINER_MAX_ROUNDS):
+        pending = [pk for pk in discovered if pk not in announcements]
+        if not pending:
+            break                                   # fixpoint: nothing new to read
+        for pk in pending:
+            announcements[pk] = load_announcement(conn, pk, repo_id)
+        grew = False
+        for pk, ev in announcements.items():
+            if ev is None or pk not in maintainers:
+                continue                            # only a MAINTAINER's announcement assigns roles
+            if author_declines_maintainership(ev):
+                # ...and an author who says they have LEFT does not get to appoint anybody on their
+                # way out. ngit's candidate set (`ordered_maintainers`) drops only the departing
+                # author and keeps whoever they had listed; its stricter AUTHORITY set
+                # (`confirmed_maintainers`) drops those too, because an unconfirmed invitee of a
+                # departed member has nobody confirmed vouching for them. This is that one rule
+                # taken across, and only that one: resignation must not leave a permanent back door,
+                # and it costs nothing on a legacy repo, where nobody declines at all.
+                continue
+            new_maints, mods = announcement_roles(ev)
+            for h in new_maints | mods:
+                if h not in discovered and len(discovered) < _MAINTAINER_MAX_PUBKEYS:
+                    discovered.add(h)
+                    grew = True
+            for h in new_maints:
+                if h in discovered and h not in maintainers:
+                    maintainers.add(h)
+                    grew = True
+        if not grew:
+            break
+    # Step 5. A member's own announcement outranks anybody's assignment of them, so somebody who
+    # resigned stops being able to push. The owner is exempt (see above).
+    for pk in list(maintainers):
+        ev = announcements.get(pk)
+        if pk != owner_hex and ev is not None and author_declines_maintainership(ev):
+            maintainers.discard(pk)
+    return maintainers
 
 
 def load_announced_private(conn, owner_hex: str, repo_id: str) -> bool:
@@ -323,30 +509,13 @@ def load_announced_private(conn, owner_hex: str, repo_id: str) -> bool:
     and on the read gate it means deny — returning False here would let an unreachable database
     quietly publish a private repository, which is the failure this function exists to prevent.
 
-    Kept separate from load_maintainers rather than folded into it: load_maintainers is the
-    pre-receive hook's security core and answers a question the read gate asks only AFTER it already
-    knows the repo is private, while this one is asked of every repo. One extra indexed read on a
-    path that caches its answer is not worth churning the push-authorization ACL for.
+    Asks about the OWNER's announcement only, deliberately not the recursive set: privacy here is a
+    property of the repository this node hosts at this path, and the owner is who that path belongs
+    to. (GRASP-08 defines privacy over the recursive set for a CLIENT deciding where to publish; a
+    co-maintainer flipping their own copy private must not take this host's repo off its listing.)
     """
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT e.raw FROM events e "
-            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND t.value = %s "
-            "WHERE e.kind = %s AND e.pubkey = %s "
-            "ORDER BY e.created_at DESC LIMIT 4",
-            (repo_id, ANNOUNCE_KIND, owner_hex))
-        rows = cur.fetchall()
-    for row in rows:
-        try:
-            ev = json.loads(row[0])
-        except (ValueError, TypeError):
-            continue
-        if ev.get("pubkey") != owner_hex:      # belt-and-suspenders: only the owner's announcement
-            continue
-        if not verify_event(ev):               # re-verify — never trust the DB row's validity
-            continue
-        return event_says_private(ev)          # newest VALID owner-signed announcement wins
-    return False
+    ev = load_announcement(conn, owner_hex, repo_id)
+    return event_says_private(ev) if ev is not None else False
 
 
 def load_state_events(conn, owner_hex: str, repo_id: str, maintainers) -> list:
