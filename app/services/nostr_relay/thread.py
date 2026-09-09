@@ -1237,8 +1237,12 @@ async def _main(cfg: dict) -> None:
                         try:
                             fresh = _read_config()
                             cfg["blocked_pubkeys"] = fresh["blocked_pubkeys"]
-                            cfg["blocked_words"] = fresh["blocked_words"]   # server reads these live
-                            cfg["blocked_langs"] = fresh["blocked_langs"]   # for on-the-fly filtering
+                            # Firehose callbacks and active sync/backfill passes retain these sets.
+                            # Mutate them in place so a live edit reaches every ingestion path,
+                            # including clear-all, without restarting or deleting stored events.
+                            for key in ("blocked_words", "blocked_langs"):
+                                cfg[key].clear()
+                                cfg[key].update(fresh[key])
                             cfg["blocked_relays"] = fresh["blocked_relays"]
                             cfg["block_bridged"] = fresh.get("block_bridged", False)   # proxy-tag filter, live
                             cfg["operator"] = fresh["operator"]
