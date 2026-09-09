@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 from app.auth import get_admin_user
 from app.models import User
 from app.services.monero_user_wallets import zap_fee_percent
-from app.services.monero_wallet_service import MoneroWallet, WalletError, atomic_to_xmr, transfer_gate, xmr_to_atomic
+from app.services.monero_wallet_service import (
+    MoneroWallet, WalletError, atomic_to_xmr, explorer_tx_base, transfer_gate, xmr_to_atomic,
+)
 
 # NO PREFIX HERE — main.py mounts this under two of them.
 #
@@ -47,6 +49,11 @@ async def wallet_status(user: WalletOwner):
         # would be taken from and handed straight back. Silence there is indistinguishable from the
         # setting not having saved, which is what actually prompted the question.
         "zap_fee_percent": str(zap_fee_percent()),
+        # Where a transaction id in Recent activity may be looked up — built HERE, from the network
+        # this wallet is actually on, so the client only ever appends a validated id. "" means the
+        # operator turned explorer links off (or the network is unknown), and the client then shows
+        # the id with a Copy button and no link rather than guessing a chain.
+        "explorer_tx_base": explorer_tx_base(wallet.config.network),
     }
 
 

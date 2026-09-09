@@ -19,7 +19,7 @@ from app.database import get_db
 from app.models import User
 from app.routers import auth
 from app.services.monero_user_wallets import user_wallets, zap_fee_percent
-from app.services.monero_wallet_service import WalletError, xmr_to_atomic
+from app.services.monero_wallet_service import WalletError, explorer_tx_base, xmr_to_atomic
 
 router = APIRouter(tags=["monero-user-wallet"])
 async def get_member_wallet_user(user: User = Depends(auth.get_current_user)):
@@ -72,7 +72,11 @@ async def status(user: CurrentUser):
     from the wallet being broken — which is a support question at best and an accusation at worst."""
     fee = zap_fee_percent()
     return {"enabled": user_wallets.enabled(), "network": user_wallets.network,
-            "fee_percent": str(fee) if fee > 0 else "0"}
+            "fee_percent": str(fee) if fee > 0 else "0",
+            # The same explorer prefix the operator's wallet gets, resolved from the network this
+            # pooled wallet is on. Both wallets read one setting so a user and the operator can
+            # never be pointed at two different chains' explorers from one node.
+            "explorer_tx_base": explorer_tx_base(user_wallets.network)}
 
 
 @router.get("/address")

@@ -14,7 +14,10 @@ SRC = (ROOT / "static/js/client/monero-wallet.js").read_text(encoding="utf-8")
 
 
 def _run(js):
-    body = SRC[SRC.index("  function transferView("):]
+    # Sliced from the txid helpers rather than from transferView, because the row model and the
+    # renderer now use them: a slice that stops short of a helper its own code calls does not
+    # measure a smaller thing, it fails at the first line.
+    body = SRC[SRC.index("  const TXID_RE="):]
     body = body[:body.index("\n  function paint(")]
     script = ("const esc=s=>String(s);const xmr=(v)=>String(v);\n"
               "function historyDate(){return 'when';}\n" + body + "\n" + js)
