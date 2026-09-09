@@ -132,3 +132,33 @@ def test_kind_10318_is_reachable_by_no_cleaner():
     assert 10318 not in store._RETIRED_KINDS
     assert store.retired_kind_reason(10318) is None, "a retired kind is refused at ingest"
     assert store._REPLACEABLE(10318), "10318 is a NIP-51 replaceable list — newest wins, one per author"
+
+
+# --------------------------------------------------------------------------------------------
+# STEP 2 of announcement-based privacy: WHERE a private repo's events are allowed to go.
+#
+# The serve gate above only exists on THIS relay. GRASP-08 says related events go only to the repo's
+# declared relays; the server-side half of that is that the outbox must never re-broadcast one to the
+# public upstreams, where nothing enforces NIP-42 and nothing can withdraw it afterwards.
+
+def test_a_private_repo_announcement_is_never_broadcast_upstream():
+    """Without this the gate is theatre: our relay would correctly answer "auth-required" while the
+    same event sat readable on ~20 relays somebody else runs — name, maintainer set and activity."""
+    from app.services.nostr_relay.server import _broadcastable
+    assert _broadcastable(repo_event()) is False
+    assert _broadcastable(repo_event(kind=30618)) is False
+
+
+def test_a_public_repo_announcement_still_federates():
+    """Discovery is the whole point of announcing a public repo — this must not become a git-wide
+    federation block."""
+    from app.services.nostr_relay.server import _broadcastable
+    assert _broadcastable(repo_event(private=False)) is True
+    assert _broadcastable(repo_event(kind=30618, private=False)) is True
+
+
+def test_the_serve_gate_and_the_broadcast_gate_agree_on_what_private_means():
+    """Two answers to "is this repo private" is how one door closes while the other stays open."""
+    from app.services.nostr_relay.server import RelayServer, _broadcastable
+    for ev in (repo_event(), repo_event(kind=30618), repo_event(private=False)):
+        assert _broadcastable(ev) is not RelayServer._is_private_repo_event(ev)

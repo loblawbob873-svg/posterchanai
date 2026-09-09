@@ -137,6 +137,21 @@ def _broadcastable(ev, cfg=None) -> bool:
             if cfg and cfg.get("backup_datastore") and d.startswith(_BACKUP_NS):
                 continue
             return False
+    # GRASP-08: A PRIVATE REPOSITORY'S ANNOUNCEMENT MUST NOT LEAVE THE RELAYS IT NAMES.
+    #
+    # `_can_serve_event` refuses a private 30617/30618 to any reader who has not NIP-42-authenticated
+    # as the owner or a maintainer — but that gate only exists HERE. A 30617 is an ordinary
+    # replaceable event as far as this function is concerned (not 30078, not a draft, no `nofederate`
+    # tag), so without this clause the outbox would re-broadcast it to every upstream public relay,
+    # where nothing enforces any of it: the repo's name, its maintainer set and its whole activity
+    # would then be readable by anyone, permanently, from ~20 relays somebody else runs, with our own
+    # relay still correctly answering "auth-required". Federating it is the one action that makes the
+    # gate meaningless, and it is the reason announcing a private repo is not safe until this holds.
+    #
+    # GRASP-08 says the same thing from the client's side: related events go only to the repo's
+    # declared relays. This is the server-side half of that rule.
+    if RelayServer._is_private_repo_event(ev):
+        return False
     # Opt-out marker: e.g. game bots tag the mid-game move boards so only the opening + final post
     # federate to the wider network (the middle plays stay local-only — anti-spam).
     if any(t and len(t) >= 1 and t[0] == "nofederate" for t in ev.get("tags", [])):
