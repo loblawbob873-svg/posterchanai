@@ -1970,7 +1970,7 @@
       const a = b.dataset.w;
       if(a === 'ai') toggleWindowAI(w, b, e);
       else if(a === 'pop') popOut(w);
-      else if(a === 'close') closeWin(w);
+      else if(a === 'close') closeWin(w, { user:true });
       else if(a === 'max') toggleMax(w);
       else minimise(w);
     });
@@ -2008,7 +2008,7 @@
         {label:'Snap right', run:()=>snapTo(w,'right')},
         {label:w.max?'Restore':'Maximise', run:()=>toggleMax(w)},
         {sep:true},
-        {label:'Close', run:()=>closeWin(w)}
+        {label:'Close', run:()=>closeWin(w, { user:true })}
       ], $('.osw-bar', el));
     });
     $('.osw-grip', el).addEventListener('pointerdown', e => { focusWin(w, false); startResize(w, e); });
@@ -3925,6 +3925,16 @@
        background-player path look dead after entering Desktop.  Reopening Music reconnects to the
        same player; an explicit Pause remains the way to stop playback. */
     try{ PC().syncPlayer && PC().syncPlayer(); }catch(_){}
+    /* A PERSON CLOSED THE LAST THING THAT COULD STOP IT.
+     *
+     * Only on an explicit close: a monitor handoff, a native reconcile and a folder losing its
+     * members all come through here too, and pausing on those would stop the music because a window
+     * changed screens. And only when nothing is left to control it — with a Now-playing widget on
+     * the desk, or another Music window open, playback outliving one frame is correct and is what
+     * the background player depends on. */
+    if(opts && opts.user && (w.view === 'doc:music' || w.view === '__music') && !musicSurface()){
+      try{ const m = PC().music && PC().music(); if(m && m.close) m.close(); }catch(_){}
+    }
     /* Monitor handoff already focused the destination renderer/native surface. Focusing the next
      * source window here steals input back across displays, leaving Firefox painted but inert and
      * making a moved Terminal maximise back on monitor one. Ordinary closes retain normal focus. */
@@ -6826,6 +6836,26 @@
     for(const [el, m] of _mounted) if(m.w.type === 'music') _wgtRefreshOne(el);
   }
 
+  /* IS THERE ANYWHERE ON THIS DESKTOP TO PAUSE THE MUSIC?
+   *
+   * The desktop hides the floating player on purpose — the Music WINDOW is the player, and a second
+   * smaller one beside it is two sets of controls for one thing. That reasoning rested on a promise
+   * the CSS wrote down and closeWin does not keep: "closing the Music window stops it". It does not,
+   * deliberately (stopping playback on close is what once made the background player look dead), so
+   * closing that window with no Now-playing widget on the desk left audio running with NO control
+   * anywhere — reported as "I closed Music player and I hear music still".
+   *
+   * The answer is not to bring the floating player back — there deliberately is not one here. It is
+   * to keep the CSS's promise in the one case it was ever needed for: a PERSON closing the last
+   * thing that could have stopped it. With a widget on the desk, or another Music window open,
+   * playback outliving one frame is correct and is what the background player depends on. */
+  function musicSurface(){
+    if(!on) return true;   // classic UI still has the floating player; this rule is not for it
+    if(wins.some(w => !w.disposed && (w.view === 'doc:music' || w.view === '__music'))) return true;
+    for(const [, m] of _mounted) if(m.w.type === 'music') return true;
+    return false;
+  }
+
   /* Dragging a widget. Transform while moving, committed once on release — the same discipline as
    * windows and icons, and for the same reason: this desktop can hold a live timeline, so writing
    * left/top per pointer move lays the whole document out at pointer rate. */
@@ -7805,7 +7835,7 @@
       const actions=[];
       if(running)actions.push({label:'Move',run:()=>taskbarMove(running)},
         {label:'Move to other display',run:()=>{moveToOtherMonitor(running);}},
-        {label:'Close',run:()=>closeWin(running)},{sep:true});
+        {label:'Close',run:()=>closeWin(running, { user:true })},{sep:true});
       if(key){const pinned=pins.indexOf(key)>=0,cut=key.indexOf(':');actions.push({
         label:pinned?'Unpin from taskbar':'Pin to taskbar',
         run:()=>setPinned(key.slice(0,cut),key.slice(cut+1),!pinned)});}
@@ -9657,7 +9687,7 @@
     // steal their own Ctrl+W. Keep Alt+W as a compatibility alias for existing installations.
     if((e.ctrlKey || e.altKey) && !e.metaKey && (e.key === 'w' || e.key === 'W')){
       const f = wins.find(w => w.el.classList.contains('focused'));
-      if(f){ e.preventDefault(); e.stopPropagation(); closeWin(f); return; }
+      if(f){ e.preventDefault(); e.stopPropagation(); closeWin(f, { user:true }); return; }
     }
 
     /* PRINT SCREEN. Windows takes the whole screen with PrtSc and picks an area with Shift+PrtSc
@@ -10152,7 +10182,7 @@
                    * would cost a round trip per switch flip. It also closes a folder window whose
                    * members have all just gone, which is the visible half of hiding a group. */
                   navChanged: refreshIcons,
-                  isRepainting: () => repainting > 0, ownsFeedView, parkedSlot, noteScroll,
+                  isRepainting: () => repainting > 0, ownsFeedView, parkedSlot, noteScroll, musicSurface,
                   windows: () => wins.map(w => ({ view: w.view, appView: w.appView || w.view,
                                                   title: w.title, min: w.min,
                                                   snap:w.snap||'', rotationSnap:w.rotationSnap||'' })),

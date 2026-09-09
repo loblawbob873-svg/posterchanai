@@ -24870,6 +24870,23 @@
         this._render();
       }
       this._tickApp();   // before the early return: the widget is hidden exactly when the app is up
+      /* THE OS AND THE DESKTOP WIDGET TICK WHETHER OR NOT OUR OWN PANEL IS ON SCREEN — and this
+       * block sat BELOW the early return, which is the whole of the bug.
+       *
+       * The floating player is hidden exactly when the Music app is up (see _tickApp above) and is
+       * hidden ALWAYS on the windowed desktop, where CSS takes it out entirely. So on the desktop
+       * this never ran: the Now-playing widget's bar stood still and its clock read 0:00 for the
+       * length of the track — reported as "widget on the desktop was not showing progress". On
+       * Android it is the same defect one step quieter: open the Music screen and the lock-screen
+       * position stops advancing, because _media() is in here too.
+       *
+       * Neither surface belongs to our panel, so neither may be gated on it. Still throttled to once
+       * a SECOND — timeupdate fires ~4x — so the widget costs no new timer and cannot tick while
+       * nothing plays, which is what put it here in the first place. */
+      { const sec=Math.floor((_audioEl&&_audioEl.currentTime)||0);
+        if(sec!==this._msSec){ this._msSec=sec; this._media();
+          try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}
+        } }
       if(!this.el||this.el.classList.contains('hidden')||this.min) return;
       const f=this.el.querySelector('.mp-seek-fill'), c=this.el.querySelector('.mp-cur'), du=this.el.querySelector('.mp-dur');
       if(_audioEl && _audioEl.duration){
@@ -24878,19 +24895,7 @@
         if(f && this._scrub==null) f.style.width=((_audioEl.currentTime/_audioEl.duration*100)||0)+'%';
         if(c) c.textContent=_fmtTime(this._scrub!=null ? this._scrub*_audioEl.duration : _audioEl.currentTime);
         if(du) du.textContent=_fmtTime(_audioEl.duration); }
-      // …and tell the OS once a second, so a car's elapsed/remaining time tracks the audio. timeupdate
-      // fires ~4x a second; the media session does not need that and every call is a cross-process hop.
-      { const sec=Math.floor((_audioEl&&_audioEl.currentTime)||0);
-        if(sec!==this._msSec){ this._msSec=sec; this._media();
-          /* …and the desktop's Now-playing widget, so its progress bar moves.
-           *
-           * Deliberately HERE and not in the timeupdate body: this branch already throttles itself to
-           * once a SECOND (it exists so the media session's elapsed time does not cross a process
-           * boundary four times a second), and reusing it means the widget costs no new timer and
-           * cannot tick while nothing is playing. A per-frame repaint is what this file has had to
-           * remove three times; a per-second text-and-width update on one small panel is not that. */
-          try{ if(window.PCOS && PCOS.musicChanged) PCOS.musicChanged(); }catch(_){}
-        } } },
+    },
     onChange:null,   // the Music app mirrors this widget's state; see _musicAppNow
     _render(){
       try{ if(this.onChange) this.onChange(); }catch(_){}
@@ -38882,6 +38887,10 @@
       },
       prev: () => MusicPlayer.prev(),
       next: () => MusicPlayer.next(),
+      /* The desktop closing the LAST thing that could stop the music. close() and not pause():
+       * there is no player left to leave paused, so the native media session and its notification
+       * go too — buttons that work on nothing are worse than none (see MusicPlayer.close). */
+      close: () => MusicPlayer.close(),
       /* Shuffle the whole library and start somewhere in it — what the Music app's own Shuffle-all
        * button does, so the two cannot mean different things. Pulls the library first for the same
        * reason `toggle` does: the drive index is loaded once per session by whichever screen needs it
