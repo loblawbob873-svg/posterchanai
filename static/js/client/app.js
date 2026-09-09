@@ -13509,9 +13509,10 @@
     const liked = myReaction(ev.id);
     const hasNoteXmr = isXmrAddr(xmrForNote(ev));
     const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey)));
+    const _rtAct = _repostAction(ev.id, counts.iRt);
     return `<div class="acts">
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
-          <button class="act rt ${counts.iRt?'on':''}${_repostUndoPending(ev.id)?' rt-unconfirmed':''}" data-a="repost" title="${_repostActionTitle(ev.id,counts.iRt)}" aria-label="${_repostActionTitle(ev.id,counts.iRt)}">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
+          <button class="act rt ${counts.iRt?'on':''}${_rtAct.pending?' rt-unconfirmed':''}" data-a="repost" title="${_rtAct.label}" aria-label="${_rtAct.label}">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="${liked?'remove your reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
@@ -15926,10 +15927,14 @@
   function _repostUndoPending(id){
     return !!(ME&&[false,true].some(privateEvent=>_repostUndoReceipt('pc_repost_undo_'+ME.pubkey+':'+id+(privateEvent?':private':':public'),id,ME.pubkey,privateEvent)));
   }
-  function _repostActionTitle(id,reposted){
-    if(_repostUndoPending(id))return 'retry undo repost';
-    return reposted?'undo your repost':'repost';
+  /* Both callers want the label AND the pending flag, and each answer costs two localStorage reads.
+   * Asked separately that is six synchronous reads per card per draw on a 200-card timeline, for a
+   * key that is almost always absent — so the pair is resolved once and handed back together. */
+  function _repostAction(id,reposted){
+    const pending=_repostUndoPending(id);
+    return {pending,label:pending?'retry undo repost':(reposted?'undo your repost':'repost')};
   }
+  function _repostActionTitle(id,reposted){ return _repostAction(id,reposted).label; }
   async function doRepost(id,pk,btn){
     if(!ME||GUEST){_guestPrompt();return;}
     const owner=ME.pubkey,key=owner+':'+id,current=()=>ME&&ME.pubkey===owner;
@@ -34987,7 +34992,7 @@
        * and a screen reader announces the icon, not the state. An undo that was signed and never
        * acknowledged has to be legible without a mouse, so the same one string is also the accessible
        * name, and an unconfirmed one carries a class the stylesheet can mark. */
-      const rt=n.querySelector('.act[data-a="repost"]'); if(rt){const _rl=_repostActionTitle(id,c.iRt);rt.classList.toggle('on',c.iRt);rt.title=_rl;rt.setAttribute('aria-label',_rl);rt.classList.toggle('rt-unconfirmed',_repostUndoPending(id));}
+      const rt=n.querySelector('.act[data-a="repost"]'); if(rt){const _ra=_repostAction(id,c.iRt);rt.classList.toggle('on',c.iRt);rt.title=_ra.label;rt.setAttribute('aria-label',_ra.label);rt.classList.toggle('rt-unconfirmed',_ra.pending);}
       const zp=n.querySelector('.act[data-a="zap"]'); if(zp) zp.classList.toggle('on',!!c.zaps);
       const bm=n.querySelector('.act[data-a="bookmark"]'); if(bm) bm.classList.toggle('on',BOOKMARKS.has(id));
     });
