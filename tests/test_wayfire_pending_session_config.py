@@ -26,6 +26,21 @@ def setup(tmp_path):
     library.mkdir()
     for name in ('posterchan-shell', 'view-shot'):
         (library / ('lib' + name + '.so')).write_bytes(b'fixture')
+    # MODES ARE SET EXPLICITLY, NOT INHERITED FROM THE AMBIENT UMASK.
+    #
+    # The code under test only trusts a path that is root-owned AND not group/other-writable, and
+    # it reads it as the unprivileged session user — so these fixtures must be 0755/0644 to be both
+    # trusted and readable. Left to the process umask they were 0755/0644 when this file ran alone
+    # and 0700/0600 inside the full suite (something earlier in the session tightens it), so after
+    # the chown below the session user could no longer traverse `etc` or read wayfire.ini:
+    # `PermissionError` from source.read_text(), six failures that never reproduced in isolation.
+    # A fixture that describes the permissions it needs cannot be broken by an unrelated test.
+    config.chmod(0o755)
+    source.chmod(0o644)
+    pending.chmod(0o644)
+    library.chmod(0o755)
+    for entry in library.iterdir():
+        entry.chmod(0o644)
     subprocess.run(['sudo', '-n', 'chown', '-R', '0:0', str(config), str(library)], check=True)
     body = (ROOT / 'os/bin/pc-compositor-session').read_text().split("<<'PC_SESSION_CONFIG_PY'\n", 1)[1].split('\nPC_SESSION_CONFIG_PY', 1)[0]
     # Only redirect the installed library paths into the root-owned fixture.
