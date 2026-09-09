@@ -17582,6 +17582,12 @@
     clearTimeout(_pushMirrorTimer);
     _pushMirrorTimer=setTimeout(()=>{void mirrorPushPrefs(owner);},2500);
   }
+  /* Reporting must never be able to break the thing it reports on: this runs from a timer and from
+   * inside a catch, so a throw here would escape the function that was handling a failure. */
+  function _pushSyncSaid(text){
+    try{ const el=document.querySelector&&document.querySelector('#us-push-sync-state');
+         if(el)el.textContent=text; }catch(_){}
+  }
   async function mirrorPushPrefs(owner=_notificationOwner()){
     try{
       if(!owner || owner!==_notificationOwner() || _standalone())return false;
@@ -17593,15 +17599,31 @@
        * exists to prevent. */
       const P=_pushPlugin();
       if(P){ try{ const ep=String(((await P.getEndpoint())||{}).endpoint||'');
-                  const bits=ep.split(':'); if(bits[0]==='direct'&&bits[2])body.device_id=bits[2]; }catch(_){} }
+                  const bits=ep.split(':'); if(bits[0]==='direct'&&bits[2])body.device_id=bits[2]; }catch(_){}
+             /* AND KEEP A COPY ON THE PHONE. The server is the primary filter, but it can only
+              * filter what it was told, and the telling can fail — offline, a refused signature, a
+              * stale row after a reinstall. Silently, and looking exactly like the bug this fixes.
+              * The WebView is not running when a push lands, so localStorage cannot serve here. */
+             try{ const S=_capPlugin('PosterChanPush','setPrefs');
+                  if(S)await S.setPrefs({prefs:body.prefs}); }catch(_){} }
       else { try{ const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();
                   if(sub&&sub.endpoint)body.endpoint=sub.endpoint; }catch(_){} }
       if(!body.device_id && !body.endpoint)return false;   // never fall back to "all my devices"
       const auth=await sign(27235,'push-prefs',[['p',owner]]);
       const r=await fetch('/api/push/prefs',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({...body,auth:btoa(JSON.stringify(auth))})}).then(x=>x.json()).catch(()=>null);
-      return !!(r&&r.ok);
-    }catch(_){ return false; }
+      /* SAY WHICH IT WAS. "Telling the server…" left standing for ever is a status line that lies,
+       * and the thing it would be lying about is the notifications you asked to stop. Retried once
+       * on the way out, because the common failure here is a moment without a network. */
+      if(r&&r.ok){ _pushSyncSaid('Saved on this device, and this device only.'); return true; }
+      _pushSyncSaid('Saved on this device. The server has not been told yet — retrying.');
+      clearTimeout(_pushMirrorTimer);
+      _pushMirrorTimer=setTimeout(()=>{void mirrorPushPrefs(owner);},30000);
+      return false;
+    }catch(_){ _pushSyncSaid('Saved on this device. The server has not been told yet — retrying.');
+               clearTimeout(_pushMirrorTimer);
+               _pushMirrorTimer=setTimeout(()=>{void mirrorPushPrefs(owner);},30000);
+               return false; }
   }
   function notificationPreference(key){
     const state=_notificationState(),v={...state.values,...state.dirty}[key];

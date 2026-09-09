@@ -20,6 +20,11 @@ function ctx(){
     localStorage:{getItem:k=>mem.has(k)?mem.get(k):null,setItem:(k,v)=>mem.set(k,String(v)),
                   removeItem:k=>mem.delete(k)},
     _paintNotificationSettings(){},
+    // The debounced mirror fires ~2.5s after a toggle and reaches for the DOM and the network.
+    // Neither exists here; stubbing them keeps this harness about the PREFERENCES, and proves the
+    // mirror cannot take the page down when it runs somewhere without them.
+    document:{querySelector:()=>null},
+    _standalone:()=>true,
     _mem:mem};
   c.window=c;
   vm.createContext(c);

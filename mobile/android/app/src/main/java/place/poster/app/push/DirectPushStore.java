@@ -24,6 +24,7 @@ final class DirectPushStore {
     private static final String DEVICE = "direct_device_id";
     private static final String SEALED = "direct_credentials";
     private static final String RECEIPTS = "direct_receipts";
+    private static final String TYPE_PREFS = "push_type_prefs";
     private static final int MAX_RECEIPTS = 256;
     private static final String ALIAS = "posterchan_direct_push_v1";
     private static final int IV_BYTES = 12;
@@ -47,6 +48,45 @@ final class DirectPushStore {
     }
 
     /** Public, random and stable across app upgrades. It exists before notifications are enabled. */
+    /* WHICH NOTIFICATIONS THIS PHONE WANTS, held natively.
+     *
+     * The server filters too, and that is the primary gate — but it can only filter once the client
+     * has managed to tell it, and that call can fail (offline, a refused signature, a reinstall that
+     * left a stale row). The failure is silent and reads as the original complaint coming back: you
+     * turn likes off and the phone keeps buzzing. This copy is written from the same place the
+     * server mirror is sent, so the device enforces its own answer even when the server has the
+     * wrong one. localStorage cannot do this job — the WebView is not running when a push arrives.
+     */
+    static void setTypePrefs(Context context, String json) {
+        prefs(context).edit().putString(TYPE_PREFS, json == null ? "" : json).apply();
+    }
+
+    static boolean allowsType(Context context, String type) {
+        try {
+            return allowsType(prefs(context).getString(TYPE_PREFS, ""), type);
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
+    /** The decision, with no Context so it can be run directly by a test.
+     *
+     * FAIL OPEN, exactly like app/services/push_prefs.py at the other end: unset, unparseable or
+     * unknown all mean SHOW. A silenced notification is indistinguishable from a lost one, and the
+     * expensive mistake here is a direct message that never appeared — not one buzz too many. A
+     * call carries no toggle and must ring whatever else is switched off.
+     */
+    static boolean allowsType(String storedJson, String type) {
+        if (type == null || type.isEmpty() || "call".equals(type)) return true;
+        if (storedJson == null || storedJson.isEmpty()) return true;
+        try {
+            JSONObject o = new JSONObject(storedJson);
+            return o.isNull(type) || o.optBoolean(type, true);
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
     static String deviceId(Context context) {
         SharedPreferences p = prefs(context);
         String id = p.getString(DEVICE, "");

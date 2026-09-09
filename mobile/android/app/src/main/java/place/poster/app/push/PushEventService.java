@@ -59,6 +59,16 @@ public final class PushEventService {
         // the event-id tag, so Android replaces the duplicate card while distinct events coexist.
         try {
             if (!canNotify(ctx, "call".equals(type))) return false;
+            /* THIS PHONE'S OWN ANSWER, checked even though the server already filtered.
+             *
+             * The server can only filter once the client has managed to mirror the toggles to it,
+             * and that call can fail — offline, a refused signature, a reinstall that left a stale
+             * row. Nothing about that failure is visible: the tab shows likes off and the phone
+             * keeps buzzing for likes, which is exactly the complaint this feature answers. Return
+             * TRUE, not false: the notification was handled, not dropped, so a durable delivery is
+             * acknowledged rather than retried forever.
+             */
+            if (!DirectPushStore.allowsType(ctx, type)) return true;
             show(ctx, title, body, type, eventTag, route);
             return true;
         } catch (Throwable ignored) {

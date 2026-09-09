@@ -247,6 +247,20 @@ public class PushPlugin extends Plugin {
      * The START must come from the foreground — Android 12+ refuses a background foreground-service
      * start — which is fine, because the only thing that calls this is a switch in Settings.
      */
+    /* The client's notification toggles, kept where a push can still read them.
+     *
+     * The WebView is not running when a notification arrives, so localStorage is no use here; this
+     * is the same object the client mirrors to the server, stored natively so the device can
+     * enforce its own answer if the server has a stale one or never got told. */
+    @PluginMethod
+    public void setPrefs(PluginCall call) {
+        JSObject prefs = call.getObject("prefs");
+        DirectPushStore.setTypePrefs(getContext(), prefs == null ? "" : prefs.toString());
+        JSObject out = new JSObject();
+        out.put("ok", true);
+        call.resolve(out);
+    }
+
     @PluginMethod
     public void setStayConnected(PluginCall call) {
         boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
