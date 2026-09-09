@@ -3699,6 +3699,40 @@ ipcMain.handle('pc:clip:write', async (e, text) => {
   }
   return true;
 });
+/* COPYING AN IMAGE, which until now could not be done on this desktop at all.
+ *
+ * The lightbox's "Copy image" only ever had navigator.clipboard.write, and that is refused on the
+ * app:// origin exactly as writeText is -- so on PosterChanOS the button had never once worked, and
+ * its one catch told the person to "long-press the image", a gesture a desk with a mouse does not
+ * have. This is the missing half of the bridge, not a repair.
+ *
+ * Success is reported from wl-copy's exit status and from nothing else. clipboard.readImage() would
+ * hand back Chromium's own cached write whether or not the compositor ever took the selection, so
+ * reading it back proves only that we wrote it to ourselves.
+ */
+ipcMain.handle('pc:clip:write-image', async (e, bytes) => {
+  if (!fromOurPage(e)) { console.warn('[clip] image denied'); return false; }
+  let png;
+  try { png = Buffer.from(bytes && bytes.buffer ? bytes.buffer : (bytes || [])); }
+  catch (_) { return false; }
+  // 32 MiB is far above any pasted screenshot and far below a channel worth abusing. The renderer
+  // has already re-encoded to PNG, so anything else here is a caller that got it wrong: publish it
+  // and the selection advertises image/png over bytes no client can decode.
+  if (!png.length || png.length > 32 * 1024 * 1024) return false;
+  if (png.length < 8 || png.readUInt32BE(0) !== 0x89504e47) return false;
+  /* Fill Chromium's cache too, so an in-app paste works and so a non-Wayland desktop (X11, macOS,
+   * Windows) gets the copy at all -- the same order the text write above uses. */
+  let cached = false;
+  try {
+    const { nativeImage } = require('electron');
+    const image = nativeImage.createFromBuffer(png);
+    if (!image.isEmpty()) { clipboard.writeImage(image); cached = true; }
+  } catch (_) {}
+  if (require('./clipboard.js').isWayland()) {
+    return require('./clipboard.js').writeWaylandImage(png);
+  }
+  return cached;
+});
 /* CLIPBOARD READ, and why this exists at all when write was deliberately alone.
  *
  * `pcClip.write` is exposed to any page the app loads, and its comment says the page can never READ

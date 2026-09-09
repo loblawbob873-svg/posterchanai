@@ -211,6 +211,23 @@ const backgroundOwner = !_isWindowDoc && !process.argv.includes('--pc-secondary-
 // page can never read the user's clipboard.
 contextBridge.exposeInMainWorld('pcClip', {
   write: (s) => ipcRenderer.invoke('pc:clip:write', String(s == null ? '' : s)),
+  /* IMAGES, same trust level and same direction: write-only, and it can neither repoint the app nor
+   * read anything back. It exists because the lightbox's Copy image had no working path here at all
+   * -- navigator.clipboard.write is refused on app:// just as writeText is.
+   *
+   * An ArrayBuffer is handed over, never a typed array: contextBridge's clone lists ArrayBuffer
+   * explicitly, and a view's byteOffset/byteLength are the sort of thing a clone flattens silently
+   * -- which would publish the wrong bytes rather than fail. */
+  writeImage: (bytes) => {
+    let buf;
+    try {
+      if (bytes instanceof ArrayBuffer) buf = bytes;
+      else if (bytes && bytes.buffer instanceof ArrayBuffer)
+        buf = bytes.buffer.slice(bytes.byteOffset || 0, (bytes.byteOffset || 0) + bytes.byteLength);
+      else return Promise.resolve(false);
+    } catch (_) { return Promise.resolve(false); }
+    return ipcRenderer.invoke('pc:clip:write-image', buf);
+  },
 });
 
 if (isOurPage) {
