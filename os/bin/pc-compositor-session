@@ -231,42 +231,69 @@ if true; then
 		PC_WAYFIRE_SHELL_PID_FILE="$XDG_RUNTIME_DIR/posterchan-wayfire-shell.pid"
 		export PC_WAYFIRE_READY_FILE PC_WAYFIRE_SHELL_PID_FILE
 		rm -f "$PC_WAYFIRE_READY_FILE" "$PC_WAYFIRE_SHELL_PID_FILE"
-		# THE SESSION CONFIG IS APPLIED HERE, BECAUSE HERE IS THE ONLY PLACE NO SESSION IS RUNNING.
-		#
-		# Portage installs a changed /etc/wayfire.ini as `._cfg0000_wayfire.ini`, and
-		# `update-posterchan` used to move it into place immediately -- which is a write to the
-		# config file of a compositor that is running. Wayfire watches that file and re-reads it, and
-		# a re-read that has to LOAD A PLUGIN is not the same operation as loading one at startup.
-		# MEASURED on the real desk: the release that added `view-shot` and `force-fullscreen` was
-		# installed at 19:24, wayfire died at 19:24:28 -- "Fatal Wayland communication error: Broken
-		# pipe" in the shell log, then a text console -- and the identical file started a healthy
-		# session seconds later. The content was never the problem; applying it live was.
-		#
-		# So the pending copy is applied at STARTUP, before wayfire is told to exist. That also keeps
-		# the promise update-posterchan already prints ("the new desktop starts at your next login")
-		# instead of contradicting it. The previous file is kept beside it, as it was before.
-		for pending in /etc/._cfg[0-9][0-9][0-9][0-9]_wayfire.ini; do
-			[ -e "$pending" ] || continue
-			[ ! -e /etc/wayfire.ini ] || cp -a /etc/wayfire.ini /etc/wayfire.ini.pre-update 2>/dev/null || true
-			mv -f "$pending" /etc/wayfire.ini 2>/dev/null || true
-		done
-		# AND THE COMPOSITOR READS A COPY, BECAUSE PORTAGE CAN REWRITE THE ORIGINAL AT ANY MOMENT.
-		#
-		# The block above handles the config-protected case, where a CHANGED /etc/wayfire.ini is
-		# staged as `._cfg0000_`. That is only half of it: portage stages a protected file only when
-		# the copy on disk was MODIFIED since it was installed, and nobody hand-edits this one -- so
-		# an ordinary upgrade writes straight over it, under a running compositor, with no staging
-		# involved. MEASURED: the release adding two plugins was installed at 19:24 and wayfire died
-		# at 19:24:28, and an upgrade an hour later rewrote the file in place again with no `._cfg`
-		# anywhere. Deferring the staged copy would have prevented neither.
-		#
-		# So the running compositor is pointed at a copy in the session's own runtime directory,
-		# which the package manager has no reason to touch and which cannot outlive the login. The
-		# installed file stays the source of truth and is read afresh here at every start, so an
-		# upgrade still takes effect at the next login exactly as its message promises.
+		# Keep package updates away from the live compositor and preserve custom settings.
+		# Portage's pending config belongs to root: this user cannot move it into /etc.
+		# Only the two required shell plugins are merged into this session's private copy.
 		session_cfg="$XDG_RUNTIME_DIR/posterchan-wayfire.ini"
-		if ! cp -f "${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}" "$session_cfg" 2>/dev/null; then
-			# A copy that could not be made is not a reason to refuse to start a desktop.
+		if ! python3 - "${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}" "$session_cfg" "${PC_WAYFIRE_CONFIG:+explicit}" <<'PC_SESSION_CONFIG_PY'
+import os
+import pathlib
+import re
+import stat
+import sys
+
+source, destination = map(pathlib.Path, sys.argv[1:3])
+explicit = sys.argv[3] == "explicit"
+text = source.read_text()
+required = ("posterchan-shell", "view-shot")
+
+def trusted(path):
+    try:
+        info = path.lstat()
+        return not stat.S_ISLNK(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022
+    except OSError:
+        return False
+
+def plugin_line(lines):
+    core = False
+    for index, line in enumerate(lines):
+        section = re.match(r"^\s*\[([^]]+)\]", line)
+        if section:
+            core = section[1].strip() == "core"
+        elif core and re.match(r"^\s*plugins\s*=", line):
+            return index, line.split("=", 1)[1].split("#", 1)[0].split()
+    return None, []
+
+if not explicit and trusted(source.parent) and trusted(source):
+    supplied = set()
+    for pending in sorted(source.parent.glob("._cfg[0-9][0-9][0-9][0-9]_" + source.name)):
+        if trusted(pending) and pending.is_file():
+            _, plugins = plugin_line(pending.read_text().splitlines())
+            supplied.update(plugins)
+    lines = text.splitlines(keepends=True)
+    index, plugins = plugin_line(lines)
+    additions = [name for name in required if name in supplied and name not in plugins
+                 and any(trusted(pathlib.Path(base) / ("lib" + name + ".so"))
+                         and stat.S_ISREG((pathlib.Path(base) / ("lib" + name + ".so")).lstat().st_mode)
+                         for base in ("/usr/lib64/wayfire", "/usr/lib/wayfire"))]
+    if additions and index is not None:
+        original = lines[index].rstrip("\r\n")
+        value, comment, suffix = original.partition("#")
+        lines[index] = value.rstrip() + " " + " ".join(additions) + (" #" + suffix if comment else "") + "\n"
+        text = "".join(lines)
+        print("Session required plugins added: " + " ".join(additions), file=sys.stderr)
+# The destination is session-private; replace atomically without following an old symlink.
+temporary = destination.with_name(destination.name + ".tmp." + str(os.getpid()))
+fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+try:
+    with os.fdopen(fd, "w") as stream:
+        stream.write(text)
+    os.replace(temporary, destination)
+finally:
+    temporary.unlink(missing_ok=True)
+PC_SESSION_CONFIG_PY
+		then
+			# Keep a usable desktop if the optional private-copy preparation fails.
 			session_cfg="${PC_WAYFIRE_CONFIG:-/etc/wayfire.ini}"
 		fi
 		wayfire -c "$session_cfg" >"$state_dir/wayfire.log" 2>&1 &
