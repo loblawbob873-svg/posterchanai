@@ -22,6 +22,7 @@ Run under node against the shipped file, so this cannot drift from what the exte
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -252,11 +253,26 @@ def test_bookmarks_are_sealed_and_uncleanable():
     assert "const KIND = 30078;" in bg
 
     store = open(os.path.join(ROOT, "app", "services", "nostr_relay", "store.py"), encoding="utf-8").read()
-    assert "_NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078,)" in store, \
+    # The MEMBERSHIP is the contract, not one spelling of the tuple: the list legitimately grows
+    # (GRASP-08's kind 10318 joined it, and pinning the old literal turned that into a red test
+    # about a rule nothing had broken). What must never change is that 30078 is on it.
+    exemption = re.search(r"^_NEVER_EXPIRE_KINDS\s*=\s*(.+)$", store, re.M)
+    assert exemption, "the expiry-exemption list is gone entirely"
+    assert "30078" in exemption.group(1), \
         "kind 30078 lost its expiry exemption — every bookmark, note and setting becomes deletable " \
         "by a stray NIP-40 tag from any other client"
     assert 'assert not (set(_NEVER_EXPIRE_KINDS) & set(_PRUNABLE_KINDS))' in store, \
         "the never-expire/prunable overlap guard is gone"
+    # And RUN it wherever the relay's own dependencies are installed. A list that READS right and is
+    # not the list the sweep consults is exactly the failure this test exists to prevent, and no
+    # amount of source matching can tell the two apart.
+    try:
+        from app.services.nostr_relay import store as relay_store
+    except Exception:                                   # psycopg2 absent — the source check stands
+        relay_store = None
+    if relay_store is not None:
+        assert 30078 in relay_store._NEVER_EXPIRE_KINDS
+        assert not (set(relay_store._NEVER_EXPIRE_KINDS) & set(relay_store._PRUNABLE_KINDS))
 
 
 def test_relays_are_user_definable_with_a_working_default():
