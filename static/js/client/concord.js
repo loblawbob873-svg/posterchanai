@@ -2351,6 +2351,24 @@
       if(gates.length)void Promise.any(gates).catch(e=>{if(chatSubKey===key)console.warn('Concord live room subscription is unconfirmed; leaving it open',e);});
     }catch(e){ chatSubKey='';console.warn('Concord live room subscription failed',e); }
   }
+  /* IS THE CHAT ON SCREEN ANYWHERE? Not the same question as "is the full-page Concord view active".
+   *
+   * On the windowed desktop Concord lives in an OS window, and `body.concord-view` is only set when
+   * it is the active full-page view. The two live-message paths below gated their REPAINT on that
+   * class alone, so in a window the arriving message was decrypted, merged and SAVED — and never
+   * painted. It then appeared the next time anything else rendered, which is why it looked like
+   * "new messages only show up after I send or switch rooms": both of those repaint.
+   *
+   * refreshActiveChannel already knew better and asked foreground-OR-parked; the render gate did
+   * not. Same question, one answer. */
+  function chatOnScreen(){
+    if(document.body.classList.contains('concord-view'))return true;
+    // Read through `window` throughout rather than the bare global: the alias only exists in a
+    // browser document, and this predicate decides whether a message is ever shown.
+    try{ const os=window.PCOS;
+         return !!(os&&os.isOn&&os.isOn()&&os.parkedSlot&&os.parkedSlot('concord')); }
+    catch(_){ return false; }
+  }
   async function flushChatLive(p,key){
     const wraps=chatBuffer;chatBuffer=[];
     if(!wraps.length||chatSubKey!==key)return;
@@ -2372,7 +2390,7 @@
       }
       if(!merged)return;
       const prior=testMessages(storeId);
-      if(JSON.stringify(merged)!==JSON.stringify(prior)){saveTestMessages(storeId,merged);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());}
+      if(JSON.stringify(merged)!==JSON.stringify(prior)){saveTestMessages(storeId,merged);if(chatOnScreen())preserveChatScroll(()=>backgroundRender());}
       return;
     }
     const bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
@@ -2445,7 +2463,7 @@
     // Another live batch or history refresh may have committed while decryption was pending.
     // Merge into the current store after the await, so late completion cannot erase newer arrivals.
     const prior=testMessages(storeId),next=mergeCordTimeline(prior,opened,p,key);
-    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
+    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(chatOnScreen())preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
 
     };
     const task=(pending.get(key)||Promise.resolve()).then(run,run);pending.set(key,task);
