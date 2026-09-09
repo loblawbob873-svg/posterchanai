@@ -1794,6 +1794,27 @@ def main():
             time.sleep(30)
             _write_status(True)
     threading.Thread(target=_heartbeat, name="git-host-status", daemon=True).start()
+
+    # GRASP-01's `refs/nostr/<event-id>` REAPER. "SHOULD delete … if no corresponding git PR event or
+    # git PR update event, with a `c` tag that matches the ref tip, is accepted by relay with 20
+    # minutes." That namespace is an unauthenticated write by design — it is how somebody who is not
+    # a maintainer contributes code — so the sweep is not housekeeping, it is the bound on it.
+    #
+    # It lives HERE and not in the app's schedulers for the reason this whole subprocess exists: it
+    # runs git, and git never runs on the port-3051 event loop. The existing `reap_all` is daily,
+    # which is 72x too slow for a 20-minute rule, and it is in a different process.
+    if _CONFIG.get("nostr_ref_reaper", True):
+        def _reap_nostr():
+            while True:
+                time.sleep(int(_CONFIG.get("nostr_ref_sweep_seconds", 300)))
+                try:
+                    r = ghs.reap_nostr_refs()
+                    if r.get("deleted"):
+                        log.info("[git-host] nostr-ref sweep: %s", r)
+                except Exception as e:                 # a sweeper must never take the server down
+                    log.warning("[git-host] nostr-ref sweep failed: %s", e)
+        threading.Thread(target=_reap_nostr, name="git-host-nostr-reaper", daemon=True).start()
+
     log.info("[git-host] serving smart-HTTP on http://%s:%d (repos: %s)", bind, port, _root)
     try:
         httpd.serve_forever(poll_interval=1.0)

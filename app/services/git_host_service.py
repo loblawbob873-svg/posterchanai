@@ -557,6 +557,106 @@ def maybe_gc(owner_hex: str, repo_id: str, *, force: bool = False) -> bool:
         return False
 
 
+#: GRASP-01: "SHOULD delete and MAY garbage collect these refs if no corresponding git PR event or
+#: git PR update event, with a `c` tag that matches the ref tip, is accepted by relay with 20
+#: minutes." The grace is the spec's number; the sweep interval is ours.
+NOSTR_REF_GRACE_SECONDS = 20 * 60
+
+
+def nostr_refs(owner_hex: str, repo_id: str) -> dict:
+    """{refs/nostr/<event-id>: (sha, age_seconds)} for one repo.
+
+    Age comes from the ref's own committer date, NOT from the file mtime: a `git gc` rewrites
+    packed-refs and would reset every mtime at once, silently granting the whole namespace a fresh
+    20 minutes. `%(creatordate:unix)` is the object's date, which nothing on this side rewrites."""
+    rid = sanitize_repo_id(repo_id)
+    d = repo_dir(owner_hex, rid) if rid else None
+    if not d or not os.path.isdir(d):
+        return {}
+    r = _git(d, "for-each-ref", "--format=%(refname) %(objectname) %(creatordate:unix)",
+             "refs/nostr/", check=False)
+    now = int(time.time())
+    out = {}
+    for line in (r.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        name, sha, when = parts
+        try:
+            age = now - int(when)
+        except ValueError:
+            age = 0
+        out[name] = (sha, max(age, 0))
+    return out
+
+
+def reap_nostr_refs(conn=None, *, grace: int = NOSTR_REF_GRACE_SECONDS) -> dict:
+    """Delete every `refs/nostr/<event-id>` older than `grace` that no PR event claims.
+
+    THE REF IS AN UNAUTHENTICATED WRITE BY DESIGN — that is what makes a pull request possible from
+    somebody who is not a maintainer, and it is also why the namespace needs a sweeper rather than a
+    quota alone. A ref is KEPT when the relay holds a valid kind-1618/1619 with that event id whose
+    `c` tags include the ref's current tip; otherwise, once it is past the grace, it goes.
+
+    FAIL-CLOSED HERE MEANS KEEP, not delete: with no database, no psycopg2 or an unreachable relay we
+    cannot tell an unclaimed ref from a claimed one, and deleting on "I could not ask" would throw
+    away contributors' work every time Postgres blinked. Deletion needs positive evidence of absence,
+    which is the same rule the folder-sync deletion guard and the Blossom store scan already state:
+    "could not ask" is never "missing".
+    """
+    dsn = os.environ.get("GRASP_PG_DSN", "")
+    close_after = False
+    if conn is None:
+        if not dsn:
+            return {"swept": 0, "deleted": 0, "kept": 0, "skipped": "no relay DSN"}
+        try:
+            import psycopg2
+            conn = psycopg2.connect(dsn, connect_timeout=5)
+            conn.autocommit = True
+            close_after = True
+        except Exception as e:
+            logger.info("[git-host] nostr-ref reaper: no relay DB (%s) — keeping every ref", e)
+            return {"swept": 0, "deleted": 0, "kept": 0, "skipped": str(e)}
+    from app.services import git_auth
+    swept = deleted = kept = 0
+    try:
+        for r in list_repos():
+            refs = nostr_refs(r["owner"], r["repo_id"])
+            if not refs:
+                continue
+            stale = {name: v for name, v in refs.items() if v[1] >= grace}
+            if not stale:
+                kept += len(refs)
+                continue
+            ids = [git_auth.nostr_ref_event_id(n) for n in stale]
+            claims = git_auth.load_pr_events_for_tips(conn, [i for i in ids if i])
+            d = repo_dir(r["owner"], r["repo_id"])
+            for name, (sha, _age) in stale.items():
+                swept += 1
+                eid = git_auth.nostr_ref_event_id(name)
+                ev = claims.get(eid)
+                if ev is not None and sha.lower() in git_auth.pr_commit_tips(ev):
+                    kept += 1
+                    continue
+                # `update-ref -d <ref> <sha>` is a compare-and-swap: a contributor who re-pushed the
+                # branch a moment ago keeps it, instead of losing a ref this sweep already decided
+                # about from a stale read.
+                res = _git(d, "update-ref", "-d", name, sha, check=False)
+                if res.returncode == 0:
+                    deleted += 1
+                    logger.info("[git-host] reaped %s in %s/%s (no PR event claims %s)",
+                                name, r["owner"][:12], r["repo_id"], sha[:12])
+    except Exception as e:
+        logger.warning("[git-host] nostr-ref reaper failed (%s) — refs kept", e)
+    finally:
+        if close_after:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return {"swept": swept, "deleted": deleted, "kept": kept}
+
+
 def reap_all(total_cap_gb: float) -> dict:
     """Daily best-effort reaper: gc each repo (rate-limited) and warn if the global cap is exceeded.
     Intentionally does NOT delete data — bounding is per-repo push-time (the hook) + operator action."""

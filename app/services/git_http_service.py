@@ -111,6 +111,13 @@ def _read_config() -> dict:
             # server that does not do this is unusable to every v3 client), with the real protection
             # in `accept_policy` — accepting means allocating disk to a remote party.
             "auto_provision": gb("git_server_auto_provision", True),
+            # The `refs/nostr` sweep (GRASP-01's 20-minute rule). The GRACE is the spec's and is
+            # not configurable; how often we look is ours. 300s means a ref lives 20-25 minutes,
+            # which is inside "SHOULD delete … within 20 minutes" read as a floor on the grace
+            # rather than a ceiling on the sweep — deleting EARLY would throw away a contribution
+            # whose PR event is still in flight.
+            "nostr_ref_reaper": gb("git_server_nostr_ref_reaper", True),
+            "nostr_ref_sweep_seconds": gi("git_server_nostr_ref_sweep_seconds", 300),
             # WHO WE ACCEPT A REPOSITORY FROM. GRASP-01 requires this to be advertised, in prose, as
             # NIP-11 `repo_acceptance_criteria`; keep the two in step (docs/GIT_OVER_NOSTR.md).
             #   local-or-wot  an account on this node, OR a member of this relay's web of trust

@@ -28,6 +28,7 @@ directly with crafted events (see tests/test_git_push_auth.py) — the actual se
 
 import base64
 import json
+import re
 import time
 from urllib.parse import urlparse
 
@@ -40,6 +41,109 @@ ZERO_SHA = "0" * 40
 STATE_KIND = 30618        # NIP-34 repository state (the push-authorization token)
 ANNOUNCE_KIND = 30617     # NIP-34 repository announcement (carries the maintainer ACL)
 NIP98_KIND = 27235        # NIP-98 HTTP auth event
+PR_KINDS = (1618, 1619)   # NIP-34 pull request / pull request update (ngit v3's default contribution)
+
+# GRASP-01: "MUST accept pushes via this service to `refs/nostr/<event-id>`". The suffix is the id of
+# the PR event the branch belongs to, so it is a 64-char lowercase hex event id and nothing else — a
+# loose pattern here would make `refs/nostr/*` a free-form namespace anybody could push anything into.
+_NOSTR_REF_RE = re.compile(r"^refs/nostr/([0-9a-f]{64})$")
+
+
+def nostr_ref_event_id(ref: str):
+    """The event id a `refs/nostr/<event-id>` ref names, or None if this is not such a ref."""
+    m = _NOSTR_REF_RE.match(ref or "")
+    return m.group(1) if m else None
+
+
+def pr_commit_tips(event) -> set:
+    """The commit ids a kind-1618/1619 pull-request event claims, from its `c` tags.
+
+    `c` is ngit v3's spelling (CHANGELOG: "PR events (kind 1618/1619) use `c` tags for commit IDs"),
+    matching NIP-34's ["c", "<current-commit-id>"]."""
+    out = set()
+    for t in (event or {}).get("tags") or []:
+        if isinstance(t, list) and len(t) >= 2 and t[0] == "c":
+            v = str(t[1]).strip().lower()
+            if _is_sha(v):
+                out.add(v)
+    return out
+
+
+def decide_nostr_ref(ref: str, new_sha: str, pr_event) -> tuple:
+    """GRASP-01's OTHER push path: `refs/nostr/<event-id>`, the transport a pull request's code
+    travels over. Pure function; returns (accepted, reason).
+
+    THIS IS DELIBERATELY NOT A BRANCH OF `decide_push_ref`'s 30618 LOGIC, and the separation is the
+    safety argument. The 30618 path is the security crux — a ref may move only to a SHA a maintainer
+    signed — and a PR by definition comes from somebody who is not a maintainer and cannot appear in
+    any signed state. Merging the two would mean loosening the crux; instead this is a second,
+    narrower door into a namespace that is not `refs/heads/*`, cannot be fetched as a branch, and is
+    swept by the reaper.
+
+    The rules, from the spec:
+      - the ref must be exactly `refs/nostr/<64-hex>` (checked by the caller via nostr_ref_event_id);
+      - "SHOULD reject if event exists on relay listing a different tip" — so when the PR event IS
+        here, its `c` tags must include the sha being pushed;
+      - when the event is NOT here yet, ACCEPT. This is not laxity, it is the ordering: ngit pushes
+        the objects and publishes the event around the same moment, and a server that demanded the
+        event first would deadlock against a client that pushes first. The 20-minute reaper is what
+        makes that safe — an unclaimed ref is deleted, so the window is bounded rather than open.
+
+    Deletes are always allowed here: the namespace is disposable by design, and the reaper deletes
+    them anyway."""
+    if new_sha == ZERO_SHA:
+        return True, "%s deleted (refs/nostr is reapable)" % ref
+    if pr_event is None:
+        return True, "%s accepted provisionally (no PR event yet; reaper will sweep it)" % ref
+    if int(pr_event.get("kind", 0)) not in PR_KINDS:
+        return False, "%s: event %s is not a pull request (kind %s)" % (
+            ref, str(pr_event.get("id", ""))[:12], pr_event.get("kind"))
+    tips = pr_commit_tips(pr_event)
+    if not tips:
+        return True, "%s accepted (PR event names no commit)" % ref
+    if new_sha.lower() not in tips:
+        return False, "%s: tip %s is not among the PR event's c tags" % (ref, new_sha[:12])
+    return True, "%s authorized by PR event %s" % (ref, str(pr_event.get("id", ""))[:12])
+
+
+def load_event_by_id(conn, event_id: str):
+    """One event by id, signature re-verified here. Returns the dict or None."""
+    if not isinstance(event_id, str) or len(event_id) != 64:
+        return None
+    with conn.cursor() as cur:
+        cur.execute("SELECT raw FROM events WHERE id = %s LIMIT 1", (event_id,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    try:
+        ev = json.loads(row[0])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(ev, dict) or ev.get("id") != event_id or not verify_event(ev):
+        return None
+    return ev
+
+
+def load_pr_events_for_tips(conn, event_ids) -> dict:
+    """{event_id: event} for the given ids that are valid kind-1618/1619 PR events. One indexed read
+    for the whole set; used by the reaper, which asks about every `refs/nostr/*` ref at once."""
+    ids = [i for i in (event_ids or []) if isinstance(i, str) and len(i) == 64]
+    if not ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute("SELECT raw FROM events WHERE id = ANY(%s) AND kind = ANY(%s)",
+                    (ids, list(PR_KINDS)))
+        rows = cur.fetchall()
+    out = {}
+    for row in rows:
+        try:
+            ev = json.loads(row[0])
+        except (ValueError, TypeError):
+            continue
+        if isinstance(ev, dict) and verify_event(ev):
+            out[ev.get("id")] = ev
+    return out
+
 
 
 # --------------------------------------------------------------------------- helpers
@@ -109,7 +213,8 @@ def select_authorized_state(state_events, maintainers) -> dict | None:
 def decide_push_ref(ref: str, old_sha: str, new_sha: str, maintainers,
                     state_events, *, allow_force: bool = True,
                     is_non_fast_forward: bool = False,
-                    nip98_signer: str | None = None) -> tuple[bool, str]:
+                    nip98_signer: str | None = None,
+                    pr_event: dict | None = None) -> tuple[bool, str]:
     """THE push-authorization decision for a single ref line. Pure function; fail-closed.
 
     Args:
@@ -120,9 +225,19 @@ def decide_push_ref(ref: str, old_sha: str, new_sha: str, maintainers,
       allow_force          if False, a non-fast-forward update is rejected even when signed.
       is_non_fast_forward  computed by the caller (git merge-base --is-ancestor); tests pass directly.
       nip98_signer         a verified NIP-98 maintainer pubkey (convenience/admin path), or None.
+      pr_event             for a `refs/nostr/<id>` ref only: the kind-1618/1619 event with that id if
+                           the relay already holds one, else None. Ignored for every other ref.
 
     Returns (accepted, reason). `accepted=False` MUST cause the caller to exit non-zero.
     """
+    # (-1) GRASP-01's OTHER namespace. `refs/nostr/<event-id>` is how a pull request's CODE reaches
+    # a GRASP server, and by definition it comes from somebody who is not a maintainer, so it can
+    # never appear in a signed 30618 — every such push used to die at step (3) below with
+    # "is not present in the signed 30618 state", which is why contribution did not work here at all.
+    # Routed out FIRST and decided by `decide_nostr_ref`, so the 30618 crux underneath is untouched.
+    if nostr_ref_event_id(ref):
+        return decide_nostr_ref(ref, new_sha, pr_event)
+
     # (0) NIP-98 authenticated-maintainer bypass. A maintainer who signed a fresh NIP-98 header for
     # THIS receive-pack URL is trusted to push arbitrary refs; post-receive derives the 30618 from
     # what actually landed. This is the automation/sync.sh path — still gated on the maintainer ACL.
