@@ -270,8 +270,12 @@ class TheStateRules(unittest.TestCase):
             self.assertNotIn(bad, self.src)
 
     def test_discard_uses_the_shared_non_native_confirmation(self):
+        """Matched on the CALL, not on the sentence.  What the dialog says is measured per file now
+        (`discardPlan`) and the old fixed wording survives only in the comment explaining why it
+        went — a check that greps for it passes against a screen that no longer has it."""
         self.assertIn("ensureAiSession, uiPrompt, uiConfirm } = PC", self.src)
-        self.assertIn("if(!await uiConfirm('Discard every change", self.src)
+        self.assertIn("await uiConfirm(plan.message,{ok:plan.ok,cancel:'Keep it',danger:true})",
+                      self.src)
 
     def test_native_source_control_never_falls_back_to_posterchans_own_repository(self):
         """With no selected folder Electron's process cwd is the application source tree."""
