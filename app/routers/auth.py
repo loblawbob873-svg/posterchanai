@@ -4,6 +4,7 @@ import logging
 import time
 from typing import List
 from datetime import datetime, timedelta
+from sqlalchemy import func
 from fastapi import APIRouter, Depends, HTTPException, status, Response, UploadFile, File, Request
 from starlette.requests import Request as StarletteRequest
 from fastapi.responses import FileResponse
@@ -1144,9 +1145,29 @@ def rrule_to_human(rrule: str) -> str:
 
 @router.get("/reminder-notifications")
 def reminder_notifications(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Delivered reminders survive missed sockets and are private to the authenticated account."""
+    """Delivered reminders survive missed sockets and are private to the authenticated account.
+
+    BOUNDED BY AGE, because this feeds the NOTIFICATIONS panel. Unbounded it returned every
+    delivered reminder ever — reported as a desktop whose notifications filled with calendar
+    reminders from months back, including one from June, the moment history import shipped. A
+    notification list is about what recently happened; a reminder from eight weeks ago is not news,
+    and burying today's items under it is worse than not showing them at all.
+
+    Nothing is lost: `reminder_service.deliver` also persists every reminder into the "⏰ Reminders"
+    conversation, which is the durable history and is not age-bounded.
+    """
     from app.models import Reminder
     from app.services.reminder_service import notification_record
-    rows = (db.query(Reminder).filter(Reminder.user_id == user.id, Reminder.status == "done")
+    days = 7
+    try:
+        from app.services import settings_store
+        days = max(1, min(365, int(settings_store.get("reminder_history_days", 7) or 7)))
+    except Exception:
+        days = 7
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    # delivered_at is the truth; fall back to due_at for rows delivered before it was recorded.
+    rows = (db.query(Reminder)
+            .filter(Reminder.user_id == user.id, Reminder.status == "done",
+                    func.coalesce(Reminder.delivered_at, Reminder.due_at) >= cutoff)
             .order_by(Reminder.delivered_at.desc(), Reminder.id.desc()).limit(200).all())
     return {"items": [notification_record(row) for row in rows]}
