@@ -245,6 +245,43 @@ def test_datastore_docs_survive_a_stray_expiration_tag(store_factory):
     _run(go)
 
 
+def test_the_private_repo_list_survives_a_stray_expiration_tag(store_factory):
+    """Kind 10318 is GRASP-08's private-repository DISCOVERY list (NIP-51): its `g` tags are all
+    private items, each NIP-44-encrypted to the author, naming the relays that person's PRIVATE
+    repositories live on. It is replaceable, so there is exactly one per person — lose it and the
+    owner has no index of where their private repos are, and a private repo is precisely the one
+    nothing else on the network points at.
+
+    Same accidental trigger as 30078, which is why it joins it: NIP-37 recommends stamping
+    `expiration: now + 90 days`, so a client following that convention on a list would take somebody's
+    private repos off the map three months later, from the relay holding the only copy. Both halves
+    are pinned — the tag must not be STORED (a stored expiration hides the event from every read,
+    since the query builder filters on `expiration > now`) and the sweep must not delete one.
+    """
+    async def go(loop):
+        store = store_factory(loop, retention_days=0)
+        soon = int(time.time()) + 1
+        # Replaceable (10000-19999) → same pubkey+kind collapses to one, so distinct authors.
+        await store.add_events_bulk(
+            [_ev(i, kind=10318, expiration=soon, pubkey=f"{i:064x}") for i in range(1, 6)]
+            + [_ev(i, kind=1, expiration=soon) for i in range(100, 110)])
+        assert await store.count() == 15, "all 15 must be stored while still unexpired"
+
+        await asyncio.sleep(1.6)
+        # A read of 0 here would mean the tag WAS stored and is hiding the lists — intact on disk
+        # and invisible, which reads as corruption rather than policy.
+        assert len(await store.query([{"kinds": [10318], "limit": 50}])) == 5
+
+        preview = await store.prune_preview()
+        removed = await store.prune(chunk=3)
+
+        assert preview["expired"] == removed == 10, "only the kind-1 notes may expire"
+        assert await store.count() == 5, "every private-repo list survives its expiration tag"
+        assert len(await store.query([{"kinds": [10318], "limit": 50}])) == 5
+
+    _run(go)
+
+
 def test_the_password_vault_survives_every_cleaner(store_factory):
     """A password is the least reconstructable thing this relay holds.
 

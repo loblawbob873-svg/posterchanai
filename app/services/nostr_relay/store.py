@@ -270,7 +270,18 @@ _PRUNABLE_SQL = ("(kind IN (%s) AND NOT (kind = 1111 AND id IN "
 # than by attack: NIP-37 (Draft Events) recommends stamping `expiration: now + 90 days`, so a note
 # written or touched by any other client following that convention would quietly disappear 90 days
 # later, from the relay that holds the only copy. Kept regardless, at ingest and in the sweep.
-_NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078,)
+# GRASP-08 private-repository DISCOVERY list (NIP-51, kind 10318). Its `g` tags are ALL private
+# items — each a JSON array NIP-44-encrypted to the list's author — naming the relays a user's
+# private repositories live on. It is REPLACEABLE, so there is exactly one per person and the newest
+# wins: lose it and the owner has no index of where their private repos ARE. That is the same class
+# of loss as 30078 (this app's own datastore) and it is why 30078 is in this tuple, with the same
+# accidental trigger — NIP-37 recommends stamping `expiration: now + 90 days`, so any client
+# following that convention on a list would take somebody's private repos off the map three months
+# later, from the relay holding the only copy. It is already outside _PRUNABLE_KINDS (every prune
+# rule in this file is gated on _PRUNABLE_SQL or _RETIRED_SQL, so no cleaner can reach it); this
+# closes the one path that could.
+_GRASP_PRIVATE_LIST_KIND = 10318
+_NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078, _GRASP_PRIVATE_LIST_KIND)
 assert not (set(_NEVER_EXPIRE_KINDS) & set(_PRUNABLE_KINDS)), "never-expire kinds must never be prunable"
 
 # The retired rule is the ONLY rule in this file that deletes by kind alone — no age, no origin, no

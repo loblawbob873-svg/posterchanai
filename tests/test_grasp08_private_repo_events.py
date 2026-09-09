@@ -100,3 +100,35 @@ def test_nip78_privacy_still_works():
     assert s._can_serve_event(conn, {"kind": 30078, "pubkey": OWNER, "tags": []}) is False
     s2, c2 = server_with([OWNER])
     assert s2._can_serve_event(c2, {"kind": 30078, "pubkey": OWNER, "tags": []}) is True
+
+
+# --------------------------------------------------------------------------------------------
+# GRASP-08 DISCOVERY: kind 10318, the private-repository list.
+#
+# A NIP-51 list whose `g` tags are ALL private items — each a JSON array NIP-44-encrypted to the
+# author — naming the relays that person's PRIVATE repositories live on. Replaceable, so there is
+# exactly one per person and the newest wins. It is the answer to the one thing our own model of
+# private repos (never announce them at all) does not give you: discoverability. Losing it orphans
+# every private repo its owner has, and a private repo is exactly the one nothing else on the
+# network points at.
+#
+# tests/test_relay_prune.py::test_the_private_repo_list_survives_a_stray_expiration_tag drives the
+# real store. These two are the cheap invariants that run with no Postgres, so a refactor of the
+# kind tuples can never quietly drop it.
+
+def test_kind_10318_can_never_be_deleted_by_an_expiration_tag():
+    """NIP-37 recommends stamping `expiration: now + 90 days`; a client following that convention on
+    a list would take somebody's private repos off the map three months later."""
+    from app.services.nostr_relay import store
+    assert 10318 in store._NEVER_EXPIRE_KINDS
+
+
+def test_kind_10318_is_reachable_by_no_cleaner():
+    """Every prune rule in store.py is gated on _PRUNABLE_SQL or _RETIRED_SQL — including the paid
+    tier, the only thing here that can delete an origin='direct' event. Being outside both tuples is
+    what keeps the list safe from all of them at once."""
+    from app.services.nostr_relay import store
+    assert 10318 not in store._PRUNABLE_KINDS
+    assert 10318 not in store._RETIRED_KINDS
+    assert store.retired_kind_reason(10318) is None, "a retired kind is refused at ingest"
+    assert store._REPLACEABLE(10318), "10318 is a NIP-51 replaceable list — newest wins, one per author"
