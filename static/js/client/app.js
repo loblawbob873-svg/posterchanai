@@ -7249,6 +7249,7 @@
   }
 
   function switchView(v, quiet){
+    if(typeof openEmojiPopover==='function' && openEmojiPopover.closeActive)openEmojiPopover.closeActive();
     /* Leaving the screen stops the narration. The chip is fixed to the viewport, so without this it
        outlives the post it belongs to and offers to stop something the reader can no longer see. */
     try{ if(typeof stopNarration === 'function') stopNarration(); }catch(_){}
@@ -14751,6 +14752,7 @@
     window.addEventListener('resize', ()=>{ if(box) place(); });
   }
   function openEmojiPopover(anchorBtn, onPick, opts){
+    if(openEmojiPopover.closeActive)openEmojiPopover.closeActive();
     opts=opts||{};
     document.querySelectorAll('.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack pickers
     const pop=document.createElement('div'); pop.className='emoji-pop';
@@ -14799,7 +14801,12 @@
       out.push(chip('std','Emoji','😀'));
       packs.forEach(p=>out.push(chip(p, p==='_'?'Custom':p, '', (first[p]||{}).t)));
       tabs.innerHTML=out.join('');
-      $$('.ep-tab',pop).forEach(b=> b.onmousedown=ev=>{ ev.preventDefault(); _setTab(b.dataset.tab); });
+      $$('.ep-tab',pop).forEach(b=>{
+        // Finish the pointer gesture before resizing/reanchoring the grid. Moving on mousedown
+        // can retarget mouseup/click to the page, where the outside-click handler closes us.
+        b.onmousedown=ev=>ev.preventDefault();
+        b.onclick=()=>_setTab(b.dataset.tab);
+      });
     };
     document.documentElement.appendChild(pop);   // <html>, not <body>: body has zoom:.85 on desktop,
     _placePop(pop, anchorBtn, opts);                    // which throws off fixed-position math for a body child
@@ -14813,17 +14820,21 @@
     const _prevFocus = document.activeElement;
     pop.tabIndex = -1;
     try{ pop.focus({preventScroll:true}); }catch(_){ }
+    let closed=false,armTimer;
     const close=()=>{
+      if(closed)return;closed=true;clearTimeout(armTimer);
+      if(openEmojiPopover.closeActive===close)openEmojiPopover.closeActive=null;
       // Hand focus back where it came from, so opening a menu mid-sentence does not cost you the caret.
       // Only when the popover still owns it — an item's action may have moved focus deliberately.
       const mine = pop.contains(document.activeElement) || document.activeElement===document.body;
       _detachKeys(); pop.remove(); document.querySelectorAll('.pop-backdrop').forEach(b=>b.remove()); document.removeEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.removeEventListener('scroll',close); document.removeEventListener('scroll',onScroll,true); window.removeEventListener('resize',close);
       if(mine && _prevFocus && _prevFocus.isConnected){ try{ _prevFocus.focus({preventScroll:true}); }catch(_){ } }
     };
+    openEmojiPopover.closeActive=close;
     const onScroll=e=>{ if(!pop.contains(e.target)) close(); };
     if(opts.anchored){ document.addEventListener('scroll',onScroll,true); window.addEventListener('resize',close); }
     const onDoc=e=>{ if(!pop.contains(e.target) && !(anchorBtn && anchorBtn.contains(e.target))) close(); };
-    setTimeout(()=>{ document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
+    armTimer=setTimeout(()=>{ if(closed)return;document.addEventListener('click',onDoc,true); const f=$('#feed'); if(f) f.addEventListener('scroll',close,{once:true}); },0);
     // mousedown + preventDefault keeps the textarea focused so insert-at-cursor works. Buttons arrive
     // in chunks, so wiring is per-button and idempotent rather than one pass over the grid.
     function _wire(){
@@ -14874,6 +14885,7 @@
   // Generic "☰ more" popover anchored under a button. items = [action, label, optional css class];
   // onPick(action) fires after the menu closes. Shared by the post menu and the profile menu.
   function openMenuPopover(anchorBtn, items, onPick){
+    if(typeof openEmojiPopover==='function' && openEmojiPopover.closeActive)openEmojiPopover.closeActive();
     document.querySelectorAll('.menu-pop,.emoji-pop,.pop-backdrop').forEach(p=>p.remove());   // never stack popovers
     const pop=document.createElement('div'); pop.className='menu-pop';
     /* AN ITEM MAY BE A <label>, AND THAT IS WHAT KEEPS A FILE PICKER WORKING FROM A MENU.
@@ -34174,6 +34186,7 @@
     // A stray/empty id (e.g. a click that leaked from a closing modal backdrop, or a malformed
     // route) must NOT navigate to a thread and flash "Post not found on the relay" — just no-op.
     if(!id || typeof id!=='string' || id.length<10){ return; }
+    if(typeof openEmojiPopover==='function' && openEmojiPopover.closeActive)openEmojiPopover.closeActive();
     const hints=(relays||[]).filter(u=>/^wss?:\/\//i.test(u));
     // PosterChan OS: a post opens in its own window rather than replacing the timeline behind it.
     // The window's render callback re-enters here with the guard set, so the navigation and the
