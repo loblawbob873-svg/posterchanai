@@ -57,6 +57,7 @@ def _func(name: str) -> str:
 STUBS = """
 const REPLY_ICON='<i r>', RT_ICON='<i t>', QUOTE_ICON='<i q>', REACT_ICON='<i k>', ZAP_ICON='<i z>';
 const LOGO='/logo.png';
+const ME={pubkey:'viewer'},_repostReceiptMemo=new Map(),localStorage={getItem:()=>null};
 const BOOKMARKS = new Set();
 const enc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmtSats = (n) => String(n);
@@ -83,7 +84,7 @@ def _node(script):
 
 
 def _render(fn_name):
-    src = STUBS + _func("actsRow") + "\n" + _func("webxdcFileCard") + "\n"
+    src = STUBS + _func("_repostUndoReceipt") + "\n" + _func("_repostActionTitle") + "\n" + _func("actsRow") + "\n" + _func("webxdcFileCard") + "\n"
     return _node(src + f"""
       const ev = {{ id:'e1', pubkey:'pk1', kind:1063, created_at:1, content:'a game',
                    tags:[['m','application/x-webxdc'],['url','https://h/a.xdc'],['webxdc','g1']] }};
