@@ -1052,10 +1052,62 @@ async def persist_progress(request, auth, db, record, body):
                      'POST', {'position': position})
 
 
+async def revive_play(request, auth, db, body):
+    """Rebuild JUST ENOUGH of a lost play session to keep recording progress.
+
+    `_plays` is in-memory, so restarting the app invalidates every session a client is in the middle
+    of — and the client is a REAL JELLYFIN APP on a TV or a phone, which we do not ship and cannot
+    patch. It goes on reporting the PlaySessionId it was given, gets 404 'Playback session expired'
+    every few seconds for ever, and the person watching has to stop and reopen the item. Reported
+    exactly that way, after a backend restart: "it does not recover on its own".
+
+    The ACL IS RE-CHECKED, not assumed. `resolve` reads the live library list for THIS token, so a
+    revived session can only ever name an item this viewer may actually watch — reviving must not
+    become a way to report progress against somebody else's library by guessing an ItemId.
+
+    Only the two fields progress needs are restored. A revived record carries no stream `url`, so it
+    is marked `revived` and never pretends to own a transcode ticket it cannot have.
+    """
+    # ONLY A SESSION WE COULD HAVE ISSUED, AND ONLY ONE THE CLIENT NAMED.
+    #
+    # Two refusals in this file are deliberate and must survive: an explicitly-named session that
+    # does not exist is 404 (a Roku sending `PlaySessionId: 'wrong'`), and an ItemId-only report is
+    # 404 when it is AMBIGUOUS between two plays of the same item. Reviving on either would turn a
+    # refusal into a success — so revival needs the client to have named an id, and that id has to
+    # have the shape of one we mint (`secrets.token_hex(16)`). A malformed or foreign id is not a
+    # session we forgot; it is a session we never had.
+    play_id = str(body_value(body, 'PlaySessionId', ''))
+    if not re.fullmatch(r'[0-9a-f]{32}', play_id):
+        return None
+    uid = str(body_value(body, 'ItemId', '')).replace('-', '').lower()
+    if not uid:
+        return None
+    try:
+        lib, item = await resolve(request, auth, db, uid)
+    except HTTPException:
+        return None
+    if not lib or not item or item.get('_folder'):
+        return None
+    return {'token': digest(auth.token), 'item': uid, 'url': '', 'seen': time.monotonic(),
+            'library_id': lib['id'], 'native_id': item['id'], 'revived': True}
+
+
 @router.post('/Sessions/Playing', status_code=204)
 @router.post('/Sessions/Playing/Progress', status_code=204)
 async def progress(request: Request, body: dict = Body(default={}), auth=Depends(authenticate), db=Depends(get_db)):
-    _, record = reported_play(auth, body)
+    try:
+        play_id, record = reported_play(auth, body)
+    except HTTPException as expired:
+        if expired.status_code != 404:
+            raise
+        record = await revive_play(request, auth, db, body)
+        if not record:
+            raise
+        # Keep it under the id the client is already using, so its next report is an ordinary hit.
+        play_id = str(body_value(body, 'PlaySessionId', ''))
+        _plays[play_id] = record
+        while len(_plays) > 256:
+            _plays.popitem(last=False)
     await persist_progress(request, auth, db, record, body)
     return Response(status_code=204)
 
@@ -1064,8 +1116,12 @@ async def progress(request: Request, body: dict = Body(default={}), auth=Depends
 async def stopped(request: Request, body: dict = Body(default={}), auth=Depends(authenticate), db=Depends(get_db)):
     play_id, record = reported_play(auth, body)
     await persist_progress(request, auth, db, record, body)
-    ticket = parse_qs(urlsplit(record['url']).query)['ticket'][0]
-    await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
+    # A REVIVED session owns no ticket: the transcode it belonged to died with the process that held
+    # it. Stopping is still a success — the position is saved and the id is dropped — and treating a
+    # missing ticket as an error would put the 404 back on the one report that ends cleanly.
+    ticket = parse_qs(urlsplit(record.get('url') or '').query).get('ticket', [''])[0]
+    if ticket:
+        await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
     _plays.pop(play_id, None)
     return Response(status_code=204)
 

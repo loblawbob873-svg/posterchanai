@@ -1279,3 +1279,98 @@ def test_profile_lookup_outage_is_retryable_for_tv_socket(api):
         with api.client.websocket_connect('/jellyfin/socket?api_key=' + login['AccessToken']):
             pass
     assert closed.value.code == 1013
+
+
+def test_a_backend_restart_does_not_strand_a_playing_client(api):
+    """`_plays` is in memory, so restarting the app invalidates every session mid-playback.
+
+    The client here is a REAL Jellyfin app on a TV or a phone — not something we ship and not
+    something we can patch — so it keeps reporting the PlaySessionId it was handed and takes
+    404 'Playback session expired' for ever. Reported after a restart of mine, as exactly that:
+    the video sat there and "it does not recover on its own"; the person had to stop and reopen it.
+
+    Clearing `_plays` IS the restart: nothing else in that dict survives the process.
+    """
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    play_id = info['PlaySessionId']
+    body = {'PlaySessionId': play_id, 'ItemId': item['Id'], 'PositionTicks': 60000000}
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
+
+    jf._plays.clear()                                    # ← the restart
+
+    body['PositionTicks'] = 90000000
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204, \
+        'a client mid-playback is stranded until somebody restarts the video by hand'
+    # …and the position it reported after the restart is the one that was actually saved.
+    assert c.get('/jellyfin/Items/' + item['Id'], headers=h).json()['UserData'][
+        'PlaybackPositionTicks'] == 90000000
+    # The revived session is a real one from here on: it answers under the same id.
+    body['PositionTicks'] = 100000000
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
+
+
+def test_a_revived_session_still_stops_cleanly(api):
+    """A revived record owns no transcode ticket — that died with the process. Stopping must still
+    save the position and succeed, or the ONE report that ends a viewing is the one that 404s."""
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    body = {'PlaySessionId': info['PlaySessionId'], 'ItemId': item['Id'], 'PositionTicks': 60000000}
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
+    jf._plays.clear()
+    body['PositionTicks'] = 90000000
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 204
+    assert c.post('/jellyfin/Sessions/Playing/Stopped', headers=h, json=body).status_code == 204
+    assert c.get('/jellyfin/Items/' + item['Id'], headers=h).json()['UserData'][
+        'PlaybackPositionTicks'] == 90000000
+
+
+def test_reviving_re_checks_the_library_acl(api):
+    """The dangerous shape of this fix: reviving from a client-supplied ItemId is a way to write
+    progress against an item by GUESSING its id. `resolve` reads the live library list for this
+    token, so a viewer whose access was revoked cannot revive anything — and neither can anyone
+    naming an item that is not theirs."""
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    jf._plays.clear()
+    jf._locators.clear()
+    api.catalog['library:' + api.library['id']]['shared_with'] = []       # access revoked
+    body = {'PlaySessionId': info['PlaySessionId'], 'ItemId': item['Id'], 'PositionTicks': 90000000}
+    assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 404
+
+
+def test_a_session_id_we_never_issued_is_not_revived(api):
+    """The other half of the Roku contract, and the one my first revival broke.
+
+    An explicitly-named session that does not exist must stay 404, and an ItemId-only report that is
+    AMBIGUOUS must stay 404. Reviving on either turns a deliberate refusal into a success — so
+    revival requires the client to have named an id, and that id must have the shape of one we mint.
+    A malformed or foreign id is not a session we forgot; it is one we never had.
+    """
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    jf._plays.clear()
+    for junk in ('wrong', 'WRONG', 'g' * 32, 'f' * 31, 'f' * 33, ''):
+        body = {'ItemId': item['Id'], 'PlaySessionId': junk, 'PositionTicks': 90000000}
+        assert c.post('/jellyfin/Sessions/Playing', headers=h, json=body).status_code == 404, junk
+        assert jf._plays == {}, junk
+
+
+def test_an_unknown_item_cannot_conjure_a_session(api):
+    login = connect(api)
+    item, info = playable(api, login)
+    c, h = api.client, headers(login)
+    jf._plays.clear()
+    # 'f'*32 has the SHAPE of one of our ids and a bogus ItemId; the others are refused earlier,
+    # by the id shape itself — which is what keeps the Roku "explicitly invalid session" contract.
+    for bogus in ('', 'f' * 32, 'not-an-id'):
+        body = {'PlaySessionId': info['PlaySessionId'], 'ItemId': bogus, 'PositionTicks': 90000000}
+        assert c.post('/jellyfin/Sessions/Playing/Progress', headers=h, json=body).status_code == 404, bogus
+        # And NOTHING was created. Asserting only the 404 let a version that trusted the id pass,
+        # because the write failed further downstream — a session had still been minted from a
+        # guess, which is the thing worth refusing.
+        assert jf._plays == {}, bogus
