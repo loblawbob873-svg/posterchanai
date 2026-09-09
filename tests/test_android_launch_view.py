@@ -41,6 +41,13 @@ public class Harness {
         else System.out.println("ok   " + what);
     }
 
+    /** A refused delivery must leave a genuinely parked request alone. */
+    static boolean parkedSurvives(long t) {
+        LaunchView.request("mail", t);
+        LaunchView.deliver("", 0, false, t);
+        return "mail".equals(LaunchView.take(t + 1));
+    }
+
     public static void main(String[] a) {
         long t = 1_000_000_000L;
 
@@ -95,6 +102,46 @@ public class Harness {
         LaunchView.request("mail", t);
         ok("waiting() sees a fresh request", LaunchView.waiting(t + 1));
         ok("waiting() left it alone", "mail".equals(LaunchView.take(t + 2)));
+
+        /* A NOTIFICATION'S ROUTE IS FRESH WHEN ANDROID DELIVERS IT, not when it was built.
+         *
+         * A tile parks its own request a moment before starting the app; a notification cannot,
+         * because its PendingIntent is assembled when the notification is POSTED and tapped
+         * whenever the person gets round to it. `EXTRA_VIEW_AT` therefore carries the posting time,
+         * and consumeLaunchView — rightly — drops an extra older than MAX_AGE_MS. Together those
+         * two facts deleted the deep link of every notification not tapped inside the first minute:
+         * "clicking a DM notification does not bring me to the DM screen". `deliver` re-stamps it
+         * at the moment of delivery, and refuses the two shapes that are a REPLAY rather than a
+         * press. */
+        LaunchView.clear();
+        ok("a delivered view is parked however old its own stamp is",
+           LaunchView.deliver("messages", 0, false, t)
+           && "messages".equals(LaunchView.take(t + 1)));
+
+        LaunchView.clear();
+        ok("a resume from Recents is not a press",
+           !LaunchView.deliver("messages", LaunchView.FROM_HISTORY, false, t)
+           && "".equals(LaunchView.take(t + 1)));
+
+        LaunchView.clear();
+        ok("a recreate (rotation, WebView recovery) is not a press",
+           !LaunchView.deliver("messages", 0, true, t)
+           && "".equals(LaunchView.take(t + 1)));
+
+        LaunchView.clear();
+        ok("no view is not a delivery", !LaunchView.deliver("", 0, false, t));
+        ok("...and it does not clear what a tile just parked",
+           parkedSurvives(t));
+
+        LaunchView.clear();
+        ok("a null view is not a delivery", !LaunchView.deliver(null, 0, false, t));
+
+        // Other launcher flags travel with a real press and must not be mistaken for the history
+        // flag: NEW_TASK|SINGLE_TOP is what both intent builders set.
+        LaunchView.clear();
+        ok("ordinary launch flags still deliver",
+           LaunchView.deliver("notes", 0x10000000 | 0x20000000, false, t)
+           && "notes".equals(LaunchView.take(t + 1)));
 
         System.out.println(failed == 0 ? "ALL OK" : (failed + " FAILED"));
         if (failed != 0) System.exit(1);
@@ -202,6 +249,7 @@ class TheLaunchIsNotDressedAsALauncherPress(unittest.TestCase):
                 self.assertIn("LaunchView.request(", src,
                               "%s starts the app without parking which view it wants" % p.name)
 
+
     def test_the_request_is_parked_before_the_start(self):
         """On a fast device the target resumes and reads before the caller's next line."""
         for p, fn in self.PATHS:
@@ -218,6 +266,39 @@ class TheLaunchIsNotDressedAsALauncherPress(unittest.TestCase):
                 self.assertIn("EXTRA_VIEW", block,
                               "%s dropped the intent extra — a COLD start has no process to have "
                               "parked anything" % p.name)
+
+
+class ANotificationsRouteIsStampedWhenItIsDelivered(unittest.TestCase):
+    """The third carrier, and the one a NOTIFICATION depends on.
+
+    A tile parks its own request before starting the app. A notification cannot: its PendingIntent
+    is built when the notification is POSTED and tapped whenever the person gets round to it, so its
+    `EXTRA_VIEW_AT` is the posting time — and `consumeLaunchView` drops an extra older than a
+    minute, which is every notification anybody leaves in the shade. Both entry points into
+    MainActivity must therefore re-park what they were handed, stamped at delivery.
+    """
+
+    main = (JAVA / "MainActivity.java").read_text()
+
+    def test_a_cold_start_parks_what_it_was_launched_with(self):
+        body = method(strip_comments(self.main), "public void onCreate")
+        self.assertIn("LaunchView.deliver(", body,
+                      "a cold notification tap loses its route to the staleness rule")
+
+    def test_a_warm_start_parks_it_too(self):
+        """The announcement is the fast path; a page still booting has no listener for it yet."""
+        body = method(strip_comments(self.main), "public void onNewIntent")
+        self.assertIn("LaunchView.deliver(", body)
+
+    def test_the_cold_path_refuses_a_recreate(self):
+        """Rotation and the render-process recovery re-run onCreate against the ORIGINAL intent."""
+        body = method(strip_comments(self.main), "public void onCreate")
+        self.assertIn("savedInstanceState != null", body)
+
+    def test_the_notification_still_carries_the_extra_as_well(self):
+        """Two carriers, disjoint halves — do not let the fix quietly delete the other one."""
+        push = (JAVA / "push/PushEventService.java").read_text()
+        self.assertIn("HomeActivity.EXTRA_VIEW", push)
 
 
 class ThePluginReadsBoth(unittest.TestCase):

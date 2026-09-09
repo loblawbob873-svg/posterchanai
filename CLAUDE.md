@@ -522,6 +522,65 @@ would have handled it fine).
   **JSON-encoded string** whose items carry `file: "/v1/audio?path=..."`. Deployed: BOTH nas.lan
   (RTX 3060, CUDA) and the Arc (server1, A770 XPU) generate music in-process (measured on the Arc:
   load 6.9s, a 12s song in 14.3s, unload reclaims 100% of the 6.5GB).
+- **Android notifications: WHERE A TAP LANDS, HOW MANY CARDS THERE ARE, AND WHO IS FILTERED**
+  (`app/services/nostr_push_service.py` + `mobile/android/.../push/` + `_dmNotify`/`mirrorPushPrefs`
+  in `app.js`). Four reports, one payload, and every one of them silent.
+  **`view` IS THE TAP TARGET.** `PushEventService.deliver` derives its deep link from `eid`
+  (→ `post:<id>`) or `view` (→ a screen) and falls back to `"notifications"`. A DM push had NEITHER —
+  a gift wrap has no post to open — so **every DM notification this node ever sent opened
+  Notifications**, which is a real screen, so nothing looked broken. The PWA was always right
+  (`sw.js` maps `type==='dm'` → messages); only the native path lost it.
+  **A NOTIFICATION'S ROUTE USED TO EXPIRE IN THE SHADE, for every route.** `openIntent` stamps
+  `EXTRA_VIEW_AT` when the notification is BUILT, and `HomePlugin.consumeLaunchView` drops an extra
+  older than `LaunchView.MAX_AGE_MS` (60s) — rightly, since a stale extra restored with the task must
+  not yank somebody back to yesterday's screen. So a notification tapped after the first minute lost
+  its deep link on a COLD start, while a WARM tap kept working (`onNewIntent` hands the view straight
+  to the page and never reads the stamp) — "it works sometimes". `LaunchView.deliver(view, flags,
+  recreated, now)` re-parks at the moment of DELIVERY and refuses the only two replay shapes:
+  `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY` (Recents) and a non-null `savedInstanceState` (rotation, the
+  render-process recovery). Called from **both** `MainActivity.onCreate` and `onNewIntent`.
+  **ONE DM, ONE CARD, VIA A SHARED IDENTITY — never by deleting one of them.** Android keys a
+  notification on **(tag, id)**: the server push posted under the default `"msg"` and the client's
+  decrypted "Alice sent you a DM" under `"pc-dm"`, so they stacked. They are the same event at two
+  stages of knowledge (the server CANNOT decrypt a gift wrap, the client can), and both are needed —
+  the push is the only copy that reaches a closed phone, the client's is the only one that names the
+  sender. So the push now carries `tag: "pc-dm"` and `deliver` prefers an explicit tag over the eid,
+  which makes the named one REPLACE the blind one. The other ordering (client first) is
+  `push/ClientNotified.java`: the client's own DM notification records a timestamp and `deliver`
+  drops a generic `dm` push inside a 45s window. **It fails OPEN** — a phone whose WebView never ran
+  writes no record, so the push shows. A duplicate guard that ends up suppressing the only copy is
+  the failure this repo keeps re-learning.
+  **BOTH PUSH FILTERS FAIL OPEN BY DESIGN (`push_prefs.py` argues it at length), so "likes when I
+  only selected DMs" is never a wrong decision — it is that neither filter was TOLD.** Two causes:
+  (1) `mirrorPushPrefs` parsed the endpoint and required `direct:<x>:<id>`, while
+  `PushPlugin.getEndpoint` has always answered `"pcdirect:" + deviceId` — so `device_id` was never
+  set, the "never fall back to all my devices" guard returned before the POST, and every phone's
+  `PushSubscription.prefs` stayed **NULL** (measured: zero POSTs, ever). It reads `getEndpoint()
+  .deviceId` now, which cannot drift with a string format. (2) The phone-local copy
+  (`DirectPushStore`) was written from INSIDE `mirrorPushPrefs`, after its early returns and behind
+  the same `pushState()==='on'`/`!_standalone()` preconditions as the server call it exists to back
+  up — **a backstop that shares the failure mode of the thing it backs up is not a backstop.** It is
+  `_pushPrefsToDevice()` now, called straight from `setPushPreference`. `_resendPushPrefsOnce` (in
+  `hydrateUser`) repairs installs whose row is already NULL, guarded by a stored mark so it costs one
+  signature and not one per boot. **Never make either filter fail CLOSED.**
+  **THE COVERAGE HOLE THAT LET ALL OF IT THROUGH sat on both sides of one seam.**
+  `AppViewsLaunchSmokeTest` opens every view by calling `__PC.switchView(view)` in JS;
+  `test_android_launch_view.py::test_the_catalogue_matches_the_sidebar` is a NAME check; the launcher
+  device test walks ONE tile and it is Texts, a native Activity. Nothing crossed tile → intent →
+  LaunchView → HomePlugin → client → painted screen. `tests/client/
+  test_every_launcher_tile_lands_on_its_screen.py` now drives EVERY tile in the shipped `HomeTiles`
+  catalogue (never a copied list) cold and warm through the shipped `phoneshell.js`, plus a javac run
+  of `LaunchView` per tile; `LauncherTileLandsOnItsScreenDeviceTest` does the whole chain with real
+  intents and a real renderer on the emulator.
+  **And the launcher report was NOT a routing bug** — measured, the tile does reach
+  `switchView('messages')`. The screen opened and stayed EMPTY: `ensureDMs` was the last
+  entry-querying view with no `await Relay.ready()`, and a tile lands the instant `pc-app-ready`
+  fires, which app.js dispatches in the same turn as `connectRelays()`. The history REQ went into a
+  CONNECTING socket, `_dmLoaded` latched true, and the 60s watcher (`if(!_dmLoaded)`) never retried.
+  The LIVE subscriptions stay ungated on purpose — they re-arm on connect, and gating them would
+  trade an empty list for a silent one.
+  `tests/test_dm_notification_is_one_and_lands_on_messages.py`,
+  `tests/client/dm_history_waits_for_a_socket_runtime.mjs`, `tests/client/push_prefs_runtime.mjs`.
 - **Music player: the APK's media controls + home-screen widget**
   (`mobile/android/.../music/` = `MusicService` + `MusicPlugin` + `MusicWidget`; JS in `app.js`'s
   `MusicPlayer._nativeInit/_nativePush`): lock screen, notification shade, headset/car buttons and a

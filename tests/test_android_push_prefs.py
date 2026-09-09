@@ -125,7 +125,29 @@ def test_the_phone_can_be_told_the_preferences_at_all():
     assert "public void setPrefs(PluginCall call)" in PLUGIN
     assert "DirectPushStore.setTypePrefs(getContext()" in PLUGIN
     app = (ROOT / "static/js/client/app.js").read_text()
+    assert "setPrefs({prefs:" in app, "the client never sends them to the phone"
+    # It still happens on the server-mirror path too, so a device that registered without ever
+    # touching a toggle is told as well.
     fn = app[app.index("  async function mirrorPushPrefs("):app.index("  function notificationPreference(")]
-    assert "setPrefs({prefs:" in fn, "the client never sends them to the phone"
-    # And it happens on the SAME path as the server mirror, so the two cannot drift apart.
-    assert fn.index("setPrefs({prefs:") < fn.index("fetch('/api/push/prefs'")
+    assert "_pushPrefsToDevice(" in fn
+    assert fn.index("_pushPrefsToDevice(") < fn.index("fetch('/api/push/prefs'")
+
+
+def test_the_phones_copy_does_not_share_the_server_mirrors_failure_mode():
+    """A backstop written inside the thing it backs up is not a backstop.
+
+    The native copy used to be written from INSIDE `mirrorPushPrefs`, after that function's early
+    returns and behind the same `pushState()==='on'` / `!_standalone()` preconditions as the server
+    call. Any of those returning early left the phone storing nothing, and `DirectPushStore` then
+    failed open on every type — "getting push notifications for likes when I only have DMs
+    selected". The write must be reachable from the toggle on its own.
+    """
+    app = (ROOT / "static/js/client/app.js").read_text()
+    setter = app[app.index("  function setPushPreference("):app.index("  /* THE PHONE'S OWN COPY")]
+    assert "_pushPrefsToDevice(" in setter, \
+        "changing a preference does not write the phone's own copy"
+    writer = app[app.index("  async function _pushPrefsToDevice("):]
+    writer = writer[:writer.index("\n  }\n") + 4]
+    for gate in ("pushState()", "_standalone()", "/api/push/prefs"):
+        assert gate not in writer, \
+            "the device copy is gated on %s — the same precondition it exists to survive" % gate

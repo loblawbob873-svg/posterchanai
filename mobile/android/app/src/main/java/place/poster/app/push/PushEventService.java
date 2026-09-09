@@ -49,7 +49,13 @@ public final class PushEventService {
             body = j.optString("body", body);
             type = j.optString("type", "");
             String eid = j.optString("eid", "").trim();
-            eventTag = !eid.isEmpty() ? "nostr-" + eid : null;
+            /* AN EXPLICIT TAG WINS OVER THE EVENT ID, because some notifications deliberately share
+             * an identity with one the CLIENT raises. A DM push sends `pc-dm` — the tag the client's
+             * own decrypted "Alice sent you a DM" carries — so the named notification REPLACES the
+             * blind "Someone sent you a message" instead of landing beside it. A gift wrap has no
+             * `eid` to key on anyway, which is why every DM used to post under the shared "msg". */
+            String want = j.optString("tag", "").trim();
+            eventTag = !want.isEmpty() ? want : (!eid.isEmpty() ? "nostr-" + eid : null);
             route = !eid.isEmpty() ? "post:" + eid : j.optString("view", route).trim();
         } catch (Throwable ignored) {
             // A payload we cannot parse is still a signal that SOMETHING happened; showing the
@@ -69,6 +75,14 @@ public final class PushEventService {
              * acknowledged rather than retried forever.
              */
             if (!DirectPushStore.allowsType(ctx, type)) return true;
+            /* THE CLIENT ALREADY SAID IT, BETTER. This push cannot decrypt a gift wrap, so it says
+             * "Someone"; a running client can, and says who. Two notifications for one message.
+             * A live client that has just drawn its own is recorded in ClientNotified, and that
+             * window is the only thing that can suppress this — no record means SHOW, because a
+             * phone whose WebView is not running is exactly the phone this push exists for.
+             * Returns TRUE: handled, not dropped, so a durable delivery is acknowledged rather
+             * than retried for ever. */
+            if ("dm".equals(type) && ClientNotified.recentlyDm(System.currentTimeMillis())) return true;
             show(ctx, title, body, type, eventTag, route);
             return true;
         } catch (Throwable ignored) {

@@ -5015,6 +5015,9 @@
        * on the phone. Returns immediately on every platform but Android and for everybody who has
        * not turned the switch on — see PCContacts.syncTick. */
       setTimeout(()=>{ try{ if(window.PCContacts) PCContacts.syncTick(); }catch(_){} }, 9000);
+      // Tell this device (and, once, the server) what it wants pushed. Free on the device side; the
+      // server half is skipped entirely when it already matches, so it costs no signer prompt.
+      setTimeout(()=>{ try{ _resendPushPrefsOnce(ME.pubkey); }catch(_){} }, 6000);
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
       setTimeout(()=>{ try{ Mail.loginSync(); }catch(_){} }, 4500);   // fetch mail on login (background)
       Mail.startPolling();   // …and keep checking, so mail arriving later is noticed too
@@ -17571,13 +17574,62 @@
     const next={..._pushPrefState(owner),[key]:!!value};
     try{localStorage.setItem(_pushPrefKey(owner),JSON.stringify(next));}catch(_){}
     _paintNotificationSettings();
+    void _pushPrefsToDevice(next);   // the phone's own copy, first and unconditionally — see below
     _mirrorPushPrefsSoon(owner);
     return true;
+  }
+  /* THE PHONE'S OWN COPY OF THE ANSWER, written whenever the answer changes.
+   *
+   * `DirectPushStore` is the device-side half of the filter, and its whole reason to exist is that
+   * the server "can only filter what it was told, and the telling can fail". It used to be written
+   * from INSIDE mirrorPushPrefs — after that function's early returns, behind the same
+   * `pushState()==='on'`/`!_standalone()` preconditions, in the same try as the server call it is
+   * supposed to back up. A backstop that shares the failure mode of the thing it backs up is not a
+   * backstop: any of those returning early left the phone storing nothing, and `allowsType` then
+   * failed open on every type, which is "getting push notifications for likes when I only have DMs
+   * selected".
+   *
+   * So it is its own call now, made from the toggle, and it depends on nothing but the plugin being
+   * there. Fails silently by design — a phone that cannot store the answer still has the server
+   * filter, and both fail OPEN (see app/services/push_prefs.py). */
+  async function _pushPrefsToDevice(prefs){
+    try{
+      const S=_capPlugin('PosterChanPush','setPrefs');
+      if(!S)return false;
+      await S.setPrefs({prefs:prefs||_pushPrefState()});
+      return true;
+    }catch(_){ return false; }
   }
   /* One signature per settings session, not one per toggle. Flipping five switches would otherwise
    * be five signer prompts on a NIP-46/Amber account, which is how a preference screen becomes
    * something people back out of. */
   let _pushMirrorTimer=null;
+  function _pushMirrorKey(owner=_notificationOwner()){ return 'pc_push_prefs_sent:'+owner; }
+  // The prefs the server was last told, canonically. localStorage is already per-device, so the
+  // device identity is implicit and must NOT be part of the mark — an id that changes on reinstall
+  // would make this re-sign on every boot, which is the cost this exists to avoid.
+  function _pushMirrorMark(prefs){
+    const p=prefs||{};
+    return JSON.stringify(Object.keys(p).sort().map(k=>[k,p[k]]));
+  }
+  /* ONE RE-SEND FOR A DEVICE THE SERVER WAS NEVER TOLD ABOUT.
+   *
+   * `mirrorPushPrefs` only ever ran from a toggle or from registration, so a phone that registered
+   * before the device_id derivation was fixed keeps `prefs = NULL` on its row until somebody happens
+   * to flip a switch — i.e. the reported bug survives the fix for everybody who already has it. This
+   * re-sends once, and only when what the server holds provably differs from what this device
+   * believes, because the mirror costs a SIGNATURE and a prompt at every boot is how a preference
+   * screen becomes something people turn off.
+   *
+   * The phone's own copy is written unconditionally on the way past: it needs no signature, no
+   * server and no registration, and it is the half that survives all three failing. */
+  function _resendPushPrefsOnce(owner=_notificationOwner()){
+    if(!owner)return;
+    void _pushPrefsToDevice(_pushPrefState(owner));
+    let sent=null; try{ sent=localStorage.getItem(_pushMirrorKey(owner)); }catch(_){}
+    if(sent!==null && sent===_pushMirrorMark(_pushPrefState(owner)))return;
+    void mirrorPushPrefs(owner);
+  }
   function _mirrorPushPrefsSoon(owner=_notificationOwner()){
     clearTimeout(_pushMirrorTimer);
     _pushMirrorTimer=setTimeout(()=>{void mirrorPushPrefs(owner);},2500);
@@ -17598,14 +17650,28 @@
        * would put the desktop's push back under the phone's choices — the exact thing this split
        * exists to prevent. */
       const P=_pushPlugin();
-      if(P){ try{ const ep=String(((await P.getEndpoint())||{}).endpoint||'');
-                  const bits=ep.split(':'); if(bits[0]==='direct'&&bits[2])body.device_id=bits[2]; }catch(_){}
-             /* AND KEEP A COPY ON THE PHONE. The server is the primary filter, but it can only
-              * filter what it was told, and the telling can fail — offline, a refused signature, a
-              * stale row after a reinstall. Silently, and looking exactly like the bug this fixes.
-              * The WebView is not running when a push lands, so localStorage cannot serve here. */
-             try{ const S=_capPlugin('PosterChanPush','setPrefs');
-                  if(S)await S.setPrefs({prefs:body.prefs}); }catch(_){} }
+      if(P){ /* ASK THE PLUGIN WHO THIS DEVICE IS; DO NOT PARSE ITS ENDPOINT STRING.
+              *
+              * This used to split the endpoint and require `direct:<x>:<id>`. The plugin has always
+              * answered `"pcdirect:" + deviceId` — TWO fields, and a first field that is not
+              * `direct` — so `bits[0]==='direct'` was false and `bits[2]` undefined on every
+              * Android build there has ever been. `device_id` was therefore never set, the guard
+              * below returned false before the POST, and every phone's PushSubscription row kept
+              * `prefs = NULL`. push_prefs fails open on NULL, deliberately, so the server sent
+              * everything while the Notifications tab showed likes switched off: "i am getting push
+              * notifications for likes when I only have DM's and concord mentions selected".
+              *
+              * `getEndpoint()` returns `deviceId` as its own field and always has. That is the
+              * authoritative answer and it cannot drift with a string format. */
+             try{ const ep=(await P.getEndpoint())||{};
+                  const id=String(ep.deviceId||ep.device_id||'').trim();
+                  if(id)body.device_id=id;
+                  else{ const bits=String(ep.endpoint||'').split(':');   // last resort, both spellings
+                        if(bits.length>1&&/^(pc)?direct$/.test(bits[0]))body.device_id=bits[bits.length-1]; } }catch(_){}
+             /* AND KEEP A COPY ON THE PHONE — see _pushPrefsToDevice, which is where the write now
+              * lives. Repeated here so a device that registered before ever touching a toggle is
+              * told too; it no longer DEPENDS on this function being reached. */
+             await _pushPrefsToDevice(body.prefs); }
       else { try{ const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();
                   if(sub&&sub.endpoint)body.endpoint=sub.endpoint; }catch(_){} }
       if(!body.device_id && !body.endpoint)return false;   // never fall back to "all my devices"
@@ -17615,7 +17681,12 @@
       /* SAY WHICH IT WAS. "Telling the server…" left standing for ever is a status line that lies,
        * and the thing it would be lying about is the notifications you asked to stop. Retried once
        * on the way out, because the common failure here is a moment without a network. */
-      if(r&&r.ok){ _pushSyncSaid('Saved on this device, and this device only.'); return true; }
+      if(r&&r.ok){ _pushSyncSaid('Saved on this device, and this device only.');
+        // WHAT THE SERVER WAS ACTUALLY TOLD, so a boot can tell "already mirrored" from "never
+        // mirrored" without asking the signer again. An install that predates the device_id fix has
+        // no marker and re-sends once; after that a toggle is the only thing that costs a signature.
+        try{ localStorage.setItem(_pushMirrorKey(owner), _pushMirrorMark(body.prefs)); }catch(_){}
+        return true; }
       _pushSyncSaid('Saved on this device. The server has not been told yet — retrying.');
       clearTimeout(_pushMirrorTimer);
       _pushMirrorTimer=setTimeout(()=>{void mirrorPushPrefs(owner);},30000);
@@ -26145,6 +26216,29 @@
     Store.byKind(4).forEach(ingestDM);                 // show cached legacy DMs instantly
     if(modern) _queueDmHistory(Store.byKind(1059));   // unwrap cached gift wraps (async)
     if(VIEW==='messages') renderMessages();
+    /* THE HISTORY READ MUST WAIT FOR A SOCKET THAT CAN ANSWER — `await Relay.ready()`.
+     *
+     * A REQ written to a CONNECTING socket is silently dropped (relay.js `_send`), and this view is
+     * the one that is opened INTO that window by construction: a launcher tile lands the moment
+     * `pc-app-ready` fires, which is the same turn `connectRelays()` was called in — the socket
+     * cannot be open yet. Reported as "when I click on Messages from the android launcher, it does
+     * not load messages for me": the right screen, painted correctly, with an empty conversation
+     * list and nothing in any log. The timeline, the profile, the notification flush and Trending
+     * all already wait here; Messages never did.
+     *
+     * The LIVE subscriptions above are deliberately started first and are NOT gated on this: they
+     * re-arm themselves when a socket opens (`Conn` re-sends a live sub's REQ on connect), so a
+     * message arriving during the gap is still delivered. It is only the one-shot history read that
+     * has nothing to re-arm it.
+     *
+     * Not ready in time is "I could not ask", never "you have no messages", so `_dmLoaded` is put
+     * back and the read is left to be retried — by hydrateUser's post-onReady call, and by the
+     * 60-second watcher in `_watchDMs` as the backstop. */
+    if(!(await Relay.ready(8000).catch(()=>false))){
+      _dmLoaded=false;
+      console.warn('[dm] no relay socket yet; history read deferred');
+      return;
+    }
     const filt=[{ kinds:[4], '#p':[ME.pubkey], limit:300 }, { kinds:[4], authors:[ME.pubkey], limit:300 }];
     if(modern) filt.push({ kinds:[1059], '#p':[ME.pubkey], limit:400 });
     let evs;
@@ -26762,12 +26856,18 @@
     // alerts) — "you sent you a message" would be both confusing and wrong. Say what it is.
     if(selfNote){
       notifToast('🔔 <b>New notification</b> — saved to your notes to self', LOGO);
-      osNotify('🔔 New notification', 'Saved to your notes to self', { tag:'pc-dm', route:'messages' });
+      osNotify('🔔 New notification', 'Saved to your notes to self', { tag:'pc-dm', type:'dm', route:'messages' });
       return;
     }
     const p=fromPk?profOf(fromPk):{}; const who=p.name||p.display_name||'someone';
     notifToast(`✉ <b>${fromPk?emojiName(fromPk,who):enc(who)}</b> sent you a message`, p.picture);   // in-app toast (no OS permission needed)
-    osNotify('✉ New message', `${who} sent you a DM`, { tag:'pc-dm', icon:p.picture||LOGO, route:'messages',
+    /* `tag:'pc-dm'` IS SHARED WITH THE SERVER'S PUSH ON PURPOSE — it is what makes this ONE
+     * notification instead of two. The push cannot decrypt a gift wrap, so it says "Someone sent you
+     * a message"; this one has, so it names them. Same tag, so Android replaces rather than stacks.
+     * `type:'dm'` is the other half: the native plugin records that a live client spoke for this DM,
+     * and a generic push arriving just afterwards is dropped rather than overwriting the better
+     * wording (or re-posting a message already read). See ClientNotified. */
+    osNotify('✉ New message', `${who} sent you a DM`, { tag:'pc-dm', type:'dm', icon:p.picture||LOGO, route:'messages',
                                                         onClick:()=>switchView('messages') });
   }
   // Index DMs WITHOUT decrypting (decryption is CPU-heavy ECDH+AES in the worker; decrypting all

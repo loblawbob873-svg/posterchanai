@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1710';
+const CACHE = 'pc-nostr-v1711';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -620,7 +620,10 @@ self.addEventListener('push', e => {
   const opts = {
     body: d.body || 'New activity',
     icon: '/static/icon-192.png', badge: '/static/icon-192.png',
-    tag: isCall ? ('call-' + (d.author || '')) : (d.eid || undefined),   // collapse dup pushes
+    // Collapse dup pushes. An EXPLICIT tag wins: a DM push carries `pc-dm`, the same tag the client
+    // raises its own decrypted "Alice sent you a DM" under, so the named one REPLACES the blind
+    // "Someone sent you a message" instead of landing beside it. A gift wrap has no `eid` to key on.
+    tag: isCall ? ('call-' + (d.author || '')) : (d.tag || d.eid || undefined),
     data: d,
     vibrate: isCall ? [400, 200, 400, 200, 400] : [40, 30, 40],
     requireInteraction: isCall,     // an incoming call stays up until you act on it
