@@ -91,6 +91,48 @@ int main(int argc, char** argv) {
 }
 '''
 
+CAPABILITIES_HARNESS = r'''
+#include <cstdlib>
+#include <cstdint>
+#include <vector>
+constexpr int WLR_INPUT_DEVICE_KEYBOARD = 1, WLR_INPUT_DEVICE_POINTER = 2,
+              WLR_INPUT_DEVICE_TOUCH = 3;
+constexpr uint32_t WL_SEAT_CAPABILITY_KEYBOARD = 2, WL_SEAT_CAPABILITY_POINTER = 1,
+                   WL_SEAT_CAPABILITY_TOUCH = 4;
+struct Device { int type; Device* get_wlr_handle() { return this; } };
+struct Core {
+    std::vector<Device*> devices;
+    const auto& get_input_devices() { return devices; }
+};
+Core core;
+namespace wf { Core& get_core() { return core; } }
+uint32_t advertised = 0;
+void wlr_seat_set_capabilities(int, uint32_t caps) { advertised = caps; }
+struct Seat {
+    std::vector<int> keyboards;
+    int seat = 0;
+    void update_capabilities() /* CAPABILITIES */
+};
+int main(int argc, char** argv) {
+    const int survivors = std::atoi(argv[1]);
+    const bool pointer = std::atoi(argv[2]);
+    const bool touch = std::atoi(argv[3]);
+    Device removed_keyboard{WLR_INPUT_DEVICE_KEYBOARD};
+    Device mouse{WLR_INPUT_DEVICE_POINTER}, touchscreen{WLR_INPUT_DEVICE_TOUCH};
+    // input_manager emits removal before erasing this stale device from its list.
+    core.devices.push_back(&removed_keyboard);
+    if (pointer) core.devices.push_back(&mouse);
+    if (touch) core.devices.push_back(&touchscreen);
+    Seat seat;
+    seat.keyboards.resize(survivors);
+    seat.update_capabilities();
+    const auto expected = (survivors ? WL_SEAT_CAPABILITY_KEYBOARD : 0)
+        | (pointer ? WL_SEAT_CAPABILITY_POINTER : 0)
+        | (touch ? WL_SEAT_CAPABILITY_TOUCH : 0);
+    return advertised == expected ? 0 : 31;
+}
+'''
+
 
 def callback(source):
     start = source.index("priv->on_remove_device = [&]")
@@ -118,6 +160,16 @@ def executables(tmp_path_factory):
         subprocess.run([compiler, "-std=c++17", "-Wall", "-Wextra", str(code), "-o", str(executable)],
                        check=True, capture_output=True)
         builds[name] = executable
+        source = target.read_text()
+        start = source.index("void wf::seat_t::impl::update_capabilities()")
+        start = source.index("{", start)
+        end = source.index("\n}", start) + 2
+        capabilities = directory / (name + "-capabilities.cpp")
+        capabilities.write_text(CAPABILITIES_HARNESS.replace("/* CAPABILITIES */", source[start:end]))
+        executable = directory / (name + "-capabilities")
+        subprocess.run([compiler, "-std=c++17", str(capabilities), "-o", str(executable)],
+                       check=True, capture_output=True)
+        builds[name + "-capabilities"] = executable
     return builds
 
 
@@ -131,3 +183,14 @@ def test_packaged_callback_preserves_a_valid_surviving_keyboard(executables, sce
 def test_original_callback_reproduces_loss_of_keyboard_state(executables, scenario):
     result = subprocess.run([str(executables["original"]), scenario], capture_output=True)
     assert result.returncode == 21, (scenario, result.returncode)
+
+
+@pytest.mark.parametrize("survivors,pointer,touch", [(0,0,0),(0,1,0),(0,0,1),(0,1,1),(1,0,0),(2,1,1)])
+def test_capabilities_reflect_surviving_keyboards_without_losing_pointer_or_touch(executables, survivors, pointer, touch):
+    result = subprocess.run([str(executables["patched-capabilities"]), str(survivors), str(pointer), str(touch)])
+    assert result.returncode == 0
+
+
+def test_original_advertises_the_last_keyboard_after_it_is_removed(executables):
+    result = subprocess.run([str(executables["original-capabilities"]), "0", "1", "1"])
+    assert result.returncode == 31

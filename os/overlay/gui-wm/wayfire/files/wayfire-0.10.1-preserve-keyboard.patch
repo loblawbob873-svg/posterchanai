@@ -1,8 +1,6 @@
 --- a/src/core/seat/seat.cpp
 +++ b/src/core/seat/seat.cpp
-@@ -388,12 +388,15 @@
- 
-             priv->keyboards.erase(it, priv->keyboards.end());
+@@ -390,8 +390,11 @@
  
 -            if (current_kbd_destroyed && priv->keyboards.size())
 +            // The wlroots keyboard can differ from current_keyboard (for example after
@@ -17,5 +15,14 @@
 -                priv->set_keyboard(nullptr);
 +                priv->set_keyboard(priv->current_keyboard);
              }
-         }
- 
+@@ -431,3 +434,9 @@
+           case WLR_INPUT_DEVICE_KEYBOARD:
+-            caps |= WL_SEAT_CAPABILITY_KEYBOARD;
++            // Removal is emitted before the input manager erases the device. Our
++            // keyboard list has already been updated, unlike get_input_devices().
++            if (!keyboards.empty())
++            {
++                caps |= WL_SEAT_CAPABILITY_KEYBOARD;
++            }
++
+             break;
