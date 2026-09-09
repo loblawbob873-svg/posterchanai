@@ -287,6 +287,16 @@ def main():
             return {o, _m}
         gh._Handler._maintainers = _stub_maints
         gh._alias_cache.clear()
+        # GRASP-08 added a SECOND Postgres read to the read gate — "does this repo\'s own 30617 say
+        # ["private","true"]?" — and it fails CLOSED, so with this bogus DSN it answers "private" and
+        # every route below would 401. Measure that first (it is the fail-closed contract, end to end
+        # through the real handler), then stub it out exactly as the ACL above is stubbed.
+        gh._priv_cache.clear()
+        check("a DSN we cannot ask -> the read gate fails closed (401)", aget("/refs")[0] == 401,
+              aget("/refs"))
+        _real_priv = gh._Handler._announced_private
+        gh._Handler._announced_private = lambda self, o, r: False   # demo is public; read stubbed
+        gh._priv_cache.clear()
         try:
             st, j = aget("/refs")
             check("maintainer URL serves the owner's repo", st == 200 and
@@ -329,8 +339,10 @@ def main():
             check("non-maintainer npub still 404s", aget("/refs")[0] == 404)
         finally:
             gh._Handler._maintainers = _real_maints
+            gh._Handler._announced_private = _real_priv
             gh._CONFIG["pg_dsn"] = ""
             gh._alias_cache.clear()
+            gh._priv_cache.clear()
     finally:
         httpd.shutdown()
         shutil.rmtree(wt, ignore_errors=True)

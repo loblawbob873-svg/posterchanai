@@ -1284,10 +1284,11 @@ class RelayServer:
         about an event that arrived from elsewhere."""
         if int(ev.get("kind", 0)) not in RelayServer.GIT_KINDS:
             return False
-        for t in ev.get("tags", []):
-            if isinstance(t, list) and len(t) >= 2 and t[0] == "private" and str(t[1]).lower() == "true":
-                return True
-        return False
+        # ONE definition of the tag predicate, shared with the git HTTP read gate
+        # (git_host_main.py:_announced_private) — see git_auth.event_says_private. Two hand-written
+        # copies is how a repo ends up refused at one door and served at the other.
+        from app.services import git_auth
+        return git_auth.event_says_private(ev)
 
     @staticmethod
     def _repo_readers(ev: dict) -> set:

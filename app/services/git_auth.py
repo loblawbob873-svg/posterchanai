@@ -243,6 +243,30 @@ def verify_nip98(header: str | None, method: str | None, repo_path_needle: str,
         return None
 
 
+# --------------------------------------------------------------------------- GRASP-08 privacy
+
+def event_says_private(event) -> bool:
+    """GRASP-08: a repository is PRIVATE when its kind-30617 announcement carries ["private","true"].
+
+    THE ONE definition of that predicate, deliberately here in the import-light module both halves
+    already depend on. The relay's serve gate (nostr_relay/server.py:_is_private_repo_event) and the
+    git HTTP read gate (git_host_main.py:_announced_private) both call it, because two hand-written
+    copies of "does this announcement say private" is exactly how a repo ends up refused at one door
+    and served at the other — and a repo whose bytes are refused while its metadata is served is not
+    private. (Same drift the four copied effect-command literals produced.)
+
+    `true` is matched case-insensitively and whitespace-trimmed: the tag is written by whichever
+    client announced the repo, not by us, so its exact spelling is not ours to assume.
+    """
+    if not isinstance(event, dict):
+        return False
+    for t in event.get("tags") or []:
+        if (isinstance(t, list) and len(t) >= 2 and t[0] == "private"
+                and str(t[1]).strip().lower() == "true"):
+            return True
+    return False
+
+
 # --------------------------------------------------------------------------- Postgres reads
 # One indexed query each; no scans (see the JOIN on event_tags(tag,value) + events(kind,pubkey)).
 
@@ -279,6 +303,44 @@ def load_maintainers(conn, owner_hex: str, repo_id: str) -> set:
                         maints.add(h)
         break                                  # newest VALID owner-signed announcement wins
     return maints
+
+
+def load_announced_private(conn, owner_hex: str, repo_id: str) -> bool:
+    """GRASP-08: does the OWNER's newest valid kind-30617 for <repo_id> carry ["private","true"]?
+
+    Same ACL reasoning and the same one indexed read as load_maintainers: ONLY `pubkey = owner` is
+    considered, so a forged 30617 from another key (which addresses a different coordinate) can
+    neither reveal a private repo nor conceal a public one, and the announcement's signature is
+    re-verified here rather than trusting the row.
+
+    RAISES on a database error instead of answering. The CALLER decides what "could not ask" means,
+    and on the read gate it means deny — returning False here would let an unreachable database
+    quietly publish a private repository, which is the failure this function exists to prevent.
+
+    Kept separate from load_maintainers rather than folded into it: load_maintainers is the
+    pre-receive hook's security core and answers a question the read gate asks only AFTER it already
+    knows the repo is private, while this one is asked of every repo. One extra indexed read on a
+    path that caches its answer is not worth churning the push-authorization ACL for.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT e.raw FROM events e "
+            "JOIN event_tags t ON t.event_id = e.id AND t.tag = 'd' AND t.value = %s "
+            "WHERE e.kind = %s AND e.pubkey = %s "
+            "ORDER BY e.created_at DESC LIMIT 4",
+            (repo_id, ANNOUNCE_KIND, owner_hex))
+        rows = cur.fetchall()
+    for row in rows:
+        try:
+            ev = json.loads(row[0])
+        except (ValueError, TypeError):
+            continue
+        if ev.get("pubkey") != owner_hex:      # belt-and-suspenders: only the owner's announcement
+            continue
+        if not verify_event(ev):               # re-verify — never trust the DB row's validity
+            continue
+        return event_says_private(ev)          # newest VALID owner-signed announcement wins
+    return False
 
 
 def load_state_events(conn, owner_hex: str, repo_id: str, maintainers) -> list:
