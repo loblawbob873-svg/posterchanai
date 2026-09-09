@@ -20,6 +20,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
+from app.services import git_acceptance
 from .langfilter import blocked_language, blocked_word
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 from .store import retired_kind_reason as _retired_kind_reason
@@ -184,6 +185,61 @@ def _git_comment_root(ev: dict):
         if len(t) >= 2 and t[0] == "E" and isinstance(t[1], str) and len(t[1]) == 64:
             return t[1]
     return None
+
+
+
+def _supported_grasps(raw) -> list:
+    """GRASP-01's `supported_grasps`, normalised to the spec's `GRASP-XX` spelling.
+
+    An operator types what the node supports; they should not also have to type it in a shape.
+    "1, 8" / "grasp-8" / "GRASP-01" all mean the same thing and all come out as `GRASP-01`,
+    `GRASP-08`. ngit compares case-insensitively, but the spec fixes the format and an auditor or a
+    stricter client is entitled to it. Anything that names no GRASP number is dropped rather than
+    passed through — a malformed entry in a capability array is worse than a missing one, because a
+    client that cannot parse the array may discard the whole document.
+
+    Always returns a list, so the key is present (as "a string array") even when empty.
+    """
+    out, seen = [], set()
+    for tok in str(raw or "").replace(",", " ").split():
+        t = tok.strip().upper()
+        if t.startswith("GRASP-"):
+            t = t[6:]
+        elif t.startswith("GRASP"):
+            t = t[5:]
+        if not t.isdigit():
+            continue
+        name = "GRASP-%02d" % int(t)
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _curation_summary(c) -> str:
+    """A brief, TRUE summary of the curation this node applies beyond generic spam prevention — or
+    "" when it applies none, in which case GRASP-01 requires the key to be omitted entirely.
+
+    Built from the filters that are actually configured rather than from a fixed sentence, because
+    the sentence is what a person reads before deciding whether their events will survive here, and
+    every one of these is operator-toggleable at runtime. A stock relay with the web-of-trust gate
+    off and no word/language/bridge filters correctly says nothing at all.
+    """
+    parts = []
+    if c.get("wot_enabled", True):
+        parts.append("publishing is limited to authors inside this relay's web of trust "
+                     "(git repository announcements and repo-scoped collaboration events excepted)")
+    if c.get("blocked_words"):
+        parts.append("notes containing operator-listed words are rejected")
+    if c.get("blocked_langs"):
+        parts.append("notes in operator-listed languages are rejected")
+    if c.get("block_bridged"):
+        parts.append("bridged (NIP-48 proxy) content is rejected")
+    if c.get("blocked_relays"):
+        parts.append("accounts on operator-listed bridge relays are rejected")
+    if not parts:
+        return ""
+    return "; ".join(parts) + "."
 
 
 def _event_expiration(ev: dict):
@@ -496,6 +552,27 @@ class RelayServer:
             "supported_nips": [1, 2, 9, 11, 17, 22, 23, 40, 42, 44, 45, 50, 59, 65, 77, 78],
             # Concord is a CORD family rather than a NIP, so advertise it separately.
             "concord": {"cords": [1, 2, 3, 4, 5, 6, 7, 8], "giftwrap_streams": True},
+            # GRASP-01 NIP-11 MUST (1): "MUST list each supported GRASP under `supported_grasps` in
+            # format `GRASP-XX` eg `GRASP-01` as a string array" (grasp.git 01.md @ f35b4f9a4ed2).
+            # This is the ONLY capability surface a git-over-nostr client has: ngit v3 reads exactly
+            # this key and nothing else (`relay_information.rs`), so a service that omits it cannot
+            # be identified as a GRASP service at all — which is what we looked like until now.
+            #
+            # It is EMPTY BY DEFAULT and that is a statement, not an oversight. Claiming a GRASP is
+            # claiming every MUST in it, and GRASP-01 still has outstanding ones here: pushes to
+            # `refs/nostr/<event-id>` are refused, HEAD is chosen by convention rather than read
+            # from the signed 30618, the maintainer set is resolved one level rather than
+            # recursively, and we accept announcements that do not name this service (which is
+            # GRASP-05's MAY, and GRASP-05 in turn requires GRASP-02, which we do not implement).
+            # An advertised capability that is not there costs a client a failed push and a wrong
+            # diagnosis; an absent one costs it a fallback. The operator flips the setting when the
+            # node earns it.
+            "supported_grasps": _supported_grasps(c.get("supported_grasps")),
+            # GRASP-01 NIP-11 MUST (2): the acceptance rule in prose. Rendered from the POLICY the
+            # provisioning gate enforces (app/services/git_acceptance.py), never typed twice — two
+            # copies of one rule go stale silently, leaving the document promising a policy nobody
+            # implements while a client is refused for a reason it says does not apply.
+            "repo_acceptance_criteria": git_acceptance.criteria_text(c.get("repo_acceptance")),
             "limitation": {
                 "max_message_length": c.get("max_message_size", 262144),
                 "max_subscriptions": c.get("max_subs_per_conn", 20),
@@ -509,6 +586,17 @@ class RelayServer:
         # Off by default so single-relay setups stick; flip on to be honest to spam clients.
         if c.get("advertise_restricted_writes", False):
             doc["limitation"]["restricted_writes"] = True
+        # GRASP-01 NIP-11 MUST (3): "MUST list brief summary of curation policy under `curation` if
+        # events are curated beyond generic SPAM prevention; otherwise `curation` MUST be ommitted".
+        # BOTH halves are normative, so this key is computed and not constant: a node running no
+        # filters must omit it entirely, and a node running the web-of-trust publish gate must not
+        # pretend that gate is generic spam prevention. It is not — it refuses a stranger's post on
+        # the strength of who follows them, which is exactly the "curation eg. WoT, whitelist, user
+        # bans and banned topics" the spec names. Being silent about it is what makes the refusal
+        # unexplainable from the outside.
+        _cur = _curation_summary(c)
+        if _cur:
+            doc["curation"] = _cur
         if icon:
             doc["icon"] = icon
             doc["banner"] = icon

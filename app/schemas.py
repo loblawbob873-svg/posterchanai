@@ -549,6 +549,11 @@ class SettingsResponse(BaseModel):
     git_server_bind: str = "127.0.0.1"         # bind host (container turnkey may set 0.0.0.0)
     git_server_public_base: str = ""           # e.g. https://poster.place/git — stamped into 30617 clone URLs
     git_server_allowlist: str = ""             # npubs allowed to provision (empty ⇒ admins only)
+    # WHO may cause a repository to exist here. GRASP-01 requires the service to publish this rule
+    # in prose, so the value is the POLICY and app/services/git_acceptance.py renders the sentence
+    # the relay's NIP-11 document advertises — one source, so the advertisement cannot drift from
+    # the gate. Values: account_or_wot (default) | wot | account | allowlist | open | closed.
+    git_repo_acceptance: str = "account_or_wot"
     git_server_repo_max_mb: str = "512"        # per-repo hard size cap (enforced in the pre-receive hook)
     git_server_total_gb: str = "20"            # global storage cap (daily reaper warns/repacks)
     git_server_allow_force: str = "true"       # allow maintainer-signed non-fast-forward (force) pushes
@@ -716,6 +721,10 @@ class SettingsResponse(BaseModel):
     nostr_relay_contact: Optional[str] = None
     nostr_relay_icon: Optional[str] = None
     nostr_relay_advertise_restricted_writes: Optional[bool] = False
+    # GRASP-01's NIP-11 capability array, e.g. "GRASP-01 GRASP-08". Empty by default: claiming a
+    # GRASP claims every MUST in it, and an advertised capability that is not there costs a client
+    # a failed operation and a wrong diagnosis. See server._supported_grasps.
+    nostr_relay_supported_grasps: Optional[str] = None
     nostr_relay_mirror_feeds: Optional[bool] = False
     nostr_relay_firehose_max_relays: Optional[int] = 0
     nostr_relay_blocked_langs: Optional[str] = None

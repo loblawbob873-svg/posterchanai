@@ -24,6 +24,7 @@ import subprocess
 from websockets.asyncio.server import serve
 
 from app.services.nostr import nostr_service
+from app.services import git_acceptance
 from .store import RelayStore, _RETIRED_KINDS
 from .wot import WotGate
 from .server import RelayServer, _git_comment_root
@@ -462,6 +463,13 @@ def _read_config() -> dict:
             # inject their defaults, resetting a single-relay NIP-65 list. WoT gate still
             # enforces writes at runtime either way.
             "advertise_restricted_writes": gb("nostr_relay_advertise_restricted_writes", False),
+            # GRASP-01 NIP-11. `supported_grasps` is empty by default and only an operator can fill
+            # it — see the comment at server._supported_grasps for why claiming one is not free.
+            "supported_grasps": g("nostr_relay_supported_grasps", ""),
+            # The repository ACCEPTANCE POLICY, not a sentence about it: the NIP-11 prose is
+            # rendered from this same value the provisioning gate enforces, so the advertisement
+            # cannot drift from the rule. See app/services/git_acceptance.py.
+            "repo_acceptance": g(git_acceptance.SETTING, git_acceptance.DEFAULT),
             # protocol limits
             "max_message_size": _MAX_MESSAGE_SIZE,
             "max_subs_per_conn": _MAX_SUBS_PER_CONN,
