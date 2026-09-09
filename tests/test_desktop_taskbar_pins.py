@@ -31,7 +31,11 @@ def test_running_task_context_menu_can_move_recover_and_close_windows():
     assert "function taskbarMove(w)" in SRC
     assert "osw-taskbar-moving" in SRC
     assert "{label:'Move',run:()=>taskbarMove(running)}" in SRC
-    assert "{label:'Close',run:()=>closeWin(running)}" in SRC
+    # The ARGUMENT list is not the contract; going through closeWin is. It also carries `user:true`,
+    # because a person picking Close from the taskbar means it the same way the ✕ does — without
+    # that flag, closing the Music window there leaves audio playing with nothing left to stop it
+    # (tests/client/test_music_desktop_controls.py owns that rule and pins every human close site).
+    assert "{label:'Close',run:()=>closeWin(running, { user:true })}" in SRC
     assert "keepFrameReachable(w);_natGesture(w,false)" in SRC
     assert "function nativeTaskbarMove(row)" in SRC
     assert "{label:'Move',run:()=>nativeTaskbarMove(w)}" in SRC
@@ -61,7 +65,7 @@ def test_adopted_native_task_gets_move_and_close_without_an_ephemeral_pin():
                SRC.index("Unpin from taskbar", SRC.index("$$('.os-task', bar).forEach(b => b.oncontextmenu"))]
     assert "running.native==null" in menu
     assert "if(running)actions.push({label:'Move'" in menu
-    assert "{label:'Close',run:()=>closeWin(running)}" in menu
+    assert "{label:'Close',run:()=>closeWin(running, { user:true })}" in menu
     assert "if(key){" in menu
 
 
