@@ -11,6 +11,17 @@ import pytest
 import websockets
 from tests.client.test_effects_full_app import Browser, Handler, INIT
 
+# The shipped list, so the pane and the tests cannot disagree about what exists.
+TYPES=[m.group(1) for m in __import__('re').finditer(
+    r"\['([a-z]+)','[^']+'\]",
+    (Path(__file__).resolve().parents[2]/'static/js/client/app.js').read_text(encoding='utf-8')
+        .split('const _NOTIFICATION_TYPES',1)[1].split('const _NOTIFICATION_SOUNDS',1)[0])]
+# Derived so a list that GROWS does not go red — but derived from the same source it checks, so it
+# cannot notice one that SHRINKS. This names the floor independently: a toggle may be added, and
+# removing one is a decision somebody has to make here, not a silent loss of the control for it.
+REQUIRED={'email','dm','likes','replies','quotes','mentions','reposts','zaps','concord','reminders'}
+assert REQUIRED <= set(TYPES), 'a notification type lost its toggle: ' + str(REQUIRED - set(TYPES))
+
 EXTRA=r'''
 window.__publishOK=true;
 const OriginalAudio=window.AudioContext;window.__audioCount=0;
@@ -41,7 +52,15 @@ async def run(width):
                 await b.until("!!document.querySelector('.us-tab[data-tab=notifications]')")
                 await b.js("document.querySelector('.us-tab[data-tab=notifications]').click()")
                 await b.until("document.querySelector('[data-pane=notifications]').classList.contains('active')")
-                assert await b.js("document.querySelectorAll('[data-notification-type]').length===10")
+                # EVERY DECLARED TYPE GETS A CONTROL — counted from the source list, not pinned to a
+                # number. `10` went red the day the list legitimately GREW (NIP-28 chat became its
+                # own "Chat rooms" toggle), which tests the length of a literal rather than the rule
+                # that a toggle exists for each thing the app can notify about.
+                assert await b.js(
+                    f"document.querySelectorAll('[data-notification-type]').length==={len(TYPES)}")
+                for key in TYPES:
+                    assert await b.js(
+                        f"!!document.querySelector('[data-notification-type={key}]')"), key
                 await b.js("document.querySelector('[data-notification-type=email]').click()")
                 assert await b.js("!__PC.notificationAllowed('email')")
                 await b.until("__published.some(e=>e.kind===30078&&JSON.parse(e.content).notificationPrefs?.email===false)")

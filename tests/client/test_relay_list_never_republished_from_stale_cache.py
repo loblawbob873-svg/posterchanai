@@ -18,10 +18,22 @@ def _block(start: str, end: str) -> str:
 
 
 def test_global_settings_save_does_not_refresh_an_unchanged_stale_kind_10002():
+    """The rule is that `relayChanged` GATES the write, not the shape of the line it is written on.
+
+    This pinned `if(relayChanged && on && urls.length) await publish(10002` as one string, and went
+    red when a second gate was added inside it (the write now also requires a confirmed read of the
+    user's existing list — see test_relay_list_ownership.py). The contract was never weakened by
+    that; it was made stricter, and a test that cannot tell those apart is measuring formatting.
+    """
     body = _block("if($('#set-relays-on')){", "if($('input[name=media-mode]'))")
 
     assert "const relayChanged =" in body
-    assert "if(relayChanged && on && urls.length) await publish(10002" in body
+    gate = body.index("if(relayChanged && on && urls.length)")
+    publish = body.index("await publish(10002")
+    assert gate < publish, "the kind-10002 write is no longer behind the relayChanged gate"
+    # Nothing between the gate and the write may re-open it — only narrow it further.
+    assert "}" not in body[gate:publish].split("{", 1)[-1], body[gate:publish]
+    # And no ungated form anywhere: that is the stale-cache republish itself.
     assert "if(on && urls.length) await publish(10002" not in body
 
 
@@ -30,7 +42,7 @@ def test_global_settings_save_still_publishes_an_explicit_relay_edit():
 
     changed = body.index("if(relayChanged){")
     persisted = body.index("ClientSettings.set('relaysEnabled', on)")
-    published = body.index("if(relayChanged && on && urls.length) await publish(10002")
+    published = body.index("await publish(10002")
     assert changed < persisted < published
 
 

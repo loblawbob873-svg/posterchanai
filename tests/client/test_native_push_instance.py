@@ -14,7 +14,11 @@ const location={href:'https://localhost/index.html'};
 let base='https://poster.example',path='/api/push/direct/ws';
 const _instanceBase=()=>base,ME={pubkey:'owner'},toast=()=>{};
 const _directPushAuth=async()=>({sig:'proof'});
-const requests=[], registrations=[];
+const requests=[], registrations=[], mirrored=[];
+/* Stubbed rather than sliced in — but ASSERTED below, so the gap becomes coverage. A phone that has
+   just registered has no preferences on the server yet, and push_prefs fails open, so without this
+   call the first thing it does is deliver exactly what the user switched off. */
+const mirrorPushPrefs=async pk=>{mirrored.push(pk);};
 const fetch=async(url,opts)=>{requests.push([url,JSON.parse(opts.body)]);return {json:async()=>({ok:true,token:'server-token',websocket_url:path})};};
 const P={getEndpoint:async()=>({deviceId:'phone-1234567890123456'}),register:async r=>{registrations.push(r);return {ok:true};},batteryStatus:async()=>({healthy:true})};
 CODE
@@ -22,11 +26,13 @@ CODE
  await _enablePushNative(P);
  assert.equal(registrations[0].socketUrl,'wss://poster.example/api/push/direct/ws');
  assert.equal(registrations[0].token,'server-token');
+ assert.deepEqual(mirrored,['owner'],'a freshly registered phone is never told what it may notify about');
  base='https://second.example';await _enablePushNative(P);
  assert.equal(registrations[1].socketUrl,'wss://second.example/api/push/direct/ws');
  path='https://attacker.example/api/push/direct/ws';
  await assert.rejects(()=>_enablePushNative(P),/does not match/);
  assert.equal(registrations.length,2,'token must never reach a different origin');
+ assert.equal(mirrored.length,2,'…and a refused registration must not claim to have set preferences');
  base='';assert.throws(()=>_directPushSocketUrl(),/Choose a server/);
  base='http://127.0.0.1:3051';assert.equal(_directPushSocketUrl(),'ws://127.0.0.1:3051/api/push/direct/ws');
 })().catch(e=>{console.error(e);process.exitCode=1;});
