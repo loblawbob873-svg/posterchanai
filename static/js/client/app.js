@@ -36507,17 +36507,75 @@
     return true;
   }
 
+  /* WHAT TO TELL SOMEBODY WHOSE IMAGE COPY DID NOT HAPPEN.
+   *
+   * Every cause used to collapse into one catch and one line — "copy failed — long-press the image
+   * to copy" — and on the PosterChanOS desktop that sentence was wrong twice over. Copying an image
+   * had never been possible there at all (the app:// origin refuses navigator.clipboard.write, and
+   * the native bridge was text-only), and long-press is not a gesture a desk with a mouse has. It was
+   * reported exactly that way: a failure, and nonsense advice underneath it.
+   *
+   * So name the cause, and only ever offer a gesture on a surface that has one. Save (⤓) is the
+   * button next to Copy on the same toolbar and works on every surface, so it is the advice that is
+   * always true. */
+  function _lbCopyImgFail(reason, detail){
+    let touch=false;
+    try{ touch = (navigator.maxTouchPoints|0) > 0 || ('ontouchstart' in window); }catch(_){}
+    const alt = touch ? 'long-press the image, or use Save (⤓)' : 'use Save (⤓) to keep a copy';
+    if(reason==='unavailable') return 'this app can’t put images on the clipboard — ' + alt;
+    if(reason==='fetch')       return 'couldn’t load that image' + (detail?' ('+detail+')':'') + ' — ' + alt;
+    if(reason==='convert')     return 'couldn’t read that image — ' + alt;
+    return 'the clipboard refused the image — ' + alt;
+  }
   async function _lbCopyImg(src){
     if(_isNativeApp()){ try{ if(await _nativeShareMedia(src)) return; }catch(e){ toast('couldn’t share image'); return; } }
+    /* THE DESKTOP SHELL GOES NATIVE, and there it is the ONLY path — not a preference. The bundle is
+     * served from app://, where navigator.clipboard.write is refused, which is the same reason
+     * copyValue() exists for text. Electron's own clipboard.writeImage would not have rescued it
+     * either: it fills Chromium's cache and never takes the Wayland selection, so the copy would work
+     * inside PosterChan and paste nothing into Firefox or Telegram. The main process publishes the
+     * selection with wl-copy and answers from ITS exit status.
+     *
+     * Unlike the web path below, the bytes are fetched first — there is no clipboard permission here
+     * to lose by awaiting, and fetching first is what lets a 404/403 be reported as a 404/403.
+     * fetchMediaBlob is the app's one media reader (bearer for our own /api, proxy-image fallback for
+     * a third-party Blossom host with no CORS), so a timeline image works, not just our own. */
+    if(window.pcClip && window.pcClip.writeImage){
+      let blob;
+      try{ blob = (await fetchMediaBlob(src)).blob; }
+      catch(e){ toast(_lbCopyImgFail('fetch', (e && e.message) || '')); return; }
+      try{ if((blob.type||'')!=='image/png') blob = await _blobToPng(blob); }
+      catch(_){ toast(_lbCopyImgFail('convert')); return; }
+      let ok=false;
+      try{ ok = !!(await window.pcClip.writeImage(await blob.arrayBuffer())); }catch(_){ ok=false; }
+      toast(ok ? 'image copied' : _lbCopyImgFail('refused'));
+      return;
+    }
+    // No native bridge and no web clipboard is a MISSING CAPABILITY, not a failed attempt — say that
+    // rather than letting it fall through and be reported as a refusal.
+    if(!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)){
+      toast(_lbCopyImgFail('unavailable')); return; }
+    let failStage=null, failDetail='';
     try{
       const hdr = _aiToken ? {'Authorization':'Bearer '+_aiToken} : {};
       // Pass a Promise<Blob> to ClipboardItem so navigator.clipboard.write is invoked SYNCHRONOUSLY with the
       // tap — iOS/Safari revoke the clipboard permission if you await first. Send the Bearer token too (the
       // APK WebView is cross-origin to the API host, so cookies alone 403 on /api images).
-      const png = (async()=>{ const r=await fetch(src, {headers:hdr, credentials:'include'}); if(!r.ok) throw new Error('HTTP '+r.status); let b=await r.blob(); if((b.type||'')!=='image/png') b=await _blobToPng(b); return b; })();
+      // Each stage records WHY it failed on the way past: the rejection surfaces out of
+      // navigator.clipboard.write, where a refused permission and a 403 on the image are otherwise
+      // the same exception.
+      const png = (async()=>{
+        let r;
+        try{ r=await fetch(src, {headers:hdr, credentials:'include'}); }
+        catch(e){ failStage='fetch'; failDetail=(e && e.message) || 'network'; throw e; }
+        if(!r.ok){ failStage='fetch'; failDetail='HTTP '+r.status; throw new Error(failDetail); }
+        let b=await r.blob();
+        if((b.type||'')!=='image/png'){ try{ b=await _blobToPng(b); }catch(e){ failStage='convert'; throw e; } }
+        return b;
+      })();
       await navigator.clipboard.write([new ClipboardItem({'image/png': png})]);
       toast('image copied');
-    }catch(e){ toast('copy failed — long-press the image to copy'); }
+    }catch(e){ toast(_lbCopyImgFail(failStage || 'refused', failDetail)); }
   }
   // Save the media in the lightbox. One line, because this now shares the app's single save pipeline
   // (saveMedia → fetchMediaBlob → fileNameFor → saveBlobAs): same credential rules, same proxy
