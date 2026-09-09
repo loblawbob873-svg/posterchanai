@@ -92,7 +92,12 @@ def test_web_concord_removes_the_timeline_shell_gutter_and_width_cap():
 def test_concord_owns_a_versioned_stylesheet_so_stale_shell_css_cannot_unstyle_it():
     assert 'static/css/concord.css' in HTML
     assert "data-concord-css" in CONCORD
-    assert "concord.css?v=17" in CONCORD
+    # THE RULE IS "IT IS VERSIONED", NOT "IT IS VERSION 17". Pinning the literal made every CSS
+    # edit break a test about something else — it went red the moment concord.css changed and the
+    # loader was bumped correctly to v18, which is the loader doing exactly its job.
+    import re as _re
+    _v = _re.search(r"concord\.css\?v=(\d+)", CONCORD)
+    assert _v and int(_v.group(1)) > 0, "the loader must carry a cache-busting version"
     assert '.cc-compose textarea:focus' in CONCORD_CSS
     assert 'box-shadow:none!important' in CONCORD_CSS
     assert "'/static/css/concord.css'" in (ROOT / "static/js/client/sw.js").read_text()
