@@ -230,6 +230,48 @@ class UserWallets:
             "outputs": sum(int(x.get("num_unspent_outputs") or 0) for x in subs),
         }
 
+    async def history(self, pubkey: str, *, limit: int = 50) -> dict[str, Any]:
+        """This user's own transfers, and nobody else's.
+
+        THE ACCOUNT INDEX IS RESOLVED HERE, NEVER ACCEPTED FROM A CALLER. Every user is an account
+        in one pooled wallet, so an index supplied by the client would be a request to read another
+        person's payments. It comes from their pubkey's own account, the same way balance() gets it.
+
+        `pending` is OUTGOING unconfirmed and `pool` is INCOMING unconfirmed: asking for one and not
+        the other hides a tip that has not been mined yet, which is exactly the window somebody
+        looks in, having just been told the payment was sent (see the node wallet's history()).
+        """
+        if not 1 <= limit <= 100:
+            raise WalletError("History limit must be between 1 and 100")
+        account = await self.account(pubkey, create=False)
+        index = int(account.get("account_index"))
+        got = await self.rpc("get_transfers", {"in": True, "out": True, "pending": True,
+                                               "failed": True, "pool": True, "account_index": index})
+        out: dict[str, Any] = {}
+        for key in ("in", "out", "pending", "failed", "pool"):
+            rows = got.get(key)
+            if not isinstance(rows, list):
+                continue
+            kept = []
+            for row in rows[-limit:]:
+                # Belt and braces: the RPC was asked for one account, but a wallet that ever
+                # answered with another account's row must not have it forwarded to this user.
+                if int(row.get("subaddr_index", {}).get("major", index)) != index:
+                    continue
+                kept.append({
+                    "txid": str(row.get("txid") or ""),
+                    "amount": atomic_to_xmr(int(row.get("amount") or 0)),
+                    "fee": atomic_to_xmr(int(row.get("fee") or 0)),
+                    "confirmations": int(row.get("confirmations") or 0),
+                    "timestamp": int(row.get("timestamp") or 0),
+                    "height": int(row.get("height") or 0),
+                    "note": str(row.get("note") or ""),
+                    "double_spend_seen": bool(row.get("double_spend_seen")),
+                })
+            if kept:
+                out[key] = kept
+        return out
+
     async def maintain_account_outputs(self, account: dict[str, Any]) -> dict[str, Any]:
         """Top up one user's *spendable* output capacity without blocking their remaining zaps.
 

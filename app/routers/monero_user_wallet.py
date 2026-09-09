@@ -92,6 +92,21 @@ async def balance(user: CurrentUser):
         raise _bad(exc) from exc
 
 
+@router.get("/history")
+async def history(user: CurrentUser, limit: int = 50):
+    """This user's own Monero transfers.
+
+    The account is resolved from the caller's identity inside the service; there is deliberately no
+    account parameter to accept, because in a pooled wallet an index from the client is a request
+    to read somebody else's payments. `limit` is the only thing a caller controls, and the service
+    bounds it.
+    """
+    try:
+        return await user_wallets.history(_pubkey(user), limit=limit)
+    except WalletError as exc:
+        raise _bad(exc) from exc
+
+
 @router.post("/pay")
 async def pay(body: PayRequest, user: CurrentUser):
     """Tip one person or many — in as few transactions as Monero allows.

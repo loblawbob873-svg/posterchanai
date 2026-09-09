@@ -162,14 +162,10 @@
         // must not hide an otherwise healthy wallet, balance and receive address.
         request('/api/wallet/xmr/history?limit=50').catch(error=>({__error:error}))]);
       const hist=histResult&&typeof histResult==='object'&&!histResult.__error?histResult:{};
-      const transfers=[];
-      /* `pool` is INCOMING UNCONFIRMED — a payment that has been broadcast and not yet mined.
-         It used not to be requested at all, so the one window in which somebody checks ("they said
-         they sent it") showed nothing. It is marked, because an unconfirmed credit is not the same
-         promise as a confirmed one. */
-      for(const kind of ['in','out','pending','failed','pool']) for(const row of (hist[kind]||[]))
-        transfers.push(Object.assign({direction:kind, unconfirmed:(kind==='pool'||kind==='pending')},row));
-      transfers.sort((a,b)=>Number(b.timestamp||b.height||0)-Number(a.timestamp||a.height||0));
+      /* `pool` is INCOMING UNCONFIRMED — broadcast, not yet mined. It used not to be requested at
+         all, so the one window in which somebody checks ("they said they sent it") showed nothing.
+         Marked as unconfirmed, because that credit is not the same promise as a confirmed one. */
+      const transfers=flattenTransfers(hist);
       const _next={available:true,network:meta.network,warning:meta.warning,balance:bal.balance,
         unlocked_balance:bal.unlocked_balance,
         /* The configured service fee, so the operator's own send sheet can state it. */
@@ -256,6 +252,23 @@
     const incoming=direction==='in';
     const atomic=t.amount_atomic!=null, raw=String(atomic?t.amount_atomic:(t.amount==null?0:t.amount)).replace(/^-/,'');
     return {incoming,amount:xmr(raw,atomic),date:historyDate(t.timestamp||t.date)};
+  }
+  /* ONE FLATTENER FOR BOTH WALLETS. The node wallet and a user's own wallet get the same buckets
+     from get_transfers, so they render through one implementation rather than two that can drift.
+
+     `pool` IS INCOMING. It is unconfirmed money arriving; `pending` is unconfirmed money leaving.
+     Carrying the bucket name straight through as the direction made every pool row read as
+     "Sent ↑", because transferView only treats 'in' as incoming — so a payment somebody had just
+     been told about showed up pointing the wrong way, in the exact window they went looking. */
+  function flattenTransfers(hist){
+    const out=[];
+    const h=hist&&typeof hist==='object'&&!hist.__error?hist:{};
+    for(const kind of ['in','out','pending','failed','pool'])
+      for(const row of (h[kind]||[]))
+        out.push(Object.assign({direction:(kind==='pool'?'in':(kind==='in'?'in':'out')),
+                                bucket:kind, unconfirmed:(kind==='pool'||kind==='pending')},row));
+    out.sort((a,b)=>Number(b.timestamp||b.height||0)-Number(a.timestamp||a.height||0));
+    return out;
   }
   function transferRows(rows){
     if(!Array.isArray(rows)||!rows.length)return '<div class="mw-empty">No transactions yet</div>';
@@ -548,7 +561,15 @@
       + '<button class="btn" id="mw-me-withdraw">Withdraw</button></div>'
       + '<section class="mw-card mw-address"><h3>Your receiving address</h3><code>'
       + esc(s.address || '') + '</code>'
-      + '<button class="btn btn-ghost small" id="mw-me-copy">Copy</button></section></div>';
+      + '<button class="btn btn-ghost small" id="mw-me-copy">Copy</button></section>'
+      /* The same renderer the node wallet uses, so the two cannot drift. History being briefly
+         unreachable says nothing about the balance above it, so it says so in its own card
+         instead of blanking the screen or pretending there are no transactions. */
+      + '<section class="mw-card"><h3>Recent activity</h3>'
+      + (s.history_unavailable
+          ? '<div class="mw-empty">Your transactions could not be loaded just now. Your balance and address above are unaffected.</div>'
+          : transferRows(s.transfers))
+      + '</section></div>';
   }
 
   function meBind(s){
@@ -834,7 +855,13 @@
       const st = await request('/api/wallet/xmr/me/status');
       if(!st || !st.enabled){ _meState = {enabled:false}; _meAt = Date.now(); return _meState; }
       const b = await request('/api/wallet/xmr/me/balance');
+      /* History is DISPLAY DATA and must never decide whether the wallet works: a user who cannot
+         see their past payments must still see their balance, their address and the ability to
+         send. Same reasoning as the node wallet's history request, and the same catch. */
+      const h = await request('/api/wallet/xmr/me/history?limit=50').catch(error=>({__error:error}));
       _meState = {enabled:true, network:st.network, address:b.address, balance:b.balance,
+                  transfers:flattenTransfers(h),
+                  history_unavailable:!!(h&&h.__error),
                   unlocked_balance:b.unlocked_balance, blocks_to_unlock:b.blocks_to_unlock,
                   outputs:b.outputs,
                   /* The operator's cut, so the sheet can state it BEFORE anybody sends. A fee a
