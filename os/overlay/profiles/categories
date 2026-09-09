@@ -3,4 +3,5 @@ dev-vcs
 games-util
 gui-apps
 gui-libs
+gui-wm
 net-p2p
