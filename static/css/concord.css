@@ -257,3 +257,7 @@ body.concord-view .cc-message.cc-actions-open .cc-action-trigger{background:rgba
    less room than its own member list needs. One column here; the window is the frame. */
 html.pc-oswin body.concord-view .app{grid-template-columns:minmax(0,1fr)!important}
 html.pc-oswin body.concord-view .sidebar{display:none!important}
+
+/* A single check means delivery confirmed, never a read receipt. */
+.cc-delivery-confirmed{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;vertical-align:middle;white-space:nowrap;color:var(--muted);line-height:1}
+.cc-delivery-confirmed .ic{width:14px;height:14px;flex:none}

@@ -33,6 +33,14 @@ assert(feed.innerHTML.includes('Not sent'),'signer failure not visible');
 signMode='defer';const pending=submit('retry ciphertext exactly');await tick();
 assert(signCount===2&&sentPackets.length===0,'did not wait on real sign callback');
 assert(feed.innerHTML.includes('Waiting for signer'),'signing not visible');
+// SCOPED TO THIS MESSAGE'S OWN STATUS, not the whole feed. The feed legitimately still holds
+// earlier delivered messages ('hello concord', 'race once') whose confirmation marks are correct;
+// asking whether ANY confirmation exists anywhere fails on their success, which says nothing about
+// the message that is still waiting on the signer.
+const statusHtmlFor=t=>{const h=feed.innerHTML,i=h.indexOf(t);if(i<0)return '';
+  const j=h.indexOf('cc-delivery-status',i);return j<0?'':h.slice(j,h.indexOf('</span>',j));};
+assert(statusHtmlFor('retry ciphertext exactly').includes('Waiting for signer'),'pending row lost its signing label');
+assert(!statusHtmlFor('retry ciphertext exactly').includes('cc-delivery-confirmed'),'pending signer must not show confirmation');
 releaseSign();await pending;
 const unknown=rowFor('retry ciphertext exactly');
 assert(unknown.delivery==='unknown'&&!unknown.remote,'missing ACK looked sent');
@@ -64,7 +72,7 @@ assert(sentPackets.slice(4).every(x=>JSON.stringify(x.packet[1])===originalWrap)
 assert(rowFor('retry ciphertext exactly').delivery==='sent','positive ACK did not mark sent: '+JSON.stringify({row:rowFor('retry ciphertext exactly'),toasts:calls.toasts.slice(-2)}));
 assert([...pendingDeliveryCache.values()].every(m=>m.size===0),'ACK left resurrectable pending record');
 PCConcord.render();
-assert(/role="status" style="[^"]*clip:rect\(0,0,0,0\)[^"]*">Sent<\/span>/.test(feed.innerHTML),'successful delivery still visibly labels every message');
+assert(feed.innerHTML.includes('cc-delivery-confirmed')&&feed.innerHTML.includes('aria-label="Sent"')&&feed.innerHTML.includes('href="#i-check"')&&!feed.innerHTML.includes('>Sent<'),'confirmed delivery must use one accessible check');
 
 // An account change while signature is pending stores only owner-bound ciphertext, sends nothing.
 ackMode='ok';signMode='defer';const switched=submit('owner changed while signing');await tick();

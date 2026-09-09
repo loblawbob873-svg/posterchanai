@@ -1868,9 +1868,10 @@
     const status=m.delivery||(m.pending?'signing':'failed');
     const label={signing:'Waiting for signer',sending:'Sending',unknown:'Delivery unknown',failed:'Not sent',sent:'Sent'}[status]||'Delivery unknown';
     const d=deliveries.get(deliveryId(deliveryOwner(p),m.id));
-    // Successful delivery stays available to assistive technology without cluttering each message.
-    const quiet=status==='sent'?' style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0"':'';
-    return `<span class="cc-delivery-status" role="status"${quiet}>${label}</span>`+
+    const statusHtml=status==='sent'
+      ? '<span class="cc-delivery-status cc-delivery-confirmed" role="status" aria-label="Sent" title="Sent"><svg class="ic" aria-hidden="true"><use href="#i-check"></use></svg></span>'
+      : `<span class="cc-delivery-status" role="status">${label}</span>`;
+    return statusHtml+
       (d&&['failed','unknown'].includes(status)?`<button data-cc-retry-delivery="${p.enc(m.id)}" title="Resend the same signed message; no new signature">Retry delivery</button>`:'');
   }
   async function hydrateRoomStreams(p,index,expectedIdentity=''){
