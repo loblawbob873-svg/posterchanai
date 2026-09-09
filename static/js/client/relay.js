@@ -204,30 +204,31 @@
       return attempt;
     },
 
-    // External room streams are authored by stream keys, but AUTH belongs to the signed-in user.
+    // Generic external AUTH uses the account. Explicit CORD capabilities authenticate one held plane.
     // Each helper owns one exact socket and at most two distinct challenge attempts. No global
     // OK waiter or replacement socket can consume its delayed signer result.
     _authRequired(reason){return /^(?:ERROR:\s*)?auth-required:/i.test(String(reason||''));},
-    _externalReadAuth(ws,url,isCurrent,replay,deny,onRequired=()=>{}){
-      const signer=this._authSigner,ownerReader=this._authOwner,owner=ownerReader?ownerReader():null;
-      const current=()=>isCurrent()&&ws.readyState===1&&this._authSigner===signer&&
-        this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner);
+    _externalReadAuth(ws,url,isCurrent,replay,deny,onRequired=()=>{},scope=null){
+      const accountSigner=this._authSigner,signer=scope?scope.sign:accountSigner,ownerReader=this._authOwner,owner=ownerReader?ownerReader():null;
+      const expected=scope?scope.pubkey:owner;
+      const current=()=>isCurrent()&&ws.readyState===1&&this._authSigner===accountSigner&&
+        this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner)&&(!scope||scope.current());
       let challenge='',required=false,closed=false,awaiting=false,pendingId='',timer=null,version=0;
       const attempted=new Set();
       const stop=()=>{closed=true;version++;clearTimeout(timer);pendingId='';};
-      const fail=()=>{if(closed)return;stop();deny();};
+      const fail=(reason='denied')=>{if(closed)return;stop();deny(reason);};
       const attempt=()=>{
         if(closed||!required||!challenge||attempted.has(challenge))return;
-        if(!current()||!signer||(ownerReader&&!owner)||attempted.size>=2)return fail();
+        if(!current()||!signer||(!scope&&ownerReader&&!owner)||attempted.size>=2)return fail();
         attempted.add(challenge);awaiting=true;const captured=challenge,token=++version;pendingId='';
-        clearTimeout(timer);timer=setTimeout(fail,12000);onRequired();
+        clearTimeout(timer);timer=setTimeout(()=>fail('timeout'),12000);onRequired();
         Promise.resolve().then(()=>{
           if(!current()||closed||version!==token)return null;
           return signer({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
             tags:[['relay',url],['challenge',captured]]});
         }).then(ev=>{
           if(closed||version!==token)return;
-          if(!current()||!ev||!ev.id||ev.kind!==22242||(owner&&ev.pubkey!==owner))return fail();
+          if(!current()||!ev||!ev.id||ev.kind!==22242||(expected&&ev.pubkey!==expected))return fail();
           pendingId=ev.id;
           try{ws.send(JSON.stringify(['AUTH',ev]));}catch(_){fail();}
         }).catch(()=>{if(version===token)fail();});
@@ -840,7 +841,7 @@
     // reconnect, no pool membership, deduped + capped fan-out so a send can't spike CPU/sockets.
     // Resolves with the number of relays that accepted. Skips relays already in the pool (publish()
     // covered them) and is a no-op when there are none.
-    async publishTo(urls, event, { timeout=5000, max=4, includeManaged=false, detailed=false } = {}){
+    async publishTo(urls, event, { timeout=5000, max=4, includeManaged=false, detailed=false, authScope=null } = {}){
       // Room sends must reach their exact relay set even when those URLs are already pooled.
       // Keep the external-only default for callers that already used publish() for the pool.
       const finishResults = results => {
@@ -851,6 +852,7 @@
           msg:accepted?'':uncertain?'delivery has not been confirmed':
             results.find(r=>r.msg)?.msg||'no eligible room relays'};
       };
+      if(authScope&&(![1059,21059].includes(event.kind)||event.pubkey!==authScope.pubkey||!authScope.current()))return finishResults([]);
       if(_fediPrivate(event)) return finishResults([]);
       if(this.socialRoute && await this.socialRoute(event,true)) return finishResults([]);
       const targets = [...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))]
@@ -866,7 +868,7 @@
         const wire=JSON.stringify(['EVENT',event]);
         const send=()=>{if(auth&&!auth.current()){fin(false,'account changed during room delivery',authRejected);return;}attempted=true;authRejected=false;ws.send(wire);};
         if(includeManaged&&detailed)auth=this._externalReadAuth(ws,u,()=>!done,send,
-          ()=>fin(false,'room relay authentication refused',authRejected),()=>{clearTimeout(tm);tm=setTimeout(()=>fin(false,'room relay authentication timed out',authRejected),12000);});
+          ()=>fin(false,'room relay authentication refused',authRejected),()=>{clearTimeout(tm);tm=setTimeout(()=>fin(false,'room relay authentication timed out',authRejected),12000);},authScope);
         ws.onopen = () => { try{send();}catch(_){fin(false,'room relay connection failed',authRejected);} };
         ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
           if(auth){
@@ -904,11 +906,12 @@
      * reconnect storm. The REQ is re-sent verbatim: the filter's `since` is then older than it needs
      * to be, which costs a few duplicate events the store already dedupes and is the safe direction
      * — a recomputed `since` would open a hole exactly the width of the outage. */
-    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false } = {}){
-      const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>!this._conns.has(u)).slice(0,max);
+    subscribeFrom(urls, filters, { onEvent, timeout=60000, max=4, live=false, authScope=null } = {}){
+      if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))throw new Error("invalid plane subscription scope");
+      const targets=[...new Set((urls||[]).filter(u=>u&&!_isBlockedRelay(u)))].filter(u=>authScope||!this._conns.has(u)).slice(0,max);
       const sockets=[]; let closed=false,tm=null,readyDone=false,readyResolve;
       const ownerReader=this._authOwner,owner=ownerReader?ownerReader():null;
-      const active=()=>!closed&&this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner);
+      const active=()=>!closed&&this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner)&&(!authScope||authScope.current());
       /* Callers that bridge a realtime protocol must not report "joined" before an external
        * socket has actually sent its REQ.  The old API returned its closer immediately, while the
        * websocket was still connecting; ioquake then sent host-election packets into the gap.  A
@@ -922,7 +925,7 @@
         sockets.forEach(ws=>{try{ws.close();}catch(_){}}); };
       stop.ready=ready;
       stop.hasTargets=targets.length>0;
-      stop.publish=event=>{if(_SOCIAL_KINDS.has(event.kind) || _fediPrivate(event))return 0;let sent=0;for(const ws of sockets){try{if(!closed&&ws.readyState===1){ws.send(JSON.stringify(['EVENT',event]));sent++;}}catch(_){}}return sent;};
+      stop.publish=event=>{if(!active()||(authScope&&(![1059,21059].includes(event.kind)||event.pubkey!==authScope.pubkey))||_SOCIAL_KINDS.has(event.kind) || _fediPrivate(event))return 0;let sent=0;for(const ws of sockets){try{if(!closed&&ws.readyState===1){ws.send(JSON.stringify(['EVENT',event]));sent++;}}catch(_){}}return sent;};
       if(!targets.length)markReady(true); // every requested URL is already in the managed pool
       if(timeout>0) tm=setTimeout(stop,timeout);
       targets.forEach((u,n)=>{
@@ -942,12 +945,12 @@
           if(!active()){stop();return;}
           let ws;
           try{ws=new WebSocket(u);}catch(_){ return schedule(); }
-          if(auth)auth.stop();cur=ws; if(!live)sockets.push(ws);
+          if(auth)auth.stop();cur=ws;sockets[n]=ws;
           const current=()=>active()&&cur===ws;
           const request=()=>{if(!current())return;ws.send(wire);markReady(true);};
-          auth=this._externalReadAuth(ws,u,current,request,()=>{authBlocked=true;try{ws.close();}catch(_){}markReady(false);});
+          auth=this._externalReadAuth(ws,u,current,()=>{backoff=1000;request();},reason=>{authBlocked=!authScope||reason!=='timeout';try{ws.close();}catch(_){}markReady(false);},()=>{},authScope);
           const ownAuth=auth;
-          ws.onopen=()=>{if(!current())return;backoff=1000;try{request();}catch(_){}};
+          ws.onopen=()=>{if(!current())return;if(!authScope)backoff=1000;try{request();}catch(_){}};
           ws.onmessage=async e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
             if(!current()||!ownAuth.current())return;
             if((m[0]!=='CLOSED'||m[1]===id)&&ownAuth.receive(m))return;
@@ -1023,13 +1026,15 @@
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
     // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000 } = {}){
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null } = {}){
+      if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))return Promise.resolve([]);
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
        * that relay even when it is also present in the shared pool. */
+      const slot=u=>authScope?u+'\0plane:'+authScope.pubkey:u;
       const blocked=u=>{try{return this._queryFromBlockedHosts.has(new URL(String(u)).hostname.toLowerCase());}catch(_){return true;}},
         now=Date.now(),targets = [...new Set((urls||[]).filter(Boolean))]
-        .filter(u => (allowBlocked || !blocked(u)) && (exact || !this._conns.has(u)) && !this._queryFromActive.has(u) && Number(this._queryFromCooldown.get(u)||0)<=now && (minInterval<=0 || Number(this._queryFromPurposeCooldown.get(u+'\0'+purpose)||0)<=now))
+        .filter(u => (allowBlocked || !blocked(u)) && (exact || !this._conns.has(u)) && !this._queryFromActive.has(slot(u)) && Number(this._queryFromCooldown.get(slot(u))||0)<=now && (minInterval<=0 || Number(this._queryFromPurposeCooldown.get(slot(u)+'\0'+purpose)||0)<=now))
         .slice(0, max);
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);
@@ -1037,27 +1042,27 @@
         let ws, done = false, tm,auth; const got = [];
         const abort = () => fin('abort');
         const stop = () => fin('abort');
-        const fin = (outcome='failure') => { if (done) return; done = true; clearTimeout(tm);if(auth)auth.stop();
+        const fin = (outcome='failure') => { if (done) return;if(authScope&&!authScope.current())outcome='abort'; done = true; clearTimeout(tm);if(auth)auth.stop();
           if (signal) signal.removeEventListener('abort', abort);
-          Relay._queryFromStops.delete(stop);Relay._queryFromActive.delete(u);
+          Relay._queryFromStops.delete(stop);Relay._queryFromActive.delete(slot(u));
           if(outcome==='failure'){
-            Relay._queryFromCooldown.set(u,Date.now()+Math.max(30000,Number(failureCooldown)||0));
+            Relay._queryFromCooldown.set(slot(u),Date.now()+Math.max(30000,Number(failureCooldown)||0));
             try{console.warn('[relay queryFrom]',purpose,u,'failed; cooling down');}catch(_){}
           }else if(outcome==='success'){
-            Relay._queryFromCooldown.delete(u);
-            if(minInterval>0)Relay._queryFromPurposeCooldown.set(u+'\0'+purpose,Date.now()+minInterval);
+            Relay._queryFromCooldown.delete(slot(u));
+            if(minInterval>0)Relay._queryFromPurposeCooldown.set(slot(u)+'\0'+purpose,Date.now()+minInterval);
           }
           if (ws){ try{ ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); }catch(_){} }
           resolve(got); };
         if (signal){ if (signal.aborted) return fin('abort'); signal.addEventListener('abort', abort, {once:true}); }
-        Relay._queryFromActive.add(u);Relay._queryFromStops.add(stop);
+        Relay._queryFromActive.add(slot(u));Relay._queryFromStops.add(stop);
         /* Arm at construction, not only EOSE: switching windows may abort this socket before it
            answers, and the four-second owner timer must not immediately recreate it. */
-        if(minInterval>0)Relay._queryFromPurposeCooldown.set(u+'\0'+purpose,Date.now()+minInterval);
+        if(minInterval>0)Relay._queryFromPurposeCooldown.set(slot(u)+'\0'+purpose,Date.now()+minInterval);
         try { ws = new WebSocket(u); } catch(_){ return fin('failure'); }
         tm = setTimeout(fin, timeout);
         const wire=JSON.stringify(['REQ',subId,...filters]),request=()=>{if(auth&&!auth.current()){fin('abort');return;}ws.send(wire);};
-        auth=this._externalReadAuth(ws,u,()=>!done,request,()=>fin('failure'),()=>{clearTimeout(tm);tm=setTimeout(fin,12000);});
+        auth=this._externalReadAuth(ws,u,()=>!done,request,()=>fin('failure'),()=>{clearTimeout(tm);tm=setTimeout(fin,12000);},authScope);
         ws.onopen = () => { try{ request(); }catch(_){ fin(); } };
         ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
           if(done||!auth.current())return;

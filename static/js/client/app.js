@@ -37762,7 +37762,7 @@
     relayClose: subId => Relay.close(subId),
     relayPublish: ev => Relay.publish(ev),
     relayPublishTo: (relays, ev) => Relay.publishTo(relays, ev),
-    relayPublishRoom: (relays, ev) => Relay.publishTo(relays, ev, {includeManaged:true, detailed:true}),
+    relayPublishRoom: (relays, ev, authScope=null) => Relay.publishTo(relays, ev, {includeManaged:true, detailed:true, authScope}),
     relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev),
     relayQuery: (filters, timeout) => Relay.query(filters, timeout),
     relayQueryFrom: (relays, filters, opts) => Relay.queryFrom(relays, filters, opts),

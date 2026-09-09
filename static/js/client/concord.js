@@ -27,10 +27,67 @@
     const own=[...new Set((bundle&&bundle.relays||[]).map(normalizeRelay).filter(Boolean))];
     return (own.length?own:CORD_RELAYS).slice(0,8);
   }
-  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000}={}){
+  function cordControlStamp(wraps){return [...new Set((wraps||[]).map(ev=>ev&&ev.id).filter(Boolean))].sort();}
+  function cordPlaneContext(p,bundle,controls=[],room=null){
+    const owner=String(p&&p.viewer&&p.viewer().pubkey||''), identity=room&&roomIdentity(room),
+      material=JSON.stringify(bundle),loadKey=room&&(room.communityId||room.naddr),
+      generation=loadKey&&JSON.stringify(cordControlStamp(roomControls.get(loadKey)));
+    const membershipCurrent=()=>{
+      if(String(p&&p.viewer&&p.viewer().pubkey||'')!==owner)return false;
+      if(!room)return true;
+      const live=saved().find(r=>roomIdentity(r)===identity);
+      return !!live&&JSON.stringify(live.cord&&live.cord.bundle)===material;
+    };
+    return {bundle,controls:controls||[],membershipCurrent,current:()=>membershipCurrent()&&
+      (!generation||JSON.stringify(cordControlStamp(roomControls.get(loadKey)))===generation)};
+  }
+  function cordPlaneAuth(p,plane,author,relays){
+    const reader=window.PosterCordReader;
+    if(!plane||!reader||!reader.createPlaneAuth)return null;
+    if(!plane.current())throw new Error('Concord membership changed during transport');
+    return {...reader.createPlaneAuth(plane.bundle,plane.controls,author,relays),current:plane.current};
+  }
+  function cordPlaneSubscribe(p,R,relays,filters,options,plane){
+    const subscriptions=[],relayCap=Math.max(1,Math.min(4,Number(options.max)||4)),planeLimit=Math.floor(8/relayCap);
+    // At most eight live sockets. Reader streams are current-first; archived epochs beyond
+    // this budget remain covered by the bounded sequential history refresh.
+    try{for(const filter of filters)for(const author of [...new Set(filter.authors||[])]){
+      if(subscriptions.length>=planeLimit)break;
+      const authScope=cordPlaneAuth(p,plane,author,relays);
+      subscriptions.push(R.subscribeFrom(relays,[{...filter,authors:[author]}],{...options,max:relayCap,authScope}));
+    }}catch(e){subscriptions.forEach(stop=>stop());throw e;}
+    const stop=()=>subscriptions.forEach(close=>close());
+    stop.publish=event=>subscriptions.reduce((n,sub)=>n+(sub.publish?sub.publish(event):0),0);
+    stop.hasTargets=subscriptions.some(sub=>sub.hasTargets);
+    stop.ready=Promise.all(subscriptions.map(sub=>sub.ready)).then(results=>results.every(Boolean));
+    return stop;
+  }
+  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null}={}){
     /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
        otherwise opening a room can silently omit the newest wraps from whichever relay is connected. */
     const jobs=[];
+    if(plane&&window.PosterCordReader&&window.PosterCordReader.createPlaneAuth){
+      if(!p.relayQueryFrom)throw new Error('Concord plane transport unavailable');
+      const byId=new Map();
+      // One author per socket: relays may require every queried author to authenticate.
+      // Sequential planes also bound fan-out to the explicit relay cap.
+      for(const filter of filters){
+        const page=new Map();
+        for(const author of [...new Set(filter.authors||[])]){
+          const authScope=cordPlaneAuth(p,plane,author,relays);
+          const events=await p.relayQueryFrom(relays,[{...filter,authors:[author]}],
+            {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope});
+          if(!plane.current())return [];
+          for(const ev of events||[])if(ev&&ev.id)page.set(ev.id,ev);
+        }
+        // Preserve the combined filter's global limit. Otherwise an ancient epoch's
+        // first page can move the shared cursor past an unread newer epoch's tail.
+        const ordered=[...page.values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(b.id).localeCompare(String(a.id))),
+          limit=Number.isSafeInteger(filter.limit)&&filter.limit>0?filter.limit:ordered.length;
+        for(const ev of ordered.slice(0,limit))byId.set(ev.id,ev);
+      }
+      return [...byId.values()];
+    }
     if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
     if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown})));
     const settled=await Promise.allSettled(jobs),ok=settled.filter(result=>result.status==='fulfilled');
@@ -1199,7 +1256,7 @@
     try{
       const signal=discoveryAbortController&&discoveryAbortController.signal,room=await hydrateInvite(p,item.url,signal);if(signal&&signal.aborted)return;const bundle=room.cord.bundle,reader=window.PosterCordReader;
       const seed=reader.inspectControl(bundle,[]),relays=roomRelays(bundle);
-      const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,signal});
+      const wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,signal,plane:cordPlaneContext(p,bundle,[],null)});
       const info=reader.inspectControl(bundle,wraps||[]);
       item.name=info.name||item.name; item.description=info.description||item.description;
       if(info.icon)item.icon=typeof info.icon==='string'?info.icon:await decryptImagePointer(info.icon);
@@ -1765,7 +1822,8 @@
       if(!p.relayPublishRoom)throw new Error('room delivery requires an updated client');
       paintDelivery(d,'sending');
       let result;
-      try{result=await p.relayPublishRoom(d.relays,d.made.wrap);}
+      try{const room=saved().find(r=>roomIdentity(r)===d.roomId),bundle=room&&room.cord&&room.cord.bundle;
+        result=await p.relayPublishRoom(d.relays,d.made.wrap,cordPlaneAuth(p,cordPlaneContext(p,bundle,roomControls.get(d.loadKey)||[],room),d.made.wrap.pubkey,d.relays));}
       catch(e){paintDelivery(d,'unknown');throw e;}
       if(!result||!result.ok){
         paintDelivery(d,result&&result.uncertain?'unknown':'failed');
@@ -1819,7 +1877,7 @@
     const rooms=saved(),room=rooms[index],reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle;
     if(!room||!bundle||!reader)return;
     const loadKey=room.communityId||room.naddr,identity=roomIdentity(room),owner=deliveryOwner(p),jobKey=owner+'\n'+loadKey;
-    const currentOwner=()=>deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity);
+    const hydrationScope=cordPlaneContext(p,bundle,[],room),currentOwner=()=>hydrationScope.membershipCurrent();
     if(roomLoads.has(jobKey))return roomLoads.get(jobKey);
     const job=(async()=>{
       /* Membership refresh and Leave can finish while relay history is in flight. Persist by room
@@ -1946,7 +2004,7 @@
         })();
       }
       try{
-      const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
+      const completeControl=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,controlWraps,{plane:cordPlaneContext(p,bundle,controlWraps,room)}),fetchedControl=completeControl.filter(ev=>!controlWraps.some(old=>old.id===ev.id));
       if(!currentOwner())return;
       controlWraps=completeControl;await cacheEnvelopes(controlKey,fetchedControl);
       if(!currentOwner())return;
@@ -1968,7 +2026,7 @@
       const fetchChannel=async channel=>{
         if(!currentOwner())return;
         const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),
-          wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached),
+          wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached,{plane:cordPlaneContext(p,bundle,controlWraps,room)}),
           fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
         if(!currentOwner())return;
         await cacheEnvelopes(cacheKey,fetched);await applyChannel(channel,wraps);
@@ -2062,7 +2120,7 @@
     const channel=(room.channels||[]).find(c=>c.name===channelName); if(!channel||!channel.id)throw new Error('channel key is unavailable');
     const loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);
     let controlWraps=roomControls.get(loadKey);
-    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]),key=envelopeCacheKey(loadKey,'control'),cached=await cachedEnvelopes(key);controlWraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cached);await cacheEnvelopes(key,controlWraps.filter(ev=>!cached.some(old=>old.id===ev.id)));
+    if(!controlWraps){ const seed=reader.inspectControl(bundle,[]),key=envelopeCacheKey(loadKey,'control'),cached=await cachedEnvelopes(key);controlWraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cached,{plane:cordPlaneContext(p,bundle,cached,room)});await cacheEnvelopes(key,controlWraps.filter(ev=>!cached.some(old=>old.id===ev.id)));
       /* AN EMPTY CONTROL SET IS "COULD NOT ASK", NOT "THIS COMMUNITY HAS NO CHANNELS".
        *
        * A community's channels are DEFINED by its control events — Armada's own reader builds
@@ -2095,7 +2153,7 @@
       if(!/not writable with this membership/i.test(String(e&&e.message||e)))throw e;
       const seed=reader.inspectControl(bundle,[]),key=envelopeCacheKey(loadKey,'control'),cached=await cachedEnvelopes(key),
         known=[...cached,...(controlWraps||[])].filter((ev,i,a)=>ev&&ev.id&&a.findIndex(x=>x&&x.id===ev.id)===i),
-        fresh=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,known),
+        fresh=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,known,{plane:cordPlaneContext(p,bundle,known,room)}),
         added=fresh.filter(ev=>!known.some(old=>old.id===ev.id));
       if(added.length)await cacheEnvelopes(key,added);
       if(fresh.length){controlWraps=fresh;roomControls.set(loadKey,fresh);}
@@ -2107,7 +2165,7 @@
     if(![9,1111].includes(kind)){
       if(deliveryOwner(p)!==viewer.pubkey)throw new Error('sending account changed');
       if(!p.relayPublishRoom)throw new Error('room delivery requires an updated client');
-      const result=await p.relayPublishRoom(relays,made.wrap);
+      const result=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,cordPlaneContext(p,bundle,controlWraps,room),made.wrap.pubkey,relays));
       if(!result||!result.ok)throw new Error(result&&result.msg||'room delivery was not acknowledged');
       await cacheEnvelopes(envelopeCacheKey(loadKey,writeChannel.id),[made.wrap]);return made;
     }
@@ -2210,8 +2268,9 @@
     if(chatFlush){clearTimeout(chatFlush);chatFlush=null;}
     if(sub&&typeof sub.close==='function')try{sub.close();}catch(_){}
   }
+  function chatLiveKey(p,room,channel){if(room&&room.protocol==='nip29')return roomIdentity(room)+'\n'+String(channel&&channel.id||'');return JSON.stringify([roomIdentity(room),String(channel&&channel.id||''),deliveryOwner(p),room&&room.cord&&room.cord.bundle,cordControlStamp(roomControls.get(room&&(room.communityId||room.naddr)))]);}
   function startChatLive(p,room,channel){
-    const key=roomIdentity(room)+'\n'+String(channel&&channel.id||'');
+    const key=chatLiveKey(p,room,channel);
     if(chatSub&&chatSubKey===key)return;
     stopChatLive();
     const nip29=room&&room.protocol==='nip29',authors=(channel&&channel.streamPubkeys)||[];
@@ -2233,11 +2292,14 @@
     const urls=nip29?[room.relay]:roomRelays(room&&room.cord&&room.cord.bundle),
       filters=nip29?[{kinds:[5,7,9,10,11,12,1111],'#h':[room.groupId],since}]:[{kinds:[1059],authors,since}];
     try{
-      const pooled=R.subscribe(filters,{onEvent,live:true}),external=R.subscribeFrom(urls,filters,{onEvent,timeout:0,live:true});
+      const plane=!nip29&&window.PosterCordReader&&window.PosterCordReader.createPlaneAuth&&
+        cordPlaneContext(p,room.cord.bundle,roomControls.get(room.communityId||room.naddr)||[],room);
+      const pooled=plane?null:R.subscribe(filters,{onEvent,live:true}),
+        external=plane?cordPlaneSubscribe(p,R,urls,filters,{onEvent,timeout:0,live:true},plane):R.subscribeFrom(urls,filters,{onEvent,timeout:0,live:true});
       const close=()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
       chatSub={close,pooled,external};
       const gates=[];
-      if(R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
+      if(pooled&&R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
       if(external.hasTargets&&external.ready)gates.push(external.ready.then(ok=>{if(!ok)throw new Error('external room relay did not open');}));
       /* WARN, NEVER TEAR DOWN. Neither gate can prove a subscription is dead: the managed
        * pool legitimately does not carry a room's own invite relays (so waitForSubscription
@@ -2258,7 +2320,7 @@
     if(!room||!channel)return;
     /* THE VIEW MOVED WHILE THOSE BYTES WERE IN FLIGHT. Without this the events of the channel you
      * just left are merged into the store of the one you just opened. */
-    if(roomIdentity(room)+'\n'+String(channel.id||'')!==key)return;
+    if(chatLiveKey(p,room,channel)!==key)return;
     if(room.protocol==='nip29'){
       const storeId=channelStoreId(room,channel.name),owner=deliveryOwner(p),identity=roomIdentity(room),
         needsContext=wraps.some(ev=>[5,7].includes(Number(ev.kind)));
@@ -2361,10 +2423,12 @@
         stillOwned=()=>deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity);
       const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);
       if(!controlWraps)return;
+      // Repair transport ownership before a slow/failed history read can hold the room deaf.
+      startChatLive(p,room,channel);
       const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),
         since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),
         wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],
-          {timeout:6000,max:8,signal:ownRoomReads(identity),purpose:'concord room live '+loadKey,minInterval:60000});
+          {timeout:6000,max:8,plane:cordPlaneContext(p,bundle,controlWraps,room),signal:ownRoomReads(identity),purpose:'concord room live '+loadKey,minInterval:60000});
       if(!stillOwned())return;
       await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);
       if(!stillOwned())return;
@@ -2398,18 +2462,23 @@
        * somebody navigates away and back. */
       const selected=eligible[metadataCursor++%eligible.length],room=selected.room,bundle=room.cord.bundle,
         reader=window.PosterCordReader,loadKey=room.communityId||room.naddr,
-        seed=reader.inspectControl(bundle,[]),relays=roomRelays(bundle),
-        cachedWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),wraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cachedWraps,{signal:roomIdentity(room)===roomReadIdentity&&roomReadAbortController?roomReadAbortController.signal:null,purpose:'concord room metadata '+loadKey,minInterval:60000}),freshWraps=wraps.filter(ev=>!cachedWraps.some(old=>old.id===ev.id)),
+        seed=reader.inspectControl(bundle,[]),relays=roomRelays(bundle),context=cordPlaneContext(p,bundle,roomControls.get(loadKey)||[],room),
+        cachedWraps=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),wraps=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,cachedWraps,{plane:context,signal:roomIdentity(room)===roomReadIdentity&&roomReadAbortController?roomReadAbortController.signal:null,purpose:'concord room metadata '+loadKey,minInterval:60000}),freshWraps=wraps.filter(ev=>!cachedWraps.some(old=>old.id===ev.id)),
         info=reader.inspectControl(bundle,wraps||[]);
-      await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),freshWraps);roomControls.set(loadKey,wraps||[]);void refreshGuestbookMembers(p,room,wraps||[]);
+      if(!context.current())return;
+      await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),freshWraps);if(!context.current())return;roomControls.set(loadKey,wraps||[]);
+      void refreshGuestbookMembers(p,room,wraps||[]);
       let changed=false;
       const assign=(key,value)=>{if(value!==undefined&&JSON.stringify(room[key])!==JSON.stringify(value)){room[key]=value;changed=true;}};
       assign('name',info.name||room.name); assign('description',info.description===undefined?room.description:info.description);
       assign('banned',Array.isArray(info.banned)?info.banned:room.banned||[]);
       if(await applyRoomIconMetadata(room,info,loadKey,seed))changed=true;
+      if(!context.membershipCurrent())return;
       const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
       if(channels.length)assign('channels',channels);
       if(changed){const latest=saved(),at=latest.findIndex(item=>sameRoom(item,room));if(at>=0){latest[at]=mergeRoom(latest[at],room);save(latest);preserveChatScroll(()=>backgroundRender());}}
+      const active=saved()[state.community],activeChannel=active&&(active.channels||[]).find(c=>c.name===(state.channel||'general'));
+      if(roomIdentity(active)===roomIdentity(room)&&activeChannel)startChatLive(p,active,activeChannel);
     }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
   }
   function stopLiveSync(){ if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
@@ -2418,10 +2487,16 @@
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
     const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
     const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:location.origin,signEvent:p.signTemplate});
-    for(const ev of made.events){ const accepted=await p.relayPublishTo(relays,ev); if(!accepted)throw new Error('CORD relays rejected an event'); }
+    const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
+    const plane=cordPlaneContext(p,bundle,made.events.filter(ev=>ev.kind===1059));
+    for(const ev of made.events){
+      if(deliveryOwner(p)!==viewer.pubkey)throw new Error('creating account changed');
+      const accepted=await p.relayPublishRoom(relays,ev,ev.kind===1059?cordPlaneAuth(p,plane,ev.pubkey,relays):null);
+      if(!accepted||!accepted.ok)throw new Error('CORD relays rejected an event');
+    }
+    if(deliveryOwner(p)!==viewer.pubkey)throw new Error('creating account changed');
     const announcement=await p.publish(1,`${name}\n\n${made.url}`,[['t','concord'],['t','community']]);
     await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev);
-    const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
     return {name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
   }
   async function activateJoinedRoom(p,index,inDrawer=false,expectedIdentity=''){
@@ -2666,7 +2741,7 @@
     if(input)input.onpaste=event=>{ const images=[...(event.clipboardData&&event.clipboardData.items||[])].filter(item=>item.kind==='file'&&String(item.type||'').startsWith('image/')).map(item=>item.getAsFile&&item.getAsFile()).filter(Boolean); if(!images.length)return; event.preventDefault(); void uploadAttachments(images); };
     const members=$('#cc-members'); if(members)members.onclick=()=>{if(!window.matchMedia||window.matchMedia('(max-width:820px)').matches){$('#cc-members-dialog').classList.remove('hidden');return;}const pane=$('.cc-members-pane');if(!pane)return;const hide=localStorage.getItem('pc.concord.members.hidden')!=='1';pane.classList.toggle('hidden',hide);localStorage.setItem('pc.concord.members.hidden',hide?'1':'0');};
     const membersClose=$('#cc-members-close'); if(membersClose)membersClose.onclick=()=>$('#cc-members-dialog').classList.add('hidden');
-    const banMember=async target=>{ const initial=saved(),room=initial[state.community],roomId=roomIdentity(room),viewer=p.viewer?p.viewer():{},bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader,loadKey=room&&(room.communityId||room.naddr),wraps=roomControls.get(loadKey); if(!bundle||!reader||!reader.createBanWrap||!wraps)return p.toast('community moderation is not ready'); if(p.uiConfirm&&!await p.uiConfirm('Ban this member from the community?',{ok:'Ban',danger:true}))return; try{ const made=await reader.createBanWrap(bundle,wraps,target,viewer.pubkey,p.signTemplate),relays=roomRelays(bundle),accepted=await p.relayPublishTo(relays,made.wrap); if(!accepted)throw new Error('community relays rejected the ban');/* A signer may keep this promise open while the owner changes rooms. Update the moderated room by durable identity instead of overwriting the newly active numeric index. */const latest=saved(),roomIndex=latest.findIndex(item=>roomIdentity(item)===roomId);if(roomIndex<0)throw new Error('community was removed while moderation was pending');latest[roomIndex].banned=made.banned;save(latest);render();p.toast('member banned'); }catch(e){p.toast('member was not banned: '+(e&&e.message||e));} };
+    const banMember=async target=>{ const initial=saved(),room=initial[state.community],roomId=roomIdentity(room),viewer=p.viewer?p.viewer():{},bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader,loadKey=room&&(room.communityId||room.naddr),wraps=roomControls.get(loadKey); if(!bundle||!reader||!reader.createBanWrap||!wraps)return p.toast('community moderation is not ready');const scope=cordPlaneContext(p,bundle,wraps,room); if(p.uiConfirm&&!await p.uiConfirm('Ban this member from the community?',{ok:'Ban',danger:true}))return; try{if(!scope.current())throw new Error('Concord membership changed during confirmation');const made=await reader.createBanWrap(bundle,wraps,target,viewer.pubkey,p.signTemplate),relays=roomRelays(bundle);if(!scope.current())throw new Error('Concord membership changed while signing');const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays)); if(!accepted||!accepted.ok)throw new Error('community relays rejected the ban');if(!scope.current())throw new Error('Concord membership changed during moderation');/* A signer may keep this promise open while the owner changes rooms. Update the moderated room by durable identity instead of overwriting the newly active numeric index. */const latest=saved(),roomIndex=latest.findIndex(item=>roomIdentity(item)===roomId);if(roomIndex<0)throw new Error('community was removed while moderation was pending');latest[roomIndex].banned=made.banned;save(latest);render();p.toast('member banned'); }catch(e){p.toast('member was not banned: '+(e&&e.message||e));} };
     const closeMemberMenu=()=>{const old=document.querySelector('.cc-member-menu');if(old)old.remove();};
     const openMemberMenu=(event,target)=>{closeMemberMenu();const canBan=isOwner&&target!==viewer.pubkey,canMessage=target!==viewer.pubkey,menu=document.createElement('div');menu.className='cc-member-menu';menu.setAttribute('role','menu');menu.innerHTML=`<button data-cc-member-profile="${p.enc(target)}" role="menuitem">View profile</button>${canMessage?`<button data-cc-member-message="${p.enc(target)}" role="menuitem">Message</button>`:''}${canBan?`<button class="danger" data-cc-member-ban="${p.enc(target)}" role="menuitem">Ban from community</button>`:''}`;document.body.appendChild(menu);const anchor=event.currentTarget||(event.target&&event.target.closest&&event.target.closest('[data-cc-member]')),rect=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null,rows=1+(canMessage?1:0)+(canBan?1:0),x=Math.min(rect?rect.right+6:(event.clientX||12),window.innerWidth-190),y=Math.min(rect?rect.top:(event.clientY||12),window.innerHeight-(rows*42+8));menu.style.left=Math.max(8,x)+'px';menu.style.top=Math.max(8,y)+'px';menu.querySelector('[data-cc-member-profile]').onclick=()=>{closeMemberMenu();if(p.openProfile)p.openProfile(target);};const message=menu.querySelector('[data-cc-member-message]');if(message)message.onclick=()=>{closeMemberMenu();if(p.messageUser)p.messageUser(target);};const ban=menu.querySelector('[data-cc-member-ban]');if(ban)ban.onclick=()=>{closeMemberMenu();void banMember(target);};setTimeout(()=>document.addEventListener('pointerdown',e=>{if(!menu.contains(e.target))closeMemberMenu();},{once:true}),0);};
     $$('[data-cc-member]').forEach(row=>{const target=row.dataset.ccMember;let held=null,longPressed=false;row.onclick=e=>{e.preventDefault();/* Android/iOS synthesize click after a completed long press. Consume that click or the menu is immediately replaced by Profile. Resolve the viewport now, not when this row was rendered: rotation and desktop window resizing can cross the responsive boundary without causing a Concord repaint. */const action=memberTapAction(memberViewportIsNarrow(),longPressed);longPressed=false;if(action==='consume')return;if(action==='profile'){if(p.openProfile)p.openProfile(target);return;}openMemberMenu(e,target);};row.oncontextmenu=e=>{e.preventDefault();longPressed=false;openMemberMenu(e,target);};row.onpointerdown=e=>{if(e.pointerType==='mouse')return;longPressed=false;held=setTimeout(()=>{held=null;longPressed=true;openMemberMenu(e,target);},550);};row.onpointerup=row.onpointercancel=row.onpointermove=()=>{if(held){clearTimeout(held);held=null;}};});
@@ -2684,7 +2759,7 @@
     const leaveByHeader=()=>{const action=$('#cc-leave-community');if(action)action.click();};
     const leaveShortcut=$('#cc-leave-shortcut');if(leaveShortcut)leaveShortcut.onclick=leaveByHeader;
     const leaveRoom=$('#cc-leave-room');if(leaveRoom)leaveRoom.onclick=leaveByHeader;
-    const settingsSave=$('#cc-settings-save'); if(settingsSave)settingsSave.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; const description=String($('#cc-description-value').value||'').trim().slice(0,1000),icon=normalizeIcon($('#cc-settings-icon').value); settingsSave.disabled=true; try{ if(!room.local){const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room.cord&&room.cord.bundle,loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);if(!reader||!reader.createMetadataWrap||!bundle)throw new Error('community profile is not ready');let wraps=roomControls.get(loadKey);if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8});}const made=await reader.createMetadataWrap(bundle,wraps||[],{name:room.name,description,icon},viewer.pubkey,p.signTemplate),accepted=await p.relayPublishTo(relays,made.wrap);if(!accepted)throw new Error('community relays rejected the profile update');roomControls.set(loadKey,[...(wraps||[]),made.wrap]);} room.description=description; room.icon=icon; if(!Array.isArray(room.channels))room.channels=[]; let channel=room.channels.find(c=>c.name===(state.channel||'general')); if(!channel){ channel={name:state.channel||'general'}; room.channels.push(channel); } channel.private=$('#cc-channel-visibility').value==='private'; save(a); render(); p.toast('community profile updated'); }catch(e){settingsSave.disabled=false;p.toast('community profile was not updated: '+(e&&e.message||e));} };
+    const settingsSave=$('#cc-settings-save'); if(settingsSave)settingsSave.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; const description=String($('#cc-description-value').value||'').trim().slice(0,1000),icon=normalizeIcon($('#cc-settings-icon').value); settingsSave.disabled=true; try{ if(!room.local){const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room.cord&&room.cord.bundle,loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);if(!reader||!reader.createMetadataWrap||!bundle)throw new Error('community profile is not ready');let wraps=roomControls.get(loadKey);if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room)});}const scope=cordPlaneContext(p,bundle,wraps||[],room),made=await reader.createMetadataWrap(bundle,wraps||[],{name:room.name,description,icon},viewer.pubkey,p.signTemplate);if(!scope.current())throw new Error('Concord membership changed while signing');const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));if(!accepted||!accepted.ok)throw new Error('community relays rejected the profile update');if(!scope.current())throw new Error('Concord membership changed during profile update');roomControls.set(loadKey,[...(wraps||[]),made.wrap]);} room.description=description; room.icon=icon; if(!Array.isArray(room.channels))room.channels=[]; let channel=room.channels.find(c=>c.name===(state.channel||'general')); if(!channel){ channel={name:state.channel||'general'}; room.channels.push(channel); } channel.private=$('#cc-channel-visibility').value==='private'; save(a); render(); p.toast('community profile updated'); }catch(e){settingsSave.disabled=false;p.toast('community profile was not updated: '+(e&&e.message||e));} };
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community],viewerPk=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,viewerPk).filter(pk=>pk!==viewerPk); if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
@@ -2812,34 +2887,50 @@
     });
     $$('[data-cc-zap]').forEach(b=>b.onclick=()=>{closeMessageActions();const room=saved()[state.community],storeId=channelStoreId(room,state.channel),messages=testMessages(storeId),target=messages.find(m=>messageId(m)===b.dataset.ccZap);if(!target)return;const lightning=async amount=>{b.disabled=true;let proof=null;try{p.toast('paying private zap…');proof=await p.payPrivateConcordZap(target.pubkey,amount);const tags=[['e',messageId(target)],['p',target.pubkey],['k',String(target.kind||9)],['amount',String(proof.amountMsats)],['bolt11',proof.bolt11],['preimage',proof.preimage]];const made=await publishCordNative(p,room,state.channel,'',tags,9735);target.zaps=[...(target.zaps||[]),{id:made.rumorId,pubkey:(p.viewer&&p.viewer().pubkey)||'',sats:amount,comment:'',rail:'lightning'}];saveTestMessages(storeId,messages);preserveChatScroll(()=>render());p.toast('⚡ privately zapped '+amount+' sats');}catch(e){b.disabled=false;p.toast((proof?'payment succeeded, but the private tally was not posted: ':'private zap failed: ')+(e&&e.message||e));}};return p.startConcordTip(target.pubkey,lightning);});
   }
-  async function webxdcCordParts(ctx){const p=PC(),room=saved().find(r=>roomIdentity(r)===ctx.room),reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle,channel=room&&(room.channels||[]).find(c=>c.id===ctx.channelId||c.name===ctx.channel);if(!p||!room||!reader||!bundle||!channel)throw new Error('Concord Webxdc channel is unavailable');const loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);let controls=roomControls.get(loadKey);if(!controls){const seed=reader.inspectControl(bundle,[]);controls=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,await cachedEnvelopes(envelopeCacheKey(loadKey,'control')));roomControls.set(loadKey,controls||[]);}const view=reader.inspectControl(bundle,controls||[]),wireChannel=view.channels.find(c=>c.id===channel.id);return{p,room,reader,bundle,channel,loadKey,relays,controls:controls||[],streamPubkeys:wireChannel&&wireChannel.streamPubkeys||[]};}
-  async function webxdcQuery(ctx,uuid){const p=PC();if(ctx.protocol==='nip29')return nip29RelayQuery(p,ctx.relay,[{kinds:[9450],'#h':[ctx.groupId],'#i':[uuid],limit:500}],10000);const x=await webxdcCordParts(ctx),key=envelopeCacheKey(x.loadKey,x.channel.id),cached=await cachedEnvelopes(key),wraps=await queryEnvelopeHistory(x.p,x.relays,x.streamPubkeys,cached),fresh=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));await cacheEnvelopes(key,fresh);const rows=await x.reader.inspectWebxdc(x.bundle,x.controls,x.channel.id,wraps,uuid,false);try{window.PCWebxdc&&PCWebxdc.rtDiagnostic('static-replay',uuid+' '+rows.length+'/'+wraps.length);}catch(_){}return rows;}
-  async function webxdcPublish(ctx,uuid,content,meta,realtime,liveSub){const p=PC(),tags=[['i',uuid],['alt',realtime?'Webxdc realtime':'Webxdc update']];if(realtime)tags.push(['rt','1']);for(const n of ['info','document','summary'])if(meta&&meta[n])tags.push([n,String(meta[n]).slice(0,200)]);if(ctx.protocol==='nip29')return p.publishNip29Authed(ctx.relay,{kind:realtime?24450:9450,created_at:Math.floor(Date.now()/1000),content,tags:[['h',ctx.groupId],...tags]});const x=await webxdcCordParts(ctx),viewer=x.p.viewer(),made=await x.reader.createWebxdcWrap(x.bundle,x.controls,x.channel.id,content,viewer.pubkey,x.p.signTemplate,tags,realtime);
+  async function webxdcCordParts(ctx){
+    const p=PC(),room=saved().find(r=>roomIdentity(r)===ctx.room),reader=window.PosterCordReader,bundle=room&&room.cord&&room.cord.bundle,
+      channel=room&&(room.channels||[]).find(c=>c.id===ctx.channelId||c.name===ctx.channel);
+    if(!p||!room||!reader||!bundle||!channel)throw new Error('Concord Webxdc channel is unavailable');
+    const loadKey=room.communityId||room.naddr,relays=roomRelays(bundle),initial=cordPlaneContext(p,bundle,roomControls.get(loadKey)||[],room);
+    let controls=roomControls.get(loadKey);
+    if(!controls){
+      const seed=reader.inspectControl(bundle,[]);
+      controls=await queryEnvelopeHistory(p,relays,seed.controlPubkeys,await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),{plane:initial});
+      if(!initial.current())throw new Error('Concord membership changed');
+      roomControls.set(loadKey,controls||[]);
+    }
+    if(!initial.membershipCurrent())throw new Error('Concord membership changed');
+    const view=reader.inspectControl(bundle,controls||[]),wireChannel=view.channels.find(c=>c.id===channel.id);
+    return{p,room,reader,bundle,channel,loadKey,relays,controls:controls||[],streamPubkeys:wireChannel&&wireChannel.streamPubkeys||[],plane:cordPlaneContext(p,bundle,controls||[],room)};
+  }
+  async function webxdcQuery(ctx,uuid){const p=PC();if(ctx.protocol==='nip29')return nip29RelayQuery(p,ctx.relay,[{kinds:[9450],'#h':[ctx.groupId],'#i':[uuid],limit:500}],10000);const x=await webxdcCordParts(ctx),key=envelopeCacheKey(x.loadKey,x.channel.id),cached=await cachedEnvelopes(key),wraps=await queryEnvelopeHistory(x.p,x.relays,x.streamPubkeys,cached,{plane:cordPlaneContext(x.p,x.bundle,x.controls,x.room)}),fresh=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));await cacheEnvelopes(key,fresh);const rows=await x.reader.inspectWebxdc(x.bundle,x.controls,x.channel.id,wraps,uuid,false);if(!x.plane.current())return [];try{window.PCWebxdc&&PCWebxdc.rtDiagnostic('static-replay',uuid+' '+rows.length+'/'+wraps.length);}catch(_){}return rows;}
+  async function webxdcPublish(ctx,uuid,content,meta,realtime,liveSub){const p=PC(),tags=[['i',uuid],['alt',realtime?'Webxdc realtime':'Webxdc update']];if(realtime)tags.push(['rt','1']);for(const n of ['info','document','summary'])if(meta&&meta[n])tags.push([n,String(meta[n]).slice(0,200)]);if(ctx.protocol==='nip29')return p.publishNip29Authed(ctx.relay,{kind:realtime?24450:9450,created_at:Math.floor(Date.now()/1000),content,tags:[['h',ctx.groupId],...tags]});const x=await webxdcCordParts(ctx),viewer=x.p.viewer(),made=await x.reader.createWebxdcWrap(x.bundle,x.controls,x.channel.id,content,viewer.pubkey,x.p.signTemplate,tags,realtime);if(!x.plane.current())throw new Error('Concord membership changed while signing');
     /* publishTo deliberately skips managed relays. It was the receive-side bug's mirror image: a
      * perfectly connected room relay meant every Webxdc packet was sent to zero sockets. Reuse the
      * subscription's external sockets and send to one matching managed socket, never a random relay. */
-    if(realtime){const sent=(p.relayPublishFastTo?p.relayPublishFastTo(x.relays,made.wrap):0)+(liveSub&&liveSub.publish?liveSub.publish(made.wrap):0);if(!sent)throw new Error('no live room relay');return made;}
+    if(realtime){const sent=(!x.reader.createPlaneAuth&&p.relayPublishFastTo?p.relayPublishFastTo(x.relays,made.wrap):0)+(liveSub&&liveSub.publish?liveSub.publish(made.wrap):0);if(!sent)throw new Error('no live room relay');return made;}
+    if(x.reader.createPlaneAuth){const result=await p.relayPublishRoom(x.relays,made.wrap,cordPlaneAuth(x.p,cordPlaneContext(x.p,x.bundle,x.controls,x.room),made.wrap.pubkey,x.relays));if(!result?.ok)throw new Error(result?.msg||'room relays rejected the update');return made;}
     const [pool,external]=await Promise.all([p.relayPublish(made.wrap),p.relayPublishTo(x.relays,made.wrap)]);if(!(pool&&pool.ok)&&!external)throw new Error(pool&&pool.msg||'room relays rejected the update');return made;}
   async function webxdcSubscribe(ctx,uuid,realtime,onEvent){
     const R=window.Relay;if(!R||!R.subscribe||!R.subscribeFrom)throw new Error('relay subscription unavailable');
-    let urls,filters,receive;
+    let urls,filters,receive,plane=null;
     if(ctx.protocol==='nip29'){
       urls=[ctx.relay];filters=[{kinds:[realtime?24450:9450],'#h':[ctx.groupId],'#i':[uuid],since:Math.floor(Date.now()/1000)-120}];receive=onEvent;
     }else{
       const x=await webxdcCordParts(ctx),kind=realtime?21059:1059,filter={kinds:[kind],authors:x.streamPubkeys};
       if(realtime)filter.since=Math.floor(Date.now()/1000)-120;
-      urls=x.relays;filters=[filter];receive=async wrap=>{try{const rows=await x.reader.inspectWebxdc(x.bundle,x.controls,x.channel.id,[wrap],uuid,realtime);for(const row of rows)onEvent(row);}catch(_){}};
+      urls=x.relays;filters=[filter];plane=x.reader.createPlaneAuth&&cordPlaneContext(x.p,x.bundle,x.controls,x.room);receive=async wrap=>{try{const rows=await x.reader.inspectWebxdc(x.bundle,x.controls,x.channel.id,[wrap],uuid,realtime);if(!x.plane.current())return;for(const row of rows)onEvent(row);}catch(_){}};
     }
     /* subscribeFrom intentionally skips URLs already owned by Relay's managed pool. Using it alone
      * therefore subscribed to NOTHING for the common case where a Concord relay was also a normal
      * account relay. Listen on the pool and only use temporary sockets for the remaining URLs. */
-    const pooled=R.subscribe(filters,{onEvent:receive}),external=R.subscribeFrom(urls,filters,{onEvent:receive});
+    const pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(PC(),R,urls,filters,{onEvent:receive},plane):R.subscribeFrom(urls,filters,{onEvent:receive});
     const gates=[];
-    if(R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
+    if(pooled&&R.waitForSubscription)gates.push(R.waitForSubscription(pooled,urls).then(ok=>{if(!ok)throw new Error('managed room relay did not open');}));
     if(external.hasTargets&&external.ready)gates.push(external.ready.then(ok=>{if(!ok)throw new Error('external room relay did not open');}));
     try{if(gates.length)await Promise.any(gates);}catch(_){R.close(pooled);external();throw new Error('room relay subscription could not open');}
     const close=()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
-    close.publish=event=>(R.publishFastTo&&R.publishFastTo(urls,event)?1:0)+(external.publish?external.publish(event):0);
+    close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(urls,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
   /* CORD-04 Webxdc lobby signalling. Armada/Vector put the topic in the encrypted JSON body and
@@ -2848,7 +2939,8 @@
    * ecosystem peers never emit one. */
   async function webxdcPeerPublish(ctx,content,liveSub){
     if(!ctx||ctx.protocol!=='concord2')throw new Error('Iroh peer signalling requires a Concord channel');
-    const x=await webxdcCordParts(ctx),viewer=x.p.viewer(),made=await x.reader.createWebxdcWrap(x.bundle,x.controls,x.channel.id,content,viewer.pubkey,x.p.signTemplate,[],false);
+    const x=await webxdcCordParts(ctx),viewer=x.p.viewer(),made=await x.reader.createWebxdcWrap(x.bundle,x.controls,x.channel.id,content,viewer.pubkey,x.p.signTemplate,[],false);if(!x.plane.current())throw new Error('Concord membership changed while signing');
+    if(x.reader.createPlaneAuth){const result=await x.p.relayPublishRoom(x.relays,made.wrap,cordPlaneAuth(x.p,cordPlaneContext(x.p,x.bundle,x.controls,x.room),made.wrap.pubkey,x.relays));if(!result?.ok)throw new Error(result?.msg||'room relays rejected the peer signal');return made;}
     /* Publish on the room subscription's actual sockets. A generic pool success may be an unrelated
      * account relay and cannot prove an Armada peer can see this advertisement. */
     const sent=(x.p.relayPublishFastTo?x.p.relayPublishFastTo(x.relays,made.wrap):0)+(liveSub&&liveSub.publish?liveSub.publish(made.wrap):0);
@@ -2858,23 +2950,23 @@
   async function webxdcPeerQuery(ctx){
     if(!ctx||ctx.protocol!=='concord2')throw new Error('Iroh peer signalling requires a Concord channel');
     const x=await webxdcCordParts(ctx);if(!x.reader.inspectWebxdcSignals)throw new Error('peer signalling unavailable');
-    const filters=[{kinds:[1059],authors:x.streamPubkeys,limit:5000}],history=await cordQuery(x.p,x.relays,filters,{timeout:10000,max:8});
-    return x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,history);
+    const filters=[{kinds:[1059],authors:x.streamPubkeys,limit:5000}],history=await cordQuery(x.p,x.relays,filters,{timeout:10000,max:8,plane:cordPlaneContext(x.p,x.bundle,x.controls,x.room)});
+    const rows=await x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,history);return x.plane.current()?rows:[];
   }
   async function webxdcPeerSubscribe(ctx,onEvent){
     if(!ctx||ctx.protocol!=='concord2')throw new Error('Iroh peer signalling requires a Concord channel');
     const R=window.Relay,x=await webxdcCordParts(ctx);
     if(!R||!R.subscribe||!R.subscribeFrom||!x.reader.inspectWebxdcSignals)throw new Error('peer signalling unavailable');
-    const seen=new Set(),receive=async wrap=>{try{const rows=await x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,[wrap]);for(const row of rows)if(!seen.has(row.id)){seen.add(row.id);onEvent(row);}}catch(_){}};
-    const filters=[{kinds:[1059],authors:x.streamPubkeys,limit:1000}],pooled=R.subscribe(filters,{onEvent:receive}),external=R.subscribeFrom(x.relays,filters,{onEvent:receive});
+    const seen=new Set(),receive=async wrap=>{try{const rows=await x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,[wrap]);if(!x.plane.current())return;for(const row of rows)if(!seen.has(row.id)){seen.add(row.id);onEvent(row);}}catch(_){}};
+    const plane=x.reader.createPlaneAuth&&cordPlaneContext(x.p,x.bundle,x.controls,x.room),filters=[{kinds:[1059],authors:x.streamPubkeys,limit:1000}],pooled=plane?null:R.subscribe(filters,{onEvent:receive}),external=plane?cordPlaneSubscribe(x.p,R,x.relays,filters,{onEvent:receive},plane):R.subscribeFrom(x.relays,filters,{onEvent:receive});
     /* Backfill after opening the live subscription, so an advertisement published during the query
      * cannot fall into the gap. The id set makes the overlap harmless. */
     /* Do not hold joinRealtimeChannel (and Quake's host-election burst) behind a ten-second history
      * query. The live listener is already installed; fold the durable advertisements when their
      * backfill arrives. */
-    void cordQuery(x.p,x.relays,filters,{timeout:10000,max:8}).then(history=>x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,history)).then(rows=>{for(const row of rows)if(!seen.has(row.id)){seen.add(row.id);onEvent(row);}}).catch(()=>{});
+    void cordQuery(x.p,x.relays,filters,{timeout:10000,max:8,plane:cordPlaneContext(x.p,x.bundle,x.controls,x.room)}).then(history=>x.reader.inspectWebxdcSignals(x.bundle,x.controls,x.channel.id,history)).then(rows=>{if(!x.plane.current())return;for(const row of rows)if(!seen.has(row.id)){seen.add(row.id);onEvent(row);}}).catch(()=>{});
     const close=()=>{try{R.close(pooled);}catch(_){}try{external();}catch(_){}};
-    close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
+    close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
   window.PCConcord={render,backgroundRender,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};

@@ -9349,6 +9349,7 @@ var PosterCordReader = (() => {
   __export(pc_cord_reader_exports, {
     createBanWrap: () => createBanWrap,
     createChatWrap: () => createChatWrap,
+    createPlaneAuth: () => createPlaneAuth,
     createWebxdcWrap: () => createWebxdcWrap,
     createMetadataWrap: () => createMetadataWrap,
     inspectChat: () => inspectChat,
@@ -26710,6 +26711,26 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return {members:members.filter(pk=>pk===community.owner||!transport.has(pk)),guestbookEvents:events.length,snapshotEvents:events.filter(e=>e.type==='snapshot').length,snapshotAuthorityAvailable:!!snapshotAuthority,rootEpoch:Number(community.rootEpoch),complete:false};
   }
 
+  // A capability for one held transport plane, never an export of its secret key.
+  // This cannot sign notes/seals or authenticate to a relay outside this operation.
+  function createPlaneAuth(bundle, wraps, author, relays) {
+    const { groups, channels } = control(bundle, wraps);
+    const held = [...groups, ...channels.flatMap(ch => ch.streams.map(s => s.group)),
+      ...(typeof guestbookGroups === "function" ? guestbookGroups(bundle) : [])];
+    const group = held.find(g => g.pk === author);
+    if (!group) throw new Error("Concord plane key is not held by this membership");
+    const allowed = new Set((relays || []).map(value => new URL(value).href));
+    return Object.freeze({pubkey: group.pk, sign: template => {
+      const tags = template && template.tags;
+      if (!template || template.kind !== 22242 || template.content !== "" ||
+          !Number.isSafeInteger(template.created_at) || Math.abs(template.created_at - Math.floor(Date.now()/1000)) > 60 ||
+          !Array.isArray(tags) || tags.length !== 2 || tags.some(t => !Array.isArray(t) || t.length !== 2) ||
+          tags[0][0] !== "relay" || tags[1][0] !== "challenge" ||
+          typeof tags[1][1] !== "string" || !tags[1][1] || tags[1][1].length > 2048 ||
+          !allowed.has(new URL(tags[0][1]).href)) throw new Error("invalid Concord plane authentication request");
+      return finalizeEvent2({kind:22242,created_at:template.created_at,content:"",tags:tags.map(t=>[...t])},group.sk);
+    }});
+  }
   function inspectControl(bundle, wraps) {
     const { community, groups, folded, channels } = control(bundle, wraps);
     return {

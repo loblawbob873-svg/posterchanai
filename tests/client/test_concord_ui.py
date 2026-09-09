@@ -183,7 +183,7 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'Create community' in CONCORD
     assert 'Create a public community' in CONCORD
     assert 'window.PosterCord.createCommunity' in CONCORD
-    assert 'p.relayPublishTo(relays,ev)' in CONCORD
+    assert 'p.relayPublishRoom(relays,ev,' in CONCORD
     assert "await p.publish(1,`${name}" in CONCORD
     assert 'id="cc-publish-listing"' in CONCORD and 'DISCOVER_RELAYS' in CONCORD
     assert 'p.relayPublishTo(CORD_RELAYS,ev)' in CONCORD
@@ -431,7 +431,7 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'kinds:[13302]' in CONCORD and 'kinds:[33302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
     assert 'window.PosterCordReader' in CONCORD and 'hydrateRoomStreams(p,joined)' in CONCORD
     assert 'kinds:[1059]' in CONCORD and 'reader.inspectChat' in CONCORD
-    assert 'reader.createChatWrap' in CONCORD and 'await p.relayPublishTo(relays,made.wrap)' in CONCORD
+    assert 'reader.createChatWrap' in CONCORD and 'await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(' in CONCORD
     assert 'scrollChatBottom()' in CONCORD
     assert "if(file&&input)file.onchange=async()=>" in CONCORD
     assert 'room.cord.hydrated=true' in CONCORD
