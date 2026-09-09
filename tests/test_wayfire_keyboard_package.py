@@ -30,6 +30,13 @@ def test_stable_revision_preserves_complete_upstream_ebuild():
     assert sorted(p.name for p in PACKAGE.glob('*.ebuild')) == ['wayfire-0.10.1-r1.ebuild']
 
 
+def test_shell_update_requires_the_fixed_keyboard_package():
+    shell = (ROOT / 'os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild').read_text()
+    dependencies = shell.split('RDEPEND="', 1)[1].split('"', 1)[0].split()
+    assert '>=gui-wm/wayfire-0.10.1-r1' in dependencies
+    assert 'gui-wm/wayfire' not in dependencies
+
+
 @pytest.mark.parametrize('name,digest', INPUT_SHA512.items())
 def test_upstream_support_inputs_unchanged(name, digest):
     assert hashlib.sha512((PACKAGE / 'files' / name).read_bytes()).hexdigest() == digest
