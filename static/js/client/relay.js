@@ -257,6 +257,20 @@
        of them synchronously; per-call AbortSignals remain useful for finer owners inside a view. */
     abortQueries(){ for(const stop of [...this._queryFromStops])try{stop();}catch(_){} },
 
+    /* A RETRY THE USER ASKED FOR MUST NOT BE REFUSED BY OUR OWN COOLDOWN. `queryFrom` holds a
+       failed relay out for at least 30 seconds — half an hour for Concord's room reads — which is
+       right for a background poll and wrong for a button somebody pressed. Clearing is per relay
+       and covers the per-plane slots keyed off the same url. */
+    clearQueryCooldown(urls){
+      const want=new Set((urls||[]).filter(Boolean));
+      let cleared=0;
+      for(const key of [...this._queryFromCooldown.keys()])
+        if(want.has(String(key).split('\0')[0])){this._queryFromCooldown.delete(key);cleared++;}
+      for(const key of [...this._queryFromPurposeCooldown.keys()])
+        if(want.has(String(key).split('\0')[0])){this._queryFromPurposeCooldown.delete(key);cleared++;}
+      return cleared;
+    },
+
     // Connect to an explicit set of relays. verify=true makes the pool signature-verify every
     // incoming event (used for user-supplied relays); verify=false trusts them (built-in WoT relay).
     configure({ urls, verify } = {}){
@@ -1026,7 +1040,7 @@
     // non-WoT peer's NIP-17 inbox list (kind 10050), which our WoT-only relay never stored. Same
     // bounded ephemeral-socket pattern as publishTo: REQ, collect until EOSE/timeout, close. Events
     // are UNVERIFIED here (untrusted relays) — the caller must verify signatures before trusting them.
-    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null } = {}){
+    queryFrom(urls, filters, { timeout=4000, max=4, exact=false, signal=null, purpose='external read', minInterval=0, allowBlocked=false, failureCooldown=30000, authScope=null, report=null } = {}){
       if(authScope&&(!authScope.current()||!filters.length||!filters.every(f=>f.authors?.length===1&&f.authors[0]===authScope.pubkey&&f.kinds?.length&&f.kinds.every(k=>[1059,21059].includes(k)))))return Promise.resolve([]);
       /* Most external discovery reads should avoid duplicating a connected pool socket. Some
        * protocols bind truth to one named relay (notably NIP-29), so exact=true deliberately opens
@@ -1036,6 +1050,22 @@
         now=Date.now(),targets = [...new Set((urls||[]).filter(Boolean))]
         .filter(u => (allowBlocked || !blocked(u)) && (exact || !this._conns.has(u)) && !this._queryFromActive.has(slot(u)) && Number(this._queryFromCooldown.get(slot(u))||0)<=now && (minInterval<=0 || Number(this._queryFromPurposeCooldown.get(slot(u)+'\0'+purpose)||0)<=now))
         .slice(0, max);
+      /* AN EMPTY ANSWER IS NOT AN ANSWER UNLESS SOMEBODY ANSWERED — say which relays did.
+       *
+       * This returns events and nothing else, so a caller cannot tell "every relay said there is
+       * nothing" from "every relay was cooled down, already busy, or refused us". Both are `[]`.
+       * That is how a Concord channel whose one relay gates gift wraps behind an AUTH it cannot
+       * complete renders "This is the start of this encrypted channel" — a claim of emptiness the
+       * client has not earned. `report` is opt-in and costs a caller that does not pass it nothing. */
+      const note=(bucket,u)=>{if(report)(report[bucket]||(report[bucket]=[])).push(u);};
+      /* SKIPPED IS NOT ONE THING. A relay held out by the FAILURE cooldown is a relay that refused
+       * us and is still refused — the caller's answer is incomplete and it must say so. A relay
+       * held out because this purpose asked it a minute ago, because the shared pool already owns
+       * it, or because another call is mid-flight is ordinary rate limiting; reporting those as
+       * unreachable would make every live tick cry wolf. Only the first goes in `cooled`. */
+      if(report){for(const u of targets)note('asked',u);
+        for(const u of [...new Set((urls||[]).filter(Boolean))])if(!targets.includes(u))
+          note(Number(this._queryFromCooldown.get(slot(u))||0)>now?'cooled':'held',u);}
       if (!targets.length || (signal && signal.aborted)) return Promise.resolve([]);
       const subId = 'qf' + Math.random().toString(36).slice(2,9);
       return Promise.all(targets.map(u => new Promise(resolve => {
@@ -1046,9 +1076,11 @@
           if (signal) signal.removeEventListener('abort', abort);
           Relay._queryFromStops.delete(stop);Relay._queryFromActive.delete(slot(u));
           if(outcome==='failure'){
+            note('failed',u);
             Relay._queryFromCooldown.set(slot(u),Date.now()+Math.max(30000,Number(failureCooldown)||0));
             try{console.warn('[relay queryFrom]',purpose,u,'failed; cooling down');}catch(_){}
           }else if(outcome==='success'){
+            note('ok',u);
             Relay._queryFromCooldown.delete(slot(u));
             if(minInterval>0)Relay._queryFromPurposeCooldown.set(slot(u)+'\0'+purpose,Date.now()+minInterval);
           }

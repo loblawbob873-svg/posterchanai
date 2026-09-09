@@ -38191,6 +38191,7 @@
     relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev),
     relayQuery: (filters, timeout) => Relay.query(filters, timeout),
     relayQueryFrom: (relays, filters, opts) => Relay.queryFrom(relays, filters, opts),
+    relayRetryRelays: (relays) => Relay.clearQueryCooldown(relays),
     verifyRelayEvents: async events => { const list=Array.isArray(events)?events:[],result=await Relay.worker.call('verifyBatch',{events:list}),valid=new Set((result||[]).filter(r=>r.valid).map(r=>r.id));return list.filter(event=>valid.has(event.id)); },
     publishNip29Authed: async (relay, template) => {
       const url=new URL(String(relay||''));if(!/^wss?:$/.test(url.protocol))throw new Error('invalid NIP-29 relay');

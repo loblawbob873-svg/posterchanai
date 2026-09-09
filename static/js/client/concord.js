@@ -5,7 +5,7 @@
   // cached client.css for one navigation. Concord owns a versioned sheet and loads it itself too.
   if(!document.querySelector('link[data-concord-css]')){
     const l=document.createElement('link'); l.rel='stylesheet'; l.dataset.concordCss='1';
-    l.href='/static/css/concord.css?v=17'; (document.head||document.documentElement).appendChild(l);
+    l.href='/static/css/concord.css?v=18'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>window.__PC;
   /* Automatic reads must contain only known Concord endpoints. relay.ditto.pub currently refuses
@@ -76,7 +76,7 @@
     stop.ready=Promise.all(subscriptions.map(sub=>sub.ready)).then(results=>results.every(Boolean));
     return stop;
   }
-  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null}={}){
+  async function cordQuery(p,relays,filters,{timeout=8000,max=8,signal=null,purpose='concord room',minInterval=0,allowBlocked=true,failureCooldown=1800000,plane=null,report=null}={}){
     /* queryFrom intentionally skips relays already owned by the shared pool. Always ask both paths:
        otherwise opening a room can silently omit the newest wraps from whichever relay is connected. */
     const jobs=[];
@@ -105,11 +105,15 @@
         for(const author of authors){
           let authScope;
           try{ authScope=cordPlaneAuth(p,plane,author,relays); }
-          catch(err){ firstFailure=firstFailure||err; unreadablePlanes.add(author); continue; }
+          catch(err){ firstFailure=firstFailure||err; unreadablePlanes.add(author);
+            /* A stream we hold no key for is a stream nothing was read from — it must not be
+             * indistinguishable from one that answered with nothing. */
+            if(report)(report.unheld||(report.unheld=[])).push(author);
+            continue; }
           let events;
           try{
             events=await p.relayQueryFrom(relays,[{...filter,authors:[author]}],
-              {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope});
+              {timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,exact:true,authScope,report});
           }catch(err){ firstFailure=firstFailure||err; continue; }
           succeeded++;
           if(!plane.current())return [];
@@ -127,7 +131,7 @@
       return [...byId.values()];
     }
     if(p.relayQuery)jobs.push(Promise.resolve().then(()=>p.relayQuery(filters,timeout)));
-    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown})));
+    if(p.relayQueryFrom)jobs.push(Promise.resolve().then(()=>p.relayQueryFrom(relays,filters,{timeout,max,signal,purpose,minInterval,allowBlocked,failureCooldown,report})));
     const settled=await Promise.allSettled(jobs),ok=settled.filter(result=>result.status==='fulfilled');
     if(jobs.length&&!ok.length)throw settled[0].reason;
     const batches=ok.map(result=>result.value||[]),byId=new Map();
@@ -177,6 +181,39 @@
   const hydratedRoomViews=new Set();
   const roomLoadNotices=new Map();
   const roomControls=new Map();
+  /* WHETHER A CHANNEL WAS ACTUALLY READ, PER CHANNEL — because "no messages" is a CLAIM.
+   *
+   * A channel with nothing in it and a channel whose relays refused us are the same empty array,
+   * and the empty state said "This is the start of this encrypted channel" for both. Measured on
+   * two joined Vector rooms whose relay set includes `wss://asia.vectorapp.io/nostr`: that relay
+   * answers every kind-1059 filter with `auth-required` and then rejects the AUTH itself with
+   * "relay needs serviceUrl to be configured before AUTH can work", so its gift wraps are
+   * unreadable to any client — and after the first failure it is COOLED DOWN for half an hour, at
+   * which point `queryFrom` skips it and returns `[]` with no warning at all. The room then
+   * declares itself brand new, twice over.
+   *
+   * Keyed by `channelStoreId`, so it survives a room switch and belongs to the channel it
+   * describes rather than to whatever is on screen. */
+  const channelReach=new Map();
+  function noteChannelReach(storeId,report,relays){
+    if(!storeId)return;
+    const seen=b=>[...new Set((report&&report[b])||[])];
+    const ok=seen('ok'),failed=seen('failed').filter(u=>!ok.includes(u)),
+      cooled=seen('cooled').filter(u=>!ok.includes(u)&&!failed.includes(u)),unheld=seen('unheld');
+    /* A PASS THAT ASKED NOBODY TEACHES NOTHING. The live tick is rate limited per relay per
+     * minute, so most ticks reach no socket at all; recording that would erase what the last real
+     * read measured and make a healthy channel look unreachable every other second. */
+    if(!ok.length&&!failed.length&&!cooled.length&&!unheld.length&&channelReach.has(storeId))return;
+    channelReach.set(storeId,{ok,failed,cooled,unheld,total:[...new Set(relays||[])].length,at:Date.now()});
+  }
+  /* An unread channel reports nothing rather than guessing: no record is "not asked yet", which is
+   * a spinner's business, not the empty state's. */
+  function channelUnread(room,name){
+    const reach=channelReach.get(channelStoreId(room,name));
+    if(!reach)return null;
+    const missed=[...reach.failed,...reach.cooled];
+    return missed.length||reach.unheld.length?{...reach,missed}:null;
+  }
   /* Blob URLs die with their renderer. Keep encrypted icon pointer identity in memory so a saved
    * room never suppresses re-decryption after the next browser/native-shell launch. */
   /* Durable storage keeps the encrypted pointer; only this renderer keeps its decrypted blob URL.
@@ -2113,9 +2150,11 @@
       const selected=state.channel||'general',networkOrder=[...room.channels].sort((a,b)=>(a.name===selected?-1:b.name===selected?1:0));
       const fetchChannel=async channel=>{
         if(!currentOwner())return;
+        const reach={};
         const cacheKey=envelopeCacheKey(loadKey,channel.id),cached=await cachedEnvelopes(cacheKey),
-          wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached,{plane:cordPlaneContext(p,bundle,controlWraps,room)}),
+          wraps=await queryEnvelopeHistory(p,relays,channel.streamPubkeys,cached,{plane:cordPlaneContext(p,bundle,controlWraps,room),report:reach}),
           fetched=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));
+        noteChannelReach(channelStoreId(room,channel.name),reach,relays);
         if(!currentOwner())return;
         await cacheEnvelopes(cacheKey,fetched);await applyChannel(channel,wraps);
       };
@@ -2515,8 +2554,13 @@
       startChatLive(p,room,channel);
       const relays=roomRelays(bundle),storeId=channelStoreId(room,channel.name),prior=testMessages(storeId),
         since=Math.max(0,Math.floor((prior.reduce((n,m)=>Math.max(n,Number(m.at)||0),0)-60000)/1000)),
+        reach={},
         wraps=await cordQuery(p,relays,[{kinds:[1059],authors:channel.streamPubkeys,since,limit:500}],
-          {timeout:6000,max:8,plane:cordPlaneContext(p,bundle,controlWraps,room),signal:ownRoomReads(identity),purpose:'concord room live '+loadKey,minInterval:60000});
+          {timeout:6000,max:8,plane:cordPlaneContext(p,bundle,controlWraps,room),signal:ownRoomReads(identity),purpose:'concord room live '+loadKey,minInterval:60000,report:reach});
+      /* The live tick is what runs for a channel opened after hydration prefetched past it, so it
+       * owns the verdict for that channel just as much as the first load does. A tick that was
+       * rate-limited off every relay records `skipped`, which is exactly the honest answer. */
+      noteChannelReach(storeId,reach,relays);
       if(!stillOwned())return;
       await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),wraps);
       if(!stillOwned())return;
@@ -2629,6 +2673,31 @@
    * what made arriving messages invisible until the next send or room switch, so patchMessageList()
    * repaints exactly this pane and leaves the composer where it is. One builder, so the two paints
    * can never disagree about what a message looks like. */
+  /* "NO MESSAGES" IS A CLAIM, AND THIS IS WHERE IT GETS MADE.
+   *
+   * An empty channel drew "This is the start of this encrypted channel" whatever the reason it was
+   * empty — including the reason that nothing could be read. Two joined Vector rooms sat like that:
+   * their relay set includes one that gates every kind-1059 filter behind an AUTH it then refuses
+   * ("relay needs serviceUrl to be configured before AUTH can work"), so its history is unreadable,
+   * and half an hour of failure cooldown later the client stops even trying and gets a silent `[]`.
+   * The room announced itself brand new to somebody who could see its messages in another client.
+   *
+   * Same rule Trending already follows here: a query no relay answered is "the relays never spoke",
+   * never "there is nothing". Say which relays, and offer the retry — the cooldown is the thing
+   * standing in the way, so the button has to clear it rather than just re-asking. */
+  function emptyChannelHtml(p,room){
+    if(room&&room.local)return `<div class="cc-welcome"><div class="cc-welcome-hash">#</div><h2>Welcome to #${p.enc(state.channel||'general')}</h2><p>This local test room lets you validate the chat UI before publishing or joining a relay community.</p></div>`;
+    const unread=room?channelUnread(room,state.channel||'general'):null;
+    if(!unread)return `<div class="cc-welcome"><div class="cc-welcome-hash">#</div><h2>Welcome to #${p.enc(state.channel||'general')}</h2><p>This is the start of this encrypted channel.</p></div>`;
+    const hosts=unread.missed.map(u=>{try{return new URL(u).host;}catch(_){return String(u);}}),
+      read=unread.ok.length,total=unread.total||read+hosts.length;
+    return `<div class="cc-welcome cc-welcome-unread"><div class="cc-welcome-hash">!</div>`
+      +`<h2>#${p.enc(state.channel||'general')} could not be read</h2>`
+      +`<p>${read} of ${total} of this community's relays answered${hosts.length?', and '+p.enc(hosts.join(', '))+' did not':''}.`
+      +`${unread.unheld.length?` ${unread.unheld.length} stream${unread.unheld.length===1?'':'s'} in this channel need a membership key this account does not hold.`:''}`
+      +` This is not the same as the channel being empty.</p>`
+      +`<button id="cc-retry-channel" class="cc-welcome-retry">Try these relays again</button></div>`;
+  }
   function messagesPaneHtml(p,messages,current,viewer,me){
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
     return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list">${(()=>{
@@ -2647,7 +2716,7 @@
           const _t=threadView(messages,state.thread);
           if(!_t.length){ state.thread=null; return messages; }
           return _t;
-        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_replies=(threadIndex(messages).get(mid)||[]).length,_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply?`<div class="cc-message-reply"><b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${_replies&&!state.thread?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&m.pubkey===viewer.pubkey?'':'hidden'}" title="Delete message">⌫</button></div></div></article>`;}).join('')}</div>`:`<div class="cc-welcome"><div class="cc-welcome-hash">#</div><h2>Welcome to #${p.enc(state.channel||'general')}</h2><p>${current&&current.local?'This local test room lets you validate the chat UI before publishing or joining a relay community.':'This is the start of this encrypted channel.'}</p></div>`)}`;
+        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_replies=(threadIndex(messages).get(mid)||[]).length,_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply?`<div class="cc-message-reply"><b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${_replies&&!state.thread?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&m.pubkey===viewer.pubkey?'':'hidden'}" title="Delete message">⌫</button></div></div></article>`;}).join('')}</div>`:emptyChannelHtml(p,current))}`;
   }
   function render(){
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
@@ -2905,6 +2974,24 @@
    * that can drift from the one render() uses. */
   function bindMessages(){
     const p=PC(), $=p.$, $$=p.$$;
+    /* The retry has to LIFT THE COOLDOWN, not merely ask again: a relay that failed is held out of
+     * `queryFrom` for half an hour on Concord's room reads, so a plain re-read would be a button
+     * that measurably does nothing for thirty minutes. */
+    const retry=$('#cc-retry-channel');
+    if(retry)retry.onclick=async()=>{
+      const room=state.community==null?null:saved()[state.community];
+      if(!room)return;
+      retry.disabled=true;retry.textContent='Trying…';
+      try{
+        const relays=roomRelays(room.cord&&room.cord.bundle);
+        if(p.relayRetryRelays)p.relayRetryRelays(relays);
+        channelReach.delete(channelStoreId(room,state.channel||'general'));
+        hydratedRoomViews.delete(roomIdentity(room));
+        if(room.cord)room.cord.hydrated=false;
+        await hydrateRoomStreams(p,state.community,roomIdentity(room));
+      }catch(e){ p.toast&&p.toast('could not reach this community: '+(e&&e.message||e)); }
+      finally{ backgroundRender(); }
+    };
     const closeMessageActions=()=>{$$('.cc-message.cc-actions-open').forEach(x=>{x.classList.remove('cc-actions-open');const t=x.querySelector('[data-cc-actions]');if(t)t.setAttribute('aria-expanded','false');});const picker=document.querySelector('.cc-reaction-picker');if(picker)picker.remove();reactionTarget=null;};
     if(actionDismissOff){actionDismissOff();actionDismissOff=null;}
     const dismissPointer=e=>{if(!(e.target&&e.target.closest&&e.target.closest('.cc-message-actions,.cc-reaction-picker,.emoji-pop')))closeMessageActions();};
@@ -3078,7 +3165,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,emptyChannelHtml,channelUnread,noteChannelReach,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
