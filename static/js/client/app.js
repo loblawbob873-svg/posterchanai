@@ -1652,7 +1652,9 @@
     tags = _enrichTags(kind, tags, content);
     const ev = await sign(kind, content, tags, kind===30078 && opts && Number.isSafeInteger(opts.createdAt) ? opts.createdAt : undefined);
     if((_FEDI_SOCIAL_KINDS.has(kind) || kind===30078) && ev.pubkey!==postingAuthor) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
-    Store.saveEvent(ev); invalidateCounts(); applySobLive(ev);   // optimistic: show it instantly
+    if(opts && opts.deferLocal && (!ME || ME.pubkey!==postingAuthor)) return {ok:false,noQueue:true,msg:'Account changed — posting stopped'};
+    if(!(opts && opts.deferLocal)){ Store.saveEvent(ev); invalidateCounts(); applySobLive(ev); }   // destructive requests wait for acknowledgement
+    if(opts && typeof opts.onSigned==='function')opts.onSigned(ev);
     const r = await Relay.publish(ev);
     // publish() reports {ok}; it never throws on a relay failure. On failure it ROLLS BACK the optimistic
     // save — otherwise a post/follow/react that never reached the relay would sit in the local cache looking
@@ -1683,6 +1685,7 @@
       // Callers that show their OWN specific failure message pass {quiet:true} so we don't double-toast.
       if(!(opts && opts.quiet)) toast(r.msg || 'couldn’t reach the relay — try again in a moment');
     }
+    if(r.ok && opts && opts.deferLocal && ME && ME.pubkey===postingAuthor){ Store.saveEvent(ev); invalidateCounts(); }
     if(r.ok && kind===3 && opts && opts._confirmedFollowBaseline){
       /* Commit the new recovery baseline only AFTER the signed event is accepted. Cancellation,
        * signer refusal and relay failure leave both the old members and old history floor intact.
@@ -6598,6 +6601,7 @@
   }
   function isMutedView(ev){
     if(!ev) return false;
+    if(_repostDeleted(ev))return true;
     if(isMutedAuthor(ev.pubkey) || mutedByWord(ev) || _mutedThread(ev)) return true;
     if(ev.kind===6){
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
@@ -7565,8 +7569,11 @@
   // NIP-09: a kind-5 removes the AUTHOR'S OWN events it e-tags. Drop them from the cache, the feed,
   // AND notifications (a deleted bot post/reply must stop showing as a notification too).
   function _applyDeletion(ev){
+    try{if(!ev||ev.kind!==5||!_repostVerified(ev))return;}catch(_){return;}
     let removed = false;
     const _rm = id => {
+      const target=Store.get(id);
+      if(target&&(target.kind===6||target.kind===16))document.querySelectorAll(`[data-repost-id="${id}"]`).forEach(card=>{card.querySelector('.repost-tag')?.remove();card.removeAttribute('data-repost-id');card.removeAttribute('data-rtpk');card.removeAttribute('data-rtts');});
       Store.removeEvent(id); removed = true;
       document.querySelectorAll(`[data-id="${id}"],[data-open="${id}"]`).forEach(n=>{
         const card = n.closest('.note,.notif,.stream-card,.pic-card,.article-card,.channel-card') || n;
@@ -7576,19 +7583,19 @@
     for(const t of (ev.tags||[])){
       if(t[0]==='e' && t[1]){
         const tgt = Store.get(t[1]);
-        if(tgt && tgt.pubkey!==ev.pubkey) continue;   // only the author can delete their own event
+        if(!tgt || tgt.pubkey!==ev.pubkey || !_repostVerified(tgt)) continue;   // only the author can delete their own event
         _rm(t[1]);
       } else if(t[0]==='a' && t[1]){                  // addressable (kind:pubkey:dtag) — drafts/articles/etc.
         const parts = String(t[1]).split(':'); if(parts.length<3) continue;
         const [k, pk, dt] = [parts[0], parts[1], parts.slice(2).join(':')];
         if(pk!==ev.pubkey) continue;
         for(const e of Store.all()){
-          if(String(e.kind)===k && e.pubkey===pk && (e.tags.find(x=>x[0]==='d')||[])[1]===dt) _rm(e.id);
+          if(String(e.kind)===k && e.pubkey===pk && (e.tags.find(x=>x[0]==='d')||[])[1]===dt && _repostVerified(e)) _rm(e.id);
         }
       }
     }
     if(removed){ try{ invalidateCounts(); }catch(_){}
-      renderNotificationsSoon();
+      decorateCounts(); renderNotificationsSoon();
       if(VIEW==='articles') renderArticles(); }
   }
   // Always-on deletion feed: catches kind-5s regardless of the current view (the notifications/feed
@@ -12688,17 +12695,18 @@
     return `<div class="repost-tag">${RT_ICON} <span class="name" data-prof="${enc(pk)}">${nm}</span> reposted${when}</div>`;
   }
   function _noteHtml(ev){
+    if(_repostDeleted(ev))return '';
     if (ev.kind===6){  // repost
       let inner=null; try{ inner=JSON.parse(ev.content); }catch(_){}
       if(inner && inner.id) Store.saveEvent(inner);
       const origId=(ev.tags.find(t=>t[0]==='e')||[])[1];
       const orig = inner || Store.get(origId);
       needProfile(ev.pubkey);
-      if(orig){ needProfile(orig.pubkey); return noteCard(orig, _repostTag(ev.pubkey, ev.created_at)); }
+      if(orig){ needProfile(orig.pubkey); return noteCard(orig, _repostTag(ev.pubkey, ev.created_at)).replace('<article ',`<article data-repost-id="${enc(ev.id)}" `); }
       needEvent(origId);   // fetch the original; flushEvents patches this placeholder in place
       // The reposter's pubkey and the repost's time ride on the placeholder, because patchLoaded
       // rebuilds the header from it and has no other way back to the kind-6.
-      return `<article class="note" data-orig="${enc(origId||'')}" data-rtpk="${enc(ev.pubkey)}" data-rtts="${ev.created_at}"><div class="body">${_repostTag(ev.pubkey, ev.created_at)}<div class="muted small">loading post…</div></div></article>`;
+      return `<article data-repost-id="${enc(ev.id)}" class="note" data-orig="${enc(origId||'')}" data-rtpk="${enc(ev.pubkey)}" data-rtts="${ev.created_at}"><div class="body">${_repostTag(ev.pubkey, ev.created_at)}<div class="muted small">loading post…</div></div></article>`;
     }
     /* A mini app posted as NIP-94 file metadata — which is how Ditto publishes them and how the
      * Half-Life port is published. Without this the client has NO renderer for kind 1063 at all: the
@@ -13420,7 +13428,7 @@
     const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey)));
     return `<div class="acts">
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
-          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="repost">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
+          <button class="act rt ${counts.iRt?'on':''}" data-a="repost" title="${_repostActionTitle(ev.id,counts.iRt)}">${RT_ICON} <span class="n">${counts.reposts?fmtSats(counts.reposts):''}</span></button>
           <button class="act actq" data-a="quote" title="quote post">${QUOTE_ICON}</button>
           <button class="act ${liked?'on':''}" data-a="react" title="${liked?'remove your reaction':'react'}"><span class="react-ic">${liked||REACT_ICON}</span> <span class="n">${counts.reactions?fmtSats(counts.reactions):''}</span></button>
           <button class="act actz ${(counts.zaps||counts.tipN)?'on':''}" data-a="tip" title="tip — Lightning${hasNoteXmr?', Monero':''}${hasNoteBch?', Bitcoin Cash':''}"><span class="tipbolt">${ZAP_ICON}${hasNoteXmr?`<sup class="xmr-mark">ɱ</sup>`:''}${hasNoteBch?`<sup class="bch-mark">🟢</sup>`:''}</span> <span class="n">${enc(tipCountLabel(counts))}</span></button>
@@ -13657,8 +13665,8 @@
   // re-render (that flashed the whole screen on the busy global feed).
   function patchLoaded(e){
     $$(`.note[data-orig="${e.id}"]`).forEach(el=>{
-      const div=document.createElement('div'); div.innerHTML=noteCard(e, _repostTag(el.dataset.rtpk||'', +el.dataset.rtts||0));
-      if(div.firstElementChild) el.replaceWith(div.firstElementChild);
+      const div=document.createElement('div'); div.innerHTML=noteCard(e, el.dataset.rtpk?_repostTag(el.dataset.rtpk,+el.dataset.rtts||0):'');
+      if(div.firstElementChild){if(el.dataset.repostId)div.firstElementChild.dataset.repostId=el.dataset.repostId;el.replaceWith(div.firstElementChild);}
     });
     $$(`[data-nctx="${e.id}"]`).forEach(el=>{   // notification context: fill the preview once the post lands
       const div=document.createElement('div'); div.innerHTML=_notifCtxHtml(e.id);
@@ -13771,7 +13779,7 @@
       else if(e.kind===7){ c.reactions[id]=(c.reactions[id]||0)+1;
         if(ME && e.pubkey===ME.pubkey){ c.myReact[id]=reactDisp(e); (c.myReactIds[id]=c.myReactIds[id]||[]).push(e.id); }
         if(_isSob(e.content)) c.sob[id]=(c.sob[id]||0)+1; }
-      else if(e.kind===6){ c.reposts[id]=(c.reposts[id]||0)+1; if(ME && e.pubkey===ME.pubkey) c.myRt.add(id); }
+      else if((e.kind===6||e.kind===16)&&!_repostDeleted(e)){ c.reposts[id]=(c.reposts[id]||0)+1; if(ME && e.pubkey===ME.pubkey){c.myRt.add(id);} }
       else if(e.kind===9735){ const sats=zapAmount(e); if(sats){ c.zaps[id]=(c.zaps[id]||0)+sats; c.zapN[id]=(c.zapN[id]||0)+1; } }
      }catch(err){
       // Bounded and NOISY on purpose. Containment is what keeps the timeline alive, but a catch that
@@ -15749,12 +15757,97 @@
     if(MOVE.includes(mod)){ p.mods=p.mods.filter(m=>!MOVE.includes(m) && m!==mod); p.mods.push(mod); }   // ONE movement
     else { p.mods.includes(mod) ? (p.mods=p.mods.filter(m=>m!==mod)) : p.mods.push(mod); }               // glow/trippy compose (toggle)
     ta.value=_fxJoin(p); }
+  // Deletion evidence is signed and author-bound. A late relay/cache copy must not re-enable
+  // an undone repost; a different author's deletion must never hide it or the original post.
+  const _repostVerificationMemo=new Map(),_repostReceiptMemo=new Map();
+  function _repostVerified(ev){
+    try{
+      // Recompute the ID from current fields before consulting a bounded signature cache.
+      // Neither mutable Store objects nor NostrTools' cached verification flag are proof.
+      if(!ev||NostrTools.getEventHash(ev)!==ev.id)return false;
+      const key=ev.id+':'+ev.sig,known=_repostVerificationMemo.get(key);
+      if(known!==undefined)return known;
+      const valid=NostrTools.verifyEvent(JSON.parse(JSON.stringify(ev)));
+      if(_repostVerificationMemo.size>=512)_repostVerificationMemo.delete(_repostVerificationMemo.keys().next().value);
+      _repostVerificationMemo.set(key,valid);return valid;
+    }catch(_){return false;}
+  }
+  function _repostDeleted(ev){
+    if(!ev||(ev.kind!==6&&ev.kind!==16))return false;
+    return Store.query([{'#e':[ev.id]}]).some(d=>{
+      try{return d.pubkey===ev.pubkey&&d.kind===5&&d.tags.some(t=>t[0]==='e'&&t[1]===ev.id)&&_repostVerified(d);}catch(_){return false;}
+    });
+  }
+  const _repostActions=new Map();
+  function _ownReposts(id,owner){
+    return Store.query([{kinds:[6,16],authors:[owner],'#e':[id]}]).filter(e=>e.pubkey===owner&&e.id!==id&&(e.kind===6||e.kind===16)&&_repostVerified(e)&&!_repostDeleted(e));
+  }
+  function _repostUndoReceipt(key,id,owner,privateEvent){
+    try{
+      const raw=localStorage.getItem(key),context=id+':'+owner+':'+privateEvent,memo=_repostReceiptMemo.get(key);
+      if(!raw){_repostReceiptMemo.delete(key);return null;}
+      if(memo&&memo.raw===raw&&memo.context===context)return memo.value;
+      const saved=JSON.parse(raw),deletion=saved&&saved.deletion,targets=saved&&saved.targets;
+      if(!deletion||!Array.isArray(targets)||!targets.length||deletion.pubkey!==owner||deletion.kind!==5||deletion.content!==''||!_repostVerified(deletion)||_fediOnlyEvent(deletion)!==privateEvent)return null;
+      if(!targets.every(e=>e.pubkey===owner&&(e.kind===6||e.kind===16)&&e.id!==id&&e.tags.some(t=>t[0]==='e'&&t[1]===id)&&_fediOnlyEvent(e)===privateEvent&&_repostVerified(e)))return null;
+      const ids=deletion.tags.filter(t=>t[0]==='e').map(t=>t[1]);
+      if(!ids.length||ids.length!==targets.length||new Set(ids).size!==ids.length||!ids.every(id=>targets.some(e=>e.id===id)))return null;
+      if(!deletion.tags.every(t=>['e','k'].includes(t[0])||(t[0]==='client-mode'&&t[1]==='fedi-only')||(t[0]==='client'&&t.length===2&&t[1]==='PosterChan AI')))return null;
+      const value={deletion,targets};
+      if(_repostReceiptMemo.size>=64)_repostReceiptMemo.delete(_repostReceiptMemo.keys().next().value);
+      _repostReceiptMemo.set(key,{raw,context,value});return value;
+    }catch(_){return null;}
+  }
+  function _repostActionTitle(id,reposted){
+    if(ME&&[false,true].some(privateEvent=>_repostUndoReceipt('pc_repost_undo_'+ME.pubkey+':'+id+(privateEvent?':private':':public'),id,ME.pubkey,privateEvent)))return 'retry undo repost';
+    return reposted?'undo your repost':'repost';
+  }
   async function doRepost(id,pk,btn){
-    if(countsFor(id).iRt){ toast('already reposted'); return; }
-    const o=Store.get(id);
-    const r=await publish(6, o?JSON.stringify(o):'', eTags(id,pk));   // failure toast by publish()
-    if(!(r && r.ok)) return;   // relay didn't store it → don't mark reposted (else the guard blocks a retry)
-    btn.classList.add('on'); const n=btn.querySelector('.n'); n.textContent=(parseInt(n.textContent||'0')+1); toast('reposted');
+    if(!ME||GUEST){_guestPrompt();return;}
+    const owner=ME.pubkey,key=owner+':'+id,current=()=>ME&&ME.pubkey===owner;
+    if(_repostActions.has(key))return;
+    _repostActions.set(key,true);
+    if(btn){btn.disabled=true;btn.setAttribute('aria-busy','true');}
+    const pendingKey='pc_repost_undo_'+key;
+    try{
+      const own=_ownReposts(id,owner),groups=[false,true].map(privateEvent=>{
+        const receiptKey=pendingKey+(privateEvent?':private':':public');
+        return {privateEvent,receiptKey,receipt:_repostUndoReceipt(receiptKey,id,owner,privateEvent)};
+      });
+      if(!own.length&&!groups.some(g=>g.receipt)){
+        const o=Store.get(id),r=await publish(6,o?JSON.stringify(o):'',eTags(id,pk));
+        if(current()&&r&&r.ok){decorateCounts();toast('reposted');}
+        return;
+      }
+      let failed=false;
+      // Visibility belongs to each signed target, including after changing posting mode.
+      // Durable target snapshots keep a lost-ACK retry an undo even after history removed it.
+      for(const {privateEvent,receiptKey,receipt} of groups){
+        const targets=receipt?receipt.targets:own.filter(e=>_fediOnlyEvent(e)===privateEvent);
+        if(!targets.length)continue;
+        if(!current())return;
+        let r;
+        if(receipt){
+          r={...await Relay.publish(receipt.deletion),ev:receipt.deletion};
+        }else{
+          const tags=targets.map(e=>['e',e.id]);
+          [...new Set(targets.map(e=>e.kind))].forEach(k=>tags.push(['k',String(k)]));
+          if(privateEvent)tags.push(['client-mode','fedi-only']);
+          r=await publish(5,'',tags,{quiet:true,noQueue:true,publicDeletion:!privateEvent,deferLocal:true,
+            onSigned:deletion=>localStorage.setItem(receiptKey,JSON.stringify({deletion,targets}))});
+        }
+        if(!current())return;
+        if(!(r&&r.ok)){failed=true;continue;}
+        Store.saveEvent(r.ev);_applyDeletion(r.ev);invalidateCounts();decorateCounts();
+        try{localStorage.removeItem(receiptKey);}catch(_){}
+      }
+      decorateCounts();
+      toast(failed?'Some undo requests are not confirmed — retry undo; your original post is unchanged':'Repost deletion requested');
+    }catch(_){if(current())toast('Could not undo or repost — try again');}
+    finally{
+      _repostActions.delete(key);
+      if(btn){btn.disabled=false;btn.removeAttribute('aria-busy');}
+    }
   }
   async function doDelete(id,art){
     if(!await uiConfirm('Delete this post? (publishes a NIP-09 deletion request)')) return;
@@ -34562,10 +34655,22 @@
     if(NO_IMAGES){ decorateCounts(); return; }
     _ixT=setTimeout(async()=>{
     _ixT=null;
-    const ids=[...new Set($$('.note[data-id]').map(n=>n.dataset.id))].slice(0,200);
+    const owner=ME&&ME.pubkey,ids=[...new Set($$('.note[data-id]').map(n=>n.dataset.id))].slice(0,200);
     if(!ids.length) return;
-    try{ const evs=await Relay.query([{ kinds:[1,6,7,9735], '#e':ids, limit:600 }]);
+    try{ const evs=await Relay.query([{ kinds:[1,6,16,7,9735], '#e':ids, limit:600 }]);
+      if((ME&&ME.pubkey)!==owner)return;
       let any=false; for(const e of evs){ if(Store.saveEvent(e)){ any=true; needProfile(e.pubkey); } }
+      // The global deletion subscription is bounded. Ask specifically about the reposts now
+      // visible so an old undo from another device also survives a late history/cache replay.
+      const repostIds=Store.query([{kinds:[6,16],'#e':ids,limit:600}]).filter(e=>!_fediOnlyEvent(e)).map(e=>e.id);
+      if(repostIds.length){
+        try{const deletions=await Relay.query([{kinds:[5],'#e':repostIds,limit:600}]);
+          if((ME&&ME.pubkey)!==owner)return;
+          for(const d of deletions){
+          if(Store.saveEvent(d))any=true;
+          _applyDeletion(d);
+        }}catch(_){}
+      }
       if(any){ invalidateCounts(); }
     }catch(_){}
     decorateCounts();
@@ -34582,7 +34687,7 @@
       const setN=(a,v)=>{ const s=n.querySelector('.act[data-a="'+a+'"] .n'); if(s) s.textContent=v||''; };
       setN('reply',c.replies); setN('repost',c.reposts); setN('react',c.reactions); setN('zap',c.zaps?fmtSats(c.zaps):'');
       const rk=n.querySelector('.act[data-a="react"]'); if(rk){ rk.classList.toggle('on',!!mr); rk.title=mr?'remove your reaction':'react'; const ic=rk.querySelector('.react-ic'); if(ic) ic.innerHTML=(mr||REACT_ICON); }
-      const rt=n.querySelector('.act[data-a="repost"]'); if(rt) rt.classList.toggle('on',c.iRt);
+      const rt=n.querySelector('.act[data-a="repost"]'); if(rt){rt.classList.toggle('on',c.iRt);rt.title=_repostActionTitle(id,c.iRt);}
       const zp=n.querySelector('.act[data-a="zap"]'); if(zp) zp.classList.toggle('on',!!c.zaps);
       const bm=n.querySelector('.act[data-a="bookmark"]'); if(bm) bm.classList.toggle('on',BOOKMARKS.has(id));
     });
