@@ -177,6 +177,72 @@ def normalize_amounts(value: Any, field: str | None = None) -> Any:
     return value
 
 
+#: WHERE A TRANSACTION ID MAY BE LOOKED UP, per network — a PRIVACY decision before it is a
+#: convenience one.
+#:
+#: A txid is the one value on a wallet screen that means something to a stranger. Handing it to a
+#: public explorer tells that explorer's operator (and every hop to it) the viewer's IP address and
+#: exactly which transaction they care about. What leaks is not the money — Monero's amounts and
+#: parties stay hidden on chain, and an explorer can only decode an amount for somebody who already
+#: holds the view key — it is the INTEREST: "this person is watching this payment". That is the
+#: correlation the people who chose Monero chose it to avoid, so the client asks before the first
+#: time it leaves the app and always offers copying the id instead, which tells nobody anything.
+#:
+#: The defaults are the reference open-source explorer (`onion-monero-blockchain-explorer`), so the
+#: feature works on a fresh node instead of being a switch nobody finds. An operator who does not
+#: want their users pointed at a third party at all sets `monero_explorer_base` to `off`; one who
+#: runs their own — or wants a .onion — puts its base URL there and every wallet on the node follows.
+_DEFAULT_EXPLORER_TX = {
+    "mainnet": "https://xmrchain.net/tx/",
+    "stagenet": "https://stagenet.xmrchain.net/tx/",
+}
+
+#: Values of `monero_explorer_base` that mean "no explorer links anywhere on this node".
+_EXPLORER_OFF = frozenset({"off", "none", "no", "disabled", "0", "false"})
+
+
+def explorer_tx_base(network: str | None = None) -> str:
+    """The URL prefix a transaction id is appended to, or ``""`` for no links at all.
+
+    RESOLVED ON THE NODE, FROM THE NODE'S OWN NETWORK, deliberately. A mainnet explorer holding a
+    stagenet txid is a "not found" page, which on a wallet screen reads as a lost payment — and the
+    two chains are one setting apart. Pairing base and network in the BROWSER would let a cached
+    network value meet a freshly-read base and produce exactly that; here they cannot disagree,
+    because the caller passes the network its wallet is actually configured for. A client handed no
+    base draws no link at all rather than guessing one.
+    """
+    net = str(network or "").strip().lower()
+    if net not in _DEFAULT_EXPLORER_TX:              # never invent a chain
+        return ""
+    configured = ""
+    try:
+        settings_store = importlib.import_module("app.services.settings_store")
+        configured = str(settings_store.get("monero_explorer_base", "") or "").strip()
+    except Exception:
+        configured = ""
+    if not configured:
+        configured = os.getenv("MONERO_EXPLORER_BASE", "").strip()
+    if not configured:
+        return _DEFAULT_EXPLORER_TX[net]
+    if configured.lower() in _EXPLORER_OFF:
+        return ""
+    # http(s) only, no embedded credentials, no whitespace or quoting: this string is concatenated
+    # with a txid and handed to a browser, so anything else is a javascript:/data: sink with extra
+    # steps, and a quote in it would break out of the attribute it is rendered into. A .onion is an
+    # ordinary http URL and is allowed on purpose — it is the most private answer available.
+    parsed = urlsplit(configured)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return ""
+    if parsed.username or parsed.password:
+        return ""
+    if any(ch.isspace() or ch in "\"'<>\\" for ch in configured):
+        return ""
+    # The id is appended verbatim. A base already ending in a separator is left exactly as typed (so
+    # `https://explorer.example/?tx=` works); anything else gets the path separator it obviously
+    # meant, because `https://explorer.example/tx` + a txid is a 404 nobody would think to debug.
+    return configured if configured[-1] in "/=?&" else configured + "/"
+
+
 def validate_address(address: str, network: str = "stagenet") -> str:
     prefixes = {"stagenet": {"5", "7"}, "mainnet": {"4", "8"}}.get(network)
     if prefixes is None:

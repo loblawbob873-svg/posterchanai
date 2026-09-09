@@ -44,6 +44,82 @@
     return {address,amount:/^0(?:\.0+)?$/.test(valueAmount)?'':valueAmount,recipient};
   }
 
+  /* ── A TRANSACTION ID, AND WHAT IT COSTS TO CLICK ONE ────────────────────────────────────────
+   *
+   * The id is the only value on this screen that means anything to a stranger, and looking it up
+   * on a block explorer tells that explorer's operator — and every hop to it — this device's IP
+   * address and exactly which transaction this person cares about. The chain data itself stays
+   * private (an explorer can only decode the amount for somebody who already holds the view key),
+   * so what leaks is not the money: it is the INTEREST, "this person is watching this payment".
+   * That is the correlation Monero is chosen to avoid, and it would be dishonest to spend it on
+   * the user's behalf just because a link is convenient.
+   *
+   * The decision, and why each half of it:
+   *   - The id is ALWAYS shown and ALWAYS copyable. Copying leaks nothing, needs no network, and
+   *     is what somebody pasting it into their own Feather or monerod actually wants.
+   *   - The link ASKS ONCE per device before it first leaves the app, naming the host it is about
+   *     to tell. Remembering the answer is a per-device convenience: losing it (a cleared profile,
+   *     another browser) only means being asked again, which is the safe direction.
+   *   - WHERE it goes belongs to the operator (`monero_explorer_base`, Admin → Monero): their own
+   *     explorer, a .onion, or `off` to take the links off the node entirely.
+   *   - The BASE IS BUILT ON THE NODE from the network that node's wallet is on, and this file only
+   *     appends a validated id. A mainnet explorer holding a stagenet txid is a "not found" page,
+   *     which on a wallet screen reads as a lost payment. If the node sends no base there is no
+   *     link — never a guess. */
+  const TXID_RE=/^[0-9a-f]{64}$/;
+  /* The history comes from a remote API and anyone who can get a row into it controls this string,
+     so it is checked to be exactly what a Monero txid is before it can reach a URL or the DOM. */
+  const txidOf=v=>{const s=String(v==null?'':v).trim().toLowerCase();return TXID_RE.test(s)?s:'';};
+  const shortTxid=id=>String(id||'').slice(0,10)+'…'+String(id||'').slice(-8);
+  function explorerTxUrl(base,txid){
+    const id=txidOf(txid); if(!id)return '';
+    const b=String(base==null?'':base).trim();
+    // http(s) only, and nothing that could break out of an attribute or become a script sink. The
+    // node validates this too; a client that trusts a server-supplied string into a link is one
+    // compromised response away from being the sink itself.
+    if(!/^https?:\/\/[^\s"'<>\\]+$/i.test(b))return '';
+    return b+id;
+  }
+  //: Per DEVICE, not per account: the question is about this browser's IP address.
+  const EXPLORER_OK_KEY='pc_xmr_explorer_ok';
+  function explorerAllowed(){
+    try{ return root.localStorage&&root.localStorage.getItem(EXPLORER_OK_KEY)==='1'; }catch(_){ return false; }
+  }
+  function rememberExplorer(){
+    try{ root.localStorage&&root.localStorage.setItem(EXPLORER_OK_KEY,'1'); }catch(_){ }
+  }
+  function _openExplorerNow(url,id){
+    /* PC.openExternal, never a bare anchor or window.open: it is the one helper that lands in a
+       real browser from all three shells — a tab on the web, shell.openExternal in the desktop app,
+       and Capacitor's shouldOverrideUrlLoading in the APK, where window.open returns null and does
+       nothing at all, silently. */
+    if(PC&&typeof PC.openExternal==='function'&&PC.openExternal(url))return;
+    // It did not leave. Say so and hand over the id, rather than claiming a page that never opened.
+    copy(id,'transaction id');
+    PC.toast('could not open your browser — the transaction id is copied instead');
+  }
+  function openExplorer(base,txid){
+    const id=txidOf(txid), url=explorerTxUrl(base,id);
+    if(!url){PC.toast('no block explorer is configured for this wallet');return;}
+    let host=url; try{ host=new root.URL(url).host; }catch(_){ }
+    if(explorerAllowed()){_openExplorerNow(url,id);return;}
+    PC.modal('<div class="mw-modal"><h3>Open this transaction on a block explorer?</h3>'
+      +'<p>This leaves PosterChan and asks <b>'+esc(host)+'</b> about one transaction. That tells them '
+      +'your IP address and which transaction you are looking at — a third party learning that '
+      +'this payment interests you, which is the correlation Monero exists to avoid.</p>'
+      +'<p class="muted small">The payment itself stays private: an explorer can only show the amount '
+      +'to somebody who already has the view key. Copying the id instead tells nobody anything.</p>'
+      +'<code>'+esc(url)+'</code>'
+      +'<label class="mw-check"><input type="checkbox" id="mw-exp-remember"> Don’t ask again on this device</label>'
+      +'<button class="btn btn-neon full" id="mw-exp-go">Open '+esc(host)+'</button>'
+      +'<button class="btn btn-ghost full" id="mw-exp-copy">Copy the transaction ID instead</button></div>',r=>{
+        const go=r.querySelector('#mw-exp-go'), cp=r.querySelector('#mw-exp-copy'),
+              keep=r.querySelector('#mw-exp-remember');
+        if(go)go.onclick=()=>{ if(keep&&keep.checked)rememberExplorer(); PC.closeModal(); _openExplorerNow(url,id); };
+        if(cp)cp.onclick=()=>{ PC.closeModal(); copy(id,'transaction id'); };
+      });
+  }
+
   const WALLET_TIMEOUT_MS = 20000;   // > the node's own 8s RPC budget, with room for its overhead
   /* A SPEND IS NOT A READ, AND ONE TIMER FOR BOTH IS HOW A SENT PAYMENT BECAME A FAILED ONE.
    *
@@ -178,6 +254,10 @@
            change for 10 blocks, so a wallet made of one output can tip once and then not again for
            ~20 minutes however large the balance is. */
         outputs:bal.num_unspent_outputs,
+        /* WHERE A TXID MAY BE LOOKED UP, already matched to this wallet's network by the node.
+           Absent (an older node, or an operator who typed `off`) means no explorer links at all —
+           the ids still render and still copy. */
+        explorer:String(meta.explorer_tx_base||''),
         address:addr.address||(((addr.addresses||[])[0]||{}).address)||'',transfers};
       if(seq === _probeSeq) state=_next;
     }catch(e){
@@ -251,7 +331,13 @@
     // RPC `out` amounts are commonly positive. The bucket is authoritative, not the sign.
     const incoming=direction==='in';
     const atomic=t.amount_atomic!=null, raw=String(atomic?t.amount_atomic:(t.amount==null?0:t.amount)).replace(/^-/,'');
-    return {incoming,amount:xmr(raw,atomic),date:historyDate(t.timestamp||t.date)};
+    /* THE ID WAS BEING DROPPED HERE. Both histories carry it — the node wallet passes
+       get_transfers straight through, the per-user one builds an explicit `txid` — and this view
+       model returned amount, direction and date only, so the one value that lets somebody look a
+       payment up in their own wallet never reached the screen. Validated, never trusted: `txid` is
+       '' for anything that is not exactly 64 hex characters. */
+    return {incoming,amount:xmr(raw,atomic),date:historyDate(t.timestamp||t.date),
+            txid:txidOf(t.txid||t.tx_hash||t.hash)};
   }
   /* ONE FLATTENER FOR BOTH WALLETS. The node wallet and a user's own wallet get the same buckets
      from get_transfers, so they render through one implementation rather than two that can drift.
@@ -270,13 +356,39 @@
     out.sort((a,b)=>Number(b.timestamp||b.height||0)-Number(a.timestamp||a.height||0));
     return out;
   }
-  function transferRows(rows){
+  /* `explorer` is the node-resolved URL prefix (see explorerTxUrl). Passed in rather than read off
+     module state, because the two wallets are two different states rendering through this one
+     function and neither may borrow the other's answer. */
+  function transferRows(rows,explorer){
     if(!Array.isArray(rows)||!rows.length)return '<div class="mw-empty">No transactions yet</div>';
+    const base=String(explorer==null?'':explorer);
     return '<div class="mw-history">'+rows.slice(0,50).map(t=>{
       const row=transferView(t), incoming=row.incoming;
       const pend=!!t.unconfirmed;
-      return '<div class="mw-tx'+(pend?' mw-tx-pending':'')+'"><span class="mw-dir '+(incoming?'in':'out')+'">'+(incoming?'↓':'↑')+'</span><span><b>'+(incoming?'Received':'Sent')+(pend?' · unconfirmed':'')+'</b><small>'+esc(row.date)+'</small></span><strong>'+(incoming?'+':'−')+row.amount+' XMR</strong></div>';
+      const link=explorerTxUrl(base,row.txid);
+      /* The id is a BUTTON, not an <a href>: leaving the app is PC.openExternal's job in all three
+         shells, and it is gated on a one-time question this anchor could not ask. Copy is always
+         there, with or without a link, because it is the answer that leaks nothing. */
+      const id=row.txid
+        ? '<small class="mw-txid">'
+          +(link
+             ? '<button type="button" class="mw-tx-open" data-tx="'+esc(row.txid)+'" title="Look this transaction up on a block explorer">'+esc(shortTxid(row.txid))+'</button>'
+             : '<span class="mw-tx-id" title="Transaction ID">'+esc(shortTxid(row.txid))+'</span>')
+          +'<button type="button" class="mw-tx-copy" data-tx="'+esc(row.txid)+'" title="Copy the full transaction ID">copy</button></small>'
+        : '';
+      return '<div class="mw-tx'+(pend?' mw-tx-pending':'')+'"><span class="mw-dir '+(incoming?'in':'out')+'">'+(incoming?'↓':'↑')+'</span><span><b>'+(incoming?'Received':'Sent')+(pend?' · unconfirmed':'')+'</b><small>'+esc(row.date)+'</small>'+id+'</span><strong>'+(incoming?'+':'−')+row.amount+' XMR</strong></div>';
     }).join('')+'</div>';
+  }
+  /* Bound from BOTH wallets' bind steps, over whatever history is on screen. Every handler is
+     null-guarded and the whole sweep is in a try: a throw here would take every binding after it
+     (Refresh, Send, Copy address) with the screen still drawn perfectly. */
+  function bindHistory(explorer){
+    const base=String(explorer==null?'':explorer);
+    try{
+      const each=(sel,fn)=>Array.prototype.forEach.call(document.querySelectorAll(sel)||[],fn);
+      each('.mw-tx-open',b=>{ if(b)b.onclick=()=>openExplorer(base,b.getAttribute&&b.getAttribute('data-tx')); });
+      each('.mw-tx-copy',b=>{ if(b)b.onclick=()=>copy(b.getAttribute&&b.getAttribute('data-tx'),'transaction id'); });
+    }catch(_){ }
   }
   function paint(s){
     // The state request is async. A late balance/history response never owns the shared feed after
@@ -300,7 +412,7 @@
       +warning(s)+'<section class="mw-balance"><span>Balance</span><strong>'+xmr(balance,s.balance_atomic!=null)+' <small>XMR</small></strong><span class="muted small">'+xmr(s.unlocked_balance_atomic!=null?s.unlocked_balance_atomic:balance,s.unlocked_balance_atomic!=null||s.balance_atomic!=null)+' XMR can be sent now</span></section>'
       +'<div class="mw-actions"><button class="btn btn-neon" id="mw-send">Send</button><button class="btn btn-cyan" id="mw-receive">Receive</button></div>'
       +'<div id="mw-sync"></div>'
-      +'<section class="mw-card"><h3>Recent activity</h3>'+transferRows(s.transfers||s.history)+'</section>'
+      +'<section class="mw-card"><h3>Recent activity</h3>'+transferRows(s.transfers||s.history,s.explorer)+'</section>'
       +'<section class="mw-card mw-address"><h3>Receive address</h3><code>'+esc(address||'Wallet has not returned an address')+'</code><button class="btn btn-ghost small" id="mw-copy">Copy</button></section></div>';
     bind();
   }
@@ -348,20 +460,23 @@
     if(by('mw-send'))by('mw-send').onclick=()=>sendDialog({});
     if(by('mw-receive'))by('mw-receive').onclick=receiveDialog;
     if(by('mw-copy'))by('mw-copy').onclick=()=>copy(state.address);
+    bindHistory(state&&state.explorer);
   }
-  async function copy(value){
-    const text=String(value||'');
-    try{await navigator.clipboard.writeText(text); PC.toast('address copied');return;}
+  //: `what` names the thing in the toast — an address by default, a transaction id from history.
+  //: Claiming "address copied" over a txid is a small lie the user has no way to check.
+  async function copy(value,what){
+    const text=String(value||''), label=String(what||'address');
+    try{await navigator.clipboard.writeText(text); PC.toast(label+' copied');return;}
     catch(_){}
     /* Clipboard permission is commonly denied in embedded desktop/mobile webviews. Keep the
        fallback inside PosterChan's own UI: native prompt() escapes the app window and is unusable
        on a phone. execCommand is deliberately only the last-resort compatibility path. */
     const box=document.createElement('textarea');
-    box.value=text;box.readOnly=true;box.setAttribute('aria-label','Monero address');
+    box.value=text;box.readOnly=true;box.setAttribute('aria-label','Monero '+label);
     Object.assign(box.style,{position:'fixed',inset:'auto 0 0',opacity:'0',pointerEvents:'none'});
     document.body.appendChild(box);box.select();box.setSelectionRange(0,text.length);
     let copied=false;try{copied=!!document.execCommand&&document.execCommand('copy');}catch(_){}
-    box.remove();PC.toast(copied?'address copied':'touch and hold the address to copy');
+    box.remove();PC.toast(copied?(label+' copied'):('touch and hold the '+label+' to copy'));
   }
   function receiveDialog(){
     if(!state||!validAddress(state.address,state.network)){PC.toast('wallet address unavailable');return;}
@@ -568,7 +683,7 @@
       + '<section class="mw-card"><h3>Recent activity</h3>'
       + (s.history_unavailable
           ? '<div class="mw-empty">Your transactions could not be loaded just now. Your balance and address above are unaffected.</div>'
-          : transferRows(s.transfers))
+          : transferRows(s.transfers, s.explorer))
       + '</section></div>';
   }
 
@@ -576,6 +691,7 @@
     const by = id => document.getElementById(id);
     if(by('mw-refresh')) by('mw-refresh').onclick = () => { _meAt = 0; render(true); };
     if(by('mw-me-copy')) by('mw-me-copy').onclick = () => copy(s.address);
+    bindHistory(s && s.explorer);
     if(by('mw-me-receive')) by('mw-me-receive').onclick = () => {
       PC.modal('<div class="mw-modal"><h3>Receive Monero</h3>'
         + '<div class="mw-qr">' + qr(uri(s.address, '', ''), 'Your Monero address') + '</div>'
@@ -861,6 +977,8 @@
       const h = await request('/api/wallet/xmr/me/history?limit=50').catch(error=>({__error:error}));
       _meState = {enabled:true, network:st.network, address:b.address, balance:b.balance,
                   transfers:flattenTransfers(h),
+                  //: Same field, same rule as the node wallet: node-resolved, or no links.
+                  explorer:String(st.explorer_tx_base||''),
                   history_unavailable:!!(h&&h.__error),
                   unlocked_balance:b.unlocked_balance, blocks_to_unlock:b.blocks_to_unlock,
                   outputs:b.outputs,
@@ -1097,6 +1215,6 @@
        deciding on a stopwatch, which is what made the chooser differ between identical clicks. */
     warm();
   }
-  if(typeof module!=='undefined'&&module.exports)module.exports={uri,parsePaymentUri,validAddress,format:xmr,transferView,historyDate};
+  if(typeof module!=='undefined'&&module.exports)module.exports={uri,parsePaymentUri,validAddress,format:xmr,transferView,historyDate,txidOf,explorerTxUrl,transferRows};
   if(typeof document!=='undefined')boot();
 })(typeof window!=='undefined'?window:globalThis);

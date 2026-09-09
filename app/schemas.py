@@ -135,6 +135,12 @@ class SettingsResponse(BaseModel):
     monero_zap_fee_percent: str = "2"
     #: Where that cut goes. Blank means the node's own wallet address.
     monero_zap_fee_address: str = ""
+    #: Where a transaction id in either wallet's Recent activity is looked up. BLANK means the
+    #: built-in default for the wallet's network (xmrchain.net / stagenet.xmrchain.net); `off`
+    #: removes the links from every wallet on this node; anything else is used as the URL prefix,
+    #: so an operator can point at their own explorer or a .onion. Resolved server-side, per
+    #: network — see monero_wallet_service.explorer_tx_base.
+    monero_explorer_base: str = ""
     # Default UI theme for the Nostr web client (/client) — applied to any visitor/device that
     # hasn't picked their own theme. One of CLIENT_THEMES; the client falls back to "cyberpunk" (the
     # flagship bare-:root theme) if unknown. Stored in the relay like every other setting.

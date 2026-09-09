@@ -14,6 +14,15 @@
     <label>Rolling daily cap (XMR) <input id="monero_wallet_daily_cap_xmr" name="monero_wallet_daily_cap_xmr" value="0" inputmode="decimal"></label>
     <label>RPC timeout (seconds) <input type="number" id="monero_wallet_rpc_timeout" name="monero_wallet_rpc_timeout" value="8" min="1" max="30"></label>
     <label>Durable spend ledger <input id="monero_wallet_spend_ledger" name="monero_wallet_spend_ledger" value="data/monero_wallet_spend.sqlite3" autocomplete="off"></label>
+    <label>Block explorer for transaction links <input id="monero_explorer_base" name="monero_explorer_base" placeholder="Blank = xmrchain.net (matched to the network above)" autocomplete="off" spellcheck="false"></label>
+    <p class="settings-help"><strong>Opening an explorer tells a third party who is looking at which transaction.</strong>
+      A transaction id in Recent activity is always shown and always copyable — copying leaks nothing —
+      and the app asks each device once before the first time a link takes it to an explorer.
+      Leave this blank for the default (<code>https://xmrchain.net/tx/</code> on mainnet,
+      <code>https://stagenet.xmrchain.net/tx/</code> on stagenet), type <code>off</code> to remove the
+      links entirely, or give the base URL of your own explorer — a <code>.onion</code> is fine. The id
+      is appended to whatever you type; a base ending in <code>/</code>, <code>=</code>, <code>?</code>
+      or <code>&amp;</code> is used exactly as written.</p>
   </fieldset>
   <fieldset>
     <legend>Multi-chain wallet (Exodus)</legend>

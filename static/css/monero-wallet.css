@@ -26,3 +26,14 @@
   .mw-wrap{padding:10px max(8px,env(safe-area-inset-right)) calc(74px + env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))}
   .modal:has(.mw-modal){padding:16px 14px}.mw-modal .mw-actions{gap:8px}.mw-modal .btn{min-height:44px}}
 @media(max-width:340px){.mw-qr{min-height:0}.mw-qr img{width:min(196px,100%)}}
+/* The transaction id under each row. Shown for every transfer that has one and always copyable —
+   copying a txid leaks nothing, where opening it on an explorer tells that explorer who is looking
+   at which payment. Both are plain buttons rather than links: leaving the app is PC.openExternal's
+   job in all three shells, and the explorer button is gated on a one-time question first. */
+.mw-tx .mw-txid{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-top:2px;font:11px/1.5 var(--mono,monospace)}
+.mw-tx .mw-txid>button,.mw-tx .mw-txid>span{max-width:100%;overflow-wrap:anywhere}
+.mw-tx .mw-txid>button{padding:0;border:0;background:none;font:inherit;color:#ff8a33;cursor:pointer;text-align:start}
+.mw-tx-open{text-decoration:underline;text-underline-offset:2px}
+.mw-tx-copy{color:var(--muted)!important;text-decoration:underline dotted;text-underline-offset:2px}
+.mw-tx .mw-txid>button:hover,.mw-tx .mw-txid>button:focus-visible{filter:brightness(1.25)}
+.mw-tx-id{color:var(--muted)}
