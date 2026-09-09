@@ -50,7 +50,7 @@ def mount_all(os_js: str = "") -> dict:
   communityStats:()=>null, relayQuery:async()=>[] };
 window.ClientSettings={get:(k,d)=>d,set(){}};</script>
 <script>%s</script>
-<script>requestAnimationFrame(()=>{
+<script>(()=>{
   const reg=(window.PCOS&&window.PCOS.__widgets)?window.PCOS.__widgets():null;
   if(!reg){ out.textContent=JSON.stringify({error:'no registry'}); return; }
   const res={};
@@ -65,7 +65,7 @@ window.ClientSettings={get:(k,d)=>d,set(){}};</script>
     res[k]={threw, shows:((d.innerText||'')+' '+ph).replace(/\\s+/g,' ').trim().slice(0,70)};
   }
   out.textContent=JSON.stringify(res);
-});</script>""" % (CSS, js)
+})();</script>""" % (CSS, js)
     with tempfile.TemporaryDirectory() as td:
         html = Path(td) / "w.html"
         html.write_text(page, encoding="utf-8")
