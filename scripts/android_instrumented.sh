@@ -102,6 +102,29 @@ if [ $rc -ne 0 ]; then
   if grep -q "No connected devices" /tmp/pc-instrumented.log 2>/dev/null; then
     skip "the emulator was gone before any test executed (gradle: \"No connected devices!\")."
   fi
+  # PLAY SERVICES TAKING US DOWN WITH IT IS NOT OUR TEST FAILING.
+  #
+  # `AppViewsLaunchSmokeTest` went red on two of five runs with "Instrumentation run failed due to
+  # Process crashed" and, until the unfiltered logcat above existed, no cause anywhere. It is not a
+  # crash. Run 34411867870, verbatim:
+  #
+  #   Killing 4939:place.poster.app (adj 0): depends on provider
+  #   com.google.android.gms/.fonts.provider.FontsProvider
+  #   in dying proc com.google.android.gms.persistent (adj -10000)
+  #
+  # The ActivityManager killed the app because GMS died under it — the google_apis image restarting
+  # its own persistent process — and anything holding a provider in that process goes with it. The
+  # app under test did nothing. Reported as a test failure it is worse than noise: it is a red build
+  # that sends somebody looking for a bug in whatever view happened to be open, which is where two
+  # rounds of reading already went.
+  #
+  # So it is exit 2, the same verdict this file already gives a missing emulator: nothing was
+  # verified. NOT exit 0 — a run that could not ask is never a pass, and the job's own summary says
+  # so. Matched against the LOGCAT rather than the gradle output, because gradle never sees it.
+  if grep -qE "Killing [0-9]+:place\.poster\.app.*dying proc com\.google\.android\.gms" \
+       /tmp/pc-androidtest/logcat-instrumented-full.txt 2>/dev/null; then
+    skip "Play Services died and the ActivityManager killed the app under test with it (it depends on GMS's FontsProvider). Nothing here is a verdict on the code — see logcat-instrumented-full.txt."
+  fi
   device_present || skip "the emulator disappeared partway through the run; the results are not a verdict on the code."
 fi
 exit $rc

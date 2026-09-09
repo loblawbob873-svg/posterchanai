@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Launcher uninstall requests still require Android's user confirmation. -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
@@ -427,6 +428,42 @@
         <receiver
             android:name=".phone.InCallReceiver"
             android:exported="false" />
+
+        <!-- PLAY SERVICES MUST NOT BE ABLE TO TAKE THIS APP DOWN WITH IT.
+             appcompat pulls in androidx.emoji2, whose EmojiCompatInitializer asks GMS for a
+             DOWNLOADABLE font at startup. That makes this process depend on a content provider
+             living in com.google.android.gms.persistent — and when that process dies, the
+             ActivityManager kills every process holding one of its providers. Measured on CI run
+             34411867870, verbatim from logcat:
+
+               Killing 4939:place.poster.app (adj 0): depends on provider
+               com.google.android.gms/.fonts.provider.FontsProvider
+               in dying proc com.google.android.gms.persistent (adj -10000)
+
+             That is two of five emulator runs going red on a test that never failed, and on a real
+             phone it is the same mechanism every time Play Services updates or restarts: the app
+             vanishes with no crash, no dialog and nothing in any log that names a cause. We already
+             have a standing report shaped exactly like that ("APK closes with no error"), whose
+             recorded cause is a WebView renderer death — this is a second, independent path to the
+             identical symptom.
+
+             THE TRADE, stated rather than hidden: EmojiCompat is what back-fills emoji newer than
+             the device's own font, and only in NATIVE views — the launcher, Texts, the dialer,
+             notification text. Everything else here is drawn by the WebView, which has its own font
+             stack and never used EmojiCompat. So the cost is that a very new emoji may render as a
+             box in those few native surfaces on an older phone; the benefit is that a Play Services
+             restart can no longer end the process. If the boxes are ever reported, the answer is
+             androidx.emoji2:emoji2-bundled plus BundledEmojiCompatConfig — the font in the APK,
+             still no provider — not putting this back. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+                tools:node="remove" />
+        </provider>
 
         <provider
             android:name="androidx.core.content.FileProvider"
