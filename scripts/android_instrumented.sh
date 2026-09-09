@@ -77,6 +77,22 @@ cp -r app/build/outputs/androidTest-results/connected/. /tmp/pc-androidtest/ 2>/
 # device was to fail a test on purpose.
 timeout --kill-after=5s 20s adb logcat -d -s PosterChan:* TestRunner:* \
   > /tmp/pc-androidtest/logcat-instrumented.txt 2>/dev/null || true
+# AND THE UNFILTERED BUFFER, BECAUSE A CRASH DOES NOT LOG UNDER OUR TAGS.
+#
+# The tag filter above is right for a test that MEASURES something and wrong for the failure that
+# actually happens: when the app process dies, gradle says "Instrumentation run failed due to
+# Process crashed", the HTML report carries a test name and no message, and the filtered logcat
+# shows `started:` with no `finished:` — three artifacts and not one line of cause, because the
+# stack is logged by AndroidRuntime/chromium/DEBUG. Measured on run 34400576969: 112 tests, one
+# failure, zero evidence. The crash buffer is separate from main and survives a died process, so
+# both are taken.
+timeout --kill-after=5s 30s adb logcat -d -v threadtime \
+  > /tmp/pc-androidtest/logcat-instrumented-full.txt 2>/dev/null || true
+timeout --kill-after=5s 20s adb logcat -d -b crash -v threadtime \
+  > /tmp/pc-androidtest/logcat-instrumented-crash.txt 2>/dev/null || true
+# A native crash writes a tombstone rather than a Java stack; a WebView renderer death is one.
+timeout --kill-after=5s 20s adb shell "ls -t /data/tombstones 2>/dev/null | head -3" \
+  > /tmp/pc-androidtest/tombstones.txt 2>/dev/null || true
 cp /tmp/pc-instrumented.log /tmp/pc-androidtest/ 2>/dev/null || true
 
 # THE POST-MORTEM. Reports are copied first so a skip still publishes whatever the device produced.
