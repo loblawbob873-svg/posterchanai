@@ -286,6 +286,21 @@ _PRUNABLE_SQL = ("(kind IN (%s) AND NOT (kind = 1111 AND id IN "
 # later, from the relay holding the only copy. It is already outside _PRUNABLE_KINDS (every prune
 # rule in this file is gated on _PRUNABLE_SQL or _RETIRED_SQL, so no cleaner can reach it); this
 # closes the one path that could.
+# Kinds that must NEVER take the `tie_direct` shortcut below (see the addressable-replaceable
+# branch in _add_event_sync). That shortcut hands a same-second tie to the LAST direct write instead
+# of to the lowest event id NIP-01 specifies, which is right for a person saving one document twice
+# in a second and wrong for anything two parties must agree on independently.
+#
+# A repo announcement (30617) and a repo state (30618) are exactly that: `git_auth.decide_push_ref`
+# authorises a push by SHA-equality against the newest maintainer-signed 30618, and reads the
+# maintainer set off the 30617 — so both are an AUTHORISATION input, and the relay resolving a tie
+# differently from the client means `pre-receive` deciding against a state the pusher considers
+# superseded. ngit v3 honours the lower-event-ID tie-break and grinds nonces to avoid same-second
+# collisions, so the practical window is small; the cost when it opens is a push refused (or
+# allowed) for a reason neither side can see. Conformance wins here, and the rapid-save argument
+# does not apply: a tie needs two pushes to the SAME repo in the SAME second.
+_STRICT_TIE_KINDS = (30617, 30618)
+
 _GRASP_PRIVATE_LIST_KIND = 10318
 _NEVER_EXPIRE_KINDS = _GIT_KINDS + (30078, _GRASP_PRIVATE_LIST_KIND)
 assert not (set(_NEVER_EXPIRE_KINDS) & set(_PRUNABLE_KINDS)), "never-expire kinds must never be prunable"
@@ -554,7 +569,8 @@ class RelayStore:
                     # manifests, measured six-a-second on a real account. Scoped to origin='direct'
                     # replacing origin='direct': mirrored copies still settle by the spec, so two
                     # nodes syncing each other cannot flip-flop.
-                    tie_direct = (row["created_at"] == created and origin == "direct"
+                    tie_direct = (kind not in _STRICT_TIE_KINDS
+                                  and row["created_at"] == created and origin == "direct"
                                   and str(row["origin"] if "origin" in row.keys() else "") == "direct")
                     if older or tie_lost or tie_direct:
                         self._delete_sync(conn, row["id"])
