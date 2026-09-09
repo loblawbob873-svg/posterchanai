@@ -44,8 +44,10 @@ test, deployment/package, and relevant real-device check are complete. The insta
 ## 4. Remaining desktop applications
 
 - [ ] Remote Desktop remains frozen until after Beta 3; retain its follow-up list separately.
-- [ ] PosterChan Code opens a user-selected local folder (never the repository by default), switches
+- [x] PosterChan Code opens a user-selected local folder (never the repository by default), switches
       between Explorer and Source Control, shows clickable diffs, and offers revert/restore safely.
+      Done 2026-09-09. Revert/restore measures what it destroys PER FILE from a fresh read of that
+      file's own patch, and an unreadable diff is never treated as an empty one.
 - [ ] Terminal/editor never shrink when unfocused. Office, Preview, and Email maximize usable content,
       avoid decorative effects on documents, and open attachments through non-localhost URLs.
 - [ ] Virtual Machines start attached installer media, show their display, eject media, and boot the
@@ -56,6 +58,14 @@ test, deployment/package, and relevant real-device check are complete. The insta
       into forms; LiveUSB remains a coherent section. Posterfetch lists actual AMD GPU models.
 - [ ] Social refreshes after offline without destroying open replies/place; newly opened Social starts
       at top; timeline has a desktop scrollbar; article images have bounded height.
+      2026-09-09: the last three were already implemented and now have MEASURED tests (rendered
+      scrollbar width and rendered image height against the shipped stylesheet, in real Chrome —
+      the previous tests read client.css as text, which passes for a rule overridden three lines
+      later). The offline-refresh half is NOT reproduced and deliberately untouched: it needs a real
+      relay and a genuine offline/online cycle with an open reply. Residue, flagged not fixed: in an
+      .osw window the article image cap is viewport-relative, so a tall image can exceed a short
+      window's body; bounding it to the WINDOW needs container-type:size, which creates a new
+      containing block and is the black-window class of risk, for a mild symptom.
 
 ## 5. Release gates and ISO — only after sections 1–4
 
