@@ -57,6 +57,16 @@ const stop=Relay.subscribeFrom([url],[{kinds:[1059],authors:[note.wrap.pubkey]}]
 socket.close();await new Promise(r=>setTimeout(r,1050));const replacement=Socket.all.at(-1);assert.notEqual(socket,replacement);await authenticate(replacement,note.wrap.pubkey);stop();
 // Room publish uses exactly the existing signed wrap on its own plane socket.
 for(const event of [controls[0],note.wrap]){const pubScope=ctx.cordPlaneAuth(p,plane(),event.pubkey,[url]),pending=Relay.publishTo([url],event,{includeManaged:true,detailed:true,timeout:1000,authScope:pubScope});await tick();socket=Socket.all.at(-1);await authenticate(socket,event.pubkey,true);socket.receive(['OK',event.id,true]);assert.equal((await pending).accepted,1);}
+// Actual Webxdc peer publisher/history and realtime subscriber use the scoped transport too.
+p.signTemplate=signEvent;p.relayPublishRoom=(urls,event,authScope)=>Relay.publishTo(urls,event,{includeManaged:true,detailed:true,timeout:1000,authScope});
+ctx.PC=()=>p;ctx.webxdcCordParts=async()=>({p,reader:PosterCordReader,bundle,controls,channel,room:rooms[0],relays:[url],streamPubkeys:channel.streamPubkeys,plane:plane()});
+vm.runInContext(src.slice(src.indexOf('  async function webxdcSubscribe('),src.indexOf('  window.PCConcord=')),ctx);
+const webCtx={protocol:'concord2'},signal=JSON.stringify({op:'ad',topic:'fixture',addr:'fixture-node'});
+const peerPending=ctx.webxdcPeerPublish(webCtx,signal);await tick();socket=Socket.all.at(-1);await authenticate(socket,note.wrap.pubkey,true);const peerWrap=socket.sent.find(m=>m[0]==='EVENT')[1];socket.receive(['OK',peerWrap.id,true]);const peerMade=await peerPending;assert.equal(peerMade.wrap.id,peerWrap.id);
+const peerHistory=ctx.webxdcPeerQuery(webCtx);await tick();socket=Socket.all.at(-1);req=await authenticate(socket,note.wrap.pubkey);socket.receive(['EVENT',req[1],peerWrap]);socket.receive(['EOSE',req[1]]);const peerRows=await peerHistory;assert.equal(peerRows.length,1);assert.equal(peerRows[0].content,signal);
+const updates=[],update=await PosterCordReader.createWebxdcWrap(bundle,controls,channel.id,'fixture-update',user,signEvent,[['i','fixture-session'],['rt','1']],true);
+const livePending=ctx.webxdcSubscribe(webCtx,'fixture-session',true,row=>updates.push(row));await tick();socket=Socket.all.at(-1);req=await authenticate(socket,update.wrap.pubkey);const webStop=await livePending;socket.receive(['EVENT',req[1],update.wrap]);await tick();assert.equal(updates.length,1);assert.equal(updates[0].content,'fixture-update');assert.equal(webStop.publish(update.wrap),1);webStop();
+assert.equal(accountSigns,0,'Webxdc room traffic does not authenticate the account pool');
 // Revoked membership/rekey and account switches suppress held signer completions and replay.
 for(const change of ['account','membership','rekey']){
  owner=user;rooms=[{communityId:made.communityId,cord:{bundle},channels:[channel]}];ctx.roomControls.set(made.communityId,controls);

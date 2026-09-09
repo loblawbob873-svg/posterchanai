@@ -47,7 +47,7 @@ def test_peer_ads_use_the_open_room_sockets_not_an_unrelated_pool():
     assert "relayPublishTo(x.relays,made.wrap)" in body
     assert ".relayPublish(made.wrap)" not in body
     sub = CONCORD.split("async function webxdcPeerSubscribe", 1)[1].split("window.PCConcord", 1)[0]
-    assert "close.publish=event=>(R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)" in sub
+    assert "close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0)" in sub
     iroh = (ROOT / "static/js/client/webxdc-iroh.js").read_text()
     assert "webxdcPeerPublish(ctx,JSON.stringify({op:'ad',topic,addr:encodeAddr(node.nodeAddrJson())}),off)" in iroh
     assert "await PCConcord.webxdcPeerQuery(ctx)" in iroh
@@ -122,16 +122,16 @@ def test_concord_realtime_serializes_member_signing_and_keeps_newest_packet():
 def test_room_realtime_listens_on_managed_and_external_relays():
     """A room relay already present in Relay._conns is intentionally skipped by subscribeFrom.
 
-    Concord must therefore install a normal pooled subscription too; otherwise the helper returns a
-    closer successfully while listening to zero sockets, which split Armada and PosterChan games.
+    Legacy/NIP-29 routes must also listen on the pool. CORD planes instead use dedicated
+    authenticated sockets even for pooled URLs, keeping the account socket identity intact.
     """
-    assert "const pooled=R.subscribe(filters,{onEvent:receive})" in CONCORD
-    assert "external=R.subscribeFrom(urls,filters,{onEvent:receive})" in CONCORD
+    assert "const pooled=plane?null:R.subscribe(filters,{onEvent:receive})" in CONCORD
+    assert "external=plane?cordPlaneSubscribe(PC(),R,urls,filters,{onEvent:receive},plane):R.subscribeFrom(urls,filters,{onEvent:receive})" in CONCORD
     assert "R.waitForSubscription(pooled,urls)" in CONCORD
     assert "if(external.hasTargets&&external.ready)" in CONCORD
     assert "await Promise.any(gates)" in CONCORD
     assert "const close=()=>{try{R.close(pooled);}" in CONCORD
-    assert "close.publish=event=>(R.publishFastTo&&R.publishFastTo(urls,event)?1:0)" in CONCORD
+    assert "close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(urls,event)?1:0)+(external.publish?external.publish(event):0)" in CONCORD
     assert "liveSub&&liveSub.publish?liveSub.publish(made.wrap):0" in CONCORD
     assert "relayPublishFastTo: (relays, ev) => Relay.publishFastTo(relays, ev)" in (ROOT / "static/js/client/app.js").read_text()
     assert "typeof this.rtSub==='function'?this.rtSub():Relay.close(this.rtSub)" in WEBXDC
