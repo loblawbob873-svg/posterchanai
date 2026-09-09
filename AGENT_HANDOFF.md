@@ -78,3 +78,46 @@ Signer correction febb0fe00 deployed all nodes; full suite 10745 +630 subtests p
 Coordination: new independent edits detected in os/gentoo.sh (installer memory/mirror/scripted options). Preserved; continuation will not blanket-stage them. Desktop1492 pin verified but its gentoo.sh line shares your dirty file. Please commit/test your installer changes explicitly when ready; sync.sh publishes working-tree overlay so we will deploy only a reviewed snapshot.
 
 Full follow-up suite stalled at55% in tests/test_exodus_wallet_routes.py teardown (py-spy confirmed anyio portal cancellation waiting forever). That route-only fixture unnecessarily started every service. Continuation changed it to a FastAPI app with the real wallet router and mocked chain transport; wallet/storage/chain tests remain intact. Rerunning full suite. This also explains the other session's long-running wallet route test process; did not stop that other process.
+
+2026-09-06 wallet scope correction from user: Exodus Monero MUST be independent of
+built-in Monero. Do not add pooled/operator wallet integration to Exodus. Continuation
+is replacing that integration in isolated branch codex/wallet-followup-20260906
+(/tmp/pc-wallet-followup-worktree; wallet UI/switching commit c35a21c62). Main
+4e09d6fd0 fixes a singleton call defect but is superseded by this scope correction;
+do not separately deploy that Monero integration. Full followup suite c69295c82 is
+past 57%; main installer and checkall changes remain the other agent's work.
+
+USER EXPLICIT (2026-09-06): do NOT commit gentoo.sh; other agent is testing it.
+Followup68799fa95 deployed from clean clone, installer edits excluded. Full suite
+10787passed+632subtests,25skips in24m51s. Publicterm/app/SW bytehashesmatch; serviceshealthy.
+Wallet clarified: custom in CloudOS, no officialapp needed, two-way Exodus recovery
+compatibility and sends/receives. Monero separate from built-in. Work stays isolated.
+
+Regression stage 7ee72ed42 includes your a120e9aa2 without altering your commit. Full
+suite is running from /tmp/pc-reviewed-followup-deploy-20260906. Native emulator CI
+34058614197 runs the same snapshot on branch codex/regressions-20260906. New gentoo.sh
+and scratch gate edits remain yours, untouched. Future frontend edits are isolated:
+the running app serves this checkout directly. Terminal fixes/tests are being reviewed
+in /tmp/pc-terminal-regression-20260906. Full suite exposed a generated-launcher test
+that read untracked run-intel.sh/run-nvidia.sh; actual Intel/NVIDIA/AMD generators omit
+secrets.env. Continuation owns scripts/install/systemd.sh plus that contract test in
+the isolated terminal branch. No change to your gentoo.sh/scratch gate files.
+
+Regression gate update: clean integration candidate 2b9640cf0 (isolated terminal branch)
+includes 69d61e30a terminal replay/UTF-8/buffer eviction fixes, generated launcher env
+fix, desktop1493 pin, and corrected packaged-WM/tab fixtures. Main remains untouched
+except this handoff and prior pin WIP. Full suite rerun /tmp/pc-regressions-final-suite.log;
+backend 7402+519 subtests passed; client/browser checks continue. Android7ee retry passed
+all88 instrumented tests plus lifecycle; final2b964 emulator34061102226 now running.
+Wallet changes remain isolated /tmp/pc-wallet-followup-worktree, never deploy it as-is.
+Independent Monero runtime + Exodus derivation preservation/import fixtures now in test;
+remaining send/discovery/review work is still incomplete. gentoo.sh and your current
+scratch gate test edits remain untouched and explicitly excluded from my commits.
+
+2026-09-06 regression deployment: 1297393e6 is now synchronized on server1, NAS,
+router and both remotes. Public app/term/vault/SW bytes match. Android/Windows builds
+34062557952/34062557961 and emulator 34062557945 are running. Your uncommitted
+os/gentoo.sh and tests/test_scratch_install_gate.py are byte-for-byte unchanged.
+The release includes your committed a120e9aa2 work. Final regression verification
+is in docs/REGRESSION-RELEASE-20260906.md. Wallet expansion remains isolated in
+/tmp/pc-wallet-followup-worktree; please do not merge/deploy that unfinished branch.

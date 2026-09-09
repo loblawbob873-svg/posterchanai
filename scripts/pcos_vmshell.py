@@ -113,6 +113,12 @@ def main():
                                                    "/var/tmp/pcvm/gentoo-minimal.iso"))
     ap.add_argument("--password", default=os.environ.get("PC_INSTALL_PASSWORD", "pc-vm-test-only"))
     ap.add_argument("--out-dir", default="")
+    # A SECOND DISK, BECAUSE SOME ANSWERS ARE TOO BIG FOR THE CONSOLE. Command output comes back
+    # through a PUT over slirp, which is right for a log and wrong for a two-gigabyte ISO. A raw
+    # image attached here is mkfs'd and mounted by the caller's own commands, and the host then
+    # loop-mounts the same file directly -- no qemu-nbd, no format conversion. Raw, not qcow2, for
+    # exactly that reason.
+    ap.add_argument("--extra-drive", default="", help="raw image attached as a second virtio disk")
     ap.add_argument("--memory", type=int, default=8192)
     ap.add_argument("--cpus", type=int, default=min(8, os.cpu_count() or 4))
     args = ap.parse_args()
@@ -155,10 +161,11 @@ def main():
         sock = Path(td, "console.sock")
         append = (f"root=live:CDLABEL={_GATE.iso_label(Path(args.iso))} rd.live.dir=/ "
                   "rd.live.squashimg=image.squashfs cdroot console=ttyS0,115200n8")
-        proc = subprocess.Popen(
-            _GATE.qemu_args(args.disk, args.iso, boot / "gentoo", boot / "gentoo.igz", append,
-                            sock, code, vars_copy, args.memory, args.cpus, port),
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        qargs = list(_GATE.qemu_args(args.disk, args.iso, boot / "gentoo", boot / "gentoo.igz",
+                                     append, sock, code, vars_copy, args.memory, args.cpus, port))
+        if args.extra_drive:
+            qargs += ["-drive", f"file={args.extra_drive},if=virtio,format=raw"]
+        proc = subprocess.Popen(qargs, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
             for _ in range(200):
                 if sock.exists():
