@@ -22,7 +22,7 @@ RDEPEND="
 	>=dev-lang/python-3.10
 	app-misc/posterchan-desktop
 	dev-vcs/ngit
-	gui-wm/wayfire
+	>=gui-wm/wayfire-0.10.1-r1
 	gui-libs/posterchan-wayfire-shell
 	gui-libs/wayfire-plugins-extra
 	gamescope? ( gui-wm/gamescope )
