@@ -105,6 +105,21 @@ def _read_config() -> dict:
             # which a 60s window makes a one-minute token. An operator whose client needs the old
             # behaviour sets the key; nobody has to patch the host to get their clone back.
             "read_skew": gi("git_server_read_skew", 60),
+            # GRASP-01 AUTO-PROVISIONING. A stock ngit v3 client never calls a create endpoint —
+            # `ngit init` publishes the 30617 and then polls `info/refs` until the server has made
+            # the repo, because ACCEPTING THE ANNOUNCEMENT IS THE CONTRACT. On by default (a GRASP
+            # server that does not do this is unusable to every v3 client), with the real protection
+            # in `accept_policy` — accepting means allocating disk to a remote party.
+            "auto_provision": gb("git_server_auto_provision", True),
+            # WHO WE ACCEPT A REPOSITORY FROM. GRASP-01 requires this to be advertised, in prose, as
+            # NIP-11 `repo_acceptance_criteria`; keep the two in step (docs/GIT_OVER_NOSTR.md).
+            #   local-or-wot  an account on this node, OR a member of this relay's web of trust
+            #   local         an account on this node only
+            #   wot           web-of-trust membership only
+            #   allowlist     only `git_server_allowlist` (plus the two above are ignored)
+            #   any           anybody who can publish a 30617 naming us  — an OPEN DISK-ALLOCATION
+            #                 PRIMITIVE; only sensible behind a quota this code does not have
+            "accept_policy": g("git_server_accept_policy", "local-or-wot"),
             "read_require_method": gb("git_server_read_require_method", True),
             "pg_dsn": g("nostr_relay_pg_dsn", os.environ.get(
                 "NOSTR_RELAY_PG_DSN", "host=127.0.0.1 port=5432 dbname=posterchan_relay user=posterchan")),

@@ -148,6 +148,19 @@ _PRIV_MAX = 512
 _priv_cache: dict = {}
 _priv_lock = threading.Lock()
 
+# Auto-provision REFUSAL cache: (owner_hex, repo_id) -> expiry_monotonic.
+#
+# The provisioning probe runs on a path that 404s today, i.e. one any anonymous caller can aim at any
+# made-up name, and it costs up to three Postgres reads (announcement, WoT, local account). Only the
+# NO answer is cached: a yes creates the repo, after which `repo_exists` short-circuits and this is
+# never consulted again. 60s, so a client that publishes its 30617 a moment after its first probe is
+# not locked out for long — ngit polls `info/refs` in a loop and would otherwise spend its whole
+# timeout inside one cached refusal.
+_PROV_TTL = 60.0
+_PROV_MAX = 4096
+_prov_deny: dict = {}
+_prov_lock = threading.Lock()
+
 
 def _pick_ref(path_ref: str, query: str) -> str:
     """The effective ref: `?ref=` wins over the path segment (a slashed branch name can't live in a
@@ -259,6 +272,154 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def _accepts_repo_from(self, cur, owner_hex: str) -> bool:
+        """The ACCEPTANCE POLICY, and the only thing standing between GRASP-01's "serve a repository
+        for each accepted announcement" and an unauthenticated `git init --bare` on our disk.
+
+        GRASP-01 requires a server to serve a repo for every announcement it accepts, and separately
+        permits rejecting announcements on quota / payment / web-of-trust grounds — but it says
+        nothing about the resource question acceptance creates, and leaves it to the operator to
+        state in NIP-11 `repo_acceptance_criteria`. So this is a POLICY, deliberately named and
+        deliberately narrow by default, not a reading of the spec.
+
+        Default `local-or-wot`: an account on this node, or a member of this relay's web of trust.
+        Both are cheap indexed reads on the relay Postgres. `any` exists so an operator can run an
+        open service, and it is not the default because with no per-pubkey quota (the repo size caps
+        are enforced at PUSH time, in the hook) it is an unbounded empty-repo flood.
+
+        Takes an open cursor rather than a connection: the caller has already paid for one and this
+        must not be a second connect per probe."""
+        policy = str(_CONFIG.get("accept_policy", "local-or-wot")).strip().lower()
+        if policy == "any":
+            return True
+        # An explicit operator allowlist always grants, under every policy — it is how a key that is
+        # in no social graph (a CI key, a fresh operator) gets in at all.
+        from app.services.nostr import nostr_service
+        for tok in (_CONFIG.get("allowlist", "") or "").replace(",", "\n").split():
+            if nostr_service.to_pubkey_hex(tok.strip()) == owner_hex:
+                return True
+        if policy == "allowlist":
+            return False
+        if policy in ("local-or-wot", "local"):
+            npub = nostr_service.npub_of(owner_hex) or ""
+            try:
+                cur.execute("SELECT 1 FROM users WHERE nostr_npub = %s LIMIT 1", (npub,))
+                if cur.fetchone() is not None:
+                    return True
+            except Exception:
+                # No `users` table here (the relay DB need not be the app's on every deployment).
+                # That is "this criterion cannot be evaluated", not "denied" — WoT below still can.
+                log.info("[git-host] no local-account table on the relay DSN; accept policy falls "
+                         "back to web-of-trust only")
+        if policy in ("local-or-wot", "wot"):
+            cur.execute("SELECT 1 FROM wot WHERE pubkey = %s LIMIT 1", (owner_hex,))
+            if cur.fetchone() is not None:
+                return True
+        return False
+
+    def _service_is_named_by(self, ev) -> bool:
+        """GRASP-01: "MUST reject git repository announcements that do not list the service in both
+        `clone` and `relays` tags unless implementing GRASP-05."
+
+        Enforced on the CLONE tag, by host+path prefix rather than by string equality, because the
+        announcement is written by the client from whatever base it was configured with and ours is a
+        non-root base path (`https://poster.place/git`). The `relays` tag is checked by HOST only:
+        ngit derives a GRASP service's relay URL by truncating its clone URL at the npub
+        (`repo_ref.rs:3633`), so an announcement that names our clone URL names our relay by
+        construction, and demanding an exact websocket string here would refuse correct clients over
+        a spelling we do not control.
+
+        With NO `public_base` configured we cannot answer the question at all, and answer NO — a node
+        that does not know its own address cannot tell whether an announcement names it."""
+        base = (_CONFIG.get("public_base", "") or "").strip().rstrip("/")
+        if not base:
+            return False
+        from urllib.parse import urlparse
+        want = urlparse(base)
+        want_host, want_path = (want.hostname or "").lower(), want.path.rstrip("/")
+        for u in git_auth.announcement_urls(ev, "clone"):
+            got = urlparse(u if "://" in u else "https://" + u)
+            if (got.hostname or "").lower() == want_host and got.path.startswith(want_path):
+                return True
+        return False
+
+    def _autoprovision(self, owner_hex: str, repo_id: str) -> bool:
+        """GRASP-01: create the bare repo because we ACCEPTED the announcement. Returns True if the
+        repo now exists.
+
+        WHY THIS IS THE PROBE PATH AND NOT AN INGEST HOOK. A stock ngit v3 client never calls a
+        create endpoint — there is none in ngit at all. `ngit init` publishes the 30617 and then
+        polls `check_git_server_ready` (an anonymous `info/refs` against the clone URL,
+        accept_maintainership.rs:401) until the server answers, because accepting the announcement
+        IS the contract. So the probe is exactly where the client expects provisioning to have
+        happened, and doing it here rather than on relay ingest has three properties worth having:
+        it needs no cross-process wiring between the relay (3052) and this host (3053); it cannot
+        create a repository nobody ever asks for; and it is naturally idempotent, because the second
+        probe finds the repo on disk and never reaches this code.
+
+        Fail-closed at every step, and never clobbers: `create_repo` re-applies private/readers
+        config on EVERY call, so an existing repo must never be handed to it (the same wipe
+        `_serve_create` guards against).
+        """
+        if not _CONFIG.get("auto_provision", True):
+            return False
+        if ghs.sanitize_repo_id(repo_id) != repo_id or not owner_hex:
+            return False
+        key = (owner_hex, repo_id)
+        now = time.monotonic()
+        with _prov_lock:
+            until = _prov_deny.get(key)
+            if until and until > now:
+                return False
+        dsn = _CONFIG.get("pg_dsn")
+        if not dsn:
+            return False          # no relay database -> no announcements to accept
+        try:
+            import psycopg2
+            conn = psycopg2.connect(dsn, connect_timeout=5)
+            try:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute("SET statement_timeout = 4000")
+                ev = git_auth.load_announcement(conn, owner_hex, repo_id)
+                if ev is None:
+                    return self._refuse_provision(key, "no announcement from %s" % owner_hex[:12])
+                if not self._service_is_named_by(ev):
+                    return self._refuse_provision(key, "announcement does not name this service")
+                with conn.cursor() as cur:
+                    if not self._accepts_repo_from(cur, owner_hex):
+                        return self._refuse_provision(key, "author fails the acceptance policy (%s)"
+                                               % _CONFIG.get("accept_policy", "local-or-wot"))
+            finally:
+                conn.close()
+        except Exception as e:
+            log.warning("[git-host] auto-provision check failed for %s/%s (%s) -> refuse",
+                        owner_hex[:12], repo_id, e)
+            return False
+        # Re-check on disk INSIDE the decision: two concurrent probes are the normal case (ngit
+        # polls), and create_repo on an existing repo would rewrite its private/readers config.
+        if ghs.repo_exists(owner_hex, repo_id):
+            return True
+        res = ghs.create_repo(owner_hex, repo_id,
+                              private=git_auth.event_says_private(ev),
+                              announcement_addr="30617:%s:%s" % (owner_hex, repo_id))
+        if not res.get("ok"):
+            log.warning("[git-host] auto-provision create failed for %s/%s: %s",
+                        owner_hex[:12], repo_id, res.get("error"))
+            return False
+        log.info("[git-host] auto-provisioned %s/%s from its 30617 (policy=%s)",
+                 owner_hex[:12], repo_id, _CONFIG.get("accept_policy", "local-or-wot"))
+        return True
+
+    def _refuse_provision(self, key, why: str) -> bool:
+        """Remember a refusal briefly and say why once. Refusals only — a success creates the repo."""
+        log.info("[git-host] not provisioning %s/%s: %s", key[0][:12], key[1], why)
+        with _prov_lock:
+            if len(_prov_deny) >= _PROV_MAX:
+                _prov_deny.clear()
+            _prov_deny[key] = time.monotonic() + _PROV_TTL
+        return False
 
     def _announced_private(self, owner_hex: str, repo_id: str) -> bool:
         """GRASP-08: does this repo's OWN kind-30617 announcement carry ["private","true"]?
@@ -516,11 +677,22 @@ class _Handler(BaseHTTPRequestHandler):
             return self._serve_create(owner_hex, repo_id)
         if not ghs.repo_exists(owner_hex, repo_id):
             # Not on disk under this npub — it may still be a MAINTAINER's spelling of a repo we do
-            # host (ngit probes one clone URL per maintainer). Never auto-create on read/GET.
+            # host (ngit probes one clone URL per maintainer).
             alias = self._resolve_alias_owner(owner_hex, repo_id)
-            if alias is None:
+            if alias is not None:
+                owner_hex = alias
+            elif _wants_service(parsed.path, parsed.query, method) and not self._autoprovision(
+                    owner_hex, repo_id):
+                # GRASP-01 AUTO-PROVISION, and it is why `ngit init` works against us at all. The
+                # client publishes its 30617 and then POLLS THIS EXACT REQUEST
+                # (`check_git_server_ready`, an anonymous info/refs) waiting for the server to have
+                # created the repository, because accepting the announcement is the contract — there
+                # is no provisioning call anywhere in ngit. Scoped to the smart-HTTP endpoints on
+                # purpose: a browse route or a stray GET must not be able to allocate disk, and only
+                # a git client is ever waiting on the answer.
                 return self._deny(404, "no such repo")
-            owner_hex = alias
+            elif not _wants_service(parsed.path, parsed.query, method):
+                return self._deny(404, "no such repo")
         # RAW single-file read (README + file browsing in the client's repo view):
         #   GET /<owner>/<id>.git/raw/<ref>/<path>  ->  `git show <ref>:<path>`
         # Read-gated exactly like a clone (private repos need NIP-98). Our /git/ is otherwise smart-HTTP
