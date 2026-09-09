@@ -215,3 +215,73 @@ def test_the_answer_is_cached_so_a_clone_costs_one_indexed_read(monkeypatch, cfg
     assert h._announced_private(OWNER, REPO) is True
     assert h._announced_private(OWNER, REPO) is True
     assert len(calls) == 1, "the second request re-queried Postgres"
+
+
+# --------------------------------------------------------------------- the REAL on-disk shapes
+#
+# Fixtures below are the two grasp.json shapes actually hosted on this deployment, read off
+# /var/lib/posterchanai/git_repos/774ae7f8…/ rather than invented:
+#
+#   privrepo.git  {"private": true,  "readers": ["421f5fc9…"], "announcement_addr": ""}
+#   pubrepo.git   {"private": false, "readers": [],            "announcement_addr": "30617:774ae7f8…:pubrepo"}
+#
+# THE ONLY PRIVATE REPO WE HOST HAS NO KIND-30617 AT ALL. Our model makes a repo private by never
+# announcing it — `app/routers/git.py` refuses to announce one and `create_repo` writes an EMPTY
+# announcement_addr — which leaks strictly LESS than GRASP-08's (no name, no maintainer set, no
+# activity on any relay), and lacks only discoverability, which is what kind 10318 is for. So the
+# union must never read "no announcement" as "not private", and nothing here starts announcing:
+# publishing a 30617 for a repo that has none today would CREATE the metadata this model withholds.
+
+@pytest.fixture
+def repo_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(ghs, "GIT_PROJECT_ROOT", str(tmp_path), raising=False)
+    return tmp_path
+
+
+READER = "421f5fc9a21065445c96fdb91c0c1e2f2431741c72713b4b99ddcb316f31e9fc"
+
+
+def test_our_own_unannounced_private_repo_stays_private(repo_store, monkeypatch, cfg):
+    """privrepo's real shape: private=true, a readers list, announcement_addr "". There is no 30617
+    to consult, so the announcement half answers False and the DISK flag must still carry it."""
+    r = ghs.create_repo(OWNER, "privrepo", private=True, readers=[READER])
+    assert r.get("ok")
+    meta = ghs.repo_private_meta(OWNER, "privrepo")
+    assert meta["private"] is True and meta["readers"] == [READER], meta
+    monkeypatch.setattr(gh._Handler, "_announced_private", lambda self, o, r_: False)
+    assert _handler()._read_gate_ok(OWNER, "privrepo") is False
+
+
+def test_the_readers_list_survives_the_union_and_still_admits_a_reader(repo_store, monkeypatch, cfg):
+    """`readers` has no GRASP-08 equivalent — it is per-repo and finer grained than the maintainer
+    set — and the union must leave it exactly where it was: additive to the access set."""
+    import base64
+    import json as _json
+    reader_sk = (44).to_bytes(32, "big")
+    reader_hex = bip340.pubkey_from_seckey(reader_sk).hex()
+    ghs.create_repo(OWNER, "privrepo", private=True, readers=[reader_hex])
+    ev = build_event(reader_sk, git_auth.NIP98_KIND, "",
+                     tags=[["u", "https://x/git/%s/privrepo.git/info/refs" % OWNER], ["method", "GET"]])
+    h = _handler()
+    h.headers = {"Authorization": "Nostr " + base64.b64encode(_json.dumps(ev).encode()).decode()}
+    monkeypatch.setattr(gh._Handler, "_announced_private", lambda self, o, r_: False)
+    assert h._read_gate_ok(OWNER, "privrepo") is True
+
+
+def test_our_own_announced_public_repo_is_still_anonymous(repo_store, monkeypatch, cfg):
+    """pubrepo's real shape: private=false and a populated announcement_addr. A 30617 exists and
+    says nothing about privacy, so nothing changes for it."""
+    ghs.create_repo(OWNER, "pubrepo", private=False)
+    assert ghs.repo_private_meta(OWNER, "pubrepo")["private"] is False
+    monkeypatch.setattr(gh._Handler, "_announced_private", lambda self, o, r_: False)
+    assert _handler()._read_gate_ok(OWNER, "pubrepo") is True
+
+
+def test_unreadable_metadata_on_an_existing_repo_is_still_deny_by_default(repo_store, monkeypatch, cfg):
+    """repo_private_meta's own fail-closed rule — dir exists, metadata indeterminate -> private —
+    must come through the union untouched. It is the older guard and the union sits on top of it."""
+    ghs.create_repo(OWNER, "pubrepo", private=False)
+    monkeypatch.setattr(ghs, "repo_private_meta",
+                        lambda o, r_: {"private": True, "readers": []})   # what an unreadable one returns
+    monkeypatch.setattr(gh._Handler, "_announced_private", lambda self, o, r_: False)
+    assert _handler()._read_gate_ok(OWNER, "pubrepo") is False
