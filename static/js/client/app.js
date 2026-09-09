@@ -33149,8 +33149,22 @@
   // Pleroma OAuth, Nostr key) to their existing endpoints.
   let _usMail=[];
   let _nostrPrefsLoaded=false;   // load relay/media prefs from Nostr ONCE per session, not on every re-render
+  let _userSettingsRender=0;
   async function renderUserSettings(){
     const host=$('#user-settings'); if(!host) return;
+    const generation=++_userSettingsRender,owner=ME&&ME.pubkey;
+    const current=()=>generation===_userSettingsRender&&VIEW==='settings'&&(ME&&ME.pubkey)===owner&&$('#user-settings')===host&&host.isConnected!==false&&host.firstChild===renderedRoot;
+    const fields=[...host.querySelectorAll('input,textarea,select')],values=()=>fields.map(el=>el.tagName==='SELECT'?[...el.options].map(o=>o.selected):[el.value,el.checked]);
+    const originalValues=JSON.stringify(values()),hadEdits=fields.some(el=>el.tagName==='SELECT'?[...el.options].some(o=>o.selected!==o.defaultSelected):el.type==='checkbox'||el.type==='radio'?el.checked!==el.defaultChecked:el.value!==el.defaultValue);
+    const unchanged=()=>!hadEdits&&JSON.stringify(values())===originalValues;
+    let loading=null;
+    if(!host.children.length&&!host.textContent.trim()){
+      host.innerHTML='<section class="set-card" data-settings-loading><div class="set-body"><p role="status" aria-live="polite">Loading your settings…</p></div></section>';
+      loading=host.querySelector('[role="status"]');
+    }
+    const renderedRoot=host.firstChild;
+    const status=text=>{if(current()&&loading&&loading.isConnected)loading.textContent=text;};
+
     // /api/auth/settings needs the nostr-login session cookie. Establish it FIRST — otherwise the
     // very first open 401s (cookie not set yet) and shows "Couldn't load", and you had to click
     // Settings a second time once the session warmed (the flicker/"do it twice" bug).
@@ -33174,10 +33188,13 @@
     const _solo = _standalone();
     let authError=null;
     for(let attempt=0; _solo ? false : attempt<3; attempt++){
+      const waiting=setTimeout(()=>status(ME&&ME.mode==='nip46'&&(Nip46._inflightP||(Nip46._queueP||[]).length)?'Waiting for your phone signer…':'Establishing your app session…'),1000);
       try{ await ensureAiSession(); }
-      catch(e){ authError=e; break; }          // no credential means no protected GET
-      if(VIEW!=='settings') return;   // navigated away during the (first-time) sign/login
-      try{ const r=await fetch('/api/auth/settings'); if(r.ok){ s=await r.json(); break; }
+      catch(e){ authError=e; break; }
+      finally{clearTimeout(waiting);}          // no credential means no protected GET
+      if(!current()||!unchanged()) return;   // stale account/view or edits made during authentication
+      status('Loading your settings…');
+      try{ const r=await fetch('/api/auth/settings'); if(!current()||!unchanged())return; if(r.ok){ s=await r.json(); break; }
            // 401 = the cached session is STALE (server session expired / restarted). ensureAiSession
            // caches _aiAuth forever, so re-calling it would just return the dead session — clear it so
            // the next attempt re-signs and re-establishes the cookie. Without this the retry loop is a
@@ -33188,9 +33205,11 @@
       // recovers from a transient 401 (cookie lag on a high-latency link). Breaking early would serve STALE
       // settings that a later Save then writes back, reverting changes made on another device. The cache is
       // a genuine-offline fallback only (used below after all attempts fail).
+      if(!current()||!unchanged())return;
       await new Promise(r=>setTimeout(r, 400*(attempt+1)));   // brief backoff before re-warming + refetching
+      if(!current()||!unchanged())return;
     }
-    if(!host || VIEW!=='settings') return;
+    if(!current()||!unchanged()) return;
     if(authError){
       host.innerHTML=`<section class="set-card"><div class="set-body"><div class="muted">${enc(
         (authError&&authError.message)||'could not establish your app session')}</div>

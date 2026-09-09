@@ -1,0 +1,14 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync(process.argv[2],'utf8'),start=source.indexOf('  let _userSettingsRender='),end=source.indexOf('    _usMail =',start);
+(async()=>{for(const activeSigner of [true,false]){
+ let resolve,cleared=0,statusNode=null,firstChild=null,html='',timer;const host={children:[],textContent:'',isConnected:true,querySelectorAll:()=>[],querySelector:()=>statusNode,get firstChild(){return firstChild},get innerHTML(){return html},set innerHTML(value){html=value;firstChild={};this.children=[firstChild];statusNode={isConnected:true,textContent:'Loading your settings…'}}};
+ const ctx={ME:{pubkey:'owner',mode:'nip46'},VIEW:'settings',Nip46:{_inflightP:activeSigner?1:0,_queueP:[]},$:s=>s==='#user-settings'?host:null,_standalone:()=>false,localStorage:{getItem:()=>null,setItem(){}},ensureAiSession:()=>new Promise(r=>resolve=r),setTimeout:fn=>{timer=fn;return 1},clearTimeout:()=>cleared++,fetch:async()=>({ok:true,json:async()=>({theme:'cyberpunk'})}),enc:String,console};vm.createContext(ctx);vm.runInContext(source.slice(start,end)+'return {loaded:s};}',ctx);const job=ctx.renderUserSettings();assert(html.includes('role="status"'));timer();assert.equal(statusNode.textContent,activeSigner?'Waiting for your phone signer…':'Establishing your app session…');resolve();await job;assert.equal(cleared,1,'auth settlement clears its only status timer');}
+ for(const phase of ['fetch','backoff']){
+  let releaseFetch,backoff,authCalls=0;const host={children:[{}],textContent:'existing',firstChild:{},isConnected:true,querySelectorAll:()=>[]};
+  const ctx={ME:{pubkey:'owner',mode:'nip46'},VIEW:'settings',Nip46:{},$:s=>s==='#user-settings'?host:null,_standalone:()=>false,localStorage:{getItem:()=>null,setItem(){}},ensureAiSession:async()=>{authCalls++},_aiAuth:'original',setTimeout:(fn,ms)=>{if(ms===400)backoff=fn;return 1},clearTimeout(){},fetch:()=>new Promise(r=>releaseFetch=r),enc:String,console};
+  vm.createContext(ctx);vm.runInContext(source.slice(start,end)+'return {loaded:s};}',ctx);
+  const job=ctx.renderUserSettings();for(let n=0;n<12&&!releaseFetch;n++)await Promise.resolve();assert(releaseFetch);
+  if(phase==='fetch'){ctx.ME={pubkey:'new owner'};ctx._aiAuth='new account auth';releaseFetch({ok:false,status:401});await job;assert.equal(ctx._aiAuth,'new account auth','stale 401 must not clear new account auth');}
+  else{releaseFetch({ok:false,status:401});for(let n=0;n<8&&!backoff;n++)await Promise.resolve();assert(backoff);ctx.VIEW='home';backoff();await job;assert.equal(authCalls,1,'navigation during backoff must not start another auth request');}
+ }
+ console.log('phone signer state distinguished from server session wait; timer cleared on settle');})().catch(e=>{console.error(e);process.exitCode=1});
