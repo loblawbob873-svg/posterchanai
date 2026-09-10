@@ -1496,22 +1496,30 @@ liveISOinstall() {
 		# A live medium is now recognised by carrying BOTH boot/ and LiveOS/ -- LiveOS/ is written
 		# by liveCD and by nothing else, so it identifies OUR image positively. That is a stronger
 		# guarantee than the type test it replaces: an installed disk has boot/ but never LiveOS/.
-		# `rom` IS THE ONE TYPE THIS SCAN EXISTED FOR, AND IT WAS THE ONE TYPE IT EXCLUDED.
+		# NEVER FILTER THE CANDIDATE LIST. THIS BUG HAS NOW BEEN FIXED TWICE, ONE MEDIUM APART.
 		#
-		# A CD/DVD — and every VM that attaches an ISO with `media=cdrom`, which is how the install
-		# gate runs — is `/dev/sr0`, and `lsblk` types it `rom`, not `disk` or `part`. The loop
-		# above normally finds a CD boot at /run/initramfs/live and this fallback never runs; when
-		# dracut detaches the optical filesystem after pivoting (exactly the case this block was
-		# written for) there was then nothing left that could see it. Measured: the installer
-		# scanned `vda`, the BLANK TARGET disk, reported "Can't find ext4 filesystem" three times
-		# and said "No kernel found on this live medium" while /dev/sr0 sat there holding
-		# boot/vmlinuz.
+		#   a4ad756c7  "the installer could not find its own kernel when booted from USB"
+		#   this one   "the installer can see a CD, which is the medium it exists to find"
 		#
-		# It stays safe for the same reason as before: a candidate is accepted only if it carries
-		# BOTH boot/ and LiveOS/, and an installed disk never has LiveOS/.
+		# The first was right about the ACCEPTANCE test: identify the medium by what it CARRIES
+		# (boot/ + LiveOS/), not by its filesystem type, because the USB stick's copy is hfsplus.
+		# But the same edit narrowed the ENUMERATION -- from `blkid -o device`, which lists every
+		# device with a filesystem including /dev/sr0, to lsblk filtered to `disk`/`part`, which
+		# excludes `rom`. It widened one half and narrowed the other, so USB began working and CD
+		# silently stopped. Measured in the install gate: the installer scanned `vda`, the BLANK
+		# TARGET disk, printed "Can't find ext4 filesystem" three times and refused with "No kernel
+		# found on this live medium" while /dev/sr0 held boot/vmlinuz. An image that boots and
+		# cannot install is the whole product missing.
+		#
+		# Adding `rom` would fix today's medium and leave the shape that caused both: a typed
+		# allowlist that some future medium is not on (nvme namespaces, mmcblk, iSCSI, a loop
+		# device, whatever the next one is). So the list is a UNION of both enumerations and is not
+		# filtered by type at all. The contents test below is the ONLY discriminator -- which is
+		# what the previous fix meant to make it -- and it is strictly safer than any type test: an
+		# installed disk has boot/ but never LiveOS/.
 		local cand
-		cand="$(lsblk -pnro NAME,TYPE 2>/dev/null | awk '$2=="disk"||$2=="part"||$2=="rom"{print $1}')"
-		[ -n "$cand" ] || cand="$(blkid -o device 2>/dev/null)"
+		cand="$(printf '%s\n%s\n' "$(lsblk -pnro NAME 2>/dev/null)" "$(blkid -o device 2>/dev/null)" \
+			| awk 'NF && !seen[$0]++')"
 		for dev in $cand; do
 			[ -b "$dev" ] || continue
 			# Never touch something already mounted read-write, and never the running root.

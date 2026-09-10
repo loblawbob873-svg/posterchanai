@@ -830,6 +830,41 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
     def test_it_looks_where_a_live_boot_actually_keeps_the_medium(self):
         self.assertIn("/run/initramfs/live", self.fn)
 
+    def test_the_candidate_list_is_never_filtered_by_device_type(self):
+        """THE BUG THIS PINS HAS BEEN FIXED TWICE, ONE MEDIUM APART.
+
+            a4ad756c7  the installer could not find its own kernel when booted from USB
+            d3cd2915a  the installer can see a CD, which is the medium it exists to find
+
+        The first was right about the ACCEPTANCE test — identify the medium by what it CARRIES
+        (boot/ + LiveOS/), not by filesystem type, because a USB stick's copy is hfsplus. But the
+        same edit narrowed the ENUMERATION, from `blkid -o device` (every device with a filesystem,
+        /dev/sr0 included) to lsblk filtered to `disk`/`part`, which excludes `rom`. Widening one
+        half while narrowing the other made USB work and CD silently stop.
+
+        So the rule is not "also allow rom" — that fixes one medium and leaves the shape that caused
+        both. The candidate list must not be type-filtered AT ALL; the contents test is the only
+        discriminator, and it is strictly safer than any type test.
+        """
+        line = [l for l in self.fn.splitlines() if "lsblk" in l and "cand=" in l or
+                ("lsblk" in l and "NAME" in l)]
+        self.assertTrue(line, "the live-medium candidate scan is gone")
+        joined = " ".join(line)
+        self.assertNotIn('$2==', joined,
+                         "the candidate list is type-filtered again — that is how both of the "
+                         "commits named above happened: " + joined)
+
+    def test_the_candidate_list_is_a_union_of_both_enumerations(self):
+        """Either tool alone has a blind spot: lsblk types a CD `rom`, and blkid misses a device
+        carrying no recognised filesystem. Using one as a mere fallback for the other is what let a
+        narrowing go unnoticed."""
+        block = self.fn[self.fn.index("local cand"):]
+        block = block[:block.index("for dev in")]
+        self.assertIn("lsblk", block)
+        self.assertIn("blkid -o device", block)
+        self.assertNotIn("[ -n \"$cand\" ] ||", block,
+                         "blkid is a fallback again rather than part of the union")
+
     def test_the_fallback_scan_can_see_a_cd(self):
         """`rom` IS THE ONE TYPE THIS SCAN EXISTS FOR, AND IT WAS THE ONE TYPE IT EXCLUDED.
 
@@ -843,9 +878,11 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
         live medium" while /dev/sr0 held boot/vmlinuz. The image booted to a desktop and could not
         install — the whole product missing, which is what this gate exists to catch.
         """
-        line = [l for l in self.fn.splitlines() if "lsblk -pnro NAME,TYPE" in l]
-        self.assertTrue(line, "the live-medium fallback scan is gone")
-        self.assertIn('$2=="rom"', line[0], line[0])
+        block = self.fn[self.fn.index("local cand"):]
+        block = block[:block.index("for dev in")]
+        self.assertNotIn("$2==", block,
+                         "a CD is lsblk TYPE `rom`; any type filter here excludes the medium the "
+                         "scan exists to find")
 
     def test_the_fallback_still_cannot_adopt_an_installed_disk(self):
         """Widening the TYPES is only safe because the ACCEPTANCE test is unchanged: a candidate
