@@ -21,7 +21,7 @@ from websockets.http11 import Response
 
 from app.services.nostr.event import verify_event
 from app.services import git_acceptance
-from .langfilter import blocked_language, blocked_word
+from .langfilter import blocked_language, blocked_word, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 from .store import retired_kind_reason as _retired_kind_reason
 from app.services.nostr.quotes import quote_pubkeys
@@ -1274,18 +1274,19 @@ class RelayServer:
         elif _wot and not self.gate.is_member(ev.get("pubkey", "")):
             self._refuse(conn, eid, ev, "blocked: not in web of trust")
             return
+        content = ev.get("content", "")
+        # LANGUAGE detection stays kind-1 only: it guesses, and it may only guess about prose.
         if kind == 1:
-            content = ev.get("content", "")
             blocked = self.cfg.get("blocked_langs")
             if blocked:
                 lang = blocked_language(content, blocked)
                 if lang:
                     self._refuse(conn, eid, ev, f"blocked: language '{lang}' not accepted")
                     return
-            words = self.cfg.get("blocked_words")
-            if words and blocked_word(content, words):
-                self._refuse(conn, eid, ev, "blocked: contains filtered text")
-                return
+        words = self.cfg.get("blocked_words")
+        if words and kind not in _NEVER_WORD_FILTERED and blocked_word(content, words):
+            self._refuse(conn, eid, ev, "blocked: contains filtered text")
+            return
         # NIP-01 ephemeral events (20000-29999): deliver to subscribers but NEVER persist.
         # WoT/lang gating above still applies; we just skip storage + the upstream blaster.
         if _is_ephemeral(kind):

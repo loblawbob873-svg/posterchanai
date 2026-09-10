@@ -247,13 +247,59 @@ def blocked_language(content: str, blocked: set) -> str | None:
     return next(iter(hit)) if hit else None
 
 
+# SEPARATORS ARE NOT PART OF THE WORD.
+#
+# "i added zone_presence to relay block words and the posts are still coming through" — and they
+# were, because the notes say "zone presence" with a SPACE while the blocked term was typed with an
+# underscore. A literal substring match is exactly right about characters and exactly wrong about
+# intent: somebody blocking `zone_presence` means the thing, not one of its four spellings, and the
+# spammer publishing it uses whichever separator suits the field it lands in (the same payload
+# appears as `"type":"zone_presence"` inside a repost and as prose in the note).
+#
+# So `_`, `-`, `.` and any run of whitespace all fold to one space, on BOTH sides of the comparison.
+# This adds no fuzziness — it is still an exact, admin-defined string, which is what lets the
+# retroactive purge use it without the false-positive risk a language guess carries. It only stops
+# the match being defeated by a keystroke.
+_SEPARATORS = re.compile(r"[\s_.\-]+")
+
+
+def _fold(text: str) -> str:
+    return _SEPARATORS.sub(" ", str(text or "").lower()).strip()
+
+
 def blocked_word(content: str, words) -> str | None:
-    """Return the first blocked word/phrase found in `content` (case-insensitive substring),
-    or None. `words` should already be lowercased. Used to reject notes containing banned text."""
+    """Return the first blocked word/phrase found in `content`, or None.
+
+    Case-insensitive, and insensitive to which separator joins a multi-word term. `words` should
+    already be lowercased.
+    """
     if not words or not content:
         return None
-    low = content.lower()
+    low = _fold(content)
     for w in words:
-        if w and w in low:
+        if w and _fold(w) in low:
             return w
     return None
+
+
+# A BLOCKED WORD IS BLOCKED WHATEVER KIND CARRIES IT.
+#
+# "i added zone_presence to relay block words and the posts are still comeing through" — and it was
+# in the list, spelled exactly right. The word filter here was written `if kind == 1:`, so anything
+# that was not a plain note was never examined, and the spam this was aimed at arrives as a JSON
+# payload in another kind entirely. An operator typing a word into a block list is not saying
+# "block this in kind 1"; they are saying "I do not want this on my relay".
+#
+# So the rule inverts: every kind is filtered EXCEPT the ones where matching text would be
+# meaningless or destructive. Encrypted payloads are ciphertext — a match there is impossible by
+# construction and a false one would silently drop somebody's DM. Kind 78/30078 is THIS APP'S OWN
+# DATASTORE: settings, notes, calendars, contacts, the files index. A blocked word that happened to
+# appear inside one would refuse a user's own data, and the retroactive purge would delete it — the
+# replaceable-document wipe this codebase has already paid for more than once. Git metadata and the
+# auth event are protocol, not content.
+_NEVER_WORD_FILTERED = frozenset({
+    4, 13, 1059,                 # NIP-04 / NIP-59 seal / gift wrap — ciphertext
+    78, 30078,                   # this app's own encrypted datastore
+    22242,                       # NIP-42 AUTH
+    10318, 30617, 30618,         # git: the private repo list, announcements, state
+})

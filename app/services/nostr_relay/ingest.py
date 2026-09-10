@@ -17,7 +17,7 @@ import logging
 
 from app.services.nostr import relay as _relay
 from app.services.nostr.event import verify_event
-from .langfilter import blocked_language, blocked_word
+from .langfilter import blocked_language, blocked_word, _NEVER_WORD_FILTERED
 from .bridges import reveals_blocked_bridge, author_on_blocked_bridge, is_bridged_post
 
 logger = logging.getLogger(__name__)
@@ -27,15 +27,20 @@ def _is_evid(x) -> bool:
     return isinstance(x, str) and len(x) == 64
 
 
+# ONE DEFINITION OF WHICH KINDS A BLOCKED WORD APPLIES TO — see langfilter._NEVER_WORD_FILTERED.
+# This path had its own list and the direct-publish path in server.py had another, which is exactly
+# how a word can be "blocked" and still arrive: two filters disagreeing about what they cover.
 def _content_blocked(ev, blocked, blocked_words) -> bool:
-    """True if a kind-1 note should be rejected by the language/word content filters — applied
-    on EVERY ingestion path (sync, ancestor backfill) so blocked content can't sneak in as a
+    """True if this event should be rejected by the language/word content filters — applied on
+    EVERY ingestion path (sync, ancestor backfill) so blocked content can't sneak in as a
     backfilled reply parent."""
-    if int(ev.get("kind", 1)) != 1:
-        return False
+    kind = int(ev.get("kind", 1))
     content = ev.get("content", "")
-    return bool((blocked and blocked_language(content, blocked)) or
-                (blocked_words and blocked_word(content, blocked_words)))
+    if kind == 1 and blocked and blocked_language(content, blocked):
+        return True
+    if blocked_words and kind not in _NEVER_WORD_FILTERED and blocked_word(content, blocked_words):
+        return True
+    return False
 
 
 async def sync_tick(store, gate, server, upstream, cfg) -> int:
@@ -133,13 +138,12 @@ async def sync_tick(store, gate, server, upstream, cfg) -> int:
                 continue
             if not gate.is_member(ev.get("pubkey", "")):
                 continue
-            if int(ev.get("kind", 1)) == 1:
-                _content = ev.get("content", "")
-                if not _content.strip():
-                    continue   # empty note — spam/noise
-                if (blocked and blocked_language(_content, blocked)) or \
-                        (blocked_words and blocked_word(_content, blocked_words)):
-                    continue
+            if int(ev.get("kind", 1)) == 1 and not ev.get("content", "").strip():
+                continue   # empty note — spam/noise
+            # ONE predicate for both filters, so this path and the backfill path cannot disagree
+            # about what "blocked" means — which is how a repost of blocked content got in.
+            if _content_blocked(ev, blocked, blocked_words):
+                continue
             to_store.append(ev)
         if to_store:
             await store.add_events_bulk(to_store, origin="wot")

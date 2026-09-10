@@ -1,0 +1,73 @@
+"""A blocked word is blocked whatever kind carries it.
+
+Reported: "i added zone_presence to relay block words and the posts are still comeing through" —
+and it WAS in the list, spelled exactly right. Both filters were written `kind == 1`, so anything
+that was not a plain note was never examined, and the payload this was aimed at
+(`{"type":"zone_presence","zone":…}`) arrives inside another kind entirely. Measured on the live
+relay: events carrying that literal string are stored under kind 1 AND kind 6.
+
+An operator typing a word into a block list is not saying "block this in kind 1". They are saying
+"I do not want this on my relay".
+"""
+import json
+
+from app.services.nostr_relay import ingest
+from app.services.nostr_relay.langfilter import _NEVER_WORD_FILTERED
+from app.services.nostr_relay.langfilter import blocked_word
+
+WORDS = {"zone_presence"}
+PAYLOAD = json.dumps({"content": json.dumps({"type": "zone_presence", "zone": "x"})})
+
+
+def test_the_payload_is_caught_whatever_kind_wraps_it():
+    for kind in (1, 6, 16, 42, 1111, 30023):
+        assert ingest._content_blocked({"kind": kind, "content": PAYLOAD}, None, WORDS), kind
+
+
+def test_an_ordinary_note_is_untouched():
+    assert not ingest._content_blocked({"kind": 1, "content": "an ordinary post"}, None, WORDS)
+
+
+def test_the_apps_own_datastore_is_never_word_filtered():
+    """78/30078 carry settings, notes, calendars, contacts and the files index. A blocked word that
+    happened to appear in one would refuse a user's own data — and the retroactive purge would
+    delete it, which is the replaceable-document wipe this codebase has already paid for."""
+    for kind in (78, 30078):
+        assert kind in _NEVER_WORD_FILTERED
+
+
+def test_ciphertext_is_never_word_filtered():
+    """A match in an encrypted payload is impossible by construction; a false one silently drops
+    somebody's direct message."""
+    for kind in (4, 13, 1059):
+        assert kind in _NEVER_WORD_FILTERED
+
+
+def test_git_metadata_and_auth_are_protocol_not_content():
+    for kind in (22242, 10318, 30617, 30618):
+        assert kind in _NEVER_WORD_FILTERED
+
+
+def test_both_filters_share_one_definition():
+    """The direct-publish path and the sync path had their own lists, which is precisely how a word
+    can be blocked and still arrive."""
+    import inspect
+    from app.services.nostr_relay import server
+    for mod in (ingest, server):
+        src = inspect.getsource(mod)
+        assert "_NEVER_WORD_FILTERED" in src, mod.__name__
+        assert "kind == 1 and blocked_word" not in src, mod.__name__
+
+
+def test_language_detection_stays_kind_one_only():
+    """It GUESSES, and it may only guess about prose. A repost's content is JSON."""
+    langs = {"ru"}
+    assert not ingest._content_blocked({"kind": 6, "content": "привет " * 20}, langs, None)
+
+
+def test_a_separator_does_not_defeat_the_word():
+    """The same term typed with an underscore must catch the prose spelling beside it — the notes
+    on this relay say "Zone presence" in text and `zone_presence` in the payload."""
+    assert blocked_word("This is a zone presence announcement", WORDS) == "zone_presence"
+    assert blocked_word("Zone-Presence telemetry", WORDS) == "zone_presence"
+    assert blocked_word("zonepresence", WORDS) is None, "a separator is a separator, not nothing"
