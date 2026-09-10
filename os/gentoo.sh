@@ -1496,8 +1496,21 @@ liveISOinstall() {
 		# A live medium is now recognised by carrying BOTH boot/ and LiveOS/ -- LiveOS/ is written
 		# by liveCD and by nothing else, so it identifies OUR image positively. That is a stronger
 		# guarantee than the type test it replaces: an installed disk has boot/ but never LiveOS/.
+		# `rom` IS THE ONE TYPE THIS SCAN EXISTED FOR, AND IT WAS THE ONE TYPE IT EXCLUDED.
+		#
+		# A CD/DVD — and every VM that attaches an ISO with `media=cdrom`, which is how the install
+		# gate runs — is `/dev/sr0`, and `lsblk` types it `rom`, not `disk` or `part`. The loop
+		# above normally finds a CD boot at /run/initramfs/live and this fallback never runs; when
+		# dracut detaches the optical filesystem after pivoting (exactly the case this block was
+		# written for) there was then nothing left that could see it. Measured: the installer
+		# scanned `vda`, the BLANK TARGET disk, reported "Can't find ext4 filesystem" three times
+		# and said "No kernel found on this live medium" while /dev/sr0 sat there holding
+		# boot/vmlinuz.
+		#
+		# It stays safe for the same reason as before: a candidate is accepted only if it carries
+		# BOTH boot/ and LiveOS/, and an installed disk never has LiveOS/.
 		local cand
-		cand="$(lsblk -pnro NAME,TYPE 2>/dev/null | awk '$2=="disk"||$2=="part"{print $1}')"
+		cand="$(lsblk -pnro NAME,TYPE 2>/dev/null | awk '$2=="disk"||$2=="part"||$2=="rom"{print $1}')"
 		[ -n "$cand" ] || cand="$(blkid -o device 2>/dev/null)"
 		for dev in $cand; do
 			[ -b "$dev" ] || continue

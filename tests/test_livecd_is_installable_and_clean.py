@@ -830,6 +830,33 @@ class InstallingTheLiveImageIsItsOwnJob(unittest.TestCase):
     def test_it_looks_where_a_live_boot_actually_keeps_the_medium(self):
         self.assertIn("/run/initramfs/live", self.fn)
 
+    def test_the_fallback_scan_can_see_a_cd(self):
+        """`rom` IS THE ONE TYPE THIS SCAN EXISTS FOR, AND IT WAS THE ONE TYPE IT EXCLUDED.
+
+        A CD/DVD — and every VM that attaches an ISO with `media=cdrom`, which is how
+        `check_livecd_install_vm.py` runs — is `/dev/sr0`, typed `rom` by lsblk. The candidate
+        filter took `disk` and `part` only, so when dracut had detached the optical filesystem
+        (precisely the case this fallback was written for) nothing left could find the medium.
+
+        MEASURED on the real ISO in a real VM: the installer scanned `vda`, the BLANK TARGET disk,
+        printed "Can't find ext4 filesystem" three times and refused with "No kernel found on this
+        live medium" while /dev/sr0 held boot/vmlinuz. The image booted to a desktop and could not
+        install — the whole product missing, which is what this gate exists to catch.
+        """
+        line = [l for l in self.fn.splitlines() if "lsblk -pnro NAME,TYPE" in l]
+        self.assertTrue(line, "the live-medium fallback scan is gone")
+        self.assertIn('$2=="rom"', line[0], line[0])
+
+    def test_the_fallback_still_cannot_adopt_an_installed_disk(self):
+        """Widening the TYPES is only safe because the ACCEPTANCE test is unchanged: a candidate
+        needs both boot/ and LiveOS/, and an installed disk never has LiveOS/."""
+        self.assertIn('[ -d "$media/LiveOS" ]', self.fn)
+        self.assertIn('[ -d "$media/boot" ]', self.fn)
+
+    def test_the_fallback_never_touches_the_running_root(self):
+        self.assertIn("findmnt -no SOURCE /", self.fn)
+        self.assertIn("-o ro", self.fn)
+
     def test_the_system_copy_never_deletes(self):
         """`--delete` is what tries to remove $TARGET/boot out from under the mounted EFI
         partition. The target was just partitioned, so there is nothing to delete anyway."""
