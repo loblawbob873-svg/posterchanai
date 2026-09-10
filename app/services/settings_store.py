@@ -134,8 +134,21 @@ def _save_local_file() -> None:
                     v = _CACHE.get(k)
                     if v is not None and _is_local_only(k):
                         merged[k] = v
-            with open(tmp, "w") as f:
+            # 0600 BEFORE ANY CONTENT REACHES THE FILE.
+            #
+            # This file holds `nostr_relay_pg_dsn`, which carries the relay database PASSWORD, and
+            # `json.dump` into a default-mode file leaves it world-readable (0644 under a normal
+            # umask). Measured on this deployment: -rw-r--r--, on a host with five other user
+            # accounts — any of them could read the credentials for the store that holds every
+            # user's events, encrypted DMs, notes, calendars and contacts.
+            #
+            # The mode is set on the TEMP file and carried across by os.replace, so the published
+            # file is never momentarily readable; and it is applied on every write, so a file that
+            # already exists with loose permissions is tightened rather than preserved.
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
                 json.dump(merged, f)
+            os.chmod(tmp, 0o600)
             os.replace(tmp, _LOCAL_PATH)
             try:
                 fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
