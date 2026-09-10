@@ -305,9 +305,14 @@ async def deliver(db: Session, reminder: Reminder) -> None:
             from app.services.nostr import nostr_service
             pk = nostr_service.to_pubkey_hex(npub)
             rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all() if pk else []
+            from app.services import push_prefs
             payload = {"title": "⏰ Reminder", "body": reminder.text, "type": "reminder",
                        **notification_record(reminder), "view": notification_record(reminder)["route"]}
             for row in rows:
+                # Same rule as the mail sender: the `reminders` toggle is only real if the thing
+                # that sends reminders reads it.
+                if not push_prefs.allows_row(row, "reminders"):
+                    continue
                 from app.services.direct_push_service import subscription_dict
                 sub = subscription_dict(row)
                 if not await asyncio.to_thread(push_service.send, sub, payload):

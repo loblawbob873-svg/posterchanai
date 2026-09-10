@@ -61,9 +61,23 @@ async def _push(db, user, title: str, body: str) -> None:
         from app.services import push_service
         from app.services.nostr import nostr_service
         pk = nostr_service.to_pubkey_hex(npub)
+        from app.services import push_prefs
         rows = db.query(PushSubscription).filter(PushSubscription.pubkey == pk).all() if pk else []
         payload = {"title": title, "body": body, "type": "mail"}
         for row in rows:
+            # THE "EMAIL" TOGGLE WAS HONOURED BY NOTHING ON THIS PATH.
+            #
+            # Only the Nostr sender consulted push_prefs; this one queried every subscription for
+            # the account and sent to all of them. So "i am still getting push notifications for
+            # email despite having that turned off" was exactly right, and no app build could have
+            # fixed it — the choice was mirrored to the row correctly and then never read.
+            #
+            # The toggle is named `email`; the PAYLOAD is typed `mail` (that string is the client's
+            # deep-link routing, not a preference name). Passing the payload type here would look
+            # like a filter and silently allow everything, since `allows` returns True for a name
+            # no toggle governs.
+            if not push_prefs.allows_row(row, "email"):
+                continue
             from app.services.direct_push_service import subscription_dict
             sub = subscription_dict(row)
             if not await asyncio.to_thread(push_service.send, sub, payload):
