@@ -344,6 +344,37 @@ def wsgi_app():
     return _app
 
 
+def _hydrate_settings_for_the_unit() -> None:
+    """Let the process that OWNS settings.yml read the settings that decide its contents.
+
+    `_proxy_wanted` refuses to act on an unhydrated store, and it is right to: this unit runs a bare
+    `python -m app.services.searxng_native`, `all_settings()` is empty there, and rewriting the file
+    from `get_bool`'s own defaults is how the admin toggle came to do nothing on a live node.
+
+    But that guard left the feature with NO ONE able to apply it. `apply_outgoing_proxy` runs from
+    exactly one place — building the WSGI app — and of the two processes that do so, only the in-app
+    mount has settings; the UNIT is the copy `resolve_searxng_url` prefers, because it is already
+    warm. So `searxng_proxy_engines` could be ON, the file could have a managed block with no
+    `proxies:` line in it, and nothing anywhere would ever close the gap. Measured by
+    `scripts/check_websearch_rate.py` on this node: "the toggle did not reach the file".
+
+    The answer is not to relax the guard — an unreadable store must still mean "leave the operator's
+    file alone" — but to stop the store being unreadable here. Best effort by construction: a failure
+    leaves `is_hydrated()` false, `_proxy_wanted` returns its refusal, and the file is untouched,
+    which is exactly today's behaviour. Nothing about search is gated on this succeeding.
+    """
+    try:
+        from app.services import settings_store
+        settings_store.load_local()
+        if settings_store.is_hydrated():
+            return
+        from app.database import SessionLocal
+        with SessionLocal() as db:
+            settings_store.hydrate_from_db(db)
+    except Exception as exc:                       # no DB, early boot, a partial install
+        logger.info("[searxng] settings not hydrated (%s) — leaving settings.yml as it is", exc)
+
+
 def serve(host: str = "127.0.0.1", port: int | None = None) -> int:
     """Run SearXNG on its own, out of this venv — what `posterchanai-searxng.service` executes.
 
@@ -361,6 +392,7 @@ def serve(host: str = "127.0.0.1", port: int | None = None) -> int:
     import uvicorn
     from a2wsgi import WSGIMiddleware
 
+    _hydrate_settings_for_the_unit()
     wsgi = wsgi_app()
     if wsgi is None:
         print(f"SearXNG is not installed in this venv, or {settings_path()} is missing.")
