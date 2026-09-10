@@ -30,12 +30,48 @@ FONT_LADDER = {11, 12, 13, 15, 17, 20, 24, 30}
 FONT_DISPLAY = {34, 36, 40, 42, 58}
 # 0 collapses the line box under an inline-block <img> (kills the descender gap); 1 centres a glyph
 # in an icon button. Both are layout idioms that a typographic scale has no opinion about.
-LINE_HEIGHTS = {0, 1, 1.2, 1.45, 1.6}
+# 1.68 is the LONG-FORM READING measure — the mail reader's body copy, tuned for paragraphs of
+# somebody else's prose rather than for UI text, and pinned by
+# tests/test_mobile_mail_reader.py::test_mobile_reader_uses_readable_type_and_measure. It is a
+# documented exemption and not a step: nothing else may use it.
+LINE_HEIGHTS = {0, 1, 1.2, 1.45, 1.6, 1.68}
 
 SPACE_PROPS = (
     "padding", "margin", "gap", "row-gap", "column-gap",
 )
 SKIP_FN = re.compile(r"\b(calc|var|min|max|clamp|env)\s*\(")
+
+# ── TWO DOCUMENTED EXEMPTIONS, BOTH FUNCTIONAL RATHER THAN TYPOGRAPHIC ───────────────────────────
+#
+# 1. 16px ON A FORM CONTROL IS THE iOS ZOOM THRESHOLD. Safari on iOS zooms the page when a focused
+#    input is under 16px and never zooms back, so this is a behaviour requirement, not a step on a
+#    type scale. Several of these rules already carried the note `/* 16px: iOS zooms anything
+#    smaller */` in the stylesheet, and check_mail_mobile / check_notes_mobile / check_vault_mobile
+#    and friends FAIL with `ios-zoom-trap` if it is snapped away — which is how a sweep of this file
+#    was caught doing exactly that.
+#
+# 2. LONG-FORM READING TYPE is tuned for paragraphs of somebody else's prose rather than for UI
+#    text: the mail reader's body and subject, and the article pane. Pinned by
+#    tests/test_mobile_mail_reader.py::test_mobile_reader_uses_readable_type_and_measure.
+#
+# Both are gated on the SELECTOR, so they cannot become a licence to put 16px on a heading.
+FORM_CONTROL = re.compile(
+    r"input|textarea|select|contenteditable|\.input\b|-search\b|search\b|-pick\b|-time\b"
+    r"|#cm-(to|cc|subj|body)|-tagin\b|-note[s]?\b|-field\b|composer|editor"
+    r"|-sel\b|\.nt-(body|render)\b", re.I)
+READING = re.compile(r"\.mail-body|\.mail-text|\.mr-subj|article-body|\.ae-pane", re.I)
+IOS_FONT = 16.0
+READING_FONT = {16.0, 18.0}
+READING_LH = {1.25, 1.3, 1.5, 1.68}
+
+
+def selector_at(css, off):
+    """The selector list of the rule containing `off` — the text before its opening brace."""
+    open_brace = css.rfind("{", 0, off)
+    if open_brace < 0:
+        return ""
+    start = max(css.rfind("}", 0, open_brace), css.rfind("{", 0, open_brace)) + 1
+    return css[start:open_brace].strip()
 
 
 def code_segments(css):
@@ -73,6 +109,13 @@ def main():
                 if nm.start(1) > 0 and val[nm.start(1) - 1] == "-":
                     continue
                 n = float(nm.group(1))
+                sel = selector_at(css, base + m.start())
+                if n == IOS_FONT and FORM_CONTROL.search(sel):
+                    continue                      # exemption 1 — see the block at the top
+                if n in READING_FONT and READING.search(sel):
+                    continue                      # exemption 2
+                if n == IOS_FONT and READING.search(sel):
+                    continue
                 if n not in FONT_LADDER and n not in FONT_DISPLAY:
                     bad.append((line_of(css, base + m.start()), "font-size",
                                 f"{nm.group(1)}px is off the ladder {sorted(FONT_LADDER)}"))
@@ -85,6 +128,8 @@ def main():
                 n = float(val)
             except ValueError:
                 continue
+            if n in READING_LH and READING.search(selector_at(css, base + m.start())):
+                continue                          # exemption 2 — long-form reading measure
             if n not in LINE_HEIGHTS:
                 bad.append((line_of(css, base + m.start()), "line-height",
                             f"{val} is not one of {sorted(LINE_HEIGHTS)}"))
