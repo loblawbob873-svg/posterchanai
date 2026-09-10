@@ -1853,7 +1853,13 @@
        *
        * Focus the one that exists, and bring it back if it was minimised: a launch of a minimised
        * app that silently does nothing is the other way to read this as broken. */
-      const mine = nativeTasks.find(r => r && r.own && r.view && r.view === view);
+      /* …AND MESSAGES IS ONE APP WITH TWO TABS, HERE TOO. The in-page lookup below asks
+         `sameAppWindow`, which knows that `concord` and `messages` are the same application; this
+         one compared identities literally. So with the Communities tab already open as a real
+         toplevel, asking for Direct Messages found nothing and opened a SECOND
+         `PosterChan Window — messages` — reported as "two messages windows appear and no DM
+         window to the user". The two halves of one lookup must not answer differently. */
+      const mine = nativeTasks.find(r => r && r.own && r.view && sameAppWindow(String(r.view), view));
       if(mine && window.pcWM){
         const focusToken=_claimFocus();
         /* The native window may have navigated within its app (Social → profile). Focus does not
@@ -2918,6 +2924,28 @@
       if(!on||!wins.includes(w))return false;
       focusWin(w);return true;
     };
+  }
+
+  /* FOCUS OR CREATE AN APP WINDOW **AND TELL IT WHAT THE CLICK WAS ABOUT**.
+   *
+   * `routeView` answers "which application", which is everything a launcher icon needs and not
+   * enough for "message this person": the window that ends up on screen may be a real toplevel in
+   * another renderer, and `dmActive` is a variable in the page that was clicked. Returning true
+   * means the route was delivered and the caller must NOT also paint here — painting would put the
+   * conversation in the wrong window, which is the failure one layer along from the one being
+   * fixed. */
+  function routeApp(view, arg){
+    if(!on || !view) return false;
+    const native = nativeTasks.find(r => r && r.own && r.view && sameAppWindow(String(r.view), view));
+    if(native){
+      try{ if(window.PCOSWin && PCOSWin.routeExisting) PCOSWin.routeExisting(view, arg); }catch(_){ }
+      try{ openApp(view); }catch(_){ }          // focus + unminimise, via the one path that knows how
+      return true;
+    }
+    /* Not a toplevel: it is this renderer's own frame, or it does not exist yet. Either way the
+     * caller paints, because `dmActive` is already set in the page that will do the painting. */
+    try{ if(window.PCOSWin && PCOSWin.routeExisting) PCOSWin.routeExisting(view, arg); }catch(_){ }
+    return false;
   }
 
   function routeView(view, focusOnly){
@@ -10171,7 +10199,7 @@
                    * Leave the windowed desktop for this session without changing the user's saved
                    * desktop preference; an ordinary later launch may restore it. */
                   mobileLanding: () => { if(on) exit(false); },
-                  isOn: () => on, openDoc, focusDoc, closeDoc, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, snapTo, documentWindow,
+                  isOn: () => on, openDoc, focusDoc, closeDoc, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
                   openSystemSettings, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
                   // nothing to subscribe to, and polling an element we could be told about is the

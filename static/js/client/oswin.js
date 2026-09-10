@@ -217,10 +217,20 @@
    * shows a profile, focus alone strands the person on that profile forever. Broadcast the
    * canonical app route across the shared app:// origin; only the window whose latched identity
    * matches consumes it. This also works when the window was opened by the other monitor. */
-  function routeExisting(view){
+  /* …AND WHAT THE ROUTE IS ABOUT, when the app needs one.
+   *
+   * A view name alone answers "which application", never "which conversation". Choosing Message on
+   * somebody's profile sets `dmActive` in the page that was clicked and then opens Messages — and
+   * if Messages is a real toplevel that is a DIFFERENT RENDERER, which shares an origin and no
+   * variables. The window duly opened on the conversation LIST, so the one thing asked for did not
+   * happen: "no DM window to the user". `arg` is that missing half. Kept opaque and small on
+   * purpose: this crosses a BroadcastChannel shared by every window on app://posterchan, so it
+   * carries an identifier the receiver validates, never a payload it executes. */
+  function routeExisting(view, arg){
     const v=String(view||'');
     if(!v||!routable(v)||typeof root.BroadcastChannel!=='function')return false;
-    try{const ch=new root.BroadcastChannel(ROUTE_CHANNEL);ch.postMessage({view:v});ch.close();return true;}
+    const a=String(arg==null?'':arg).slice(0,128);
+    try{const ch=new root.BroadcastChannel(ROUTE_CHANNEL);ch.postMessage(a?{view:v,arg:a}:{view:v});ch.close();return true;}
     catch(_){return false;}
   }
 
@@ -229,10 +239,16 @@
       const ch=new root.BroadcastChannel(ROUTE_CHANNEL);
       ch.onmessage=(event)=>{
         const v=String(event&&event.data&&event.data.view||''),state=root.__PC_WIN_STATE__;
+        const arg=String(event&&event.data&&event.data.arg||'');
         if(!state||String(state.view||'')!==v)return;
         try{
           if(root.__PC && ['home','global','trending'].includes(v) && typeof root.__PC.timelineTop==='function')
             root.__PC.timelineTop(v);
+          /* A named conversation is what the click was ABOUT — opening the list instead is the bug
+             this exists for. `openDMWith` validates the key itself; a malformed one falls through to
+             the ordinary view switch rather than being trusted. */
+          else if(arg && v==='messages' && root.__PC && typeof root.__PC.openDMWith==='function')
+            root.__PC.openDMWith(arg);
           else if(root.__PC&&typeof root.__PC.switchView==='function')root.__PC.switchView(v);
         }catch(_){}
         try{root.focus();}catch(_){}

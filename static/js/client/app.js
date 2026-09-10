@@ -28622,6 +28622,35 @@
       to.focus();
     });
   }
+  /* OPEN A CONVERSATION WITH SOMEBODY — from anywhere, including a window that is not this one.
+   *
+   * Choosing Message on a profile used to set `dmActive` and call switchView('messages'). In a
+   * browser that is the whole job. On PosterChanOS it is not: Messages can be a real compositor
+   * toplevel, which is a DIFFERENT RENDERER sharing an origin and no variables — so the window
+   * opened on the conversation LIST and the one thing that was asked for did not happen. Reported
+   * as "two messages windows appear and no DM window to the user"; the second window was a separate
+   * bug in os.js (the native lookup did not know Messages and Communities are one app), and this is
+   * the half that lost the person.
+   *
+   * The route is named ONCE here so every entry point — the profile menu, a notification, a
+   * mention — reaches the same place, rather than each re-implementing "set a variable and hope the
+   * right renderer reads it".
+   */
+  function openDMWith(pk){
+    const peer = String(pk || '').trim().toLowerCase();
+    if(!/^[0-9a-f]{64}$/.test(peer)) return false;   // it arrives over a shared BroadcastChannel
+    if(!dmPeers.has(peer)) dmPeers.set(peer, []);
+    dmActive = peer;
+    /* Hand the window manager the peer as well as the view. `routeApp` focuses or creates the one
+     * Messages window and delivers `peer` to whichever renderer ends up showing it — including this
+     * one, which is why there is no separate in-page branch to keep in step. */
+    try{
+      if(window.PCOS && PCOS.isOn && PCOS.isOn() && PCOS.routeApp && PCOS.routeApp('messages', peer)) return true;
+    }catch(_){ }
+    switchView('messages');
+    if(VIEW === 'messages') try{ openDm(peer); }catch(_){ }
+    return true;
+  }
   function openDm(pk){ _dmShown.delete(pk); dmActive=pk; $$('.dm-peer').forEach(e=>e.classList.toggle('active',e.dataset.peer===pk)); $('#dm-list').classList.add('has-active'); renderDmThread(pk); }
   // Coalesce a STORM of incoming-message renders into ONE every 350ms. On load, the NIP-17 sub replays
   // your WHOLE DM history and unwraps each message — rendering per message was the "window keeps moving"
@@ -29584,7 +29613,7 @@
     }
     openMenuPopover(anchorBtn, items, async a=>{
       if(a==='follow'){ await toggleFollow(pk); renderProfileView(pk); return; }
-      if(a==='message'){ if(!dmPeers.has(pk))dmPeers.set(pk,[]); dmActive=pk; switchView('messages'); return; }
+      if(a==='message'){ openDMWith(pk); return; }
       if(a==='mute'){ await toggleMute(pk); renderProfileView(pk); return; }
       if(a==='reports') return showReports(pk);
       if(a==='relays') return showRelays(pk);
@@ -38477,6 +38506,7 @@
      * sub-modules' `PC` binding and skips comment lines by that marker, so a prose line without one
      * reads as code and fails the build — which is exactly what it had been doing.) */
     driveSearch, driveReveal,
+    openDMWith,                                               // → one named route to a conversation, from any window
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to
      * `Capacitor.registerPlugin(name)`, which is what a plugin registered in Java but with no JS
