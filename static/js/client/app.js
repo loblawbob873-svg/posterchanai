@@ -5947,6 +5947,10 @@
   // default order, which looks like a layout that was never saved rather than one that was dropped.
   const _CARRY_D = [/^pcai:note:/, /^pcai:notefolder:/, /^pcai:pw:/, /^pcai:pwfolder:/,
                     /^pcai:pwkey$/, /^pcai:budget$/, /^pcai:playlist:/, /^pcai:desktop$/,
+                    /* The auto-mute switch. Left behind on the old pool it reads as OFF, which is
+                       indistinguishable from never having turned it on — the exact shape of "why is
+                       it disabled again?". */
+                    /^pcai:automute$/,
                     /^pcai:agent-tasks$/, /^pcai:dmkey$/, /^pcai:dmcache$/,
                     /* The phone's text-message archive. Carried for the same reason as Notes, and
                        for one more: on every device that is not the phone this IS the only copy —
@@ -6480,6 +6484,97 @@
   let _autoMuteCache=null, _autoMuteMessage='', _autoMuteEpoch=0;
   const _AUTO_MUTE_INTERVAL=15*60*1000;
   function _autoMuteStoreKey(){ return 'pc_auto_mute:'+((ME&&ME.pubkey)||''); }
+  /* THE PREFERENCE FOLLOWS THE ACCOUNT, NOT THE BROWSER.
+   *
+   * "auto-mute people who mute you — why is it disabled again? I thought we fixed this!" It was
+   * never fixed, because it was never stored anywhere that could follow anybody: the only copy was
+   * `localStorage['pc_auto_mute:<pubkey>']`, and localStorage is per ORIGIN. The web client, the
+   * APK and the desktop app (which serves the bundle from `app://posterchan`) are three separate
+   * stores, so turning it on in one left it off in the other two for ever, and clearing site data
+   * turned it off everywhere. Nothing was regressing; the switch simply had no memory that reached
+   * past one browser profile.
+   *
+   * So `enabled` and `ignored` — the two things that are a PERSON'S DECISION — go in an encrypted
+   * kind-30078 document, `d=pcai:automute`, NIP-44-sealed to the user's own key, exactly like
+   * `pcai:desktop` and `pcai:budget`. `records` (who has muted you) deliberately stays local: it is
+   * a cache rebuilt from public mute lists on every refresh, it can run to thousands of entries,
+   * and NIP-44 is a single 64 KiB envelope.
+   *
+   * THE WRITE RULE IS THE REPLACEABLE-DOC RULE, and it is the one that costs data when it is
+   * missed: a document is replaced whole, so publishing before a relay has ANSWERED replaces a real
+   * preference with the default. `_autoMuteDocRead` is set only by a read that a relay actually
+   * answered, and nothing publishes until it is. An unreachable pool therefore costs a sync, not
+   * the setting.
+   *
+   * Registered in BOTH `_isPinned` (store.js) and `_CARRY_D` below — every private document here
+   * has missed one of those at least once, and the symptom is the DEFAULT, which is
+   * indistinguishable from never having set it. Which is this bug. */
+  const AUTO_MUTE_D = 'pcai:automute';
+  let _autoMuteDocRead = false;      // a relay answered; only then may we replace the document
+  let _autoMuteDocPk = '';           // …for whom
+  let _autoMuteDocLoading = null;
+  function _autoMuteDocReady(){ return _autoMuteDocRead && _autoMuteDocPk === ((ME&&ME.pubkey)||''); }
+  /* Read the account's copy and merge it over the device's. Returns quietly on every failure: this
+   * runs at sign-in, and a screen that cannot be drawn because a relay is slow is worse than a
+   * preference that syncs a moment later. */
+  async function _autoMuteDocLoad(){
+    const owner = ME && ME.pubkey;
+    if(!owner || GUEST || !/^[0-9a-f]{64}$/.test(owner)) return null;
+    if(_autoMuteDocLoading && _autoMuteDocLoading.owner === owner) return _autoMuteDocLoading.promise;
+    const job = { owner };
+    job.promise = (async () => {
+      let evs = null;
+      /* BOUNDED. `Relay.query` carries its own timeout, but a signer does not and a socket that
+       * never speaks would otherwise pin this loader for the session — and with it the only path
+       * that can ever turn the switch back on. A read that gives up leaves `_autoMuteDocRead`
+       * false, so this device's copy governs and nothing is published over the account's. */
+      const giveUp = ms => new Promise(r => setTimeout(() => r(null), ms));
+      try{ evs = await Promise.race([
+             Relay.query([{ authors:[owner], kinds:[30078], '#d':[AUTO_MUTE_D], limit:1 }]),
+             giveUp(9000)]); }
+      catch(_){ return null; }              // could not ask — never "there is nothing"
+      if(!Array.isArray(evs)) return null;
+      _autoMuteDocRead = true; _autoMuteDocPk = owner;   // the relay answered; writes are allowed
+      const ev = evs.sort((a,b)=>b.created_at-a.created_at)[0] || null;
+      if(!ev || typeof ev.content !== 'string' || !ev.content) return null;
+      if(!signer || !signer.nip44dec) return null;
+      let doc = null;
+      try{ doc = JSON.parse(await Promise.race([signer.nip44dec(owner, ev.content),
+                                                giveUp(20000)]) || 'null') || null; }
+      catch(_){ return null; }
+      if(!doc || typeof doc !== 'object') return null;
+      if(!ME || ME.pubkey !== owner) return null;        // the account moved while we were reading
+      const local = _autoMuteStored();
+      const merged = { ...local, owner,
+        enabled: doc.enabled === true,
+        ignored: [...new Set((Array.isArray(doc.ignored) ? doc.ignored : [])
+                    .filter(pk => /^[0-9a-f]{64}$/.test(pk)))].slice(0, 5000) };
+      try{ localStorage.setItem('pc_auto_mute:'+owner, JSON.stringify(merged)); }catch(_){}
+      _cacheAutoMute(merged);
+      _paintAutoMuteControls();
+      if(local.enabled !== merged.enabled) _applyAutoMuteToView();
+      if(merged.enabled) _scheduleAutoMutes();
+      return merged;
+    })().finally(()=>{ if(_autoMuteDocLoading === job) _autoMuteDocLoading = null; });
+    _autoMuteDocLoading = job;
+    return job.promise;
+  }
+  /* Publish the two decisions. Silent on failure by design — the local copy is already written, so
+   * the switch works on this device either way and the next change re-publishes. */
+  async function _autoMuteDocSave(){
+    const owner = ME && ME.pubkey;
+    if(!owner || GUEST || !_autoMuteDocReady()) return false;
+    if(!signer || !signer.nip44enc) return false;
+    const state = _autoMuteStored();
+    const body = { v:1, enabled: state.enabled === true,
+                   ignored: (Array.isArray(state.ignored) ? state.ignored : [])
+                              .filter(pk => /^[0-9a-f]{64}$/.test(pk)).slice(0, 5000) };
+    try{
+      const ct = await signer.nip44enc(owner, JSON.stringify(body));
+      const r = await publish(30078, ct, [['d', AUTO_MUTE_D]], { quiet:true });
+      return !!(r && r.ok);
+    }catch(_){ return false; }
+  }
   function _cacheAutoMute(value){
     const owner=(ME&&ME.pubkey)||'';
     const state=value && value.owner===owner ? value : {owner,enabled:false,records:{},ignored:[]};
@@ -6553,7 +6648,11 @@
       if(!module || !module.create) throw new Error('Could not load automatic mute settings');
       let effective=new Set(_autoMuteStored().enabled?_autoMuteCache.keys:[]);
       _autoMuteEngine=module.create({owner, read:()=>_autoMuteStored(),
-        write:state=>{localStorage.setItem('pc_auto_mute:'+owner,JSON.stringify(state));_cacheAutoMute(state);},
+        /* The engine owns `ignored` too — an account that stops muting you is forgotten — so its
+         * writes publish as well. Fire-and-forget: this runs inside a refresh, and a relay that
+         * will not take it must not fail the refresh. */
+        write:state=>{localStorage.setItem('pc_auto_mute:'+owner,JSON.stringify(state));_cacheAutoMute(state);
+                      Promise.resolve(_autoMuteDocSave()).catch(()=>{});},
         isCurrent:pk=>!!ME && !GUEST && ME.pubkey===pk,
         query:filters=>Relay.query(filters),
         verify:async event=>{const result=await Relay.worker.call('verify',{event});return !!(result&&result.valid);},
@@ -6594,6 +6693,16 @@
     },delay);
   }
   async function _syncAutoMutes(){
+    /* ASK THE ACCOUNT BEFORE BELIEVING THE DEVICE. This used to early-return on the LOCAL copy, so
+     * a browser, phone or desktop build that had never had the switch turned on read "off" and
+     * never looked any further — which is precisely how the preference could be on where you set
+     * it and off everywhere else, for ever. The document is the account's answer; the local copy is
+     * a cache of it. */
+    if(ME && !GUEST && !_autoMuteDocReady()) _autoMuteDocLoad().catch(()=>{});
+    /* KICKED, NOT AWAITED. The account is asked on every sync whatever this device believes — that
+     * is the fix — but the answer arrives on its own: `_autoMuteDocLoad` repaints the switch,
+     * re-applies the filter and re-schedules when it lands. Waiting here would put the whole mute
+     * sync behind one relay read, on the path that runs at sign-in. */
     if(!ME || GUEST || !_autoMuteStored().enabled){_scheduleAutoMutes();return;}
     await _loadAutoMute();
     const age=Date.now()-(_autoMuteStored().lastChecked||0);
@@ -34221,6 +34330,13 @@
           _cacheAutoMute(next);_autoMuteMessage='';
           if(previous.enabled!==wanted)_applyAutoMuteToView();
           _scheduleAutoMutes();_paintAutoMuteControls();
+          /* AND ON THE ACCOUNT, not just this browser. Awaited so the status line can say when it
+           * did not land — a switch that silently only applies to the device you flipped it on is
+           * this whole bug. A read must have answered first, or publishing would replace a real
+           * preference with this device's default. */
+          if(!_autoMuteDocReady()) await _autoMuteDocLoad();
+          if(!await _autoMuteDocSave() && _autoMuteDocReady())
+            _autoMuteMessage='Saved on this device only — the relays did not accept the change.';
           if(wanted){
             await _loadAutoMute();
             if(ME&&ME.pubkey===owner && epoch===_autoMuteEpoch)_updateAutoMutes();

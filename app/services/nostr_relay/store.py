@@ -870,6 +870,26 @@ class RelayStore:
     async def bridge_identity_pubkeys(self, domains) -> set:
         return await self._w(self._bridge_identity_pubkeys_sync, set(domains))
 
+    def _nip05_domains_sync(self) -> list:
+        """Every domain the stored kind-0 profiles actually identify as, one entry per account.
+
+        This is the ONLY thing that can tell a blocklist entry that works from one that matches
+        nothing — and until it existed the two looked identical from every screen and every log.
+        See bridges.explain_blocklist."""
+        import json as _json
+        out = []
+        for r in self._conn().execute("SELECT content FROM events WHERE kind=0"):
+            try:
+                nip05 = (_json.loads(r["content"] or "{}").get("nip05") or "").strip().lower()
+            except Exception:
+                continue
+            if "@" in nip05:
+                out.append(nip05.rsplit("@", 1)[-1])
+        return out
+
+    async def nip05_domains(self) -> list:
+        return await self._w(self._nip05_domains_sync)
+
     def _delete_by_proxy_sync(self) -> int:
         """Purge bridged PUBLIC POSTS: notes/reposts (kind 1,6) carrying a NIP-48 `proxy` tag
         (ActivityPub / atproto mirror content from mostr.pub, momostr.pink, ditto.pub, brid.gy, …).

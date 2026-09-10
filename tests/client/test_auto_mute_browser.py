@@ -46,14 +46,36 @@ const _noteNode=e=>{const n=document.createElement('article');n.className='note'
 let moduleHold=false,modulePending=[];
 const _withModule=()=>moduleHold?new Promise(resolve=>modulePending.push(resolve)):Promise.resolve(PCAutoMute), toast=()=>{}, _persistMutes=()=>{};
 const _editPList=async()=>{manualWrites++;return true;};
+/* The preference is an encrypted 30078 now (see test_auto_mute_follows_the_account.py), so this
+   harness has to be able to seal and publish one. `docEvent` is the account's copy: null means the
+   relay answered and there is none, which is the state a fresh device is in. */
+let publishes=[], publishOk=true, docEvent=null;
+const signer={nip44enc:async(_pk,text)=>'ct:'+text, nip44dec:async(_pk,ct)=>String(ct).replace(/^ct:/,'')};
+const publish=async(kind,content,tags)=>{publishes.push({kind,content,tags});
+  return {ok:publishOk};};
 let peerMuted=true, timestamp=100, hold=false, pending=[], queryCalls=0;
 const answer=filters=>{
+  // The auto-mute PREFERENCE document is a different question from a peer's mute list, and a stub
+  // that answered both with the same kind-10000 would have the loader read an empty content and
+  // (correctly) give up — hiding whatever the document path actually does.
+  if((filters[0]['#d']||[]).includes('pcai:automute'))
+    return Object.defineProperty(docEvent?[docEvent]:[],'complete',{value:true});
   const event=NT().finalizeEvent({kind:10000,created_at:timestamp,
     tags:peerMuted?[['p',ME.pubkey]]:[],content:''},key(2));
   const rows=filters[0]['#p']?(peerMuted?[event]:[]):[event];
   return Object.defineProperty(rows,'complete',{value:!new URL(location.href).searchParams.has('offline')});
 };
-const Relay={worker:{call:async(_method,{event})=>({valid:NT().verifyEvent(event)})},query:filters=>{queryCalls++;return hold?new Promise(resolve=>pending.push(()=>resolve(answer(filters)))):Promise.resolve(answer(filters));}};
+/* THE TWO READS ARE COUNTED SEPARATELY, and that distinction is the point of several tests below.
+   `queryCalls` has always meant "work the auto-mute ENGINE did" — the assertions that read
+   `queryCalls===0` are asserting that a disabled switch checks nobody's mute list. That is still
+   true. What is new is that the switch itself is an account-level document, so a device where it
+   reads "off" must ask once whether that is actually the account's answer: without that read, a
+   preference set on your phone is off on your laptop for ever, which is the bug this all exists
+   for. It is `docQueries`, and it is never held. */
+let docQueries=0;
+const Relay={worker:{call:async(_method,{event})=>({valid:NT().verifyEvent(event)})},query:filters=>{
+  if((filters[0]['#d']||[]).includes('pcai:automute')){docQueries++;return Promise.resolve(answer(filters));}
+  queryCalls++;return hold?new Promise(resolve=>pending.push(()=>resolve(answer(filters)))):Promise.resolve(answer(filters));}};
 ''' + controller + toggle + recount + rows + timeline + r'''
 document.querySelector('#user-settings').innerHTML=`PANEL`;
 document.querySelector('#dm-list').innerHTML='<input id="dm-search"><div id="dm-rows"></div>';

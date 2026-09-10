@@ -155,7 +155,7 @@
             see files that were all still there. Reported as exactly that. */
          t[1].startsWith('pcai:files-index') ||
          t[1].startsWith('pcai:playlist') || t[1] === 'pcai:budget' ||
-         t[1] === 'pcai:desktop' || t[1] === 'pcai:agent-tasks' ||
+         t[1] === 'pcai:desktop' || t[1] === 'pcai:automute' || t[1] === 'pcai:agent-tasks' ||
          t[1] === 'pcai:dmkey' || t[1] === 'pcai:dmcache')) return true;
     return false;
   }

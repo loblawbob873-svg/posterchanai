@@ -1851,6 +1851,24 @@ async def _mark_blocked_relays(store, gate, domains) -> list:
     # Weak hints (a synced post's proxy tag, a relay-list entry) can show up on a real account that
     # merely cross-posts from the fediverse, so for those we still spare the whole WoT (follows +
     # operators) — they must never be bridged/purged on a hint alone.
+    # AN ENTRY THAT MATCHES NOTHING MUST NOT LOOK LIKE ONE THAT WORKS. The field is labelled
+    # "blocked bridges/relays", so a RELAY host is exactly what an operator types — and an account
+    # is classified by the domain in its own nip05, which is the operator's domain, not the relay's.
+    # `relay.bchnostr.com` therefore matched none of the 25 accounts reading `handle@bchnostr.com`
+    # (suffix matching runs downwards, never up), the relay carried on serving their posts, and
+    # nothing in any log said so: "I added relay.bchnostr.com under blocked bridges/relays and I
+    # still see BCHnostr posts". Nothing is widened on the operator's behalf — blocking damus.io
+    # because somebody blocked relay.damus.io is a far worse failure — it is SAID instead.
+    try:
+        from .bridges import explain_blocklist
+        for row in explain_blocklist(domains, await store.nip05_domains()):
+            if row["matches"]:
+                continue
+            logger.warning("[nostr-relay] blocked bridge %r matches no stored identity%s",
+                           row["entry"],
+                           (" — did you mean %r?" % row["suggestion"]) if row["suggestion"] else "")
+    except Exception as e:
+        logger.debug("[nostr-relay] blocklist explain failed: %s", e)
     wot = gate.members()   # _members | _operator
     weak_pks = [p for p in (weak or []) if p not in wot]
     gate.add_bridged(weak_pks)

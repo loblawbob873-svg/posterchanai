@@ -116,3 +116,49 @@ def reveals_blocked_bridge(ev: dict, domains) -> bool:
             if len(t) >= 2 and t[0] == "r" and _match(relay_domain(t[1]), domains):
                 return True
     return False
+
+
+def _parents(host: str):
+    """Every domain `host` is a subdomain of, longest first — `relay.bchnostr.com` →
+    ['bchnostr.com', 'com']. Used only to EXPLAIN a blocklist entry, never to widen one."""
+    h = _norm_host(host)
+    parts = h.split(".")
+    return [".".join(parts[i:]) for i in range(1, len(parts))] if len(parts) > 1 else []
+
+
+def explain_blocklist(entries, nip05_domains):
+    """Say what each blocklist entry actually catches, and what it probably meant to.
+
+    AN ENTRY THAT MATCHES NOTHING IS INDISTINGUISHABLE FROM ONE THAT WORKS. The field is labelled
+    "blocked bridges/relays", so `relay.bchnostr.com` is exactly what an operator types — and it
+    matches nothing, because an account is classified by the domain in its OWN nip05 and every one
+    of those reads `handle@bchnostr.com`. Matching is suffix-based downwards (`bchnostr.com` covers
+    `relay.bchnostr.com`) and never upwards, so the entry was a subdomain OF the thing meant, and
+    the relay carried on serving those posts with nothing anywhere to say so. Reported as "I added
+    relay.bchnostr.com under blocked bridges/relays and I still see BCHnostr posts".
+
+    `nip05_domains` is the set of domains stored kind-0 profiles actually identify as. Returns one
+    row per entry: `matches` (how many of those it catches) and, when that is zero, `suggestion` —
+    the nearest PARENT domain that would catch some, which is the whole point. Nothing here changes
+    what is blocked; widening an operator's entry on their behalf could take out `damus.io` because
+    they blocked `relay.damus.io`.
+    """
+    counts = {}
+    for d in (nip05_domains or ()):
+        h = _norm_host(d)
+        if h:
+            counts[h] = counts.get(h, 0) + 1
+    out = []
+    for raw in (entries or ()):
+        host = _norm_host(relay_domain(raw) or raw)
+        if not host:
+            continue
+        matches = sum(n for h, n in counts.items() if h == host or h.endswith("." + host))
+        suggestion = ""
+        if not matches:
+            for parent in _parents(host):
+                if any(h == parent or h.endswith("." + parent) for h in counts):
+                    suggestion = parent
+                    break
+        out.append({"entry": host, "matches": matches, "suggestion": suggestion})
+    return out
