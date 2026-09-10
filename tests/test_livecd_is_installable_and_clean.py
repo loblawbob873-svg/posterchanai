@@ -1059,3 +1059,37 @@ def test_the_release_gate_reads_the_overlay_portage_actually_installs_from():
     assert "$HELPER_DIR/$HELPER" in helpers, helpers
     assert "app-misc/posterchanos-shell/files" in src
     assert '"$PCOS_TREE/bin"' in src, "no fallback for a machine without the repo configured"
+
+
+class TheImageCarriesTheInstallerThatBuiltIt(unittest.TestCase):
+    """`mksquashfs /` packs whatever /usr/bin/gentoo.sh the BUILD HOST has installed, so building
+    from a fixed checkout put the fix in the build and not in the image.
+
+    MEASURED on the first 20260910 build: the tree the build ran from carried the live-medium fix
+    and the resulting ISO's /usr/bin/gentoo.sh still had the old `$2=="disk"` filter. That is a
+    silent way for an installer bug to outlive its fix across image after image — you rebuild, you
+    re-gate, and the gate is still testing the old installer.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        src = GENTOO.read_text()
+        i = src.index("\nliveCD() {")
+        cls.fn = src[i:src.index("\n}\n", i)]
+
+    def test_the_running_installer_is_injected(self):
+        self.assertIn('pseudoput "usr/bin/gentoo.sh"', self.fn,
+                      "the image takes the build host's installed installer, not the one building it")
+
+    def test_it_prefers_the_tree_it_is_running_from(self):
+        block = self.fn[self.fn.index("LIVE_INSTALLER="):]
+        block = block[:block.index('pseudoput "usr/bin/gentoo.sh"')]
+        self.assertLess(block.index("PCOS_TREE"), len(block),
+                        "the checkout being built from must win over an installed copy")
+
+    def test_it_still_has_a_source_when_there_is_no_checkout(self):
+        """A build from an installed system with no tree beside it must not inject an empty file."""
+        block = self.fn[self.fn.index("LIVE_INSTALLER="):]
+        block = block[:block.index('pseudoput "usr/bin/gentoo.sh"')]
+        self.assertIn("/usr/local/share/posterchanos/gentoo.sh", block)
+        self.assertIn("/usr/bin/gentoo.sh", block)

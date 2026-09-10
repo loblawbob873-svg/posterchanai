@@ -3582,6 +3582,21 @@ FSTAB
 		return 1
 	fi
 	{
+		# THE IMAGE CARRIES THE INSTALLER THAT BUILT IT, NOT THE BUILD HOST'S INSTALLED COPY.
+		#
+		# `mksquashfs /` packs whatever `/usr/bin/gentoo.sh` the build machine happens to have, so
+		# building from a fixed checkout put the FIX IN THE BUILD AND NOT IN THE IMAGE. That is a
+		# silent way for an installer bug to outlive its fix across image after image, and it is
+		# how one did: a live-medium bug fixed in the repo, rebuilt, and still broken on the ISO.
+		# Measured on the first 20260910 build — the repo's copy carried the fix, the image's did
+		# not.
+		#
+		# The install path already states this rule for the target ("a machine must be repairable
+		# with the installer that built it"); the ISO is the same claim one step earlier.
+		local LIVE_INSTALLER="$PCOS_TREE/gentoo.sh"
+		[ -f "$LIVE_INSTALLER" ] || LIVE_INSTALLER="/usr/local/share/posterchanos/gentoo.sh"
+		[ -f "$LIVE_INSTALLER" ] || LIVE_INSTALLER="/usr/bin/gentoo.sh"
+		pseudoput "usr/bin/gentoo.sh" f 755 0 0 cat "$LIVE_INSTALLER"
 		pseudoput "etc/fstab" f 644 0 0 cat "$LIVEFSTAB"
 		pseudoput "usr/local/bin/posterchan" f 755 0 0 cat "$WORK/posterchan-launcher"
 		# Always replace /etc/wayfire.ini. mksquashfs otherwise silently keeps the source host's file
