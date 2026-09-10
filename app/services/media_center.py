@@ -6,6 +6,7 @@ storage key. Sharing is mediated by this server, not public relay publication.
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -25,6 +26,11 @@ PROFILES = {"360p": (640, 360, 450, 64), "480p": (854, 480, 900, 96),
             "720p": (1280, 720, 2000, 128), "1080p": (1920, 1080, 4500, 128)}
 EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".ts", ".mpg", ".mpeg",
               ".mp3", ".flac", ".m4a", ".ogg", ".wav", ".opus"}
+# A LOGGER THAT EXISTS AT IMPORT TIME. The transcoder's only failure paths are inside `except`
+# blocks, and this repo has already taken an outage from an `except` that called an undefined
+# `logger` — the guard raised NameError and every request 502'd.
+logger = logging.getLogger(__name__)
+
 SEGMENT = 6
 mutation_lock = asyncio.Lock()
 DEFAULT_LIMITS = {"server_kbps": 20000, "viewer_kbps": 1600, "max_streams": 8,
@@ -538,10 +544,23 @@ def transcode(library, item, profile, number, config=None):
             if encoder != "libx264" and _failed_encoders.get(encoder, 0) > time.monotonic():
                 continue
             with tempfile.NamedTemporaryFile(dir=cache, suffix=".part") as temp:
+                started = time.monotonic()
                 try:
+                    # STDERR IS KEPT. Discarding it made every stutter unexplainable: the one
+                    # component that knows which encoder ran, how long the segment took and why a
+                    # hardware encoder was abandoned said nothing at all, on any log, ever.
                     subprocess.run(command(path, item, profile, number, encoder, temp.name),
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                                    timeout=45 if encoder == "libx264" else 10, check=True)
+                    took = time.monotonic() - started
+                    # A segment is SEGMENT seconds of video. Taking longer than that to make means
+                    # the stream cannot keep up, which is what the viewer experiences as a stutter
+                    # before any error exists to find.
+                    if took > SEGMENT:
+                        logger.warning("[media] %s segment %s took %.1fs for %ss of video (%s)",
+                                       encoder, number, took, SEGMENT, profile)
+                    else:
+                        logger.debug("[media] %s segment %s in %.1fs", encoder, number, took)
                     data = Path(temp.name).read_bytes()
                     if data:
                         with (cache / ".cache-lock").open("a") as cache_lock:
@@ -561,8 +580,33 @@ def transcode(library, item, profile, number, config=None):
                                 # NamedTemporaryFile removes its name on exit.
                                 os.link(temp.name, target)
                         return data
-                except (OSError, subprocess.SubprocessError):
+                except subprocess.TimeoutExpired:
+                    # A TIMEOUT IS NOT A BROKEN ENCODER, and treating it as one is a latch set on a
+                    # transient — the shape this codebase keeps rediscovering. This box shares its
+                    # GPU with music and video generation, so one busy moment, one cold seek or one
+                    # leaked NVENC session made a 6s segment miss a 10s budget ONCE and demoted
+                    # every following segment to libx264 for five minutes. Measured from the
+                    # outside: the player stepped 480p -> 360p and restarted its session three
+                    # times in an hour, with nothing in any log.
+                    #
+                    # This segment still falls through to the next candidate, so the viewer gets
+                    # their picture; what does not happen is a blanket ban on the hardware the box
+                    # was bought for.
+                    logger.warning("[media] %s timed out on segment %s (%ss of video) — falling "
+                                   "back for this segment only", encoder, number, SEGMENT)
+                    continue
+                except (OSError, subprocess.SubprocessError) as exc:
+                    # A real refusal — the encoder is missing, the device is gone, the driver said
+                    # no. That IS worth remembering, and now it says what it was told.
+                    detail = getattr(exc, "stderr", b"") or b""
+                    if isinstance(detail, bytes):
+                        detail = detail.decode("utf-8", "replace")
                     if encoder != "libx264":
                         _failed_encoders[encoder] = time.monotonic() + 300
+                        logger.warning("[media] %s refused segment %s, not using it for 5 minutes: %s",
+                                       encoder, number, " ".join(detail.split())[-300:] or exc)
+                    else:
+                        logger.error("[media] libx264 failed on segment %s: %s",
+                                     number, " ".join(detail.split())[-300:] or exc)
                     continue
     raise RuntimeError("Transcoding failed, including CPU fallback; check FFmpeg and the media file")
