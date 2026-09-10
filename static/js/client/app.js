@@ -3529,7 +3529,7 @@
     try{
       if(e.kind==='concord-invite'){
         switchView('concord');
-        const open=()=>{ if(window.PCConcord&&PCConcord.openInvite)PCConcord.openInvite(e.q,true); };
+        const open=()=>{ if(window.PCConcord&&PCConcord.openInvite)PCConcord.openInvite(e.q); };
         if(window.PCConcord)open(); else _withModule('concord.js','PCConcord',open);
         return;
       } else if(e.kind==='repo'){

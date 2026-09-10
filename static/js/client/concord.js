@@ -5,7 +5,7 @@
   // cached client.css for one navigation. Concord owns a versioned sheet and loads it itself too.
   if(!document.querySelector('link[data-concord-css]')){
     const l=document.createElement('link'); l.rel='stylesheet'; l.dataset.concordCss='1';
-    l.href='/static/css/concord.css?v=18'; (document.head||document.documentElement).appendChild(l);
+    l.href='/static/css/concord.css?v=19'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>window.__PC;
   /* Automatic reads must contain only known Concord endpoints. relay.ditto.pub currently refuses
@@ -1207,12 +1207,19 @@
    * and opened the server's Classic UI in another PosterChan window.  Keep the complete URL (the
    * fragment is the decryption secret), show it in the existing join surface, and use the exact same
    * join button as a pasted invite so the two paths cannot drift. */
-  function openInviteLink(raw,autoJoin=true){
+  /* PREVIEW, NEVER JOIN. This used to auto-click the join button, so tapping a link somebody put in
+   * a message enrolled you in their community before you had seen its name. Being sent an invitation
+   * is not accepting it. The second parameter is GONE rather than defaulted off: both call sites
+   * passed `true` explicitly, so a default would have changed nothing, and a flag that silently
+   * enrols somebody is not worth keeping for a caller that does not exist. */
+  function openInviteLink(raw){
     const parsed=inviteParts(raw); if(!parsed)return false;
     const panel=document.querySelector('#cc-join'),input=document.querySelector('#cc-invite-url');
     if(!panel||!input)return false;
+    // Opening it again is reconsidering it — see forgetDeclinedInvite.
+    forgetDeclinedInvite(parsed.url);
     panel.classList.remove('hidden'); input.value=parsed.url; input.focus();
-    if(autoJoin)setTimeout(()=>{const go=document.querySelector('#cc-join-go');if(go&&!go.disabled)go.click();},0);
+    setTimeout(()=>{const go=document.querySelector('#cc-join-go');if(go&&!go.disabled)go.click();},0);
     return true;
   }
   function discoverInvites(text,source){
@@ -1255,6 +1262,70 @@
    *     press puts away again, is not the same kind of loss as a community that can never come back.
    * v1 is deliberately left on disk rather than deleted: another device may still be running the
    * older build, and this key is that build's memory. */
+  /* AN INVITATION IS A QUESTION, AND IT HAD NO "NO".
+   *
+   * `#cc-join-go` is LABELLED "Preview invite" and joined outright — hydrate, push into the room
+   * list, switch to it, publish the membership. Clicking an invite in a chat message did the same
+   * thing without even that button, because openInviteLink auto-clicked it. So being sent a link
+   * was the same act as accepting it, and there was no way to look at a community first or to say
+   * no to one.
+   *
+   * DECLINING IS A DISMISSAL, NOT A BLACKLIST, and that distinction is load-bearing. The ledger
+   * three lines below exists because a build wrote communities into a permanent local refusal and
+   * `wasLocallyLeft` then hid one for ever — "my concord community for posterchan is no longer
+   * appearing in Concord" — and a corrected rule could not remove the records already on disk. So a
+   * declined invitation is remembered ONLY so the same link stops re-asking: it is keyed on the
+   * invite, it never touches `leftCommunities`, and it is overridden the moment somebody opens that
+   * invite again or joins the community by any other route. Saying no to an invitation must not be
+   * a decision you cannot take back. */
+  /* WHAT AN INVITATION LOOKS LIKE BEFORE YOU ANSWER IT.
+   *
+   * Everything shown here comes from the invite the person was actually handed — hydrateInvite
+   * decrypts the bundle and gives the community's own name; nothing is invented and nothing is
+   * asserted that has not been read. An invite whose bundle cannot be opened never reaches this
+   * point, so the card cannot describe a community that is not there.
+   *
+   * The name is escaped: an invite is written by whoever sent it, and a community name is their
+   * text. */
+  function invitePreviewHtml(p,inv){
+    const room=inv&&inv.room||{};
+    const name=String(room.name||'Concord community');
+    const desc=String(room.description||'');
+    const known=saved().some(r=>sameRoom(r,room));
+    return '<div class="cc-invite-card" id="cc-invite-preview">'
+      + '<div class="concord-mark">'+p.enc(name.slice(0,1).toUpperCase()||'C')+'</div>'
+      + '<h3>'+p.enc(name)+'</h3>'
+      + (desc?'<p class="muted">'+p.enc(desc.slice(0,240))+'</p>':'')
+      + '<p class="cc-invite-note">'+(known
+          ? 'You are already in this community — joining again just opens it.'
+          : 'Joining publishes your membership so your other devices see it too.')+'</p>'
+      + '<div class="cc-join-actions">'
+      + '<button class="btn btn-ghost" id="cc-invite-decline">Decline</button>'
+      + '<button class="btn btn-neon" id="cc-invite-accept">'+(known?'Open':'Join community')+'</button>'
+      + '</div></div>';
+  }
+  const DECLINED_INVITES_KEY='pc.concord.declined.v1';
+  let pendingInvite=null;          // {url, room, by} — the invitation on screen, before any answer
+  function declinedInvites(){
+    try{ const v=JSON.parse(localStorage.getItem(DECLINED_INVITES_KEY)||'[]'); return Array.isArray(v)?v:[]; }
+    catch(_){ return []; }
+  }
+  function declineInvite(url){
+    const key=inviteKey({url})||String(url||''); if(!key)return false;
+    const kept=[key,...declinedInvites().filter(x=>x!==key)].slice(0,200);
+    try{ localStorage.setItem(DECLINED_INVITES_KEY,JSON.stringify(kept)); }catch(_){}
+    return true;
+  }
+  function inviteWasDeclined(url){
+    const key=inviteKey({url})||String(url||''); return !!key&&declinedInvites().includes(key);
+  }
+  /* Opening it again IS reconsidering it. Nothing else needs to clear this, and nothing else may:
+   * a record that only grows is the failure this file already carries a v2 key because of. */
+  function forgetDeclinedInvite(url){
+    const key=inviteKey({url})||String(url||''); if(!key)return;
+    try{ localStorage.setItem(DECLINED_INVITES_KEY,JSON.stringify(declinedInvites().filter(x=>x!==key))); }catch(_){}
+  }
+
   const LEFT_COMMUNITIES_KEY='pc.concord.left.v2';
   function leftCommunities(pubkey){
     if(!pubkey)return [];
@@ -2802,7 +2873,7 @@
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
         <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="Message #${p.enc(state.channel||'general')}" ${state.community==null?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null?'disabled':''}>Send</button></div>
-      </main></div><div class="cc-join hidden" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join a Concord community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div></div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
+      </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join a Concord community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
     feed.insertAdjacentHTML('afterbegin','<nav class="messages-tabs" aria-label="Message type"><button id="messages-direct">Direct messages</button><button class="on" aria-current="page">Communities</button></nav>');
     const directMessages=p.$('#messages-direct');if(directMessages)directMessages.onclick=()=>
@@ -2876,7 +2947,7 @@
       boundOwnerPk=String((boundRoom&&boundRoom.cord&&boundRoom.cord.bundle&&
         (boundRoom.cord.bundle.owner||boundRoom.cord.bundle.creator_npub))||''),
       isOwner=!!boundOwnerPk&&boundOwnerPk===viewer.pubkey;
-    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||scroller.dataset.ccScrollRestore||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); scroller.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!inviteParts(a.href))return;e.preventDefault();e.stopPropagation();openInviteLink(a.href,true);},true);watchPinnedRoomGrowth(scroller); }
+    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||scroller.dataset.ccScrollRestore||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); scroller.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!inviteParts(a.href))return;e.preventDefault();e.stopPropagation();openInviteLink(a.href);},true);watchPinnedRoomGrowth(scroller); }
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
     const home=$('#cc-home'); if(home)home.onclick=()=>{ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=!rooms.length; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     const discovery=$('#cc-discovery'); if(discovery)discovery.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
@@ -2931,11 +3002,26 @@
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community],viewerPk=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,viewerPk).filter(pk=>pk!==viewerPk); if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
-    const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw),a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
+    /* PREVIEW, THEN ANSWER. The button said "Preview invite" and joined outright; now it fetches
+     * the community, shows what it is, and waits. `acceptInvite` below is the join half, unchanged
+     * except that it is reached by a deliberate press. */
+    const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw); pendingInvite={url:raw,room}; render(); }catch(e){ go.disabled=false; p.toast('could not read that invite: '+(e&&e.message||e)); } };
+    const acceptInvite=async(raw,room)=>{ const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
       /* Joining is already the user's request to enter this room.  Waiting for a later channel click
        * left the placeholder #general on screen with no id, icon or history, so a successful Armada
        * invite looked like an empty broken community until somebody switched away and back. */
-      await hydrateRoomStreams(p,state.community); enterChatBottom(); p.toast('community joined'); }catch(e){ go.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
+      await hydrateRoomStreams(p,state.community); enterChatBottom(); p.toast('community joined'); };
+    /* The two answers to the invitation on screen. `pendingInvite` is cleared BEFORE either one
+     * acts, so the repaint each of them causes cannot draw the card again over its own result. */
+    const accept=$('#cc-invite-accept'); if(accept) accept.onclick=async()=>{ const inv=pendingInvite; if(!inv)return; accept.disabled=true;
+      try{ forgetDeclinedInvite(inv.url); pendingInvite=null; await acceptInvite(inv.url,inv.room); }
+      catch(e){ accept.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
+    const decline=$('#cc-invite-decline'); if(decline) decline.onclick=()=>{ const inv=pendingInvite; pendingInvite=null;
+      if(inv)declineInvite(inv.url);
+      render();
+      const panel=$('#cc-join'); if(panel)panel.classList.add('hidden');
+      p.toast('invitation declined — the link still works if you change your mind'); };
+
     $$('[data-cc-server]').forEach(b=>b.onclick=()=>{const i=+b.dataset.ccServer,inDrawer=mobileChatOpen&&mobileDrawerOpen;void activateJoinedRoom(p,i,inDrawer);});
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{
       const v=discovered[+b.dataset.ccDiscover];if(!v)return;
@@ -3165,7 +3251,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,emptyChannelHtml,channelUnread,noteChannelReach,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

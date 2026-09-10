@@ -516,17 +516,21 @@ def test_invite_parser_requires_naddr_and_secret_fragment():
 
 
 def test_linkified_invites_stay_inside_concord_instead_of_opening_classic_ui():
-    assert "function openInviteLink(raw,autoJoin=true)" in CONCORD
+    # THE RULE IS "IT STAYS IN CONCORD", not how the call is spelled. It pinned
+    # `openInviteLink(raw,autoJoin=true)`, and that `true` was the bug: clicking a link somebody put
+    # in a message enrolled you in their community before you had seen its name. The flag is gone.
+    assert "function openInviteLink(raw)" in CONCORD
     assert "e.target.closest('a[href]')" in CONCORD
-    assert "e.preventDefault();e.stopPropagation();openInviteLink(a.href,true)" in CONCORD
+    assert "e.preventDefault();e.stopPropagation();openInviteLink(a.href)" in CONCORD
     assert "openInvite:openInviteLink" in CONCORD
+    assert "autoJoin" not in CONCORD, "a flag that silently enrols somebody must not come back"
 
 
 def test_direct_invite_route_opens_concord_with_the_fragment_intact():
     assert "kind:'concord-invite', q:location.href" in APP
     routed = APP[APP.index("async function routeFromPath()"):APP.index("// PWA launch params")]
     assert "switchView('concord')" in routed
-    assert "PCConcord.openInvite(e.q,true)" in routed
+    assert "PCConcord.openInvite(e.q)" in routed   # a deep link previews; it does not join
     assert "_withModule('concord.js','PCConcord',open)" in routed
     assert "_withModule('/static/js/client/concord.js'" not in routed
     boot_start = APP.index("const _deepLink = _entityFromPath()")

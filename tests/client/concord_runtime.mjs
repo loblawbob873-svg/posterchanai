@@ -753,7 +753,14 @@ if(calls.mentions.length!==2 || !calls.mentions[1].title.includes('#support') ||
 // fixed, the handler saved a one-channel placeholder and said "community joined"; icon, real
 // channels and history appeared only after switching away and back.
 control('cc-invite-url').value=JOIN_URL;
+/* TWO PRESSES NOW, BECAUSE AN INVITATION IS A QUESTION. `cc-join-go` fetches and decrypts the
+   community and shows what it is; `cc-invite-accept` is the answer. The button was labelled
+   "Preview invite" and joined outright, so being sent a link was the same act as accepting it. */
 await control('cc-join-go').click();
+await new Promise(r=>setTimeout(r,0));
+if(!control('cc-invite-accept')) throw new Error('the invite preview never offered a Join button');
+if(!control('cc-invite-decline')) throw new Error('the invite preview never offered a Decline button');
+await control('cc-invite-accept').click();
 const afterJoin=JSON.parse(data.get('pc.concord.invites'));
 const joined=afterJoin.find(r=>r.communityId===JOIN_BUNDLE.community_id);
 if(!joined || !joined.cord?.hydrated || joined.icon!=='🛸' || joined.channels.length!==2)

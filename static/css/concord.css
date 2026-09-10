@@ -267,3 +267,11 @@ html.pc-oswin body.concord-view .sidebar{display:none!important}
 /* A single check means delivery confirmed, never a read receipt. */
 .cc-delivery-confirmed{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;vertical-align:middle;white-space:nowrap;color:var(--muted);line-height:1}
 .cc-delivery-confirmed .ic{width:14px;height:14px;flex:none}
+
+/* AN INVITATION, BEFORE IT IS ANSWERED. Sits inside the existing join card, so it inherits the
+   dialog's frame rather than inventing a second one. */
+.cc-invite-card{margin-top:14px!important;padding-top:14px!important;border-top:1px solid rgba(255,255,255,.1)!important;text-align:center!important}
+.cc-invite-card h3{margin:10px 0 6px!important;color:#f1f3f8!important;font-size:19px!important}
+.cc-invite-card .cc-invite-note{margin:0 0 14px!important;color:#9fa6b4!important;font-size:12px!important;line-height:1.5!important}
+.cc-invite-card .cc-join-actions{justify-content:center!important}
+.cc-join-actions.hidden{display:none!important}
