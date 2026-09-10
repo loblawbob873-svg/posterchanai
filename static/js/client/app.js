@@ -18803,7 +18803,15 @@
           const ext=_MIME_EXT[bareType]||''; const url=el.dataset.url;
           const name=el.dataset.name||'';
           close();
-          if(onPick){ try{ onPick({url, type, ext, name}); }catch(_){} return; }
+          /* A CALLBACK THAT THREW USED TO BE INDISTINGUISHABLE FROM A FILE NOBODY PICKED.
+           * `catch(_){}` swallowed everything, so a caller whose insert failed left the picker
+           * closing over a composer that never changed — no error, no toast, nothing in the
+           * console. It is what hid the Concord attach bug for as long as it existed. The catch
+           * stays (a throwing caller must not break the picker) but it SAYS so. */
+          if(onPick){ try{ onPick({url, type, ext, name}); }
+                      catch(e){ console.error('[blossomPicker] the caller could not take that file', e);
+                                toast('could not attach that file'+(e&&e.message?': '+e.message:'')); }
+                      return; }
           // ...only when the URL doesn't already carry one — the server's listing now includes the
           // extension, and appending unconditionally produced "…/<sha>.png.png" (which still served,
           // but is what every other client shows in the note).
