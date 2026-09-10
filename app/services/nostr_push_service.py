@@ -496,9 +496,22 @@ async def _dm_handler(ev: dict):
         # under "msg") and the client's carries "pc-dm". Sharing the tag makes the named one REPLACE
         # the blind one. The other ordering (the client got there first) is handled on the device by
         # ClientNotified, which drops a generic push a live client has already spoken for.
+        # `wid` IS A DEDUP KEY, NOT A ROUTE — and it is what makes "a push for every DM I SEND"
+        # fixable without guessing. NIP-17 publishes TWO gift wraps for one message: one the peer
+        # can open and a SELF-COPY the sender can, so their other devices see what they sent. Both
+        # are p-tagged to their own reader, and a gift wrap's author is an ephemeral throwaway key —
+        # so the `pk != author` guard above cannot see that the self-copy's recipient IS its sender,
+        # and the sender got pushed for their own outgoing message.
+        #
+        # The device that published it knows which wrap ids those were. Carrying the wrap's own id
+        # lets it drop exactly those and nothing else: an EXACT match, where a time window would
+        # have silenced a real DM that happened to arrive seconds after one was sent. The id is
+        # already public on the relay and this goes only to that pubkey's own subscription, so it
+        # discloses nothing the recipient could not already read.
         payload = {"title": "💬 New message",
                    "body": f"{who} sent you a message" if who else "Someone sent you a message",
-                   "type": "dm", "view": "messages", "tag": "pc-dm"}
+                   "type": "dm", "view": "messages", "tag": "pc-dm",
+                   "wid": str(ev.get("id") or "")}
         for subs in targets.values():
             for sub in subs:
                 await asyncio.to_thread(push_service.send, sub, payload)

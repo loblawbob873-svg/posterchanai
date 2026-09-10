@@ -61,6 +61,54 @@ public final class ClientNotified {
         return now - when < WINDOW_MS;
     }
 
+    /* WRAPS THIS DEVICE PUBLISHED, so a push for a message you SENT is dropped exactly.
+     *
+     * "evey time I send a DM i get a push notification." NIP-17 publishes TWO gift wraps for one
+     * message — one the peer can open and a SELF-COPY the sender can, so their other devices see
+     * what they sent — and both are p-tagged to their own reader. A gift wrap's author is an
+     * ephemeral throwaway key, so the server's "don't notify the author" guard cannot tell that the
+     * self-copy's recipient IS its sender.
+     *
+     * The device that published it can. It records the wrap id and drops a push carrying that id.
+     * EXACT, not a time window: a window after sending would have silenced a real DM that arrived
+     * seconds later, which is the failure this file already argues is worse than the duplicate.
+     *
+     * Bounded and time-limited: a send is followed by its push within seconds, so an id that has
+     * gone unclaimed for a few minutes is never going to be, and the map must not grow for the life
+     * of the process. Failing open is preserved — an id we never recorded, or one we have since
+     * forgotten, means SHOW.
+     */
+    public static final long SENT_WINDOW_MS = 300_000L;
+    private static final int SENT_MAX = 256;
+    private static final java.util.LinkedHashMap<String, Long> sent =
+            new java.util.LinkedHashMap<String, Long>(32, 0.75f, false) {
+                @Override protected boolean removeEldestEntry(java.util.Map.Entry<String, Long> e) {
+                    return size() > SENT_MAX;
+                }
+            };
+
+    /** This device published `wrapId` itself — a push carrying it is our own message coming back. */
+    public static void sent(String wrapId, long now) {
+        if (wrapId == null || wrapId.isEmpty()) return;
+        synchronized (sent) { sent.put(wrapId, now); }
+    }
+
+    /** Did this device publish the wrap this push is about? Consumes it: a push arrives once. */
+    public static boolean weSent(String wrapId, long now) {
+        if (wrapId == null || wrapId.isEmpty()) return false;
+        synchronized (sent) {
+            Long when = sent.remove(wrapId);
+            if (when == null) return false;
+            // A clock that has gone backwards must not make an old id look fresh, and an id older
+            // than the window is stale bookkeeping rather than evidence about this push.
+            if (now < when || now - when > SENT_WINDOW_MS) return false;
+            return true;
+        }
+    }
+
     /** Forget it. The client is gone, or has been told to stop speaking for the push. */
-    public static void clear() { dmAt = 0L; }
+    public static void clear() {
+        dmAt = 0L;
+        synchronized (sent) { sent.clear(); }
+    }
 }

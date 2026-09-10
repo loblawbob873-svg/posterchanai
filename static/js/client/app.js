@@ -26849,6 +26849,17 @@
   async function sendDm(pk, text){
     if(signer && signer.nip17wrap){
       const { toPeer, toSelf } = await signer.nip17wrap(pk, text);
+      /* TELL THE NATIVE LAYER WE PUBLISHED THESE, before either is on a relay.
+       *
+       * NIP-17 writes a SELF-COPY wrap so this account's other devices see what it sent, and that
+       * copy is p-tagged to US — so the push watcher, which cannot decrypt a gift wrap and whose
+       * "don't notify the author" test sees only an ephemeral key, pushes us a notification for our
+       * own outgoing message: "evey time I send a DM i get a push notification". The device that
+       * published it is the one thing that knows, so it says so, keyed on the wrap's own id — an
+       * exact match, where suppressing DMs for a few seconds after a send would silence a real one
+       * that happened to arrive in that gap. */
+      try{ const P=_capPlugin('PosterChanPush','notePublished');
+           if(P)void P.notePublished({ids:[toSelf&&toSelf.id,toPeer&&toPeer.id].filter(Boolean)}); }catch(_){ }
       Store.saveEvent(toSelf);
       /* THE MESSAGE YOU JUST SENT MUST BE IN THE THREAD. Reported as "i send dm to user, then the
        * conversation goes blank": the pane renders `dmPeers.get(pk)`, so if our own copy does not

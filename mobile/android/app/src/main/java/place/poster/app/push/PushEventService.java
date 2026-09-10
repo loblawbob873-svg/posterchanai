@@ -38,6 +38,7 @@ public final class PushEventService {
      */
     public static boolean deliver(Context ctx, String payload) {
         String title = "PosterChan", body = "New activity", type = "", route = "notifications";
+        String wid = "";
         String eventTag = null;
         try {
             JSONObject j = new JSONObject(payload == null ? "{}" : payload);
@@ -48,6 +49,7 @@ public final class PushEventService {
             title = j.optString("title", title);
             body = j.optString("body", body);
             type = j.optString("type", "");
+            wid = j.optString("wid", "");            // dedup key only — never a route
             String eid = j.optString("eid", "").trim();
             /* AN EXPLICIT TAG WINS OVER THE EVENT ID, because some notifications deliberately share
              * an identity with one the CLIENT raises. A DM push sends `pc-dm` — the tag the client's
@@ -82,6 +84,11 @@ public final class PushEventService {
              * phone whose WebView is not running is exactly the phone this push exists for.
              * Returns TRUE: handled, not dropped, so a durable delivery is acknowledged rather
              * than retried for ever. */
+            /* A MESSAGE THIS DEVICE SENT IS NOT NEWS TO IT. NIP-17 publishes a SELF-COPY gift wrap
+             * alongside the peer's, so the sender's other devices see what they sent — and its
+             * recipient is the sender, which the server cannot detect because a wrap's author is an
+             * ephemeral key. Matched on the wrap's own id, so nothing else is ever suppressed. */
+            if ("dm".equals(type) && ClientNotified.weSent(wid, System.currentTimeMillis())) return true;
             if ("dm".equals(type) && ClientNotified.recentlyDm(System.currentTimeMillis())) return true;
             show(ctx, title, body, type, eventTag, route);
             return true;

@@ -138,6 +138,26 @@ public class PushPlugin extends Plugin {
      * Stable id is available before registration so JavaScript can sign the server registration.
      * The endpoint is an opaque marker, never the socket URL or bearer token.
      */
+    /* WRAPS THE CLIENT JUST PUBLISHED. A NIP-17 send writes a self-copy addressed to this very
+     * account, so the push watcher — which cannot decrypt a gift wrap, and whose "don't notify the
+     * author" test sees only an ephemeral key — pushes the sender their own message. This is the
+     * only place that knows, and it answers with the wrap's own id so nothing else is suppressed. */
+    @PluginMethod
+    public void notePublished(PluginCall call) {
+        com.getcapacitor.JSArray ids = call.getArray("ids");
+        int noted = 0;
+        if (ids != null) {
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < ids.length(); i++) {
+                String id = ids.optString(i, "");
+                if (id != null && !id.isEmpty()) { ClientNotified.sent(id, now); noted++; }
+            }
+        }
+        JSObject out = new JSObject();
+        out.put("noted", noted);
+        call.resolve(out);
+    }
+
     @PluginMethod
     public void getEndpoint(PluginCall call) {
         JSObject out = new JSObject();
