@@ -73,3 +73,42 @@ def test_reruns_in_one_log_directory_get_distinct_browser_profiles(tmp_path, mon
     assert seen[0] != seen[1]
     assert all(str(tmp_path / "profiles") in profile for profile in seen)
     assert all(str(os.getpid()) in profile for profile in seen)
+
+
+# ── A RED ROW MUST SAY WHY ────────────────────────────────────────────────────────────────────────
+#
+# `summarise` quotes the check's own verdict line, which is right — but the common shape here is
+# `FAIL:` (or `FAIL  5 problem(s):`) followed by `  - …` bullets, so the row printed
+# `✗ check_websearch_rate — FAIL:` and nothing else. That cost three separate re-runs of one check
+# to discover what it objected to, and it silenced every check written that way, not just that one.
+
+
+def test_a_verdict_that_introduces_its_reasons_carries_them():
+    out = ("Web Search rate + engine-proxy config\n\nFAIL:\n"
+           "  - searxng_proxy_engines is ON but settings.yml has no proxy block\n"
+           "  - 3/8 searches took over 5s\n")
+    line = checkall.summarise({"out": out})
+    assert "no proxy block" in line, line
+    assert "3/8 searches took over 5s" in line, line
+    assert line.startswith("FAIL:"), line
+
+
+def test_the_other_common_shape_too():
+    line = checkall.summarise({"out": "FAIL  5 problem(s):\n  - one thing\n  - another\n"})
+    assert "one thing" in line and "another" in line, line
+
+
+def test_a_verdict_that_is_already_a_sentence_is_left_alone():
+    """Quoting the check is the rule; this only adds what a trailing colon promised."""
+    assert checkall.summarise({"out": "OK  all icon checks passed\n"}) == "OK  all icon checks passed"
+
+
+def test_a_pytest_summary_still_wins():
+    out = "FAIL:\n  - ignored\n\n=== 3 failed, 2 passed in 1.0s ===\n"
+    assert "3 failed" in checkall.summarise({"out": out})
+
+
+def test_the_reason_is_bounded():
+    """It is one row in a table, not the check's whole output."""
+    out = "FAIL:\n" + "".join(f"  - problem number {i} with a long description\n" for i in range(80))
+    assert len(checkall.summarise({"out": out})) <= 400

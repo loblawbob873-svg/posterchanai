@@ -480,9 +480,26 @@ def summarise(res):
     for l in reversed(lines):
         if re.search(r"\d+ (passed|failed|error)", l):
             return re.sub(r"\s+", " ", l.strip("= ")).strip()
-    for l in reversed(lines):
-        if re.match(r"^(OK|FAIL|SKIP|PASS)\b", l):
+    # A VERDICT LINE THAT INTRODUCES ITS REASONS IS NOT A REASON.
+    #
+    # The common shape here is `FAIL:` (or `FAIL  5 problem(s):`) followed by `  - …` bullets, and
+    # quoting only the verdict printed `✗ check_websearch_rate — FAIL:` — a red row that says
+    # nothing at all. That cost three separate re-runs of one check to find out what it objected to,
+    # and it silences EVERY check written this way, not just that one. When the verdict line ends in
+    # a colon, the sentences it was introducing come with it.
+    for i in range(len(lines) - 1, -1, -1):
+        l = lines[i]
+        if not re.match(r"^(OK|FAIL|SKIP|PASS)\b", l):
+            continue
+        if not l.rstrip().endswith(":"):
             return l
+        reasons = []
+        for nxt in lines[i + 1:]:
+            if re.match(r"^(OK|FAIL|SKIP|PASS)\b", nxt):
+                break
+            reasons.append(re.sub(r"^\s*[-*]\s*", "", nxt).strip())
+        joined = "; ".join(r for r in reasons if r)
+        return f"{l.rstrip()} {joined}"[:400] if joined else l
     # A failure with no verdict line: show the last thing it said before dying.
     return lines[-1][:160]
 
