@@ -17568,7 +17568,7 @@
   const _NOTIFICATION_TYPES = [['email','Email'],['dm','Direct messages'],['likes','Likes and reactions'],
     ['replies','Replies'],['quotes','Quote posts'],['mentions','Mentions'],['reposts','Reposts'],
     ['zaps','Zaps and tips'],['concord','Concord mentions'],['channels','Chat rooms'],
-    ['reminders','Reminders']];
+    ['sms','Text messages'],['reminders','Reminders']];
   const _NOTIFICATION_SOUNDS = ['chime','soft','bright','off'];
   function _notificationOwner(){ return (ME && ME.pubkey)||''; }
   function _notificationClean(value){
@@ -17881,6 +17881,9 @@
     if(tag==='pc-dm')return 'dm';
     if(tag.startsWith('concord-')||route.startsWith('concord:'))return 'concord';
     if(tag==='pc-reminder')return 'reminders';
+    /* Every text is tagged per CONVERSATION (`sms:<address>`) so two people cannot collapse into
+       one card — see sms.js notifyNew — which is why this matches the prefix rather than a literal. */
+    if(tag==='sms'||tag.startsWith('sms:')||route==='texts')return 'sms';
     return '';
   }
   let _notificationRefreshAt=0;
@@ -38507,6 +38510,7 @@
      * reads as code and fails the build — which is exactly what it had been doing.) */
     driveSearch, driveReveal,
     openDMWith,                                               // → one named route to a conversation, from any window
+    notifToast,                                               // → the in-app half of a notification (needs no OS permission)
     openExternal,                                             // → web search results, and anything else that must leave the app
     /* THE NATIVE PLUGIN LOOKUP, shared. Not a convenience: `_capPlugin` falls back to
      * `Capacitor.registerPlugin(name)`, which is what a plugin registered in Java but with no JS

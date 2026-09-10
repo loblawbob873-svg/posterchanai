@@ -1071,10 +1071,31 @@
       // suppresses the second message of a conversation, which is the one people are waiting for.
       if((m.date || 0) < S.since) return;
       const who = whoIs(m.name, m.address) || 'a message';
+      const preview = String(m.body || '').slice(0, 140);
+      /* ONE TAG FOR EVERY TEXT IS WHY THEY WERE EASY TO MISS. A notification tag REPLACES the card
+       * already showing under it — that is the whole point of a tag — so a literal `sms` meant the
+       * second person to text you silently overwrote the first, and a burst of three conversations
+       * left exactly one card on screen. Keyed per conversation: two people can no longer collapse
+       * into one, while a second text from the SAME person still updates in place rather than
+       * stacking, which is what a messaging app should do. */
+      const tag = 'sms:' + String(m.address || m.name || 'unknown');
+      /* AND SAY IT IN THE APP TOO, not only to the OS. Direct messages have always raised both — a
+       * toast needs no permission and is the only half that shows while somebody is looking at
+       * another screen of this app with OS notifications denied or ignored. Texts raised the OS one
+       * alone, so on a laptop with notifications off they arrived completely silently. */
+      try{ if(PC.notifToast) PC.notifToast('✉ <b>' + PC.enc(who) + '</b> ' + PC.enc(preview), ''); }catch(_){ }
       // Through the app's ONE notification path — it knows that Android's WebView implements the
       // Notifications API by doing nothing, and routes to the native builder there instead.
-      if(PC.osNotify) PC.osNotify(who, m.body || '', { tag:'sms' });
-      else PC.toast(who + ': ' + String(m.body||'').slice(0, 60));
+      // `route` is what makes the card openable: without it a click focuses the app and leaves the
+      // reader to find the conversation themselves, which is the same failure as a DM notification
+      // landing on the notifications screen.
+      /* AND OPEN THE CONVERSATION IT IS ABOUT, not merely the app. `key(address)` is the same
+       * identity the thread list is built from (see the `by` map above), so this lands on the
+       * thread rather than the room list — the rule the DM route had to be taught this week. */
+      const land = () => { try{ S.open = key(m.address); paint(); }catch(_){ } };
+      if(PC.osNotify) PC.osNotify(who, preview, { tag, route:'texts', notificationType:'sms',
+                                                  onClick: land });
+      else PC.toast(who + ': ' + preview.slice(0, 60));
     }catch(_){ }
   }
 
