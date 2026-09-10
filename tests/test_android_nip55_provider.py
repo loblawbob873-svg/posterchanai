@@ -268,13 +268,29 @@ def test_this_app_is_not_offered_as_a_signer_to_itself():
         "the login picker offers this app its own signer, which is an Intent round trip to itself"
 
 
+# WHAT THIS RULE IS ABOUT IS A **RESOLVER**, NOT THE WORD `<provider>`.
+#
+# The question is whether some other app could get a signature out of us WITHOUT an Activity — that
+# is what would make the login-picker decision wrong. These two are declared providers and answer no
+# such query: FileProvider hands out content:// URIs for files WE share, and androidx's
+# InitializationProvider is a startup hook that is only present here to REMOVE emoji2's downloadable
+# font initializer (see tests/test_android_survives_a_play_services_restart.py — the Play Services
+# process dying was killing this app). Matching the element name rather than the capability made
+# that unrelated one-line manifest override look like a new signing surface.
+_NOT_A_RESOLVER = {
+    "androidx.core.content.FileProvider",
+    "androidx.startup.InitializationProvider",
+}
+
+
 def test_we_have_no_content_provider_so_the_self_path_would_be_an_activity_each_time():
     """The fact the rule above depends on. If a resolver is ever added, revisit that decision."""
     m = _read(MANIFEST)
     providers = re.findall(r"<provider[\s\S]*?android:name=\"([^\"]+)\"", m)
-    assert all("FileProvider" in p for p in providers), (
+    assert not [p for p in providers if p not in _NOT_A_RESOLVER], (
         "a ContentProvider was added — NIP-55 may now have a silent path, so signing to ourselves "
-        "is no longer an Activity per request and the login-picker rule should be re-examined")
+        "is no longer an Activity per request and the login-picker rule should be re-examined: "
+        + str([p for p in providers if p not in _NOT_A_RESOLVER]))
 
 
 def test_the_event_id_is_not_built_with_org_json():
