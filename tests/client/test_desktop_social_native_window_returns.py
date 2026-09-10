@@ -14,7 +14,11 @@ def test_existing_native_app_is_routed_before_it_is_focused():
 
 def test_window_route_crosses_renderer_and_monitor_boundaries():
     assert "new root.BroadcastChannel(ROUTE_CHANNEL)" in WIN
-    assert "ch.postMessage({view:v})" in WIN
+    # THE RULE IS THAT THE VIEW CROSSES THE CHANNEL, not the exact shape of the object it rides in.
+    # Pinning `postMessage({view:v})` broke the day the route also began carrying WHICH conversation
+    # ("message this person" opens a window in another renderer, where `dmActive` does not exist) —
+    # a strictly larger message, doing strictly more, failing a test about whether it is sent at all.
+    assert "ch.postMessage(" in WIN and "view:v" in WIN
     assert "String(state.view||'')!==v" in WIN
     assert "root.__PC.switchView(v)" in WIN
     assert "routeExisting" in WIN.split("const API =", 1)[1]

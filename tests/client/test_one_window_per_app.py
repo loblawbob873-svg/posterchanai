@@ -49,10 +49,22 @@ def test_the_search_happens_before_a_new_window_is_opened():
 
 
 def test_it_matches_on_the_view_not_the_title():
-    """A title is a label and gets localised and renamed; the view is the identity."""
+    """A title is a label and gets localised and renamed; the view is the identity.
+
+    The rule is WHICH FIELD decides, not how the comparison is spelled. This pinned
+    `r.view === view`, and literal equality is the thing that later had to go: Direct Messages and
+    Communities are two tabs of ONE application, so asking for `messages` with `concord` already
+    open as a toplevel matched nothing and opened a second window ("two messages windows appear and
+    no DM window to the user"). The in-page lookup three lines below had always asked
+    `sameAppWindow`; the two halves of one lookup must not answer differently.
+    """
     body = _open_app()
     line = re.search(r"nativeTasks\.find\([^\n]*", body).group(0)
-    assert "r.view === view" in line and "r.own" in line
+    assert "r.view" in line and "r.own" in line, line
+    assert "title" not in line, line
+    assert "sameAppWindow(" in line, (
+        "the native lookup must know Messages and Communities are one app, exactly as the in-page "
+        "one does: " + line)
 
 
 def test_only_our_own_windows_are_matched():
