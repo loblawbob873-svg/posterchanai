@@ -119,15 +119,30 @@ public final class LauncherTileLandsOnItsScreenDeviceTest {
         }
     }
 
-    /** Wait for the client to adopt `view` and paint something, or describe what it did instead. */
+    /** Wait for the client to adopt `view` and paint something, or describe what it did instead.
+     *
+     * IT ANSWERS A BARE TOKEN, NOT JSON, and that is the whole reason this works.
+     * `evaluateJavascript` hands back a JSON-ENCODED value, so a JS string arrives at Java already
+     * escaped: `{"active":true}` comes through as `"{\"active\":true}"`. The first version matched
+     * on `"active":true`, which is never present in that text — so this NEVER returned ok, every
+     * probe burned its full budget, `aColdLaunchAlsoLandsOnMessages` failed while reporting a state
+     * that reads as success, and the per-tile walk spent six seconds a tile and blew the runner's
+     * 90-second per-test timeout. One escaping mistake, two red tests, and a failure message that
+     * argued against itself.
+     *
+     * The budget is also smaller now: this runs once per tile across the whole shipped catalogue,
+     * so a probe that cannot settle must cost ~2s, not 6.
+     */
     private static String settle(WebView web, String view) {
         String last = "";
-        for (int i = 0; i < 40; i++) {          // the landing runs after boot, then paints
-            SystemClock.sleep(150);
-            last = eval(web, "(()=>{const f=document.getElementById('feed');return JSON.stringify({"
-                    + "active:__PC.isView(" + JSONObject.quote(view) + "),"
-                    + "painted:!!(f&&f.children.length)});})()");
-            if (last.contains("\"active\":true") && last.contains("\"painted\":true")) return "ok";
+        for (int i = 0; i < 20; i++) {          // the landing runs after boot, then paints
+            SystemClock.sleep(100);
+            last = eval(web, "(()=>{const f=document.getElementById('feed');"
+                    + "const a=__PC.isView(" + JSONObject.quote(view) + "),"
+                    + "p=!!(f&&f.children.length);"
+                    + "return a&&p?'ok':('active='+a+' painted='+p);})()");
+            // The value is JSON-encoded, so an ok answer arrives as the four characters "ok".
+            if (last.contains("ok")) return "ok";
         }
         return last;
     }
