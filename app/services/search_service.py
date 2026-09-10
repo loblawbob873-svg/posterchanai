@@ -7,7 +7,7 @@ import re
 import socket
 import time
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from sqlalchemy.orm import Session
 from bs4 import BeautifulSoup
 from app.services import settings_store
@@ -822,8 +822,19 @@ class SearchService:
 
         title = "YouTube video"
         try:  # best-effort page title (the watch-page <title> is the video title)
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            # DEFENCE IN DEPTH: even reached with a validated url, a redirect is a NEW url this
+            # node did not choose — the same reason every other fetcher here hand-rolls its hops.
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
                 r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                for _hop in range(4):
+                    if r.status_code not in (301, 302, 303, 307, 308):
+                        break
+                    nxt = urljoin(str(r.url), r.headers.get("location", ""))
+                    ok, why = is_safe_url(nxt)
+                    if not ok:
+                        logger.warning("SSRF blocked (youtube redirect): %s -> %s - %s", url, nxt, why)
+                        raise ValueError("redirect blocked")
+                    r = await client.get(nxt, headers={"User-Agent": "Mozilla/5.0"})
                 if r.status_code == 200 and r.text:
                     t = BeautifulSoup(r.text, "lxml").title
                     if t:
@@ -967,6 +978,32 @@ class SearchService:
         three renders would not fit.
         """
         did_render = False
+        # SSRF PROTECTION FIRST, BEFORE ANY BRANCH TAKES THE URL SOMEWHERE ELSE.
+        #
+        # This check used to sit BELOW the YouTube interception, and `extract_video_id` matches with
+        # an UNANCHORED `re.search` — so a url merely had to CONTAIN `youtube.com/watch?v=<11 chars>`
+        # to be routed past the guard entirely, into `_fetch_youtube_content`, which fetches with
+        # `follow_redirects=True` and no validation at all. Measured:
+        #
+        #   http://169.254.169.254/latest/meta-data/?x=youtube.com/watch?v=dQw4w9WgXcQ
+        #   http://127.0.0.1:5432/?youtube.com/watch?v=dQw4w9WgXcQ
+        #
+        # both yield a video id AND are refused by `is_safe_url` — the guard would have stopped them
+        # and never ran. Every caller reaches this: telegram, the web UI, the fediverse bots, and the
+        # summarize/post commands, so a pasted link was enough, and the fetched page's <title> comes
+        # back to the caller and to the model.
+        #
+        # A guard that any branch above it can skip is not a guard. Nothing may be fetched before it.
+        is_safe, error_msg = is_safe_url(url)
+        if not is_safe:
+            logger.warning(f"SSRF blocked: {url} - {error_msg}")
+            return {
+                "url": url,
+                "title": url,
+                "content": "",
+                "error": f"URL blocked: {error_msg}"
+            }
+
         # YouTube *videos* need the transcript, not the watch-page HTML (which is contentless and
         # makes the LLM hallucinate). Centralised here so EVERY caller - telegram/web/
         # pleroma and the summarize & post commands - gets it via fetch_urls()
@@ -978,17 +1015,6 @@ class SearchService:
                 return await self._fetch_youtube_content(url, max_length)
         except Exception as _yt_err:
             logger.warning(f"YouTube transcript path failed for {url}: {_yt_err}")
-
-        # SSRF protection: validate URL before fetching
-        is_safe, error_msg = is_safe_url(url)
-        if not is_safe:
-            logger.warning(f"SSRF blocked: {url} - {error_msg}")
-            return {
-                "url": url,
-                "title": url,
-                "content": "",
-                "error": f"URL blocked: {error_msg}"
-            }
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
