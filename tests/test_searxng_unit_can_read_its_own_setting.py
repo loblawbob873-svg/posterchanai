@@ -40,3 +40,39 @@ def test_it_does_not_rehydrate_a_store_that_is_already_loaded():
     pointless database round trip on every import."""
     src = inspect.getsource(searxng_native._hydrate_settings_for_the_unit)
     assert "if settings_store.is_hydrated():" in src and "return" in src, src
+
+
+# ---- FLIPPING THE SWITCH USED TO CHANGE A SETTING AND NOTHING ELSE -----------------------------
+#
+# `apply_outgoing_proxy` runs in exactly one place — building the WSGI app — so it ran ONCE, at
+# start. Turn "Route engine requests through this node's proxy" on afterwards and settings.yml was
+# never rewritten: the setting said one thing, the file said another, and the engines carried on
+# going wherever the last start decided. MEASURED on this node by check_websearch_rate:
+# `searxng_proxy_engines=True  settings.yml proxies=False`, every search fast and DIRECT, with
+# nothing anywhere saying the toggle had not landed.
+
+
+def test_the_admin_save_re_applies_the_toggle():
+    from pathlib import Path
+    admin = (Path(__file__).resolve().parents[1] / "app/routers/admin.py").read_text(encoding="utf-8")
+    assert "refresh_outgoing_proxy" in admin, "nothing re-applies the engine-proxy toggle on save"
+    assert "searxng_proxy_engines" in admin
+    assert "proxy_fallback_port" in admin, "the port is half the same policy and needs the same refresh"
+
+
+def test_a_no_op_save_does_not_restart_the_unit():
+    """A restart drops every in-flight search; saving an unrelated setting must not cost one."""
+    src = inspect.getsource(searxng_native.refresh_outgoing_proxy)
+    assert "if after == before:" in src, src
+    assert src.index("if after == before:") < src.index("systemctl"), \
+        "the restart runs before the no-change check"
+
+
+def test_the_restart_is_best_effort_and_reported():
+    """SearXNG reads `outgoing:` once at import, so the file alone is not enough — but a node with
+    no passwordless sudo must still end up with a correct file rather than an exception."""
+    src = inspect.getsource(searxng_native.refresh_outgoing_proxy)
+    assert '"sudo", "-n", "systemctl"' in src
+    assert "except Exception" in src
+    assert 'out["restarted"]' in src
+    assert "logger.info" in src, "an unattempted or failed restart must say so"

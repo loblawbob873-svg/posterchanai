@@ -344,6 +344,54 @@ def wsgi_app():
     return _app
 
 
+def refresh_outgoing_proxy() -> dict:
+    """Re-apply the toggle to settings.yml, and get the unit to actually read it.
+
+    `apply_outgoing_proxy` runs in exactly one place — building the WSGI app — so it runs ONCE, at
+    start. Flip "Route engine requests through this node's proxy" in Admin → Tools afterwards and
+    nothing rewrites the file: the setting says one thing, settings.yml says another, and the
+    engines carry on going wherever the last start decided. MEASURED on this node by
+    `scripts/check_websearch_rate.py` — `searxng_proxy_engines=True`, `settings.yml proxies=False`,
+    every search fast and direct, and nothing anywhere saying the toggle had not landed. An operator
+    who believes engine requests leave through the proxy and is wrong about it is exactly the sort of
+    disagreement this codebase treats as a defect.
+
+    Two halves, because the file is not enough on its own: SearXNG reads `outgoing:` once at import,
+    so a running unit keeps the old policy until it restarts. The restart is best effort (it needs
+    the same passwordless sudo `vram_manager` uses) and its outcome is REPORTED rather than assumed —
+    if it did not happen, the file is still correct and the next start picks it up.
+
+    Called from the admin settings save. Safe to call when nothing changed: `apply_outgoing_proxy`
+    only writes when the bytes differ, and the restart is skipped unless they did.
+    """
+    out = {"file": "", "restarted": False, "why": ""}
+    try:
+        before = settings_path().read_text(encoding="utf-8") if settings_path().is_file() else ""
+    except Exception:
+        before = ""
+    out["file"] = apply_outgoing_proxy()
+    try:
+        after = settings_path().read_text(encoding="utf-8") if settings_path().is_file() else ""
+    except Exception:
+        after = before
+    if after == before:
+        out["why"] = "settings.yml already matched the toggle"
+        return out
+    import subprocess
+    try:
+        r = subprocess.run(["sudo", "-n", "systemctl", "restart", "posterchanai-searxng.service"],
+                           timeout=40, capture_output=True, text=True)
+        out["restarted"] = r.returncode == 0
+        if not out["restarted"]:
+            out["why"] = (r.stderr or r.stdout or "").strip()[:200] or f"exit {r.returncode}"
+    except Exception as exc:
+        out["why"] = str(exc)[:200]
+    logger.info("[searxng] outgoing proxy now %s; unit restart %s%s", out["file"],
+                "ok" if out["restarted"] else "NOT done",
+                f" ({out['why']})" if out["why"] else "")
+    return out
+
+
 def _hydrate_settings_for_the_unit() -> None:
     """Let the process that OWNS settings.yml read the settings that decide its contents.
 

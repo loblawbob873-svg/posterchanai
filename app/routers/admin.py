@@ -624,6 +624,14 @@ def update_settings(
                 trigger_block_reload()
             except Exception as e:
                 logger.warning(f"[Admin] relay block reload after settings save failed: {e}")
+        # The SearXNG engine-proxy toggle decides the CONTENTS of settings.yml, which SearXNG reads
+        # once at import — so without this the switch changed a setting and nothing else, for ever.
+        if any(k in data.settings for k in ("searxng_proxy_engines", "proxy_fallback_port")):
+            try:
+                from app.services.searxng_native import refresh_outgoing_proxy
+                refresh_outgoing_proxy()
+            except Exception as e:
+                logger.warning(f"[Admin] SearXNG outgoing-proxy refresh failed: {e}")
         # NIP-05 identities edited → push to the running relay (serves /.well-known/nostr.json)
         if any(k in data.settings for k in ("nostr_relay_nip05_enabled", "nostr_relay_nip05_names", "nostr_relay_nip05_relays")):
             try:
