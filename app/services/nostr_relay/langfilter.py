@@ -13,6 +13,9 @@ guard (a false positive DELETES the note via the retroactive purge, so both are 
 
 import re
 from collections import defaultdict
+import logging
+
+logger = logging.getLogger(__name__)
 
 # URLs, nostr: URIs and bech32/Lightning entities are long runs of Latin/base32 characters that
 # are NOT language — left in, they inflate the letter count and dilute a short non-Latin note
@@ -264,6 +267,45 @@ def blocked_language(content: str, blocked: set) -> str | None:
 #
 # Exact substring, case-insensitive, and nothing else. If a term needs to catch two spellings, that
 # is two lines in the list — which is visible, reversible and belongs to the operator.
+# A TERM THAT MATCHES EVERYTHING IS REFUSED, WHATEVER IT IS.
+#
+# This predicate decides what the relay ACCEPTS and, through delete_by_words, what it DELETES. One
+# term that matches every string therefore takes the whole relay down and starts removing history,
+# and there is no reading of an operator's intent under which they meant that.
+#
+# It has happened. Separator folding turned the real entry `--------------` into the empty string,
+# `"" in content` is true for everything, and the timeline stopped within the hour. The folding is
+# gone, but the CLASS of mistake is not: any future normalisation, a stray whitespace-only line, or
+# a term someone pastes with an invisible character can do it again. So the list is screened once,
+# where it is read, against text that must never be blocked — and a term that matches THAT is
+# dropped and named in the log rather than trusted.
+#
+# The canaries are deliberately dull and varied: an empty string (what a degenerate term folds to),
+# plain prose, and pure punctuation, so a term matching any of them cannot be a content filter.
+_CANARIES = ("", "good morning", "hello world", "the quick brown fox", "...", "----")
+
+
+def screen_blocked_words(words):
+    """Return (usable, refused): terms safe to filter with, and terms that match everything.
+
+    Called where the setting is READ, so one bad line costs that line and not the relay.
+    """
+    usable, refused = set(), []
+    for w in words or ():
+        term = str(w or "")
+        if not term.strip():
+            refused.append(w)
+            continue
+        if any(blocked_word(c, {term}) for c in _CANARIES):
+            refused.append(w)
+            continue
+        usable.add(term)
+    if refused:
+        logger.warning("[relay] ignoring %d blocked-word entr%s that would match every event: %r",
+                       len(refused), "y" if len(refused) == 1 else "ies", refused[:10])
+    return usable, refused
+
+
 def blocked_word(content: str, words) -> str | None:
     """Return the first blocked word/phrase found in `content`, or None.
 

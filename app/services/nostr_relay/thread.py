@@ -30,6 +30,7 @@ from .wot import WotGate
 from .server import RelayServer, _git_comment_root
 from .bridges import (relay_domain as _bridge_domain, reveals_blocked_bridge,
                       author_on_blocked_bridge, is_bridged_post)
+from .langfilter import screen_blocked_words
 
 logger = logging.getLogger(__name__)
 
@@ -421,8 +422,12 @@ def _read_config() -> dict:
                               .replace(",", " ").split() if x.strip()},
             # Reject notes whose text contains any of these words/phrases (case-insensitive
             # substring). One per line so phrases with spaces work.
-            "blocked_words": {w.strip().lower() for w in g("nostr_relay_blocked_words", "")
-                              .split("\n") if w.strip()},
+            # SCREENED WHERE IT IS READ. A term that matches every string does not filter content,
+            # it takes the relay down and — through delete_by_words — starts removing history. One
+            # bad line costs that line and is named in the log; see langfilter.screen_blocked_words.
+            "blocked_words": screen_blocked_words(
+                w.strip().lower() for w in g("nostr_relay_blocked_words", "").split("\n")
+                if w.strip())[0],
             # Hard denylist of pubkeys (npub/hex) — rejected even if in the WoT, and their
             # existing notes are purged on startup.
             "blocked_pubkeys": [pk for pk in
