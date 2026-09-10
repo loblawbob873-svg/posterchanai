@@ -247,26 +247,23 @@ def blocked_language(content: str, blocked: set) -> str | None:
     return next(iter(hit)) if hit else None
 
 
-# SEPARATORS ARE NOT PART OF THE WORD.
+# A TERM IS MATCHED EXACTLY. SEPARATOR FOLDING WAS TRIED HERE AND CAUSED AN OUTAGE — do not
+# re-add it without reading this.
 #
-# "i added zone_presence to relay block words and the posts are still coming through" — and they
-# were, because the notes say "zone presence" with a SPACE while the blocked term was typed with an
-# underscore. A literal substring match is exactly right about characters and exactly wrong about
-# intent: somebody blocking `zone_presence` means the thing, not one of its four spellings, and the
-# spammer publishing it uses whichever separator suits the field it lands in (the same payload
-# appears as `"type":"zone_presence"` inside a repost and as prose in the note).
+# The idea was that somebody blocking `zone_presence` means the thing, not one of its spellings, so
+# `_`, `-`, `.` and whitespace runs were folded to one space on both sides of the comparison. It
+# looked harmless and it is not, because a block list is operator free text and some entries are
+# PUNCTUATION. This relay's real list contains `--------------`, which folds to the empty string —
+# and `"" in content` is true for every event ever published. So every ingest path refused
+# everything and the retroactive purge, which shares this predicate, was entitled to delete
+# anything not preserved or anchored. Reported within the hour as "timeline is not looking normal".
 #
-# So `_`, `-`, `.` and any run of whitespace all fold to one space, on BOTH sides of the comparison.
-# This adds no fuzziness — it is still an exact, admin-defined string, which is what lets the
-# retroactive purge use it without the false-positive risk a language guess carries. It only stops
-# the match being defeated by a keystroke.
-_SEPARATORS = re.compile(r"[\s_.\-]+")
-
-
-def _fold(text: str) -> str:
-    return _SEPARATORS.sub(" ", str(text or "").lower()).strip()
-
-
+# It also silently WIDENS an operator's existing entries: `✄-` folds to `✄`, which then matches
+# every post containing that character rather than the one string they typed. Changing what
+# somebody's saved filter means, on live data, with a purge attached to it, is not a tidy-up.
+#
+# Exact substring, case-insensitive, and nothing else. If a term needs to catch two spellings, that
+# is two lines in the list — which is visible, reversible and belongs to the operator.
 def blocked_word(content: str, words) -> str | None:
     """Return the first blocked word/phrase found in `content`, or None.
 
@@ -275,9 +272,9 @@ def blocked_word(content: str, words) -> str | None:
     """
     if not words or not content:
         return None
-    low = _fold(content)
+    low = content.lower()
     for w in words:
-        if w and _fold(w) in low:
+        if w and w in low:
             return w
     return None
 

@@ -65,12 +65,20 @@ def test_language_detection_stays_kind_one_only():
     assert not ingest._content_blocked({"kind": 6, "content": "привет " * 20}, langs, None)
 
 
-def test_a_separator_does_not_defeat_the_word():
-    """The same term typed with an underscore must catch the prose spelling beside it — the notes
-    on this relay say "Zone presence" in text and `zone_presence` in the payload."""
-    assert blocked_word("This is a zone presence announcement", WORDS) == "zone_presence"
-    assert blocked_word("Zone-Presence telemetry", WORDS) == "zone_presence"
-    assert blocked_word("zonepresence", WORDS) is None, "a separator is a separator, not nothing"
+def test_a_punctuation_term_can_never_match_everything():
+    """A block list is operator free text and some entries ARE punctuation.
+
+    Separator folding was tried here and took the relay down: `--------------` is a real entry on
+    this node, it folded to the empty string, and `"" in content` is true for every event ever
+    published — so ingest refused everything and the purge was entitled to delete anything not
+    preserved or anchored. Reported within the hour as "i am not seeing new posts, just reposts".
+    """
+    words = {"--------------", "\u2704-", "zone_presence"}
+    assert blocked_word("good morning everyone", words) is None
+    assert blocked_word("nothing to see", words) is None
+    # …while the terms themselves still match exactly what they say.
+    assert blocked_word("a -------------- rule", words) == "--------------"
+    assert blocked_word('{"type":"zone_presence"}', words) == "zone_presence"
 
 
 def test_the_retroactive_purge_uses_the_same_predicate_and_the_same_kinds():
