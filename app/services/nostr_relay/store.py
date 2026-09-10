@@ -720,29 +720,59 @@ class RelayStore:
         return await self._w(self._delete_pubkeys_sync, list(pubkeys))
 
     def _delete_by_words_sync(self, words: list) -> int:
-        """Purge stored kind-1 notes whose content contains any blocked word (case-insensitive
-        substring) — the same match blocked_word() uses, applied retroactively."""
+        """Purge stored events whose content contains any blocked word — THE SAME MATCH the live
+        filter uses, applied retroactively.
+
+        Two things this got wrong, both of which let already-stored spam sit there for ever after
+        the operator had blocked it.
+
+        IT WAS `kind=1` ONLY, exactly like the two ingest filters were, so the kinds the payload
+        actually arrives in were never even selected. Measured on this relay: eight stored events
+        carried the blocked string and half of them were not kind 1.
+
+        AND IT BUILT ITS OWN SQL `LIKE`, with `_` escaped as a literal. That was a faithful copy of
+        `blocked_word` when `blocked_word` was a plain substring test, and stopped being one the
+        moment separators began folding — at which point the relay would refuse a word at the door
+        and decline to remove the same word already inside, with nothing to say the two disagreed.
+        There is no SQL form of the real predicate, so this reads content and asks the predicate,
+        exactly as the language purge already does.
+        """
+        words = [w for w in words if w]
         if not words:
             return 0
+        from .langfilter import blocked_word, _NEVER_WORD_FILTERED
         conn = self._conn()
-        removed = 0
         # Spare only LOCAL users' own notes (preserve/direct). A blocked word is blocked at INGEST for
         # everyone including WoT members (server.py has no WoT exemption), so the retroactive purge matches:
         # it also purges WoT members' matching notes. Blocked words are EXACT admin-defined strings (no
         # heuristic false-positive risk), so this can't delete legitimate content the way a bad lang guess
         # could. Kept consistent with _delete_by_langs_sync.
-        preserve = self._preserve_clause()
-        for w in words:
-            like = "%" + w.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-            ids = [r["id"] for r in conn.execute(
-                f"SELECT id FROM events WHERE kind=1 AND {preserve} AND LOWER(content) LIKE ? ESCAPE '\\'",
-                (like,)).fetchall()]
+        skip = ",".join(str(int(k)) for k in sorted(_NEVER_WORD_FILTERED))
+        ids = [r["id"] for r in conn.execute(
+                   f"SELECT id, content, kind FROM events "
+                   f"WHERE kind NOT IN ({skip}) AND {self._preserve_clause()}")
+               if blocked_word(r["content"] or "", words)]
+        # Spare thread ANCHORS, for the reason _delete_by_langs_sync spares them: deleting a note a
+        # SURVIVING event still points at by an e-tag orphans that reply's whole thread.
+        if ids:
+            cand = set(ids)
+            anchored = set()
             for i in range(0, len(ids), 900):
                 chunk = ids[i:i + 900]
                 ph = ",".join("?" * len(chunk))
-                conn.execute(f"DELETE FROM event_tags WHERE event_id IN ({ph})", chunk)
-                conn.execute(f"DELETE FROM events WHERE id IN ({ph})", chunk)
-                removed += len(chunk)
+                for row in conn.execute(
+                        f"SELECT value, event_id FROM event_tags WHERE tag='e' AND value IN ({ph})", chunk):
+                    if row["event_id"] not in cand:
+                        anchored.add(row["value"])
+            if anchored:
+                ids = [x for x in ids if x not in anchored]
+        removed = 0
+        for i in range(0, len(ids), 900):
+            chunk = ids[i:i + 900]
+            ph = ",".join("?" * len(chunk))
+            conn.execute(f"DELETE FROM event_tags WHERE event_id IN ({ph})", chunk)
+            conn.execute(f"DELETE FROM events WHERE id IN ({ph})", chunk)
+            removed += len(chunk)
         conn.commit()
         return removed
 

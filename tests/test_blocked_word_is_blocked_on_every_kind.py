@@ -71,3 +71,35 @@ def test_a_separator_does_not_defeat_the_word():
     assert blocked_word("This is a zone presence announcement", WORDS) == "zone_presence"
     assert blocked_word("Zone-Presence telemetry", WORDS) == "zone_presence"
     assert blocked_word("zonepresence", WORDS) is None, "a separator is a separator, not nothing"
+
+
+def test_the_retroactive_purge_uses_the_same_predicate_and_the_same_kinds():
+    """A relay that refuses a word at the door and declines to remove the same word already inside
+    is a relay with two different answers to one question.
+
+    The purge built its own SQL LIKE with `_` escaped as a literal — a faithful copy of
+    `blocked_word` while that was a plain substring test, and no longer one the moment separators
+    began folding. There is no SQL form of the real predicate, so it reads content and asks the
+    predicate, exactly as the language purge already does.
+    """
+    import inspect
+    from app.services.nostr_relay.store import RelayStore
+    src = inspect.getsource(RelayStore._delete_by_words_sync)
+    # The CODE, not the docstring explaining what it used to do — prose about a bug is not the
+    # bug. (Five tests went red today for asserting a spelling; this one nearly made six.)
+    parts = src.split(chr(34) * 3)
+    code = parts[2] if len(parts) >= 3 else src
+    assert "blocked_word(" in code, "the purge must ask the same predicate the door asks"
+    assert " LIKE " not in code, "a second, SQL-shaped definition of the same rule: " + code
+    assert "_NEVER_WORD_FILTERED" in src and "kind NOT IN" in src, (
+        "it was kind=1 only, exactly like the two ingest filters were")
+
+
+def test_the_purge_still_spares_what_it_always_spared():
+    """Broadening a purge is the thing this relay has lost data to before."""
+    import inspect
+    from app.services.nostr_relay.store import RelayStore
+    src = inspect.getsource(RelayStore._delete_by_words_sync)
+    assert "_preserve_clause()" in src, "local users' own writes are spared"
+    assert "anchored" in src and "tag='e'" in src, (
+        "a note a SURVIVING event still points at must not be deleted — that orphans the thread")
