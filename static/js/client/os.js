@@ -1411,18 +1411,36 @@
      * drawBar) is what tells it this frame does need it — so the surface simply rises and nothing
      * is hidden. Minimising somebody's browser to show a Settings window is precisely "opening a
      * new window hides all the other windows"; do not do it where the compositor can be asked. */
-    const mine=/^(?:posterchan(?:-desktop)?|place\.poster\.desktop)$/i;
-    const others=rows.map(r=>r&&mine.test(String(r.app||''))?Object.assign({},r,{own:true}):r);
-    const plan=typeof pcWM.shellFront==='function'
-      ? {hide:[],show:NAT().domStackPlan(others,rect).show}
-      : NAT().domStackPlan(others,rect);
-    for(const id of plan.show) if(_domCoveredNative.has(id)){
-      try{ await pcWM.show(id); _domCoveredNative.delete(id); }catch(_){}
-      if(gen!==_domStackGen||!_focusCurrent(focusToken))return;
-    }
-    for(const id of plan.hide) if(!_domCoveredNative.has(id)){
-      try{ await pcWM.hide(id); _domCoveredNative.add(id); }catch(_){}
-      if(gen!==_domStackGen||!_focusCurrent(focusToken))return;
+    /* ONLY THE DESKTOP'S OWN SURFACE IS `own`. The rows come straight from `pcWM.snapshot()`, i.e.
+     * the compositor's own view records, which carry no such field — so this plan's one protection
+     * against acting on our own windows was inert, and what it would have put away is the shell: a
+     * full-output window containing this very frame, i.e. the whole desktop.
+     *
+     * A POPPED-OUT PosterChan WINDOW IS NOT `own` FOR THIS PURPOSE, and that is deliberate. It is
+     * an ordinary toplevel like Telegram; a Settings frame drawn over it must go in front of it for
+     * the same reason and by the same means. Marking every window sharing our app-id exempted them,
+     * which is "social is stuck behind terminal" seen from the other end.
+     *
+     * AND NOTHING IS HIDDEN HERE ANY MORE. `plan.hide` used to be a list of applications to take
+     * off the screen, because sway painted floating above tiled and the only way to show a frame
+     * drawn inside the shell was to remove whatever covered it. On a compositor that can be asked
+     * to order its own stack it is simply the list of windows this frame COVERS, published to main,
+     * which puts them under the desktop and leaves every other window exactly where it is.
+     * Minimising somebody's browser to show a Settings window is precisely "opening a new window
+     * hides all the other windows"; do not do it where the compositor can be asked. */
+    const others=rows.map(r=>r&&Number(r.id)===shellId?Object.assign({},r,{own:true}):r);
+    const plan=NAT().domStackPlan(others,rect);
+    if(typeof pcWM.shellFront==='function'){
+      _shellCoverWish(plan.hide);
+    }else{
+      for(const id of plan.show) if(_domCoveredNative.has(id)){
+        try{ await pcWM.show(id); _domCoveredNative.delete(id); }catch(_){}
+        if(gen!==_domStackGen||!_focusCurrent(focusToken))return;
+      }
+      for(const id of plan.hide) if(!_domCoveredNative.has(id)){
+        try{ await pcWM.hide(id); _domCoveredNative.add(id); }catch(_){}
+        if(gen!==_domStackGen||!_focusCurrent(focusToken))return;
+      }
     }
     /* Parking the formerly-focused floating surface lets Sway choose a successor. Reassert the
        shell only if this is still the newest user click, so DOM active/z-order and compositor
@@ -1528,7 +1546,11 @@
      * ordinary recomputation from drawBar still governs every later frame -- including sinking the
      * surface again the moment a foreign application really does take the keyboard. */
     if(w.native == null) _shellFrontWish(true);
-    else _publishShellFront();
+    /* AN ADOPTED APPLICATION TAKING FOCUS ENDS THE COVER LIST, and forgetting that pins real
+     * windows under the desktop with nothing on screen still claiming the space. `covers` describes
+     * ONE in-page frame's overlap; the moment the thing you clicked is a compositor window of its
+     * own, no frame of ours is on top and there is nothing left for the desktop to be above. */
+    else { _shellCoverWish([]); _publishShellFront(); }
     if(w.native == null) _stackDomAboveNative(w,focusToken).catch(()=>{});
     if(nativeWins().length) nsync();
     if(!w.noFeed) claimFeed(w);   // a folder owns its own contents and must never take the feed
@@ -7612,7 +7634,35 @@
    * notification centre, the tray flyout, the composer) is already its own window.
    *
    * Only on change: this is on the draw path, and an IPC call per repaint is a call per clock tick. */
+  /* WHAT IS PUBLISHED IS NOW TWO THINGS, AND THE SECOND ONE IS THE FIX.
+   *
+   * `front` still means "a window this desktop DRAWS is focused" — main reads it only to keep the
+   * bottom guard's focus-a-sibling fallback away from a frame somebody is typing into. It no longer
+   * raises anything: this surface is opaque and fills the output, so raising it took Telegram,
+   * Firefox and every popped-out PosterChan window off the monitor ("i don't want any windows
+   * hiding because I clicked another window!").
+   *
+   * `covers` is the list of compositor windows that focused frame actually OVERLAPS, measured by
+   * `_stackDomAboveNative`, and they are the only ones main puts under the desktop. A window that
+   * shares no pixels with the frame you clicked does not move. */
   let _shellFrontSent = null, _foreignFocused = false;
+  let _shellFrontState = { front:false, covers:[] };
+  function _sendShellFront(next){
+    if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
+    const sig = (next.front ? '1' : '0') + ':' + next.covers.join(',');
+    if(sig === _shellFrontSent) return;
+    _shellFrontSent = sig; _shellFrontState = next;
+    try{ Promise.resolve(pcWM.shellFront(next)).catch(()=>{ _shellFrontSent = null; }); }
+    catch(_){ _shellFrontSent = null; }
+  }
+  /* The overlap is measured against a compositor snapshot, which is a round trip — far too much for
+   * the draw path. So the stack pass owns this half and `_publishShellFront` owns `front`; a draw
+   * that finds no frame focused clears both, since a frame that is not on top covers nothing. */
+  function _shellCoverWish(ids){
+    const covers = (ids || []).map(Number)
+      .filter(n => Number.isSafeInteger(n) && n > 0).slice(0, 64);
+    _sendShellFront({ front: _shellFrontState.front, covers });
+  }
   /* Does the desktop surface itself hold the compositor keyboard focus? With no compositor to ask
    * (a browser tab, the Windows or macOS build) the DOM is the only truth there is, so the answer
    * is yes and every taskbar button behaves exactly as it always has. */
@@ -7624,12 +7674,7 @@
   /* Publish a decided answer, bypassing the derivation. Used when focusing a window the desktop
    * DRAWS: that is the front being needed, and no flag has to be consulted to know it. */
   function _shellFrontWish(want){
-    if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
-    want = !!want;
-    if(want === _shellFrontSent) return;
-    _shellFrontSent = want;
-    try{ Promise.resolve(pcWM.shellFront(want)).catch(()=>{ _shellFrontSent = null; }); }
-    catch(_){ _shellFrontSent = null; }
+    _sendShellFront({ front: !!want, covers: want ? _shellFrontState.covers : [] });
   }
   function _publishShellFront(){
     if(!window.pcWM || typeof pcWM.shellFront !== 'function') return;
@@ -7641,10 +7686,7 @@
     try{ want = !on || (!_foreignFocused
       && wins.some(w => w && !w.min && w.el && w.el.classList.contains('focused'))); }
     catch(_){ want = false; }
-    if(want === _shellFrontSent) return;
-    _shellFrontSent = want;
-    try{ Promise.resolve(pcWM.shellFront(want)).catch(()=>{ _shellFrontSent = null; }); }
-    catch(_){ _shellFrontSent = null; }
+    _sendShellFront({ front: want, covers: want ? _shellFrontState.covers : [] });
   }
 
   // A focus/tray update must not detach the button between pointerdown and click.

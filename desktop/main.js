@@ -1161,7 +1161,10 @@ function createWindow(assignment) {
   const contentsId = created.webContents.id;
   if(assignment) _shellScopes.set(contentsId, assignment);
   created.on('closed', () => { _shellScopes.delete(contentsId); _handoffReady.delete(contentsId);
-                               _shellWantsFront.delete(contentsId); });
+                               _shellWantsFront.delete(contentsId);
+                               /* A cover list outliving its renderer holds real applications under
+                                * the desktop for ever, with no frame left on screen to explain it. */
+                               if(_shellCovers.delete(contentsId)) sinkShellSurfaces(); });
   loadApp(created);
   return created;
 }
@@ -1899,23 +1902,60 @@ function enforceNativeGameFullscreen(ev){
  * notification centre, the tray flyout, the composer) is already its own window and is unaffected.
  *
  * Backends that do not need it answer false from `keepBelow` and nothing happens — see wm.js. */
+/* WHAT REPLACED "RAISE THE DESKTOP", AND WHY IT HAD TO.
+ *
+ * The exception below used to be "do not sink this surface", which on an opaque full-output window
+ * means RAISE IT ABOVE EVERY APPLICATION ON THAT MONITOR. Clicking System Settings, a folder or a
+ * post opened in its own window therefore took Telegram, Firefox and every popped-out PosterChan
+ * window off the screen — reported again as "i don't want any windows hiding because I clicked
+ * another window!". Sinking it instead put those frames behind every application, which is the
+ * same bug with the sign flipped ("System settings never gets focus").
+ *
+ * Both halves were trying to express one ordinary rule — A COVERED WINDOW IS COVERED, AND ONLY A
+ * COVERED ONE — and neither could, because the desktop is one surface and the answer differs per
+ * application. Wayfire can express it: `send-to-back` moves a view to the BOTTOM of the stack, so
+ * sinking the desktop first and then each window its focused frame actually overlaps leaves the
+ * desktop above exactly those and below everything else. Nothing is hidden, nothing is minimised,
+ * and a window that shares no pixels with the frame you clicked does not move at all.
+ *
+ * The renderer measures the overlap (it is the only half that knows where its frames are) and
+ * publishes the ids; this process owns the ORDER, and re-applies it on every focus event, because
+ * send-to-back is one-shot and any later focus undoes it. */
+const _shellCovers = new Map();          // webContents id -> view ids its focused frame overlaps
 const _shellWantsFront = new Set();      // webContents ids that have a window of their own on screen
 function shellSurfaceIds(){
   return new Map(Array.from(_shellSurfaces.values())
     .filter(record => record && Number.isFinite(Number(record.conId)))
     .map(record => [Number(record.conId), record]));
 }
-function sinkShellSurfaces(){
-  for(const [id, record] of shellSurfaceIds()){
-    const wc = record.browser && !record.browser.isDestroyed() ? record.browser.webContents : null;
-    if(wc && _shellWantsFront.has(Number(wc.id))) continue;
-    /* ALT+TAB IS THE OTHER TIME THE DESKTOP IS DELIBERATELY IN FRONT, and it says so by going
+function coveredViewIds(){
+  const out = [];
+  for(const ids of _shellCovers.values())
+    for(const id of ids) if(Number.isSafeInteger(id) && id > 0 && !out.includes(id)) out.push(id);
+  return out;
+}
+/* ORDERED, AND THEREFORE AWAITED. `send-to-back` means "to the BOTTOM", so the last call wins the
+ * lowest place: the desktop must go down FIRST and the windows it covers after it, or they end up
+ * above the very frame they are supposed to be behind. Issued without awaiting, these are separate
+ * writes on one socket whose completion order is not ours to assume. Callers do not wait on this —
+ * it is re-applied on the next focus event either way. */
+async function sinkShellSurfaces(){
+  const shellIds = [];
+  for(const [id] of shellSurfaceIds()){
+    /* ALT+TAB IS THE ONE TIME THE DESKTOP IS DELIBERATELY IN FRONT, and it says so by going
      * FULLSCREEN — the one state that outranks everything, which is why the chooser can be seen at
      * all. Its own gesture generates focus events, so without this the surface would be pushed back
      * under the applications with the chooser drawn on it, mid-press. `_shellFullscreenFailsafes`
      * holds exactly the ids that asked, and only while the gesture's own 3s failsafe is armed. */
     if(_shellFullscreenFailsafes.has(id)) continue;
-    try{ Promise.resolve(wm().keepBelow(id, true)).catch(()=>{}); }catch(_){ }
+    shellIds.push(id);
+  }
+  for(const id of shellIds){
+    try{ await wm().keepBelow(id, true); }catch(_){ }
+  }
+  for(const id of coveredViewIds()){
+    if(_shellFullscreenFailsafes.has(id) || shellIds.includes(id)) continue;
+    try{ await wm().keepBelow(id, true); }catch(_){ }
   }
 }
 /* EVERY shell surface, on every focus and map — not only the one named in the event. A raise this
@@ -2775,32 +2815,26 @@ ipcMain.handle('pc:wm:preview-frame', (e, payload, direction) => {
  * above an application — see sinkShellOnFocus. Asked for by the renderer, because only the renderer
  * knows whether the thing you just clicked was a Settings frame drawn inside the desktop or the
  * desktop itself. Released the moment it stops being true, and on the surface going away. */
-/* ASKING TO BE IN FRONT HAS TO PUT YOU IN FRONT, NOT MERELY STOP YOU BEING PUSHED BACK.
+/* THERE IS NO LONGER A WAY TO RAISE THE DESKTOP, AND THAT IS THE FIX. `raiseShellSurfaces` used to
+ * answer this call by NOT sinking an opaque screen-sized window, i.e. by leaving it over every
+ * application on the monitor. See the block on `_shellCovers`.
  *
- * This used to add the renderer to `_shellWantsFront` and nothing else, which exempts it from the
- * NEXT sink and does nothing about the one that already happened. And one always has: the only way
- * to click a PosterChan window drawn INSIDE this surface is to click the surface, that click is a
- * focus, and `sinkShellOnFocus` sinks on every focus. So the sequence was -- click, sunk, and only
- * then the renderer says it wanted to be forward, to a process that records the wish and leaves the
- * surface at the back. Reported as "social is stuck behind terminal and can't move", and it is the
- * same shape as the earlier "a bunch of apps are stuck and won't close": the window is alive,
- * focused and receiving the clicks, underneath an application.
- *
- * `keepBelow(id, false)` is `wm-actions/send-to-back` with `state:false`, the inverse of the call
- * that sank it, and it does not touch keyboard focus -- which the shell already has, having just
- * been clicked. */
-function raiseShellSurfaces(){
-  for(const [id, record] of shellSurfaceIds()){
-    const wc = record.browser && !record.browser.isDestroyed() ? record.browser.webContents : null;
-    if(!wc || !_shellWantsFront.has(Number(wc.id))) continue;
-    try{ Promise.resolve(wm().keepBelow(id, false)).catch(()=>{}); }catch(_){ }
-  }
-}
+ * `front` still exists and still means "the desktop has a window of its own on screen": the bottom
+ * guard reads it to keep its focus-a-sibling fallback away from a frame somebody is typing into.
+ * `covers` is the new half — the ids that frame actually overlaps, and the only windows this
+ * process puts underneath it. An old renderer sending a bare boolean publishes no cover list, so
+ * the desktop is simply sunk: the safe direction, since nothing disappears. */
 ipcMain.handle('pc:wm:shell-front', (e, want) => {
   fsGuard(e);
   const id = Number(e.sender.id);
-  if(want){ _shellWantsFront.add(id); raiseShellSurfaces(); }
-  else { _shellWantsFront.delete(id); sinkShellSurfaces(); }
+  const front = !!(want && (want === true || want.front));
+  const raw = Array.isArray(want) ? want : (want && Array.isArray(want.covers) ? want.covers : []);
+  const covers = raw.map(Number)
+    .filter(n => Number.isSafeInteger(n) && n > 0 && n <= 0xffffffff)
+    .slice(0, 64);
+  if(front) _shellWantsFront.add(id); else _shellWantsFront.delete(id);
+  if(covers.length) _shellCovers.set(id, covers); else _shellCovers.delete(id);
+  sinkShellSurfaces();
   return true;
 });
 ipcMain.handle('pc:wm:hide', (e, id) => { fsGuard(e); return wm().hide(Number(id)); });

@@ -209,23 +209,28 @@ def test_the_shell_surface_is_sent_back_whenever_it_is_focused():
     but every fact it asserts is a fact the machine measured."""
     assert "wm().on('window', sinkShellOnFocus)" in MAIN_JS, (
         "nothing sinks the desktop any more: focusing it covers every application on that monitor")
-    handler = MAIN_JS[MAIN_JS.index("function sinkShellSurfaces()"):
+    handler = MAIN_JS[MAIN_JS.index("async function sinkShellSurfaces()"):
                       MAIN_JS.index("async function wireShellRecovery()")]
     assert "keepBelow" in handler
     # ONE-SHOT, measured: send-to-back followed by a focus put the shell straight back on top. So it
     # has to run on the EVENT; a single call at assignment time would last exactly one focus.
     assert "view-focused" in handler and "view-mapped" in handler
-    # The exception, and the only one: a window this shell DRAWS (Settings, Task Manager, VMs,
-    # Remote Desktop, a folder) is focused and has no toplevel of its own to raise instead.
-    assert "_shellWantsFront" in handler
+    # THE EXCEPTION USED TO BE "A WINDOW THIS SHELL DRAWS IS FOCUSED — LEAVE THE SURFACE IN FRONT",
+    # and on an opaque full-output window that means over every application on the monitor: "i don't
+    # want any windows hiding because I clicked another window!". It is gone. The desktop is sunk
+    # unconditionally now, and the windows its focused frame actually OVERLAPS are sunk after it, so
+    # it comes to rest above exactly those. See
+    # tests/test_a_covered_window_is_covered_and_only_a_covered_one.py.
+    assert "_shellWantsFront" not in handler, "the desktop can be raised over applications again"
+    assert "coveredViewIds()" in handler
     # …and Alt+Tab, which says it is deliberately in front by going FULLSCREEN — the state that
     # outranks everything, and the only reason its chooser can be seen at all. Its own gesture emits
     # focus events, so without this exemption the surface would be pushed back under the
     # applications with the chooser drawn on it, mid-press.
     assert "_shellFullscreenFailsafes.has(id)" in handler
     assert "ipcMain.handle('pc:wm:shell-front'" in MAIN_JS
-    assert "_shellWantsFront.delete(contentsId)" in MAIN_JS, (
-        "a closed surface would keep the desktop entitled to sit above every application for ever")
+    assert "_shellCovers.delete(contentsId)" in MAIN_JS, (
+        "a closed surface would keep real applications pinned under the desktop for ever")
     assert "shellFront:" in PRELOAD, "the renderer has no way to ask"
     assert "_publishShellFront" in OS_JS and "function drawBar(){\n    _publishShellFront();" in OS_JS
     # …and leaving the desktop hands the surface back: in Classic there is no taskbar and no

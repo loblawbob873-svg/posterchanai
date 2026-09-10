@@ -18,10 +18,19 @@ The desktop stayed at the back with the window drawn on it. Measured on the lapt
 click System Settings, and Wayfire still reports view 174 (Social) focused with the shell behind it
 while the frame is present and carries `focused`.
 
-Both halves are checked here, because either one alone reads as correct:
-  * the renderer must publish the wish BEFORE it sends the focus, and
-  * main must really skip a surface that has asked -- if it sank it anyway the order would not
-    matter and this test would be measuring a comment.
+THE RAISE IS GONE, AND WITH IT THE RACE THIS FILE WAS WRITTEN FOR. Raising an opaque full-output
+surface put it over every application on the monitor -- "i don't want any windows hiding because I
+clicked another window!" -- so the desktop is now sunk unconditionally and the windows its focused
+frame OVERLAPS are sunk after it, leaving it above exactly those. Main skips nothing, so nothing can
+win a race against it, and `_shellFrontWish(true)` survives only to tell the bottom guard to keep
+its focus-a-sibling fallback away from a frame somebody is typing into.
+
+What is still checked here is the renderer half: focusWin must state the front outright rather than
+deriving it from `_foreignFocused` (which is cleared LATER, so clicking an in-page window while a
+foreign app held focus published nothing at all), it must measure and publish the cover list, and it
+must clear that list the moment an application takes focus -- a cover list that outlives its frame
+pins real windows under the desktop with nothing on screen to explain it. The compositor half is
+tests/test_a_covered_window_is_covered_and_only_a_covered_one.py.
 """
 from pathlib import Path
 import re
@@ -56,12 +65,12 @@ class TestFocusWinOrder(unittest.TestCase):
         self.assertIn("_stackDomAboveNative(", self.body,
                       "focusWin no longer raises the shell for an in-page window")
 
-    def test_the_wish_is_published_first(self):
-        wish = self.body.index("_shellFrontWish(true)")
-        focus = self.body.index("_stackDomAboveNative(")
-        self.assertLess(wish, focus,
-                        "the shell is focused before main knows it must not be sunk; the sink wins "
-                        "and `send-to-back state:false` cannot undo it")
+    def test_an_application_taking_focus_ends_the_cover_list(self):
+        """`covers` describes ONE in-page frame's overlap. The moment the thing you clicked is a
+        compositor window of its own, no frame of ours is on top -- and a list left behind holds
+        real applications under the desktop with nothing on screen still claiming the space."""
+        self.assertIn("_shellCoverWish([])", self.body,
+                      "focusing an adopted application leaves the last frame's windows pinned")
 
     def test_it_is_stated_not_derived(self):
         """`_publishShellFront` computes the wish from `_foreignFocused`, which is cleared LATER --
@@ -81,34 +90,45 @@ class TestFocusWinOrder(unittest.TestCase):
         self.assertIn("_shellFrontWish(true)", self.body,
                       "only drawBar publishes, so the wish is always late")
 
-    def test_both_forms_share_one_sender(self):
-        """Two places that write `_shellFrontSent` must agree about it, or one can latch the other
-        out of ever sending."""
-        wish = _decls(_fn(OS_JS, "  function _shellFrontWish(want){"))
-        self.assertIn("_shellFrontSent", wish)
-        self.assertIn("pcWM.shellFront(want)", wish)
-        self.assertIn("_shellFrontSent = null", wish,
+    def test_every_form_goes_through_one_sender(self):
+        """Three places publish this, and two of them used to write the dedup latch themselves --
+        which is how one can latch the other out of ever sending. They share `_sendShellFront`
+        now, so the latch has one writer and the payload has one shape."""
+        for header in ("  function _shellFrontWish(want){",
+                       "  function _shellCoverWish(ids){"):
+            body = _decls(_fn(OS_JS, header))
+            self.assertIn("_sendShellFront(", body, header)
+            self.assertNotIn("_shellFrontSent", body, header + " writes the latch behind the sender")
+        sender = _decls(_fn(OS_JS, "  function _sendShellFront(next){"))
+        self.assertIn("pcWM.shellFront(next)", sender)
+        self.assertIn("_shellFrontSent = null", sender,
                       "a failed IPC must clear the latch or the wish is never retried")
 
 
-class TestMainHonoursTheWish(unittest.TestCase):
-    def test_a_surface_that_asked_is_not_sunk(self):
-        body = _decls(_fn(MAIN_JS, "function sinkShellSurfaces(){"))
-        self.assertRegex(body, r"_shellWantsFront\.has\(.*?\)\)\s*continue",
-                         "sinkShellSurfaces does not skip a surface that asked to be in front, so "
-                         "publishing the wish first would change nothing")
+class TestTheCoverListIsMeasured(unittest.TestCase):
+    def test_the_stack_pass_publishes_what_the_frame_overlaps(self):
+        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken){"))
+        self.assertIn("domStackPlan(others,rect)", body)
+        self.assertIn("_shellCoverWish(plan.hide)", body,
+                      "the overlap is computed and thrown away")
 
-    def test_asking_clears_the_always_below_flag(self):
-        body = _decls(_fn(MAIN_JS, "function raiseShellSurfaces(){"))
-        self.assertIn("keepBelow(id, false)", body,
-                      "asking to be in front no longer clears the always-below state")
+    def test_it_no_longer_takes_applications_off_the_screen(self):
+        """Minimising somebody's browser to show a Settings window is precisely "opening a new
+        window hides all the other windows". Only the no-compositor fallback may still do it."""
+        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken){"))
+        hide = body.index("pcWM.hide(id)")
+        guard = body.index("typeof pcWM.shellFront==='function'")
+        self.assertLess(guard, hide,
+                        "pcWM.hide runs on a compositor that could simply be asked to reorder")
 
-    def test_the_wish_is_recorded_before_the_raise_is_attempted(self):
-        handler = _decls(MAIN_JS[MAIN_JS.index("ipcMain.handle('pc:wm:shell-front'"):][:600])
-        add = handler.index("_shellWantsFront.add")
-        raise_at = handler.index("raiseShellSurfaces()")
-        self.assertLess(add, raise_at,
-                        "raiseShellSurfaces reads the set, so recording after it is a no-op pass")
+    def test_a_popped_out_window_is_not_exempt(self):
+        """It is an ordinary toplevel like Telegram, and a frame drawn over it must go in front of
+        it by the same means. Exempting everything sharing our app-id is "social is stuck behind
+        terminal" seen from the other end -- only the desktop's OWN surface may be skipped."""
+        body = _decls(_fn(OS_JS, "  async function _stackDomAboveNative(w, focusToken){"))
+        line = [l for l in body.splitlines() if "const others=rows.map(" in l][0]
+        self.assertIn("Number(r.id)===shellId", line)
+        self.assertNotIn("poster", line, "every window sharing our app-id is exempted again")
 
 
 if __name__ == "__main__":
