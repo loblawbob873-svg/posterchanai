@@ -24,6 +24,7 @@ and is idempotent, so it is a no-op on a machine that has already built. It writ
 gitignored build directories, never into live state (the rule a check that touched
 `streamserver/mediamtx.pid` broke).
 """
+import os
 import shutil
 from pathlib import Path
 
@@ -81,3 +82,42 @@ def _isolated_monero_spend_ledger(monkeypatch, tmp_path):
         return connect(path)
 
     monkeypatch.setattr(TransferGate, '_connect', staticmethod(isolated_connect))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _searxng_settings_are_a_copy(tmp_path_factory):
+    """NO TEST MAY REWRITE THIS NODE'S OWN searxng/settings.yml.
+
+    `apply_outgoing_proxy()` runs inside `wsgi_app()` and writes the managed `outgoing:` block into
+    whatever `settings_path()` returns — the LIVE file on a node that is actually serving. Any test
+    that builds the WSGI app therefore rewrites this node's search egress from whatever its settings
+    cache happens to hold, and in pytest's shared process that cache is seeded from defaults, where
+    `searxng_proxy_engines` is "false".
+
+    MEASURED: settings.yml's mtime landed inside the suite's window on two consecutive runs, the
+    proxy block was replaced by the DIRECT one each time, and the next `check_websearch_rate`
+    reported the setting and the file disagreeing — which read as a flaky check rather than as the
+    suite changing the machine under it. No single test reproduces it alone, which is exactly why
+    this belongs here rather than in one of them: the guard has to hold for whichever test does it.
+
+    `settings_path()` already honours `SEARXNG_SETTINGS_PATH`, so a copy costs nothing and every
+    test that legitimately needs a real settings file still gets one.
+    """
+    live = ROOT / "searxng" / "settings.yml"
+    if not live.is_file():
+        yield
+        return
+    scratch = tmp_path_factory.mktemp("searxng") / "settings.yml"
+    shutil.copyfile(live, scratch)
+    before = live.read_bytes()
+    old = os.environ.get("SEARXNG_SETTINGS_PATH")
+    os.environ["SEARXNG_SETTINGS_PATH"] = str(scratch)
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("SEARXNG_SETTINGS_PATH", None)
+        else:
+            os.environ["SEARXNG_SETTINGS_PATH"] = old
+        assert live.read_bytes() == before, (
+            "the test suite rewrote this node's searxng/settings.yml — see this fixture")

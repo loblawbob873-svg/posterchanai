@@ -24,6 +24,7 @@ tested (it is a packaging choice), but every consequence of the move is:
 """
 import ipaddress
 import logging
+import pathlib
 import os
 import unittest
 from unittest import mock
@@ -198,8 +199,34 @@ class ImportSideEffectTests(unittest.TestCase):
     """
 
     def test_importing_searxng_leaves_our_root_logger_alone(self):
+        """A TEST MUST NOT REWRITE THE NODE'S OWN settings.yml, and this one did.
+
+        `wsgi_app()` calls `apply_outgoing_proxy()`, which writes the managed `outgoing:` block into
+        whatever `settings_path()` returns — the LIVE file on a node that is actually serving. In
+        pytest's shared process the settings store is hydrated by other tests from seeded defaults,
+        where `searxng_proxy_engines` is "false", so every `./test.sh` quietly switched this node's
+        engine requests back to DIRECT and the next `check_websearch_rate` reported the setting and
+        the file disagreeing. Twice, before it was the check that was suspected rather than the
+        suite. Same rule as the check that once touched `streamserver/mediamtx.pid`.
+
+        The import side effect being measured needs a REAL settings file, so it gets a copy.
+        """
+        import shutil
+        import tempfile
+
         root = logging.getLogger()
         before_level, before_handlers = root.level, list(root.handlers)
+        live = N.settings_path()
+        live_before = live.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            scratch = pathlib.Path(tmp) / "settings.yml"
+            shutil.copyfile(live, scratch)
+            with mock.patch.object(N, "settings_path", return_value=scratch):
+                self._root_logger_check(root, before_level, before_handlers)
+        self.assertEqual(live.read_bytes(), live_before,
+                         "building the WSGI app rewrote this node's live settings.yml")
+
+    def _root_logger_check(self, root, before_level, before_handlers):
         try:
             root.setLevel(logging.INFO)
             self.assertIsNotNone(N.wsgi_app(), "searx is installed, so this must build")
