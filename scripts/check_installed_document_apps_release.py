@@ -23,42 +23,14 @@ PC_ALLOW_STALE_INSTALL=1 to run it against whatever is installed anyway.
 from __future__ import annotations
 
 import os
-import re
+import sys
 import subprocess
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GATE = ROOT / "scripts" / "check_installed_document_apps.sh"
-ASAR_BIN = ROOT / "desktop" / "node_modules" / ".bin" / "asar"
-
-
-def _installed_stamp(asar: Path) -> str:
-    """The commit the installed bundle was built from, or '' if it cannot be read.
-
-    Unreadable is deliberately NOT stale: without a stamp there is nothing to compare, and refusing
-    to run on that basis would turn every bundle built before stamping into a permanent skip."""
-    if not ASAR_BIN.is_file():
-        return ""
-    try:
-        with tempfile.TemporaryDirectory() as td:
-            done = subprocess.run([str(ASAR_BIN), "extract-file", str(asar), "www/index.html"],
-                                  cwd=td, capture_output=True, timeout=120)
-            if done.returncode != 0:
-                return ""
-            html = (Path(td) / "index.html").read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return ""
-    found = re.search(r'window\.__PC_BUILD="([^"]*)"', html)
-    return found.group(1) if found else ""
-
-
-def _head() -> str:
-    try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
-                              capture_output=True, text=True, timeout=30).stdout.strip()
-    except Exception:
-        return ""
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _installed_stamp import stale_reason  # noqa: E402
 
 
 def main() -> int:
@@ -67,15 +39,11 @@ def main() -> int:
         print(f"SKIP installed ASAR is not available for the document-app release gate: {asar}")
         return 2
 
-    if not os.environ.get("PC_ALLOW_STALE_INSTALL"):
-        stamp, head = _installed_stamp(asar), _head()
-        # Compared as prefixes: the bundle stamps an abbreviated sha and `git rev-parse --short` can
-        # abbreviate to a different length on a bigger repo.
-        if stamp and head and not (stamp.startswith(head) or head.startswith(stamp)):
-            print(f"SKIP installed build is {stamp}, the repo is at {head} — this gate tests the "
-                  f"INSTALLED bundle at {asar} and cannot speak for your working tree. Deploy, or "
-                  f"point PC_INSTALLED_ASAR at the bundle you mean to gate.")
-            return 2
+    # ONE copy of "is this bundle the commit we are on" — see scripts/_installed_stamp.py.
+    reason = stale_reason(asar, "the document apps")
+    if reason:
+        print("SKIP " + reason)
+        return 2
 
     return subprocess.run(["sh", str(GATE)], cwd=ROOT, env=os.environ.copy()).returncode
 

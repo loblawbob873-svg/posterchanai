@@ -101,17 +101,33 @@ window.__PC = {
   authFetch: (u,o) => window.fetch(u,o),
   ensureAiSession: async () => ({ can_ai:true, is_admin:true }),
   uiPrompt: async () => '',
-  uiConfirm: async () => true,
+  /* RECORD THE QUESTION, because the question IS the feature under test.
+     This page stubs uiConfirm — so asserting on `.uiconfirm` markup measured a dialog the stub
+     never renders, and read as "discard did not say what it would lose: ''" about wording that was
+     in fact correct. The real overlay's markup is uiConfirm's own business and is covered where it
+     lives; what belongs here is the sentence a destructive action asks and whether it asked
+     dangerously. */
+  uiConfirm: async (message, opts) => { window.__confirms.push({message:String(message||''),
+                                                                danger:!!(opts&&opts.danger),
+                                                                ok:String((opts&&opts.ok)||'')});
+                                        return true; },
   switchView: v => { window.__view = v; },
   get ME(){ return {pubkey:'abcdef012345'}; },
   get VIEW(){ return window.__view; },
 };
 </script>
+<!-- THE REAL host-file MODULE, not a stub of it. `openHostFile` goes through
+     window.PCHostFiles (hostfiles.js), which is what wraps window.pcHost — so a page that
+     stubs pcHost and never loads this module makes the editor answer "this build cannot open
+     a local file" and every later assertion measure a click that was refused. That is what
+     made the diff-click and discard rules look like product bugs. -->
+<script src="/static/js/client/hostfiles.js"></script>
 <script src="/static/js/client/code.js"></script>
 <script>
 (async function(){
   for(let i=0;i<80 && !window.PCCode;i++) await new Promise(r=>setTimeout(r,50));
   await window.PCCode.render();
+  window.__confirms = [];
   window.__ready = true;
 })();
 </script>
@@ -165,12 +181,11 @@ NATIVE_GIT = r"""(async () => {
   if(restore) restore.click();
   /* The destructive action asks first, and what it asks is the point: it must name the file and
      say that the lines are committed nowhere. Answering is a click on the named button. */
-  for(let i=0;i<80 && !document.querySelector('.uiconfirm');i++) await new Promise(r=>setTimeout(r,25));
-  const box = document.querySelector('.uiconfirm');
-  const confirmText = box ? (box.querySelector('.uiconfirm-msg')||{}).textContent||'' : '';
-  const confirmOk = box ? ((box.querySelector('[data-uc="1"]')||{}).textContent||'') : '';
-  const confirmDanger = !!(box && box.querySelector('[data-uc="1"].btn-danger'));
-  if(box) box.querySelector('[data-uc="1"]').click();
+  for(let i=0;i<80 && !window.__confirms.length;i++) await new Promise(r=>setTimeout(r,25));
+  const asked = window.__confirms[window.__confirms.length-1] || {};
+  const confirmText = String(asked.message||'');
+  const confirmOk = String(asked.ok||'');
+  const confirmDanger = !!asked.danger;
   for(let i=0;i<60 && !document.body.textContent.includes('Working tree clean');i++)
     await new Promise(r=>setTimeout(r,25));
   const clean = document.body.textContent.includes('Working tree clean');
