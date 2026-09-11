@@ -33,7 +33,12 @@ def _strip(js: str) -> str:
 class SaveIsTheLastButtonInTheForm(unittest.TestCase):
     def _form(self) -> str:
         start = OS_JS.index("const editHardware=async(name)=>{")
-        return OS_JS[start:OS_JS.index("$('[data-vm-new]',w.slot)", start)]
+        # THE END OF THE EDIT FORM, addressed by the control that follows it rather than by the
+        # element it used to be painted into. `w.slot` is gone: the Virtual Machines app is a real
+        # compositor toplevel on PosterChanOS now, so its painter takes a HOST and knows nothing
+        # about a window ("why the fuck are windows still hiding when I open a app like system
+        # settings" — an in-page frame can only be shown by raising the desktop over everything).
+        return OS_JS[start:OS_JS.index("data-vm-new]',slot)", start)]
 
     def _markup(self) -> str:
         """Just the innerHTML the settings form is built from."""

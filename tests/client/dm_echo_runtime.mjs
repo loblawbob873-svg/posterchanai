@@ -38,7 +38,7 @@ function run({ ingestReturns }){
     ingestWrap: async () => ingestReturns,
     Relay:{ publish: async () => ({ok:true}), publishTo: async () => 1 },
     _keepDmOpen(){}, _scheduleDmRefresh(){ calls.refreshed++; },
-    dmInboxRelays: async () => [], toast(){}, Date, Math, String, setTimeout, Promise,
+    dmInboxRelays: async () => ({relays:[],answered:true}), toast(){}, Date, Math, String, setTimeout, Promise,
   };
   vm.runInNewContext(extract('function _dmEcho(pk, text, id){') + '\n'
                    + extract('async function sendDm(pk, text){') + '\nthis.send=sendDm;',

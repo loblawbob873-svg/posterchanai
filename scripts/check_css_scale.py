@@ -18,6 +18,8 @@ Same exemptions as the original sweep, and for the same reasons:
   * 1px padding/margin is an optical nudge
   * line-height:1 centres a glyph in an icon button, and line-height:0 removes the descender gap
     under an inline-block <img> wrapper — both are layout, not typography
+  * a DESKTOP WIDGET (`.wgt-*`, `.os-wgt*`) is typeset to a fixed pixel box the desktop grid
+    chose — see the block beside WIDGET below
 """
 import re
 import sys
@@ -63,6 +65,21 @@ READING = re.compile(r"\.mail-body|\.mail-text|\.mr-subj|article-body|\.ae-pane"
 IOS_FONT = 16.0
 READING_FONT = {16.0, 18.0}
 READING_LH = {1.25, 1.3, 1.5, 1.68}
+
+# 3. A DESKTOP WIDGET IS TYPESET TO A FIXED PIXEL BOX, AND THE BOX IS NOT NEGOTIABLE.
+#
+#    `.os-wgt` tiles are sized by the desktop grid, not by their contents — the compact Monero tile
+#    is exactly 210x118 — so every font size, gap and padding inside one is measured to fit that
+#    rectangle. A type scale has no way to know that, and snapping to it is not a cosmetic change:
+#    a sweep of this file moved the widget surface onto the ladder (9.5 -> 11px, gap 7 -> 8, padding
+#    5px 7px -> 6px 8px, line-height 1.05 -> 1.2) and the compact Monero tile overflowed its own box
+#    by 4px, with `tests/client/test_monero_desktop_widget.py` measuring it in a real browser. The
+#    other twelve widgets were swept the same way and have no overflow test, so nothing would have
+#    said so at all.
+#
+#    Gated on the selector, so this is not a licence to put 9.5px on anything else. If a widget ever
+#    needs to grow, the box grows with it — in os.js, where the grid is.
+WIDGET = re.compile(r"\.wgt-|\.os-wgt", re.I)
 
 
 def selector_at(css, off):
@@ -116,6 +133,8 @@ def main():
                     continue                      # exemption 2
                 if n == IOS_FONT and READING.search(sel):
                     continue
+                if WIDGET.search(sel):
+                    continue                      # exemption 3 — a fixed-box desktop widget
                 if n not in FONT_LADDER and n not in FONT_DISPLAY:
                     bad.append((line_of(css, base + m.start()), "font-size",
                                 f"{nm.group(1)}px is off the ladder {sorted(FONT_LADDER)}"))
@@ -128,8 +147,11 @@ def main():
                 n = float(val)
             except ValueError:
                 continue
-            if n in READING_LH and READING.search(selector_at(css, base + m.start())):
+            sel = selector_at(css, base + m.start())
+            if n in READING_LH and READING.search(sel):
                 continue                          # exemption 2 — long-form reading measure
+            if WIDGET.search(sel):
+                continue                          # exemption 3 — a fixed-box desktop widget
             if n not in LINE_HEIGHTS:
                 bad.append((line_of(css, base + m.start()), "line-height",
                             f"{val} is not one of {sorted(LINE_HEIGHTS)}"))
@@ -144,6 +166,8 @@ def main():
                 n = float(nm.group(1))
                 if n <= 1:
                     continue      # 0 and 1px: exempt
+                if WIDGET.search(selector_at(css, base + m.start())):
+                    continue      # exemption 3 — a fixed-box desktop widget
                 if n != int(n) or int(n) % 2:
                     bad.append((line_of(css, base + m.start()), m.group(1),
                                 f"{nm.group(1)}px is not on the even 2px grid"))

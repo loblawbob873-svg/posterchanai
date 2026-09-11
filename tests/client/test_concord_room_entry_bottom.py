@@ -47,7 +47,13 @@ def test_delayed_prepend_preserves_the_visible_message_anchor():
 
 def test_delayed_media_growth_preserves_the_visible_message_anchor():
     watcher = JS[JS.index("function viewportAnchor("):JS.index("function removeMessageRow(")]
-    assert "scroller.addEventListener('scroll',remember" in watcher
+    # THE ANCHOR IS RE-READ WHEN THE READER MOVES — but the listener is no longer `remember` bare.
+    # Our own restores fire `scroll` too, and re-reading the anchor from a position WE just set
+    # records the app's opinion as the reader's, so the handler asks `programmaticScrollEvent`
+    # first. What this pins is that a real scroll still updates the anchor.
+    assert "addEventListener('scroll'" in watcher
+    assert "remember()" in watcher
+    assert "programmaticScrollEvent(scroller)" in watcher
     assert "el.dataset.messageId===anchor.id" in watcher
     assert "Number(row.offsetTop)" in watcher
 

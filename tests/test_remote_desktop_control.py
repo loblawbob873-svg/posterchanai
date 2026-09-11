@@ -31,9 +31,22 @@ def test_remote_desktop_is_armed_only_while_its_app_is_open_on_both_ends():
     assert "let _remoteDesktopArmed=false" in APP
     assert "if(!_remoteDesktopArmed)throw new Error('open Remote Desktop before starting a session')" in APP
     assert "if(remoteDesktopInvite&&!_remoteDesktopArmed)return" in APP
-    assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true)" in os_src
-    assert "w.onClose=()=>" in os_src
-    assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false)" in os_src
+    # ARM AND DISARM ARE ONE PAIR AND IT TRAVELS WITH THE PAINT.
+    #
+    # They used to sit on the OPENER and on the in-page frame's `onClose` — and a real compositor
+    # toplevel has neither, so on PosterChanOS (where this app is now a real window) Remote Desktop
+    # would have armed screen sharing and had nothing left to disarm it. Assert the PAIRING rather
+    # than the call site: the painter arms, the teardown it answers with disarms and drops the
+    # session host, and whoever owns the window is the one that calls that teardown.
+    painter = os_src.split("function paintRemoteDesktop(slot){", 1)[1].split("\n  }", 1)[0]
+    assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true)" in painter
+    assert "return ()=>{" in painter, "the painter no longer answers with its own teardown"
+    teardown = painter.split("return ()=>{", 1)[1]
+    assert "setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false)" in teardown, (
+        "nothing disarms screen sharing when Remote Desktop goes away")
+    assert "setRemoteDesktopHost&&PC().setRemoteDesktopHost(null)" in teardown
+    assert "w.onClose=paintRemoteDesktop(w.slot)" in os_src, (
+        "the in-page frame no longer runs the painter's teardown when it closes")
 
 
 def test_same_identity_remote_desktop_auto_accepts_on_the_other_device_only():

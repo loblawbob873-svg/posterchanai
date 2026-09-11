@@ -650,7 +650,13 @@ def test_mobile_room_list_and_drawer_do_not_consume_channel_unread_state():
 def test_entering_channel_wins_scroll_race_with_history_and_media():
     assert 'function enterChatBottom()' in CONCORD
     assert "[0,60,180,450,900,1600]" in CONCORD
-    assert "scroller.dataset.ccScrollRestore" in CONCORD
+    # THE RULE, NOT THE EXPRESSION. `onscroll` has to be able to tell the app's own restore from the
+    # reader's finger, and it used to do that by reading the mark directly — a TIME window, which
+    # discarded every real scroll event that landed in the same frame as a restore ("my position
+    # keeps getting reset when I scroll through a room history"). It asks by POSITION now, through
+    # one shared predicate; what matters here is that the question is still asked at all.
+    assert "programmaticScrollEvent(scroller)" in CONCORD
+    assert "function programmaticScrollEvent(box)" in CONCORD
     assert "delete box.dataset.ccScrollRestore" in CONCORD
     channel_click = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split("$$('[data-cc-star]')", 1)[0]
     assert channel_click.count('enterChatBottom()') == 2

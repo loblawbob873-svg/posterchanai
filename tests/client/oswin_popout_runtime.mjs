@@ -42,9 +42,16 @@ export function oswin({ nav = ['home', 'global', 'settings'], toplevels = true, 
 /** The shipped `popOutView` rule, lifted from os.js and run against the same stub nav. */
 export function popOutView(win, nav = ['home', 'global', 'settings']) {
   const src = readFileSync(OS_JS, 'utf8');
-  const start = src.indexOf('  function popOutView(w){');
-  if (start < 0) throw new Error('popOutView is gone from os.js');
-  const end = src.indexOf('\n  }', start) + 4;
+  /* THE SLICE STARTS AT THE MAP, NOT AT THE FUNCTION. `popOutView` reads `EXTRA_WINDOWS` — the one
+     place that says which screens can be a real toplevel — so lifting the function alone threw
+     `EXTRA_WINDOWS is not defined` and took EVERY case in this file with it, including the ones
+     about ordinary apps that have nothing to do with extras. A harness that cannot run the shipped
+     rule reports the same red for a fixed rule and a broken one. */
+  const start = src.indexOf('  const EXTRA_WINDOWS = {');
+  if (start < 0) throw new Error('EXTRA_WINDOWS is gone from os.js');
+  const fn = src.indexOf('  function popOutView(w){', start);
+  if (fn < 0) throw new Error('popOutView is gone from os.js');
+  const end = src.indexOf('\n  }', fn) + 4;
   const ctx = { document: stubDoc(nav), String, RegExp };
   ctx.globalThis = ctx;
   runInNewContext(src.slice(start, end) + '\nresult = popOutView(WIN);',

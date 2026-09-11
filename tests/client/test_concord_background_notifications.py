@@ -26,5 +26,27 @@ def test_active_concord_channel_keeps_polling_while_another_desktop_app_is_focus
 
 def test_background_poll_persists_without_repainting_the_foreground_app():
     body = _refresh()
-    assert "if(document.body.classList.contains('concord-view'))preserveChatScroll" in body
-    assert "else saveTestMessages(storeId,next)" in body
+    # THE RULE, WHICH HAS NOT MOVED: a merge always PERSISTS, and only PAINTS when this view is on
+    # screen. It used to be written as a save inside the repaint plus an `else` branch that saved —
+    # two copies of one statement, which is how they come to disagree. The save is unconditional
+    # now and sits in front of the gate, so a background poll cannot lose it.
+    assert body.count("saveTestMessages(storeId,next)") == 1, (
+        "the save is written twice again — one copy will eventually not be reached")
+    save_at = body.index("saveTestMessages(storeId,next)")
+    gate = body.index("document.body.classList.contains('concord-view')")
+    assert save_at < gate, (
+        "the save moved behind the on-screen gate, so a poll while Concord is not showing drops the "
+        "messages it just merged")
+    assert "preserveChatScroll" in body, "an on-screen merge no longer repaints the room"
+    # …AND THE PAINT WAITS FOR THE READER'S HAND. Replacing the rows kills a momentum scroll, so a
+    # busy room repainting on every arriving message is a series of dead flings.
+    assert "whenHandLeaves(" in body, (
+        "a live message repaints the room mid-flick again — 'it constantly jerks me to different "
+        "positions'")
+    # …AND THE ON-SCREEN TEST IS MADE TWICE. Waiting for the hand separates the request from the
+    # paint, so "Concord is showing" can stop being true in between; a held repaint that does not
+    # re-ask would draw a room over whatever the reader navigated to.
+    held = body[body.index("whenHandLeaves("):]
+    held = held[:held.index("preserveChatScroll")]
+    assert "concord-view" in held, (
+        "a deferred repaint no longer re-checks that Concord is still on screen when it fires")

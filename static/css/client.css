@@ -7279,23 +7279,23 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    reads as a release, so the widget never moves a pixel. Icons drag on the same screen because an
    icon has no scrollable child. Measured as an A/B with real touch input: identical panels, the one
    whose body carried this line completed the drag and the one without it cancelled. */
-.os-wgt-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;font-size:12px;color:var(--text);
+.os-wgt-body{flex:1;min-height:0;overflow:auto;padding:10px 12px;font-size:12.5px;color:var(--text);
   touch-action:none}
-.wgt-dim{color:var(--muted);font-size:11px}
+.wgt-dim{color:var(--muted);font-size:11.5px}
 
 /* Monero tip wallet — operational summary only. Addresses, credentials and transactions belong in
    the full wallet window, never on an always-visible desktop surface. */
-.wgt-xmr{display:flex;flex-direction:column;height:100%;min-width:0;gap:8px;font-variant-numeric:tabular-nums}.wgt-xmr header{display:flex;align-items:center;gap:8px;min-width:0}.wgt-xmr header>div{display:flex;flex-direction:column;min-width:0}.wgt-xmr header b{font-size:13px}.wgt-xmr-mark{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;border-radius:50%;background:#f60;color:#fff;font-size:20px;font-weight:800}.wgt-xmr-net{font-size:11px;letter-spacing:.09em;color:#f80}.wgt-xmr-bal{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:0 6px;min-width:0}.wgt-xmr-bal strong{font-size:clamp(20px,8cqw,30px);line-height:1.2;color:var(--text);overflow:hidden;text-overflow:ellipsis}.wgt-xmr-bal>span{font-size:11px;color:var(--muted)}.wgt-xmr-bal small{grid-column:1/3;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wgt-xmr-health{display:flex;flex-wrap:wrap;gap:4px 8px;color:var(--muted);font-size:11px}.wgt-xmr-health span{white-space:nowrap}.wgt-xmr-warn{padding:4px 6px;border:1px solid rgba(255,102,0,.5);border-radius:6px;background:rgba(255,102,0,.1);color:#f80;font-size:11px}.wgt-xmr-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 28px;gap:6px;margin-top:auto}.wgt-xmr-actions button{min-width:0;min-height:28px;padding:4px 6px;border:1px solid var(--line);border-radius:7px;background:var(--bg2);color:var(--text);font:inherit;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.wgt-xmr-actions button:hover{border-color:#f60;color:#f80}.wgt-xmr.is-loading{opacity:.72}.wgt-xmr.is-error .wgt-xmr-bal strong{color:var(--muted)}
-.os-wgt[data-type="monero"][data-size="s"] .os-wgt-body{padding:6px 8px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr{gap:4px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-mark{width:23px;height:23px;flex-basis:23px;font-size:17px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-bal strong{font-size:17px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-bal>span,.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-health [data-node],.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-health [data-at],.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-warn{display:none}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-actions button{padding-inline:2px;font-size:11px}
+.wgt-xmr{display:flex;flex-direction:column;height:100%;min-width:0;gap:7px;font-variant-numeric:tabular-nums}.wgt-xmr header{display:flex;align-items:center;gap:8px;min-width:0}.wgt-xmr header>div{display:flex;flex-direction:column;min-width:0}.wgt-xmr header b{font-size:13px}.wgt-xmr-mark{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;border-radius:50%;background:#f60;color:#fff;font-size:19px;font-weight:800}.wgt-xmr-net{font-size:9px;letter-spacing:.09em;color:#f80}.wgt-xmr-bal{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:0 6px;min-width:0}.wgt-xmr-bal strong{font-size:clamp(20px,8cqw,30px);line-height:1.05;color:var(--text);overflow:hidden;text-overflow:ellipsis}.wgt-xmr-bal>span{font-size:10px;color:var(--muted)}.wgt-xmr-bal small{grid-column:1/3;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.wgt-xmr-health{display:flex;flex-wrap:wrap;gap:3px 9px;color:var(--muted);font-size:10px}.wgt-xmr-health span{white-space:nowrap}.wgt-xmr-warn{padding:4px 6px;border:1px solid rgba(255,102,0,.5);border-radius:6px;background:rgba(255,102,0,.1);color:#f80;font-size:9.5px}.wgt-xmr-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 28px;gap:5px;margin-top:auto}.wgt-xmr-actions button{min-width:0;min-height:28px;padding:4px 5px;border:1px solid var(--line);border-radius:7px;background:var(--bg2);color:var(--text);font:inherit;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.wgt-xmr-actions button:hover{border-color:#f60;color:#f80}.wgt-xmr.is-loading{opacity:.72}.wgt-xmr.is-error .wgt-xmr-bal strong{color:var(--muted)}
+.os-wgt[data-type="monero"][data-size="s"] .os-wgt-body{padding:5px 7px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr{gap:3px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-mark{width:23px;height:23px;flex-basis:23px;font-size:16px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-bal strong{font-size:18px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-bal>span,.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-health [data-node],.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-health [data-at],.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-warn{display:none}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:3px}.os-wgt[data-type="monero"][data-size="s"] .wgt-xmr-actions button{padding-inline:2px;font-size:9px}
 
 /* CPU, memory and network. A number says where the machine is now; the trace says whether that is
    a spike or a trend. Sixty samples at two seconds is a compact two-minute history. */
-.wgt-perf{height:100%;min-height:0;display:flex;flex-direction:column;gap:8px;font-variant-numeric:tabular-nums}
+.wgt-perf{height:100%;min-height:0;display:flex;flex-direction:column;gap:7px;font-variant-numeric:tabular-nums}
 .wgt-perf header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex:none}
 .wgt-perf header>div{display:flex;flex-direction:column;min-width:0}
 .wgt-perf header b{font-size:13px;line-height:1.2;color:var(--text)}
-.wgt-perf-sub{font-size:11px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
-.wgt-perf-num{font-size:20px;line-height:1;font-weight:750;color:var(--neon);white-space:nowrap}
+.wgt-perf-sub{font-size:9.5px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.wgt-perf-num{font-size:22px;line-height:1;font-weight:750;color:var(--neon);white-space:nowrap}
 .wgt-perf-graph{display:block;width:100%;flex:1;min-height:62px;border:1px solid var(--line);
   border-radius:7px;background:rgba(var(--accent-rgb),.035);overflow:visible}
 .wgt-perf-grid path{fill:none;stroke:var(--line);stroke-width:.65;vector-effect:non-scaling-stroke;opacity:.65}
@@ -7351,18 +7351,18 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* Today. The date is the anchor and the list is what you actually read, so the numeral is large and
    everything else is quiet. Times are tabular for the same reason the ticker's are: a column of
    09:00 / 11:30 / 14:05 that does not line up is harder to scan than one that does. */
-.wgt-cal{display:flex;flex-direction:column;gap:8px;height:100%;min-height:0;cursor:pointer}
+.wgt-cal{display:flex;flex-direction:column;gap:7px;height:100%;min-height:0;cursor:pointer}
 .wgt-calhead{flex:none;display:flex;align-items:baseline;gap:8px}
-.wgt-calhead b{font-size:24px;line-height:1;font-weight:700;color:var(--neon)}
-.wgt-calhead span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
+.wgt-calhead b{font-size:26px;line-height:1;font-weight:700;color:var(--neon)}
+.wgt-calhead span{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* "Coming up" — a divider, not a heading: it separates today from what follows without competing
    with the date, which is the only thing in this panel meant to be read at a glance. */
-.wgt-calnext{margin:6px 0 4px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+.wgt-calnext{margin:6px 0 3px;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--muted);border-top:1px solid var(--line);padding-top:6px}
 .wgt-calrows{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:4px;
   touch-action:none}   /* a scroller inside a draggable widget — see .os-wgt-body */
-.wgt-calrow{display:flex;align-items:baseline;gap:8px;font-variant-numeric:tabular-nums}
+.wgt-calrow{display:flex;align-items:baseline;gap:7px;font-variant-numeric:tabular-nums}
 /* A finished appointment is DIMMED, never removed — a day whose entries disappear as it goes on
    reads as a calendar that is losing things. */
 .wgt-calrow.gone{opacity:.42}
@@ -7381,9 +7381,9 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 
 /* Ticker. A monospaced numeral column so the prices line up as they change — proportional digits
    make a live list twitch sideways on every update. */
-.wgt-rows{display:flex;flex-direction:column;gap:4px}
+.wgt-rows{display:flex;flex-direction:column;gap:3px}
 .wgt-row{display:flex;align-items:baseline;gap:8px;font-variant-numeric:tabular-nums}
-.wgt-sym{flex:none;width:3.4em;font-weight:700;color:var(--neon);font-size:11px;letter-spacing:.04em}
+.wgt-sym{flex:none;width:3.4em;font-weight:700;color:var(--neon);font-size:11.5px;letter-spacing:.04em}
 .wgt-val{flex:1;min-width:0;text-align:end;overflow:hidden;text-overflow:ellipsis}
 .wgt-chg{flex:none;width:5.2em;text-align:end;font-size:11px}
 /* --green/--danger, not a fixed pair: on the light themes a neon mint reads as decoration rather than
@@ -7395,9 +7395,9 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* Weather. The temperature is the thing you actually look at, so it gets the size and everything
    else is subordinate to it. */
 .wgt-wx{display:flex;flex-direction:column;gap:2px;height:100%}
-.wgt-wxnow{display:flex;align-items:center;gap:8px}
-.wgt-wxglyph{font-size:24px;line-height:1}
-.wgt-wxt{font-size:24px;font-weight:700;line-height:1;color:var(--text)}
+.wgt-wxnow{display:flex;align-items:center;gap:9px}
+.wgt-wxglyph{font-size:26px;line-height:1}
+.wgt-wxt{font-size:27px;font-weight:700;line-height:1;color:var(--text)}
 .wgt-wxt sup{font-size:12px;font-weight:600;color:var(--muted);vertical-align:super}
 .wgt-wxwhere{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* The unit toggle. Small, quiet and up beside the number it changes — it is a preference you set once,
@@ -7429,7 +7429,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    row takes the middle, which is the piece a player was missing, and the art grows into whatever is
    left on a large widget instead of floating in space. */
 .wgt-music{display:flex;flex-direction:column;gap:8px;height:100%;justify-content:space-between}
-.wgt-mtop{display:flex;align-items:center;gap:10px;min-width:0}
+.wgt-mtop{display:flex;align-items:center;gap:11px;min-width:0}
 /* A record, not a placeholder square: the disc turns while it is playing and stops when it stops,
    which is the state the transport button also carries and the one you read from across a room. */
 .wgt-mart{flex:none;width:clamp(42px,22%,64px);aspect-ratio:1;height:auto;border-radius:50%;display:flex;align-items:center;
@@ -7441,7 +7441,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 @media(prefers-reduced-motion:reduce){ .wgt-mart.spin{animation:none} }
 .wgt-mmeta{min-width:0;flex:1}
 .wgt-mnext{font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wgt-mtitle{font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wgt-mtitle{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wgt-mctl{display:flex;align-items:center;justify-content:center;gap:6px}
 /* Seek. A real control, so it is tall enough to hit with a thumb (the hit area is padded well past
    the 4px groove) and it takes focus for keyboard seeking. */
@@ -7451,7 +7451,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .wgt-mseekfill{position:relative;height:4px;border-radius:3px;width:0;
   background:linear-gradient(90deg,var(--cyan,#0bb6cf),var(--neon));box-shadow:0 0 8px rgba(var(--accent-rgb),.5)}
 .wgt-mseek:focus-visible{outline:1px solid var(--neon);outline-offset:3px;border-radius:3px}
-.wgt-mtimes{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);
+.wgt-mtimes{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);
   font-variant-numeric:tabular-nums;margin-top:-4px;flex:none}
 .wgt-b{background:none;border:1px solid var(--line);border-radius:50%;width:30px;height:30px;
   color:var(--muted);cursor:pointer;font-size:12px;line-height:1;display:inline-flex;
@@ -7459,7 +7459,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   box-shadow .12s}
 .wgt-b:hover{color:var(--cyan,#0ff);border-color:var(--cyan,#0ff)}
 .wgt-b:active{transform:scale(.9)}
-.wgt-bmain{width:36px;height:36px;font-size:15px;color:var(--neon);border-color:var(--neon)}
+.wgt-bmain{width:36px;height:36px;font-size:14px;color:var(--neon);border-color:var(--neon)}
 /* SHUFFLE IS A MODE, so it looks like a switch rather than a press: off it is one more quiet glyph,
    on it is filled and lit, which is the only way "it is already shuffling" is readable at a glance.
    The 12px icon keeps it visually lighter than the transport it sits beside — shuffle is a setting
@@ -7488,9 +7488,9 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   background:rgba(255,255,255,.30);border-bottom:1px solid rgba(120,88,0,.18);pointer-events:none}
 .os-wgt[data-type="note"] .os-wgt-x{background:rgba(255,255,255,.5);color:#7a5c00}
 .os-wgt[data-type="note"] .os-wgt-x:hover{background:rgba(160,40,20,.9);color:#fff}
-.os-wgt[data-type="note"] .os-wgt-body{padding:14px 10px 8px}
+.os-wgt[data-type="note"] .os-wgt-body{padding:14px 11px 8px}
 /* The textarea IS the widget — transparent, no frame, so the writing area is the paper itself. */
-.wgt-note{flex:1;min-height:60px;height:calc(100% - 16px);resize:none;line-height:1.45;
+.wgt-note{flex:1;min-height:60px;height:calc(100% - 16px);resize:none;line-height:1.5;
   background:transparent;border:0;border-radius:0;padding:2px 0;color:#2c2200;
   font-family:'Segoe Print','Bradley Hand','Comic Sans MS',ui-rounded,system-ui,sans-serif;font-size:13px}
 .wgt-note:focus{border:0;outline:none}
@@ -7516,14 +7516,14 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    around the text input so it's thinner and leaner". */
 /* The right padding is the ✕'s column, not decoration. At 54px tall the remove button and the ➜
    button want the same corner, and hovering the widget arms the ✕ — so the form ends before it. */
-.os-wgt[data-type="search"] .os-wgt-body{display:flex;align-items:center;padding:6px 28px 6px 8px}
+.os-wgt[data-type="search"] .os-wgt-body{display:flex;align-items:center;padding:5px 28px 5px 7px}
 .wgt-search{display:flex;gap:6px;align-items:center;width:100%}
 .wgt-sinput{flex:1;min-width:0}
 /* NO OUTLINE, A FILL. A 1px box around a field inside a panel that is itself a box was two frames
    deep for one input — "looks ugly, remove the textbox outline and fill it". So the field IS its
    fill: a tinted pill in the theme's own accent, which reads as a search box on every palette
    without drawing a single line. Focus deepens the fill instead of adding the border back. */
-.os-wgt[data-type="search"] .wgt-sinput{padding:6px 10px;border:0;border-radius:999px;
+.os-wgt[data-type="search"] .wgt-sinput{padding:6px 11px;border:0;border-radius:999px;
   background:rgba(var(--accent-rgb),.11)}
 .os-wgt[data-type="search"] .wgt-sinput:focus{background:rgba(var(--accent-rgb),.18)}
 .os-wgt[data-type="search"] .wgt-sinput::placeholder{color:var(--muted)}
@@ -7550,8 +7550,8 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   justify-content:center;align-items:center;text-align:center;position:relative}
 .wgt-clkt{flex:none;display:flex;align-items:baseline;justify-content:center;gap:6px;
   font-variant-numeric:tabular-nums}
-.wgt-clkh{font-size:34px;font-weight:700;line-height:1.2;color:var(--text)}
-.os-wgt[data-size="s"] .wgt-clkh{font-size:24px}
+.wgt-clkh{font-size:34px;font-weight:700;line-height:1.05;color:var(--text)}
+.os-wgt[data-size="s"] .wgt-clkh{font-size:27px}
 .os-wgt[data-size="l"] .wgt-clkh{font-size:42px}
 .wgt-clkap{font-style:normal;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase}
 /* Out of the flow entirely, at the BOTTOM-LEFT: it used to sit at the end of the time row on a
@@ -7564,7 +7564,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   transition:opacity .12s,color .12s,border-color .12s}
 .os-wgt:hover .wgt-clkadd,.wgt-clkadd:focus-visible{opacity:1}
 .wgt-clkadd:hover{color:var(--neon);border-color:var(--neon)}
-.wgt-clkd{flex:none;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
+.wgt-clkd{flex:none;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* `flex:0 1 auto`, not `flex:1`: growing to fill the panel is what pushed the clock to the top. It
    takes the height it needs, scrolls when four cities do not fit, and the whole group stays centred.
@@ -7592,16 +7592,16 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 /* Headlines. One row is a title and its source; the panel holds as many as fit and rotates by one.
    Each repaint replaces the rows, so the animation runs on arrival for free — and is dropped whole
    for anyone who has asked for less motion, where a ticker is exactly the thing they meant. */
-.wgt-news{display:flex;flex-direction:column;gap:6px;height:100%;min-height:0;overflow:hidden}
+.wgt-news{display:flex;flex-direction:column;gap:5px;height:100%;min-height:0;overflow:hidden}
 .wgt-news-tools{display:flex;align-items:center;gap:8px;flex:none;min-height:20px;border-bottom:1px solid var(--line);padding-bottom:4px}
-.wgt-news-tools b{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.wgt-news-tools button{margin-inline-start:auto;border:0;background:transparent;color:var(--neon);font:inherit;font-size:11px;cursor:pointer;padding:2px 4px;border-radius:5px}
+.wgt-news-tools b{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.wgt-news-tools button{margin-inline-start:auto;border:0;background:transparent;color:var(--neon);font:inherit;font-size:10.5px;cursor:pointer;padding:2px 4px;border-radius:5px}
 .wgt-news-tools button:hover{background:rgba(var(--accent-rgb),.12)}
 .wgt-nrow{display:block;flex:none;text-decoration:none;color:inherit;border-radius:6px;
   animation:wgtnews .42s ease}
-.wgt-nt{display:block;font-size:12px;line-height:1.2;color:var(--text);
+.wgt-nt{display:block;font-size:12.5px;line-height:1.25;color:var(--text);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wgt-nm{display:block;font-size:11px;color:var(--muted);
+.wgt-nm{display:block;font-size:10.5px;color:var(--muted);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wgt-nrow:hover .wgt-nt{color:var(--neon)}
 /* An item whose feed gave no usable link is still worth reading — it just is not a link, and must
@@ -7625,10 +7625,10 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    centres each tile in its column, and the tile centres its own icon+number pair. */
 .wgt-st{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));gap:16px 18px;
   height:100%;align-content:center;justify-items:center;cursor:pointer}
-.wgt-stc{display:grid;grid-template-columns:24px auto;grid-template-rows:auto auto;gap:2px 8px;
+.wgt-stc{display:grid;grid-template-columns:24px auto;grid-template-rows:auto auto;gap:2px 9px;
   align-items:center;justify-content:center}
 .wgt-stc .ic{width:24px;height:24px;color:var(--muted);grid-row:span 2}
-.wgt-stc b{font-size:24px;font-weight:750;color:var(--text);line-height:1.2;
+.wgt-stc b{font-size:24px;font-weight:750;color:var(--text);line-height:1.05;
   font-variant-numeric:tabular-nums}
 .wgt-stc i{font-style:normal;font-size:13px;color:var(--muted);line-height:1.2;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -7636,12 +7636,12 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    which turns five facts into THREE rows: their line boxes plus two 16px gaps consume the entire
    height and clip the labels against both edges. Small mode is deliberately 3+2, with dimensions
    that fit rather than relying on overflow to shave the text. */
-.os-wgt[data-size="s"] .wgt-st{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 6px;
+.os-wgt[data-size="s"] .wgt-st{grid-template-columns:repeat(3,minmax(0,1fr));gap:9px 5px;
   align-content:center;padding-block:2px;box-sizing:border-box}
-.os-wgt[data-size="s"] .wgt-stc{grid-template-columns:18px minmax(0,auto);gap:1px 6px;min-width:0}
+.os-wgt[data-size="s"] .wgt-stc{grid-template-columns:18px minmax(0,auto);gap:1px 5px;min-width:0}
 .os-wgt[data-size="s"] .wgt-stc .ic{width:18px;height:18px}
-.os-wgt[data-size="s"] .wgt-stc b{font-size:17px;line-height:1.2}
-.os-wgt[data-size="s"] .wgt-stc i{font-size:11px;line-height:1.2;max-width:68px}
+.os-wgt[data-size="s"] .wgt-stc b{font-size:17px;line-height:1.1}
+.os-wgt[data-size="s"] .wgt-stc i{font-size:10.5px;line-height:1.25;max-width:68px}
 /* Something is actually live: the icon lights and breathes. Only ever for a NON-ZERO counter — this
    is the one cell whose value changes what the panel is for. */
 .wgt-stc.live .ic{color:var(--neon);animation:wgtpulse 2.2s ease-in-out infinite}
@@ -7679,14 +7679,14 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 
 /* The picker — the wallpaper panel's frame, a list rather than a grid of thumbnails. */
 .os-wgt-grid{display:flex;flex-direction:column;gap:6px;padding:10px;max-height:56vh;overflow:auto}
-.os-wgt-pick{display:grid;grid-template-columns:22px 1fr;gap:4px 10px;align-items:center;
-  text-align:start;padding:8px 10px;border-radius:10px;border:1px solid var(--line);
+.os-wgt-pick{display:grid;grid-template-columns:22px 1fr;gap:3px 10px;align-items:center;
+  text-align:start;padding:9px 11px;border-radius:10px;border:1px solid var(--line);
   background:var(--panel2);color:var(--text);cursor:pointer}
 .os-wgt-pick:hover{border-color:var(--neon)}
 .os-wgt-pick .ic{width:18px;height:18px;color:var(--neon);grid-row:span 2}
 .os-wgt-pl{font-weight:600;font-size:13px}
-.os-wgt-pl i{font-style:normal;color:var(--muted);font-weight:400;font-size:11px}
-.os-wgt-pb{font-size:11px;color:var(--muted)}
+.os-wgt-pl i{font-style:normal;color:var(--muted);font-weight:400;font-size:11.5px}
+.os-wgt-pb{font-size:11.5px;color:var(--muted)}
 
 /* The right-click menu — on an icon, and on the desktop itself. */
 .os-ctx{position:absolute;z-index:420;min-width:184px;max-width:280px;max-height:60vh;overflow-y:auto;
@@ -9672,7 +9672,34 @@ audio.sms-att-img{min-width:220px}
 .pctm-table{border:1px solid #292f3c;border-radius:10px;overflow:hidden;background:#12151c}.pctm-tr{display:grid;grid-template-columns:minmax(260px,1fr) 72px 105px 120px 92px;align-items:center;min-height:48px;border-bottom:1px solid #222733}.pctm-tr:last-child{border-bottom:0}.pctm-tr>span,.pctm-tr>button{padding:8px 12px}.pctm-th{min-height:38px;background:#171b24;color:#9da6b7;font-size:12px}.pctm-th button{border:0;background:none;color:inherit;text-align:left;cursor:pointer}.pctm-rows>.pctm-tr:hover{background:#191e27}.pctm-tr>span:first-child{display:flex;align-items:center;gap:10px;min-width:0}.pctm-tr>span:first-child>b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pctm-appicon{display:grid;place-items:center;flex:0 0 28px;height:28px;border-radius:7px;background:linear-gradient(145deg,#343b4b,#202531);color:#dfe8ff;font-style:normal;font-size:12px}.pctm-heat{background:linear-gradient(90deg,color-mix(in srgb,var(--cyan) 24%,transparent) var(--use),transparent var(--use));height:100%;display:flex;align-items:center}
 .pctm-performance{max-width:1100px}.pctm-perfgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.pctm-perf{min-height:265px;background:#13171f;border:1px solid #2a303e;border-radius:12px;padding:18px;overflow:hidden}.pctm-perf:first-child{grid-column:1/-1}.pctm-perf header,.pctm-perf footer{display:flex;justify-content:space-between;gap:14px}.pctm-perf header b{font-size:20px}.pctm-perf header small{display:block;color:#8993a6;margin-top:4px}.pctm-perf header strong{font-size:24px}.pctm-graph{display:block;width:100%;height:145px;margin:10px 0;background-image:linear-gradient(#ffffff0a 1px,transparent 1px),linear-gradient(90deg,#ffffff0a 1px,transparent 1px);background-size:25% 25%;border:1px solid #ffffff0d}.pctm-perf footer{color:#929bad;font-size:12px}.pctm-perf footer b{display:block;color:#f4f6fa;font-size:15px;margin-top:2px}
 @media(max-width:760px){.pctm{grid-template-columns:58px 1fr}.pctm-brand span,.pctm-nav button span{display:none}.pctm-nav{padding-inline:8px}.pctm-main{padding:16px 12px}.pctm-tr{grid-template-columns:minmax(150px,1fr) 80px 100px 76px}.pctm-tr>*:nth-child(2){display:none}.pctm-summary{grid-template-columns:1fr 1fr}.pctm-summary>div:last-child{grid-column:1/-1}.pctm-perfgrid{grid-template-columns:1fr}.pctm-perf:first-child{grid-column:auto}}
-.os-settings-feed{padding:0!important;height:100%;overflow:hidden!important}
+/* THE CONCORD @ PICKER. It had no stylesheet at all, because it had no markup at all — the choices
+   lived in module state and the only way to reach them was ArrowUp/ArrowDown and Tab, which a phone
+   keyboard does not have ("@ tagging is not working at all on mobile"). Rows are 44px so a finger
+   can hit one, and the list sits ABOVE the composer so the keyboard does not cover it. */
+.cc-mentions{margin:0 8px 6px;max-height:232px;overflow:auto;display:flex;flex-direction:column;
+  background:var(--panel2);border:1px solid var(--neon);border-radius:11px;box-shadow:var(--glow);
+  flex:0 0 auto;-webkit-overflow-scrolling:touch}
+.cc-mention-opt{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:6px 12px;
+  border:0;background:none;color:var(--text);font:inherit;font-size:15px;text-align:left;cursor:pointer}
+.cc-mention-opt img{width:26px;height:26px;border-radius:50%;border:1px solid var(--line);object-fit:cover;flex:0 0 auto}
+.cc-mention-opt span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-mention-opt.on,.cc-mention-opt:hover{background:rgba(var(--accent-rgb),.18)}
+
+/* A FULL-HEIGHT MODIFIER ON #feed MUST CARRY THE `feed-` PREFIX, because that prefix IS the strip.
+   `_feedScrollable()` clears modifiers by scanning #feed's classList for `feed-`, deliberately
+   derived rather than a written-out list. These four were named `os-*-feed`, which that scan cannot
+   see — and they are `overflow:hidden!important`, so anything painting into #feed afterwards was
+   clipped at the fold with no way to scroll. Reported (again) as "i opened My Profile and can't
+   scroll". Never name a #feed modifier anything else. */
+.feed-ossettings{padding:0!important;height:100%;overflow:hidden!important}
+/* THE OTHER EXTRAS OPENED AS REAL TOPLEVELS. A window document has no `.osw-body`/`.osw-slot`, so
+   the frame rules that gave these apps their whole host (`.osw-taskmgr`, `.osw-vms`, `.osw-remote`)
+   reach nothing here — `#feed` is a padded scrolling column and each of these apps sizes itself to
+   its host and scrolls inside. `.feed-remote` is also the containing block `.pcrd-session`
+   positions against; without it the session overlay escapes to the viewport. */
+.feed-taskmgr{padding:0!important;height:100%;overflow:hidden!important}
+.feed-vms{padding:0!important;height:100%;overflow:hidden!important}
+.feed-remote{padding:0!important;height:100%;overflow:hidden!important;position:relative}
 .os-settings{display:grid;grid-template-columns:210px 1fr;height:100%;min-height:520px;background:#090b11;color:var(--text)}
 .os-set-nav{padding:18px 12px;border-right:1px solid var(--line);background:#0c0f16;box-shadow:8px 0 30px #0002}
 .os-set-title{display:flex;gap:8px;align-items:center;font-size:15px;margin:2px 8px 20px}

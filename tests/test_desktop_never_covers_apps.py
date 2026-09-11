@@ -161,12 +161,18 @@ def test_a_new_window_opens_at_the_size_the_desktop_chose_for_it(tmp_path):
 def test_open_app_hands_that_size_to_the_window_it_opens():
     """The conversion above is worth nothing if the call site still passes `{}` — which is the whole
     bug, and it is one character wide."""
-    call = re.search(r"real = PCOSWin\.open\(view, label \|\| view, ([^)]*)\)", OS_JS)
+    # WHAT THIS PINS IS THE SIZE HINT, NOT THE OTHER TWO ARGUMENTS. The identity and the label are
+    # the caller's business and they have already moved once — an EXTRA opens under its own view
+    # name and its own title — so matching the whole call made this test fail for a change that had
+    # nothing to do with sizing, which is a test that will be edited rather than read.
+    call = re.search(r"real = PCOSWin\.open\(([\s\S]*?)\);", OS_JS)
     assert call, "openApp no longer opens a toplevel through PCOSWin.open — re-read this test"
-    assert call.group(1).strip() != "{}", (
+    args = [a.strip() for a in call.group(1).split(",")]
+    assert len(args) == 3, ("PCOSWin.open takes (view, label, hint); openApp is passing %r" % args)
+    assert args[2] != "{}", (
         "openApp is asking for a window with no size again: every app on PosterChanOS then opens at "
         "oswin.js's 1100x760 fallback and place() reaches nothing")
-    assert "_windowOpenHint" in call.group(1)
+    assert "_windowOpenHint" in args[2]
     assert "function _windowOpenHint" in OS_JS
 
 

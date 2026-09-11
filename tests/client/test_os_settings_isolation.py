@@ -77,7 +77,7 @@ def test_mobile_settings_keeps_every_category_reachable_when_sidebar_is_hidden()
     assert "if(kind==='page'){_osSettingsPage=value;renderSystemSettings();}" in render
     assert "else if(kind==='jump')jump(value,mobile)" in render
     assert ".os-set-mobile-nav{display:none}" in css
-    mobile = css[css.index("@media(max-width:760px)", css.index(".os-settings-feed")):]
+    mobile = css[css.index("@media(max-width:760px)", css.index(".feed-ossettings")):]
     assert ".os-set-nav{display:none}" in mobile
     assert ".os-set-mobile-nav{" in mobile and "display:flex" in mobile
 

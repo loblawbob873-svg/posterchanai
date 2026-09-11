@@ -370,7 +370,29 @@
   function acceptHandoff(value){ const v=value&&typeof value==='object'?value:{},rooms=saved(),i=rooms.findIndex(room=>(room.communityId||room.naddr||room.url)===String(v.room||'')); state.community=i>=0?i:(rooms.length?Math.max(0,Math.min(Number(localStorage.getItem('pc.concord.active'))||0,rooms.length-1)):null);state.channel=String(v.channel||'general').slice(0,80);mobileChatOpen=!!v.mobileChatOpen;mobileDrawerOpen=!!v.mobileDrawerOpen;if(state.community!=null&&v.scroll){const key=scrollKey(),st={top:Math.max(0,Number(v.scroll.top)||0),height:Math.max(0,Number(v.scroll.height)||0),pinned:v.scroll.pinned!==false};writeScroll(key,st);} }
   function readScroll(key){ if(scrollStates.has(key))return scrollStates.get(key); try{ const v=JSON.parse(sessionStorage.getItem('pc.concord.scroll.'+key)||'null'); if(v&&typeof v==='object')return v; }catch(_){} return {pinned:true}; }
   function writeScroll(key,st){ scrollStates.set(key,st); try{ sessionStorage.setItem('pc.concord.scroll.'+key,JSON.stringify({top:Number(st.top)||0,height:Number(st.height)||0,pinned:st.pinned!==false})); }catch(_){} }
-  function setProgrammaticScroll(box,top,done){ if(!box)return;box.dataset.ccScrollRestore='1';box.scrollTop=top;const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0));later(()=>{if(box.isConnected)delete box.dataset.ccScrollRestore;if(done)done();}); }
+  /* A PROGRAMMATIC SCROLL IS TOLD APART FROM A FINGER BY WHERE IT LANDED, NOT BY WHEN IT HAPPENED.
+   *
+   * `ccScrollRestore` used to be the whole test, and it is a TIME WINDOW: `onscroll` discarded every
+   * scroll event between setting the flag and the next animation frame. A browser's frame is ~16ms
+   * and a reader's flick is hundreds of events, so the ones that landed inside a restore were thrown
+   * away — and `pinned` is computed from exactly those events. A picture finishing decryption above
+   * the reader fires a resize, the resize restores the pin, the flick inside that frame is
+   * swallowed, `pinned` stays true, and the next picture snaps them to the bottom. Reported as "my
+   * position keeps getting reset when I scroll through a room history", and it repeats for as long
+   * as media keeps landing, which in a busy room is the whole way up.
+   *
+   * Recording the position we asked for makes the question answerable: a scroll event still sitting
+   * at that number is ours, anything else is the reader, and the reader always wins. Read back
+   * rather than trusting `top` — the browser clamps it to the scrollable range. */
+  function setProgrammaticScroll(box,top,done){ if(!box)return;box.dataset.ccScrollRestore='1';box.scrollTop=top;box.dataset.ccScrollAt=String(box.scrollTop);const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0));later(()=>{if(box.isConnected){delete box.dataset.ccScrollRestore;delete box.dataset.ccScrollAt;}if(done)done();}); }
+  /* Is this scroll event the one `setProgrammaticScroll` just caused? Answering yes CONSUMES the
+   * flag, so a reader who moves inside a restore is heard for the rest of that frame too. */
+  function programmaticScrollEvent(box){
+    if(!box||!box.dataset||!box.dataset.ccScrollRestore) return false;
+    if(Math.abs((Number(box.scrollTop)||0)-(Number(box.dataset.ccScrollAt)||0))<=2) return true;
+    delete box.dataset.ccScrollRestore; delete box.dataset.ccScrollAt;
+    return false;
+  }
   function scrollChatBottom(){ const key=scrollKey(),st=readScroll(key); st.pinned=true; writeScroll(key,st); const later=window.requestAnimationFrame||((fn)=>setTimeout(fn,0)); later(()=>{ const box=document.querySelector('.cc-messages'); if(box)setProgrammaticScroll(box,box.scrollHeight,()=>{st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);}); }); }
   /* Entering a room is different from preserving a room somebody is already reading. History,
    * decrypted attachments and link previews all grow the scroller asynchronously, so one rAF can
@@ -406,13 +428,94 @@
       .find(el=>(Number(el.offsetTop)||0)+(Number(el.offsetHeight)||0)>top);
     return row&&row.dataset&&row.dataset.messageId?{id:row.dataset.messageId,gap:(Number(row.offsetTop)||0)-top}:null;
   }
+  /* IS THE READER'S HAND ON THIS SCROLLER RIGHT NOW?
+   *
+   * Writing `scrollTop` during a gesture CANCELS it. A fling that was going to carry four hundred
+   * pixels further up stops dead where the write landed, so the reader ends up somewhere they did
+   * not choose — and a room full of decrypting pictures fires a resize every few hundred
+   * milliseconds, which is "it constantly jerks me to different positions". The restore is usually
+   * computing the right number; writing it at the wrong moment is the whole problem. A correction
+   * therefore waits for the hand to leave.
+   *
+   * A `scroll` event cannot START a gesture — our own writes fire one, and that would latch this
+   * on for ever. It only EXTENDS one that a real input device began, which is how momentum past
+   * the end of the finger keeps counting. */
+  let chatGestureUntil=0;
+  function chatHandOn(){ return Date.now()<chatGestureUntil; }
+  function scrollGesture(scroller){
+    const begin=()=>{ chatGestureUntil=Date.now()+220; };
+    const extend=()=>{ if(chatHandOn()) begin(); };
+    const on=(type,fn)=>{ try{ if(scroller.addEventListener)scroller.addEventListener(type,fn,{passive:true}); }catch(_){ } };
+    on('pointerdown',begin); on('touchstart',begin); on('touchmove',begin);
+    on('wheel',begin); on('keydown',begin); on('scroll',extend);
+    return chatHandOn;
+  }
+  /* A REPAINT MID-FLICK IS A JERK NO RESTORE CAN UNDO.
+   *
+   * `preserveChatScroll` REPLACES the rows, and replacing the content of a scroller kills a
+   * momentum scroll outright — the restore afterwards puts the right pixel back, but the fling that
+   * was going to carry the reader another few hundred pixels is gone. A busy room repaints on every
+   * arriving message, so scrolling back through history in one is a series of dead flings: "it
+   * constantly jerks me to different positions".
+   *
+   * So the repaint waits for the hand to leave. Only the PAINT waits — whatever the caller needed
+   * to persist has already happened by the time it gets here — and repeated calls coalesce into
+   * one, because five messages arriving during a flick are still one repaint. */
+  /* AND A DEFERRED PAINT IS CHECKED TWICE. Waiting for the hand means the request and the paint no
+   * longer happen in the same instant, so "Concord is on screen" can stop being true in between - a
+   * held repaint would then draw a room over whatever the reader navigated to. Callers re-test
+   * their own precondition inside the callback; this helper deliberately does not guess what it is. */
+  let chatRepaintHold=null;
+  function whenHandLeaves(fn){
+    if(!chatHandOn()){ fn(); return; }
+    if(chatRepaintHold)clearTimeout(chatRepaintHold);
+    chatRepaintHold=setTimeout(()=>{ chatRepaintHold=null; whenHandLeaves(fn); },240);
+  }
   function watchPinnedRoomGrowth(scroller){
     if(!scroller||typeof ResizeObserver==='undefined')return;
     const key=scrollKey(),content=scroller.querySelector('.cc-message-list')||scroller;
     let anchor=viewportAnchor(scroller);
     const remember=()=>{anchor=viewportAnchor(scroller);};
-    if(scroller.addEventListener)scroller.addEventListener('scroll',remember,{passive:true});
-    const observer=new ResizeObserver(()=>{const st=readScroll(key);if(!scroller.isConnected||scrollKey()!==key){if(!scroller.isConnected)observer.disconnect();return;}if(st.pinned!==false){setProgrammaticScroll(scroller,scroller.scrollHeight,()=>{st.top=scroller.scrollTop;st.height=scroller.scrollHeight;writeScroll(key,st);remember();});return;}/* Decrypted images and link cards can gain height above an unpinned reader long after render. A fixed pixel offset would replace the message in view, so restore the last visible row and its viewport gap. Growth below it naturally produces the same offset. */const row=anchor&&[...scroller.querySelectorAll('.cc-message[data-message-id]')].find(el=>el.dataset&&el.dataset.messageId===anchor.id),top=row?Math.max(0,(Number(row.offsetTop)||0)-anchor.gap):scroller.scrollTop;setProgrammaticScroll(scroller,top,()=>{st.top=scroller.scrollTop;st.height=scroller.scrollHeight;writeScroll(key,st);remember();});});
+    const handOn=scrollGesture(scroller);
+    if(scroller.addEventListener)scroller.addEventListener('scroll',()=>{if(!programmaticScrollEvent(scroller))remember();},{passive:true});
+    let waiting=null;
+    /* Where this scroller SHOULD be, given what the reader was looking at. `null` means "leave it
+     * alone" — which is most of the time, because growth below an unpinned reader moves nothing
+     * they can see. */
+    const wanted=(st)=>{
+      if(st.pinned!==false) return scroller.scrollHeight;
+      /* Decrypted images and link cards can gain height above an unpinned reader long after
+       * render. A fixed pixel offset would replace the message in view, so restore the last
+       * visible row and its viewport gap. Growth below it naturally produces the same offset. */
+      const row=anchor&&[...scroller.querySelectorAll('.cc-message[data-message-id]')]
+        .find(el=>el.dataset&&el.dataset.messageId===anchor.id);
+      return row?Math.max(0,(Number(row.offsetTop)||0)-anchor.gap):null;
+    };
+    const correct=()=>{
+      const st=readScroll(key);
+      if(!scroller.isConnected||scrollKey()!==key) return;
+      /* THE HAND WINS. Come back when it has left rather than fighting it for the scroller. */
+      if(handOn()){ hold(); return; }
+      const want=wanted(st);
+      /* WHERE THE WRITE WOULD ACTUALLY LAND. The pinned branch asks for `scrollHeight`, which is
+       * past the end — a browser clamps it to `scrollHeight - clientHeight` — so comparing the
+       * REQUEST against the current position would report a difference on every single resize and
+       * write every time. Compare the landing, write the request. */
+      const max=Math.max(0,(Number(scroller.scrollHeight)||0)-(Number(scroller.clientHeight)||0));
+      const landing=want==null?null:Math.max(0,Math.min(want,max));
+      /* A NO-OP WRITE IS NOT FREE. Assigning the value it already holds still cancels a momentum
+       * scroll, so "nothing to correct" has to mean writing nothing at all. */
+      if(landing==null||Math.abs((Number(scroller.scrollTop)||0)-landing)<=1){
+        st.top=scroller.scrollTop;st.height=scroller.scrollHeight;writeScroll(key,st);remember();
+        return;
+      }
+      setProgrammaticScroll(scroller,want,()=>{st.top=scroller.scrollTop;st.height=scroller.scrollHeight;writeScroll(key,st);remember();});
+    };
+    function hold(){ if(waiting)clearTimeout(waiting); waiting=setTimeout(()=>{waiting=null;correct();},240); }
+    const observer=new ResizeObserver(()=>{
+      if(!scroller.isConnected){observer.disconnect();if(waiting){clearTimeout(waiting);waiting=null;}return;}
+      correct();
+    });
     observer.observe(content);
   }
   function removeMessageRow(id){ const box=document.querySelector('.cc-messages'),row=[...document.querySelectorAll('.cc-message[data-message-id]')].find(el=>el.dataset.messageId===id); if(!box||!row)return false; const key=scrollKey(),st=readScroll(key),top=box.scrollTop,height=box.scrollHeight,above=(Number(row.offsetTop)||0)+(Number(row.offsetHeight)||0)<=top; row.remove(); const later=window.requestAnimationFrame||((f)=>setTimeout(f,0)); later(()=>{ if(!box.isConnected)return; const lost=Math.max(0,height-box.scrollHeight); box.scrollTop=st.pinned!==false?box.scrollHeight:(above?Math.max(0,top-lost):top);st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st); }); return true; }
@@ -2619,7 +2722,7 @@
     // Another live batch or history refresh may have committed while decryption was pending.
     // Merge into the current store after the await, so late completion cannot erase newer arrivals.
     const prior=testMessages(storeId),next=mergeCordTimeline(prior,opened,p,key);
-    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>{saveTestMessages(storeId,next);backgroundRender();});else saveTestMessages(storeId,next);}
+    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);saveTestMessages(storeId,next);if(document.body.classList.contains('concord-view'))whenHandLeaves(()=>{if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());});}
 
     };
     const task=(pending.get(key)||Promise.resolve()).then(run,run);pending.set(key,task);
@@ -2880,7 +2983,7 @@
     const oldCommunityRail=feed.querySelector&&feed.querySelector('.cc-communities');
     feed.innerHTML=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${mobileDrawerOpen?' drawer-open':''}${state.community==null?' home-view':''}">
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
-      <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Join a community">+</button></aside>
+      <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Create or join a community" aria-label="Create or join a community">+</button></aside>
       <aside class="cc-channels"><header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-room" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button>':''}<button class="cc-head-btn" id="cc-invite" title="Join with invite">+</button></header>
         <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
@@ -2888,7 +2991,7 @@
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
         <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="Message #${p.enc(state.channel||'general')}" ${state.community==null?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null?'disabled':''}>Send</button></div>
-      </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join a Concord community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
+      </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?'':'<div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div>'}${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
     feed.insertAdjacentHTML('afterbegin','<nav class="messages-tabs" aria-label="Message type"><button id="messages-direct">Direct messages</button><button class="on" aria-current="page">Communities</button></nav>');
     const directMessages=p.$('#messages-direct');if(directMessages)directMessages.onclick=()=>
@@ -2962,13 +3065,27 @@
       boundOwnerPk=String((boundRoom&&boundRoom.cord&&boundRoom.cord.bundle&&
         (boundRoom.cord.bundle.owner||boundRoom.cord.bundle.creator_npub))||''),
       isOwner=!!boundOwnerPk&&boundOwnerPk===viewer.pubkey;
-    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||scroller.dataset.ccScrollRestore||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); scroller.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!inviteParts(a.href))return;e.preventDefault();e.stopPropagation();openInviteLink(a.href);},true);watchPinnedRoomGrowth(scroller); }
+    const scroller=document.querySelector('.cc-messages'); if(scroller){ scroller.onscroll=()=>{ if(scroller.dataset.osParking||programmaticScrollEvent(scroller)||!scroller.isConnected||!document.body.classList.contains('concord-view'))return; const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); }; scroller.querySelectorAll('a').forEach(a=>a.addEventListener('pointerdown',()=>{ const key=scrollKey(),st=readScroll(key); st.top=scroller.scrollTop;st.height=scroller.scrollHeight;st.pinned=scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<80;writeScroll(key,st); },{passive:true})); scroller.addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a||!inviteParts(a.href))return;e.preventDefault();e.stopPropagation();openInviteLink(a.href);},true);watchPinnedRoomGrowth(scroller); }
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
     const home=$('#cc-home'); if(home)home.onclick=()=>{ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=!rooms.length; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     const discovery=$('#cc-discovery'); if(discovery)discovery.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     ['#cc-add','#cc-invite','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
     const roomInvite=$('#cc-invite');if(roomInvite&&state.community!=null){roomInvite.title='Invite people';roomInvite.setAttribute&&roomInvite.setAttribute('aria-label','Invite people');roomInvite.onclick=()=>{const room=saved()[state.community];if(room&&room.url)p.copyValue(room.url);else $('#cc-join').classList.remove('hidden');};}
-    const create=$('#cc-create'); if(create)create.onclick=()=>{ $('#cc-create-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-community-name').focus(),20); };
+    /* CREATING A COMMUNITY WAS REACHABLE ONLY WHILE YOU HAD NONE.
+     *
+     * "Create community" lives on the `state.community==null` discover pane, and the moment you
+     * join or create anything that pane is replaced by the message list — so the button ceased to
+     * exist and the only way back was the unlabelled ◎ in the rail, whose title says "Discover
+     * public communities". Reported as "i don;t see a way to create a new Concord room": the
+     * feature was there and nothing on screen said so.
+     *
+     * The rail's + now advertises both, and the join sheet offers the other half. One opener for
+     * all three entry points, because three copies of "show the dialog and focus the name" is how
+     * two of them come to disagree about which. */
+    const openCreate=()=>{ const dlg=$('#cc-create-dialog'); if(!dlg)return;
+      $('#cc-join').classList.add('hidden');
+      dlg.classList.remove('hidden'); setTimeout(()=>{const n=$('#cc-community-name'); if(n)n.focus();},20); };
+    ['#cc-create','#cc-join-create'].forEach(sel=>{ const b=$(sel); if(b)b.onclick=openCreate; });
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
     const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const room=await mintPublicRoom(p,name,normalizeIcon($('#cc-community-icon').value)); const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general'; render(); await persistArmadaMembership(p,room); p.copyValue(room.url); p.toast('public community created — invite link copied'); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
@@ -2982,9 +3099,54 @@
     let mentionChoices=[...(activeMentionState.choices||[])],mentionIndex=Number(activeMentionState.index)||0;
     const mentionRecipients=new Map(activeMentionState.recipients||[]);
     const syncMentionState=()=>{activeMentionState={choices:[...mentionChoices],index:mentionIndex,recipients:new Map(mentionRecipients)};};
-    const closeMentions=()=>{ mentionChoices=[];syncMentionState(); };
+    /* THE PICKER HAD NO PICTURE, AND ON A PHONE THAT MEANS IT DOES NOT EXIST.
+     *
+     * `mentionChoices` was module state and nothing ever painted it: the only way to choose was
+     * `input.onkeydown` — ArrowUp/ArrowDown to move, Tab or Enter to accept. A phone keyboard has
+     * no arrows and no Tab, and Enter sends the message, so typing `@` in a room did nothing
+     * whatsoever and there was nothing on screen to say a list existed. Reported as "@ tagging is
+     * not working at all on mobile".
+     *
+     * The list is drawn above the composer and every row is a real target. Keyboard selection is
+     * untouched — the highlighted row is the SAME `mentionIndex` the arrows move, so the two ways
+     * of choosing cannot disagree. */
+    const closeMentions=()=>{ mentionChoices=[];syncMentionState();paintMentionPicker(); };
+    function paintMentionPicker(){
+      const anchor=document.querySelector('.cc-compose');
+      let list=document.querySelector('.cc-mentions');
+      if(!mentionChoices.length||!anchor){ if(list)list.remove(); return; }
+      if(!list||list.parentElement!==anchor.parentElement){
+        if(list)list.remove();
+        list=document.createElement('div');
+        list.className='cc-mentions'; list.setAttribute('role','listbox');
+        list.setAttribute('aria-label','Mention a member');
+        anchor.parentElement.insertBefore(list,anchor);
+        /* ONE delegated pair, bound once — the rows are rebuilt on every keystroke, so per-row
+         * handlers would be re-attached hundreds of times and lost in between.
+         *
+         * `pointerdown` is the event, not `mousedown`: it is the one a finger, a mouse and a pen
+         * all send. preventDefault there keeps the textarea focused (and the phone keyboard up)
+         * without cancelling `pointerup`, so the choice is made on RELEASE and a drag that was
+         * meant to scroll this list does not tag somebody. */
+        let sx=0,sy=0,moved=false;
+        list.addEventListener('pointerdown',ev=>{ if(!ev.target.closest||!ev.target.closest('[data-cc-mention]'))return;
+          sx=ev.clientX;sy=ev.clientY;moved=false;ev.preventDefault(); });
+        list.addEventListener('pointermove',ev=>{ if(Math.abs(ev.clientX-sx)>8||Math.abs(ev.clientY-sy)>8)moved=true; });
+        list.addEventListener('pointerup',ev=>{ const row=ev.target.closest&&ev.target.closest('[data-cc-mention]');
+          if(!row||moved)return; ev.preventDefault(); acceptMention(Number(row.dataset.ccMention)||0); });
+      }
+      list.innerHTML=mentionChoices.map((choice,i)=>{
+        const pr=p.profOf?p.profOf(choice.pk):{};
+        return `<button type="button" role="option" class="cc-mention-opt${i===mentionIndex?' on':''}"`
+          +` aria-selected="${i===mentionIndex?'true':'false'}" data-cc-mention="${i}">`
+          +`<img src="${p.enc(pr.picture||p.LOGO||'')}" alt="">`
+          +`<span>@${p.enc(choice.name)}</span></button>`;
+      }).join('');
+      const on=list.querySelector('.cc-mention-opt.on');
+      if(on&&on.scrollIntoView)try{ on.scrollIntoView({block:'nearest'}); }catch(_){ }
+    }
     const mentionToken=()=>{ const before=input.value.slice(0,input.selectionStart); return before.match(/(?:^|\s)@([\w.-]*)$/); };
-    const drawMentions=()=>{ const match=mentionToken(); if(!match){closeMentions();return;} const room=saved()[state.community],viewer=p.viewer?p.viewer():{},pks=roomParticipants(room,viewer.pubkey),q=match[1].toLowerCase(); mentionChoices=pks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=String(pr.display_name||pr.name||(pk===viewer.pubkey?me:pk.slice(0,12)));return {pk,name,aliases:mentionAliases(pr,pk,name)};}).filter(x=>!q||[...x.aliases].some(alias=>alias.includes(q))).slice(0,8); if(!mentionChoices.length){closeMentions();return;} mentionIndex=Math.min(mentionIndex,mentionChoices.length-1);syncMentionState(); };
+    const drawMentions=()=>{ const match=mentionToken(); if(!match){closeMentions();return;} const room=saved()[state.community],viewer=p.viewer?p.viewer():{},pks=roomParticipants(room,viewer.pubkey),q=match[1].toLowerCase(); mentionChoices=pks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=String(pr.display_name||pr.name||(pk===viewer.pubkey?me:pk.slice(0,12)));return {pk,name,aliases:mentionAliases(pr,pk,name)};}).filter(x=>!q||[...x.aliases].some(alias=>alias.includes(q))).slice(0,8); if(!mentionChoices.length){closeMentions();return;} mentionIndex=Math.min(mentionIndex,mentionChoices.length-1);syncMentionState();paintMentionPicker(); };
     const acceptMention=(i=mentionIndex)=>{ const match=mentionToken(),choice=mentionChoices[i]; if(!match||!choice)return false; const handle=choice.name.replace(/\s+/g,'_'),end=input.selectionStart,start=end-match[1].length-1;mentionRecipients.set(handle.toLowerCase(),choice.pk);input.setRangeText('@'+handle+' ',start,end,'end'); closeMentions();syncMentionState(); input.focus(); return true; };
     if(input&&input.addEventListener)input.addEventListener('input',drawMentions);
     const attach=$('#cc-attach'), file=$('#cc-file');

@@ -16,7 +16,18 @@ def test_vm_delete_uses_an_in_app_confirm_owned_by_its_managed_window():
     handler = vm_delete_handler()
     assert "confirm(" not in handler
     assert "await PC().uiConfirm" in handler
-    assert "owner:w.body" in handler
+    # THE DIALOG IS ANCHORED TO WHATEVER HOSTS THIS APP — which is no longer always a window.
+    # Virtual Machines is a real compositor toplevel on PosterChanOS, so its painter takes a host
+    # and an `owner` and reaches for no frame; the IN-PAGE opener is what supplies `w.body`, and
+    # `uiConfirm` falls back to `document.body` when there is none, which is exactly right for a
+    # window document. Assert the chain, not the one expression it used to be.
+    assert "owner:owner" in handler.replace(" ", ""), (
+        "the delete confirm no longer anchors to the host it was given")
+    assert "function paintVmManager(slot, owner)" in OS, (
+        "the VM painter is welded back to a window, so this app cannot be a real toplevel and "
+        "opening it hides every window behind it")
+    assert "w.onClose=paintVmManager(w.slot,w.body)" in OS.replace(" ", ""), (
+        "the in-page frame no longer gives the painter its own body to anchor dialogs to")
     assert "ok:'Delete'" in handler and "danger:true" in handler
 
 

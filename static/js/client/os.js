@@ -1767,8 +1767,70 @@
    * So the destination has to be a view the nav actually knows, which is the same list the desktop
    * reads to draw its icons. Anything else refuses, keeps the frame it was going to close, and says
    * so. A window that lies about what it contains is worse than a button that declines. */
+  /* AN EXTRA THIS SHELL BUILDS, AND THE WINDOW IDENTITY IT OPENS UNDER.
+   *
+   * These are the screens that had no way to be anything but an in-page frame — and an in-page
+   * frame can only be shown by putting the desktop surface in front of the applications, which is
+   * opaque and fills the output, so showing one HID every window it overlapped. Reported as "why
+   * the fuck are windows still hiding when I open a app like system settings". No stacking order
+   * fixes that; only being a real toplevel does.
+   *
+   * The key is the in-page frame's view; the value is what a fresh page is asked to render. The
+   * whole point of a MAP rather than a prefix rule is that a screen only appears here once
+   * `renderExtra` can actually draw it in a window that has no desktop behind it. */
+  const EXTRA_WINDOWS = {
+    'doc:os-settings': { view: '__ossettings',  label: 'System Settings' },
+    '__ossettings':    { view: '__ossettings',  label: 'System Settings' },
+    '__tasks':         { view: '__tasks',       label: 'Task Manager' },
+    '__vms':           { view: '__vms',         label: 'Virtual Machines' },
+    '__remote':        { view: '__remote',      label: 'Remote Desktop' },
+  };
+
+  /* …AND WHAT DRAWS IT. Declared HERE, beside the map it has to agree with, because
+   * `_extraOpensAsWindow` below reads it: a `const` further down the file is in its temporal dead
+   * zone until then, and the read is inside a try/catch — so an ordering mistake would not throw,
+   * it would quietly answer "this cannot be a window" and put every EXTRA back to the in-page frame
+   * that hides your windows. A bug that restores a bug in silence is the worst shape there is.
+   *
+   * The two maps are edited together for the same reason. A name in EXTRA_WINDOWS with nothing here
+   * opens an empty window; a renderer here that oswin.js will not route paints the timeline under
+   * the right title. */
+  const EXTRA_RENDER = {
+    '__ossettings': () => renderSystemSettings(),
+    '__tasks':      () => _paintExtraInFeed('feed-taskmgr', paintTaskManager),
+    '__vms':        () => _paintExtraInFeed('feed-vms',     paintVmManager),
+    '__remote':     () => _paintExtraInFeed('feed-remote',  paintRemoteDesktop),
+  };
+
+  /* Run one of the extracted painters against this window's own `#feed`.
+   *
+   * TEAR THE PREVIOUS ONE DOWN FIRST. Each of these painters owns a polling timer, and a window
+   * CAN be re-routed while it lives — a monitor handoff re-enters the route, and so does opening
+   * the same app again. Left running, the old timer keeps calling the system bridge and writing
+   * into a host it no longer owns, for the life of the window: two Task Managers' worth of
+   * snapshots a second, with one of them invisible.
+   *
+   * The class is what the window frame's own `.osw-*` rule used to do — these apps size themselves
+   * to their host, and `#feed` is a scrolling column by default. */
+
+  /* CAN THIS LAUNCHER ENTRY BE A REAL TOPLEVEL ON THIS MACHINE?
+   *
+   * Three conditions, and the third is the one that keeps this honest: there has to be a RENDERER
+   * that can draw the screen in a page with no desktop behind it. Without that check, adding a
+   * name to the map above would open an empty, correctly-titled window — which is how this whole
+   * family of bugs reads from the outside, and is worse than the frame it replaced. */
+  function _extraOpensAsWindow(view){
+    try{
+      const extra = EXTRA_WINDOWS[String(view || '')];
+      return !!(extra && EXTRA_RENDER[extra.view] && window.PCOSWin && PCOSWin.enabled());
+    }catch(_){ return false; }
+  }
+
   function popOutView(w){
-    const v = String((w && (w.appView || w.view)) || '');
+    const raw = String((w && (w.appView || w.view)) || '');
+    const extra = EXTRA_WINDOWS[raw];
+    if(extra) return extra.view;
+    const v = raw;
     if(!v || v.indexOf('doc:') === 0 || v.indexOf('__') === 0 || v.indexOf('folder:') === 0) return '';
     if(!/^[a-z0-9_-]+$/i.test(v)) return '';
     try{ return document.querySelector('.nav-item[data-view="' + v + '"]') ? v : ''; }
@@ -1838,7 +1900,15 @@
       try{ mailAck = (PC().mailUnread && PC().mailUnread()) || 0; }catch(_){}
     }
     const extra = !direct && EXTRAS.find(x => x.view === view);
-    if(extra){
+    /* AN EXTRA'S OPENER BUILDS AN IN-PAGE FRAME, AND ON PosterChanOS THAT IS THE BUG.
+     *
+     * Showing an in-page frame means raising the desktop's own FULL-OUTPUT surface, which covers
+     * every native window on the screen — "why the fuck are windows still hiding when I open a app
+     * like system settings". So where this screen can be a real toplevel, do not call the opener at
+     * all: fall through to the block below, which already finds the window you have, sizes a new
+     * one and routes it. Everywhere else (web, Android, a desktop with no compositor bridge) the
+     * opener still runs and nothing about those platforms moves. */
+    if(extra && !_extraOpensAsWindow(view)){
       try{
         const opened=extra.act();
         /* EXTRAS that create managed windows must return that window during a monitor handoff.
@@ -1898,8 +1968,15 @@
       }
       let real = null;
       try{
-        if(window.PCOSWin && PCOSWin.enabled() && popOutView({view, appView:view}))
-          real = PCOSWin.open(view, label || view, _windowOpenHint(view) || {});
+        const popAs = (window.PCOSWin && PCOSWin.enabled()) ? popOutView({view, appView:view}) : '';
+        if(popAs){
+          /* An EXTRA opens under its OWN identity and its own title: its frame view (`doc:os-settings`)
+             is not a name a fresh page can render, and `label` here is the launcher's, which is
+             empty for several call sites. */
+          const asWindow = EXTRA_WINDOWS[view];
+          real = PCOSWin.open(popAs, (asWindow && asWindow.label) || label || popAs,
+                              _windowOpenHint(popAs) || {});
+        }
       }catch(_){ real = null; }
       /* A REAL WINDOW OPENED, AND `null` CANNOT SAY SO.
        *
@@ -2267,7 +2344,7 @@
     if(!host) return;
     const owner=wins.find(w=>w.body===host.parentElement), token={}; host._pcOsSettings=token;
     const alive=()=>host._pcOsSettings===token && (!owner || host.parentElement===owner.body);
-    host.className='feed os-settings-feed';
+    host.className='feed feed-ossettings';
     host.innerHTML='<div class="spinner"></div>';
     /* Displays is one settings page, not the gatekeeper for every page. A missing/crashed display
        bridge must not also erase Appearance, Power and About. Degrade this page locally. */
@@ -2705,7 +2782,20 @@
      * stack overflowed and made the button appear dead. */
     const w=openApp('__tasks','Task Manager','#i-chart',null,true,true); if(!w)return null;
     w.el.classList.add('osw-taskmgr');
-    w.slot.innerHTML=`<div class="pctm"><aside class="pctm-nav">
+    w.onClose=paintTaskManager(w.slot);
+    return w;
+  }
+
+  /* THE PAINTER IS SEPARATE FROM THE WINDOW, and that split is the whole point: on PosterChanOS
+   * this app is a REAL COMPOSITOR TOPLEVEL, so there is no in-page frame and no `w.slot` to paint
+   * into — the window document paints into its own `#feed`. Everything below therefore knows only
+   * a host element and answers with its TEARDOWN; the caller owns the window and calls it.
+   *
+   * Nothing here may reach for `w`. A painter that closes over the frame is a painter that cannot
+   * run without one, which is exactly how System Settings came to hide every other window: the
+   * only way to show it was to raise the desktop's own full-output surface over the lot. */
+  function paintTaskManager(slot){
+    slot.innerHTML=`<div class="pctm"><aside class="pctm-nav">
       <div class="pctm-brand"><svg><use href="#i-chart"></use></svg><span>Task Manager</span></div>
       <button class="active" data-tm-page="processes"><svg><use href="#i-grid"></use></svg><span>Processes</span></button>
       <button data-tm-page="performance"><svg><use href="#i-chart"></use></svg><span>Performance</span></button>
@@ -2718,28 +2808,29 @@
     let dead=false,busy=false,page='processes',sort='cpu',desc=true;
     const history={cpu:[],ram:[],rx:[],tx:[]};
     const line=(a,max,color)=>{const n=Math.max(1,max||Math.max(1,...a));return `<svg class="pctm-graph" viewBox="0 0 300 90" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="g-${color}" x1="0" y1="0" x2="0" y2="1"><stop stop-color="var(--${color})" stop-opacity=".32"/><stop offset="1" stop-color="var(--${color})" stop-opacity="0"/></linearGradient></defs><polygon fill="url(#g-${color})" points="0,90 ${a.map((v,i)=>`${i*300/Math.max(1,a.length-1)},${90-v*84/n}`).join(' ')} 300,90"/><polyline fill="none" stroke="var(--${color})" stroke-width="2" vector-effect="non-scaling-stroke" points="${a.map((v,i)=>`${i*300/Math.max(1,a.length-1)},${90-v*84/n}`).join(' ')}"/></svg>`;};
-    const switchPage=(next)=>{page=next;w.slot.querySelectorAll('[data-tm-page]').forEach(b=>b.classList.toggle('active',b.dataset.tmPage===page));$('[data-tm-processes]',w.slot).hidden=page!=='processes';$('[data-tm-performance]',w.slot).hidden=page!=='performance';const h=$('.pctm-top h2',w.slot),p=$('.pctm-top p',w.slot),q=$('.pctm-search',w.slot);if(h)h.textContent=page==='processes'?'Processes':'Performance';if(p)p.textContent=page==='processes'?'Apps and background processes':'Live system utilization';if(q)q.hidden=page!=='processes';};
+    const switchPage=(next)=>{page=next;slot.querySelectorAll('[data-tm-page]').forEach(b=>b.classList.toggle('active',b.dataset.tmPage===page));$('[data-tm-processes]',slot).hidden=page!=='processes';$('[data-tm-performance]',slot).hidden=page!=='performance';const h=$('.pctm-top h2',slot),p=$('.pctm-top p',slot),q=$('.pctm-search',slot);if(h)h.textContent=page==='processes'?'Processes':'Performance';if(p)p.textContent=page==='processes'?'Apps and background processes':'Live system utilization';if(q)q.hidden=page!=='processes';};
     const paint=async()=>{
       if(dead||busy||!window.pcSystem)return;busy=true;
       try{
         const s=await pcSystem.snapshot(true);if(dead)return;
         for(const [k,v] of Object.entries({cpu:s.cpu.percent,ram:s.memory.percent,rx:s.network.rx||0,tx:s.network.tx||0})){history[k].push(v);if(history[k].length>60)history[k].shift();}
-        const summary=$('.pctm-summary',w.slot);if(summary)summary.innerHTML=`<div><span>CPU</span><b>${enc(s.cpu.percent)}%</b></div><div><span>Memory</span><b>${enc(s.memory.percent)}%</b></div><div><span>Network</span><b>${enc(_sysBytes((s.network.rx||0)+(s.network.tx||0)))}/s</b></div>`;
-        const perf=$('.pctm-perfgrid',w.slot);if(perf)perf.innerHTML=`
+        const summary=$('.pctm-summary',slot);if(summary)summary.innerHTML=`<div><span>CPU</span><b>${enc(s.cpu.percent)}%</b></div><div><span>Memory</span><b>${enc(s.memory.percent)}%</b></div><div><span>Network</span><b>${enc(_sysBytes((s.network.rx||0)+(s.network.tx||0)))}/s</b></div>`;
+        const perf=$('.pctm-perfgrid',slot);if(perf)perf.innerHTML=`
           <article class="pctm-perf cpu"><header><div><b>CPU</b><small>${enc(s.cpu.cores)} logical processors</small></div><strong>${enc(s.cpu.percent)}%</strong></header>${line(history.cpu,100,'cyan')}<footer><span>Utilization <b>${enc(s.cpu.percent)}%</b></span><span>Up time <b>${enc(Math.floor(s.uptime/3600))}h ${enc(Math.floor(s.uptime/60)%60)}m</b></span></footer></article>
           <article class="pctm-perf ram"><header><div><b>Memory</b><small>${enc(_sysBytes(s.memory.total))} installed</small></div><strong>${enc(s.memory.percent)}%</strong></header>${line(history.ram,100,'violet')}<footer><span>In use <b>${enc(_sysBytes(s.memory.used))}</b></span><span>Available <b>${enc(_sysBytes(s.memory.total-s.memory.used))}</b></span></footer></article>
           <article class="pctm-perf net"><header><div><b>Network</b><small>Send and receive</small></div><strong>${enc(_sysBytes((s.network.rx||0)+(s.network.tx||0)))}/s</strong></header>${line(history.rx.map((x,i)=>x+(history.tx[i]||0)),0,'neon')}<footer><span>Receive <b>${enc(_sysBytes(s.network.rx))}/s</b></span><span>Send <b>${enc(_sysBytes(s.network.tx))}/s</b></span></footer></article>`;
-        const q=(($('.pctm-search',w.slot)||{}).value||'').toLowerCase();
+        const q=(($('.pctm-search',slot)||{}).value||'').toLowerCase();
         const rows=(s.processes||[]).filter(p=>!q||(p.name+' '+p.cmd+' '+p.pid).toLowerCase().includes(q)).sort((a,b)=>{let x=a[sort],y=b[sort];if(sort==='name'){x=String(x).toLowerCase();y=String(y).toLowerCase();return (x<y?-1:x>y?1:0)*(desc?-1:1);}return ((Number(x)||0)-(Number(y)||0))*(desc?-1:1);});
-        const host=$('.pctm-rows',w.slot);if(host){host.innerHTML=rows.map(p=>`<div class="pctm-tr"><span title="${enc(p.cmd||p.name)}"><i class="pctm-appicon">${enc((p.name||'?')[0].toUpperCase())}</i><b>${enc(p.name)}</b></span><span>${enc(p.pid)}</span><span class="pctm-heat" style="--use:${Math.min(100,Number(p.cpu)||0)}%">${enc((Number(p.cpu)||0).toFixed(1))}%</span><span class="pctm-heat" style="--use:${Math.min(100,s.memory.total?p.rss*100/s.memory.total:0)}%">${enc(_sysBytes(p.rss))}</span><button class="btn btn-ghost small" data-end="${enc(p.pid)}">End task</button></div>`).join('')||'<div class="os-pop-none">No matching processes.</div>';
+        const host=$('.pctm-rows',slot);if(host){host.innerHTML=rows.map(p=>`<div class="pctm-tr"><span title="${enc(p.cmd||p.name)}"><i class="pctm-appicon">${enc((p.name||'?')[0].toUpperCase())}</i><b>${enc(p.name)}</b></span><span>${enc(p.pid)}</span><span class="pctm-heat" style="--use:${Math.min(100,Number(p.cpu)||0)}%">${enc((Number(p.cpu)||0).toFixed(1))}%</span><span class="pctm-heat" style="--use:${Math.min(100,s.memory.total?p.rss*100/s.memory.total:0)}%">${enc(_sysBytes(p.rss))}</span><button class="btn btn-ghost small" data-end="${enc(p.pid)}">End task</button></div>`).join('')||'<div class="os-pop-none">No matching processes.</div>';
           host.querySelectorAll('[data-end]').forEach(b=>b.onclick=async()=>{try{await pcSystem.end(Number(b.dataset.end));paint();}catch(e){try{PC().toast(String((e&&e.message)||e));}catch(_){}}});}
-      }catch(e){const h=$('.pctm-rows',w.slot);if(h)h.innerHTML='<div class="os-pop-none">Performance data is unavailable.</div>';}
+      }catch(e){const h=$('.pctm-rows',slot);if(h)h.innerHTML='<div class="os-pop-none">Performance data is unavailable.</div>';}
       finally{busy=false;}
     };
-    w.slot.querySelectorAll('[data-tm-page]').forEach(b=>b.onclick=()=>switchPage(b.dataset.tmPage));
-    w.slot.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{if(sort===b.dataset.sort)desc=!desc;else{sort=b.dataset.sort;desc=sort!=='name';}paint();});
-    const search=$('.pctm-search',w.slot);if(search)search.oninput=()=>paint();
-    const timer=setInterval(paint,2000);w.onClose=()=>{dead=true;clearInterval(timer);};paint();return w;
+    slot.querySelectorAll('[data-tm-page]').forEach(b=>b.onclick=()=>switchPage(b.dataset.tmPage));
+    slot.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{if(sort===b.dataset.sort)desc=!desc;else{sort=b.dataset.sort;desc=sort!=='name';}paint();});
+    const search=$('.pctm-search',slot);if(search)search.oninput=()=>paint();
+    const timer=setInterval(paint,2000);paint();
+    return ()=>{dead=true;clearInterval(timer);};
   }
 
   function openVmManager(){
@@ -2747,7 +2838,16 @@
     /* Same launcher/window split as Task Manager above. */
     const w=openApp('__vms','Virtual Machines','#i-monitor',null,true,true);if(!w)return null;
     w.el.classList.add('osw-vms');
-    w.slot.innerHTML=`<div class="vmui"><div class="vmui-hero"><div class="vmui-heroicon"><svg class="ic"><use href="#i-monitor"></use></svg></div><div><h2>Virtual Machines</h2><p>Run Windows or Linux in a window. PosterChanOS handles the virtual hardware for you.</p></div><button class="btn vmui-new" data-vm-new><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create a virtual machine</button></div><div class="vmui-create" hidden>
+    w.onClose=paintVmManager(w.slot,w.body);
+    return w;
+  }
+
+  /* Painter and window are separate here for the reason given above paintTaskManager: on
+   * PosterChanOS this is a real compositor toplevel with no in-page frame to paint into. `owner`
+   * is only ever a dialog anchor — uiConfirm/uiPrompt fall back to document.body when it is
+   * absent, which is exactly right for a window document. */
+  function paintVmManager(slot, owner){
+    slot.innerHTML=`<div class="vmui"><div class="vmui-hero"><div class="vmui-heroicon"><svg class="ic"><use href="#i-monitor"></use></svg></div><div><h2>Virtual Machines</h2><p>Run Windows or Linux in a window. PosterChanOS handles the virtual hardware for you.</p></div><button class="btn vmui-new" data-vm-new><svg class="ic b-ic" aria-hidden="true"><use href="#i-plus"></use></svg>Create a virtual machine</button></div><div class="vmui-create" hidden>
       <div class="vmui-formhead"><b>Create a virtual machine</b><span>Choose an installer, then give the machine a name and enough space.</span></div>
       <label>What should it be called?<input class="input" data-vm-name placeholder="Windows 11"></label>
       <label>Installation image (.iso)<div class="vmui-pick"><input class="input" data-vm-iso readonly placeholder="No installer selected"><button class="btn btn-ghost" data-vm-pick>Choose file…</button></div></label>
@@ -2756,7 +2856,7 @@
       <div class="vmui-formacts"><button class="btn btn-ghost" data-vm-cancel>Cancel</button><button class="btn" data-vm-create>Create and start</button></div></div>
       <div class="vmui-note"><b>Your machines stay private.</b> Their disks are stored inside this PosterChanOS account’s home folder.</div>
       <div class="vmui-edit" data-vm-edit hidden></div><div class="vmui-list"><div class="os-pop-none">Loading virtual machines…</div></div></div>`;
-    const vmroot=$('.vmui',w.slot),form=$('.vmui-create',w.slot),list=$('.vmui-list',w.slot);let dead=false,busy=false;
+    const vmroot=$('.vmui',slot),form=$('.vmui-create',slot),list=$('.vmui-list',slot);let dead=false,busy=false;
     const say=s=>{try{PC().toast(s);}catch(_){}};
     const paint=async()=>{if(dead||busy)return;busy=true;try{const r=await pcVM.list();if(dead)return;
       if(!r.available){list.innerHTML=`<div class="vmui-empty"><b>Virtualization is unavailable</b><span>${enc(r.error||'libvirt could not be reached')}</span></div>`;return;}
@@ -2772,11 +2872,11 @@
       list.querySelectorAll('[data-vm-boot-disk]').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='Preparing installed system…';const n=b.dataset.vmBootDisk;const r=await pcVM.bootDisk(n);if(!r.ok){b.disabled=false;b.textContent='Boot installed system';say(r.error||'Could not select the installed disk');return;}const s=await pcVM.action(n,'start');if(!s.ok){b.disabled=false;b.textContent='Boot installed system';say(s.error||'VM could not start');return;}/* This is a graphical start just like the ordinary Start path. The old handler only repainted, leaving the newly installed guest running headlessly until a second Open display click. */await new Promise(resolve=>setTimeout(resolve,300));const v=await pcVM.view(n);if(!v.ok)say(v.error||'VM started, but its display could not open');setTimeout(paint,500);});
       list.querySelectorAll('[data-vm-edit-open]').forEach(b=>b.onclick=()=>editHardware(b.dataset.vmEditOpen));
       list.querySelectorAll('[data-vm-delete]').forEach(b=>b.onclick=async()=>{const n=b.dataset.vmDelete;
-        const ok=await PC().uiConfirm(`Delete ${n} and its virtual disk?`,{ok:'Delete',danger:true,owner:w.body});
+        const ok=await PC().uiConfirm(`Delete ${n} and its virtual disk?`,{ok:'Delete',danger:true,owner:owner});
         if(!ok)return;const r=await pcVM.remove(n,true);if(!r.ok)say(r.error||'Delete failed');paint();});
     }catch(e){list.innerHTML='<div class="vmui-empty"><b>Could not read virtual machines</b></div>';}finally{busy=false;}};
-    const closeHardware=()=>{const box=$('[data-vm-edit]',w.slot);if(box){box.hidden=true;box.innerHTML='';}if(vmroot)vmroot.classList.remove('vmui-editing');};
-    const editHardware=async(name)=>{const box=$('[data-vm-edit]',w.slot);if(!box)return;if(vmroot)vmroot.classList.add('vmui-editing');box.hidden=false;box.innerHTML='<div class="spinner"></div>';let d;try{d=await pcVM.details(name);}catch(e){d={ok:false,error:String(e&&e.message||e)}}if(!d.ok){box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>${enc(d.error||'Could not read VM hardware')}</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>`;$('[data-vme-close]',box).onclick=closeHardware;return;}
+    const closeHardware=()=>{const box=$('[data-vm-edit]',slot);if(box){box.hidden=true;box.innerHTML='';}if(vmroot)vmroot.classList.remove('vmui-editing');};
+    const editHardware=async(name)=>{const box=$('[data-vm-edit]',slot);if(!box)return;if(vmroot)vmroot.classList.add('vmui-editing');box.hidden=false;box.innerHTML='<div class="spinner"></div>';let d;try{d=await pcVM.details(name);}catch(e){d={ok:false,error:String(e&&e.message||e)}}if(!d.ok){box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>${enc(d.error||'Could not read VM hardware')}</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>`;$('[data-vme-close]',box).onclick=closeHardware;return;}
       const cd=(d.disks||[]).find(x=>x.device==='cdrom'),iso=cd&&cd.source&&cd.source!=='-'?cd.source:'',isoName=iso.split(/[\\/]/).pop();
       box.innerHTML=`<div class="vmui-top"><div><b>${enc(name)} settings</b><span>Turn the machine off before changing hardware.</span></div><button class="btn btn-ghost" data-vme-close>Back to machines</button></div>
         <section class="vmui-section"><h3>Performance</h3><div class="vmui-spec"><label>Memory (MB)<input class="input" data-vme-ram type="number" min="512" value="${enc(d.ramMiB)}"></label><label>Processors<input class="input" data-vme-cpu type="number" min="1" value="${enc(d.cpus)}"></label><label class="vmui-check"><input data-vme-auto type="checkbox" ${d.autostart?'checked':''}> Start automatically</label></div></section>
@@ -2802,7 +2902,7 @@
       const leave=async()=>{
         if(dirty()){
           const go=await PC().uiConfirm('Leave without saving your changes to '+name+'?',
-                                        {ok:'Discard changes',danger:true,owner:w.body});
+                                        {ok:'Discard changes',danger:true,owner:owner});
           if(!go)return;
         }
         closeHardware();
@@ -2825,25 +2925,37 @@
          * is the ONLY place this screen exists — that wedges the whole window with no way back.
          * The rest of the client learned this long ago; this one call site was missed, and nothing
          * was watching for it. */
-        const gib=Number(await PC().uiPrompt('New disk size in GB',{value:'40',ok:'Add disk',owner:w.body}));
+        const gib=Number(await PC().uiPrompt('New disk size in GB',{value:'40',ok:'Add disk',owner:owner}));
         if(!gib||!(gib>0))return;const r=await pcVM.addDisk(name,gib);state(r.ok?'Disk added':r.error);};
       $('[data-vme-iso]',box).onclick=async()=>{const p=await pcVM.pickIso();if(!p)return;const r=await pcVM.changeIso(name,p);if(r.ok){await editHardware(name);state('Installation disc changed');paint();}else state(r.error);};
       $('[data-vme-eject]',box).onclick=async()=>{const r=await pcVM.ejectIso(name);if(r.ok){await editHardware(name);state('Installation disc ejected — the next start boots from disk');paint();}else state(r.error);};
       $('[data-vme-net]',box).onclick=async()=>{const r=await pcVM.addNetwork(name);state(r.ok?'Network adapter added':r.error);};
       $('[data-vme-mouse]',box).onclick=async()=>{const r=await pcVM.gamingMouse(name,!d.gamingMouse);state(r.ok?(!d.gamingMouse?'Gaming mouse enabled — Ctrl+Alt releases it':'Desktop pointer enabled'):r.error);if(r.ok)editHardware(name);};};
-    $('[data-vm-new]',w.slot).onclick=()=>{form.hidden=false;};$('[data-vm-cancel]',w.slot).onclick=()=>{form.hidden=true;};
-    $('[data-vm-pick]',w.slot).onclick=async()=>{const p=await pcVM.pickIso();if(p)$('[data-vm-iso]',w.slot).value=p;};
-    $('[data-vm-create]',w.slot).onclick=async function(){this.disabled=true;this.textContent='Creating…';const r=await pcVM.create({name:$('[data-vm-name]',w.slot).value,iso:$('[data-vm-iso]',w.slot).value,guest:$('[data-vm-guest]',w.slot).value,firmware:$('[data-vm-firmware]',w.slot).value,ramMiB:$('[data-vm-ram]',w.slot).value,cpus:$('[data-vm-cpu]',w.slot).value,diskGiB:$('[data-vm-disk]',w.slot).value});this.disabled=false;this.textContent='Create and start';if(!r.ok){say(r.error||'VM creation failed');return;}form.hidden=true;await new Promise(resolve=>setTimeout(resolve,300));const v=await pcVM.view(r.name);if(!v.ok)say(v.error||'VM created, but its display could not open');paint();};
-    const timer=setInterval(paint,3000);w.onClose=()=>{dead=true;clearInterval(timer);};paint();return w;
+    $('[data-vm-new]',slot).onclick=()=>{form.hidden=false;};$('[data-vm-cancel]',slot).onclick=()=>{form.hidden=true;};
+    $('[data-vm-pick]',slot).onclick=async()=>{const p=await pcVM.pickIso();if(p)$('[data-vm-iso]',slot).value=p;};
+    $('[data-vm-create]',slot).onclick=async function(){this.disabled=true;this.textContent='Creating…';const r=await pcVM.create({name:$('[data-vm-name]',slot).value,iso:$('[data-vm-iso]',slot).value,guest:$('[data-vm-guest]',slot).value,firmware:$('[data-vm-firmware]',slot).value,ramMiB:$('[data-vm-ram]',slot).value,cpus:$('[data-vm-cpu]',slot).value,diskGiB:$('[data-vm-disk]',slot).value});this.disabled=false;this.textContent='Create and start';if(!r.ok){say(r.error||'VM creation failed');return;}form.hidden=true;await new Promise(resolve=>setTimeout(resolve,300));const v=await pcVM.view(r.name);if(!v.ok)say(v.error||'VM created, but its display could not open');paint();};
+    const timer=setInterval(paint,3000);paint();
+    return ()=>{dead=true;clearInterval(timer);};
   }
 
   function openRemoteDesktop(){
     const old=wins.find(x=>x.view==='__remote');if(old){focusWin(old,false);return old;}
     const w=openApp('__remote','Remote Desktop','#i-monitor',null,true,true);if(!w)return null;
-    try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true);}catch(_){}
-    w.onClose=()=>{try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost(null);PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false);}catch(_){}};
     w.el.classList.add('osw-remote');
-    w.slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
+    w.onClose=paintRemoteDesktop(w.slot);
+    return w;
+  }
+
+  /* Painter and window are separate here for the reason given above paintTaskManager.
+   *
+   * THE ARM/DISARM PAIR MOVED IN HERE WITH THE PAINT, and it had to. `setRemoteDesktopArmed(true)`
+   * used to be set by the OPENER and cleared by the window's onClose — so a real toplevel, which
+   * has no in-page frame to open or close, would have armed screen sharing and never disarmed it.
+   * Arming is a fact about the SCREEN this painter is running on; whoever tears the painter down
+   * disarms it. */
+  function paintRemoteDesktop(slot){
+    try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true);}catch(_){}
+    slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
       <label class="pcrd-label">Viewer’s npub or address<input class="input" data-rd-peer placeholder="npub1… · 192.168.1.20 · name@host" autocomplete="off" spellcheck="false"></label>
       <div class="pcrd-label" data-rd-choose hidden><label>User at this address<select class="input" data-rd-choice></select></label><button class="btn" type="button" data-rd-continue>Share with this user</button></div>
       <button class="btn" type="button" data-rd-self>Share to my other signed-in device</button>
@@ -2851,8 +2963,8 @@
       <div class="pcrd-status" data-rd-status role="status" aria-live="polite"></div>
       <div class="pcrd-note"><b>The viewer must accept.</b> Media uses a direct WebRTC path when possible and your configured TURN service when it is not.</div>
       <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ npub, IP address, or name@host</span><span>✓ Authenticated, encrypted Nostr signaling</span></div></div><div class="pcrd-session" data-rd-session></div>`;
-    try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost($('[data-rd-session]',w.slot));}catch(_){}
-    const input=$('[data-rd-peer]',w.slot),button=$('[data-rd-share]',w.slot),selfButton=$('[data-rd-self]',w.slot),status=$('[data-rd-status]',w.slot),choose=$('[data-rd-choose]',w.slot),choice=$('[data-rd-choice]',w.slot),continueButton=$('[data-rd-continue]',w.slot);
+    try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost($('[data-rd-session]',slot));}catch(_){}
+    const input=$('[data-rd-peer]',slot),button=$('[data-rd-share]',slot),selfButton=$('[data-rd-self]',slot),status=$('[data-rd-status]',slot),choose=$('[data-rd-choose]',slot),choice=$('[data-rd-choice]',slot),continueButton=$('[data-rd-continue]',slot);
     const reset=()=>{button.disabled=false;selfButton.disabled=false;button.textContent='Choose screen and share';};
     const go=async explicitPeer=>{const peer=String(explicitPeer||input.value||'').trim();if(!peer){status.textContent='Enter a viewer address or choose your other signed-in device.';input.focus();return;}
       const proceed=await PC().uiConfirm('Select the monitor you want to share in the next window, then click it.\n\nNothing is shared until you choose a monitor.',{ok:'Open monitor picker',cancel:'Cancel'});if(!proceed)return;
@@ -2864,7 +2976,8 @@
     choice.onchange=()=>{input.value=choice.value;};
     continueButton.onclick=()=>{input.value=choice.value;choose.hidden=true;go();};
     selfButton.onclick=()=>{const viewer=PC().viewer&&PC().viewer(),pk=viewer&&viewer.pubkey;if(!pk){status.textContent='Sign in before sharing to another device.';return;}go(pk);};
-    button.onclick=()=>go();input.oninput=()=>{choose.hidden=true;status.textContent='';};input.onkeydown=e=>{if(e.key==='Enter')go();};return w;
+    button.onclick=()=>go();input.oninput=()=>{choose.hidden=true;status.textContent='';};input.onkeydown=e=>{if(e.key==='Enter')go();};
+    return ()=>{try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost(null);PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false);}catch(_){}};
   }
   // app.js receives WebRTC signaling independently of whichever simulated app currently has focus.
   // A Remote Desktop session must never use that current app as its canvas: ensure the dedicated
@@ -10235,7 +10348,42 @@
              uiScale: uiScaleEffective(), uiScaleStored: uiScaleStored() };
   }
 
-  window.PCOS = { enter, exit, suspend, toggle, restore, refresh,
+  function _paintExtraInFeed(cls, paint){
+    const host = document.getElementById('feed');
+    if(!host) throw new Error('this window has nothing to paint into');
+    try{ if(typeof host._pcExtraStop === 'function') host._pcExtraStop(); }catch(_){ }
+    host._pcExtraStop = null;
+    host.className = 'feed ' + cls;
+    host.innerHTML = '';
+    const stop = paint(host);
+    host._pcExtraStop = (typeof stop === 'function') ? stop : null;
+    /* A CLOSED WINDOW MUST STOP POLLING TOO, and nothing else here would ever call the teardown:
+     * there is no frame to close. Bound once per document, not once per paint. */
+    if(!document._pcExtraUnload){
+      document._pcExtraUnload = true;
+      /* Re-read the host rather than closing over this one: `#feed` is shared and app.js can
+         replace the element, which would leave this holding a host nobody paints into any more. */
+      try{ window.addEventListener('pagehide', () => {
+        try{
+          const live = document.getElementById('feed');
+          if(live && typeof live._pcExtraStop === 'function') live._pcExtraStop();
+        }catch(_){ }
+      }); }catch(_){ }
+    }
+  }
+
+  function renderExtra(view){
+    const paint = EXTRA_RENDER[String(view || '')];
+    if(!paint) return false;
+    try{ if(PC().adoptView) PC().adoptView(String(view)); }catch(_){}
+    Promise.resolve().then(paint).catch(err => {
+      try{ PC().toast && PC().toast('could not open that screen: ' + ((err && err.message) || err)); }
+      catch(_){}
+    });
+    return true;
+  }
+
+  window.PCOS = { enter, exit, suspend, toggle, restore, refresh, renderExtra,
                   metrics, applyUiScale, setUiScale, uiScaleEffective,
                   /* Android launcher tiles are MOBILE destinations even on a landscape tablet.
                    * Leave the windowed desktop for this session without changing the user's saved

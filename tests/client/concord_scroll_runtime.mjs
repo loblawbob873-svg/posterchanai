@@ -18,12 +18,26 @@ const storage=new Map();
 const listeners={};
 const box={dataset:{},scrollTop:0,scrollHeight:100,clientHeight:40,isConnected:true,
   querySelector(){return content;},querySelectorAll(){return rows;},
-  addEventListener(type,fn){listeners[type]=fn;}};
+  /* A LIST PER TYPE, because more than one thing listens now: the anchor's `remember` and the
+     gesture watch both want `scroll`, and a stub that keeps only the last registration silently
+     unsubscribes the first — which looks exactly like the feature being broken. */
+  addEventListener(type,fn){(listeners[type]=listeners[type]||[]).push(fn);}};
 const content={};
 let rows=[];
 let resizeCallback=null;
+/* A FRAME IS NOT SYNCHRONOUS, AND PRETENDING IT IS HID A REAL BUG FOR THE LIFE OF THIS FILE.
+ *
+ * `setProgrammaticScroll` marks the scroller and clears the mark on the next frame, and `onscroll`
+ * used to discard every scroll event while that mark was set. Run rAF inline and the mark is set and
+ * cleared inside one call, so the window is zero-width and a reader's flick can never land in it —
+ * the fixture agreed with the bug. Frames are deferred here, and `drain()` is what runs them.
+ * `tests/client/test_concord_scroll_survives_a_restore.py` is the file that measures the window. */
+const frames=[];
+const drain=()=>{ while(frames.length) frames.splice(0).forEach(f=>f()); };
 const context={
-  window:{requestAnimationFrame:f=>f()},
+  window:{requestAnimationFrame:f=>{frames.push(f);return frames.length;}},
+  Date:{now:()=>Date.now()},
+  clearTimeout:()=>{},
   document:{querySelector:s=>s==='.cc-messages'?box:null},
   sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v))},
   setTimeout:f=>{timers.push(f);return timers.length;},
@@ -34,7 +48,9 @@ vm.createContext(context);
 vm.runInContext([
   fn('function readScroll('),fn('function writeScroll('),fn('function setProgrammaticScroll('),
   fn('function repaintScrollTop('),fn('function preserveChatScroll('),
-  fn('function enterChatBottom('),fn('function viewportAnchor('),fn('function watchPinnedRoomGrowth('),
+  fn('function enterChatBottom('),fn('function viewportAnchor('),
+  fn('function programmaticScrollEvent('),'let chatGestureUntil=0;', fn('function chatHandOn('), fn('function scrollGesture('),
+  fn('function watchPinnedRoomGrowth('),
   'globalThis.api={readScroll,writeScroll,preserveChatScroll,enterChatBottom,watchPinnedRoomGrowth};'
 ].join('\n'),context);
 
@@ -68,7 +84,7 @@ if(box.scrollTop!==1400)throw Error('delayed media growth moved pinned room away
 // Once the reader deliberately scrolls up, later media must not drag them down.
 const state=context.api.readScroll('room:general');state.pinned=false;state.top=275;
 rows=[{dataset:{messageId:'reading'},offsetTop:300,offsetHeight:40}];
-box.scrollTop=275;if(listeners.scroll)listeners.scroll();
+box.scrollTop=275;(listeners.scroll||[]).forEach(f=>f({}));
 // An attachment above the visible message hydrates and adds 240px.
 rows[0].offsetTop=540;box.scrollHeight=1800;resizeCallback();
 if(box.scrollTop!==515)throw Error('delayed media replaced the message being read');
@@ -84,6 +100,7 @@ context.api.preserveChatScroll(()=>{
         {dataset:{messageId:'visible'},offsetTop:700,offsetHeight:40}];
   box.scrollHeight=2200;
 });
+drain();                       // preserveChatScroll restores on the NEXT frame, like the app does
 if(box.scrollTop!==710)throw Error('prepended history replaced the message being read');
 
 console.log('Concord delayed scroll behavior holds');

@@ -127,3 +127,63 @@ def test_the_shipped_helper_strips_every_modifier_the_app_can_set():
     got = json.loads(res.stdout)
     for mod in mods:
         assert got[mod] == ["feed"], f"{mod} survived the strip: {got[mod]}"
+
+
+# ───────────────── the hole the prefix rule had, and how it came back ─────────────────────────────
+
+OS_JS = open(os.path.join(ROOT, "static/js/client/os.js"), encoding="utf-8").read()
+CSS_ALL = open(os.path.join(ROOT, "static/css/client.css"), encoding="utf-8").read()
+
+
+def _feed_class_tokens():
+    """Every class this client puts on #feed, read from the code that ASSIGNS it.
+
+    The enumeration above greps for `classList.toggle('feed-…')`, so it can only ever find classes
+    that already carry the prefix — it is blind to a whole className being written at once. That is
+    exactly how four modifiers came to exist that the strip cannot see."""
+    found = set()
+    for src in (APP, OS_JS):
+        # `className = 'feed something-else'`
+        for literal in re.findall(r"""className\s*=\s*['"]feed([^'"]*)['"]""", src):
+            found |= {t for t in literal.split() if t}
+        # `_paintExtraInFeed('something-else', …)` — the class arrives as an argument
+        found |= set(re.findall(r"_paintExtraInFeed\(\s*['\"]([\w-]+)['\"]", src))
+    return found
+
+
+def test_every_class_put_on_feed_can_be_taken_off_again():
+    """THE REGRESSION, RETURNING A THIRD TIME — reported as "i opened My Profile and can't scroll,
+    why is this regression returning again!".
+
+    `_feedScrollable()` clears modifiers by scanning #feed's classList for the `feed-` PREFIX. That
+    is the right shape and it is why a written-out list was removed. But four full-height modifiers
+    were named the other way round — `os-settings-feed`, `os-taskmgr-feed`, `os-vms-feed`,
+    `os-remote-feed` — so the scan could not see any of them, and every one is
+    `overflow:hidden!important`. Open System Settings (or Task Manager, or Virtual Machines) and
+    then a profile, and the profile draws and refuses to move, exactly as before.
+
+    A prefix rule only works if everything obeys the prefix, so that is what this asserts — from the
+    code that sets the class, not from a list anybody has to remember to extend."""
+    tokens = _feed_class_tokens()
+    assert tokens, "re-point this test: nothing appears to assign a class to #feed any more"
+    bad = sorted(t for t in tokens if not t.startswith("feed-"))
+    assert not bad, (
+        "these classes are put on #feed but cannot be stripped by `_feedScrollable`, which scans for "
+        "the `feed-` prefix: %s. Every one of them is a full-height modifier, so the next view that "
+        "paints into #feed is clipped at the fold with no way to scroll." % ", ".join(bad))
+
+
+def test_those_modifiers_really_are_the_dangerous_kind():
+    """Proof this test is about something: each of those classes hides overflow, which is what makes
+    a leftover one cost the next view its scrolling. If they were harmless the rule above would be
+    bureaucracy."""
+    for cls in _feed_class_tokens():
+        at = CSS_ALL.find(".%s{" % cls)
+        if at < 0:
+            continue                       # a modifier whose rule lives in another sheet
+        rule = CSS_ALL[at:CSS_ALL.index("}", at)]
+        if "overflow:hidden" in rule:
+            assert cls.startswith("feed-"), cls
+            break
+    else:
+        raise AssertionError("no #feed modifier hides overflow — re-read this file, the hazard moved")

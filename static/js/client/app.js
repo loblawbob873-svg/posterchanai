@@ -3522,7 +3522,16 @@
      * browser tab, in the APK and in the desktop's own shell — so no existing boot path moves. That
      * matters: a speculative landing guard once shipped and broke the APK, because
      * `applyInstanceGating` can switchView during boot and the guard then skipped its own landing. */
-    if(_inWin()){ const v = PCOSWin.viewOf(); if(v){ switchView(v); return; } }
+    if(_inWin()){
+      const v = PCOSWin.viewOf();
+      /* AN EXTRA IS NOT A VIEW. System Settings and the other screens the desktop BUILDS have no
+       * nav entry and nothing routes their name — and `switchView` does not validate its argument,
+       * so it would set VIEW and fall through to the timeline under the right window title. That
+       * exact shape has already shipped once ("System settings just loaded a social feed"). The
+       * desktop's own renderer draws it; if it cannot, we fall through rather than paint a lie. */
+      if(v && window.PCOS && typeof PCOS.renderExtra === 'function' && PCOS.renderExtra(v)) return;
+      if(v){ switchView(v); return; }
+    }
     const e = _entityFromPath();
     if(!e){ switchView(_startTimeline()); return; }   // the root path IS "back to my timeline"
     _routing = true;
@@ -17295,10 +17304,23 @@
       box=document.createElement('div'); box.className='mention-box';
       box.innerHTML=list.map(p=>`<div class="mention-opt" data-pk="${p.pubkey}"><img src="${enc((p.meta||{}).picture||LOGO)}" onerror="this.src='${LOGO}'"><span><b>${enc((p.meta||{}).name||(p.meta||{}).display_name||'anon')}</b> <span class="muted small">${enc(niceNip05((p.meta||{}).nip05)||(NT().nip19.npubEncode(p.pubkey).slice(0,14)+'…'))}</span></span></div>`).join('');
       ta.insertAdjacentElement('afterend', box);
-      box.querySelectorAll('[data-pk]').forEach(el=> el.onmousedown=ev=>{ ev.preventDefault();
+      /* `pointerdown`, NOT `mousedown` — it is the one event a finger, a mouse and a pen all send,
+       * and this list is most often used on a phone. preventDefault holds the caret in the textarea
+       * (and the soft keyboard up) without cancelling `pointerup`, so the choice is made on RELEASE:
+       * a drag meant to scroll a list of six people does not tag the one under the finger. */
+      const pick=el=>{
         const np=NT().nip19.npubEncode(el.dataset.pk);
         const newLeft=left.replace(/@[^\s@]+(?:@[^\s@]*)?$/,'nostr:'+np+' ');
-        ta.value=newLeft+ta.value.slice(pos); ta.focus(); ta.selectionStart=ta.selectionEnd=newLeft.length; close(); });
+        ta.value=newLeft+ta.value.slice(pos); ta.focus(); ta.selectionStart=ta.selectionEnd=newLeft.length;
+        try{ ta.dispatchEvent(new Event('input',{bubbles:true})); }catch(_){}
+        close();
+      };
+      let sx=0, sy=0, moved=false;
+      box.addEventListener('pointerdown', ev=>{ if(!ev.target.closest||!ev.target.closest('[data-pk]')) return;
+        sx=ev.clientX; sy=ev.clientY; moved=false; ev.preventDefault(); });
+      box.addEventListener('pointermove', ev=>{ if(Math.abs(ev.clientX-sx)>8||Math.abs(ev.clientY-sy)>8) moved=true; });
+      box.addEventListener('pointerup', ev=>{ const el=ev.target.closest&&ev.target.closest('[data-pk]');
+        if(!el||moved) return; ev.preventDefault(); pick(el); });
     }
     ta.addEventListener('input', ()=>{
       const pos=ta.selectionStart, left=ta.value.slice(0,pos), m=left.match(/(?:^|\s)@([^\s@]+(?:@[^\s@]*)?)$/);
@@ -26900,13 +26922,34 @@
       const have = cur ? [...new Set(cur.tags.filter(t=>t[0]==='relay'&&t[1]).map(t=>normalizeRelay(t[1])).filter(Boolean))] : [];
       if(want.every(u=>have.includes(u))) return;   // our relays already present → don't republish
       const merged = [...new Set([...have, ...want])];   // union: add ours, keep theirs
-      await publish(10050, '', merged.map(u=>['relay', u]));
+      const made = await publish(10050, '', merged.map(u=>['relay', u]));
+      /* AND PUT IT WHERE THE PEOPLE WHO NEED IT ACTUALLY LOOK.
+       *
+       * `publish` reaches our own pool. Every other client resolves a DM inbox from the relay-list
+       * INDEXERS — the same set we read theirs from, below — so a list that only ever lands on our
+       * relay is a list nobody who wants to message us can find. Measured on this account: the
+       * kind-10050 was on damus/nos/primal by incidental sync and absent from kindpag.es, which had
+       * our kind-10002; clients that (correctly) refuse to deliver a NIP-17 DM to a non-inbox relay
+       * therefore answered "no inbox" about somebody who has one.
+       *
+       * Backgrounded and best-effort: this is a convenience for strangers, never a condition of
+       * publishing, and a dead indexer must not fail the write that already succeeded. */
+      if(made && made.ev) Relay.publishTo(DISCOVERY_RELAYS, made.ev, {max:DISCOVERY_RELAYS.length})
+        .catch(()=>{});
     }catch(_){ _dmInboxEnsured = false; }   // let a later DM-use retry after a transient failure
   }
   // Discovery/indexer relays queried to find an EXTERNAL (non-WoT) peer's DM-inbox list — these
   // specialise in profiles/relay-lists (kind 0/10002/10050), so they're low-volume to hit, plus
   // 0xchat's own relay where its users publish theirs.
-  const DISCOVERY_RELAYS = ['wss://purplepag.es/', 'wss://user.kindpag.es/', 'wss://relay.nostr.band/', 'wss://relay.0xchat.com/'];
+  /* MEASURED, NOT ASSUMED — three of the original four were dead when this list was last read
+   * (purplepag.es 502, relay.0xchat.com 502, relay.nostr.band no answer), and the one that was up
+   * did not hold the inbox list. The dedicated indexers stay first because they are cheap and
+   * specialise in exactly these kinds; the big general relays are here because they are the ones
+   * that actually had the data. A list of four hosts that can all be down at once is not a
+   * fallback. */
+  const DISCOVERY_RELAYS = ['wss://purplepag.es/', 'wss://user.kindpag.es/', 'wss://relay.nostr.band/',
+                            'wss://relay.0xchat.com/', 'wss://relay.damus.io/', 'wss://nos.lol/',
+                            'wss://relay.primal.net/'];
   // A peer's DM-inbox relays (their kind-10050), lazily fetched + cached (1h TTL); falls back to their
   // NIP-65 read relays (kind 10002). Tries our pool first (has it for WoT members), then external
   // discovery relays for strangers (our WoT-only relay never stored those). Looked up ONLY when
@@ -26917,25 +26960,44 @@
     return ev?ev.tags.filter(t=>t[0]==='relay'&&t[1]).map(t=>normalizeRelay(t[1])).filter(Boolean):[]; }
   function _pick10002(evs, pk){ const ev=evs.filter(e=>e&&e.kind===10002&&e.pubkey===pk).sort((a,b)=>b.created_at-a.created_at)[0];
     return ev?ev.tags.filter(t=>t[0]==='r'&&t[1]&&(t.length<3||t[2]==='read')).map(t=>normalizeRelay(t[1])).filter(Boolean):[]; }
+  /* "COULD NOT ASK" IS NEVER "HAS NO INBOX", and this path was the last place in the client still
+   * conflating them. The whole lookup sat in `catch(_){}`, the empty result was cached for an HOUR,
+   * and the sender was told "recipient has no DM inbox relays" — a confident statement about
+   * somebody else's account, made after reaching nobody, and then repeated to the next person who
+   * tried. With three of four discovery relays down that is exactly what happened.
+   *
+   * `answered` is the difference, and it comes from `queryFrom`'s own report: `ok` lists the relays
+   * that actually replied. Nothing is cached unless somebody answered, so the next attempt looks
+   * again instead of inheriting a verdict nobody earned. */
   async function dmInboxRelays(pk){
     const c=_inboxCache.get(pk); const now=Date.now();
-    if(c && (now-c.ts)<_INBOX_TTL) return c.relays;
-    let relays=[];
+    if(c && (now-c.ts)<_INBOX_TTL) return { relays:c.relays, answered:true };
+    let relays=[], answered=false;
     try{
       const evs=await Relay.query([{ authors:[pk], kinds:[10050,10002], limit:2 }]);
       relays=_pick10050(evs, pk); if(!relays.length) relays=_pick10002(evs, pk);
+      /* Our own relay holding nothing is not evidence: it is WoT-only, so a stranger's relay list
+       * was never stored here. Only FINDING something makes the local read an answer. */
+      if(relays.length) answered=true;
       if(!relays.length){
         // Stranger (not in our WoT) → ask external discovery relays. They're untrusted, so VERIFY
         // signatures before trusting a relay list — a forged one would misroute the (encrypted) wrap.
-        let ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{ authors:[pk], kinds:[10050,10002], limit:2 }], {purpose:'dm inbox discovery'});
+        const report={};
+        /* `allowBlocked` on purpose: relay.damus.io is on the pool's blocked-host list (it is a
+         * firehose we do not want in the shared pool) and it is one of the few relays that reliably
+         * holds these lists. This read is one author, two kinds, limit 2 — bounded and cheap. */
+        let ext=await Relay.queryFrom(DISCOVERY_RELAYS, [{ authors:[pk], kinds:[10050,10002], limit:2 }],
+                                      {purpose:'dm inbox discovery', report, allowBlocked:true,
+                                       max:DISCOVERY_RELAYS.length});
+        if((report.ok||[]).length) answered=true;
         if(ext.length){ try{ const v=await Relay.worker.call('verifyBatch',{events:ext});
           const ok=new Set(v.filter(r=>r.valid).map(r=>r.id)); ext=ext.filter(e=>ok.has(e.id)); }catch(_){ ext=[]; } }
         relays=_pick10050(ext, pk); if(!relays.length) relays=_pick10002(ext, pk);
       }
-    }catch(_){}
+    }catch(_){ answered=false; }
     relays=[...new Set(relays)];
-    _inboxCache.set(pk, { relays, ts:now });
-    return relays;
+    if(answered) _inboxCache.set(pk, { relays, ts:now });   // never cache a verdict nobody gave
+    return { relays, answered };
   }
   /* A background history/profile refresh may rebuild #dm-list while a remote signer or relay is
    * still handling Send. `dmActive` remains correct, but mobile navigation is controlled by the
@@ -27003,8 +27065,16 @@
       // relays already in our pool + is bounded, so it's a no-op when the peer reads our relay. We only
       // warn when NOTHING accepted it — our relay rejects wraps to a non-WoT recipient (expected for an
       // external user), which is fine once their own inbox relay has taken it.
-      dmInboxRelays(pk).then(inbox=>{
-        if(!inbox.length){ if(r1 && r1.ok===false) toast('message not delivered — recipient has no DM inbox relays'); return; }
+      dmInboxRelays(pk).then(({relays:inbox, answered})=>{
+        if(!inbox.length){
+          /* TWO DIFFERENT SENTENCES, because they are two different situations and only one of them
+           * is about the recipient. Telling somebody "they have no inbox" when we simply could not
+           * reach a single indexer is how a working account gets written off as unreachable. */
+          if(r1 && r1.ok===false) toast(answered
+            ? 'message not delivered — recipient has no DM inbox relays'
+            : 'message not delivered — could not look up their DM inbox; try again');
+          return;
+        }
         Relay.publishTo(inbox, toPeer).then(n=>{ if(r1 && r1.ok===false && !n) toast('message not delivered — no inbox relay accepted it'); });
       }).catch(()=>{});
     } else {

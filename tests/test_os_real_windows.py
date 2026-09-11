@@ -393,9 +393,16 @@ def test_the_start_view_preference_does_not_reach_a_window():
         "a window no longer switches to the view it was opened for")
     for where, needle in (
             ("the startup preference", "const _win = _inWin() ? PCOSWin.viewOf() : '';"),
-            ("the remembered view", "if(!_inWin() && !_entityFromPath() && st && st.pcv"),
-            ("the path route", "if(_inWin()){ const v = PCOSWin.viewOf();")):
+            ("the remembered view", "if(!_inWin() && !_entityFromPath() && st && st.pcv")):
         assert needle in APP_JS, f"{where} no longer excludes a window"
+    # THE PATH ROUTE, AS A RULE RATHER THAN AS ONE LINE. It grew a branch — an EXTRA is drawn by the
+    # desktop's own renderer, because `switchView` does not validate its argument and would fall
+    # through to the timeline under the right window title — so pinning the literal line made this
+    # fail for a change it has no opinion about. What it has an opinion about is that the route asks
+    # whether this page is a window, and lands it on its own view, BEFORE it reads the path.
+    route = APP_JS.split("async function routeFromPath(){", 1)[1].split("const e = _entityFromPath();", 1)[0]
+    assert "_inWin()" in route, "the path route no longer excludes a window"
+    assert "PCOSWin.viewOf()" in route, "the path route no longer lands a window on its own view"
     # One helper, guarded once — three copies of the same try/catch is how two of them drift.
     assert "function _inWin(){" in APP_JS and "catch(_){ return false; }" in APP_JS
 

@@ -36,8 +36,32 @@
    * background services; treating every display as a sync engine makes two writers publish the
    * same device manifest and manufacture conflicts. Secondary surfaces remain complete desktop
    * views, but folder operations stay owned by the primary. */
-  const FS = () => (window.pcShell && window.pcShell.backgroundOwner === false)
-    ? null : (window.pcFs || null);                 // desktop + Android SAF adapter
+  /* A SECONDARY SURFACE BORROWS THE PRIMARY'S BRIDGE — it does not get its own, and it is no
+   * longer simply refused.
+   *
+   * Returning null here made `fs` falsy on the Folder Sync screen, which renders "Set up on this
+   * device…" DISABLED. On PosterChanOS every app opens as a real toplevel, so that is a window
+   * document, so `backgroundOwner` is false, so the button was disabled in the only place anybody
+   * ever sees it — reported as "folder sync doing nothing when I click setup on this device", with
+   * no error, no toast and nothing in any log, because a disabled button is silent by design.
+   *
+   * The rule it was enforcing is real and stays: ONE writer per device. That is why this returns
+   * the OPENER'S bridge rather than this window's own — a same-origin child shares the opener's
+   * process and objects (see oswin.js), so the pick, the grant and the folder list all belong to
+   * the primary surface, which is the surface that sweeps. The folder list itself is localStorage,
+   * shared across both, so the primary picks up the new folder on its next pass.
+   *
+   * With no reachable opener there is still nothing safe to hand back, and the screen says so
+   * rather than offering a control that cannot work. */
+  const FS = () => {
+    if(!(window.pcShell && window.pcShell.backgroundOwner === false)) return window.pcFs || null;
+    try{
+      const owner = window.opener;
+      if(owner && !owner.closed && owner.pcFs &&
+         !(owner.pcShell && owner.pcShell.backgroundOwner === false)) return owner.pcFs;
+    }catch(_){ /* cross-origin or gone */ }
+    return null;
+  };
   /* Sizes for the humans reading this screen.
    *
    * Local, and NOT app.js's `_fmtBytes`. That one exists but is not on `PC` — it is passed into

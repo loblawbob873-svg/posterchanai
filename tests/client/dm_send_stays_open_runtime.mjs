@@ -26,7 +26,7 @@ const context={
   Relay:{publish:async ev=>{calls.published.push(ev.id);return {ok:true};},publishTo:async()=>1},
   VIEW:'messages', renderMessages:()=>{calls.remounted++;},
   _keepDmOpen:()=>{},
-  dmInboxRelays:async()=>{calls.inbox++;return [];}, toast:()=>{},
+  dmInboxRelays:async()=>{calls.inbox++;return {relays:[],answered:true};}, toast:()=>{},
   setTimeout, Promise,
 };
 vm.runInNewContext(source.slice(start,end)+'\nthis.run=sendDm;',context,{filename:'app-sendDm.js'});

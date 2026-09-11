@@ -145,8 +145,17 @@
    * feed" happened. The caller that got it wrong has been fixed; this is the rule stated where no
    * future caller can get round it. `.nav-item[data-view]` is the same list the desktop reads to
    * draw its icons, so a view added to the nav is poppable for free and one that is not, is not. */
+  /* THE EXTRAS THE DESKTOP BUILDS ITSELF, which have no nav entry and never could.
+   *
+   * They are listed here rather than allowed by prefix because the rule below is the one that stops
+   * a window opening on something it cannot show — "System settings just loaded a social feed" —
+   * and a prefix would re-open exactly that door. A name is added here only once `PCOS.renderExtra`
+   * can draw it in a page with no desktop behind it. */
+  const EXTRA_VIEWS = ['__ossettings', '__tasks', '__vms', '__remote'];
+
   function routable(view){
     const v = String(view || '');
+    if(EXTRA_VIEWS.includes(v)) return true;
     if(!v || !/^[a-z0-9_-]+$/i.test(v)) return false;
     try{ return !!root.document.querySelector('.nav-item[data-view="' + v + '"]'); }
     catch(_){ return false; }
@@ -249,6 +258,10 @@
              the ordinary view switch rather than being trusted. */
           else if(arg && v==='messages' && root.__PC && typeof root.__PC.openDMWith==='function')
             root.__PC.openDMWith(arg);
+          /* An EXTRA is drawn by the desktop's own renderer, never by switchView — which does not
+             validate its argument and would fall through to the timeline under the right title. */
+          else if(EXTRA_VIEWS.includes(v) && root.PCOS && typeof root.PCOS.renderExtra==='function')
+            root.PCOS.renderExtra(v);
           else if(root.__PC&&typeof root.__PC.switchView==='function')root.__PC.switchView(v);
         }catch(_){}
         try{root.focus();}catch(_){}

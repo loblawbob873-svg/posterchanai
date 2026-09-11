@@ -13,9 +13,21 @@ and falls through to the default timeline. So the window opened successfully, to
 window popped out correctly, which is why it read as random.
 
 Stripping the prefix was the wrong repair to begin with: os.js already carries the real mapping
-(`routeView`'s `doc:os-settings` → 'settings'). But the honest answer for these frames is that they
-cannot be popped out at all — Settings, Task Manager, VMs and Remote Desktop are EXTRAS this shell
-BUILDS into a frame, with no app view a fresh page could render, and a folder is not an app either.
+(`routeView`'s `doc:os-settings` → 'settings').
+
+THE RULE HAS SINCE MOVED, AND IT MOVED BECAUSE REFUSING WAS ITSELF A BUG. The answer used to be
+that these frames cannot be popped out at all — Settings, Task Manager, VMs and Remote Desktop are
+EXTRAS this shell BUILDS, with no app view a fresh page could render. True at the time, and it left
+them as IN-PAGE frames, which on PosterChanOS is the other half of the same failure: showing an
+in-page frame means raising the desktop's own full-output surface, so opening System Settings hid
+every native window on the screen ("why the fuck are windows still hiding when I open a app like
+system settings"). No stacking order fixes that; only being a real toplevel does.
+
+So the rule is no longer "never" — it is CAN A FRESH PAGE DRAW THIS. An extra pops out exactly when
+os.js has a renderer for it (`EXTRA_RENDER`) and oswin.js will route it (`EXTRA_VIEWS`); one with no
+renderer, and a folder, still refuse. Both sets are READ FROM THE SHIPPED CODE below rather than
+typed here — a renderer added on one side and forgotten on the other is precisely the shape that
+produces a correctly-titled window painting somebody else's screen.
 
 Two rules, at two levels, because one of them has to survive the next caller:
 
@@ -29,6 +41,7 @@ These run both shipped rules against a stub nav, because the question is what th
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -38,6 +51,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = Path(__file__).with_name("oswin_popout_runtime.mjs")
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+OSWIN_JS = (ROOT / "static/js/client/oswin.js").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
 pytestmark = pytest.mark.skipif(not NODE, reason="node unavailable")
@@ -69,19 +83,58 @@ def opened_for(view, nav=None):
     """)
 
 
-def test_system_settings_does_not_offer_a_pop_out(pop=None):
-    """THE BUG, by name. `doc:os-settings` is a frame this shell builds, not a view a fresh page
-    can render — and the old code turned it into `os-settings`, which lands on the feed."""
-    assert pop_view({"view": "doc:os-settings", "label": "System Settings"}) == "", (
-        "System Settings still offers to open as a real window, and there is nothing for that "
-        "window to render — this is the social feed under the Settings title")
+def _extra_windows():
+    """os.js's map of in-page frame identity -> the view a fresh page is asked to render."""
+    block = OS_JS.split("const EXTRA_WINDOWS = {", 1)[1].split("\n  };", 1)[0]
+    return dict(re.findall(r"'([^']+)':\s*\{\s*view:\s*'([^']+)'", block))
+
+
+def _extra_renderers():
+    """The extras os.js can actually DRAW in a page with no desktop behind it."""
+    block = OS_JS.split("const EXTRA_RENDER = {", 1)[1].split("\n  };", 1)[0]
+    return set(re.findall(r"'(__[a-z]+)'\s*:", block))
+
+
+def _routable_extras():
+    """The extras oswin.js will route in a window, rather than handing to switchView."""
+    line = OSWIN_JS.split("const EXTRA_VIEWS = [", 1)[1].split("]", 1)[0]
+    return set(re.findall(r"'(__[a-z]+)'", line))
+
+
+def test_the_two_halves_of_the_rule_agree():
+    """A renderer oswin will not route is a window that paints the timeline; a routable name with no
+    renderer is an empty window. Both are the reported bug wearing different clothes, and each side
+    is edited in a different file — so assert them against each other rather than against a list."""
+    assert _extra_renderers() == _routable_extras(), (
+        "os.js EXTRA_RENDER and oswin.js EXTRA_VIEWS disagree about which extras a window can show")
+    for frame, target in _extra_windows().items():
+        assert target in _extra_renderers(), (
+            f"{frame} is offered a window as {target}, which nothing can draw")
+
+
+def test_system_settings_opens_on_a_view_a_window_can_actually_draw():
+    """THE BUG, by name. `doc:os-settings` is a frame this shell builds, and the old code turned it
+    into `os-settings` — a name nothing routes, which lands on the feed. It may open now, but only
+    ever on the name its renderer answers to."""
+    got = pop_view({"view": "doc:os-settings", "label": "System Settings"})
+    assert got != "os-settings", (
+        "the doc: prefix is being stripped again — this is the social feed under the Settings title")
+    assert got == "__ossettings"
+    assert got in _extra_renderers() and got in _routable_extras()
 
 
 @pytest.mark.parametrize("view", ["__ossettings", "__tasks", "__vms", "__remote", "__bug"])
-def test_no_extras_window_offers_a_pop_out(view):
-    """Every EXTRA has the same shape as the one that was reported. Naming them individually so a
-    new one cannot quietly inherit the bug."""
-    assert pop_view({"view": view}) == ""
+def test_an_extra_pops_out_only_where_a_window_could_draw_it(view):
+    """Named individually so a new EXTRA cannot quietly inherit either failure: popping out with
+    nothing to render, or staying in-page and hiding every native window behind the shell."""
+    got = pop_view({"view": view})
+    target = _extra_windows().get(view, "")
+    if target and target in _extra_renderers():
+        assert got == target, f"{view} can be drawn in a window but is still refused one"
+        assert got in _routable_extras()
+    else:
+        assert got == "", (
+            f"{view} offers to open as a real window and nothing can paint it")
 
 
 def test_a_folder_is_not_an_application():

@@ -38,12 +38,31 @@ def test_desktop_icon_css_and_drag_geometry_agree():
 
 
 def test_launcher_labels_survive_high_resolution_shell_scaling():
-    icon_label = _rule(".os-icon span")
-    app = _rule(".os-app")
-    stats = _rule(".os-stat")
-    assert "font-size:14px" in icon_label
-    assert "font-size:17px" in app
-    assert "font-size:14px" in stats
+    """A FLOOR, NOT A FIXED NUMBER — and the difference matters twice.
+
+    This pinned 14/17/14 exactly. What it is actually about is legibility: the shell runs on a
+    3072x2048 output under `body{zoom}`, and a launcher label that shrinks is one nobody can read
+    from a seat. The exact step belongs to the TYPE SCALE, which `scripts/check_css_scale.py` owns
+    and which has since moved two of these onto the nearest ladder step (14 -> 15) — so the fixed
+    numbers failed for a change that made the labels slightly LARGER, which is a test that gets
+    edited rather than read.
+
+    Stated as a floor it still fails on the regression it exists for (a snap down to 13 or 11), and
+    it additionally refuses a value off the ladder, which is how 14 got here in the first place."""
+    ladder = {11, 12, 13, 15, 17, 20, 24, 30}
+
+    def size(selector):
+        m = re.search(r"font-size:(\d+)px", _rule(selector))
+        assert m, "no font-size in the %s rule" % selector
+        return int(m.group(1))
+
+    for selector, floor in ((".os-icon span", 14), (".os-app", 17), (".os-stat", 14)):
+        got = size(selector)
+        assert got >= floor, (
+            "%s is %dpx — below the %dpx legibility floor for a launcher read at arm's length on a "
+            "scaled 3072x2048 output" % (selector, got, floor))
+        assert got in ladder, (
+            "%s is %dpx, which is off the type scale check_css_scale.py enforces" % (selector, got))
 
 
 def test_start_menu_has_room_for_larger_rows():

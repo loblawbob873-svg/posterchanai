@@ -33,7 +33,13 @@ def test_equalizer_is_persistent_and_part_of_the_single_audio_graph():
 def test_visualizer_is_compact_so_the_library_keeps_the_screen():
     assert ".ma-viz{display:block;position:absolute" in CSS
     assert "inset:0;width:100%;height:100%;opacity:.34" in CSS
-    assert ".music-app{display:flex;flex-direction:column;gap:9px" in CSS
+    # THE SHAPE, NOT THE GAP. What keeps the library on screen is that the app is a flex COLUMN
+    # sized to its host with the LIST taking the slack (asserted next) — the exact gap belongs to
+    # the spacing scale `scripts/check_css_scale.py` owns, which has since moved it 9px -> 8px.
+    app = CSS[CSS.index(".music-app{"):]
+    app = app[:app.index("}") + 1]
+    for needed in ("display:flex", "flex-direction:column", "min-height:0", "height:100%"):
+        assert needed in app, "%s is gone from .music-app: %s" % (needed, app)
     assert ".music-app .music-list{flex:1;min-height:0;overflow-y:auto}" in CSS
     mobile = CSS[CSS.index("@media(max-width:560px)"):]
     assert ".ma-art{display:none}" in mobile

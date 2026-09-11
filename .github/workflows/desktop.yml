@@ -20,7 +20,11 @@ on:
     paths:
       - 'desktop/**'
       - 'static/js/client/**'
-      - 'static/css/client.css'
+      # EVERY STYLESHEET, not just client.css. `desktop/build-www.sh` derives the bundle's
+      # stylesheets from `templates/client.html`, so concord.css (and monero-wallet.css, and the
+      # next one) are COPIED IN — but a change to one of them did not trigger this build, which is
+      # the "works on web, broken in the app" shape that build script's own comment is about.
+      - 'static/css/**'
       # Same as android.yml: the catalogues live IN the bundle, so a language change ships only with
       # a rebuild.
       - 'static/i18n/**'
