@@ -38,6 +38,10 @@ function run({ ingestReturns }){
     ingestWrap: async () => ingestReturns,
     Relay:{ publish: async () => ({ok:true}), publishTo: async () => 1 },
     _keepDmOpen(){}, _scheduleDmRefresh(){ calls.refreshed++; },
+    /* sendDm tells the ACCOUNT which wraps it published, so no other device of the same person is
+       pushed about a message they sent. Not awaited by the send; stubbed so a missing name cannot
+       ReferenceError inside it. */
+    _notePublishedWraps(){}, _capPlugin(){ return null; },
     dmInboxRelays: async () => ({relays:[],answered:true}), toast(){}, Date, Math, String, setTimeout, Promise,
   };
   vm.runInNewContext(extract('function _dmEcho(pk, text, id){') + '\n'

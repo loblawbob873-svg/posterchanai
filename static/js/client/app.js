@@ -17957,6 +17957,41 @@
     try{ const el=document.querySelector&&document.querySelector('#us-push-sync-state');
          if(el)el.textContent=text; }catch(_){}
   }
+  /* TELL THE ACCOUNT WHICH WRAPS WERE OURS, so none of this person's devices is pushed about a
+   * message they sent. The device-local record (PushPlugin.notePublished) only ever covers the
+   * device that published; this covers the phone in your pocket when you sent it from the desktop,
+   * and Web Push, which has no device-local map at all.
+   *
+   * THE SIGNATURE IS CACHED, and that is not an optimisation. A self-auth proof is valid for five
+   * minutes either side, so signing one per DM would mean a signer prompt per message on every
+   * NIP-07 and Amber setup — turning a fix for an annoying notification into a far more annoying
+   * one. One signature covers a window of sending.
+   *
+   * Entirely best-effort: it is called AFTER the message is published, never awaited by the send
+   * path, and every failure is silent. The worst case is the notification this exists to prevent,
+   * which is exactly what happens today. */
+  let _sentAuth = null, _sentAuthAt = 0, _sentAuthOwner = '';
+  const _SENT_AUTH_TTL = 240000;   // inside the server's 300s window, with room for a slow request
+  async function _notePublishedWraps(ids){
+    try{
+      if(!Array.isArray(ids) || !ids.length) return false;
+      if(_standalone()) return false;               // no instance, no push watcher to tell
+      const owner = ME && ME.pubkey; if(!owner || GUEST) return false;
+      const now = Date.now();
+      if(!_sentAuth || _sentAuthOwner !== owner || now - _sentAuthAt > _SENT_AUTH_TTL){
+        const ev = await sign(27235, 'push-sent', [['p', owner]]);
+        if((ME && ME.pubkey) !== owner) return false;   // the account changed while we were signing
+        _sentAuth = btoa(JSON.stringify(ev)); _sentAuthAt = now; _sentAuthOwner = owner;
+      }
+      const r = await fetch('/api/push/sent', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({pubkey: owner, auth: _sentAuth, ids})}).then(x=>x.json()).catch(()=>null);
+      // A rejected proof is usually an expired one; drop it so the next send mints a fresh one.
+      if(!r || !r.ok) _sentAuth = null;
+      return !!(r && r.ok);
+    }catch(_){ _sentAuth = null; return false; }
+  }
+
   async function mirrorPushPrefs(owner=_notificationOwner()){
     try{
       if(!owner || owner!==_notificationOwner() || _standalone())return false;
@@ -27199,8 +27234,21 @@
        * published it is the one thing that knows, so it says so, keyed on the wrap's own id — an
        * exact match, where suppressing DMs for a few seconds after a send would silence a real one
        * that happened to arrive in that gap. */
+      /* TOLD TWICE, AND THE SECOND ONE IS THE ONE THAT COVERS THE REST OF YOUR DEVICES.
+       *
+       * The plugin call is this device saying "I published these", which is exact and needs no
+       * server — but a device only knows what IT sent. A DM sent from the desktop still pushed the
+       * phone, because the phone published nothing; and Web Push has no equivalent map at all, so
+       * every browser device was told regardless. Reported again as "if I send a DM, i do not want
+       * a push notification saying that somebdy sent a DM — it was me!".
+       *
+       * So the ACCOUNT is told too, and the push is never sent rather than sent and then dropped.
+       * Both are kept: the device-local one still works with no instance at all, and it is the
+       * faster of the two when the sender and the receiver are the same phone. */
+      const _wrapIds=[toSelf&&toSelf.id,toPeer&&toPeer.id].filter(Boolean);
       try{ const P=_capPlugin('PosterChanPush','notePublished');
-           if(P)void P.notePublished({ids:[toSelf&&toSelf.id,toPeer&&toPeer.id].filter(Boolean)}); }catch(_){ }
+           if(P)void P.notePublished({ids:_wrapIds}); }catch(_){ }
+      void _notePublishedWraps(_wrapIds);
       Store.saveEvent(toSelf);
       /* THE MESSAGE YOU JUST SENT MUST BE IN THE THREAD. Reported as "i send dm to user, then the
        * conversation goes blank": the pane renders `dmPeers.get(pk)`, so if our own copy does not
@@ -28348,7 +28396,27 @@
       /* A relative download URL belongs to the page that rendered it. That is correct on the web,
        * but packaged clients render at app://posterchan (desktop) or https://localhost (Android),
        * neither of which hosts Mail. Always bind the attachment to the configured instance. */
-      const atts=(m.attachments||[]).map((at,i)=>{
+      /* `attachments` IS TWO DIFFERENT THINGS WITH ONE NAME, and this is where they collide.
+       *
+       * The full message carries the LIST — `[{name,type,size}]`. The list-view projection
+       * (`_summary` in app/routers/mail.py) carries a COUNT, because the row only needs to know
+       * whether to draw a paperclip.
+       *
+       * AND THE CACHE-FIRST OPEN MIXES THEM. `openMsg` paints the conversation immediately from
+       * `this.msgs` + `this.convSent` — list rows — with the fully-fetched seed pushed on top, and
+       * upgrades when /thread answers eleven seconds later. So every SIBLING in that first paint
+       * carries a count, and `(2||[]).map` throws `attachments.map is not a function`. The whole
+       * reader renders nothing: reported as "can't open message", for a message whose body was
+       * fine. It only bites a mail that is part of a CONVERSATION, which is why "other emails open
+       * with attachments but not that one".
+       *
+       * `||[]` reads like a guard and is not one: it catches null and undefined, and a NUMBER sails
+       * straight through it. Ask what the value IS. The sibling loses its paperclip for the moment
+       * before /thread replaces it with the real document — which is what it was going to do.
+       *
+       */
+      const attList = Array.isArray(m.attachments) ? m.attachments : [];
+      const atts=attList.map((at,i)=>{
         const name=String(at.name||'attachment'), type=String(at.type||'application/octet-stream');
         const pv=_previewable(name,type);
         const url=_mailAttachmentUrl(m,folder,acct,i);
@@ -28702,7 +28770,8 @@
       else if(opts.to) to=String(opts.to);      // "Write to them", from the sender card
       else if(opts.mode==='forward'){ subj=/^fwd:/i.test(m.subject||'')?m.subject:('Fwd: '+(m.subject||'')); body=`\n\n---------- Forwarded ----------\nFrom: ${m.from||''}\nSubject: ${m.subject||''}\n\n${m.body_text||''}`; }
       else if(opts.mode==='draft'){ const dr=opts.draft||{}; to=dr.to||''; cc=dr.cc||''; subj=(dr.subject==='(no subject)'?'':(dr.subject||'')); body=dr.body_text||''; draftUid=dr.uid||null;
-        (dr.attachments||[]).forEach(a=>{ if(a&&a.b64) atts.push({name:a.name,type:a.type||'application/octet-stream',b64:a.b64}); }); }
+        // Same collision, same answer: a draft summarised for a list carries a count, not a list.
+        (Array.isArray(dr.attachments)?dr.attachments:[]).forEach(a=>{ if(a&&a.b64) atts.push({name:a.name,type:a.type||'application/octet-stream',b64:a.b64}); }); }
       const titles={forward:'Forward', reply:'Reply', replyall:'Reply all', draft:'Draft'};
       /* THE MESSAGE'S OWN ACCOUNT FOR REPLY/FORWARD — which this comment already promised and the
        * code did not do.

@@ -403,6 +403,38 @@ _sub_pks_at = 0.0
 _SUB_PKS_TTL = 60.0
 
 
+def _sent_by_own_device(pks, wrap_id: str) -> set:
+    """Which of `pks` published `wrap_id` themselves — i.e. must NOT be pushed about it.
+
+    One query, like `_subs_for`, and fed from an untrusted event's p tags in the same way. Blocking;
+    call via to_thread.
+
+    FAILS OPEN. Every other guard in this subsystem does, and for the same reason: a duplicate
+    notification is a nuisance, a suppressed one is a message the person never learns about. So a
+    database that cannot be reached answers "nobody", and the push goes out.
+    """
+    wrap_id = (wrap_id or "").strip().lower()
+    if not wrap_id or not pks:
+        return set()
+    from datetime import datetime, timedelta
+    from app.database import SessionLocal
+    from app.models import PushSentWrap
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(seconds=600)
+        rows = (db.query(PushSentWrap.pubkey)
+                .filter(PushSentWrap.wrap_id == wrap_id,
+                        PushSentWrap.pubkey.in_(list(pks)),
+                        PushSentWrap.created_at >= cutoff)
+                .all())
+        return {r[0] for r in rows}
+    except Exception as e:
+        logger.warning(f"[nostr-push] could not check own-sent wraps: {e}")
+        return set()
+    finally:
+        db.close()
+
+
 def _subs_for(pks) -> dict:
     """{pubkey: [web-push subscription dicts]} for `pks`. ONE query, not one per pubkey — the call
     and DM handlers both feed this from an untrusted event's p tags. Blocking; call via to_thread."""
@@ -475,6 +507,24 @@ async def _dm_handler(ev: dict):
         _dm_recent[pk] = now
 
     try:
+        # A MESSAGE YOU SENT IS NOT NEWS TO ANY OF YOUR DEVICES.
+        #
+        # NIP-17 publishes a SELF-COPY of every message so the sender's other devices see what they
+        # sent, p-tagged to the sender — and a wrap's author is an ephemeral throwaway key, so the
+        # `pk != author` test above cannot see that this recipient IS the sender. Reported as "if I
+        # send a DM, i do not want a push notification saying that somebdy sent a DM — it was me!".
+        #
+        # The publishing device drops it on arrival (ClientNotified), exactly and with no help from
+        # here — but only the device that sent it. A DM sent from the desktop still buzzed the
+        # phone, which published nothing and knew nothing; and Web Push has no equivalent map, so
+        # every browser device was told regardless of which one sent it. Asking the ACCOUNT is what
+        # covers both, and not sending is better than sending and then suppressing.
+        wrap_id = str(ev.get("id") or "")
+        if wrap_id:
+            mine = await asyncio.to_thread(_sent_by_own_device, fresh, wrap_id)
+            fresh = [pk for pk in fresh if pk not in mine]
+            if not fresh:
+                return
         targets = await asyncio.to_thread(_subs_for, fresh)
         if not targets:
             return

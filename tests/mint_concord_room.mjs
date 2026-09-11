@@ -25,8 +25,11 @@ const signer = (sk) => (t) => toCord(NT.finalizeEvent(toNT({
 const ownerSk = NT.generateSecretKey(), owner = NT.getPublicKey(ownerSk);
 const botSk = NT.generateSecretKey(), bot = NT.getPublicKey(botSk);
 
-const opts = toCord({ name: 'bot room', icon: '', owner,
-                      relays: ['wss://room.example'], base: 'https://poster.place' });
+/* The relay and base are overridable so this same fixture can mint a room on a REAL relay — which
+   is how the bot is tested as a live process rather than only as a set of decisions. */
+const RELAY = process.env.PC_ROOM_RELAY || 'wss://room.example';
+const BASE  = process.env.PC_ROOM_BASE  || 'https://poster.place';
+const opts = toCord({ name: 'bot room', icon: '', owner, relays: [RELAY], base: BASE });
 opts.signEvent = signer(ownerSk);
 const made = await cord.PosterCord.createCommunity(opts);
 const bundleEvents = made.events.filter(e => e.kind === 33301);

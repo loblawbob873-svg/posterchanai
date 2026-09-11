@@ -103,9 +103,20 @@ def main():
     )
     args = parser.parse_args()
 
-    # Validate that at least one platform is specified
-    if not args.nostr and not args.dvm and not args.chess and not args.ttt and not args.hangman and not args.connect4 and not args.blackjack and not args.holdem and not args.ping and not args.image and not args.autopost and not args.autopost_print and not args.blockbot and not args.pleroma and not args.blocks and not args.blocks_print and not args.scalps and not args.scalps_print and not args.fba and not args.topposts and not args.topposts_print and not args.welcome and not args.welcome_print and not args.report and not args.report_print and not args.hashtagbot and not args.hashtagbot_print and not args.unfollowbot and not args.unfollows and not args.unfollows_print:
-        print("ERROR: Please specify at least one mode: --nostr, --dvm, --chess, --ping, --pleroma, --blockbot, --blocks, --blocks-print, --scalps, --scalps-print, --fba, --topposts, --topposts-print, --welcome, --welcome-print, --report, --report-print, --hashtagbot, --hashtagbot-print, --unfollowbot, --unfollows, --unfollows-print, --image, --autopost, or --autopost-print")
+    # AT LEAST ONE MODE — ASKED OF ARGPARSE, NOT OF A HAND-TYPED LIST.
+    #
+    # This was a chain of thirty `not args.x`, and a mode missing from it is REFUSED AT STARTUP:
+    # `--concord` on its own printed "please specify at least one mode" and exited, so a bot whose
+    # only job was answering in a community could not run at all. The message beside it is a
+    # second hand-typed list, and it had already drifted from the first (no --ttt, --hangman,
+    # --connect4, --blackjack, --holdem in it).
+    #
+    # argparse already knows every flag it defined. Ask it.
+    _modes = sorted(k for k, v in vars(args).items() if v is True)
+    if not _modes:
+        _known = ", ".join("--" + a.lstrip("-") for a in sorted(
+            k.replace("_", "-") for k in vars(args)))
+        print("ERROR: Please specify at least one mode: " + _known)
         return
 
 
@@ -154,6 +165,26 @@ def main():
     daemon_modes = (args.blockbot, args.welcome, args.unfollowbot, args.report, args.hashtagbot)
     has_daemon = any(daemon_modes)
 
+    # THE FIRST LISTENER USED TO TAKE THE MAIN THREAD AND NEVER GIVE IT BACK.
+    #
+    # Every block below reads `if threads or has_daemon or multi:` — a decision made on what came BEFORE it,
+    # so whichever listener is dispatched first finds nothing running, takes the `else` branch,
+    # loops forever and RETURNS NEVER. Every later mode on the same command line is simply never
+    # reached. A bot spawned as `--nostr --concord` ran the Nostr listener and joined no rooms:
+    # "had bot join room check logs" found the process alive, its modes correct, and no
+    # "Starting Concord listener..." anywhere, because that line is forty lines past a `while True`.
+    #
+    # Nothing was wrong with any individual block — the combination had never been exercised, since
+    # every bot here had run exactly one listener until now. The wait loop at the end of the
+    # listener section already existed for the threaded case; it simply could not be reached.
+    #
+    # So: count what was ASKED FOR up front, and when it is more than one, every listener threads
+    # and the existing wait loop holds the process open.
+    _LISTENERS = ("pleroma", "nostr", "concord", "dvm",
+                  "chess", "ttt", "hangman", "connect4", "blackjack", "holdem")
+    _wanted = [f for f in _LISTENERS if getattr(args, f, False)]
+    multi = len(_wanted) > 1
+
     if args.pleroma:
         from pleromaListener import process_notifications   # before the thread — see above
 
@@ -166,7 +197,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] process_notifications failed: {e}", flush=True)
                 time.sleep(20)
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             # Run in thread if other listeners running or daemon mode needed
             t = threading.Thread(target=run_pleroma, daemon=True)
             t.start()
@@ -207,7 +238,7 @@ def main():
                 # Poll cadence: relays push fast, so a short gap keeps replies snappy
                 # (each poll is one short-lived REQ per relay). Overridable via NOSTR_POLL_SECONDS.
                 time.sleep(int(_os.getenv("NOSTR_POLL_SECONDS", "8")))
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_nostr, daemon=True)
             t.start()
             threads.append(t)
@@ -228,7 +259,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] dvm process_job_requests failed: {e}", flush=True)
                 time.sleep(int(_os.getenv("DVM_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "15"))))
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_dvm, daemon=True)
             t.start()
             threads.append(t)
@@ -263,7 +294,7 @@ def main():
                     state.pop("session", None)
                 time.sleep(int(_os.getenv("CONCORD_POLL_SECONDS",
                                           _os.getenv("NOSTR_POLL_SECONDS", "20"))))
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_concord, daemon=True)
             t.start()
             threads.append(t)
@@ -289,7 +320,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] chess process_chess failed: {e}", flush=True)
                 time.sleep(int(_os.getenv("CHESS_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_chess, daemon=True)
             t.start()
             threads.append(t)
@@ -310,7 +341,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] ttt process_ttt failed: {e}", flush=True)
                 time.sleep(int(_os.getenv("TTT_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_ttt, daemon=True); t.start(); threads.append(t)
         else:
             run_ttt(); return
@@ -328,7 +359,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] hangman process_hangman failed: {e}", flush=True)
                 time.sleep(int(_os.getenv("HANGMAN_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_hangman, daemon=True); t.start(); threads.append(t)
         else:
             run_hangman(); return
@@ -346,7 +377,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] connect4 process_connect4 failed: {e}", flush=True)
                 time.sleep(int(_os.getenv("CONNECT4_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_connect4, daemon=True); t.start(); threads.append(t)
         else:
             run_connect4(); return
@@ -363,7 +394,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] blackjack process_blackjack failed: {e}", flush=True)
                 time.sleep(int(_os.getenv("BLACKJACK_POLL_SECONDS", _os.getenv("NOSTR_POLL_SECONDS", "10"))))
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_blackjack, daemon=True); t.start(); threads.append(t)
         else:
             run_blackjack(); return
@@ -380,7 +411,7 @@ def main():
                 except Exception as e:
                     print(f"[ERROR] holdem process_holdem failed: {e}", flush=True)
                 time.sleep(int(_os.getenv("HOLDEM_POLL_SECONDS", "4")))   # snappy interactive moves (command channel)
-        if threads or has_daemon:
+        if threads or has_daemon or multi:
             t = threading.Thread(target=run_holdem, daemon=True); t.start(); threads.append(t)
         else:
             run_holdem(); return

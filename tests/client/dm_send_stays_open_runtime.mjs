@@ -26,6 +26,12 @@ const context={
   Relay:{publish:async ev=>{calls.published.push(ev.id);return {ok:true};},publishTo:async()=>1},
   VIEW:'messages', renderMessages:()=>{calls.remounted++;},
   _keepDmOpen:()=>{},
+  /* Telling the ACCOUNT which wraps were ours, so no device of this person is pushed about a
+     message they sent. Present here because sendDm calls it and a missing name would be a
+     ReferenceError inside the send — which is the shape this whole file exists to catch. It is
+     deliberately NOT awaited by the send, so this records the call and nothing more. */
+  _notePublishedWraps:(ids)=>{calls.noted=(calls.noted||[]).concat(ids||[]);},
+  _capPlugin:()=>null,
   dmInboxRelays:async()=>{calls.inbox++;return {relays:[],answered:true};}, toast:()=>{},
   setTimeout, Promise,
 };

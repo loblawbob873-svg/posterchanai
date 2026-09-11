@@ -89,7 +89,11 @@ def test_the_delivery_drops_only_a_dm_and_only_by_id():
 def test_the_sender_records_both_wraps_before_they_are_published():
     """The self-copy is the one that comes back, but the peer's is recorded too: a second device of
     the same account can be the one that publishes, and neither should notify its own publisher."""
-    send = APP.split("async function sendDm(", 1)[1][:1400]
+    # Sliced to a real BOUNDARY, not a character count. This read the first 1400 characters of
+    # sendDm, so adding a comment to the code it tests moved the call out of the window and failed
+    # a test about something else entirely.
+    send = APP.split("async function sendDm(", 1)[1]
+    send = send[:send.index("Store.saveEvent") + 40]
     assert "notePublished" in send, send[:400]
     assert "toSelf&&toSelf.id" in send and "toPeer&&toPeer.id" in send, send[:400]
     assert send.index("notePublished") < send.index("Store.saveEvent"), (

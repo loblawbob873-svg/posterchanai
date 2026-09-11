@@ -6,7 +6,7 @@ these rows to deliver mentions/zaps/replies as OS notifications when the app is 
 """
 import asyncio
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import re
@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Request, WebSocket
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import PushSubscription
+from app.models import PushSubscription, PushSentWrap
 from app.services import push_service
 from app.services import direct_push_service
 from app.services import push_prefs
@@ -135,6 +135,58 @@ async def set_prefs(request: Request, db: Session = Depends(get_db)):
         updated += 1
     db.commit()
     return {"ok": True, "devices": updated}
+
+
+#: A send is followed by its push within seconds. Anything unclaimed after this never will be, and
+#: keeping it longer would start silencing real messages that happen to reuse an id (they cannot,
+#: but the window is the thing that bounds the damage if anything else here is ever wrong).
+_SENT_TTL_SECONDS = 600
+
+#: How many wrap ids one call may report. A NIP-17 message is two wraps; a generous ceiling still
+#: makes this useless as a way to fill the table.
+_SENT_MAX_IDS = 50
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+@router.post("/sent")
+async def note_sent_wraps(request: Request, db: Session = Depends(get_db)):
+    """These gift wraps are MINE — do not push me about them.
+
+    Reported as "if I send a DM, i do not want a push notification saying that somebdy sent a DM —
+    it was me!". NIP-17 publishes a SELF-COPY of every message so the sender's other devices see
+    what they sent, and it is p-tagged to the sender, whose wrap author is an ephemeral throwaway
+    key. The watcher's "don't notify the author" test cannot see that the recipient IS the sender.
+
+    The publishing device already drops the push when it recognises the id (ClientNotified), which
+    is exact and needs nothing from this node — but only on the device that sent it. Send from the
+    desktop and the phone still buzzed, because the phone published nothing and knows nothing. And
+    Web Push has no equivalent of that map at all, so every browser device was told regardless.
+
+    So the account keeps the record and the push is never sent. Authenticated like /prefs: without
+    it, knowing an npub would be enough to suppress somebody's real messages, and a silenced alert
+    is invisible to the person it belonged to.
+    """
+    body = await request.json()
+    pubkey = (body.get("pubkey") or "").strip().lower()
+    if not nostr_event.verify_self_auth(body.get("auth") or "", pubkey, "push-sent"):
+        return {"ok": False, "error": "auth required"}
+    raw = body.get("ids")
+    ids = [str(i).strip().lower() for i in raw][:_SENT_MAX_IDS] if isinstance(raw, list) else []
+    ids = [i for i in ids if _HEX64.match(i)]
+    if not ids:
+        return {"ok": True, "noted": 0}
+    # Housekeeping on the write path: a send is followed by its push within seconds, so anything
+    # older than the window is bookkeeping rather than evidence. Keeps the table from ever growing.
+    cutoff = datetime.utcnow() - timedelta(seconds=_SENT_TTL_SECONDS)
+    db.query(PushSentWrap).filter(PushSentWrap.created_at < cutoff).delete(synchronize_session=False)
+    have = {r.wrap_id for r in db.query(PushSentWrap.wrap_id)
+            .filter(PushSentWrap.pubkey == pubkey, PushSentWrap.wrap_id.in_(ids)).all()}
+    for wid in ids:
+        if wid in have:
+            continue
+        db.add(PushSentWrap(pubkey=pubkey, wrap_id=wid))
+    db.commit()
+    return {"ok": True, "noted": len(set(ids) - have)}
 
 
 @router.post("/direct/register")

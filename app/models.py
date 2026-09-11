@@ -598,6 +598,34 @@ class ScheduledPost(Base):
     user = relationship("User", backref="scheduled_posts")
 
 
+class PushSentWrap(Base):
+    """A gift wrap one of this account's own devices PUBLISHED — so no device gets pushed for it.
+
+    NIP-17 sends two wraps for one message: one the peer can open, and a SELF-COPY the sender can,
+    so their other devices see what they sent. Both are p-tagged to their own reader, and a wrap's
+    author is an ephemeral throwaway key — so the push watcher's "don't notify the author" test
+    cannot see that the self-copy's recipient IS its sender, and the sender is pushed about their
+    own outgoing message.
+
+    The publishing DEVICE already records this in memory and drops the push when it arrives
+    (ClientNotified), which is exact and needs no server. It only covers the device that sent it:
+    a message sent from the desktop still pushed the phone, because the phone published nothing.
+    So the record is kept for the ACCOUNT here, and the push is never sent at all — which also
+    covers Web Push, whose service worker has no equivalent of that in-memory map.
+
+    A wrap id is already public on the relay and this is only ever matched against pushes for that
+    same pubkey, so it discloses nothing its owner could not already read. Rows are short-lived: a
+    send is followed by its push within seconds, so anything unclaimed after a few minutes never
+    will be.
+    """
+    __tablename__ = "push_sent_wraps"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pubkey = Column(String(64), index=True, nullable=False)    # whose devices must not be told
+    wrap_id = Column(String(64), index=True, nullable=False)   # the gift wrap's own event id
+    created_at = Column(DateTime, default=datetime.utcnow, index=True, nullable=False)
+
+
 class PushSubscription(Base):
     """One notification device tied to a Nostr pubkey.
 
