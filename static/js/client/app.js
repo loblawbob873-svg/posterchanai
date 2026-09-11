@@ -5043,6 +5043,13 @@
       // Tell this device (and, once, the server) what it wants pushed. Free on the device side; the
       // server half is skipped entirely when it already matches, so it costs no signer prompt.
       setTimeout(()=>{ try{ _resendPushPrefsOnce(ME.pubkey); }catch(_){} }, 6000);
+      /* ONE-SHOT, AND DELIBERATELY NOT ON THE BOOT PATH. A device whose "use my own relays" was
+       * switched on by the NIP-65 seeder is asked, once, which it wants — see _relaySwitchNotice.
+       * It waits until the app is up and running for the reason this file has paid for before: a
+       * speculative guard added to the landing sequence once broke the APK outright. By now
+       * everything is painted and the relays are connected, so the worst case of this failing is
+       * that nothing appears. */
+      setTimeout(()=>{ try{ _relaySwitchNotice(); }catch(_){} }, 12000);
       setTimeout(()=>ensureDMs(), 3000);   // subscribe to INCOMING DMs (read). Our kind-10050 DM-inbox list
       setTimeout(()=>{ try{ Mail.loginSync(); }catch(_){} }, 4500);   // fetch mail on login (background)
       Mail.startPolling();   // …and keep checking, so mail arriving later is noticed too
@@ -5812,6 +5819,57 @@
    * Case 3 used to call Relay.connect(undefined), which opens a socket to the page's own origin and
    * can only fail — so a client with no reachable server sat at "reconnecting…" forever even though
    * it needs nothing from a server to read Nostr. */
+  /* ASK ONCE, ON A DEVICE THE BUG SWITCHED ON — AND NEVER DECIDE FOR ANYBODY.
+   *
+   * `seedRelaysFromNip65` used to turn "use my own relays" on whenever the saved list was empty,
+   * which is also exactly what somebody has the instant they turn it OFF. So it came back on by
+   * itself, repeatedly, and devices are still sitting in that state. Reported as "for some reason,
+   * use my own relays got enabled again!" and then "is there a way you can reset all our users to
+   * uncheck it to solve the damage?".
+   *
+   * There is no server-side reset to offer: this setting is localStorage (`pc_nostr_settings`),
+   * per device, and the node never sees it. And a blanket switch-off would be the same mistake with
+   * the sign reversed — the bug wrote EXACTLY the state a deliberate choice writes, so there is no
+   * way to tell the two apart, and forcing it off would quietly disconnect the people who meant it.
+   *
+   * So the device asks, once, and remembers the answer whichever way it goes. Everything is inside
+   * a try/catch and behind a marker: this runs on the way to connecting relays, and a repair that
+   * can break connecting is worse than the thing it repairs.
+   */
+  const _RELAY_ASK_KEY = 'relaySwitchAsked';
+  function _relaySwitchNotice(){
+    try{
+      if(ClientSettings.get(_RELAY_ASK_KEY)) return false;
+      // Not switched on: nothing to repair, and nothing to ask about ever again.
+      if(!ClientSettings.get('relaysEnabled')){ ClientSettings.set(_RELAY_ASK_KEY, 'off'); return false; }
+      if(typeof modal !== 'function' || !document.body) return false;
+      const mine = (userRelays() || []).filter(Boolean);
+      const answer = (which) => {
+        try{
+          ClientSettings.set(_RELAY_ASK_KEY, which);
+          if(which === 'node'){ ClientSettings.set('relaysEnabled', false); connectRelays(); }
+        }catch(_){ }
+        try{ closeModal(); }catch(_){ }
+      };
+      modal(`<h3>Which relays should this app use?</h3>
+        <p class="muted small">PosterChan used to switch <b>“Use my own relays”</b> on by itself when
+        it found a relay list you had published elsewhere. That was a bug and it no longer happens —
+        but this device still has it on, and we cannot tell whether you chose it or we did.</p>
+        ${mine.length ? `<div class="keybox"><code style="overflow-wrap:anywhere">${mine.map(enc).join('<br>')}</code></div>` : ''}
+        <p class="muted small">Either answer is remembered; you can change it any time in
+        Settings → Relays.</p>
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <button class="btn btn-cyan" id="rly-node">Use this node’s relays</button>
+          <button class="btn btn-ghost" id="rly-mine">Keep mine</button>
+        </div>`, root => {
+          const n=$('#rly-node',root), m=$('#rly-mine',root);
+          if(n) n.onclick=()=>answer('node');
+          if(m) m.onclick=()=>answer('mine');
+        });
+      return true;
+    }catch(_){ return false; }
+  }
+
   function connectRelays(){
     _dropLegacyAutoRelays();
     let list = ClientSettings.get('relaysEnabled') ? userRelays() : [];

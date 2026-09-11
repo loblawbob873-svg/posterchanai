@@ -72,6 +72,10 @@ def test_the_only_writers_of_the_switch_are_controls_a_person_operates():
         # checkbox, so the value comes from the person, including when it is false.
         "renderUserSettings",
         "_dropLegacyAutoRelays",   # one-shot repair, and it only ever turns it OFF
+        # The one-time notice shown to a device the seeder switched on. It is a BUTTON — the write
+        # happens in the handler for "Use this node's relays" and nowhere else — and it only ever
+        # turns the switch OFF. See test_the_relay_switch_asks_once.py.
+        "_relaySwitchNotice",
     )
     writers = []
     for i, line in enumerate(APP.splitlines(), 1):
