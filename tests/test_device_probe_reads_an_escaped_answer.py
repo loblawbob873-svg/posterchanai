@@ -64,3 +64,32 @@ def test_the_gate_still_refuses_a_vacuous_run():
         % (min(floors) * total))
     assert "index % shards != shard" in TEST, (
         "the shard partition changed shape; check that no tile falls outside every shard")
+
+
+def test_teardown_cannot_overwrite_a_verdict_the_assertions_already_reached():
+    """THE DEVICE GATE WAS RED FOR EIGHT CONSECUTIVE RUNS AND THE PRODUCT WAS FINE.
+
+    The walk starts MainActivity with FLAG_ACTIVITY_NEW_TASK, because that is what a launcher press
+    really is — and `ActivityScenario.close()` then waits for DESTROYED on a handle the launch left
+    PAUSED, throwing
+
+        Activity never becomes requested state "[DESTROYED]" (last lifecycle transition = "PAUSED")
+
+    out of the `finally`, after every assertion above it had already passed. All three shards
+    reported failure while proving exactly what they were written to prove, 114 of the other 117
+    device tests were green, and the gate stayed red from the day the test was added — so it had
+    never once passed. A device test that always fails is a device test nobody reads.
+
+    The rule this pins is narrow on purpose: the teardown may tolerate THAT lifecycle timeout and
+    nothing else. Swallowing every AssertionError there would hide a real wedge, which is the
+    failure this whole test class exists to catch.
+    """
+    tail = TEST[TEST.index("} finally {"):]
+    assert "scenario.close()" in tail, "the scenario is no longer closed at all"
+    assert "catch (AssertionError" in tail, (
+        "close() can once again fail a shard that passed — the lifecycle timeout from launching "
+        "into a NEW_TASK is not a product failure and must not overwrite the verdict")
+    assert "never becomes requested state" in tail, (
+        "the teardown tolerance is no longer pinned to the one lifecycle timeout it is for; a bare "
+        "catch would hide a genuine wedge")
+    assert "throw e" in tail, "anything other than that timeout must still fail the test"

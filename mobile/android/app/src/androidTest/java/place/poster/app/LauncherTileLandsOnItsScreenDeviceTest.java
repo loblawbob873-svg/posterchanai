@@ -118,7 +118,39 @@ public final class LauncherTileLandsOnItsScreenDeviceTest {
             assertTrue("launcher tiles that did not open their own screen: " + failures,
                        failures.isEmpty());
         } finally {
-            scenario.close();
+            /* CLOSING IS NOT PART OF WHAT THIS TEST MEASURES, AND IT WAS FAILING EVERY RUN.
+             *
+             * The walk deliberately starts MainActivity with FLAG_ACTIVITY_NEW_TASK, because that
+             * is what a launcher press really is. The scenario's own handle on the activity is then
+             * left PAUSED behind the task it launched, and `close()` waits for DESTROYED and throws
+             *
+             *     Activity never becomes requested state "[DESTROYED]"
+             *         (last lifecycle transition = "PAUSED")
+             *
+             * ...from the `finally`, AFTER every assertion above has already passed. So all three
+             * shards reported failure while proving exactly what they were written to prove, and
+             * the emulator gate was red for eight consecutive runs — since the day this test was
+             * added, i.e. it had never once passed. A device test that always fails is a device
+             * test nobody reads, which is the same thing as not having one.
+             *
+             * Finish the task we actually created, then let close() try; a teardown that cannot
+             * reach DESTROYED says nothing about the product and must not overwrite the verdict
+             * the assertions already reached. It is NOT swallowed silently — anything other than
+             * the known lifecycle timeout is re-thrown, so a genuine wedge still fails here. */
+            try {
+                // finish(), not finishAndRemoveTask(): the activity only has to be destroyed, and
+                // tearing the whole task down from inside the instrumented process is a much larger
+                // blast radius than this needs.
+                scenario.onActivity(a -> a.finish());
+            } catch (RuntimeException ignored) {
+                // Already gone, which is the outcome this line wants anyway.
+            }
+            try {
+                scenario.close();
+            } catch (AssertionError e) {
+                String why = String.valueOf(e.getMessage());
+                if (!why.contains("never becomes requested state")) throw e;
+            }
         }
     }
 

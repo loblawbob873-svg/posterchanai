@@ -160,13 +160,16 @@ def _audit_payload(blob):
             "www/static/css/client.css",
         )
         missing = [path for path in required if not present(path)]
-        # Concord communities now live inside Messages.  Keep auditing both halves of the
-        # unified surface so a stale package cannot silently ship either the old standalone
-        # launcher or a Messages build with communities omitted.
+        # COMMUNITIES IS ITS OWN PLACE AGAIN, and this audit was still demanding the unified
+        # surface it replaced (`messages-communities` / `messages-direct` tabs).  Those markers are
+        # gone by design, so every desktop build after the split was refused here with "missing
+        # required runtime surfaces" — a publisher that blocks on a design decision it has not been
+        # told about, which reads as a broken build.  The rule is unchanged in spirit: BOTH places
+        # have to be in the package, so a stale asar cannot ship one without the other.
         if b'data-view="messages"' not in payload:
             missing.append('index.html Messages navigation entry')
-        if b'messages-communities' not in payload or b'messages-direct' not in payload:
-            missing.append('unified Messages direct/community tabs')
+        if b'data-view="concord"' not in payload:
+            missing.append('index.html Communities navigation entry')
         # These are behavior-bearing package markers, not cosmetic labels.  Checking the source tree
         # did not catch several releases whose generated app.asar silently lagged behind it.
         markers = {
