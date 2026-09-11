@@ -168,11 +168,16 @@ function onBotFormChange() {
         if (!on && c.checked) c.checked = false;
     };
     ['block', 'welcome', 'report', 'unfollow'].forEach(f => showFeat(f, isFedi));
-    ['dvm', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'stats'].forEach(f => showFeat(f, isNostr));
+    ['dvm', 'concord', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'stats'].forEach(f => showFeat(f, isNostr));
     // Nostr Stats: show the Preview/Post block only when its feature is ticked (Nostr-only).
     show('bot_grp_stats', isNostr && ck('bot_ft_stats'));
-    // The invite is only meaningful to a nostr bot that was actually asked to join a room.
-    show('bot_grp_concord', isNostr && ck('bot_ft_concord'));
+    /* THE INVITE FIELD IS VISIBLE FOR ANY NOSTR BOT, not only once the feature is ticked.
+       It was gated on the checkbox, and the checkbox is one of fifteen in a wrapped grid — so the
+       answer to "we need a field to add the invite link" was a field you could only reach by
+       finding a tickbox first, and it was reported as still missing. The nsec and profile fields
+       are not hidden behind their features either; a place to PUT the value is not the same thing
+       as the switch that uses it. */
+    show('bot_grp_concord', isNostr);
 
     // Per-feature sections appear only when their feature is enabled.
     // block / welcome / report / unfollow all need the Pleroma DB.

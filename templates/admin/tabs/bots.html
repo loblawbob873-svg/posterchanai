@@ -235,6 +235,7 @@
                 <label>Features</label>
                 <div class="bot-features">
                     <label><input type="checkbox" id="bot_ft_reply" onchange="onBotFormChange()"> Reply to mentions</label>
+                    <label title="Answer when mentioned inside an encrypted Concord community. Paste the room's invite link above; the bot joins it, watches the channels it can see, and replies in-room to messages that mention it. It never speaks unprompted."><input type="checkbox" id="bot_ft_concord" onchange="onBotFormChange()"> Concord community</label>
                     <label><input type="checkbox" id="bot_ft_welcome" onchange="onBotFormChange()"> Welcome new users</label>
                     <label><input type="checkbox" id="bot_ft_block" onchange="onBotFormChange()"> Block bot</label>
                     <label><input type="checkbox" id="bot_ft_report" onchange="onBotFormChange()"> Report bot</label>
@@ -247,7 +248,6 @@
                     <label title="#connect4 — referee Connect Four: 'connect4 @opponent' (or play the bot); drop a disc by replying with a column 1-7; cyberpunk board; calls 4-in-a-row."><input type="checkbox" id="bot_ft_connect4" onchange="onBotFormChange()"> Connect Four</label>
                     <label title="#blackjack — deal Blackjack (21) vs the bot dealer. Player posts 'blackjack' (or 'start') tagging the bot; the bot DMs the hand; reply 'hit' or 'stand'. Dealer stands on 17. Single-player (you vs the house) — no AI search, perf-trivial."><input type="checkbox" id="bot_ft_blackjack" onchange="onBotFormChange()"> Blackjack</label>
                     <label title="#holdem — deal multiplayer Texas Hold'em. Players post 'holdem @friend …' tagging the bot; the bot DMs hole cards (NIP-44 encrypted), runs the betting (blinds, flop/turn/river, side pots) and posts each result. Act via DM or the Hold'em tab: check/call/raise/fold/allin/leave. Persistent table; no AI search — perf-trivial."><input type="checkbox" id="bot_ft_holdem" onchange="onBotFormChange()"> Texas Hold'em</label>
-                    <label title="Answer when mentioned inside an encrypted Concord community. Paste the room's invite link above; the bot joins it, watches the channels it can see, and replies in-room to messages that mention it. It never speaks unprompted."><input type="checkbox" id="bot_ft_concord" onchange="onBotFormChange()"> Concord community</label>
                     <label title="Every 6 hours, this bot posts a cyberpunk graph of daily posts + daily active users (NIP-05 users only, past week + month) as a kind-1 note from its own identity. Counts only NIP-05 users from this relay's view; tagged #nostr #grownostr #nostrstats."><input type="checkbox" id="bot_ft_stats" onchange="onBotFormChange()"> Nostr Stats</label>
                 </div>
             </div>

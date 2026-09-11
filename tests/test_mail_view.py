@@ -178,7 +178,14 @@ class SurfaceTests(unittest.TestCase):
         self.assertIn("['mail','mail','Email']", m.group(1))
 
     def test_the_more_sheet_shows_the_count(self):
-        self.assertIn("counts={drafts:dn, mail:(Number(Mail && Mail.unread)||0)}", APP)
+        # The RULE, not the literal: the ☰ sheet prints a per-row count for Email. This used to pin
+        # the whole `counts={...}` expression, so adding a second thing the badge counts broke a
+        # mail test that has nothing to do with it.
+        i = APP.index("function moreMenu(")
+        m = re.search(r"const counts=\{([^}]*)\}", APP[i:i + 3000])
+        self.assertTrue(m, "the More sheet's per-row counts moved — re-point this test")
+        self.assertIn("mail:", m.group(1))
+        self.assertIn("Mail.unread", m.group(1))
 
     def test_nostr_only_hides_it(self):
         """No instance, no IMAP. Hidden in the template AND filtered out of the phone sheet."""

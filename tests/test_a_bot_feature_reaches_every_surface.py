@@ -116,6 +116,44 @@ def test_a_feature_that_needs_a_value_has_somewhere_to_type_it(feature, expected
         "never stored")
 
 
+def test_the_invite_field_is_visible_without_hunting_for_a_tickbox_first():
+    """REPORTED TWICE. The field existed and was gated on `bot_ft_concord`, which is one checkbox
+    among fifteen in a wrapped grid — so "we need a field in the bot manager to add the invite
+    link" was answered with a field you could only reach by finding a tickbox, and the follow-up
+    was "still don't see concord bot settings in admin bot ui".
+
+    A place to PUT a value is not the same thing as the switch that uses it. The nsec and the
+    profile fields are not hidden behind their features either.
+    """
+    block = JS[JS.index("function onBotFormChange("):]
+    block = block[:block.index("\n}")]
+    m = re.search(r"show\('bot_grp_concord',\s*([^)]*)\)", block)
+    assert m, "the Concord group is no longer shown or hidden by the form logic"
+    condition = m.group(1)
+    assert "bot_ft_concord" not in condition, (
+        "the invite field is hidden until the Concord feature is ticked; that is the report. Show "
+        "it for any nostr bot: " + condition)
+    assert "isNostr" in condition, (
+        "the invite field shows for non-nostr bots, which cannot join a room at all: " + condition)
+
+
+def test_a_nostr_only_feature_is_hidden_on_a_fediverse_bot():
+    """A checkbox a platform cannot honour is a control that lies — and `showFeat` UNCHECKS what it
+    hides, so a feature missing from both lists can also be saved onto a bot that cannot run it."""
+    block = JS[JS.index("function onBotFormChange("):]
+    nostr_only = re.search(r"\[([^\]]*)\]\.forEach\(f => showFeat\(f, isNostr\)\)", block)
+    assert nostr_only, "the per-platform feature lists moved — re-point this test"
+    assert "'concord'" in nostr_only.group(1), (
+        "Concord is a Nostr-only feature and is offered on Pleroma bots: " + nostr_only.group(1))
+
+
+def test_the_invite_field_comes_before_the_features_that_use_it():
+    """Its own tooltip says "paste the room's invite link above". If the field moved below the
+    checkbox, that instruction points at nothing."""
+    assert HTML.index('id="bot_grp_concord"') < HTML.index('id="bot_grp_features"'), (
+        "the invite field is now below the Features list it is referenced from")
+
+
 def test_the_invite_reaches_the_bot_process_as_an_env_var():
     """A config key the manager does not inject is a value the bot never sees."""
     assert 'setif("concord_invite", "CONCORD_INVITE")' in MANAGER, (

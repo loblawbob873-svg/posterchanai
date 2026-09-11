@@ -876,6 +876,10 @@
         if(n){ b.textContent=n>99?'99+':String(n); b.classList.remove('hidden'); }
         else b.classList.add('hidden');
       });
+      /* The phone's bar has no Rooms button any more, so the ☰ badge is where an unread community
+         shows. Painting only `#cc-badge-m` would leave the count visible exclusively inside the
+         sheet somebody has to open to see it. */
+      try{ const p=PC(); if(p && p.bumpMoreBadge) p.bumpMoreBadge(); }catch(_){ }
     }catch(_){ }
   }
   function conversationIsVisible(narrow,chatOpen,drawerOpen){ return !narrow||(!!chatOpen&&!drawerOpen); }

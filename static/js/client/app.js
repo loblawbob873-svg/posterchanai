@@ -16264,7 +16264,29 @@
           bumpDraft(); if(VIEW==='drafts') renderDrafts();
         } }catch(_){} },
   };
-  function bumpDraft(){ const n=Drafts.live().length; $$('#draft-badge,#more-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); }
+  /* THE ☰ BADGE COUNTS EVERYTHING BEHIND THE ☰, NOT JUST DRAFTS.
+   *
+   * The phone bar had grown to SEVEN items — Home, Social, compose, Alerts, DMs, Rooms, More — on
+   * a 360px screen, which is not a bar so much as a row of targets too small to hit. Rooms came
+   * out; it keeps its place in the More sheet (one tap) and its own launcher tile.
+   *
+   * But deleting the button would have deleted the only thing on the phone that said a community
+   * wanted you: `#cc-badge-m` lived on it, and `more-badge-m` counted drafts and nothing else. A
+   * control that disappears is a feature that was moved; a NOTIFICATION that disappears is a
+   * feature that was switched off. So the collapsed ☰ carries the sum, and the sheet still shows
+   * the per-row counts when it is open. */
+  function moreBadgeCount(){
+    let n = 0;
+    try{ n += Drafts.live().length; }catch(_){}
+    try{ n += (window.PCConcord && PCConcord.unreadRooms) ? PCConcord.unreadRooms() : 0; }catch(_){}
+    return n;
+  }
+  function bumpMoreBadge(){
+    const n = moreBadgeCount();
+    $$('#more-badge-m').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); });
+  }
+  // `#draft-badge` is the sidebar's Drafts row and stays drafts-only — it labels one thing.
+  function bumpDraft(){ const n=Drafts.live().length; $$('#draft-badge').forEach(b=>{ if(n){b.textContent=n>99?'99+':n;b.classList.remove('hidden');}else b.classList.add('hidden'); }); bumpMoreBadge(); }
   // ---------- Scheduled posts: sign a note with a FUTURE created_at; the backend broadcasts it at that time.
   // The server never holds your key — signing stays here — so it works for nip07 / Amber / local nsec alike. ----
   const Scheduled = {
@@ -16293,7 +16315,11 @@
   function moreMenu(){
     refreshMediaGate();
     const dn=Drafts.live().length;   // per-item counts so the ☰ badge is explained once opened
-    const counts={drafts:dn, mail:(Number(Mail && Mail.unread)||0)};
+    /* The ☰ badge is a SUM; these are what it is made of, so opening the sheet explains the number
+       rather than just carrying it. Communities joined the sum when Rooms left the phone bar, so it
+       has to appear here too — a total nothing accounts for is worse than no total. */
+    const _cc=(()=>{ try{ return (window.PCConcord && PCConcord.unreadRooms) ? PCConcord.unreadRooms() : 0; }catch(_){ return 0; } })();
+    const counts={drafts:dn, mail:(Number(Mail && Mail.unread)||0), concord:_cc};
     const _navOffKeys=navHiddenSet();
     // Discover + Games each live in their OWN sub-sheet (one row here) so they don't crowd the More sheet.
     // Admin moved into User Settings (admins only), so it's no longer a top-level More-sheet item.
@@ -38678,6 +38704,8 @@
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
     // automatically after a relay change). Exposed for the sub-modules and for the console.
     carryPrivateToRelays, reconnectNetwork,
+    // concord.js repaints its own unread count; the ☰ badge sums it with drafts.
+    bumpMoreBadge,
     retryInstanceView:view=>{if(VIEW===view)renderView(true);},
     editOwnProfile:()=>{if(ME&&!GUEST)editProfile(profOf(ME.pubkey));},
     /* Shared-feed modules may finish network/deferred work after navigation. They must ask who owns
