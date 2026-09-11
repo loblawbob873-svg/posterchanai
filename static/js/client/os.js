@@ -3038,13 +3038,30 @@
               String(w.appView||w.view||'')===String(v));
   }
 
+  /* COMMUNITIES IS ITS OWN APPLICATION NOW.
+   *
+   * This used to answer TRUE for messages-vs-concord, and that was right while Communities was a
+   * TAB inside Messages: one window held both, so a launch of either had to find it. The reason is
+   * recorded in openApp — with the Communities tab open as a real toplevel, asking for Direct
+   * Messages found nothing and opened a SECOND `PosterChan Window — messages` ("two messages
+   * windows appear and no DM window").
+   *
+   * They are separate sidebar views with separate rows, icons and windows now, so that pairing
+   * would do the opposite harm: opening Communities would focus the DM window and repaint it, and
+   * neither app could ever have a window of its own. Each view matches itself, which is what makes
+   * the one-window-per-app lookup correct again rather than merely quiet. */
   function sameAppWindow(opened, requested){
-    if(opened===requested) return true;
-    return (opened==='messages'||opened==='concord') &&
-           (requested==='messages'||requested==='concord');
+    return opened===requested;
   }
 
+  /* THERE ARE NO TABS LEFT TO SELECT. Messages and Communities are separate views with separate
+   * windows, so a launch of either is an ordinary launch: the `existing.view === view` test above
+   * is now the whole question. Kept as a function rather than deleted at ~12 call sites so the
+   * handoff and launch paths read the same as before. */
   function shouldSelectMessagesTab(w, requested){
+    return false;
+  }
+  function _retiredShouldSelectMessagesTab(w, requested){
     if(!w || (requested!=='messages'&&requested!=='concord')) return false;
     if(!sameAppWindow(String(w.view||''), requested)) return false;
     return String(w.appView||w.view||'') !== requested;
@@ -4787,10 +4804,14 @@
     /* Web Search carries its query/page in handoffState, never in the browser's page-global route.
      * A Social/profile URL left by another window must not replace the application identity. */
     if(opened==='websearch') return 'websearch';
-    /* Messages has one canonical window identity. The selected Direct/Communities tab travels in
-     * handoffPayload; recreating the frame as the historical `concord` alias made a later Direct
-     * click depend on alias lookup and could manufacture a second frame. */
-    if(opened==='messages'||opened==='concord') return 'messages';
+    /* MESSAGES AND COMMUNITIES ARE TWO APPLICATIONS, so each keeps its own identity across a
+     * monitor handoff. This used to collapse both to `messages` because they WERE one window with
+     * two tabs, and recreating the frame under the historical `concord` alias made a later Direct
+     * click depend on alias lookup and could manufacture a second frame. With separate sidebar
+     * views, collapsing them is the bug instead: a Communities window dragged to the other screen
+     * would come back as Direct Messages. */
+    if(opened==='messages') return 'messages';
+    if(opened==='concord') return 'concord';
     /* Music is opened by the __music launcher action, which in turn creates a doc:music window.
      * doc:music is a uniqueness key, not a launcher/render identity: handing that key to another
      * renderer creates a generic shared-feed document and can display Social inside a Music frame.
@@ -4880,7 +4901,10 @@
     /* Messages selection is meaningful only on the canonical Messages frame. A page-global
      * Concord repaint can leave appView stale on an unrelated frame; never let that optional field
      * acquire authority over Terminal's explicit application identity at the destination. */
-    const messagesTab=identity==='messages'?selectedMessagesTab(w):'';
+    /* `messagesTab` described WHICH TAB of the old two-tab Messages app a window was showing.
+     * Communities is its own view now, so the identity carries that by itself and the field is kept
+     * only so a window handed over by an older build still lands somewhere sensible. */
+    const messagesTab=identity==='messages'?selectedMessagesTab(w):identity==='concord'?'concord':'';
     return {view:identity,messagesTab,title:w.title||'',icon:w.icon||'',
       width:w.el.offsetWidth,height:w.el.offsetHeight,overflow:Number(overflow)||0,
       scrollTop:Math.max(0,Number(realFeed&&realFeed.parentElement===w.body
@@ -4894,9 +4918,9 @@
         ? PCTerm.handoffState()
         : w.view==='websearch'&&window.PCWebSearch&&PCWebSearch.handoffState
         ? PCWebSearch.handoffState()
-        : messagesTab==='concord'&&window.PCConcord&&PCConcord.handoffState
+        : identity==='concord'&&window.PCConcord&&PCConcord.handoffState
           ? PCConcord.handoffState()
-          : messagesTab==='messages'&&PC().messagesHandoffState
+          : identity==='messages'&&PC().messagesHandoffState
             ? PC().messagesHandoffState() : null};
   }
 

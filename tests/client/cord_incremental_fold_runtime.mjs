@@ -14,7 +14,7 @@ const code=fs.readFileSync(process.env.PC_CONCORD_SOURCE||new URL('../../static/
 const context={console,Map,Set,Promise,deliveryOwner:()=>owner,roomIdentity:r=>r.communityId,saved:()=>[room],envelopeCacheKey:()=> 'fixture',cachedEnvelopes:async()=>envelopes,
  readChat:(_p,reader,b,c,_r,ch,w)=>reader.inspectChat(b,c,ch.id,w),testMessages:()=>structuredClone(rows),messageId:m=>m.id,
  mergeRelayMessages:(prior,incoming)=>[...new Map([...prior,...incoming].map(m=>[m.id,m])).values()],
- saveTestMessages:(_id,next)=>{rows=structuredClone(next);},notifyMentions:()=>{},document:{body:{classList:{contains:()=>false}}}};
+ saveTestMessages:(_id,next)=>{rows=structuredClone(next);},notifyMentions:()=>{},paintUnreadBadge:()=>{},document:{body:{classList:{contains:()=>false}}}};
 vm.createContext(context);vm.runInContext(code.slice(code.indexOf('  function uniqueMessages('),code.indexOf('  const remoteMessages='))+code.slice(code.indexOf('  function pendingEchoMatch('),code.indexOf('  function channelStoreId('))+code.slice(start,end),context);
 const p={viewer:()=>({pubkey:owner})};
 const absorb=async wraps=>{envelopes=[...new Map([...envelopes,...wraps].map(w=>[w.id,w])).values()];await context.absorbChatWraps(p,PosterCordReader,bundle,controls,room,channel,wraps,'fixture');};

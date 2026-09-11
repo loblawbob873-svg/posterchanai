@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import types
 import struct
@@ -32,8 +33,18 @@ const stop=armShellHealthCapture(target,{runtime,viewId:()=>23,interval:10});
 console.log(process.pid);
 const keep=setInterval(()=>{},1000);process.on('SIGTERM',()=>{stop();clearInterval(keep);process.exit(0)});
 '''
-    process=subprocess.Popen(['node','-e',program,str(ROOT/'desktop/shell-health-capture.js'),str(tmp_path),str(image)],stdout=subprocess.PIPE,text=True)
-    pid=int(process.stdout.readline().strip())
+    # THE HELPER'S STDOUT IS DATA, SO IT MUST NOT BE DECORATED. node colourises console.log when
+    # FORCE_COLOR is set in the environment — a terminal, a CI runner or an agent harness may set
+    # it — and this test then reads "\x1b[33m4104269\x1b[39m" where it expects a pid, and a
+    # decorated path where it expects a filename. Disable it for the child rather than stripping
+    # escapes at each parse: there is one source and several readers.
+    env={**os.environ,'NO_COLOR':'1','FORCE_COLOR':'0'}
+    process=subprocess.Popen(['node','-e',program,str(ROOT/'desktop/shell-health-capture.js'),str(tmp_path),str(image)],stdout=subprocess.PIPE,text=True,env=env)
+    # DIGITS, NOT THE WHOLE LINE. node colourises `console.log(process.pid)` when FORCE_COLOR is
+    # set in the environment — which a terminal, a CI runner or an agent harness may well do — and
+    # the helper then prints "\x1b[33m4104269\x1b[39m". Parsing the raw line made this test fail
+    # with `invalid literal for int()` about code that is entirely fine.
+    pid=int(re.search(r"\d+", process.stdout.readline()).group(0))
     yield pid,image,tmp_path
     process.terminate();process.wait(timeout=5)
     assert not (tmp_path/f'posterchan-shell-health-{pid}').exists(), 'private health artifacts leaked'

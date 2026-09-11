@@ -9,10 +9,13 @@ CONCORD = (ROOT / "static/js/client/concord.js").read_text(encoding="utf-8")
 APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
 
 
-def test_messages_handoff_keeps_the_selected_communities_tab():
-    assert "(opened==='messages'||opened==='concord')" in OS
-    assert "if(opened==='messages'||opened==='concord') return 'messages'" in OS
-    assert "messagesTab==='concord'" in OS
+def test_each_app_keeps_its_own_identity_across_a_handoff():
+    """This used to assert the OPPOSITE — both collapsed to `messages`, because they were one window
+    with two tabs. With separate views, collapsing them is the bug: a Communities window dragged to
+    the other screen would come back as Direct Messages."""
+    assert "if(opened==='messages') return 'messages'" in OS
+    assert "if(opened==='concord') return 'concord'" in OS
+    assert "if(opened==='messages'||opened==='concord') return 'messages'" not in OS
 
 
 def test_community_and_channel_identity_cross_to_the_other_renderer():
@@ -35,7 +38,7 @@ def test_cold_destination_adopts_communities_state_before_first_render():
 def test_direct_messages_carries_the_selected_conversation():
     assert "messagesHandoffState: () => ({peer:dmActive||'',scroll:_dmScrollState($('#dm-msgs'))})" in APP
     assert "acceptMessagesHandoff: value =>" in APP
-    assert "messagesTab==='messages'&&PC().messagesHandoffState" in OS
+    assert "identity==='messages'&&PC().messagesHandoffState" in OS
     assert "PC().acceptMessagesHandoff(p.state)" in OS
 
 
@@ -69,8 +72,10 @@ def test_dragged_communities_window_is_reused_when_direct_messages_is_clicked():
     assert "PC().switchView && PC().switchView(view)" in opened
 
 
-def test_handed_off_communities_frame_selects_direct_messages_at_runtime():
-    """The destination frame is canonical `messages`, but its restored tab is `concord`."""
+def test_no_handed_off_frame_selects_a_tab_any_more():
+    """THERE ARE NO TABS LEFT TO SELECT. A Communities window arrives as Communities and a Messages
+    window as Messages, so this must answer false for every shape — the `existing.view === view`
+    test is the whole question now."""
     os_js = ROOT / "static/js/client/os.js"
     boot = f"""
 global.window = new EventTarget();
@@ -89,7 +94,9 @@ console.log(JSON.stringify([
 """
     run = subprocess.run(["node", "-e", boot], capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stderr
-    assert json.loads(run.stdout) == [True, False, True, True, False]
+    assert json.loads(run.stdout) == [False, False, False, False, False], (
+        "the desktop still tries to select a Messages tab; with separate views that repaints the "
+        "wrong app")
 
 
 def test_handoff_reads_the_live_tab_when_the_frame_owns_the_feed():

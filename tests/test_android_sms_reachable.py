@@ -110,9 +110,31 @@ class TheAliasIsStillAnOrdinaryApp(unittest.TestCase):
         self.assertIn("android.intent.category.LAUNCHER", block)
         self.assertIn('android:exported="true"', block)
 
-    def test_it_is_not_shipped_disabled(self):
-        """The HOME alias ships `enabled=false` on purpose. Messages must not — nothing enables it."""
-        self.assertNotIn('android:enabled="false"', self._alias(".sms.Messages"))
+    def test_if_it_ships_disabled_then_something_turns_it_on(self):
+        """THE RULE THIS USED TO STATE WAS "Messages must not ship disabled — nothing enables it",
+        and the second half was the real reason: a disabled alias with no enabler is a feature that
+        cannot be reached at all.
+
+        Something enables it now. A LAUNCHER alias puts an icon in EVERY drawer from the moment the
+        APK lands, so installing a Nostr client scattered Texts, Phone, Media Center and Email
+        across people's phones — none asked for, and none reachable anyway unless the phone shell is
+        opted into ("posterchan apk is showing all the posterchan apps on peoples phones without it
+        being the default launcher"). They ship disabled and `HomeRoles.setAllDrawerIcons` turns
+        them on with the shell, exactly as the HOME alias has always worked.
+
+        So the invariant is the PAIRING, not the enabled bit: ship it enabled, or ship it disabled
+        with an enabler. `tests/test_android_installs_one_icon.py` owns the other direction — that
+        nothing but the app itself ships enabled — and that the java list and the manifest agree."""
+        block = self._alias(".sms.Messages")
+        if 'android:enabled="false"' not in block:
+            return                      # shipping enabled is still a valid answer to this question
+        roles = (JAVA / "home/HomeRoles.java").read_text()
+        listed = roles.split("DRAWER_ICONS = {", 1)[1].split("};", 1)[0]
+        self.assertIn("place.poster.app.sms.Messages", listed,
+                      "Messages ships disabled and HomeRoles cannot turn it on — it is unreachable")
+        plugin = (JAVA / "home/HomePlugin.java").read_text()
+        self.assertIn("setAllDrawerIcons(getContext(), true)", plugin,
+                      "nothing enables the drawer icons when the phone shell is opted into")
 
     def test_it_has_its_own_name_and_glyph(self):
         """Three drawer entries all reading PosterChan is the same report as the letter tiles."""

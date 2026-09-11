@@ -696,7 +696,8 @@
         btn.dataset.view = v;
         btn.innerHTML = `<svg class="ic"><use href="${enc(icon)}"></use></svg><b>${enc(label)}</b>`
           + (v === 'notifications' ? '<i id="notif-badge-m" class="badge hidden"></i>' : '')
-          + (v === 'messages' ? '<i id="dm-badge-m" class="badge hidden"></i>' : '');
+          + (v === 'messages' ? '<i id="dm-badge-m" class="badge hidden"></i>' : '')
+          + (v === 'concord' ? '<i id="cc-badge-m" class="badge hidden"></i>' : '');
         btn.classList.toggle('active', v === cur);
         /* Keep the phone bar on the exact same activation path as the sidebar. Rebuilding this
          * bar used to overwrite the sidebar's "tap the active timeline again = top" handler with
@@ -4502,7 +4503,18 @@
     const t=$('#conn-relays');
     // Seeded from the saved list when there is one, else the same defaults Settings offers — an empty
     // box would ask someone to already know which relays exist.
-    if(t && !t.value){ const cur=userRelays(); t.value=(cur.length?cur:defaultRelays().filter(Boolean)).join('\n'); _authRelaySeed=t.value; }
+    if(t && !t.value){ const cur=userRelays(); t.value=(cur.length?cur:defaultRelays().filter(Boolean)).join('\n'); }
+    /* RECORD WHAT IS IN THE BOX EVERY TIME, not only when we had to fill it.
+     *
+     * `_persistAuthRelays` compares against this to decide whether somebody CHOSE their relays, and
+     * the comment there states the rule: only a box that differs from what we put in it is a choice.
+     * The seed was written inside the `!t.value` branch, so it was recorded on the first visit and
+     * never again — the textarea keeps its value, so every later sign-in found `_authRelaySeed`
+     * empty, skipped the guard, and persisted the box as a deliberate list. The box is pre-filled
+     * with the SERVER'S DEFAULTS, so signing in could silently switch "use my own relays" on and pin
+     * those defaults as the user's own, after which the node's list no longer reaches them.
+     * Reported as "i dont remember checking use my own relays". */
+    if(t) _authRelaySeed=t.value;
     const s=$('#conn-note'); if(s) s.textContent='';
   }
   // What WE typed into the relay box. _persistAuthRelays compares against this, not against the saved
@@ -4544,7 +4556,11 @@
     const urls=_authRelayUrls();
     if(!urls.length) return false;
     if(JSON.stringify(urls)===JSON.stringify(userRelays())) return false;
-    if(_authRelaySeed && $('#conn-relays') && String($('#conn-relays').value||'').trim()===String(_authRelaySeed).trim()) return false;
+    /* NO RECORD OF WHAT WE PUT THERE MEANS WE CANNOT CLAIM IT WAS CHANGED. This used to read
+     * `if(_authRelaySeed && …)`, so an unrecorded seed skipped the comparison and every box counted
+     * as a choice — failing OPEN on a question about somebody else's intent. */
+    const _box=$('#conn-relays');
+    if(_box && String(_box.value||'').trim()===String(_authRelaySeed||'').trim()) return false;
     ClientSettings.set('relays', urls); ClientSettings.set('relaysEnabled', true);
     return true;
   }
@@ -7525,12 +7541,15 @@
       // — you arrived mid-list. One-shot (mirrors _dmScrollTop): the LIVE re-renders that fire as
       // relay events arrive must NOT yank you back to the top while you're reading.
       _notifScrollTop = true; }
-    $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v || (v==='concord'&&b.dataset.view==='messages')));
+    /* ONE ROW PER VIEW. `concord` used to light up the Messages row because it WAS a tab inside
+       Messages; it has its own row now, so the special case would light the wrong one. */
+    $$('.nav-item[data-view]').forEach(b=> b.classList.toggle('active', b.dataset.view===v));
     _syncRightbar();
-    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Concord', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
+    $('#view-title').textContent = { home:'Home', texts:'Texts', global:'Nostrverse', trending:'Trending', notifications:'Notifications', messages:'Messages', concord:'Communities', mail:'Email ✉️', drafts:'Drafts', bookmarks:'Bookmarks', analytics:'My Analytics 📈', articles:'Articles', markets:'Markets 📈', streams:'Streams', calls:'Calls 📞', pics:'Pics', torrents:'Torrents 🧲', 'media-center':'Media Center', repos:'Git 🌱', repo:'Repo', news:'News 🗞️', websearch:'Web Search 🔎', code:'PosterChan Code 💻', calendar:'Calendar 📅', contacts:'Contacts 👥', notes:'Notes 📝', sync:'Folder Sync 🔄', vault:'Passwords 🔑', wallet:'Monero Wallet ɱ', exodus:'Wallet 💼', budget:'Budget 💰', stats:'Server Stats 📊', chess:'Chess ♟️', ttt:'Tic-Tac-Toe ⭕', hangman:'Hangman 🎯', connect4:'Connect Four 🔴', blackjack:'Blackjack 🃏', holdem:"Texas Hold'em 🃏", xdc:'Webxdc 🎮', meme:'Meme Builder 🎬', blossom:'Files', profile:'Profile', settings:'Settings', ai:'PosterChan AI', translate:'Live Translate 🌐', admin:'Admin' }[v]||v;
     if(v==='blossom') $('#view-title').textContent='File Manager';
     if(v==='office') $('#view-title').textContent='PosterChan Office';
-    if(v==='concord') $('#view-title').textContent='Messages';
+    /* The Communities view titled itself 'Messages' because it WAS the Communities tab of the
+       Messages app. It is its own view with its own title now. */
     if(v==='signer') $('#view-title').textContent = 'Signer';
     // "New post" is a fixed sidebar button now, so it needs no per-view toggling — it never appears in a
     // view header again. (The ▦ media toggle moved into the timeline's tab row.)
@@ -16217,7 +16236,7 @@
     // and it was buried in Discover → Streams where nobody found it. Mirrors the desktop sidebar item.
     // Icons come from the shared sprite via ICO() — the same glyphs the desktop sidebar uses, so the
     // phone and desktop navs never drift apart (and they take the theme's colour, unlike emoji).
-    const items=[['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['media-center','tv','Media Center'],['bookmarks','bookmark','Bookmarks'],['analytics','chart','My Analytics'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
+    const items=[['concord','users','Communities'],['ai','ai','PosterChan AI'],['mail','mail','Email'],['websearch','search','Web Search'],['terminal','terminal','Terminal'],['calendar','clock','Calendar'],['contacts','user','Contacts'],['calls','phone','Calls'],['__golive','live','Go Live'],['translate','translate','Live Translate'],['notes','note','Notes'],['texts','chat','Texts'],['__music','music','Music'],['wallet','coin','Monero Wallet'],['vault','key','Passwords'],['drafts','draft','Drafts'],['meme','tv','Meme Builder'],['repos','git','Git'],['media-center','tv','Media Center'],['bookmarks','bookmark','Bookmarks'],['analytics','chart','My Analytics'],['__discover','compass','Discover'],['__games','gamepad','Games'],['__files','folder','Files'],['profile','user','Profile'],['__bug','bug','Report a Bug'],['__accounts','user','Switch account'],['signer','key','Signer'],['settings','gear','Settings'],
       // Same button, same rule as the sidebar's: a guest is offered a way IN, not a second way out.
       (GUEST ? ['__login','user','Log in'] : ['logout','logout','Logout'])]
       .filter(([v])=> !(window.PC_NOSTR_ONLY && v==='translate') && !(window.PC_NOSTR_ONLY && v==='ai')
@@ -19683,8 +19702,23 @@
         } else if(r && r.ok){
           this._pullOk=true;                      // server has no index at all — a fresh drive, safe to save
         }
+      }catch(_){
+        /* A THROW HERE USED TO MEAN "STILL LOADING", FOR EVER.
+         *
+         * `_pullDone` was the last statement INSIDE the try, so any failure — an unreachable
+         * server, a blob that would not fetch, a decrypt that threw — was swallowed here and the
+         * flag stayed false with nothing to set it. The upload guard reads it and says "One sec —
+         * still loading your folders. Try that again in a moment", which is untrue in both halves:
+         * nothing is loading, and trying again never helps. Reported as "can't even upload to
+         * files now, still loading folders despite loaded".
+         *
+         * The comment on the flags above already states the rule this broke: `_pullDone` means a
+         * pull ATTEMPT FINISHED. Whether it succeeded is `_pullOk`, and whether writing is unsafe
+         * is `_pullBlocked` — which a throw leaves false, so this cannot make a dangerous write
+         * look safe. "Could not ask" is not "not finished". */
+      }finally{
         this._pullDone=true;
-      }catch(_){}
+      }
       return this._norm();
     },
     push(){ this._dirty=true; this.saveLocal(); if(this._batch) return; clearTimeout(this._t); this._t=setTimeout(()=>this._save(), 900); },
@@ -27274,8 +27308,10 @@
     // rebuilds the whole list, which would otherwise reset scroll to the TOP — yanking you up as you
     // try to scroll (and a jump-to-top is what makes the mobile browser re-reveal its toolbar).
     const _prevList=$('#dm-list'); const _listScroll=_prevList?_prevList.scrollTop:0;
-    feed.innerHTML=`<nav class="messages-tabs" aria-label="Message type"><button class="on" aria-current="page">Direct messages</button><button id="messages-communities">Communities</button></nav><div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
-    $('#messages-communities').onclick=()=>switchView('concord');
+    /* NO TAB BAR. Communities is its own sidebar view now, so a row of two tabs here would be a
+       second way to change view that the sidebar does not know about — and the highlight, the badge
+       and the desktop icon all read the sidebar. */
+    feed.innerHTML=`<div class="dm-wrap"><div class="dm-list" id="dm-list"></div><div class="dm-thread" id="dm-thread"><div class="empty">${_dmLoaded?'Select a conversation, or start one.':'Loading…'}</div></div></div>`;
     const list=$('#dm-list');
     list.innerHTML = `<div class="dm-listhd">
         <input class="input dm-search" id="dm-search" type="search" placeholder="🔍 Search conversations" autocomplete="off">

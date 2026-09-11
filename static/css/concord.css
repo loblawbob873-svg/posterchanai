@@ -91,7 +91,14 @@ body.os-on.concord-view .osw-body .cc-messages{
 .cc-join-alt{display:flex!important;flex-direction:column!important;gap:8px!important;
   margin:14px 0 0!important;padding-top:14px!important;border-top:1px solid var(--line)!important;
   color:var(--muted)!important;font-size:13px!important;text-align:center!important}
-.cc-join-alt .btn{width:100%!important;min-height:46px!important}.cc-message-actions{display:flex!important;position:static!important;float:right!important}.cc-message-actions button{width:34px!important;height:34px!important}.cc-reaction-picker{top:40px!important}.cc-reply{margin-inline:8px!important}}
+.cc-join-alt .btn{width:100%!important;min-height:46px!important}
+/* The + beside TEXT CHANNELS. Only the owner sees it (`canAddChannel`), so it sits in the section
+   header rather than taking a row of its own — a row would leave a gap for everybody else. */
+.cc-section-head{display:flex!important;align-items:center!important;justify-content:space-between!important}
+.cc-add-channel{border:0!important;background:none!important;color:var(--muted)!important;
+  cursor:pointer!important;font-size:17px!important;line-height:1!important;padding:0 4px!important;
+  min-width:28px!important;min-height:28px!important;border-radius:6px!important}
+.cc-add-channel:hover{background:rgba(255,255,255,.08)!important;color:#fff!important}.cc-message-actions{display:flex!important;position:static!important;float:right!important}.cc-message-actions button{width:34px!important;height:34px!important}.cc-reaction-picker{top:40px!important}.cc-reply{margin-inline:8px!important}}
 
 /* Compact Discord/Armada-style message controls. Keep this final block authoritative over legacy rules. */
 @media(max-width:820px){.cc-members-pane{display:none!important}}

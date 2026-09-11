@@ -180,13 +180,14 @@ def test_the_files_index_repair_still_recovers_listing_and_short_media():
     assert "publish(" not in fn
 
 
-def test_concords_communities_tab_is_untouched():
-    """Concord is a DIFFERENT product and the word collides exactly: Direct messages and
-    Communities are the two tabs inside one Messages window."""
-    assert 'id="messages-communities"' in APP
-    assert "switchView('concord')" in APP
-    assert '"Communities"' in _read("static/i18n/en.json"), "the tab's label must still translate"
-    assert 'class="messages-tabs"' in _read("static/js/client/concord.js")
+def test_concords_communities_view_is_untouched():
+    """Concord is a DIFFERENT product and the word collides exactly. It used to be one of two TABS
+    inside Messages; it is its own sidebar view now ("Separate Communities from Messages"), so what
+    this guards is that removing the shopping/shorts "Communities" never takes Concord's with it."""
+    assert 'data-view="concord"' in _read("templates/client.html")
+    assert "renderModuleView('concord','concord.js','PCConcord','render')" in APP
+    assert '"Communities"' in _read("static/i18n/en.json"), "the view's label must still translate"
+    assert 'class="cc-app' in _read("static/js/client/concord.js")
 
 
 def test_the_web_of_trust_counters_are_untouched():

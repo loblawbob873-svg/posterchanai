@@ -52,6 +52,50 @@ public final class HomeRoles {
         } catch (Throwable ignored) { }
     }
 
+    // ------------------------------------------------- THE ICONS IN SOMEBODY'S APP DRAWER
+
+    /** The optional drawer icons, by manifest name. `MainActivity` is deliberately absent: that one
+     *  IS the app, and an app that installs with no icon at all cannot be opened.
+     *
+     *  Same argument as the HOME component above, one layer out. A LAUNCHER alias puts an icon in
+     *  the drawer from the moment the APK lands, so installing a Nostr client scattered Texts,
+     *  Phone, Media Center and Email across people's phones — none of them asked for, and none
+     *  reachable at all unless the phone shell is opted into. Reported exactly that way: "posterchan
+     *  apk is showing all the posterchan apps on peoples phones without it being the default
+     *  launcher". They ship `android:enabled="false"`; this is what turns one on. */
+    public static final String[] DRAWER_ICONS = {
+            "place.poster.app.sms.Messages",
+            "place.poster.app.phone.Phone",
+            "place.poster.app.shortcut.MediaCenter",
+            "place.poster.app.shortcut.Email",
+    };
+
+    public static void setDrawerIcon(Context ctx, String component, boolean on) {
+        try {
+            ctx.getPackageManager().setComponentEnabledSetting(
+                    new ComponentName(ctx.getPackageName(), component),
+                    on ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                       : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP);
+        } catch (Throwable ignored) { }
+    }
+
+    public static boolean drawerIconEnabled(Context ctx, String component) {
+        try {
+            int s = ctx.getPackageManager().getComponentEnabledSetting(
+                    new ComponentName(ctx.getPackageName(), component));
+            // DEFAULT means "whatever the manifest says", and the manifest says false. Reading it as
+            // anything but OFF is how a settings screen claims an icon is showing when it is not —
+            // the same trap `launcherComponentEnabled` documents above.
+            return s == PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
+        } catch (Throwable t) { return false; }
+    }
+
+    /** Turn every optional icon on or off together — what the phone-shell switch drives. */
+    public static void setAllDrawerIcons(Context ctx, boolean on) {
+        for (String c : DRAWER_ICONS) setDrawerIcon(ctx, c, on);
+    }
+
     public static boolean launcherComponentEnabled(Context ctx) {
         try {
             int s = ctx.getPackageManager().getComponentEnabledSetting(

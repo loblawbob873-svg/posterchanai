@@ -827,6 +827,21 @@
   }
   function markRead(room,name){ if(room&&room.naddr)localStorage.setItem(channelReadKey(room,name),String(Date.now())); }
   function isUnread(room){ return channelsOf(room).some(c=>testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))); }
+  /* THE SIDEBAR BADGE. Communities has its own nav row now, so it needs its own count — as a tab
+   * inside Messages it had nowhere to put one and a community with unread messages looked exactly
+   * like a quiet one unless you opened Messages and looked. Rooms, not messages: the number people
+   * act on is how many communities want them, and counting every message across every channel of
+   * every room on every repaint is work nobody reads. */
+  function unreadRooms(){ try{ return saved().filter(r=>isUnread(r)).length; }catch(_){ return 0; } }
+  function paintUnreadBadge(){
+    try{
+      const n=unreadRooms();
+      (document.querySelectorAll('#cc-badge,#cc-badge-m')||[]).forEach(b=>{
+        if(n){ b.textContent=n>99?'99+':String(n); b.classList.remove('hidden'); }
+        else b.classList.add('hidden');
+      });
+    }catch(_){ }
+  }
   function conversationIsVisible(narrow,chatOpen,drawerOpen){ return !narrow||(!!chatOpen&&!drawerOpen); }
   function messageId(m){ return String((m&&m.id)||`${Number(m&&m.at)||0}:${String(m&&m.pubkey||'')}`); }
   function imetaFields(tag){
@@ -981,9 +996,21 @@
   function channelRowsHtml(p,room,channels){
     return (channels||[]).map(c=>`<div class="cc-channel-row${channelStarred(room,c.name)?' starred':''}"><button class="cc-channel${(state.channel||'general')===c.name?' active':''}${testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))?' unread':''}" data-cc-channel="${p.enc(c.name)}"><span class="cc-channel-kind" aria-hidden="true">#</span><span class="cc-channel-name">${p.enc(c.name)}</span>${c.private?'<svg class="ic cc-channel-lock" role="img" aria-label="Private channel"><use href="#i-lock"></use></svg>':''}</button><button class="cc-channel-star" data-cc-star="${p.enc(c.name)}" aria-pressed="${channelStarred(room,c.name)}" title="${channelStarred(room,c.name)?'Remove from starred channels':'Star channel'}" aria-label="${channelStarred(room,c.name)?'Unstar':'Star'} #${p.enc(c.name)}">${channelStarred(room,c.name)?'★':'☆'}</button></div>`).join('');
   }
+  /* WHO SEES THE + . Only the community owner can write a channel control event (see
+   * `createChannelWrap`), and a local sandbox room has no control plane at all — offering the
+   * button to anybody else would be a control that always fails. */
+  function canAddChannel(p,room){
+    try{
+      if(!room||room.local||!room.cord||!room.cord.bundle)return false;
+      if(room.protocol==='nip29')return false;            // NIP-29 groups are not CORD channels
+      const viewer=p.viewer?p.viewer():{},owner=String(room.cord.bundle.owner||'');
+      return !!(viewer.pubkey&&owner&&viewer.pubkey.toLowerCase()===owner.toLowerCase()
+                &&window.PosterCordReader&&window.PosterCordReader.createChannelWrap);
+    }catch(_){ return false; }
+  }
   function channelSectionsHtml(p,room,channels){
     const starred=(channels||[]).filter(c=>channelStarred(room,c.name)),regular=(channels||[]).filter(c=>!channelStarred(room,c.name));
-    return `${starred.length?`<div class="cc-section cc-starred-section">STARRED</div>${channelRowsHtml(p,room,starred)}`:''}<div class="cc-section">TEXT CHANNELS</div>${channelRowsHtml(p,room,regular)}`;
+    return `${starred.length?`<div class="cc-section cc-starred-section">STARRED</div>${channelRowsHtml(p,room,starred)}`:''}<div class="cc-section cc-section-head">TEXT CHANNELS${canAddChannel(p,room)?'<button class="cc-add-channel" id="cc-add-channel" title="Create a channel" aria-label="Create a channel">+</button>':''}</div>${channelRowsHtml(p,room,regular)}`;
   }
   /* render() replaces the workspace often (history, focus and room navigation). Replacing the
    * entire community rail also replaces every decoded <img>, producing a visible initials/image
@@ -2722,7 +2749,7 @@
     // Another live batch or history refresh may have committed while decryption was pending.
     // Merge into the current store after the await, so late completion cannot erase newer arrivals.
     const prior=testMessages(storeId),next=mergeCordTimeline(prior,opened,p,key);
-    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);saveTestMessages(storeId,next);if(document.body.classList.contains('concord-view'))whenHandLeaves(()=>{if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());});}
+    if(JSON.stringify(next)!==JSON.stringify(prior)){const viewer=p.viewer?p.viewer():{},profile=viewer.profile||{},me=profile.display_name||profile.name||(viewer.npub?viewer.npub.slice(0,12)+'…':'You');notifyMentions(p,room,next,viewer,me,channel.name);saveTestMessages(storeId,next);paintUnreadBadge();if(document.body.classList.contains('concord-view'))whenHandLeaves(()=>{if(document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());});}
 
     };
     const task=(pending.get(key)||Promise.resolve()).then(run,run);pending.set(key,task);
@@ -2993,9 +3020,8 @@
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="Message #${p.enc(state.channel||'general')}" ${state.community==null?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?'':'<div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div>'}${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
-    feed.insertAdjacentHTML('afterbegin','<nav class="messages-tabs" aria-label="Message type"><button id="messages-direct">Direct messages</button><button class="on" aria-current="page">Communities</button></nav>');
-    const directMessages=p.$('#messages-direct');if(directMessages)directMessages.onclick=()=>
-      (p.switchMessagesTab||p.switchView)('messages');
+    paintUnreadBadge();
+    /* The tab bar is gone: Communities is its own view, reached from the sidebar. */
     if(current){
       const conversation=p.$('.cc-conversation');
       if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from verified membership records and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header><div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div></aside>`);
@@ -3161,6 +3187,43 @@
     const closeMemberMenu=()=>{const old=document.querySelector('.cc-member-menu');if(old)old.remove();};
     const openMemberMenu=(event,target)=>{closeMemberMenu();const canBan=isOwner&&target!==viewer.pubkey,canMessage=target!==viewer.pubkey,menu=document.createElement('div');menu.className='cc-member-menu';menu.setAttribute('role','menu');menu.innerHTML=`<button data-cc-member-profile="${p.enc(target)}" role="menuitem">View profile</button>${canMessage?`<button data-cc-member-message="${p.enc(target)}" role="menuitem">Message</button>`:''}${canBan?`<button class="danger" data-cc-member-ban="${p.enc(target)}" role="menuitem">Ban from community</button>`:''}`;document.body.appendChild(menu);const anchor=event.currentTarget||(event.target&&event.target.closest&&event.target.closest('[data-cc-member]')),rect=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null,rows=1+(canMessage?1:0)+(canBan?1:0),x=Math.min(rect?rect.right+6:(event.clientX||12),window.innerWidth-190),y=Math.min(rect?rect.top:(event.clientY||12),window.innerHeight-(rows*42+8));menu.style.left=Math.max(8,x)+'px';menu.style.top=Math.max(8,y)+'px';menu.querySelector('[data-cc-member-profile]').onclick=()=>{closeMemberMenu();if(p.openProfile)p.openProfile(target);};const message=menu.querySelector('[data-cc-member-message]');if(message)message.onclick=()=>{closeMemberMenu();if(p.messageUser)p.messageUser(target);};const ban=menu.querySelector('[data-cc-member-ban]');if(ban)ban.onclick=()=>{closeMemberMenu();void banMember(target);};setTimeout(()=>document.addEventListener('pointerdown',e=>{if(!menu.contains(e.target))closeMemberMenu();},{once:true}),0);};
     $$('[data-cc-member]').forEach(row=>{const target=row.dataset.ccMember;let held=null,longPressed=false;row.onclick=e=>{e.preventDefault();/* Android/iOS synthesize click after a completed long press. Consume that click or the menu is immediately replaced by Profile. Resolve the viewport now, not when this row was rendered: rotation and desktop window resizing can cross the responsive boundary without causing a Concord repaint. */const action=memberTapAction(memberViewportIsNarrow(),longPressed);longPressed=false;if(action==='consume')return;if(action==='profile'){if(p.openProfile)p.openProfile(target);return;}openMemberMenu(e,target);};row.oncontextmenu=e=>{e.preventDefault();longPressed=false;openMemberMenu(e,target);};row.onpointerdown=e=>{if(e.pointerType==='mouse')return;longPressed=false;held=setTimeout(()=>{held=null;longPressed=true;openMemberMenu(e,target);},550);};row.onpointerup=row.onpointercancel=row.onpointermove=()=>{if(held){clearTimeout(held);held=null;}};});
+    /* CREATE A CHANNEL. Same publish path as the community-profile save below: read the control
+     * plane, write one control event, publish it to the room's relays under a plane auth. The room
+     * is NOT rewritten from the result — `reconcileChannels` already refuses to do that, because a
+     * partial control read has deleted whole channel lists before. The new channel is appended to
+     * the saved list and the next control read confirms it. */
+    const addChannel=$('#cc-add-channel'); if(addChannel)addChannel.onclick=async()=>{
+      const rooms=saved(),room=rooms[state.community],roomId=roomIdentity(room);
+      if(!room||!room.cord||!room.cord.bundle)return;
+      const name=String(await (p.uiPrompt?p.uiPrompt('Name the new channel',{value:'',ok:'Create channel'}):'')||'')
+        .trim().replace(/^#/,'').slice(0,64);
+      if(!name)return;
+      if((room.channels||[]).some(c=>c&&String(c.name||'').toLowerCase()===name.toLowerCase())){
+        p.toast('this community already has #'+name); return; }
+      addChannel.disabled=true;
+      try{
+        const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,
+          bundle=room.cord.bundle,loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);
+        let wraps=roomControls.get(loadKey);
+        if(!wraps){ const seed=reader.inspectControl(bundle,[]);
+          wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],
+            {timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room)}); }
+        const scope=cordPlaneContext(p,bundle,wraps||[],room),
+          made=await reader.createChannelWrap(bundle,wraps||[],{name},viewer.pubkey,p.signTemplate);
+        if(!scope.current())throw new Error('Concord membership changed while signing');
+        const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));
+        if(!accepted||!accepted.ok)throw new Error('community relays rejected the new channel');
+        roomControls.set(loadKey,[...(wraps||[]),made.wrap]);
+        /* Re-read the list by durable identity: signing can take long enough for the active room to
+           have moved, and writing back a stale index is how a channel lands in the wrong community. */
+        const latest=saved(),at=latest.findIndex(item=>roomIdentity(item)===roomId);
+        if(at>=0){ if(!Array.isArray(latest[at].channels))latest[at].channels=[];
+          if(!latest[at].channels.some(c=>c&&c.name===made.name))
+            latest[at].channels.push({name:made.name,private:false,id:made.channelId});
+          save(latest); }
+        render(); p.toast('#'+made.name+' created');
+      }catch(e){ addChannel.disabled=false; p.toast('channel was not created: '+((e&&e.message)||e)); }
+    };
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
     const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); const announcement=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]); const accepted=await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev); if(!accepted)throw new Error('Armada discovery relays rejected the listing'); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
@@ -3428,7 +3491,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

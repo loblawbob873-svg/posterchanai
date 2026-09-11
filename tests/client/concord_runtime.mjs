@@ -459,10 +459,12 @@ await new Promise(resolve=>setTimeout(resolve,30));
 if(feedWrites-writesBeforeBrokenIcon!==1)throw new Error('failed Concord icon caused a repaint loop');
 data.delete('pc.concord.invites');data.delete('pc.concord.active');
 PCConcord.render();
-control('messages-direct').click();
-if(calls.messagesTab!=='messages' || activeView!=='messages')
-  throw new Error('Direct Messages tab did not repaint its owning Messages frame');
-activeView='concord';
+/* THE TAB IS GONE. Communities is its own sidebar view ("Separate Communities from Messages"), so
+   there is no in-app control that switches to Direct Messages and nothing here to click. Assert its
+   absence instead — a leftover tab would be a second way to change view that the sidebar, the
+   highlight, the badge and the desktop icon all know nothing about. */
+if(/id="messages-direct"/.test(String(feed.innerHTML||'')))
+  throw new Error('Communities still paints a Direct messages tab');
 
 control('cc-community-name').value='Runtime Test';
 control('cc-community-icon').value='🚀';

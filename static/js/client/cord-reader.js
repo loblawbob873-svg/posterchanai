@@ -9352,6 +9352,7 @@ var PosterCordReader = (() => {
     createPlaneAuth: () => createPlaneAuth,
     createWebxdcWrap: () => createWebxdcWrap,
     createMetadataWrap: () => createMetadataWrap,
+    createChannelWrap: () => createChannelWrap,
     inspectChat: () => inspectChat,
     inspectWebxdc: () => inspectWebxdc,
     inspectWebxdcSignals: () => inspectWebxdcSignals,
@@ -26772,6 +26773,44 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: Date.now(), tags });
     const group = groups[groups.length - 1], seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), metadata: body };
+  }
+  /** Create a CHANNEL in a community that already exists.
+   *
+   * Armada communities carry many channels and ours could only ever have the one `#general` that
+   * `createCommunity` mints, because nothing here could write a second. This is the same control
+   * write as `createMetadataWrap`/`createBanWrap` with the channel subkind: the shape is theirs,
+   * not invented, so the event other clients read is the event Armada writes.
+   *
+   * THE ID IS FRESH RANDOMNESS, not a hash of the name. `createCommunity` mints `generalChannelId`
+   * with the same helper it uses for the owner salt and the root, and the reader treats ANY entity
+   * carrying a valid channel head as a channel — which is exactly why a community can hold many.
+   *
+   * OWNER-ONLY, deliberately stricter than the reader. The reader accepts anybody holding
+   * MANAGE_CHANNELS; the owner always holds it through ADMIN_ALL, so refusing everyone else cannot
+   * produce an event another client would reject, while allowing more could. */
+  async function createChannelWrap(bundle, controlWraps, channel, pubkey, signEvent) {
+    if (!/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
+    const { community, groups } = control(bundle, controlWraps);
+    if (pubkey.toLowerCase() !== community.owner.toLowerCase())
+      throw new Error("only the community owner can create channels");
+    const name = String((channel && channel.name) || "").trim();
+    if (!name) throw new Error("name the channel");
+    if (utf8Len(name) > NAME_MAX_BYTES) throw new Error("that channel name is too long");
+    const entityId = randomBytes(32), entityHex = bytesToHex2(entityId);
+    // A brand-new entity has no history: version 1, and no previous-hash citation to make.
+    /* PUBLIC ONLY, AND IT SAYS SO. A private channel is invisible until its members hold a grant,
+     * and issuing grants is a separate control write this does not do — so accepting `private:true`
+     * here would create a channel that even the person who made it cannot see, which reads as the
+     * feature being broken rather than unfinished. */
+    if (channel && channel.private) throw new Error(
+      "private channels need a membership grant, which cannot be issued here yet");
+    const body = { name, private: false };
+    const tags = [[TAG_SUBKIND, VSK_CHANNEL], [TAG_ENTITY, entityHex], [TAG_EVERSION, "1"]];
+    const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey,
+                               ms: Date.now(), tags });
+    const group = groups[groups.length - 1];
+    const seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channelId: entityHex, name: body.name };
   }
   async function inspectChat(bundle, controlWraps, channelId, chatWraps) {
     const { channels } = control(bundle, controlWraps);

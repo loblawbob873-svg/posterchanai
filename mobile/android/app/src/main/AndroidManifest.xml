@@ -59,6 +59,13 @@
              shows one target per exported component, so an alias is how one app offers two share destinations.
              Which one the user picked is read back from the launch intent's component (ShareTargetPlugin):
              the default target composes a post, this one drops the file/text into the AI chat. -->
+        <!-- THESE SHIP DISABLED, for the reason HomeRoles already gives about CATEGORY_HOME.
+             A LAUNCHER alias puts an icon in everybody's app drawer from the moment the APK is
+             installed — so somebody who installed a Nostr client found Texts, Phone, Media Center
+             and Email scattered through their drawer, none of which they asked for and none of
+             which are even reachable unless the phone shell is opted into. "Opt-in" has to mean the
+             icon appears when somebody asks for it, not that the feature behind an icon they never
+             wanted is inert. HomeRoles.setDrawerIcon() turns each one on. -->
         <activity-alias
             android:name=".ShareToAi"
             android:targetActivity=".MainActivity"
@@ -260,6 +267,7 @@
              label and its own glyph, because three drawer entries all showing the PosterChan mark is
              the same complaint as the letter tiles — the app is there and looks like it is not. -->
         <activity-alias
+            android:enabled="false"
             android:name=".sms.Messages"
             android:targetActivity=".sms.ThreadListActivity"
             android:label="@string/sms_title"
@@ -275,6 +283,7 @@
         <!-- Phone, for the same reasons. Its glyph is the handset, so a drawer shows a dialer, a
              speech bubble and the app mark — three different things to somebody scanning it. -->
         <activity-alias
+            android:enabled="false"
             android:name=".phone.Phone"
             android:targetActivity=".phone.DialerActivity"
             android:label="@string/tel_title"
@@ -306,6 +315,7 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity-alias
+            android:enabled="false"
             android:name=".shortcut.MediaCenter"
             android:targetActivity=".shortcut.ViewActivity"
             android:label="Media Center"
@@ -319,6 +329,7 @@
         </activity-alias>
 
         <activity-alias
+            android:enabled="false"
             android:name=".shortcut.Email"
             android:targetActivity=".shortcut.ViewActivity"
             android:label="@string/app_email_title"

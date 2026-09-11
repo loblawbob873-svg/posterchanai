@@ -264,6 +264,12 @@
                  and app grid from `$$('.sidebar .nav .nav-item[data-view]')` (os.js `apps()`), so a
                  view with no row here exists on a phone and nowhere else. -->
             <button class="nav-item" data-view="messages"><svg class="ic"><use href="#i-speech"></use></svg><span>Messages<i id="dm-badge" class="badge hidden"></i></span></button>
+            <!-- COMMUNITIES IS ITS OWN PLACE, not a tab inside Messages. They share a metaphor and
+                 nothing else: a DM is a NIP-17 gift wrap between two people, a community is a CORD
+                 control plane with channels, roles and its own relays. As a tab it was reachable
+                 only by opening Messages first and it could never have a desktop icon of its own —
+                 os.js builds both the icon grid and the start menu from THESE rows. -->
+            <button class="nav-item" data-view="concord"><svg class="ic"><use href="#i-users"></use></svg><span>Communities<i id="cc-badge" class="badge hidden"></i></span></button>
             <!-- Email is its OWN view, directly under Messages, rather than a tab inside it. The two
                  share nothing but a metaphor: one is NIP-17 DMs held on relays, the other is IMAP
                  through this instance. As a tab it was invisible on a phone (the More sheet has no
@@ -437,6 +443,7 @@
     <button class="nav-item compose" id="btn-compose-m" aria-label="New post"><svg class="ic"><use href="#i-pen"></use></svg></button>
     <button class="nav-item" data-view="notifications"><svg class="ic"><use href="#i-bell"></use></svg><b>Alerts</b><i id="notif-badge-m" class="badge hidden"></i></button>
     <button class="nav-item" data-view="messages"><svg class="ic"><use href="#i-mail"></use></svg><b>DMs</b><i id="dm-badge-m" class="badge hidden"></i></button>
+    <button class="nav-item" data-view="concord"><svg class="ic"><use href="#i-users"></use></svg><b>Rooms</b><i id="cc-badge-m" class="badge hidden"></i></button>
     <button class="nav-item" id="btn-more-m"><svg class="ic"><use href="#i-menu"></use></svg><b>More</b><i id="more-badge-m" class="badge hidden"></i></button>
 </nav>
 

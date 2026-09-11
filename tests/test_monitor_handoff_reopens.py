@@ -189,8 +189,10 @@ class HandoffReopensWhatItWasShowing(unittest.TestCase):
         script = fn + "\nconsole.log(JSON.stringify(" + json.dumps(cases) + ".map(handoffIdentity)))"
         got = json.loads(subprocess.run([NODE, "-e", script], capture_output=True, text=True,
                                         check=True).stdout)
-        canonical = ["messages" if view in ("messages", "concord") else view
-                     for view in simple_views]
+        # MESSAGES AND COMMUNITIES ARE TWO APPLICATIONS. They collapsed to one identity while
+        # Communities was a TAB inside Messages; with separate sidebar views, collapsing them means
+        # a Communities window dragged to the other screen comes back as Direct Messages.
+        canonical = list(simple_views)
         self.assertEqual(got, canonical + ["terminal"] +
                          [view for _ in range(20) for view in ("terminal", "websearch")] +
                          ["__music", "repo", "admin"])

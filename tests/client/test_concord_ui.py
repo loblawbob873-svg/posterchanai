@@ -26,16 +26,20 @@ def test_concord_is_a_communities_section_of_messages_not_public_chat():
     assert 'data-view="chat"' not in HTML, "legacy Nostr Chat navigation must stay removed"
 
 
-def test_messages_remains_the_single_room_and_dm_launcher():
+def test_messages_and_communities_are_both_launchers():
+    """They were one launcher with two tabs (570ded8dc) until "Separate Communities from Messages".
+    os.js builds the desktop icon grid and the start menu from these rows, so a view without one
+    exists on a phone and nowhere else."""
     locked = APP.split("const NAV_LOCKED = new Set(", 1)[1].split(");", 1)[0]
     assert 'data-view="messages"' in HTML
-    assert 'data-view="concord"' not in HTML
+    assert 'data-view="concord"' in HTML
 
 
 def test_packaged_shell_loads_the_complete_concord_surface():
     for asset in ("concord.css", "cord-reader.js", "concord.js"):
         assert asset in HTML
-    assert 'id="messages-communities"' in APP
+    # The tab that used to reach it is gone; the sidebar row is what loads it now.
+    assert 'data-view="concord"' in HTML
 
 
 def test_concord_never_repaints_another_app_shared_feed():
@@ -142,8 +146,7 @@ def test_concord_has_discord_style_panes_and_dm_style_composer():
     for surface in ('cc-communities', 'cc-channels', 'cc-conversation', 'cc-members-pane', 'cc-messages', 'cc-compose'):
         assert surface in CONCORD
     assert "Message #${p.enc(state.channel||'general')}" in CONCORD
-    assert 'id="messages-direct"' in CONCORD
-    assert 'id="messages-communities"' in APP
+    assert 'id="messages-direct"' not in CONCORD, "Communities still paints a Direct messages tab"
 
 
 def test_desktop_members_are_a_right_column_and_mobile_uses_the_dialog():
@@ -482,11 +485,10 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'linkify, linkCardHtml, hydrateLinkCards' in APP
 
 
-def test_concord_dove_icon_remains_available_inside_the_messages_app():
+def test_the_concord_dove_icon_is_still_shipped():
     sprite = (ROOT / 'static/js/client/sprite.js').read_text()
     assert 'id="i-concord"' in sprite
-    assert 'data-view="concord"' not in HTML
-    assert 'class="messages-tabs"' in CONCORD
+    assert 'data-view="concord"' in HTML, "Communities has no sidebar row of its own"
     os_js = (ROOT / 'static/js/client/os.js').read_text()
     assert "btn.querySelector('svg use')" in os_js
     assert "if(view==='concord') snapTo(w,'max')" in os_js  # old invite/shortcut route compatibility

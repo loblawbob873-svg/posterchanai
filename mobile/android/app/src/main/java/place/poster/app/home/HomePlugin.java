@@ -70,6 +70,9 @@ public class HomePlugin extends Plugin {
         JSObject o = new JSObject();
         o.put("sdk", android.os.Build.VERSION.SDK_INT);
         o.put("launcherEnabled", HomeRoles.launcherComponentEnabled(getContext()));
+        // What the settings screen needs to tell the truth about the icons, measured rather than
+        // inferred from the opt-in flag — a package replacement can re-apply the manifest default.
+        o.put("drawerIcons", HomeRoles.drawerIconEnabled(getContext(), HomeRoles.DRAWER_ICONS[0]));
         o.put("isDefaultHome", HomeRoles.isDefaultHome(getContext()));
         o.put("isDefaultSms", HomeRoles.isDefaultSms(getContext()));
         o.put("isDefaultDialer", HomeRoles.isDefaultDialer(getContext()));
@@ -109,6 +112,12 @@ public class HomePlugin extends Plugin {
         try {
             Intent i = HomeRoles.requestHome(getContext());
             new LauncherPrefs(getContext()).setOptedIn(true);
+            /* THE DRAWER ICONS FOLLOW THE OPT-IN, and they ship off. Texts, Phone, Media Center and
+             * Email are LAUNCHER aliases, so before this they appeared in everybody's app drawer the
+             * moment the APK was installed — on phones where the shell was never enabled and those
+             * screens do nothing. Enabled here, with the rest of the shell, is what makes the icons
+             * mean something. */
+            HomeRoles.setAllDrawerIcons(getContext(), true);
             asking = "home";
             startActivityForResult(call, i, "roleResult");
         } catch (Throwable t) {
@@ -124,7 +133,12 @@ public class HomePlugin extends Plugin {
     @PluginMethod
     public void disableLauncher(PluginCall call) {
         boolean ok = HomeRoles.releaseHome(getContext());
-        if (ok) new LauncherPrefs(getContext()).setOptedIn(false);
+        if (ok) {
+            new LauncherPrefs(getContext()).setOptedIn(false);
+            // …and they go away again with it. An icon left behind after the feature is switched
+            // off is the same complaint one step later.
+            HomeRoles.setAllDrawerIcons(getContext(), false);
+        }
         JSObject o = new JSObject();
         o.put("released", ok);
         if (!ok) o.put("reason", "no other home app is installed on this phone");

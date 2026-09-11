@@ -13,7 +13,11 @@ const left={VIEW:'concord',wins:[{view:'messages',appView:'concord'},
 const right={VIEW:'concord',wins:[]};
 
 const payloadBlock=os.slice(os.indexOf('function handoffPayload'),os.indexOf('function sendFrameHandoff'));
-if(!payloadBlock.includes("const messagesTab=identity==='messages'?selectedMessagesTab(w):''"))
+/* The guard this file is about: `messagesTab` must be derived from the frame's IDENTITY, never from
+   the page-global VIEW — a Concord repaint can leave a stale route on an unrelated frame, and
+   Terminal's explicit identity must survive it. The expression gained a `concord` arm when
+   Communities became its own view; what matters is that it still keys off `identity`. */
+if(!payloadBlock.includes("const messagesTab=identity==='messages'?selectedMessagesTab(w):"))
   throw Error('source did not bind Messages selection to Messages identity');
 const mainForward=main.slice(main.indexOf("ipcMain.handle('pc:wm:handoff-frame'"),
   main.indexOf("ipcMain.handle('pc:wm:preview-frame'"));
