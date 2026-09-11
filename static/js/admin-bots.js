@@ -178,6 +178,20 @@ function onBotFormChange() {
        are not hidden behind their features either; a place to PUT the value is not the same thing
        as the switch that uses it. */
     show('bot_grp_concord', isNostr);
+    /* The checkbox must never disagree with what Save will do. An invite in the box means
+       `--concord` is going into `modes`, so the feature reads as ON and says why it cannot be
+       turned off from here — a control that appears to refuse its own setting is worse than one
+       that explains itself. */
+    { const inv = _val('bot_f_concord_invite'), box = _g('bot_ft_concord');
+      if (box) {
+          if (inv && !box.checked) box.checked = true;
+          box.disabled = !!inv;
+          const lbl = box.closest('label');
+          if (lbl) lbl.title = inv
+              ? 'This bot has a community saved, so it answers when mentioned there. Clear the '
+                + 'invite link above to stop it.'
+              : (lbl.dataset.baseTitle || lbl.title);
+      } }
 
     // Per-feature sections appear only when their feature is enabled.
     // block / welcome / report / unfollow all need the Pleroma DB.
@@ -255,6 +269,7 @@ function openBotModal(id) {
     const _is = _g('bot_imgtest_status'); if (_is) _is.textContent = '';
     const _ii = _g('bot_imgtest_img'); if (_ii) { _ii.removeAttribute('src'); _ii.style.display = 'none'; }
 
+    wireBotConcordInvite();   // before the first form pass, so a loaded invite lights its feature up
     onBotFormChange();
     _g('botModal').style.display = 'flex';
 }
@@ -266,6 +281,14 @@ function _buildModes(type, platform) {
     const modes = new Set();
     if (_g('bot_ft_reply').checked) modes.add('--' + platform);          // reply on own platform
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => { if (_g(cid).checked) modes.add(flag); });
+    /* A SAVED ROOM MEANS THE BOT JOINS IT. Reported as "i don't see bot in room despite what the
+       UI says", and the row bore it out: the invite was stored, its fragment intact, "Test join"
+       had answered 200 — and `modes` was `--nostr`, because the Concord feature checkbox was never
+       ticked. So the bot held a room it never opened, silently, and every surface an operator can
+       see said things were fine.
+       Pasting an invite IS the request. The checkbox still turns it off, but it can only do that
+       for a bot that has no room saved — see `onBotFormChange`, which keeps the two in step. */
+    if (_val('bot_f_concord_invite')) modes.add('--concord');
     return [...modes].join(',');
 }
 
@@ -317,6 +340,14 @@ function _showAvatarPreview(url) {
 /* Reveal/hide the Concord invite. It is masked for the same reason the nsec is: the `#` fragment
    is the room's decryption key, so the link in that box grants read access to everything the room
    has ever said. */
+function wireBotConcordInvite() {
+    const f = _g('bot_f_concord_invite');
+    if (!f || f.dataset.wired) return;
+    f.dataset.wired = '1';
+    // `input` covers typing AND paste, which is how an invite link actually arrives.
+    f.addEventListener('input', onBotFormChange);
+}
+
 function toggleBotConcord() {
     const f = _g('bot_f_concord_invite'), btn = _g('bot_concord_toggle');
     if (!f) return;
@@ -348,8 +379,13 @@ async function testBotConcord() {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || r.statusText);
         const chans = (d.channels || []).map(c => '#' + c.name).join(' ');
-        if (st) st.textContent = '✓ ' + (d.name || 'room') + ' — ' + (d.channels || []).length
-                               + ' channel(s): ' + chans;
+        /* SAY WHAT WAS ACTUALLY PROVED. This read "✓ room — 3 channels", which an operator
+           reasonably takes as "the bot is in there" — and it was reported exactly that way: "i
+           don't see bot in room despite what the UI says". It proves the LINK opens from this
+           node. Whether the bot joins is a question about Save. */
+        if (st) st.textContent = '✓ this link opens ' + (d.name || 'the room') + ' — '
+                               + (d.channels || []).length + ' channel(s): ' + chans
+                               + ' · Save the bot to make it join.';
     } catch (e) {
         if (st) st.textContent = '✗ ' + (e.message || e);
     }

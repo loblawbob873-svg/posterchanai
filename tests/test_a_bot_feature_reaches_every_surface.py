@@ -154,6 +154,48 @@ def test_the_invite_field_comes_before_the_features_that_use_it():
         "the invite field is now below the Features list it is referenced from")
 
 
+def test_a_saved_room_means_the_bot_joins_it():
+    """THE TRAP THIS WHOLE FILE EXISTS TO CATCH, BUILT BY THE FIX FOR THE LAST ONE.
+
+    Making the invite field always visible left the SWITCH somewhere else — the feature checkbox —
+    so pasting a link and pressing Save produced a bot holding a room it never opened. Measured on
+    the real row: `concord_invite` set with its fragment intact, "Test join" answering 200, and
+    `modes='--nostr'`. Nothing was broken, nothing logged, and every surface an operator can see
+    said it was fine. Reported as "i don't see bot in room despite what the UI says".
+
+    A value that is stored and ignored is worse than a value you cannot store. Pasting an invite IS
+    the request, so `_buildModes` derives the mode from the FIELD, not only from the tickbox.
+    """
+    block = JS[JS.index("function _buildModes("):]
+    block = block[:block.index("\n}")]
+    assert "bot_f_concord_invite" in block, (
+        "saving a bot no longer derives --concord from the invite it was given, so an operator can "
+        "store a room the bot will never join")
+    assert "'--concord'" in block
+
+
+def test_the_checkbox_cannot_disagree_with_what_save_will_do():
+    """A control showing OFF while the thing is about to be turned ON is how the trap above stayed
+    invisible. The form keeps the two in step and explains why the tickbox is locked."""
+    block = JS[JS.index("function onBotFormChange("):]
+    block = block[:block.index("\n}")]
+    assert "bot_ft_concord" in block and "box.checked = true" in block, (
+        "the Concord feature no longer reflects a saved invite, so the form can show OFF for a bot "
+        "that is about to be saved with the listener ON")
+    assert "box.disabled" in block, (
+        "the tickbox can be unticked while an invite is saved, which Save then overrides — a "
+        "control that silently refuses its own setting")
+
+
+def test_test_join_does_not_claim_the_bot_has_joined():
+    """It proves the LINK opens from this node. It was read as "the bot is in the room", because
+    that is what "✓ room — 3 channels" sounds like."""
+    block = JS[JS.index("async function testBotConcord("):]
+    block = block[:block.index("\n}")]
+    assert "Save the bot" in block, (
+        "the Test join result does not say that joining still requires a save")
+
+
 def test_the_invite_reaches_the_bot_process_as_an_env_var():
     """A config key the manager does not inject is a value the bot never sees."""
     assert 'setif("concord_invite", "CONCORD_INVITE")' in MANAGER, (

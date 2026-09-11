@@ -508,6 +508,22 @@ def _cmd_for(bot_dict: dict) -> list:
     modes = [m for m in (bot_dict.get("modes") or []) if m not in _RETIRED_MODES]
     if not modes:
         modes = ["--" + (bot_dict.get("platform") or "pleroma")]
+    # A BOT GIVEN A ROOM JOINS IT, whatever its `modes` column happens to say.
+    #
+    # The invite and the listener were two separate controls in the UI, so an operator could store
+    # a community — fragment intact, "Test join" answering 200 — on a bot whose modes never got
+    # `--concord`. It then held a room it never opened, silently: nothing broken, nothing logged,
+    # every surface reporting success. Reported as "i don't see bot in room despite what the UI
+    # says", and the row bore it out exactly.
+    #
+    # The form derives it now too, but deriving it HERE is what makes already-saved bots work
+    # without anybody re-opening them, and covers rows written by the API or the migration seed,
+    # which never touch the form at all. Saving an invite is the request; this is where the request
+    # is honoured.
+    cfg = bot_dict.get("config") or {}
+    if isinstance(cfg, dict) and str(cfg.get("concord_invite") or "").strip() \
+            and "--concord" not in modes:
+        modes = list(modes) + ["--concord"]
     return [sys.executable, str(MAIN_PY)] + list(modes)
 
 

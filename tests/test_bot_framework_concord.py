@@ -183,3 +183,44 @@ def test_the_bridge_opens_a_real_community_and_speaks_in_it():
         "the message the bridge built is not one the shipped reader can decrypt — Armada would not "
         "read it either: %r" % (got["texts"],))
     assert got["unknownOp"] is False, "an unknown op is answered as success"
+
+
+# ───────────────────── a saved room is a request to join it ─────────────────────
+
+def test_a_bot_with_an_invite_is_spawned_with_the_listener():
+    """REPORTED AS "i don't see bot in room despite what the UI says", and the row bore it out.
+
+    `concord_invite` was stored with its fragment intact and "Test join" answered 200, while the
+    bot's `modes` column said `--nostr`. It held a community it never opened: nothing broken,
+    nothing logged, every surface an operator can see reporting success. The invite and the
+    listener were two separate controls, and only one of them had been used.
+
+    The form derives the mode from the field now, but deriving it HERE is what makes bots that are
+    ALREADY saved work without anybody re-opening them — and covers rows written by the API or the
+    migration seed, which never touch the form.
+    """
+    from app.services.bot_manager_service import _cmd_for
+
+    def modes(cfg, existing=("--nostr",)):
+        cmd = _cmd_for({"platform": "nostr", "modes": list(existing), "config": cfg})
+        return [a for a in cmd if a.startswith("--")]
+
+    assert modes({}) == ["--nostr"], "a bot with no room must not be given the listener"
+    assert modes({"concord_invite": "https://poster.place/invite/naddr1abc#secret"}) == \
+        ["--nostr", "--concord"], "a bot with a room saved was spawned without the listener"
+    # Idempotent: an operator who ticked the box too must not get it twice.
+    assert modes({"concord_invite": "https://poster.place/invite/naddr1abc#secret"},
+                 existing=("--nostr", "--concord")).count("--concord") == 1
+    # Whitespace is not a room.
+    assert modes({"concord_invite": "   "}) == ["--nostr"]
+
+
+def test_the_listener_says_so_when_it_has_no_room():
+    """The other half of the same silence: a bot asked to run --concord with no invite must not sit
+    in a loop doing nothing. It says it once and idles, so the log answers "why is nothing
+    happening" without anybody reading this file."""
+    main = (ROOT / "botframework/main.py").read_text(encoding="utf-8")
+    block = main[main.index("if args.concord:"):]
+    block = block[:block.index("# Every game referee")]
+    assert "CONCORD_INVITE" in block and "Not listening" in block, (
+        "a Concord bot with no invite starts a silent thread instead of saying why it cannot work")
