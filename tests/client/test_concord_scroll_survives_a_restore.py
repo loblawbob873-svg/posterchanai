@@ -165,12 +165,19 @@ def test_the_correction_still_happens_once_the_hand_has_gone():
     """Deferring is not dropping. A picture landing ABOVE the reader really does move the message
     they are looking at, and that has to be put back — just not while they are touching the
     scroller. Measured against real rows: the content gains 400px above, so the anchor row is 400px
-    lower, and the restore follows it exactly."""
+    lower, and the restore follows it exactly.
+
+    THE ORDER HERE IS THE REAL ONE, and it is load-bearing: the watcher is wired as part of the
+    PAINT, when the pane is still at 0, and the position arrives afterwards. Asking a not-yet-
+    positioned scroller what the reader is looking at answers "the oldest message in the room", and
+    the first growth then puts them there — which is what "i scroll up a little and it jumps to the
+    top" was. So the watcher starts with NO anchor and learns from the scroll the restore causes.
+    """
     got = _run("""
-      const r = makeRoom({ rows: 30, height: 3000, viewport: 600, top: 400 });
+      const r = makeRoom({ rows: 30, height: 3000, viewport: 600, top: 0 });
       r.seed({ pinned: false, top: 400, height: 3000 });
-      r.box.scrollTop = 400;
-      r.watch(); r.frame();
+      r.watch(); r.frame();                // wired during the paint, while the pane is still at 0
+      r.box.scrollTop = 400; r.scrolled(); // then the restore lands, and a browser fires `scroll`
       r.hand('touchstart');               // the reader's finger is down
       r.growAbove(400);                   // a picture above them finishes decrypting
       r.frame();
@@ -182,6 +189,34 @@ def test_the_correction_still_happens_once_the_hand_has_gone():
     assert got["after"] == 800, (
         "the message the reader was looking at was not put back after the growth above it — %r"
         % (got,))
+
+
+def test_growth_before_the_reader_has_been_put_back_does_not_send_them_to_the_top():
+    """THE "IT JUMPS TO THE TOP" REPORT, as a unit.
+
+    The growth watcher is wired during the PAINT, so the pane it is handed is at scrollTop 0 — and
+    asking it what the reader is reading answers "the oldest message in the room". If it believes
+    that, the first ResizeObserver callback restores them to message 0, which on a phone reads as
+    the room throwing you to the very beginning of its history a second after you scrolled up.
+
+    Measured in a real browser first (scripts/check_concord_scroll_mobile.py): `preserveChatScroll`
+    computed the right pixel and wrote it, and this watcher moved it to 0 three frames later.
+    """
+    got = _run("""
+      const r = makeRoom({ rows: 30, height: 3000, viewport: 600, top: 0 });
+      r.seed({ pinned: false, top: 2000, height: 3000 });
+      r.watch(); r.frame();                 // wired while the pane is still unpositioned
+      r.restore(2000);                      // then the app puts the reader back where they were
+      r.growAbove(400);                     // and something above them finishes decrypting
+      r.wait(600);
+      console.log(JSON.stringify({ corrected: r.box.scrollTop }));
+    """)
+    assert got["corrected"] != 0, (
+        "the growth watcher moved the reader to the oldest message in the room: it read its anchor "
+        "off a scroller that had not been positioned yet, and then refused to learn from the very "
+        "restore that positioned it")
+    assert got["corrected"] == 2400, (
+        "growth above the reader must follow the message they were put back on — %r" % (got,))
 
 
 def test_the_room_scroller_has_exactly_one_owner_of_its_position():

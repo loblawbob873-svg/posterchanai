@@ -397,7 +397,24 @@
   /* Entering a room is different from preserving a room somebody is already reading. History,
    * decrypted attachments and link previews all grow the scroller asynchronously, so one rAF can
    * reach what was the bottom and still leave the person hundreds of pixels above the final bottom. */
-  function enterChatBottom(){ const key=scrollKey(),token=Date.now()+Math.random();enterChatBottom.token=token;const st=readScroll(key);st.pinned=true;st.top=Number.MAX_SAFE_INTEGER;writeScroll(key,st);for(const delay of [0,60,180,450,900,1600])setTimeout(()=>{if(enterChatBottom.token!==token||scrollKey()!==key||st.pinned===false)return;const box=document.querySelector('.cc-messages');if(!box)return;setProgrammaticScroll(box,box.scrollHeight,()=>{st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);});},delay); }
+  /* ENTERING IS ONE ACT, AND IT IS OVER THE MOMENT THE READER SCROLLS.
+   *
+   * `activateJoinedRoom` calls this TWICE by design — once beside render(), and again in its
+   * `finally` once the room's history has loaded — because history, attachments and link previews
+   * all arrive late and the first pin lands on a shorter room. On a real community that second call
+   * is SECONDS after the first, by which time the reader may well have started reading backwards,
+   * and it re-pinned them to the newest message without asking. Measured: read back 364px, let
+   * hydration finish, and the phone is at the bottom again. That is "my position keeps getting
+   * reset when I scroll through a room history".
+   *
+   * So a later entry for the SAME room defers to the reader: `pinned===false` is only ever written
+   * by the scroll handler, i.e. by a finger. Changing rooms changes the key and pins normally. */
+  function enterChatBottom(late){ const key=scrollKey();
+    /* `late` is the SECOND call for one entry, and it must defer to a reader who has started
+       reading. `pinned===false` is only ever written by the scroll handler, i.e. by a finger; a
+       fresh entry (a channel tapped, a room joined) still lands on the newest message. */
+    if(late&&enterChatBottom.key===key&&readScroll(key).pinned===false) return;
+    const token=Date.now()+Math.random();enterChatBottom.token=token;enterChatBottom.key=key;const st=readScroll(key);st.pinned=true;st.top=Number.MAX_SAFE_INTEGER;writeScroll(key,st);for(const delay of [0,60,180,450,900,1600])setTimeout(()=>{if(enterChatBottom.token!==token||scrollKey()!==key||st.pinned===false)return;const box=document.querySelector('.cc-messages');if(!box)return;setProgrammaticScroll(box,box.scrollHeight,()=>{st.top=box.scrollTop;st.height=box.scrollHeight;writeScroll(key,st);});},delay); }
   function repaintScrollTop(pinned,top,scrollHeight){ return pinned!==false?scrollHeight:Math.max(0,Number(top)||0); }
   function preserveChatScroll(fn){
     const key=scrollKey(),old=document.querySelector('.cc-messages'),st=readScroll(key),
@@ -474,10 +491,29 @@
   function watchPinnedRoomGrowth(scroller){
     if(!scroller||typeof ResizeObserver==='undefined')return;
     const key=scrollKey(),content=scroller.querySelector('.cc-message-list')||scroller;
-    let anchor=viewportAnchor(scroller);
+    /* THE ANCHOR STARTS UNKNOWN, AND THAT IS THE WHOLE FIX FOR "IT JUMPS TO THE TOP".
+     *
+     * This runs as part of the paint, which is BEFORE the restore has put the reader back — a
+     * freshly painted pane is at scrollTop 0, so asking it what the reader is looking at answers
+     * "the oldest message in the room". The first ResizeObserver callback then faithfully restores
+     * them to it. Measured on a 390px viewport with a real touch fling: read back 370px, let a
+     * message arrive, and `preserveChatScroll` computes the right pixel (16669) and writes it — and
+     * a few frames later this watcher moves it to 0, because it believed the reader was reading
+     * message-0. That is the report, exactly: "i enter room, scroll up a little, and it jumps to
+     * the top".
+     *
+     * `null` means "I do not know where they are", and `wanted()` already answers null to that by
+     * leaving the scroller alone — which is right, since `preserveChatScroll` has just done the
+     * anchoring for this paint. The anchor becomes known again the moment the scroller MOVES, which
+     * includes our own restore landing. */
+    let anchor=null;
     const remember=()=>{anchor=viewportAnchor(scroller);};
     const handOn=scrollGesture(scroller);
-    if(scroller.addEventListener)scroller.addEventListener('scroll',()=>{if(!programmaticScrollEvent(scroller))remember();},{passive:true});
+    /* Remember on EVERY scroll, ours included. The position a restore just wrote is the reader's
+     * place by definition, and skipping it was what left the anchor stuck at whatever the pane held
+     * when it was wired. Consuming the programmatic flag is the other listener's job (it is
+     * registered first, on `onscroll`), so this one must not race it for that decision. */
+    if(scroller.addEventListener)scroller.addEventListener('scroll',remember,{passive:true});
     let waiting=null;
     /* Where this scroller SHOULD be, given what the reader was looking at. `null` means "leave it
      * alone" — which is most of the time, because growth below an unpinned reader moves nothing
@@ -2865,7 +2901,7 @@
       if(room.protocol==='nip29'){rooms=saved();const at=rooms.findIndex(item=>roomIdentity(item)===identity);if(at>=0){rooms[at].nip29Hydrated=false;save(rooms);}}
       roomLoadWarning(p,identity,'could not refresh community: ',e);return false;
     }finally{
-      const active=saved()[state.community];if(roomIdentity(active)===identity)enterChatBottom();
+      const active=saved()[state.community];if(roomIdentity(active)===identity)enterChatBottom(true);
     }
   }
   async function resumeActiveRoom(p,identity){
@@ -3278,9 +3314,9 @@
         else if(selected)state.community=latest.findIndex(x=>sameRoom(x,selected));
         await persistArmadaMembership(p,latest[joined]);await hydrateRoomStreams(p,joined);p.toast('community joined');
       }catch(e){p.toast('could not load community: '+(e&&e.message||e));}
-      finally{if(sameRoom(saved()[state.community],v))enterChatBottom();}
+      finally{if(sameRoom(saved()[state.community],v))enterChatBottom(true);}
     });
-    $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; state.thread=null; replyTarget=null; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(); });
+    $$('[data-cc-channel]').forEach(b=>b.onclick=async()=>{ const community=state.community,channel=b.dataset.ccChannel; state.channel=channel; state.thread=null; replyTarget=null; mobileChatOpen=true; mobileDrawerOpen=false; render(); enterChatBottom(); const rooms=saved(),room=rooms[community],noticeKey=roomIdentity(room)+':'+channel; try{if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))await hydrateRoomStreams(p,community);else if(room&&room.protocol==='nip29'&&!room.nip29Hydrated)await hydrateNip29Room(p,community);roomLoadNotices.delete(noticeKey);}catch(e){roomLoadWarning(p,noticeKey,'could not refresh room history: ',e);} if(state.community===community&&state.channel===channel)enterChatBottom(true); });
     $$('[data-cc-star]').forEach(b=>b.onclick=e=>{ if(e&&e.stopPropagation)e.stopPropagation(); const room=saved()[state.community],name=b.dataset.ccStar; if(!room||!name)return; setChannelStarred(room,name,!channelStarred(room,name)); render(); });
     const bc=$('#cc-back-communities'); if(bc)bc.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; render(); };
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){mobileDrawerOpen=!mobileDrawerOpen;}else mobileChatOpen=true; render(); };
@@ -3503,6 +3539,12 @@
                                     if(v&&v.controls)roomControls.set(v.controls[0],v.controls[1]);
                                     return state; };
   window.PCConcord.__testMessages=id=>testMessages(id);
+  /* The third door: the LIVE repaint exactly as an arriving message performs it. A scroll test that
+     calls backgroundRender() directly is testing a path no message ever takes — it skips both the
+     gesture hold and the anchor preservation, which are the two things that decide whether the
+     reader keeps their place. */
+  window.PCConcord.__testLiveRepaint=()=>whenHandLeaves(()=>preserveChatScroll(()=>backgroundRender()));
+  window.PCConcord.__testEnterChatBottom=()=>enterChatBottom(true);
   if(window.__pcConcordHandoff){
     try{acceptHandoff(window.__pcConcordHandoff);}finally{delete window.__pcConcordHandoff;}
   }

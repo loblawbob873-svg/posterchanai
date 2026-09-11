@@ -45,6 +45,9 @@ def run(profile: dict, note_has_xmr_tag=False, already_marked=False) -> dict:
       const isBchAddr = a => /^(bitcoincash:)?[qp][a-z0-9]{41}$/.test(String(a||'').trim());
       const xmrOf = p => (p && p.monero_address) || '';
       const bchOf = p => (p && p.bch) || '';
+      /* These scenarios are all about what the PROFILE says, so this author advertises no NIP-A3
+         rails. The payto path has its own coverage in test_a_payment_rail_shows_on_the_card.py. */
+      const _advertises = () => false;
       /* the smallest DOM these functions actually touch */
       const mk = (cls) => ({ className: cls, children: [], dataset:{}, title:'',
         appendChild(c){ this.children.push(c); },
@@ -115,10 +118,18 @@ def test_both_marks_can_appear_together():
 
 
 def test_decorate_profiles_actually_calls_it():
-    """The helper is worth nothing if the pass that runs on profile arrival does not invoke it."""
+    """The helper is worth nothing if the pass that runs on profile arrival does not invoke it —
+    and it must be invoked for EVERY card, not only for authors whose kind-0 has landed. The marks
+    also come from NIP-A3 rails, which arrive independently: an author can publish a 10133 and no
+    kind-0 at all, and gating this call on a profile meant their card never got a mark."""
     block = APP[APP.index("  function decorateProfiles(){"):]
     block = block[:block.index("$$('.name[data-prof]').forEach(_decorName);")]
-    assert "_tipMarks(n, p)" in block, "decorateProfiles no longer patches the tip affordance"
+    assert "_tipMarks(n," in block, "decorateProfiles no longer patches the tip affordance"
+    call = block[block.index("_tipMarks(n,"):]
+    call = call[:call.index("\n")]
+    assert "p||{}" in call.replace(" ", ""), (
+        "the tip mark pass is being handed a profile it may not have; it must run for every card: "
+        + call.strip())
 
 
 def test_a_thrown_card_does_not_kill_the_decorate_pass():

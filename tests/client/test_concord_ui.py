@@ -324,15 +324,21 @@ def test_chat_scroll_is_keyed_by_room_and_survives_profile_link_navigation():
 
 def test_every_room_entry_tracks_async_growth_all_the_way_to_latest():
     """Community metadata, decrypted history and media arrive after the first paint."""
-    assert "function enterChatBottom()" in CONCORD
+    assert "function enterChatBottom(late)" in CONCORD
     assert "[0,60,180,450,900,1600]" in CONCORD
     server = CONCORD.split("$$('[data-cc-server]')", 1)[1].split("$$('[data-cc-discover]')", 1)[0]
     activation = CONCORD.split('async function activateJoinedRoom', 1)[1].split('function render()', 1)[0]
     discover = CONCORD.split("$$('[data-cc-discover]')", 1)[1].split("$$('[data-cc-channel]')", 1)[0]
     channel = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split("$$('[data-cc-star]')", 1)[0]
     assert 'activateJoinedRoom(p,i,inDrawer)' in server
+    # TWICE PER ENTRY, and the second one is explicitly LATE. Entering pins to the newest message,
+    # then history/media arrive and it pins again on the taller room — but on a real community that
+    # second pin lands seconds later, so it defers to a reader who has already started reading
+    # backwards ("my position keeps getting reset when I scroll through a room history").
     for handler in (activation, discover, channel):
-        assert handler.count('enterChatBottom()') >= 2
+        assert handler.count('enterChatBottom(') >= 2
+        assert 'enterChatBottom(true)' in handler, (
+            "the pin that runs after the awaits must be marked late, or it overrides the reader")
 
 
 def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
@@ -650,7 +656,7 @@ def test_mobile_room_list_and_drawer_do_not_consume_channel_unread_state():
 
 
 def test_entering_channel_wins_scroll_race_with_history_and_media():
-    assert 'function enterChatBottom()' in CONCORD
+    assert 'function enterChatBottom(late)' in CONCORD
     assert "[0,60,180,450,900,1600]" in CONCORD
     # THE RULE, NOT THE EXPRESSION. `onscroll` has to be able to tell the app's own restore from the
     # reader's finger, and it used to do that by reading the mark directly — a TIME window, which
@@ -661,7 +667,10 @@ def test_entering_channel_wins_scroll_race_with_history_and_media():
     assert "function programmaticScrollEvent(box)" in CONCORD
     assert "delete box.dataset.ccScrollRestore" in CONCORD
     channel_click = CONCORD.split("$$('[data-cc-channel]')", 1)[1].split("$$('[data-cc-star]')", 1)[0]
-    assert channel_click.count('enterChatBottom()') == 2
+    # One pin on the tap and one after the history awaits — the second marked LATE, so it defers to
+    # a reader who scrolled back while the room was still loading.
+    assert channel_click.count('enterChatBottom(') == 2
+    assert channel_click.count('enterChatBottom(true)') == 1
     assert 'function watchPinnedRoomGrowth(scroller)' in CONCORD
     assert "new ResizeObserver" in CONCORD
     assert "if(st.pinned===false" in CONCORD

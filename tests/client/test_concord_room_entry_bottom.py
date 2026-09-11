@@ -24,9 +24,12 @@ def test_explicit_room_and_channel_entry_mark_the_scroller_pinned():
     # restore an old mid-history position, and the delayed relay hydration must not undo the jump.
     assert 'activateJoinedRoom(p,i,inDrawer)' in server
     assert "render();enterChatBottom();" in activation
-    assert "if(roomIdentity(active)===identity)enterChatBottom();" in activation
+    # The pin in the `finally` runs AFTER the hydration awaits, so it is marked late: on a real
+    # community it lands seconds after entry, and an unmarked one re-pinned a reader who had
+    # already scrolled back into the history.
+    assert "if(roomIdentity(active)===identity)enterChatBottom(true);" in activation
     assert "if(!inDrawer)scrollChatBottom()" not in server
-    assert "if(state.community===community&&state.channel===channel)enterChatBottom();" in channel
+    assert "if(state.community===community&&state.channel===channel)enterChatBottom(true);" in channel
     assert "[0,60,180,450,900,1600]" in JS
 
 
@@ -47,13 +50,22 @@ def test_delayed_prepend_preserves_the_visible_message_anchor():
 
 def test_delayed_media_growth_preserves_the_visible_message_anchor():
     watcher = JS[JS.index("function viewportAnchor("):JS.index("function removeMessageRow(")]
-    # THE ANCHOR IS RE-READ WHEN THE READER MOVES — but the listener is no longer `remember` bare.
-    # Our own restores fire `scroll` too, and re-reading the anchor from a position WE just set
-    # records the app's opinion as the reader's, so the handler asks `programmaticScrollEvent`
-    # first. What this pins is that a real scroll still updates the anchor.
+    # THE ANCHOR IS RE-READ WHENEVER THE SCROLLER MOVES, INCLUDING WHEN WE MOVE IT.
+    #
+    # This used to exclude our own restores, on the reasoning that reading the anchor from a
+    # position we set records the app's opinion as the reader's. Measured on a 390px viewport with
+    # a real touch fling (scripts/check_concord_scroll_mobile.py), that reasoning was backwards and
+    # cost the reader their place: the watcher is wired DURING the paint, before the restore has
+    # run, so the scroller is at 0 and the anchor it captured was the OLDEST message in the room.
+    # Excluding the restore meant it never learned otherwise, and the first ResizeObserver callback
+    # faithfully put the reader back on message 0 — "i enter room, scroll up a little, and it jumps
+    # to the top". The anchor now starts UNKNOWN (null, which `wanted()` answers by leaving the
+    # scroller alone) and every scroll teaches it, our restores included: the position a restore
+    # writes IS the reader's place, because `preserveChatScroll` just computed it from their anchor.
     assert "addEventListener('scroll'" in watcher
-    assert "remember()" in watcher
-    assert "programmaticScrollEvent(scroller)" in watcher
+    assert "remember" in watcher
+    assert "let anchor=null" in watcher, (
+        "the growth watcher is reading an anchor off a scroller that has not been positioned yet")
     assert "el.dataset.messageId===anchor.id" in watcher
     assert "Number(row.offsetTop)" in watcher
 

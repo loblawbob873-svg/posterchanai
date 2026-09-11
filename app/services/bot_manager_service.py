@@ -397,6 +397,13 @@ def _build_env(bot_dict: dict, base_env: dict) -> dict:
             # whose outbox federates the posts upstream — so there's no per-bot relay override here.
             # The external media host comes from config (_set_internal_blossom).
             setif("nostr_nsec", "NOSTR_NSEC")
+            # A CONCORD ROOM THE BOT SHOULD JOIN, as the invite URL the web client accepts.
+            #
+            # The `#` fragment IS the room's decryption secret, so the whole URL is a credential:
+            # it travels in the process environment beside NOSTR_NSEC and is never logged. Unlike
+            # a plain Nostr post, a Concord message is a CORD gift wrap on the ROOM's own relays,
+            # which is why this carries a URL rather than a relay list — the bundle names them.
+            setif("concord_invite", "CONCORD_INVITE")
             # Anti-loop: the hex pubkeys of ALL our nostr bots, so this listener never replies to
             # another of our bots. Robust by pubkey (the handle-based BOT_BLACKLIST can't, since a
             # nostr sender is a pubkey, not a name).

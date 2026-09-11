@@ -134,17 +134,30 @@ export function makeRoom({ height = 2000, viewport = 600, top = 1400, rows: rowC
        already holds changes no position and still cancels a momentum scroll, so it is invisible to
        any assertion that only reads the position afterwards. */
     writes: () => writes,
+    /* ONE SCROLL EVENT REACHES EVERY LISTENER, and the fixture has to do the same or it silently
+       unsubscribes half the app. `.cc-messages` carries TWO: the shipped `onscroll` (which owns the
+       saved position and the programmatic-move decision, and is registered first) and the growth
+       watcher's, which re-reads the anchor. Firing only the first left the watcher's anchor stuck
+       at whatever the pane held when it was wired — which is a bug the fixture would then be
+       agreeing with rather than measuring. */
+    scrolled: () => { ctx.onscroll_(); (handlers.scroll || []).forEach((f) => f({})); },
+    /* THE APP PUTTING THE READER BACK — a marked write followed by the scroll event a browser
+       really fires for it. This is how `restoreChatScroll` and `preserveChatScroll` move the
+       scroller, and the event it causes is the only signal the growth watcher gets that the pane
+       has a position at all. */
+    restore: (to) => { api.setProgrammaticScroll(box, to);
+                       ctx.onscroll_(); (handlers.scroll || []).forEach((f) => f({})); },
     /* The reader's finger. Returns whether the app heard it. */
     drag: (to) => {
       (handlers.touchstart || []).forEach((f) => f({}));
       box.scrollTop = to;
       const before = JSON.stringify(api.readScroll('room:general'));
-      ctx.onscroll_();
+      ctx.onscroll_(); (handlers.scroll || []).forEach((f) => f({}));
       return JSON.stringify(api.readScroll('room:general')) !== before ? 'seen' : 'swallowed';
     },
     /* A scroll event for a move the APP made — must never be mistaken for the reader. */
     echo: () => { const before = JSON.stringify(api.readScroll('room:general'));
-                  ctx.onscroll_();
+                  ctx.onscroll_(); (handlers.scroll || []).forEach((f) => f({}));
                   return JSON.stringify(api.readScroll('room:general')) !== before ? 'seen' : 'swallowed'; },
   };
 }

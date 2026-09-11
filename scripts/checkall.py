@@ -282,6 +282,7 @@ CHECKS = {
     "check_files_explorer":            dict(group="ui", secs=600),
     "check_mail_mobile":               dict(group="ui", secs=600),
     "check_concord_mobile":            dict(group="ui", secs=420),
+    "check_concord_scroll_mobile":     dict(group="ui", secs=420),
     # Leaving a community, on the screen a phone actually opens on, and then on the NEXT
     # device — "I left Soapbox many times" was the vault tombstone being unmatchable by the
     # owner's own invite announcement, which is what put the room back.

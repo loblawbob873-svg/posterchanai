@@ -169,9 +169,13 @@ class SurfaceTests(unittest.TestCase):
         self.assertIn('id="mail-badge"', SHELL)
 
     def test_mobile_more_sheet_offers_it(self):
-        items = APP[APP.index("    const items=[['ai','ai','PosterChan AI']"):]
-        items = items[:items.index("\n")]
-        self.assertIn("['mail','mail','Email']", items)
+        # Located by the FUNCTION, not by whichever view happens to be first in the list — this was
+        # anchored on `[['ai','ai','PosterChan AI']` being the opening entry, so adding Communities
+        # ahead of it broke a test that has nothing to do with Communities.
+        i = APP.index("function moreMenu(")
+        m = re.search(r"const items=\[(.*?)\n\s*\.filter\(", APP[i:], re.S)
+        self.assertTrue(m, "the More sheet's item list moved — re-point this test")
+        self.assertIn("['mail','mail','Email']", m.group(1))
 
     def test_the_more_sheet_shows_the_count(self):
         self.assertIn("counts={drafts:dn, mail:(Number(Mail && Mail.unread)||0)}", APP)

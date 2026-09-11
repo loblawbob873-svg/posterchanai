@@ -129,11 +129,26 @@ function ctx(){
   c.setPushPreference('likes',false);
   await new Promise(r=>setTimeout(r,0));
   assert.equal(told.length,1,'a toggle did not reach the device store at all');
-  assert.equal(JSON.stringify(told[0]),'{"likes":false}');
+  /* THE COMPLETE PICTURE, NOT THE DELTA. This used to assert exactly {"likes":false} — the sparse
+     STORED shape passed straight through. Both filters fail open on a missing key (push_prefs.py
+     argues it at length), so every type nobody had touched arrived as "no opinion" and was sent:
+     mentions kept buzzing with only DMs, Zaps, Concord mentions and Texts selected. The store is
+     still sparse; the WIRE now resolves every known type. */
+  assert.equal(told[0].likes,false,'the explicit choice was lost on the way to the device');
+  assert.ok(Object.keys(told[0]).length>1,
+    'the device store is told only about the toggle that moved, so every other type is a gap a '
+    +'fail-open filter turns into a notification');
+  for(const [k] of c._NOTIFICATION_TYPES||[])
+    assert.equal(typeof told[0][k],'boolean','no answer for '+k+' — a gap, not a preference');
   c.setPushPreference('zaps',false);
   await new Promise(r=>setTimeout(r,0));
-  assert.equal(JSON.stringify(told[1]),'{"likes":false,"zaps":false}',
-    'the device gets the WHOLE set, not one key');
+  /* "The WHOLE set" is what this always meant, and now it is literally true: every accumulated
+     choice AND every type nobody has touched, each as a boolean. Before, "whole" meant "both keys
+     that happen to have been switched", and the rest reached a fail-open filter as silence. */
+  assert.equal(told[1].likes,false,'an earlier choice was dropped when the next one was made');
+  assert.equal(told[1].zaps,false,'the new choice did not reach the device');
+  for(const [k] of c._NOTIFICATION_TYPES||[])
+    assert.equal(typeof told[1][k],'boolean','no answer for '+k+' — a gap, not a preference');
 }
 
 /* ---- 9. AN APK WITHOUT THE PLUGIN METHOD MUST NOT THROW ----
@@ -178,7 +193,12 @@ function ctx(){
   assert.equal(posted[0][0],'/api/push/prefs');
   assert.equal(posted[0][1].device_id,'dev-abc',
     'the server was not told WHICH device — the row keeps prefs=NULL and sends everything');
-  assert.equal(JSON.stringify(posted[0][1].prefs),'{"likes":false}');
+  /* The SERVER row gets the complete picture too — it is the other fail-open filter, and a
+     backstop that shares the gap it backs up is not a backstop. */
+  assert.equal(posted[0][1].prefs.likes,false,'the choice never reached the server row');
+  for(const [k] of c._NOTIFICATION_TYPES||[])
+    assert.equal(typeof posted[0][1].prefs[k],'boolean',
+      'the server row has no answer for '+k+', and push_prefs.allows() reads that as SEND');
 }
 
 /* A plugin that answers only the endpoint string (an older build, or a future rename) must still

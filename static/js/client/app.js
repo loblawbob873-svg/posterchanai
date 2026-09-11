@@ -7131,9 +7131,26 @@
     // 120ms debounce, so on a cold start it reliably fired into a dead socket — and every pubkey in the
     // batch was then cached as a MISS for 5 minutes, leaving those authors stuck as "anon"/"@profile".
     const live = await Relay.ready().catch(()=>false);
-    const evs = await Relay.query([{ authors:pks, kinds:[0], limit:pks.length }]);
+    /* The NIP-A3 payment targets ride the SAME REQ as the profiles — a second FILTER, not a second
+       query, so the "don't add a relay round trip per author" rule the resolver was written under
+       still holds: a batch of 40 authors costs exactly what it cost before. Without it the ɱ / 🟢
+       marks can only ever come from kind-0, which is the bug. */
+    const evs = await Relay.query([{ authors:pks, kinds:[0], limit:pks.length },
+                                   { authors:pks, kinds:[10133], limit:pks.length }]);
     const got=new Set(); let changed=false;
-    for(const e of evs){ Store.saveProfile(e); got.add(e.pubkey); changed=true; }
+    // Newest wins per author: 10133 is replaceable and relays may hand back more than one copy.
+    const rails=new Map();
+    for(const e of evs){
+      if(e && e.kind===10133){
+        const cur=rails.get(e.pubkey);
+        if(!cur || e.created_at>cur.created_at) rails.set(e.pubkey, e);
+        continue;
+      }
+      Store.saveProfile(e); got.add(e.pubkey); changed=true;
+    }
+    for(const e of rails.values()){
+      if(_learnRailsFromEvent(e)){ try{ Store.saveEvent(e); }catch(_){} changed=true; }
+    }
     const now=Date.now();
     // Only back off when the read actually reached a live relay. Caching a miss we never really asked for
     // is what made a cold-start profile stay blank for minutes instead of resolving on the next feed pass.
@@ -7173,43 +7190,49 @@
   function _tipMarks(n, p){
     try{
       const bolt = n.querySelector('.actz .tipbolt'); if(!bolt) return;
+      const pk = n.dataset.pk || '';
       let changed = false;
+      const mark = (cls, glyph) => {
+        if(bolt.querySelector('.'+cls)) return false;
+        const sup=document.createElement('sup'); sup.className=cls; sup.textContent=glyph;
+        bolt.appendChild(sup); return true;
+      };
       if(!n.dataset.xmr){
         const addr = xmrOf(p);
-        if(isXmrAddr(addr)){
-          n.dataset.xmr = addr;
-          if(!bolt.querySelector('.xmr-mark')){
-            const sup=document.createElement('sup'); sup.className='xmr-mark'; sup.textContent='\u0271';
-            bolt.appendChild(sup); changed = true;
-          }
-        }
+        /* The ADDRESS is set only from the profile — a NIP-A3 rail tells us the author takes Monero
+           but this map holds no address, and doTip resolves the real one through the verified
+           resolver anyway. So a rail may raise the mark and must never fill `data-xmr`, which is
+           what a tip is paid to when the note has since been evicted from the Store. */
+        if(isXmrAddr(addr)){ n.dataset.xmr = addr; if(mark('xmr-mark','\u0271')) changed = true; }
+        else if(_advertises(pk,'monero')){ if(mark('xmr-mark','\u0271')) changed = true; }
       }
-      if(isBchAddr(bchOf(p)) && !bolt.querySelector('.bch-mark')){
-        const sup=document.createElement('sup'); sup.className='bch-mark'; sup.textContent='\ud83d\udfe2';
-        bolt.appendChild(sup); changed = true;
-      }
+      if((isBchAddr(bchOf(p)) || _advertises(pk,'bitcoincash')) && mark('bch-mark','\ud83d\udfe2')) changed = true;
       if(changed){
         const btn = bolt.closest('.act');
         if(btn) btn.title = 'tip \u2014 Lightning'
-          + (n.dataset.xmr ? ', Monero' : '')
+          + (bolt.querySelector('.xmr-mark') ? ', Monero' : '')
           + (bolt.querySelector('.bch-mark') ? ', Bitcoin Cash' : '');
       }
     }catch(_){ /* one card must never cost the whole decorate pass */ }
   }
   function decorateProfiles(){
-    $$('.note[data-pk]').forEach(n=>{ const p=Store.profile(n.dataset.pk); if(p){
+    /* THE TIP AFFORDANCE IS RESOLVED AT RENDER, AND A CARD IS DRAWN ONCE.
+       `actsRow` falls back to the AUTHOR'S kind-0, so on a cold session the note is painted before
+       the profile arrives and the ɱ mark, the `data-xmr` attribute and the "Monero" half of the
+       tip title are never added. Reported as "on mobile i could not see monero zap, but i zapped
+       fine on desktop": nothing platform-specific about it, only whether that author's profile
+       happened to be cached already. Idempotent — this pass runs on every profile batch.
+       It runs OUTSIDE the `if(p)` because the marks come from the profile **and** from the
+       author's NIP-A3 rails, which arrive independently: somebody can publish a 10133 and no
+       kind-0 at all, and gating this on a profile meant their card never got a mark. */
+    $$('.note[data-pk]').forEach(n=>{
+      const p=Store.profile(n.dataset.pk);
+      _tipMarks(n, p||{});
+      if(!p) return;
       const a=n.querySelector('.av'); if(p.picture && a) a.src=p.picture;
       const h=n.querySelector('.handle'); const nip=niceNip05(p.nip05); if(h && nip) h.textContent=nip;
       // blue check is profile-only (saves a NIP-05 resolution per timeline author)
-      /* THE TIP AFFORDANCE, WHICH IS A PROFILE FACT AND WAS ONLY EVER RESOLVED AT RENDER.
-         `hasNoteXmr` falls back to the AUTHOR'S kind-0, and a card is drawn once — so on a cold
-         session the note is painted before the profile arrives and the ɱ mark, the `data-xmr`
-         attribute and the "Monero" half of the tip title are never added. Reported as "on mobile i
-         could not see monero zap, but i zapped fine on desktop": nothing platform-specific about
-         it, only whether that author's profile happened to be cached already. Exactly the mention
-         bug below, on a different element. Idempotent — this pass runs on every profile batch. */
-      _tipMarks(n, p);
-    }});
+    });
     // DM list rows + open-thread header: fill the avatar once the peer's kind-0 arrives. The NAME is a
     // `.name[data-prof]` (see renderMessages / renderDmThread) so the emoji-aware pass below renders it —
     // do NOT set it via textContent here, which would strip custom :shortcode: emoji from the name.
@@ -12659,6 +12682,45 @@
 
   // ---------- note rendering ----------
   function profOf(pk){ return Store.profile(pk)||{}; }
+  /* WHICH PAYMENT RAILS AN AUTHOR ADVERTISES — for the MARK on the tip button, NEVER for the payment.
+   *
+   * The ɱ / 🟢 marks were resolved from the author's kind-0 alone (plus a per-note `monero_address`
+   * tag), while the tip SHEET resolves through the NIP-A3 kind-10133 payment-targets event as well.
+   * So somebody who publishes an address ONLY as a `payto` — which is the whole point of NIP-A3, and
+   * what Wisp/Amethyst-family clients write — was payable and looked unpayable: the ⚡ carried no
+   * mark, nothing on the card said "this person takes Monero", and the only way to find out was to
+   * open the sheet on the off chance. Reported about deallen@erybody.com, whose kind-0 carries a
+   * lud16 and nothing else and whose 10133 carries exactly one payto: monero.
+   *
+   * This is knowledge for the AFFORDANCE only. `data-xmr` and every address that reaches a wallet
+   * still come from doTip's verified resolver, so a rail learned here can make a mark appear and can
+   * never decide where money goes — which is why an unsigned or forged 10133 costs nothing but a
+   * wrong-looking icon, and why the verify below is still done at ingest rather than skipped. */
+  const _payRails = new Map();          // pubkey -> Set of payto types this author advertises
+  function _learnRails(pk, types){
+    if(!/^[a-f0-9]{64}$/.test(pk||'')) return false;
+    const set = new Set(types||[]);
+    const had = _payRails.get(pk);
+    // Replaceable: a newer 10133 that dropped a rail must drop the mark too.
+    if(had && had.size===set.size && [...set].every(t=>had.has(t))) return false;
+    _payRails.set(pk, set);
+    return true;
+  }
+  function _learnRailsFromEvent(ev){
+    try{
+      if(!ev || ev.kind!==10133) return false;
+      /* The house rule for anything off an untrusted relay: recompute the id from the CURRENT
+         fields, and verify a fresh copy — NostrTools caches its verdict on the object, so an event
+         carrying that flag with a swapped signature verifies by inheritance. */
+      if(NostrTools.getEventHash(ev)!==ev.id) return false;
+      if(!NostrTools.verifyEvent(JSON.parse(JSON.stringify(ev)))) return false;
+      return _learnRails(ev.pubkey, PCPaymentTargets.parse(ev).map(t=>t.type));
+    }catch(_){ return false; }
+  }
+  // Does this author advertise `type` anywhere we already know about, WITHOUT asking a relay?
+  function _advertises(pk, type){
+    try{ const r=_payRails.get(pk); return !!(r && r.has(type)); }catch(_){ return false; }
+  }
   // NIP-A3 payment destinations live in a replaceable kind-10133 event, not kind-0. Discover them
   // only when somebody opens a tip flow, so a timeline does not add one relay query per author.
   const _paymentTargetCache=new Map(), _paymentTargetPending=new Map();
@@ -12720,6 +12782,9 @@
   async function _paymentChoices(pk){
     await _ensurePaymentTargets();
     const state=await _paymentResolver().load(pk),p=profOf(pk)||{},targets=state.targets.slice();
+    // Whatever the sheet just resolved is also what the CARD should be marking — the resolver may
+    // have reached relays (a NIP-65 outbox hop) that the batched profile REQ never asked.
+    if(_learnRails(pk, state.targets.map(t=>t.type))) try{ decorateProfiles(); }catch(_){}
     for(const [type,address] of [['lightning',p.lud16||p.lud06],['monero',xmrOf(p)],['bitcoincash',bchOf(p)]])
       if(address&&!targets.some(t=>t.type===type)){const t=PCPaymentTargets.target(type,address);if(t)targets.push(t);}
     return targets;
@@ -13647,8 +13712,8 @@
   function actsRow(ev){
     const counts = countsFor(ev.id);
     const liked = myReaction(ev.id);
-    const hasNoteXmr = isXmrAddr(xmrForNote(ev));
-    const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey)));
+    const hasNoteXmr = isXmrAddr(xmrForNote(ev)) || _advertises(ev.pubkey,'monero');
+    const hasNoteBch = isBchAddr(bchOf(profOf(ev.pubkey))) || _advertises(ev.pubkey,'bitcoincash');
     const _rtAct = _repostAction(ev.id, counts.iRt);
     return `<div class="acts">
           <button class="act" data-a="reply" title="reply">${REPLY_ICON} <span class="n">${counts.replies?fmtSats(counts.replies):''}</span></button>
@@ -17753,9 +17818,30 @@
     for(const [key] of _NOTIFICATION_TYPES)if(typeof raw[key]==='boolean')out[key]=raw[key];
     return out;
   }
+  /* ONE name for the default. `pushPreference` (what the switch draws) and `_pushPrefsWire` (what
+   * the filters are told) have to agree, or the screen shows one thing and the phone does another. */
+  const _PUSH_PREF_DEFAULT=true;
+  /* WHAT THE FILTERS ARE TOLD: EVERY TYPE, NEVER THE SUBSET SOMEBODY HAPPENED TO TOUCH.
+   *
+   * `_pushPrefState` is the STORED shape and it is deliberately sparse — a key appears only once it
+   * has been switched, so the default can change later without rewriting everybody's document. That
+   * is right for storage and wrong for the wire: both filters FAIL OPEN on a missing key (see
+   * app/services/push_prefs.py, which argues it at length), so a type that is off by default, or
+   * off through some path that never wrote a boolean, arrives as "no opinion" and is SENT.
+   *
+   * Reported as mentions arriving with only DMs, Zaps, Concord mentions and Texts selected — the
+   * same shape as "likes when I only have DM's and concord mentions selected" before it. Resolve
+   * every known type to its effective value here, so the filters are answering about a complete
+   * picture and there is no gap for fail-open to widen. */
+  function _pushPrefsWire(owner=_notificationOwner()){
+    const stored=_pushPrefState(owner), out={};
+    for(const [key] of _NOTIFICATION_TYPES)
+      out[key]= typeof stored[key]==='boolean' ? stored[key] : _PUSH_PREF_DEFAULT;
+    return out;
+  }
   function pushPreference(key){
     const v=_pushPrefState()[key];
-    return v===undefined ? true : v;
+    return v===undefined ? _PUSH_PREF_DEFAULT : v;
   }
   function setPushPreference(key,value){
     const owner=_notificationOwner();if(!owner)return false;
@@ -17763,7 +17849,9 @@
     const next={..._pushPrefState(owner),[key]:!!value};
     try{localStorage.setItem(_pushPrefKey(owner),JSON.stringify(next));}catch(_){}
     _paintNotificationSettings();
-    void _pushPrefsToDevice(next);   // the phone's own copy, first and unconditionally — see below
+    // The phone's own copy, first and unconditionally — see below. No argument: storage is
+    // already written, so `_pushPrefsWire()` resolves EVERY type rather than this sparse delta.
+    void _pushPrefsToDevice();
     _mirrorPushPrefsSoon(owner);
     return true;
   }
@@ -17785,7 +17873,7 @@
     try{
       const S=_capPlugin('PosterChanPush','setPrefs');
       if(!S)return false;
-      await S.setPrefs({prefs:prefs||_pushPrefState()});
+      await S.setPrefs({prefs:prefs||_pushPrefsWire()});
       return true;
     }catch(_){ return false; }
   }
@@ -17814,9 +17902,12 @@
    * server and no registration, and it is the half that survives all three failing. */
   function _resendPushPrefsOnce(owner=_notificationOwner()){
     if(!owner)return;
-    void _pushPrefsToDevice(_pushPrefState(owner));
+    void _pushPrefsToDevice();
+    /* MARK AND COMPARE THE SAME SHAPE. The mark is WRITTEN from what was actually sent (`body.prefs`,
+     * the complete map), so comparing it against the sparse stored state never matches — and this
+     * would ask the signer on every single boot, which on a NIP-46/Amber account is a prompt. */
     let sent=null; try{ sent=localStorage.getItem(_pushMirrorKey(owner)); }catch(_){}
-    if(sent!==null && sent===_pushMirrorMark(_pushPrefState(owner)))return;
+    if(sent!==null && sent===_pushMirrorMark(_pushPrefsWire(owner)))return;
     void mirrorPushPrefs(owner);
   }
   function _mirrorPushPrefsSoon(owner=_notificationOwner()){
@@ -17834,7 +17925,7 @@
       if(!owner || owner!==_notificationOwner() || _standalone())return false;
       const state=await pushState();
       if(state!=='on')return false;      // nothing registered here — nothing to scope them to
-      const body={pubkey:owner,prefs:_pushPrefState(owner)};
+      const body={pubkey:owner,prefs:_pushPrefsWire(owner)};
       /* SAY WHICH DEVICE. Unscoped, the server applies them to every device of the account, which
        * would put the desktop's push back under the phone's choices — the exact thing this split
        * exists to prevent. */

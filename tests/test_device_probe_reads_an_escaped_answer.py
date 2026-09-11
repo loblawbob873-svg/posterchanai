@@ -42,5 +42,25 @@ def test_the_per_tile_budget_fits_the_runners_timeout():
 
 
 def test_the_gate_still_refuses_a_vacuous_run():
-    """A catalogue that came back empty would make every assertion in the walk pass about nothing."""
-    assert "covered >= 30" in TEST
+    """A catalogue that came back empty would make every assertion in the walk pass about nothing.
+
+    THE WALK IS SHARDED NOW (three methods, ~30 activity launches did not fit one 90s budget), so
+    the floor moved from "the whole catalogue" to "a third of it" — and this test broke by pinning
+    the old literal rather than the rule. What has to hold is that each shard still refuses to pass
+    having covered nothing, and that the shards between them cover EVERY tile: the partition is
+    `index % shards != shard`, which leaves no index out only while every shard is actually run.
+    """
+    floors = [int(n) for n in re.findall(r"covered >= (\d+)", TEST)]
+    assert floors, "the shard's vacuity floor is gone — an empty catalogue would now pass silently"
+    shards = re.findall(r"tiles\((\d+), (\d+)\)", TEST)
+    assert shards, "the sharded entry points moved — re-point this test"
+    counts = {int(total) for _, total in shards}
+    assert len(counts) == 1, "the shards disagree about how many there are: %r" % (shards,)
+    total = counts.pop()
+    assert sorted(int(i) for i, _ in shards) == list(range(total)), (
+        "the shards do not partition the catalogue — these indices are covered: %r" % (shards,))
+    assert min(floors) * total >= 24, (
+        "the shards together only insist on %d tiles, which is well under the catalogue"
+        % (min(floors) * total))
+    assert "index % shards != shard" in TEST, (
+        "the shard partition changed shape; check that no tile falls outside every shard")

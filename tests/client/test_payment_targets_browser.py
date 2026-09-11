@@ -41,6 +41,10 @@ const _lightningAmountSheet=(_p,go)=>go(21);let lastResolved='',switchDuringLnur
 const CFG={relay_url:'wss://relay.example'},lnurlResolve=async address=>{lastResolved=address;if(switchDuringLnurl)ME={pubkey:other};return {callback:'https://invoice.test/pay',allowsNostr:true};},corsJson=async()=>{if(switchDuringInvoice)ME={pubkey:other};return {pr:'fixture-invoice'};};
 const Nwc={configured:()=>true,payInvoice:async()=>{lastTip={address:lastResolved};}};
 const bchPresets=()=>[0.001],qrImg=()=>'',_tipTellOnDismiss=()=>({});
+/* The chooser teaches the card which rails this author advertises, so the ɱ / 🟢 marks agree with
+   the sheet that just resolved them. Neither side of that is what this file measures. */
+let railsLearned=null;const _learnRails=(pk,types)=>{railsLearned={pk,types:[...types]};return true;};
+const decorateProfiles=()=>{};
 function modal(html,bind){document.querySelector('#modal-root').innerHTML='<div class="modal-bg"><div class="modal glass">'+html+'</div></div>';bind&&bind(document.querySelector('.modal'));}
 function closeModal(){document.querySelector('#modal-root').innerHTML='';}
 function editor(){modal('<details id="pf-payment-details" open><summary>Payment targets</summary><div id="pf-payment-editor"></div></details>',root=>{_bindPaymentTargetEditor(root);$('#pf-payment-details').ontoggle();});}

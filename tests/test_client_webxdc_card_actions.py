@@ -64,6 +64,8 @@ const fmtSats = (n) => String(n);
 const countsFor = () => ({ replies:2, reposts:1, reactions:3, zaps:0, tipN:0, iRt:false });
 const myReaction = () => '';
 const isXmrAddr = () => false, xmrForNote = () => '', isBchAddr = () => false, bchOf = () => '';
+// Whether this author advertises a NIP-A3 payment rail — a mark on the tip button, nothing else.
+const _advertises = () => false;
 const profOf = () => ({ name:'Ann', picture:'' });
 const needProfile = () => {};
 const safePk = (pk) => pk.slice(0, 8);
