@@ -14,6 +14,7 @@ import android.util.Log;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -47,6 +48,22 @@ public class DrawerAppsDeviceTest {
         pkg = ctx.getPackageName();
     }
 
+    /* THE OPTIONAL ICONS SHIP DISABLED, so every test that is about what the drawer CONTAINS has to
+     * say which state it means. They appear when the phone shell is opted into — before that,
+     * installing a Nostr client put Texts, Phone, Media Center and Email on somebody's phone, none
+     * of them asked for and none reachable ("posterchan apk is showing all the posterchan apps on
+     * peoples phones without it being the default launcher").
+     *
+     * Component state is DEVICE state and survives the test, so it is always put back. */
+    private void icons(boolean on) {
+        place.poster.app.home.HomeRoles.setAllDrawerIcons(ctx, on);
+    }
+
+    @After
+    public void tearDown() {
+        icons(false);
+    }
+
     private List<ResolveInfo> drawer() {
         Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                 .setPackage(pkg);
@@ -54,7 +71,23 @@ public class DrawerAppsDeviceTest {
     }
 
     @Test
+    public void onlyTheAppItselfIsInTheDrawerUntilTheShellIsEnabled() {
+        icons(false);
+        List<String> names = new ArrayList<String>();
+        for (ResolveInfo r : drawer()) names.add(r.activityInfo.name);
+        assertTrue("PosterChan itself is not in the drawer: " + names,
+                names.contains("place.poster.app.MainActivity"));
+        for (String extra : new String[] {
+                "place.poster.app.sms.Messages", "place.poster.app.phone.Phone",
+                "place.poster.app.shortcut.MediaCenter", "place.poster.app.shortcut.Email" }) {
+            assertTrue(extra + " is in the drawer without anybody opting in: " + names,
+                    !names.contains(extra));
+        }
+    }
+
+    @Test
     public void messagesPhoneAndEmailAreAllInTheDrawer() {
+        icons(true);
         List<String> names = new ArrayList<String>();
         List<String> labels = new ArrayList<String>();
         PackageManager pm = ctx.getPackageManager();
@@ -75,6 +108,7 @@ public class DrawerAppsDeviceTest {
 
     @Test
     public void eachOneLooksLikeItsOwnApp() {
+        icons(true);
         // Three drawer entries all showing the PosterChan mark and the PosterChan name is the same
         // complaint as the letter tiles: the app is there and looks like it is not.
         PackageManager pm = ctx.getPackageManager();

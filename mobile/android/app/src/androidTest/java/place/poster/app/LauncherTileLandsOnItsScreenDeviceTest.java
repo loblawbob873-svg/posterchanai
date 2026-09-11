@@ -58,15 +58,36 @@ public final class LauncherTileLandsOnItsScreenDeviceTest {
         return HomeTiles.nativeTarget(view).isEmpty();                  // Phone / Texts are Activities
     }
 
-    @Test public void everyTileOpensTheScreenItNames() throws Exception {
+    /* SHARDED, BECAUSE THE BUDGET IS 90 SECONDS AND THE WORK IS THIRTY ACTIVITY LAUNCHES.
+     *
+     * This walked the whole catalogue in one method: a real `startActivity` per tile, each followed
+     * by up to twenty WebView round trips waiting for the screen to settle. On a CI emulator with a
+     * software GPU that does not fit in the per-test timeout, so it failed as
+     * `TestTimedOutException` having proved nothing — and it did so on every commit, which makes a
+     * device test that does not exist, only slower.
+     *
+     * The timeout itself is right and stays (see build.gradle: a wedged handoff must be reported as
+     * that test's failure rather than hiding every other device result behind CI's 25-minute kill).
+     * So the work is divided instead. Three shards also localise a failure: a wedge now names a
+     * third of the catalogue rather than all of it. */
+    @Test public void everyTileOpensTheScreenItNames_shard0() throws Exception { tiles(0, 3); }
+    @Test public void everyTileOpensTheScreenItNames_shard1() throws Exception { tiles(1, 3); }
+    @Test public void everyTileOpensTheScreenItNames_shard2() throws Exception { tiles(2, 3); }
+
+    private void tiles(int shard, int shards) throws Exception {
         ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
         try {
             WebView web = ready(scenario);
             List<String> failures = new ArrayList<String>();
-            int covered = 0;
+            int covered = 0, index = -1;
+            long began = SystemClock.uptimeMillis();
+            String lastTile = "(none)";
             for (HomeTiles.Tile tile : HomeTiles.catalogue()) {
                 if (!isAView(tile.view)) continue;
+                index++;
+                if (index % shards != shard) continue;
                 covered++;
+                lastTile = tile.view;
                 // Exactly what HomeActivity.openApp does, in the same order: park BEFORE the start,
                 // because on a fast device the target can resume and read before the next line.
                 LaunchView.request(tile.view, System.currentTimeMillis());
@@ -81,15 +102,26 @@ public final class LauncherTileLandsOnItsScreenDeviceTest {
 
                 String state = settle(web, tile.view);
                 if (!state.startsWith("ok")) failures.add(tile.view + ": " + state);
+
+                /* SAY WHERE THE TIME WENT. A bare TestTimedOutException names no tile, so a real
+                 * wedge and a merely slow runner are the same report — which is why this went
+                 * unexplained for several commits. Give up with a message instead. */
+                long spent = SystemClock.uptimeMillis() - began;
+                if (spent > 60000) {
+                    failures.add("ran out of time after " + covered + " tiles in " + spent
+                                 + "ms (last: " + lastTile + ") — shard " + shard + "/" + shards);
+                    break;
+                }
             }
             // A catalogue that came back empty would make every assertion above vacuous.
-            assertTrue("suspiciously few tiles covered: " + covered, covered >= 30);
+            assertTrue("suspiciously few tiles in shard " + shard + ": " + covered, covered >= 8);
             assertTrue("launcher tiles that did not open their own screen: " + failures,
                        failures.isEmpty());
         } finally {
             scenario.close();
         }
     }
+
 
     /**
      * THE COLD START, for the one tile the report named.

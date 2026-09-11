@@ -82,8 +82,14 @@ public class ViewActivity extends Activity {
     public static String viewOf(android.content.Context ctx, ComponentName who) {
         if (ctx == null || who == null) return "";
         try {
+            /* MATCH_DISABLED_COMPONENTS, because the view IS a manifest fact and does not depend
+             * on whether the icon is currently switched on. The drawer aliases ship disabled and
+             * are enabled with the phone shell, and plain getActivityInfo throws
+             * NameNotFoundException for a disabled component — so this answered "" for Email and a
+             * drawer entry that knew its own view landed on the timeline instead. */
             ActivityInfo ai = ctx.getPackageManager()
-                    .getActivityInfo(who, PackageManager.GET_META_DATA);
+                    .getActivityInfo(who, PackageManager.GET_META_DATA
+                            | PackageManager.MATCH_DISABLED_COMPONENTS);
             if (ai == null || ai.metaData == null) return "";
             String v = ai.metaData.getString(META_VIEW);
             return v == null ? "" : v.trim();

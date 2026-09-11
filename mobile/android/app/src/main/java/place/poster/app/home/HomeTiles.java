@@ -64,6 +64,7 @@ public final class HomeTiles {
         new Tile("global",        "Social",        "globe",    true),
         new Tile("notifications", "Notifications", "bell",     true),
         new Tile("messages",      "Messages",      "speech",   true),
+        new Tile("concord",       "Communities",   "users",    true),
         new Tile("notes",         "Notes",         "note",     true),
         new Tile("blossom",       "Files",         "folder",   true),
         new Tile("music",         "Music",         "music",    true),

@@ -104,3 +104,39 @@ def test_enabled_is_read_from_the_component_not_from_a_stored_flag():
     fn = HOME_ROLES.split("public static boolean drawerIconEnabled(", 1)[1].split("\n    }", 1)[0]
     assert "COMPONENT_ENABLED_STATE_ENABLED" in fn
     assert "getComponentEnabledSetting" in fn, "the answer is inferred rather than measured"
+
+
+def test_the_device_test_knows_the_icons_are_opt_in():
+    """THE GAP THAT LET THIS SHIP BROKEN ONCE.
+
+    `DrawerAppsDeviceTest` asks the real PackageManager what the drawer contains — and it only runs
+    on the emulator in CI, because this machine has no KVM. So disabling the aliases and updating
+    the manifest-parsing tests here left that one asserting the old world, and it failed on a device
+    hours later with `messagesPhoneAndEmailAreAllInTheDrawer`.
+
+    A local test cannot run it, but it CAN check that it knows the rule: if the manifest ships those
+    aliases disabled, the device test has to enable them before asserting they are in the drawer."""
+    disabled = [n for n, en in _launcher_components() if n != THE_APP and en == "false"]
+    if not disabled:
+        return                       # nothing ships disabled; the device test needs no opt-in
+    device = (ROOT / "mobile/android/app/src/androidTest/java/place/poster/app"
+                     "/shortcut/DrawerAppsDeviceTest.java")
+    assert device.is_file(), "the drawer device test is gone — re-point this test"
+    src = device.read_text(encoding="utf-8")
+    assert "setAllDrawerIcons" in src, (
+        "the aliases ship disabled but the device test never enables them, so it asserts a drawer "
+        "that no longer exists and only says so once CI runs the emulator")
+    assert "@After" in src, (
+        "component state is DEVICE state and outlives the test — it must be put back")
+
+
+def test_the_view_metadata_is_readable_while_an_icon_is_off():
+    """`ViewActivity.viewOf` maps a drawer entry to the screen it opens, and its comment calls the
+    view "a manifest fact". A plain getActivityInfo throws NameNotFoundException for a DISABLED
+    component, so it answered "" for Email and the entry would have landed on the timeline."""
+    src = (ROOT / "mobile/android/app/src/main/java/place/poster/app/shortcut/ViewActivity.java"
+           ).read_text(encoding="utf-8")
+    fn = src.split("public static String viewOf(", 1)[1].split("\n    }", 1)[0]
+    assert "MATCH_DISABLED_COMPONENTS" in fn, (
+        "viewOf cannot read the metadata of an icon that is switched off, so the view it names is "
+        "lost exactly while the feature is opt-in")

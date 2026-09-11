@@ -86,9 +86,10 @@ def test_successful_dm_send_runtime_stays_in_open_thread():
 def test_android_launcher_uses_unambiguous_texts_and_messages_names():
     assert 'new Tile(VIEW_TEXTS,      "Texts"' in TILES
     assert 'new Tile("messages",      "Messages"' in TILES
-    # The Android launcher catalogue is a separate surface with its own tests; Communities is not
-    # a tile there yet, and adding one is a change to HomeTiles, not to this file.
-    assert 'new Tile("concord"' not in TILES
+    # THE LAUNCHER CATALOGUE IS A THIRD SURFACE. The sidebar, the phone's ☰ More sheet and the
+    # Android home screen are three separate lists, and a view has to reach all three or it is
+    # missing on exactly one of them — which is how Communities ended up invisible on a phone.
+    assert 'new Tile("concord"' in TILES
 
 
 def test_concord_still_routes_for_invites_and_saved_shortcuts():
