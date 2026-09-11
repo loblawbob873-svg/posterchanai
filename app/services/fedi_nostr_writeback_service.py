@@ -29,7 +29,12 @@ from app.services.nostr import nip17, bridge_keys, nostr_service
 
 logger = logging.getLogger(__name__)
 
-_WRITEBACK_KINDS = [1, 5, 6, 7, 1059]
+# 1111 IS AN ORDINARY REPLY NOW, NOT AN EXOTIC COMMENT. The client publishes every reply to a kind-1
+# as a NIP-22 comment (`replyKindFor` → `_commentScope`), so leaving it out of this list meant the
+# bridge never even SUBSCRIBED to the events people were writing: replies landed on Nostr and reached
+# the fediverse never. Reported as "why are my replies not getting sent over the fediverse bridge"
+# and then "nothing is getting sent today for replies".
+_WRITEBACK_KINDS = [1, 5, 6, 7, 1111, 1059]
 # KNOWN GAP (deliberately not "fixed" with an age cap): a cross-post that keeps FAILING (the instance 422s,
 # say) gets re-queued by every reconnect's _LOOKBACK_SEC replay, so a backlog can build and then federate all
 # at once when the instance recovers — which reads as spam. Bounding it on the note's created_at was the
@@ -176,11 +181,36 @@ def _referenced_event_ids(ev: dict) -> list:
     return [t[1] for t in reversed(etags)]   # last e-tag first
 
 
+def _nip22_parent(ev: dict) -> str | None:
+    """The immediate parent of a NIP-22 comment (kind 1111), or None if this is not one.
+
+    NIP-22 scopes with UPPERCASE tags (E/K/P = the unchanged root) and addresses the immediate
+    parent with LOWERCASE ones (e/k/p). Crucially `t[3]` on a NIP-22 `e` tag is the parent's AUTHOR
+    PUBKEY, not a NIP-10 marker — which is exactly what hid these from the parsers below: the
+    positional fallback takes e-tags with an EMPTY fourth element, and every NIP-22 e-tag has a
+    pubkey there. Measured on 100 real kind-1111 events: `_is_reply` said False and
+    `_reply_parent_id` said None for every single one.
+    """
+    if int(ev.get("kind") or 0) != 1111:
+        return None
+    tags = ev.get("tags", [])
+    for t in tags:                                   # lowercase e = the immediate parent
+        if len(t) >= 2 and t[0] == "e" and t[1]:
+            return t[1]
+    for t in tags:                                   # top-level comment: scoped to the root only
+        if len(t) >= 2 and t[0] == "E" and t[1]:
+            return t[1]
+    return None
+
+
 def _reply_parent_id(ev: dict) -> str | None:
     """The DIRECT reply target only (NIP-10): the 'reply'-marked e-tag; else the 'root' marker when
     that's the parent; else the last positional e-tag. NEVER the thread root when a distinct reply
     target exists — otherwise a reply to a NATIVE nostr user inside a thread whose ROOT happens to be
     bridged would be mis-resolved to that root and wrongly federated (the reported bug)."""
+    nip22 = _nip22_parent(ev)
+    if nip22:
+        return nip22
     etags = [t for t in ev.get("tags", []) if len(t) >= 2 and t[0] == "e" and t[1]]
     if not etags:
         return None
@@ -224,6 +254,12 @@ def _is_reply(ev: dict) -> bool:
     quote/embed references, so a note that only quotes still cross-posts. The earlier marker-only check
     missed unmarked positional replies (e.g. `["e", <id>]`), which is how a reply to a native Nostr user
     slipped through and federated out — this covers both markings."""
+    # A NIP-22 COMMENT IS ALWAYS A REPLY. It answers the thing its lowercase e/E tag names, and it
+    # can never be a standalone post — so it must never be cross-posted as one. The NIP-10 logic
+    # below cannot tell: a NIP-22 e-tag carries the author's pubkey in the marker position, which
+    # the positional branch reads as "marked" and skips.
+    if _nip22_parent(ev):
+        return True
     tags = ev.get("tags", [])
     # The ids a `q` tag quotes — an unmarked e-tag naming one of THOSE is the quote reference, not a
     # reply. This used to be a single has_quote boolean, so ONE q tag disabled reply-detection for
@@ -711,7 +747,9 @@ async def _crosspost(db, user, ev: dict) -> None:
         logger.info("[fedi-writeback] cross-posted note by %s → fediverse", user.username)
     except Exception as e:
         db.rollback()
-        logger.warning("[fedi-writeback] cross-post failed (ev %s): %s", eid, e)
+        # Same as the action path: an empty exception message printed nothing after the colon.
+        logger.warning("[fedi-writeback] cross-post failed (ev %s): %s: %s",
+                       eid, type(e).__name__, e or "(no message)")
 
 
 # A NIP-30 custom-emoji reaction: the content is exactly ":shortcode:" (optionally :name@host: for a
@@ -929,6 +967,18 @@ async def _handle(db, ev: dict, *, private_user=None) -> None:
         if (int(ev.get("kind", 1)) == 1 and (getattr(user, "fedi_crosspost_enabled", False) or private_user is not None)
                 and not _is_reply(ev)):
             await _crosspost(db, user, ev)
+        elif int(ev.get("kind", 1)) == 1 and _is_reply(ev):
+            # SAY WHY A REPLY STAYED ON NOSTR. This was the one outcome that produced no line
+            # anywhere: the reply is correct, the thread is correct, and nothing federates because
+            # the note being answered was never mirrored — so "why are my replies not getting sent
+            # over the fediverse bridge" had no answer in any log, and the only way to tell a
+            # working bridge from a broken one was to query the database by hand.
+            #
+            # DEBUG, not warning: replying to a native Nostr note is the ordinary case and not a
+            # fault. What matters is that the question is answerable at all.
+            logger.debug("[fedi-writeback] reply %s not federated: its parent (%s) is not a "
+                         "bridged fediverse note — nothing to thread under",
+                         eid, (_reply_parent_id(ev) or "none")[:12])
         return
 
     inst, token = user.pleroma_instance_url, user.pleroma_access_token
@@ -952,13 +1002,16 @@ async def _handle(db, ev: dict, *, private_user=None) -> None:
                     FediBridgeAction.nostr_pubkey == pk).first():
                 _seen_events.add(eid)      # done in an earlier life of this process; stop re-querying
                 return
+        posted_id = ""          # our OWN new status, for the log line at the end (kind 1 only)
         if kind == 7:
             action, emoji = await _react(inst, token, target_id, ev)   # emoji reaction if it IS one, else favourite
             _record_action(db, ev, inst, target_id, action, emoji)     # so a later kind-5 can undo it
         elif kind in (6, 16):
             await pleroma_service.reblog_status(inst, token, target_id)      # server-idempotent
             _record_action(db, ev, inst, target_id, "reblog", None)
-        elif kind == 1:
+        elif kind in (1, 1111):
+            # 1111 IS THE ORDINARY REPLY KIND NOW — see _WRITEBACK_KINDS. This read `kind == 1`, so
+            # every NIP-22 reply fell off the end of the chain and federated nothing, silently.
             # Durable idempotency across restart/replay: skip if this reply already federated. Scoped by
             # author so a foreign tombstone can't suppress it.
             if db.query(FediBridgeDelivered).filter(FediBridgeDelivered.nostr_event_id == eid,
@@ -995,6 +1048,7 @@ async def _handle(db, ev: dict, *, private_user=None) -> None:
             # Record so the global mirror won't re-publish the user's own reply as a puppet note.
             # NOTE: if this commit fails the STATUS IS ALREADY LIVE — see the fresh-session retry below.
             if isinstance(status, dict) and status.get("id"):
+                posted_id = str(status["id"])
                 try:
                     db.add(FediBridgeDelivered(
                         platform="pleroma", instance_url=inst, note_id=status["id"],
@@ -1008,10 +1062,21 @@ async def _handle(db, ev: dict, *, private_user=None) -> None:
         _seen_events.add(eid)
         if len(_seen_events) > _SEEN_CAP:
             _seen_events.clear()
-        logger.info("[fedi-writeback] kind-%d by %s → fediverse (%s)", kind, user.username, target_id)
+        # NAME BOTH ENDS. This printed `target_id` alone — the PARENT's status id — which reads
+        # exactly like the id of the thing we just created. Diagnosing a report of "my replies are
+        # not being sent" with it, the parent statuses came back `in_reply_to=None, mentions=[]`
+        # (they are thread roots, of course) and the bridge looked broken when it was not. A log
+        # line that names the wrong object is worse than no log line.
+        logger.info("[fedi-writeback] kind-%d by %s → fediverse (in reply to %s%s)",
+                    kind, user.username, target_id,
+                    (", posted as " + str(posted_id)) if posted_id else "")
     except Exception as e:
         db.rollback()
-        logger.warning("[fedi-writeback] action failed (kind %d, ev %s): %s", kind, eid, e)
+        # NAME THE EXCEPTION TYPE. `%s` of an exception with an empty message prints nothing at
+        # all, and this log has real examples: "action failed (kind 7, ev 181b…):" followed by the
+        # end of the line. A failure that does not say what failed is the same as a silent one.
+        logger.warning("[fedi-writeback] action failed (kind %d, ev %s): %s: %s",
+                       kind, eid, type(e).__name__, e or "(no message)")
 
 
 async def _listen_once() -> None:

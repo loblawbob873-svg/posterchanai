@@ -29919,6 +29919,35 @@
       if(tab==='articles' && !_prof.artLoaded){ _prof.artLoaded=true;
         try{ const a=await Relay.query([{authors:[pk],kinds:[30023],limit:40}]); for(const e of (a||[])) Store.saveEvent(e); }catch(_){}
         if(VIEW==='profile' && _prof.pk===pk && _prof.tab==='articles'){ fillList('articles'); hydrate(feed); } }
+      /* REPLIES GET THEIR OWN FETCH, because nothing else was ever going to find them.
+       *
+       * The profile loads ONE page — `kinds:[1,1068,6], limit:80` — and the Replies tab then
+       * filters it. On an account that mostly posts, those 80 newest events are nearly all
+       * top-level notes and reposts, so the tab showed whatever handful of replies happened to be
+       * in them: reported as "I can only see 5 replies on My Profile". Nothing was lost and nothing
+       * was broken — they were simply never asked for. Articles and streams have had their own
+       * lazy query all along; this is the same idea for the one tab that did not.
+       *
+       * Nostr filters cannot express "has an e tag", so the only way is to page BACK by `until` and
+       * filter here — exactly what the reply-heavy backfill below does for the opposite case. It
+       * stops as soon as it has a screenful, so an account that replies constantly pays for one
+       * page and a note-heavy one pays at most three. */
+      if(tab==='replies' && !_prof.repliesLoaded){ _prof.repliesLoaded=true;
+        const have=()=>Store.query([{authors:[pk],kinds:[1,1111]}]).filter(isReply).length;
+        let oldest=Math.min.apply(null,(Store.feed(e=>e.pubkey===pk).map(e=>e.created_at||0)
+                                        .filter(Boolean).concat([Math.floor(Date.now()/1000)])));
+        for(let page=0; page<3 && have()<_prof.limit; page++){
+          let older=[];
+          try{ older=await Relay.query([{authors:[pk],kinds:[1,1111],until:oldest-1,limit:200}])||[]; }
+          catch(_){ break; }
+          if(!older.length) break;
+          older.forEach(e=>Store.saveEvent(e));
+          const stamps=older.map(e=>e.created_at||0).filter(Boolean);
+          if(!stamps.length) break;
+          oldest=Math.min.apply(null,stamps);
+          if(VIEW!=='profile' || _prof.pk!==pk || _prof.tab!=='replies') return;   // they moved on
+        }
+        if(VIEW==='profile' && _prof.pk===pk && _prof.tab==='replies'){ fillList('replies'); hydrate(feed); } }
       // Streams (kind-30311) live + ended — lazy-fetch once (our relay + the wider stream network).
       if(tab==='streams' && !_prof.streamsLoaded){ _prof.streamsLoaded=true;
         try{ const s=await Relay.query([{authors:[pk],kinds:[30311],limit:60}]); for(const e of (s||[])) Store.saveEvent(e); }catch(_){}

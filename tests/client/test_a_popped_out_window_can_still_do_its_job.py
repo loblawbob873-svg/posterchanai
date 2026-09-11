@@ -33,6 +33,19 @@ def fs_body():
     past it into whatever helper comes next and asserts against the wrong code."""
     i = SYNC.index("const FS = () => {")
     return SYNC[i:SYNC.index("\n  };", i) + len("\n  };")]
+
+
+def fs_deps():
+    """Constants FS() closes over, emitted into the sandbox with it.
+
+    FS walks the opener chain under a bound, and the bound is a `const` OUTSIDE the arrow function.
+    Slicing the arrow alone left it undefined in the sandbox — where `hop < undefined` is false, so
+    the loop never ran, FS returned null for EVERY shape, and the failure looked like a product bug
+    rather than a missing dependency. A fixture must carry what the code it runs depends on, or it
+    reports on something that does not exist."""
+    m = re.search(r"const (FS_OPENER_HOPS)\s*=\s*(\d+);", SYNC)
+    assert m, "FS's opener bound moved — re-point this fixture"
+    return f"const {m.group(1)} = {m.group(2)};"
 OSWIN = (ROOT / "static/js/client/oswin.js").read_text(encoding="utf-8")
 OS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
 PRELOAD = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
@@ -56,14 +69,21 @@ def test_it_borrows_the_primary_bridge_rather_than_making_its_own():
     """ONE writer per device is the rule that gate exists for, and it still holds: the child uses
     the OPENER's bridge, so the pick, the grant and the sweep all belong to the primary surface."""
     block = fs_body()
-    assert "owner.pcFs" in block
-    assert "owner.pcShell && owner.pcShell.backgroundOwner === false" in block, (
-        "the child would borrow from another secondary surface, which is two writers again")
+    # THE RULE, NOT THE VARIABLE. This pinned `owner.pcFs` from the single-hop version. The walk
+    # follows the opener CHAIN now — on a second monitor the chain is window → secondary → primary,
+    # and one hop found a secondary and gave up, disabling the button on every screen but one. What
+    # has to hold is unchanged: the bridge comes from the PRIMARY surface and never from another
+    # secondary, because that would be two writers again.
+    assert ".pcFs" in block, "the child no longer borrows a bridge at all"
+    assert "backgroundOwner === false" in block, (
+        "nothing distinguishes a secondary surface any more, so the child could borrow from another "
+        "one — two writers on one device")
+    assert "opener" in block, "the child no longer looks to its opener for the primary"
 
 
 def test_an_unreachable_opener_still_refuses():
     block = fs_body()
-    assert "owner.closed" in block
+    assert ".closed" in block, "a closed window in the chain is followed as though it were live"
     assert block.rstrip().endswith("};")
     assert "return null;" in block, "with no opener there is nothing safe to hand back"
 
@@ -291,12 +311,14 @@ def test_the_shipped_FS_rule_answers_correctly_for_every_surface():
     and behave completely differently on the machine, and the one that shipped broken — a window
     document with a perfectly good opener — is the one every app on PosterChanOS is in.
 
-    ONE WRITER PER DEVICE still holds: what a child gets is the OPENER'S bridge, so the pick, the
-    grant and the sweep all belong to the primary surface. An opener that is itself a secondary
-    surface is refused, or a chain of windows would elect a writer that is not the primary."""
+    ONE WRITER PER DEVICE still holds: what a child gets is the PRIMARY's bridge, so the pick, the
+    grant and the sweep all belong to the primary surface. The opener CHAIN is followed to find it —
+    on a second monitor the chain is window → secondary → primary — and a chain containing no
+    primary hands back nothing rather than electing a secondary."""
     body = fs_body()
     script = f"""
       const mk = (over) => Object.assign({{ pcFs: null, pcShell: null, opener: null }}, over);
+      {fs_deps()}
       const run = (w) => {{
         const window = w;
         const FS = {body[body.index("() => {"):].rstrip().rstrip(";")};
@@ -314,6 +336,7 @@ def test_the_shipped_FS_rule_answers_correctly_for_every_surface():
         closedOpener: run(secondary(Object.assign(mk({{ pcFs: 'PRIMARY' }}), {{ closed: true }}))),
         openerIsAWindow: run(secondary(secondary(primary))),
         openerThrows: run(thrower),
+        chainWithNoPrimary: run(secondary(secondary(secondary(null)))),
       }}));
     """
     done = subprocess.run([NODE, "-e", script], cwd=ROOT, capture_output=True, text=True, timeout=60)
@@ -327,7 +350,20 @@ def test_the_shipped_FS_rule_answers_correctly_for_every_surface():
         "rendering disabled and clicking silently, in the only place anybody ever sees it")
     assert got["noOpener"] is None
     assert got["closedOpener"] is None, "a dead desktop is not a bridge"
-    assert got["openerIsAWindow"] is None, (
-        "a window borrowed from another WINDOW — the one-writer-per-device rule is what that gate "
-        "exists for and it must not be satisfied by a chain of secondary surfaces")
+    # A CHAIN IS FOLLOWED TO THE PRIMARY, AND THE RULE IS UNCHANGED BY THAT.
+    #
+    # This used to expect None: an opener that was itself a secondary surface was refused outright.
+    # On a multi-monitor PosterChanOS the windows on the second screen are opened from a window that
+    # IS a secondary, so the chain is window → secondary → primary — and refusing at the first hop
+    # disabled "Set up on this device" on every screen but one, silently, which is the same report
+    # this whole file exists for.
+    #
+    # One writer per device still holds, because what comes back is still the PRIMARY's bridge and
+    # never a secondary's: `chainWithNoPrimary` below is the assertion that says so.
+    assert got["openerIsAWindow"] == "PRIMARY", (
+        "a window two hops from the primary could not reach it, so Folder Sync is disabled on every "
+        "screen but one")
+    assert got["chainWithNoPrimary"] is None, (
+        "a chain containing no primary elected a writer anyway — that is two writers on one device, "
+        "which is the rule this gate exists for")
     assert got["openerThrows"] is None, "a cross-origin opener must refuse, not throw"
