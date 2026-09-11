@@ -2381,7 +2381,25 @@
       // Permissions we request up front. Amber prompts per-action so an empty list still works,
       // but iOS signers like Clave PRE-authorize from this list and deny anything not in it
       // ("No permission"). List every op/kind the client signs so the first connect grants them all.
-      const kinds=[0,1,3,4,5,6,7,1059,9734,10000,10002,10003,10050,22242,27235,30078];
+      /* EVERY KIND THIS CLIENT SIGNS — and an omission is a feature that silently cannot be used.
+       *
+       * Our OWN signer enforces this list exactly (`allowed()` asks `g.indexOf('sign_event:'+kind)`),
+       * so a kind missing here is answered "no permission" with no prompt and no way for the person
+       * to grant it. That is what "why is my damn draft not signing!" was: replies became NIP-22
+       * comments (kind 1111 — see replyKindFor) and 1111 was not on this list, so every reply to an
+       * ordinary note was refused by the signer the user had paired.
+       *
+       * KEPT IN STEP BY A TEST, not by memory: tests/client/test_the_signer_is_asked_for_every_kind
+       * _we_sign.py reads the kinds out of this file's own publish()/sign() calls and fails if one
+       * is not here. The list grew from 16 to 35 the first time that ran, which is the measure of
+       * how well "remember to add it" was working.
+       *
+       * The cost is a longer pairing URI and therefore a denser QR (384 → 777 encoded characters).
+       * That is the right trade: a QR that pairs quickly and then refuses half the app is worse than
+       * one that takes a moment longer to scan. */
+      const kinds=[0,1,3,4,5,6,7,1018,1059,1068,1111,1311,1621,2003,9734,10000,10002,10003,10050,
+                   10063,10096,10133,13302,22242,24242,27235,30003,30023,30024,30078,30311,30388,
+                   30617,30618,31923];
       const perms=['get_public_key','nip04_encrypt','nip04_decrypt','nip44_encrypt','nip44_decrypt']
         .concat(kinds.map(k=>'sign_event:'+k)).join(',');
       /* `url` goes in ONLY if it is an http(s) origin, and is omitted otherwise.
@@ -3058,7 +3076,17 @@
         this._stats.set(ev.pubkey, st); }
       let result=null, error=null;
       if(!this._allowed(sess, req.method, req.params||[])){
-        error='not permitted: '+req.method+' was not in what this app asked for';
+        /* NAME THE KIND, AND SAY WHAT FIXES IT.
+         *
+         * This said only "sign_event was not in what this app asked for", which is true and
+         * unusable: it does not say WHICH kind, and it does not say that a pairing's grants are
+         * fixed at pairing time so the only way to widen them is to pair again. Reported as "why is
+         * my damn draft not signing!" — a reply, which became a NIP-22 comment (kind 1111) after
+         * that app had already been paired with a list that could not contain it. */
+        let _k=null;
+        try{ let t=(req.params||[])[0]; if(typeof t==='string') t=JSON.parse(t); _k=t&&t.kind; }catch(_){ }
+        error='not permitted: '+req.method+(_k===null||_k===undefined?'':(' (kind '+_k+')'))
+              +' was not in what this app asked for. Pair it again to grant it.';
       }else{
         try{ result=await this._handle(req.method, req.params||[]); }
         catch(e){ error=String((e&&e.message)||e); }
