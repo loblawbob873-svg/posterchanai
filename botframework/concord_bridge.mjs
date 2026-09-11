@@ -85,11 +85,35 @@ const ops = {
     return { rumorId: made.rumorId, wrap: made.wrap };
   },
 
-  /** The NIP-42 auth event a CORD relay demands for this plane. */
-  planeAuth: async ({ bundle, controlWraps, challenge, relay, nsec }) => {
-    const signer = signerFor(nsec);
-    return R.createPlaneAuth(toCord(bundle), toCord(controlWraps || []),
-                             { challenge, relay }, signer.pubkey, signer.sign);
+  /* THE NIP-42 AUTH EVENT A CORD RELAY DEMANDS FOR THIS PLANE.
+   *
+   * Signed with a PLANE KEY THE MEMBERSHIP HOLDS, never with the bot's own nsec — the relay is
+   * authenticating the room's traffic, not the person carrying it, and a bot key would simply be
+   * refused. The first version of this op passed `{challenge, relay}` where `createPlaneAuth`
+   * wants an author pubkey, handed it the bot's signer, and returned the SIGNER object rather than
+   * an event — a function, which cannot cross a JSON bridge at all. It was never executed by any
+   * test, which is why it survived being wrong in four ways at once.
+   *
+   * The template is rebuilt INSIDE the cord realm before signing: the signer validates it with
+   * `Array.isArray`, and an array built out here is not an array in there. */
+  planeAuth: ({ bundle, controlWraps, challenge, relay, relays }) => {
+    const wraps = toCord(controlWraps || []);
+    const info = R.inspectControl(toCord(bundle), wraps);
+    const allowed = (relays && relays.length ? relays : [relay]).filter(Boolean);
+    // Any group this membership holds will do; the relay cares that the key belongs to the plane.
+    const candidates = [...(info.controlPubkeys || []),
+                        ...(info.channels || []).flatMap((c) => c.streamPubkeys || [])];
+    let refused = null;
+    for (const author of candidates) {
+      try {
+        const signer = R.createPlaneAuth(toCord(bundle), wraps, author, toCord(allowed));
+        return signer.sign(toCord({ kind: 22242, created_at: Math.floor(Date.now() / 1000),
+                                    content: '',
+                                    tags: [['relay', relay], ['challenge', challenge]] }));
+      } catch (e) { refused = e; }
+    }
+    throw new Error('this membership holds no plane key for that relay'
+                    + (refused ? ': ' + refused.message : ''));
   },
 };
 

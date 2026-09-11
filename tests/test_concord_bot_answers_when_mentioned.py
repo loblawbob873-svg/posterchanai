@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -213,6 +214,58 @@ def test_a_cold_start_does_not_answer_the_backlog(room, tmp_path):
                    identity=lambda: (room["botNpub"], room["botPk"], []),
                    generate=lambda t, m: "hi")
     assert cl.process_mentions(state, wire) == 0
+
+
+def test_it_can_authenticate_to_a_relay_that_demands_the_plane(room):
+    """NIP-42 FOR A CORD RELAY, which Armada-hosted rooms require before they will carry traffic.
+
+    This op had never been executed by anything, and it was wrong in four ways at once: it passed
+    `{challenge, relay}` where `createPlaneAuth` wants an author pubkey, handed it the BOT'S signer
+    (a relay authenticating the room does not accept a bot's key), returned the signer OBJECT
+    instead of an event — a function, which cannot cross a JSON bridge — and built the template in
+    the wrong realm, where the signer's own `Array.isArray` check would reject it.
+
+    Found by test_every_bridge_op_is_exercised.py asking "is every door opened?", not by a user.
+    """
+    cl = _listener()
+    import concord as cc
+
+    def query(relays, filters):
+        kinds = set(filters[0].get("kinds") or [])
+        if 33301 in kinds:
+            return room["bundleEvents"]
+        return room["controlWraps"]
+
+    session = cl.open_room(cc.Room(room["invite"], room["botNsec"]), query)
+    relay = session.relays[0]
+    event = session.room.plane_auth("a-challenge-from-the-relay", relay)
+
+    assert event.get("kind") == 22242, f"a NIP-42 auth event is kind 22242, got {event.get('kind')}"
+    assert event.get("content") == ""
+    tags = {t[0]: t[1] for t in event.get("tags") or []}
+    assert tags.get("challenge") == "a-challenge-from-the-relay", tags
+    assert tags.get("relay", "").rstrip("/") == relay.rstrip("/"), tags
+    assert re.fullmatch(r"[0-9a-f]{128}", event.get("sig") or ""), "the event is not signed"
+    assert event.get("pubkey") != room["botPk"], (
+        "it signed with the BOT's key; a CORD relay authenticates the ROOM's plane, and a bot key "
+        "is not one it accepts")
+    assert event["pubkey"] in set(room["controlPubkeys"]) | set(room["streamPubkeys"]), (
+        "the signing key is not one this membership holds: %s" % event.get("pubkey"))
+
+
+def test_a_relay_the_room_does_not_use_is_refused(room):
+    """The signer validates what it is asked to sign. A challenge from somewhere else must not come
+    back signed with this room's key — that is the room vouching for a relay it never joined."""
+    cl = _listener()
+    import concord as cc
+
+    def query(relays, filters):
+        return room["bundleEvents"] if 33301 in set(filters[0].get("kinds") or []) \
+            else room["controlWraps"]
+
+    session = cl.open_room(cc.Room(room["invite"], room["botNsec"]), query)
+    with pytest.raises(Exception):
+        session.room.plane_auth("challenge", "wss://somewhere-else.example")
 
 
 def _read_back(room, wrap):

@@ -151,10 +151,22 @@ class Room:
                                 channelId=channel_id, text=text, nsec=self._nsec,
                                 tags=tags or [], kind=kind)
 
-    def plane_auth(self, challenge: str, relay: str) -> dict:
-        """The NIP-42 event a CORD relay demands before it will take this room's traffic."""
+    def plane_auth(self, challenge: str, relay: str, relays: list | None = None) -> dict:
+        """The NIP-42 event a CORD relay demands before it will take this room's traffic.
+
+        Signed with a PLANE key from the room's own membership — NOT this bot's nsec. The relay is
+        authenticating the room, and a bot's own key is simply not one of the keys it accepts.
+        """
+        if self.bundle is None:
+            raise ConcordError("open() the invite before authenticating to its relays")
+        # THE ALLOWED SET IS THE ROOM'S OWN RELAYS, never the one being asked about. Defaulting it
+        # to `[relay]` makes the signer's check vacuous — it would sign an auth for any relay that
+        # challenged it, which is this room's key vouching for a relay it never joined.
+        allowed = relays or list((self.bundle or {}).get("relays") or [])
+        if not allowed:
+            raise ConcordError("this room names no relays, so there is nothing to authenticate to")
         return self.bridge.call("planeAuth", bundle=self.bundle, controlWraps=self.controls,
-                                challenge=challenge, relay=relay, nsec=self._nsec)
+                                challenge=challenge, relay=relay, relays=allowed)
 
 
 def from_env(env: dict | None = None) -> Room | None:
