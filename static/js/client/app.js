@@ -5768,14 +5768,25 @@
       if(!found.length) return false;
       const have=userRelays().map(normalizeRelay).filter(Boolean);
       const merged=[...new Set([...have, ...found])];
-      /* THE SWITCH IS A SEPARATE CHOICE FROM THE LIST, and turning it on is only ours to do when
-       * there is no configuration to override. Somebody who switched their relays OFF meant it;
-       * re-enabling at every login is this very bug with the sign reversed — us deciding for them.
-       * With a list already saved we still ADD to it, and their relays are there when they ask. */
-      const enabled=!!ClientSettings.get('relaysEnabled'), enable=enabled || !have.length;
-      if(merged.length===have.length && enabled===enable) return false;   // the steady state
+      /* THE SWITCH IS A SEPARATE CHOICE FROM THE LIST, AND THIS FUNCTION NEVER TOUCHES IT.
+       *
+       * It used to turn the switch ON whenever the saved list was empty, reasoning that an empty
+       * list means "no configuration to override". It does not. An empty list is ALSO what you
+       * have immediately after turning your own relays off — `_dropLegacyAutoRelays` literally
+       * writes `relays: []` and `relaysEnabled: false` — so the repair that switched it off was
+       * undone by this function on the very next pass, and the toggle came back on its own.
+       * Reported as "for some reason, use my own relays got enabled again!", twice.
+       *
+       * It also caught anybody who had never configured relays here at all but whose OTHER client
+       * had published a kind-10002, which is most people: finding their NIP-65 is not the same as
+       * being asked to use it INSTEAD of the node's relay list.
+       *
+       * Publishing a relay list is a statement about where to find you. Choosing to talk only to
+       * your own relays is a different statement, and only the person can make it. We still ADD
+       * what we found, so it is sitting there the moment they do. */
+      if(merged.length===have.length) return false;   // the steady state: nothing new to add
       ClientSettings.set('relays', merged);
-      if(enable) ClientSettings.set('relaysEnabled', true);
+      const enable=!!ClientSettings.get('relaysEnabled');
       /* THE SETTINGS PANE CACHES ITS ROWS ONCE PER SESSION (_nostrPrefsLoaded). If it loaded before
        * this answer arrived, those rows are the PRE-seed list — and the next Save writes them back,
        * removing exactly what was just added. Re-point them at the merged list. */

@@ -119,12 +119,25 @@ const ev=(urls,extra={})=>({id:'a1',kind:10002,pubkey:'me',created_at:100,
   assert.equal(c.dialled,0,'and nothing redials a pool that did not change');
 }
 {
-  // No configuration at all: there is nothing to override, so setting them up IS the feature.
+  /* NO CONFIGURATION AT ALL — and the switch STILL stays where it was.
+   *
+   * This used to assert the opposite: "there is nothing to override, so setting them up IS the
+   * feature". Reported twice as "for some reason, use my own relays got enabled again!", and the
+   * reasoning is what was wrong, not the code. An empty saved list is NOT only a first-time user:
+   * it is also exactly what somebody has the instant they switch their own relays off, because
+   * `_dropLegacyAutoRelays` writes `relays: []` and `relaysEnabled: false` together. So the repair
+   * that turned the switch off was undone here on the very next pass, for ever — and everybody
+   * who had never configured relays here but whose OTHER client had published a kind-10002, which
+   * is most people, was opted in without being asked.
+   *
+   * Publishing a relay list says where to find you. Talking ONLY to your own relays is a different
+   * statement and only the person makes it. The list still grows, so it is one tick away. */
   const c=makeCtx({saved:{},nip65:ev(['wss://theirs.example'])});
   assert.equal(await c.seedRelaysFromNip65(),true);
-  same(c._store.relays,['wss://theirs.example']);
-  assert.equal(c._store.relaysEnabled,true,'a first-time user gets their own published relays');
-  assert.equal(c.dialled,1);
+  same(c._store.relays,['wss://theirs.example'],'what we found is still added');
+  assert.notEqual(c._store.relaysEnabled,true,
+    'the seeder switched "use my own relays" on by itself — that is the report');
+  assert.equal(c.dialled,0,'with the switch off the pool reads no user list, so nothing redials');
 }
 
 /* ---- 8. THE LEGACY DROP IS ONE SHOT ------------------------------------------------------- */
