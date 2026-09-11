@@ -120,13 +120,22 @@ class Room:
         self.bundle = opened["bundle"]
         return opened
 
-    def channels(self, control_wraps: list | None = None) -> list:
+    def inspect(self, control_wraps: list | None = None) -> dict:
+        """Everything the bundle can see given these control wraps.
+
+        Called TWICE by a reader, and the first call is the odd one: with no wraps at all the only
+        useful field is `controlPubkeys`, which is what you must query the control stream by. There
+        is no way to know those authors without asking the bundle first, so the seed pass is not a
+        wasted call — it is how the chicken-and-egg is broken, and it is what the web client does.
+        """
         if self.bundle is None:
-            raise ConcordError("open() the invite before asking for channels")
+            raise ConcordError("open() the invite before inspecting it")
         if control_wraps is not None:
             self.controls = control_wraps
-        return self.bridge.call("inspect", bundle=self.bundle,
-                                controlWraps=self.controls)["channels"]
+        return self.bridge.call("inspect", bundle=self.bundle, controlWraps=self.controls)
+
+    def channels(self, control_wraps: list | None = None) -> list:
+        return self.inspect(control_wraps)["channels"]
 
     def read(self, channel_id: str, chat_wraps: list) -> dict:
         if self.bundle is None:

@@ -7855,6 +7855,7 @@
   document.addEventListener('pointercancel',_releaseBarPointer,true);
   window.addEventListener('blur',_releaseBarPointer);
 
+
   function drawBar(){
     _publishShellFront();
     if(!bar || _deferBarDraw()) return;
@@ -7862,8 +7863,11 @@
      * tray for this frame, so discard the old detached instance first instead of accumulating
      * clocks and relay watchers across focus changes. */
     $$('.os-tray',root).filter(x=>x.parentElement!==bar).forEach(x=>x.remove());
-    // Remember whether the search box had the caret BEFORE the rebuild throws the element away.
-    try{ barFocused = barFocused || (document.activeElement && document.activeElement.id === 'os-q-bar'); }catch(_){}
+    // Remember whether the search box had the caret BEFORE the rebuild throws the element away —
+    // or is ABOUT to have it, because this draw is happening inside the very click that would give
+    // it the caret (see the pointerdown note above).
+    try{ barFocused = barFocused
+                   || (document.activeElement && document.activeElement.id === 'os-q-bar'); }catch(_){}
     const t = new Date();
     const clock = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const date = t.toLocaleDateString([], { day: 'numeric', month: 'short' });
@@ -7949,8 +7953,21 @@
          * text has to live outside the DOM or it is wiped mid-sentence. Kept here, restored above,
          * and the caret put back if the box was the thing you were typing in. */
         qb.addEventListener('input', () => { barQuery = qb.value; });
-        if(barFocused){ qb.focus(); try{ qb.setSelectionRange(barQuery.length, barQuery.length); }catch(_){} barFocused = false; }
-        qb.addEventListener('blur', () => { barFocused = false; });
+        if(barFocused){ qb.focus(); try{ qb.setSelectionRange(barQuery.length, barQuery.length); }catch(_){}
+                        barFocused = false; }   // spent: never re-steal the caret at a later draw
+        /* THERE IS DELIBERATELY NO `blur` LISTENER HERE, and that is the fix.
+           It used to be `qb.addEventListener('blur', () => { barFocused = false; })`, which reads
+           as "the reader left the box, so do not put the caret back" — except that setting
+           `bar.innerHTML` DETACHES this input and the browser fires `blur` on the way out, into a
+           listener belonging to the element being thrown away. Measured: `barFocused` is true at
+           drawBar's top and false forty lines later at this wiring, no focus() is ever called, the
+           caret lands on <body>, and the box needs a second click. `isConnected` does not separate
+           the two cases either — the blur arrives while the node is still attached.
+
+           Nothing is lost by dropping it: `barFocused` is a SNAPSHOT, taken at the top of each
+           draw from `document.activeElement` (plus a just-happened pointerdown) and spent here. A
+           reader who has left the box is not the active element at the next draw, so the caret is
+           not taken back — which is the only thing the blur listener was for. */
         qb.addEventListener('keydown', (e) => {
           if(e.key === 'Escape'){ qb.value = ''; barQuery = ''; qb.blur(); return; }
           if(e.key !== 'Enter') return;

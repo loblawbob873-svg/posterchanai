@@ -18,52 +18,22 @@
  *
  * Protocol: one JSON request per line on stdin, one JSON response per line on stdout.
  */
-import fs from 'node:fs';
-import vm from 'node:vm';
+import vm from 'node:vm';          // signerFor builds a Uint8Array INSIDE the nt realm
 import readline from 'node:readline';
-import { webcrypto } from 'node:crypto';
+import { makeRealm, loadInto, into } from './cord_realm.mjs';
 
 const ROOT = new URL('../', import.meta.url);
-
-function realm() {
-  const ctx = vm.createContext({
-    __enc: (s) => Array.from(new TextEncoder().encode(String(s))),
-    __dec: (a) => new TextDecoder().decode(Uint8Array.from(a)),
-    __rand: (n) => Array.from(webcrypto.getRandomValues(new Uint8Array(n))),
-    __uuid: () => webcrypto.randomUUID(),
-    __now: () => Date.now(),
-    __btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
-    __atob: (s) => Buffer.from(s, 'base64').toString('binary'),
-    setTimeout, clearTimeout,
-  });
-  vm.runInContext(`
-    globalThis.TextEncoder = class TextEncoder { encode(s){ return Uint8Array.from(__enc(s)); } };
-    globalThis.TextDecoder = class TextDecoder { decode(b){ return __dec(Array.from(b ?? [])); } };
-    globalThis.crypto = { getRandomValues(a){ a.set(__rand(a.length)); return a; },
-                          randomUUID: () => __uuid() };
-    globalThis.btoa = (s) => __btoa(String(s));
-    globalThis.atob = (s) => __atob(String(s));
-    globalThis.window = globalThis; globalThis.self = globalThis;
-    globalThis.document = { createElement: () => ({}), querySelector: () => null };
-    globalThis.location = { origin: 'https://poster.place' };
-    /* performance.now is a Node global, not an ECMAScript intrinsic, so a bare vm realm has
-       none - and the reader times its decrypt batches with it. Missing, the read op failed with
-       "performance is not defined" while open and say both worked, which reads as the message
-       being unreadable rather than the realm being incomplete.
-       (No backticks in this comment: it is inside a template literal, and one would end it.) */
-    globalThis.performance = { now: () => __now() };
-    globalThis.console = { log(){}, warn(){}, error(){} };   // stdout is the protocol
-  `, ctx);
-  return ctx;
-}
-const load = (ctx, rel) => vm.runInContext(fs.readFileSync(new URL(rel, ROOT), 'utf8'), ctx,
-                                           { filename: rel });
+/* The realm bootstrap lives in cord_realm.mjs so the TEST FIXTURE uses the same one. It had its
+ * own copy, and a fixture carrying the same gap as the code cannot see the gap — it agrees with
+ * the bug. That is exactly how a missing `URL` made every real invite link unopenable while the
+ * end-to-end test stayed green. */
+const realm = makeRealm;
+const load = (ctx, rel) => loadInto(ctx, new URL(rel, ROOT));
 
 const nt = realm();   load(nt, 'static/vendor/nostr/nostr.bundle.js');
 const cord = realm(); load(cord, 'static/js/client/cord-protocol.js');
                       load(cord, 'static/js/client/cord-reader.js');
 const NT = nt.NostrTools, R = cord.PosterCordReader;
-const into = (c) => (v) => vm.runInContext('(' + JSON.stringify(v) + ')', c);
 const toCord = into(cord), toNT = into(nt);
 
 const signerFor = (nsec) => {
@@ -94,7 +64,12 @@ const ops = {
   /** The channels and members this bundle can see, given its control wraps. */
   inspect: ({ bundle, controlWraps }) => {
     const info = R.inspectControl(toCord(bundle), toCord(controlWraps || []));
-    return { channels: info.channels, members: info.members, name: info.name };
+    /* controlPubkeys and relays travel with this answer because the CALLER does the relay I/O and
+       cannot ask for the control stream without them. The client resolves the same chicken-and-egg
+       the same way: inspectControl(bundle, []) is a SEED whose only useful field is controlPubkeys,
+       and the real channels come from a second pass with the wraps those authors published. */
+    return { channels: info.channels, members: info.members, name: info.name,
+             controlPubkeys: info.controlPubkeys || [], relays: info.relays || [] };
   },
 
   /** Decrypt a channel's messages. */

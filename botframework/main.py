@@ -26,6 +26,10 @@ def main():
         "--nostr", action="store_true", help="Listen to Nostr mentions (p-tagged kind-1 notes)"
     )
     parser.add_argument(
+        "--concord", action="store_true",
+        help="Answer when mentioned inside an encrypted Concord community (needs CONCORD_INVITE)"
+    )
+    parser.add_argument(
         "--dvm", action="store_true", help="Nostr NIP-90 Data Vending Machine (fulfil kind-5xxx AI jobs)"
     )
     parser.add_argument(
@@ -230,6 +234,41 @@ def main():
             threads.append(t)
         else:
             run_dvm()
+            return
+
+    # Concord: answer when mentioned inside an encrypted community. Its traffic is CORD gift wraps
+    # on the ROOM's own relays, so unlike every other nostr mode it does not go through the local
+    # relay's outbox — see the note in concordListener.live_wire().
+    if args.concord:
+        import concordListener                          # before the thread — see above
+
+
+        def run_concord():
+            if not _os.getenv("CONCORD_INVITE", "").strip():
+                # A bot enabled for Concord with no room is a misconfiguration an operator can only
+                # find here; saying it once beats a silent thread that never does anything.
+                print("[concord] no CONCORD_INVITE set — paste the room's invite link in "
+                      "Admin → Bots. Not listening.", flush=True)
+                while True:
+                    time.sleep(3600)
+            print("Starting Concord listener...", flush=True)
+            state = {}
+            while True:
+                try:
+                    concordListener.process_mentions(state)
+                except Exception as e:
+                    # A room that cannot be opened (relays down, invite revoked) must not wedge the
+                    # thread: drop the session so the next pass re-joins from the link.
+                    print(f"[ERROR] concord process_mentions failed: {e}", flush=True)
+                    state.pop("session", None)
+                time.sleep(int(_os.getenv("CONCORD_POLL_SECONDS",
+                                          _os.getenv("NOSTR_POLL_SECONDS", "20"))))
+        if threads or has_daemon:
+            t = threading.Thread(target=run_concord, daemon=True)
+            t.start()
+            threads.append(t)
+        else:
+            run_concord()
             return
 
     # Every game referee waits out the relay-subprocess startup race, so the helper is imported

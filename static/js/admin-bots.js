@@ -29,6 +29,7 @@ const BOT_KNOWN_CHECKS = ['auto_narrate', 'unfollow_silent_mode', 'auto_post_ena
 const BOT_FEATURES = {
     bot_ft_welcome: '--welcome', bot_ft_block: '--blockbot',
     bot_ft_report: '--report', bot_ft_hashtag: '--hashtagbot', bot_ft_unfollow: '--unfollowbot',
+    bot_ft_concord: '--concord',
     bot_ft_dvm: '--dvm', bot_ft_chess: '--chess', bot_ft_ttt: '--ttt', bot_ft_hangman: '--hangman', bot_ft_connect4: '--connect4', bot_ft_blackjack: '--blackjack', bot_ft_holdem: '--holdem',
 };
 
@@ -170,6 +171,8 @@ function onBotFormChange() {
     ['dvm', 'chess', 'ttt', 'hangman', 'connect4', 'blackjack', 'holdem', 'stats'].forEach(f => showFeat(f, isNostr));
     // Nostr Stats: show the Preview/Post block only when its feature is ticked (Nostr-only).
     show('bot_grp_stats', isNostr && ck('bot_ft_stats'));
+    // The invite is only meaningful to a nostr bot that was actually asked to join a room.
+    show('bot_grp_concord', isNostr && ck('bot_ft_concord'));
 
     // Per-feature sections appear only when their feature is enabled.
     // block / welcome / report / unfollow all need the Pleroma DB.
@@ -304,6 +307,47 @@ function _readFileDataURL(file) {
 function _showAvatarPreview(url) {
     const pv = _g('bot_avatar_preview');
     if (pv) { pv.src = url; pv.style.display = ''; }
+}
+
+/* Reveal/hide the Concord invite. It is masked for the same reason the nsec is: the `#` fragment
+   is the room's decryption key, so the link in that box grants read access to everything the room
+   has ever said. */
+function toggleBotConcord() {
+    const f = _g('bot_f_concord_invite'), btn = _g('bot_concord_toggle');
+    if (!f) return;
+    const show = f.type === 'password';
+    f.type = show ? 'text' : 'password';
+    if (btn) btn.textContent = show ? '🙈 Hide' : '👁 Reveal';
+}
+
+/* DOES THIS LINK ACTUALLY OPEN THE ROOM? Answering before Save is the whole point: an invite that
+   lost its fragment on the way through a chat app, or one whose bundle this node cannot reach, is
+   indistinguishable from a working one until the bot has been running silently for a day. The
+   server opens it with the SAME bridge the bot uses, and reports the room's name and channels —
+   evidence, not a green tick. */
+async function testBotConcord() {
+    const st = _g('bot_concord_status');
+    const invite = _val('bot_f_concord_invite');
+    if (!invite) { if (st) st.textContent = 'Paste the invite link first.'; return; }
+    if (invite.indexOf('#') < 0) {
+        if (st) st.textContent = '✗ That link has no # part. The text after # is the room key — '
+                              + 'copy the whole link, some chat apps cut it off.';
+        return;
+    }
+    if (st) st.textContent = 'Opening the room…';
+    try {
+        const r = await fetch('/api/admin/bots/concord-test', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ invite }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || r.statusText);
+        const chans = (d.channels || []).map(c => '#' + c.name).join(' ');
+        if (st) st.textContent = '✓ ' + (d.name || 'room') + ' — ' + (d.channels || []).length
+                               + ' channel(s): ' + chans;
+    } catch (e) {
+        if (st) st.textContent = '✗ ' + (e.message || e);
+    }
 }
 
 // Reveal/hide the bot's nsec (it's loaded into the masked field on Edit) so the operator can read it.

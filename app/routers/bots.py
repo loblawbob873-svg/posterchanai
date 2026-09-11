@@ -6,6 +6,7 @@ edit rows and nudge the manager to reconcile. Admin-gated like app/routers/admin
 """
 
 import os
+import asyncio
 import json
 import logging
 from typing import List, Optional, Dict, Any
@@ -237,6 +238,67 @@ class AvatarPayload(BaseModel):
     bot_id: Optional[int] = None     # existing bot → sign with its stored nsec
     nsec: Optional[str] = ""         # new bot being created → the just-minted nsec
     picture_data: str = ""           # data: URL / base64
+
+
+class ConcordTestPayload(BaseModel):
+    invite: str = ""
+
+
+@router.post("/concord-test")
+async def concord_test_join(payload: ConcordTestPayload,
+                            admin: User = Depends(get_admin_user)):
+    """DOES THIS INVITE ACTUALLY OPEN THE ROOM? Asked BEFORE Save, with the bot's own bridge.
+
+    An invite that lost its `#` fragment on the way through a chat app, or one whose bundle this
+    node cannot reach, is indistinguishable from a working one until the bot has been sitting
+    silently in nothing for a day. So this opens it for real and reports the room's NAME and
+    CHANNELS — evidence an operator can recognise, not a green tick.
+
+    The room's own bootstrap relays are queried, not this node's: a Concord bundle lives where its
+    invite says it lives. Nothing is stored and nothing is published; this is a read.
+    """
+    invite = (payload.invite or "").strip()
+    if "#" not in invite:
+        raise HTTPException(status_code=400,
+                            detail="That link has no # part. The text after # is the room key — "
+                                   "copy the whole link; some chat apps cut it off.")
+    try:
+        import sys as _sys
+        bots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "botframework")
+        if bots_dir not in _sys.path:
+            _sys.path.insert(0, bots_dir)
+        import concord as _cc
+        import concordListener as _cl
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Concord bridge unavailable: {e}")
+
+    def query(relays, filters):
+        try:
+            return asyncio.run(nostr_service.relay.query(relays, filters)) or []
+        except Exception:
+            return []
+
+    # The nsec is irrelevant to a read — opening a bundle needs the link's secret, not an identity —
+    # so this deliberately does NOT ask for the bot's key to answer "is this link good".
+    room = _cc.Room(invite, "0" * 64)
+    try:
+        session = await asyncio.to_thread(_cl.open_room, room, query)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        try:
+            room.bridge.close()
+        except Exception:
+            pass
+    info = {"name": "", "channels": []}
+    try:
+        info["channels"] = [{"name": c.get("name", ""), "private": bool(c.get("private"))}
+                            for c in session.channels]
+    except Exception:
+        pass
+    return {"name": info["name"] or "community", "channels": info["channels"],
+            "relays": session.relays}
 
 
 @router.post("/upload-avatar")

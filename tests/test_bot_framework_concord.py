@@ -79,7 +79,11 @@ def test_a_bot_without_a_room_is_the_ordinary_case():
 def test_the_bridge_keeps_stdout_for_the_protocol():
     """stdout IS the wire here. The CORD bundles log warnings ("Concord room refresh failed…"), and
     one of those in the stream would be parsed as a reply."""
-    assert "globalThis.console = { log(){}, warn(){}, error(){} }" in BRIDGE
+    # The realm bootstrap lives in cord_realm.mjs — one definition, shared with the test fixture,
+    # because a fixture with its own copy agrees with whatever gap the bridge has (that is how a
+    # missing `URL` made every real invite link unopenable while the end-to-end test stayed green).
+    realm = (ROOT / "botframework/cord_realm.mjs").read_text(encoding="utf-8")
+    assert "globalThis.console = { log(){}, warn(){}, error(){} }" in realm
     assert '"NO_COLOR": "1"' in (ROOT / "botframework/concord.py").read_text(encoding="utf-8"), (
         "node colourises console output when FORCE_COLOR is set, and this protocol is line-based")
 
@@ -87,8 +91,10 @@ def test_the_bridge_keeps_stdout_for_the_protocol():
 def test_the_bridge_never_opens_a_socket():
     """Relays, retries and rate limits belong in one place. A bridge that dialled relays itself
     would be a second network policy for the bots to disagree with."""
+    realm = (ROOT / "botframework/cord_realm.mjs").read_text(encoding="utf-8")
     for banned in ("WebSocket", "net.connect", "fetch(", "http.request"):
         assert banned not in BRIDGE, f"the Concord bridge reaches the network itself ({banned})"
+        assert banned not in realm, f"the CORD realm reaches the network itself ({banned})"
 
 
 # ───────────────────────────────── RUN it against a real room ────────────────────────────────────
