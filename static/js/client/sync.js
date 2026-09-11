@@ -53,12 +53,31 @@
    *
    * With no reachable opener there is still nothing safe to hand back, and the screen says so
    * rather than offering a control that cannot work. */
+  /* WALK THE CHAIN, because a second monitor is two hops from the primary, not one.
+   *
+   * This checked ONE level: the opener had to be the primary itself. On a multi-monitor
+   * PosterChanOS the windows on the second screen are opened from a window that is ITSELF a
+   * secondary surface, so the chain is window → secondary → primary, the single check found a
+   * secondary at the first hop, returned null, and Folder Sync rendered its setup button disabled —
+   * on every screen but one, silently, because a disabled button explains nothing.
+   *
+   * The rule is unchanged and is the whole point: ONE writer per device, and that writer is the
+   * PRIMARY surface, which is the one that sweeps. This only widens how far it will look for it.
+   * Bounded, because `opener` can cycle (a window that opened its own opener) and an unbounded walk
+   * would hang the screen it is trying to draw. */
+  const FS_OPENER_HOPS = 8;
   const FS = () => {
     if(!(window.pcShell && window.pcShell.backgroundOwner === false)) return window.pcFs || null;
     try{
-      const owner = window.opener;
-      if(owner && !owner.closed && owner.pcFs &&
-         !(owner.pcShell && owner.pcShell.backgroundOwner === false)) return owner.pcFs;
+      let w = window.opener;
+      for(let hop = 0; w && hop < FS_OPENER_HOPS; hop++){
+        if(w.closed) return null;
+        const secondary = !!(w.pcShell && w.pcShell.backgroundOwner === false);
+        if(!secondary) return w.pcFs || null;   // the primary: its bridge or nothing, never a guess
+        const next = w.opener;
+        if(!next || next === w) break;          // no further up, or a self-referencing opener
+        w = next;
+      }
     }catch(_){ /* cross-origin or gone */ }
     return null;
   };
