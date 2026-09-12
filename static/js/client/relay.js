@@ -45,7 +45,15 @@
     u = String(u || '').trim();
     /* `/relay` is PosterChan's standard managed endpoint. Do not broadly strip slashes: an
        external relay may intentionally distinguish `/nostr` from `/nostr/`. */
-    return /^wss?:\/\/[^/?#]+\/relay\/$/i.test(u) ? u.slice(0, -1) : u;
+    if(/^wss?:\/\/[^/?#]+\/relay\/$/i.test(u)) return u.slice(0, -1);
+    /* A BARE HOST WITH A TRAILING SLASH IS THE SAME RELAY, and keeping both spellings opened TWO
+       SOCKETS TO IT. Reported as a relay list showing `relay.poster.place` twice: the pool dedupes
+       with a string Set, and `wss://relay.poster.place/` is not the string `wss://relay.poster.place`.
+       Both then get a Conn, both authenticate, both carry the same firehose.
+       This is NOT the broad slash-stripping the note above refuses. There is no path here to
+       distinguish: RFC 3986 makes an empty path and "/" equivalent for the origin, so the two can
+       only ever be one relay. Anything with a real path is left exactly as written. */
+    return /^wss?:\/\/[^/?#]+\/$/i.test(u) ? u.slice(0, -1) : u;
   }
   /* Deployment-denied relay hosts. These two consistently refuse/time out and have appeared through
      legacy saved rooms, user relay migrations and external reads. Check at every constructor path so

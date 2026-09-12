@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import unittest
+from tests.overlay_paths import shell_ebuild
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SH = os.path.join(ROOT, "os", "gentoo.sh")
@@ -563,8 +564,7 @@ class PosterChanOSProfile(unittest.TestCase):
         self.assertIn("emerge --sync", arm)
 
     def test_os_update_migrates_existing_repo_configuration(self):
-        package = os.path.join(ROOT, "os", "overlay", "app-misc",
-                               "posterchanos-shell", "posterchanos-shell-1.0.0.ebuild")
+        package = str(shell_ebuild())
         with open(package, encoding="utf-8") as source:
             postinst = source.read().split("pkg_postinst()", 1)[1]
         self.assertIn("sync-type = webrsync", postinst)

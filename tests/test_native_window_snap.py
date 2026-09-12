@@ -4,6 +4,7 @@ import runpy
 from pathlib import Path
 
 from tests.wayfire_config import CONFIG, bindings, sections
+from tests.overlay_paths import shell_ebuild
 
 ROOT = Path(__file__).resolve().parents[1]
 SNAP = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-window-snap"
@@ -206,7 +207,7 @@ def test_the_snap_helper_is_installed_by_the_package():
     There are no per-account compositor configs any more: one package-owned /etc/wayfire.ini carries
     them, so an upgrade cannot leave an account behind.
     """
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    ebuild = shell_ebuild().read_text()
     assert " pc-window-snap " in ebuild
     assert 'doins "${FILESDIR}/wayfire.ini"' in ebuild
 
@@ -234,7 +235,7 @@ def test_native_titlebars_use_the_posterchan_palette():
     """Sway had five colours per state; Wayfire's decoration plugin has two. The one that matters is
     the focused titlebar, which is what somebody sees next to PosterChan's own chrome."""
     decoration = sections()["decoration"]
-    assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("bg2"))
+    assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("neon"))
     assert decoration["inactive_color"].lower().lstrip("\\").startswith(_client_token("bg"))
 
 
@@ -267,7 +268,7 @@ def test_dragging_a_titlebar_to_an_output_edge_snaps_without_stealing_app_clicks
     assert int(move["snap_threshold"]) > 0
     assert int(move["quarter_snap_threshold"]) > 0, "corner drags no longer make quarters"
     assert "BTN_LEFT" in move["activate"], "there is no drag gesture to snap with"
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    ebuild = shell_ebuild().read_text()
     # pc-window-close sits between them in the install loop; match each helper on its own so
     # adding a third never reads as one going missing.
     for helper in ("pc-window-snap", "pc-key"):
@@ -315,7 +316,7 @@ def test_compositor_snap_api_supports_all_four_corner_zones():
 def test_the_native_chrome_is_package_owned_rather_than_migrated():
     """Same reason as above: the palette lives in the shipped config, not in a copy per account."""
     decoration = sections()["decoration"]
-    assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("bg2"))
+    assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("neon"))
     assert int(decoration["border_size"]) == 3
 
 
@@ -383,7 +384,7 @@ def test_there_is_only_one_copy_of_the_native_palette():
         "palette in wayfire.ini and they will drift")
     assert "client.focused" not in wayfire_backend
     # And the one remaining copy is the shipped config.
-    assert sections()["decoration"]["active_color"].lower().lstrip("\\").startswith(_client_token("bg2"))
+    assert sections()["decoration"]["active_color"].lower().lstrip("\\").startswith(_client_token("neon"))
 
 
 

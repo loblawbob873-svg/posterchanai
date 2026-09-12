@@ -18,12 +18,13 @@ daemon.
 from pathlib import Path
 
 from tests.wayfire_config import sections
+from tests.overlay_paths import shell_ebuild
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SHELL = ROOT / "os/overlay/app-misc/posterchanos-shell"
 GENTOO = (ROOT / "os/gentoo.sh").read_text()
-EBUILD = (SHELL / "posterchanos-shell-1.0.0.ebuild").read_text()
+EBUILD = shell_ebuild().read_text()
 PACKAGES = GENTOO.split("POSTERCHANOS_PACKAGES=", 1)[1].split('"', 2)[1]
 
 

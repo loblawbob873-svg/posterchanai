@@ -17,12 +17,13 @@ import stat
 import subprocess
 import unittest
 from pathlib import Path
+from tests.overlay_paths import shell_ebuild
 
 ROOT = Path(__file__).resolve().parents[1]
 CMD = ROOT / "os" / "bin" / "update-posterchan"
 PACKAGED_CMD = ROOT / "os/overlay/app-misc/posterchanos-shell/files/update-posterchan"
 GENTOO = ROOT / "os" / "gentoo.sh"
-EBUILD = ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild"
+EBUILD = shell_ebuild()
 
 
 class TheCommandExists(unittest.TestCase):

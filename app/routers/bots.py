@@ -8,6 +8,7 @@ edit rows and nudge the manager to reconcile. Admin-gated like app/routers/admin
 import os
 import asyncio
 import json
+import re
 import logging
 from typing import List, Optional, Dict, Any
 
@@ -341,6 +342,65 @@ async def upload_bot_avatar(payload: AvatarPayload, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail=f"upload failed: {e}")
 
 
+def _concord_default(modes: str, config: dict) -> str:
+    """A bot CREATED with a room invite gets the listener, unless its modes already decided.
+
+    "i don't see bot in room despite what the UI says" was a stored invite with `modes='--nostr'`:
+    a community held and never opened, with every surface reporting success. The obvious fix —
+    deriving `--concord` whenever an invite is present, at every spawn — produced the opposite
+    report, "In bots, concord can never be unchecked, wtf is this", because a decision re-derived
+    on every start cannot be turned off by anybody.
+
+    So it is a DEFAULT AT CREATION, applied once, to the row. The admin UI does the same thing
+    visibly (pasting an invite ticks the box); this is here for the callers that never see a form —
+    the REST API and the first-start migration seed. An UPDATE deliberately does not call it: by
+    then the operator has a form in front of them and their untick has to stick.
+    """
+    listed = [m for m in (modes or "").replace(",", " ").split() if m]
+    if "--concord" in listed:
+        return modes
+    invite = str((config or {}).get("concord_invite") or "").strip()
+    if not invite:
+        return modes
+    listed.append("--concord")
+    return ",".join(listed)
+
+
+def _vet_config(config: dict) -> dict:
+    """Refuse a bot config that stores the wrong KIND of secret in a field.
+
+    A real bot was created with its `nsec1…` private key in `concord_invite` — byte-identical to
+    `nostr_nsec`, in BOTH fields. Nothing complained, so the bot had no invite at all and never
+    joined the room ("i created a new bot with existing nsec and it never joined the concord room").
+
+    The silent join failure is the visible half. The half that matters more is that a PRIVATE KEY
+    was sitting in a field the code treats as an invite: it is handed to the CORD parser, written
+    into the environment as `CONCORD_INVITE`, and shown in the form as a room link. A credential
+    must not travel a path built for a different credential, whether it got there by a mis-paste or
+    by a password manager filling two boxes that look alike.
+
+    Server-side because it must hold for the API and the migration seed too, not only the form.
+    """
+    cfg = dict(config or {})
+    inv = str(cfg.get("concord_invite") or "").strip()
+    if inv:
+        if inv.startswith(("nsec1", "ncryptsec1")):
+            raise HTTPException(status_code=400, detail=(
+                "That is a private key, not a Concord invite. Paste the room's invite LINK "
+                "(https://…/invite/naddr1…#…) — the part after # is the room secret and must be "
+                "included. Your key belongs in the Nostr nsec field."))
+        if not re.match(r"^(https?://|naddr1|cord:)", inv, re.I):
+            raise HTTPException(status_code=400, detail=(
+                "That does not look like a Concord invite. Paste the room's invite link, "
+                "fragment included."))
+        if "#" not in inv:
+            raise HTTPException(status_code=400, detail=(
+                "This invite has no # fragment. That part IS the room's decryption secret — "
+                "without it the bot can open the link and never read the room. Copy the whole "
+                "link, including everything after the #."))
+    return cfg
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_bot(payload: BotPayload, db: Session = Depends(get_db),
                admin: User = Depends(get_admin_user)):
@@ -350,8 +410,8 @@ def create_bot(payload: BotPayload, db: Session = Depends(get_db),
         bot_type=payload.bot_type,
         platform=payload.platform,
         host=(payload.host or "").strip(),
-        modes=(payload.modes or "").strip(),
-        config=json.dumps(payload.config or {}),
+        modes=_concord_default((payload.modes or "").strip(), payload.config),
+        config=json.dumps(_vet_config(payload.config)),
     )
     db.add(bot)
     try:
@@ -395,7 +455,8 @@ def update_bot(bot_id: int, payload: BotUpdate, db: Session = Depends(get_db),
     if payload.modes is not None:
         bot.modes = payload.modes.strip()
     if payload.config is not None:
-        bot.config = json.dumps(payload.config)
+        # Both halves, or editing an existing bot walks straight past the check.
+        bot.config = json.dumps(_vet_config(payload.config))
     try:
         db.commit()
     except IntegrityError:

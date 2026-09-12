@@ -116,6 +116,28 @@ def _run_main(tmp_path, extra, monkeypatch):
         return 0
 
     monkeypatch.setattr(MOD, "install", fake_install)
+    # `main()` refuses to start without qemu on the host, and returns 2 — "could not run" — long
+    # before it reaches `install()`. This test is about ARGUMENT PLUMBING (does `--usb` arrive at
+    # install?), which needs no qemu at all, so on a host without it the test was failing `2 == 0`
+    # about a flag it had not looked at. Skipping the whole test instead would have retired the
+    # coverage on every machine that does not build ISOs, which is most of them — including this
+    # one. Satisfy the precondition it does not depend on, and keep measuring the thing it does.
+    _real_which = MOD.shutil.which
+    monkeypatch.setattr(MOD.shutil, "which",
+                        lambda tool: "/usr/bin/" + tool if tool.startswith("qemu-")
+                        else _real_which(tool))
+    # ...and `main()` then creates the disk with a real `qemu-img`. Record the call rather than
+    # swallowing it: a `main()` that stopped making a disk at all would otherwise pass this test.
+    made = []
+    _real_run = MOD.subprocess.run
+
+    def fake_run(cmd, *a, **kw):
+        if cmd and cmd[0] == "qemu-img":
+            made.append(cmd)
+            return __import__("subprocess").CompletedProcess(cmd, 0)
+        return _real_run(cmd, *a, **kw)
+
+    monkeypatch.setattr(MOD.subprocess, "run", fake_run)
     iso = tmp_path / "fake.iso"
     iso.write_bytes(b"not really an iso")
     monkeypatch.setattr(sys, "argv", ["check_livecd_install_vm.py", str(iso),
@@ -123,6 +145,8 @@ def _run_main(tmp_path, extra, monkeypatch):
                                       "--size", "64M",
                                       "--evidence-dir", str(tmp_path / "ev")] + extra)
     assert MOD.main() == 0
+    assert made and made[0][:2] == ["qemu-img", "create"], (
+        "main() no longer creates the guest disk — this gate would boot against nothing")
     return seen
 
 

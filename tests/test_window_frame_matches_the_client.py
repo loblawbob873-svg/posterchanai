@@ -36,7 +36,7 @@ def _frame(option):
 
 class TestTheFrameUsesThePalette(unittest.TestCase):
     def test_the_focused_frame_is_the_raised_surface(self):
-        self.assertEqual(_frame("active_color"), _token("bg2") + "ff",
+        self.assertEqual(_frame("active_color"), _token("neon") + "ff",
                          "the focused window frame is not the client's raised-surface colour")
 
     def test_the_unfocused_frame_is_the_page(self):

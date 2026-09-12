@@ -7,6 +7,7 @@ import subprocess
 import tarfile
 
 import pytest
+from tests.overlay_paths import shell_ebuild, wayfire_ebuild, wayfire_version
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / 'os/overlay/gui-wm/wayfire'
@@ -21,19 +22,24 @@ INPUT_SHA512 = {
 
 
 def test_stable_revision_preserves_complete_upstream_ebuild():
-    text = (PACKAGE / 'wayfire-0.10.1-r1.ebuild').read_text()
+    text = wayfire_ebuild().read_text()
     addition = '\t"${FILESDIR}"/${PN}-0.10.1-preserve-keyboard.patch\n'
     assert text.count(addition) == 1
     original = text.replace(addition, '')
     assert hashlib.sha512(original.encode()).hexdigest() == '1aa29c17014043e9a19f9ef7fe1507664d139dae4b3bdd06e5269afebc9ab858683c2488e5ad722b8767235314ac56006f69e7a70b6f8977f5764c8162ec5c86'
     assert 'gui-wm' in (ROOT / 'os/overlay/profiles/categories').read_text().splitlines()
-    assert sorted(p.name for p in PACKAGE.glob('*.ebuild')) == ['wayfire-0.10.1-r1.ebuild']
+    # One ebuild, at whatever revision ships today. Pinning the NAME here is what made a
+    # revbump a multi-file edit, and a revbump nobody makes is a patch nobody receives.
+    assert len(sorted(PACKAGE.glob('*.ebuild'))) == 1
 
 
 def test_shell_update_requires_the_fixed_keyboard_package():
-    shell = (ROOT / 'os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild').read_text()
+    shell = shell_ebuild().read_text()
     dependencies = shell.split('RDEPEND="', 1)[1].split('"', 1)[0].split()
-    assert '>=gui-wm/wayfire-0.10.1-r1' in dependencies
+    # The dependency must name the revision that actually carries the patch. It said -r1
+    # while the keyboard fix was revised into -r1's FILESDIR 14 minutes after -r1 was cut,
+    # so every machine satisfied the dependency with a build that predates the fix.
+    assert f'>=gui-wm/wayfire-{wayfire_version()}' in dependencies, dependencies
     assert 'gui-wm/wayfire' not in dependencies
 
 

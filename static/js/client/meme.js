@@ -2946,6 +2946,38 @@
     const name=/\.\w{2,4}$/.test(base) ? base : base+'.'+ext;
     return await addMediaFiles([new File([blob], name, { type })]);
   }
+  /* PASTE IS BOUND TO THE DOCUMENT, NOT TO THE BUILDER NODE, and the node lives in a module slot
+     the rebuild refreshes.  `bindDrop`/`bindPaste` run on every repaint, and a listener attached to
+     the element they were handed stops firing the moment that element is replaced — which is exactly
+     how Concord's attach button and then its paste both shipped dead while looking bound.  One
+     document listener, refreshed by reference, cannot go stale. */
+  let _mbPasteRoot=null, _mbPasteBound=false;
+  function bindPaste(root){
+    _mbPasteRoot=root;
+    if(_mbPasteBound) return; _mbPasteBound=true;
+    document.addEventListener('paste', async e=>{
+      const host=_mbPasteRoot; if(!host || host.isConnected===false) return;
+      // A paste aimed at a text field belongs to that field — a caption being typed must not become
+      // a new layer.  Same rule the Concord composer uses.
+      const el=document.activeElement, tag=el&&el.tagName;
+      if(tag==='INPUT'||tag==='TEXTAREA'||(el&&el.isContentEditable)) return;
+      const dt=e.clipboardData; if(!dt) return;
+      // `files` is empty in Chromium for an image copied out of another page — it arrives as an ITEM.
+      // Read both, or the paste works from a file manager and silently does nothing from a browser.
+      let files=Array.from(dt.files||[]);
+      if(!files.length) files=Array.from(dt.items||[])
+        .filter(i=>i.kind==='file').map(i=>i.getAsFile&&i.getAsFile()).filter(Boolean);
+      files=files.filter(f=>/^(image|video|audio)\//.test(f.type||''));
+      const text=!files.length && dt.getData ? String(dt.getData('text/uri-list')||dt.getData('text/plain')||'').trim() : '';
+      const url=/^https?:\/\/\S+$/.test(text) ? text : '';
+      if(!files.length && !url) return;   // plain text pasted with nothing focused is not ours
+      e.preventDefault();
+      let n=0;
+      try{ n = files.length ? await addMediaFiles(files) : await addMediaUrl(url); }
+      catch(err){ toast('could not add that: '+(err&&err.message||err)); return; }
+      if(n) toast(n===1 ? 'added as a new layer' : n+' layers added');
+    });
+  }
   function bindDrop(root){
     const wrap=root.querySelector('.mb-wrap'); if(!wrap) return;
     // Only light up for a drag that actually carries media — dragging a text selection over the builder
@@ -3923,7 +3955,7 @@
     _sndEls  = Array.from(feed.querySelectorAll('#mb-audios audio[data-snd]'));
     if(_prevT){ const s=feed.querySelector('#mb-scrub'); if(s) s.value=_prevT.toFixed(2); setTimeout(()=>seek(_prevT),0); }
     const root=feed;
-    bindStage(root); bindTimeline(root); bindInspector(root); bindDrop(root);
+    bindStage(root); bindTimeline(root); bindInspector(root); bindDrop(root); bindPaste(root);
     // After the lanes exist (fitZoom measures them) and before the toolbar is wired, so the ⤢/± buttons
     // bound below already show the zoom that was applied. No-op unless something asked to fit.
     _applyFitIfPending();

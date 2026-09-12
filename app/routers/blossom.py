@@ -339,7 +339,20 @@ async def upload_requirements(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/list/{pubkey}")
-async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db)):
+async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db),
+                     since: int | None = None, until: int | None = None,
+                     limit: int | None = None):
+    """BUD-02 listing, with the spec's own `since`/`until` and a non-standard `limit`.
+
+    A FULL listing is unbounded by design, and on this deployment that is 37,400 blobs / 9.7 MB of
+    JSON for one pubkey — measured. The Blossom server answers it in ~1.1s, so nothing server-side
+    looks wrong; the cost lands entirely on the client, which must download and parse the lot before
+    it can draw a single thumbnail. That is what "trying to attach files from Blossom, and circle
+    ....never loading" actually was. `since`/`until` are BUD-02's own filters and `limit` takes the
+    NEWEST n, which is what a picker wants — an attach sheet is not an archive browser.
+
+    Absent all three the response is byte-identical to before, so every existing client, and the
+    protocol, are unaffected."""
     if not blossom_service.is_enabled(db):
         return _err(404, "Blossom server disabled")
     pk_hex = nostr_service.to_pubkey_hex(pubkey)
@@ -347,6 +360,18 @@ async def list_blobs(pubkey: str, request: Request, db: Session = Depends(get_db
         return _err(400, "invalid pubkey")
     base = _base_url(request, db)
     blobs = blossom_service.list_for_pubkey(db, pk_hex)
+    # Narrow BEFORE building descriptors: descriptor() does per-blob string work (extension
+    # resolution, URL assembly), so on 37,400 rows it is the expensive half, not the query.
+    if since is not None:
+        blobs = [b for b in blobs if (b.created_at or 0) >= since]
+    if until is not None:
+        blobs = [b for b in blobs if (b.created_at or 0) <= until]
+    if limit is not None and limit >= 0:
+        # Newest first for the cut, then hand back the same order this route has always used, so a
+        # client that sorts by `uploaded` sees no change and one that does not is not reordered.
+        keep = sorted(blobs, key=lambda b: (b.created_at or 0), reverse=True)[:limit]
+        keep_ids = {b.sha256 for b in keep}
+        blobs = [b for b in blobs if b.sha256 in keep_ids]
     names = blossom_service.names_for_pubkey(db, pk_hex)   # one query, not one per blob
     # no-store: this listing changes the moment a user uploads or deletes, and it carried NO cache
     # headers at all — which leaves a browser (or an upstream proxy) free to apply heuristic freshness

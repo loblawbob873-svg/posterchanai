@@ -79,8 +79,54 @@ class TheWriterRuleIsUntouched(unittest.TestCase):
         self.assertIn("FS_OPENER_HOPS", fs)
         self.assertNotIn("FS_PICK", fs)
 
-    def test_fs_pick_is_fs_first_and_only_then_this_document(self):
-        self.assertIn("const FS_PICK = () => FS() || window.pcFs || null;", SYNC)
+    def test_the_two_resolvers_answer_two_different_questions(self):
+        """TWO RESOLVERS, AND COLLAPSING THEM BREAKS THE RULE THE FIRST ONE IS FOR.
+
+        The original half-fix gave the two pick buttons a fallback and left `reconcileTrash`,
+        `restoreTrash`, the sweep, `verifyFolder` and `conflictCleanup` on the strict resolver, so a
+        device picked a folder and immediately said "this device has no filesystem access". The
+        correction to THAT was to delete FS_PICK and put the fallback in `FS()` — which made every
+        surface claiming `backgroundOwner:false` answer with itself, i.e. a second writer on one
+        device, which is the single thing this resolver exists to prevent.
+
+        Neither question is the other. Writing needs the PRIMARY; picking needs A BRIDGE."""
+        self.assertNotIn("const FS_PICK = FS;", SYNC,
+                         "the picker was collapsed into the writer — a fallback in FS() mints a "
+                         "second writer on every secondary surface")
+        pick = _fn(SYNC, "  const FS_PICK = ")
+        self.assertIn("FS()", pick, "the picker must still prefer the primary when there is one")
+        self.assertIn("window.pcFs", pick, "the picker has no fallback, so the button stays dead")
+
+    def test_the_paths_that_write_still_demand_the_primary(self):
+        """The classification is the rule. A read or a button may use the picker; anything that
+        touches the folder must not, or two windows sweep the same tree."""
+        for fn_start in ("  async function syncFolder(",
+                         "  async function conflictCleanup(",
+                         "  async function verifyFolder("):
+            if fn_start not in SYNC:
+                continue
+            body = _code(_fn(SYNC, fn_start))
+            with self.subTest(fn=fn_start.strip()):
+                self.assertNotIn("FS_PICK()", body,
+                                 f"{fn_start.strip()} writes to the folder and must resolve the "
+                                 "PRIMARY surface, not merely a bridge")
+
+    def test_every_filesystem_consumer_goes_through_the_one_resolver(self):
+        """No call site may reach for `window.pcFs` directly and re-invent the rule."""
+        body = _code(SYNC)
+        # `FS_WHY` is the one legitimate reader: it distinguishes "this build has no bridge at all"
+        # from "this window cannot reach one", which is the difference between two messages. It
+        # decides nothing about access.
+        why = _code(_fn(SYNC, "  const FS_WHY = () => {"))
+        direct = [ln.strip() for ln in body.splitlines()
+                  if "window.pcFs" in ln and "const FS" not in ln
+                  and "return window.pcFs" not in ln and ln.strip() not in why]
+        self.assertEqual(direct, [], "a caller bypasses FS(): " + "; ".join(direct[:3]))
+
+    def test_the_fallback_lives_in_FS_itself(self):
+        fs = _code(_fn(SYNC, "const FS = () => {"))
+        self.assertIn("return window.pcFs || null;", fs,
+                      "FS() still answers null on a window with no opener")
 
 
 class TheResolversRun(unittest.TestCase):
@@ -103,12 +149,26 @@ class TheResolversRun(unittest.TestCase):
         self.assertTrue(out["fs"])
         self.assertTrue(out["pick"])
 
-    def test_a_window_with_no_opener_can_still_pick(self):
-        """THE BUG. A main-process window: secondary, no opener, bridge right there."""
-        out = self._run("window.pcShell={backgroundOwner:false};window.pcFs={pick(){}};"
+    def test_a_window_with_no_opener_can_still_pick_but_must_not_claim_to_be_the_writer(self):
+        """THE BUG AND THE OVERCORRECTION, WHICH ARE BOTH IN THIS ONE CASE.
+
+        A main-process window has no `window.opener`, so the walk has nothing to climb. That left
+        the "Set up on this device…" button disabled and every trash path refusing with "this device
+        has no filesystem access" while the folder synced perfectly from another surface.
+
+        The fix for that was to let `FS()` fall back to this document's own bridge — which quietly
+        broke the rule the resolver exists for. A surface declaring `backgroundOwner:false` was then
+        answering with ITSELF, so two windows on one device could both sweep and both publish.
+        `test_folder_sync_finds_the_primary_surface.py` catches it with a chain of secondaries.
+
+        Both are satisfied by keeping the two questions apart: WRITING still demands a primary, and
+        PICKING — a person pressing a button in the window they are looking at, which writes
+        nothing — is happy with any bridge."""
+        out = self._run("window.pcShell={backgroundOwner:false};window.pcFs={pick(){},listTrash(){}};"
                         "window.opener=null;")
-        self.assertFalse(out["fs"], "the sweeper must still refuse a secondary surface")
-        self.assertTrue(out["pick"], "the folder chooser is unreachable — the reported bug")
+        self.assertFalse(out["fs"], "a surface that says it is not the owner must not become a "
+                                    "second writer just because it cannot see the first")
+        self.assertTrue(out["pick"], "picking a folder needs a bridge, not authority")
 
     def test_a_window_whose_opener_is_the_primary_uses_the_primary(self):
         out = self._run("window.pcShell={backgroundOwner:false};window.pcFs={pick(){}};"

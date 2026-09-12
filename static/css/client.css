@@ -2016,7 +2016,12 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 .mc-tile .xdc-cover{aspect-ratio:4/3}.mc-tile[hidden],.mc-folder[hidden],.mc-search[hidden],.mc-playback[hidden]{display:none}
 .mc-tile:focus-within{border-color:var(--neon)}
 .mc-player-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.mc-player-toolbar h3{flex:1;min-width:120px;margin:0;font-size:15px}
+/* The now-playing title is ONE LINE. The toolbar is `flex-wrap:wrap`, so a long name either
+   overflowed its 120px box (no spaces to break on) or wrapped and pushed Full screen / Close
+   player / Quality onto a second row — the controls moving depending on what you played. The whole
+   name is still readable: it is in the `title` attribute. */
+.mc-player-toolbar h3{flex:1;min-width:120px;margin:0;font-size:15px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mc-player-toolbar label{display:flex;gap:8px;align-items:center;font-size:13px;min-width:0;max-width:100%;flex:1 1 240px}
 .mc-player-toolbar .btn,.mc-player-toolbar select{min-height:44px}
 .mc-player-toolbar select{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;flex:1;min-width:0;max-width:100%}
@@ -7988,7 +7993,18 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
     var(--neon), var(--neon2), var(--green), var(--neon2), var(--neon));
   -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-  -webkit-mask-composite:xor;mask-composite:exclude;
+  -webkit-mask-composite:xor;mask-composite:exclude}
+/* THE ROTATION IS OPT-IN, AND THE DEFAULT IS A STILL GRADIENT.
+ *
+ * `animation: … infinite` on a conic-gradient re-rasterises the ring EVERY FRAME, for as long as a
+ * window is focused, for ever. Measured on the laptop after this shipped: the desktop sat at ~125%
+ * CPU across its processes, 72% in one — "my desktop is running like shit". A border is decoration;
+ * it must not cost a core to look at.
+ *
+ * The still gradient keeps everything the border was for: the focused window is unmistakable and it
+ * is the theme's accent. Whoever wants the motion can have it — Desktop effects → Full — and that
+ * is the switch that already means "spend more on looks". */
+.os-root.os-fx-motion .osw.focused:not(.osw-document)::after{
   animation:osw-ring 8s linear infinite}
 /* A turning border is motion. Somebody who asked the system for less of it keeps the ring and
    loses the rotation — the window is still clearly the focused one. */

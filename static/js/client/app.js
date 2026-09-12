@@ -1489,7 +1489,10 @@
    * which of them can be carried to the fediverse. A kind in the first and not the second has
    * nowhere to go, which is why publish() refuses it out loud instead of signing it.
    * `tests/test_fedi_only_mode.py` fails if the two copies drift. */
-  const _FEDI_DELIVERABLE_KINDS = new Set([1,5,6,7,16]);
+  /* Must match fedi_only_service.SUPPORTED_KINDS. 1111 is the ordinary reply kind — every
+     reply to a kind-1 note gets a NIP-22 scope from `_commentScope` — so omitting it here
+     refused EVERY reply in Fediverse-only mode, with a message about a post type. */
+  const _FEDI_DELIVERABLE_KINDS = new Set([1,5,6,7,16,1111]);
   let _fediModeSupported=null;
   function _fediOnlyEvent(ev){ return !!(ev && (ev.tags||[]).some(t=>t[0]==='client-mode' && t[1]==='fedi-only')); }
   function _fediOnly(){ return !!(ME && ClientSettings.get('fediOnly:'+ME.pubkey,false)); }
@@ -10282,7 +10285,7 @@
               const session=await api('/'+lib.id+'/play/'+item.id,'POST');
               if(VIEW!=='media-center'||playGeneration!==_mediaCenterPlayGeneration){await releaseMediaCenterSession(session.url);return;}
               _mediaCenterSession=session.url;
-              $('#mc-playback').hidden=false;$('#mc-playback').scrollIntoView({block:'nearest',behavior:'smooth'});$('#mc-playing').textContent=item.name;
+              $('#mc-playback').hidden=false;$('#mc-playback').scrollIntoView({block:'nearest',behavior:'smooth'});{ const np=$('#mc-playing'); np.textContent=item.name; np.title=item.name; }
               const video=$('#mc-player'),quality=$('#mc-quality');quality.value='auto';
               let lastProgress=0;
               const savePosition=()=>{
@@ -18999,6 +19002,17 @@
   // a private copy silently ships a flat, folderless drive (which is exactly what the meme picker did).
   function blossomPicker(ta, onPick, opts={}){
     const server=mediaServer(); if(!server){ toast('no media server set'); return; }
+    /* STATE LIVES ON THE PICKER, NOT BESIDE IT.
+       `scripts/check_blossom_picker_mobile.py` LIFTS this function out of app.js and runs it against
+       a stub page, so a `const` added at module scope is simply not there — and the way that failed
+       was not a ReferenceError anybody could read. It was thrown inside the listing's own catch,
+       which then threw again on the undefined it was trying to set, so the listing resolved empty
+       and the audit died three steps later on a card that was never drawn
+       (`Cannot read properties of undefined (reading 'getBoundingClientRect')`). Anything this
+       function needs has to be reachable FROM this function. The cache hangs off the function object
+       because it must outlive one open; the failure note is per-open and is an ordinary local. */
+    const BP_LIST_LIMIT=2000, BP_LIST_TTL=5*60*1000;
+    let _bpListFailed='';
     /* A SUB-modal: it opens over the composer's own modal, so it needs to sit above it. Expressed as
      * a class rather than an inline z-index, because an inline value beats every stylesheet rule —
      * including the one that lifts modals above the PosterChan OS desktop, which is why attaching
@@ -19042,13 +19056,34 @@
        * parallel: a relay that stalls while loading the index must not leave "All" as a permanent
        * spinner even though the Blossom server is healthy. Folder metadata can catch up later; the
        * complete root listing is the reliable fallback. */
+      /* THE LISTING IS BOUNDED AND CACHED, AND IT CAN NEVER SPIN FOR EVER.
+         A full BUD-02 listing here is 37,400 blobs / 9.7 MB (measured), refetched with
+         `cache:'no-store'` on EVERY open and awaited with no timeout — so on a busy renderer the
+         picker was a permanent spinner ("trying to attach files from Blossom, and circle ....never
+         loading"). Three changes: ask for the newest slice (the server takes a `limit`), remember
+         the answer for a few minutes so reopening is instant, and give the fetch a deadline so the
+         sheet always resolves into files or a reason, never a circle. */
       const listing=(async()=>{
+        const held=blossomPicker._listCache;
+        if(held && held.pubkey===ME.pubkey && (Date.now()-held.at)<BP_LIST_TTL) return held.rows;
+        const stop=new AbortController();
+        const deadline=setTimeout(()=>stop.abort(),25000);
         try{
-          const r=await fetch(server+'/list/'+ME.pubkey,{cache:'no-store'});
+          const r=await fetch(server+'/list/'+ME.pubkey+'?limit='+BP_LIST_LIMIT,
+                              {cache:'no-store',signal:stop.signal});
           if(!r.ok)return [];
           const body=await r.json();
-          return Array.isArray(body)?body:(Array.isArray(body&&body.blobs)?body.blobs:[]);
-        }catch(_){return [];}
+          const rows=Array.isArray(body)?body:(Array.isArray(body&&body.blobs)?body.blobs:[]);
+          blossomPicker._listCache={pubkey:ME.pubkey,at:Date.now(),rows};
+          return rows;
+        }catch(err){
+          // An aborted or failed listing must SAY so. Returning [] made "your drive is empty" and
+          // "the server never answered" the same screen, and the empty one is a lie.
+          _bpListFailed = (err && err.name==='AbortError')
+            ? 'the file list took too long to load'
+            : 'could not read your files'+(err&&err.message?': '+err.message:'');
+          return [];
+        }finally{ clearTimeout(deadline); }
       })();
       // Folder names live in the encrypted Files index, which is only fetched when you OPEN Files —
       // so without this pull the picker showed a flat drive to anyone who hadn't been there yet.
@@ -19109,7 +19144,12 @@
           const when=Number(b.uploaded||b.created_at)||0;
           return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(_fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small>${when?`<small class="bp-pick-date">${enc(new Date(when*1000).toLocaleDateString())}</small>`:''}</span></button>`;
         }).join('')
-          : `<div class="empty">${cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.')}</div>`;
+          /* "I could not ask" is never "you have nothing" — the same rule the drive check and the
+             admin store scan follow. An empty grid after a failed listing used to read as an empty
+             drive, which is the most alarming possible way to report a timeout. */
+          : `<div class="empty">${_bpListFailed
+              ? enc(_bpListFailed)+' <button type="button" class="mini bp-retry">Retry</button>'
+              : (cur?'Nothing in this folder.':enc(opts.empty||'No files yet — upload some in the Files tab.'))}</div>`;
         _bindThumbFallback(grid);   // same markup as the Files grid, so the same fallback
         grid.querySelectorAll('[data-url]').forEach(el=> el.onclick=()=>{
           const type=el.dataset.type||'';
@@ -28081,7 +28121,7 @@
         <div class="mail-side">
           <select class="input mail-acct" id="mail-acct" title="Account">${this.accounts.length>1?`<option value="__all"${this.acct==='__all'?' selected':''}>📥 All inboxes</option>`:''}${this.accounts.map(a=>`<option value="${enc(a.email)}"${a.email===this.acct?' selected':''}>${enc(a.email)}</option>`).join('')}</select>
           <button class="btn btn-neon mail-compose" id="mail-compose">✏️ Compose</button>
-          <div class="mail-folders">${(this.acct==='__all'?['INBOX','Sent','Drafts']:this.folders).map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('')}</div>
+          <div class="mail-folders"></div>
         </div>
         <div class="mail-list">
           <!-- SELECT-ALL RIDES THE SEARCH ROW. It used to be the only thing in a 40px bar of its own,
@@ -28097,7 +28137,7 @@
         </div>
         <div class="mail-read" id="mail-read"><div class="empty">Select a message to read</div></div>
       </div>`;
-      $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.folder='INBOX'; this.folders=['INBOX','Sent','Drafts']; if(this.sel) this.sel.clear(); this.draw(); this.loadList(); this.sync(); };
+      $('#mail-acct',root).onchange=e=>{ this.acct=e.target.value; this.openUid=null; this.q=''; this.folder='INBOX'; this.folders=['INBOX','Sent','Drafts']; this._allFolders=null; if(this.sel) this.sel.clear(); this.draw(); this.loadList(); this.sync(); };
       $('#mail-compose',root).onclick=()=>this.compose({});
       $$('[data-folder]',root).forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
       /* THE FOLDER STRIP SCROLLS SIDEWAYS ON A PHONE, so the folder you are IN can be off-screen.
@@ -28126,12 +28166,29 @@
       { const sa=$('#mail-selall',root); if(sa) sa.onchange=()=>{ this.sel=this.sel||new Set();
         if(this.sel.size) this.sel.clear(); else this.msgs.forEach(m=>this.sel.add(this._key(m)));
         this.drawList(); }; }
-      this.loadList(); this.loadFolders();
+      this.drawFolders(); this.loadList(); this.loadFolders();
     },
     _folderLabel(f){ if(this.folderLabels && this.folderLabels[f]) return this.folderLabels[f];
       const k={INBOX:'📥 Inbox',Sent:'📤 Sent',Drafts:'📝 Drafts',Trash:'🗑 Trash',Spam:'⚠️ Spam',Junk:'⚠️ Junk',Archive:'🗄 Archive'}; return k[f]||('📁 '+enc(String(f).split(/[./]/).pop()||f)); },
     async loadFolders(){
-      if(this.acct==='__all' || !this.root) return;
+      if(!this.root) return;
+      if(this.acct==='__all'){
+        /* This returned immediately, so the unified view was stuck on the three folders draw()
+           hardcoded — "no way to browse folders". Ask every account and keep the answers per
+           account, because `_folderChoices` needs to know which folders they all share. */
+        const want=this.accounts.map(a=>a.email), per={}, labels={};
+        await Promise.all(want.map(async email=>{
+          try{
+            const r=await this.api('/folders?account='+encodeURIComponent(email));
+            per[email]=(r&&r.folders)||[];
+            Object.assign(labels,(r&&r.labels)||{});
+          }catch(_){ per[email]=[]; }     // one unreadable account must not empty the whole strip
+        }));
+        if(this.acct!=='__all') return;                      // the account changed while we asked
+        this._allFolders=per; this.folderLabels=labels;
+        this.drawFolders();
+        return;
+      }
       const account=this.acct;
       let r; try{ r=await this.api('/folders?account='+encodeURIComponent(this.acct)); }catch(_){}
       if(!r || !r.folders || !r.folders.length || account!==this.acct) return;
@@ -28142,10 +28199,42 @@
       const remapSent=this.folder==='Sent' && resolvedSent && resolvedSent!=='Sent';
       if(remapSent) this.folder=resolvedSent;
       this.folders=r.folders; this.folderLabels=r.labels||{};
-      const box=this.root.querySelector('.mail-folders'); if(!box) return;
-      box.innerHTML=this.folders.map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('');
-      box.querySelectorAll('.mail-folder').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
+      this.drawFolders();
       if(remapSent){ this.msgs=[]; this.loadList(); this.refreshFolder(resolvedSent); }
+    },
+    /* THE FOLDER LIST IS ONE RENDERER, AND IT DOES NOT GROW DOWN THE PAGE.
+       It was built in two places (draw() and loadFolders()) from two different sources, which is
+       how All-inboxes ended up permanently showing three hardcoded folders. A mailbox can have
+       dozens, and a strip of dozens of buttons is a sidebar with no room left for mail — so the
+       roles people actually switch between stay as buttons and the rest live behind one "More"
+       popover, which costs a single button of space however many folders there are. */
+    _ROLE_FOLDERS: ['INBOX','Sent','Drafts','Trash','Spam','Archive'],
+    _folderChoices(){
+      if(this.acct!=='__all') return this.folders||[];
+      /* Unified view. The server resolves a ROLE (Sent/Drafts/Trash/Spam/Archive) to each account's
+         own mailbox name, so those always work across accounts; a custom folder is tried literally,
+         so only offer one when EVERY account has it — otherwise the folder half-works and the list
+         silently omits an account. */
+      const per=this._allFolders||{}, emails=Object.keys(per);
+      if(!emails.length) return ['INBOX','Sent','Drafts'];
+      const roles=this._ROLE_FOLDERS.filter(r=> r==='INBOX' || emails.some(e=>(per[e]||[]).some(f=>f===r||this.folderLabels[f]===this._folderLabel(r))));
+      const common=(per[emails[0]]||[]).filter(f=>!this._ROLE_FOLDERS.includes(f)
+        && emails.every(e=>(per[e]||[]).includes(f)));
+      return roles.concat(common);
+    },
+    drawFolders(){
+      const box=this.root&&this.root.querySelector('.mail-folders'); if(!box) return;
+      const all=this._folderChoices();
+      const pinned=['INBOX','Sent','Drafts'];
+      // The folder you are IN is always a visible button, even when it lives in the overflow —
+      // a strip that does not show where you are is worse than one that is too long.
+      const shown=all.filter(f=>pinned.includes(f)||f===this.folder);
+      const rest=all.filter(f=>!shown.includes(f));
+      box.innerHTML=shown.map(f=>`<button class="mail-folder${f===this.folder?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`).join('')
+        +(rest.length?`<button class="mail-folder mail-folder-more" id="mail-more" title="Other folders">📁 More ▾</button>`:'');
+      box.querySelectorAll('.mail-folder[data-folder]').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
+      const more=box.querySelector('#mail-more');
+      if(more) more.onclick=()=> openMenuPopover(more, rest.map(f=>[f,this._folderLabel(f)]), v=>this.selectFolder(v));
     },
     async selectFolder(f){
       this.folder=f; this.openUid=null; this.q=''; this.msgs=[]; this.convSent=[]; if(this.sel) this.sel.clear();
@@ -28951,6 +29040,33 @@
           toast('added ' + p.email);
         }); }
       { const bb=$('#cm-blossom'); if(bb) bb.onclick=()=>_mailBlossomPicker(a=>{ atts.push(a); drawAtts(); }); }
+      /* PASTE AN ATTACHMENT INTO THE MAIL COMPOSER.
+         Bound to the composer's own body field rather than the document: mail is a modal, the body
+         is where a person pastes, and a document listener would also fire for every other screen
+         behind it.  Text keeps the browser's default (pasting a quote into an email must still
+         paste text) — only FILES are intercepted, and `files` and `items` are both read because a
+         screenshot arrives in one list on some platforms and the other elsewhere. */
+      const bodyBox=$('#cm-body');
+      if(bodyBox)bodyBox.addEventListener('paste', async e=>{
+        const cd=e.clipboardData; if(!cd) return;
+        const seen=new Set(); let picked=[];
+        for(const f of [...(cd.files||[])]){ if(f){ picked.push(f); seen.add(f.name+':'+f.size); } }
+        for(const it of [...(cd.items||[])]){
+          if(!it||it.kind!=='file') continue;
+          const f=it.getAsFile&&it.getAsFile();
+          if(f&&!seen.has(f.name+':'+f.size)) picked.push(f);
+        }
+        if(!picked.length) return;            // plain text stays the browser's business
+        e.preventDefault();
+        for(const f of picked){
+          // A pasted screenshot has no filename on most platforms; give it one or the attachment
+          // arrives as "" and the recipient sees a nameless blob.
+          const name=f.name||('pasted-'+new Date().toISOString().replace(/[:.]/g,'-')+'.'+((f.type||'application/octet-stream').split('/')[1]||'bin').split('+')[0]);
+          try{ atts.push({name,type:f.type||'application/octet-stream',b64:await _fileB64(f)}); }
+          catch(_){ toast('could not attach '+name); }
+        }
+        drawAtts();
+      });
       $('#cm-file').onchange=async ev=>{ for(const f of [...ev.target.files]){ try{ atts.push({name:f.name,type:f.type||'application/octet-stream',b64:await _fileB64(f)}); }catch(_){} } ev.target.value=''; drawAtts(); };
       const gather=()=>({to:$('#cm-to').value.trim(), cc:$('#cm-cc').value.trim(), subject:$('#cm-subj').value.trim(), body:$('#cm-body').value, attachments:atts});
       const sendAcct=()=>{ const s=$('#cm-from'); return (s&&s.value)||fromAcct; };
@@ -34531,7 +34647,11 @@
         const urls=[...new Set(_setRelays.map(u=>normalizeRelay(u)).filter(Boolean))];
         const on=$('#set-relays-on').checked;
         ClientSettings.set('relaysEnabled', on);
-        ClientSettings.set('relays', urls);
+        /* SAME RULE AS THE GLOBAL SAVE, and this button had the same hole. The note below already
+         * refuses to PUBLISH a list left in a disabled editor; saving it locally is the same
+         * mistake one step earlier — it overwrites the user's real list with seeded suggestions,
+         * so switching off and on hands back relays they never chose. */
+        if(on) ClientSettings.set('relays', urls);
         // This dedicated button is an explicit relay-list action, but turning the local override OFF
         // is not permission to re-announce the URLs left in the disabled editor. In particular, an
         // old device must not make its cached list newest again after another client changed NIP-65.
@@ -34918,7 +35038,17 @@
           try{ localStorage.setItem(_CARRY_KEY, String(Date.now())); }catch(_){ }
           try{ await stashPrivateBeforeRelayChange(); }catch(_){ }
         }
-        ClientSettings.set('relaysEnabled', on); ClientSettings.set('relays', urls);
+        /* TURNING IT OFF MUST NOT WRITE A LIST. `urls` is read from the relay textarea, and that
+         * control is DISABLED while the switch is off — it shows seeded fallback suggestions, not
+         * a choice anybody made (the comment above already says so). Saving it anyway overwrote
+         * the user's real list with our suggestions, so switching the setting off and back ON
+         * restored relays they had never picked: reported as "i did turn the setting off and on"
+         * and still three relays, with no way to get rid of them from the UI.
+         *
+         * The switch is the only thing OFF changes. The list is theirs and is left exactly as they
+         * last saved it, so turning it on again gives them back what they chose. */
+        ClientSettings.set('relaysEnabled', on);
+        if(on) ClientSettings.set('relays', urls);
         // NIP-65 is replaceable: a write made from this device's stale localStorage becomes the newest
         // global relay list and overwrites a newer edit made in Amethyst or another client. The global
         // Save button covers every settings pane, so it may publish kind 10002 ONLY when the relay

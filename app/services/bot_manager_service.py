@@ -508,7 +508,7 @@ def _cmd_for(bot_dict: dict) -> list:
     modes = [m for m in (bot_dict.get("modes") or []) if m not in _RETIRED_MODES]
     if not modes:
         modes = ["--" + (bot_dict.get("platform") or "pleroma")]
-    # A BOT GIVEN A ROOM JOINS IT, whatever its `modes` column happens to say.
+    # A BOT GIVEN A ROOM SAYS SO — BUT THE TICK BOX DECIDES.
     #
     # The invite and the listener were two separate controls in the UI, so an operator could store
     # a community — fragment intact, "Test join" answering 200 — on a bot whose modes never got
@@ -516,14 +516,33 @@ def _cmd_for(bot_dict: dict) -> list:
     # every surface reporting success. Reported as "i don't see bot in room despite what the UI
     # says", and the row bore it out exactly.
     #
-    # The form derives it now too, but deriving it HERE is what makes already-saved bots work
-    # without anybody re-opening them, and covers rows written by the API or the migration seed,
-    # which never touch the form at all. Saving an invite is the request; this is where the request
-    # is honoured.
+    # FORCING IT HERE WAS THE WRONG HALF OF THAT FIX, and it produced its own report: "in bots,
+    # concord can never be unchecked, wtf is this". An operator who unticks Concord on a bot that
+    # still holds an invite had their choice overwritten on every spawn, with no way to express it
+    # short of deleting the invite. A switch that cannot be switched off is not a switch.
+    #
+    # So the modes column is authoritative and the mismatch is SAID rather than silently corrected.
+    # That keeps what the original fix was really for — the failure was invisible, not unfixable —
+    # while leaving the decision with the person. The form derives the mode when an invite is saved,
+    # which is what covers the ordinary path.
     cfg = bot_dict.get("config") or {}
-    if isinstance(cfg, dict) and str(cfg.get("concord_invite") or "").strip() \
-            and "--concord" not in modes:
-        modes = list(modes) + ["--concord"]
+    invite = str(cfg.get("concord_invite") or "").strip() if isinstance(cfg, dict) else ""
+    name = bot_dict.get("name") or bot_dict.get("id")
+    if invite and "--concord" not in modes:
+        logger.warning("[BOTS] %s has a Concord invite but the Concord listener is switched OFF — "
+                       "it will not join that room. Tick Concord in Admin -> Bots to enable it, or "
+                       "clear the invite.", name)
+    # AND THE OTHER WAY ROUND, which is the half nothing reported. A bot with `--concord` and NO
+    # invite starts the listener, joins nothing, and looks completely healthy: the process is up,
+    # the mode is on, the checkbox is ticked, and there is no room anywhere in its config. Measured
+    # on this deployment — of the two bots carrying `--concord`, one had no `concord_invite` key at
+    # all, which is exactly "i created a new bot with existing nsec and it never joined the concord
+    # room". A running bot with nothing to join must say so or the operator has no way to tell it
+    # apart from one that is working.
+    elif "--concord" in modes and not invite:
+        logger.warning("[BOTS] %s has the Concord listener ON but NO community invite saved — it "
+                       "will not join any room. Paste the room's invite link in Admin -> Bots, or "
+                       "untick Concord.", name)
     return [sys.executable, str(MAIN_PY)] + list(modes)
 
 

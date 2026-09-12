@@ -38,6 +38,7 @@ import zlib
 from pathlib import Path
 
 import pytest
+from tests.overlay_paths import shell_ebuild
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_JS = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
@@ -289,8 +290,7 @@ def test_firefox_is_told_to_draw_the_frame_the_compositor_cannot_give_it():
     assert pref["Value"] == 0
     # NOT locked: this is a default the person may still change on their own machine.
     assert pref["Status"] == "default"
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/"
-              "posterchanos-shell-1.0.0.ebuild").read_text(encoding="utf-8")
+    ebuild = shell_ebuild().read_text(encoding="utf-8")
     assert "/etc/firefox/policies" in ebuild and "firefox-policies.json" in ebuild
     # …and the direct/LiveCD installer, for the same reason /etc/wayfire.ini is copied there: the
     # overlay emerge is a `|| true` and may not have run.

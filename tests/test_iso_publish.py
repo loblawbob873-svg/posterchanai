@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import subprocess
+from tests.overlay_paths import shell_ebuild
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +45,7 @@ def test_livecd_only_publishes_after_success_and_only_when_clean():
 def test_installed_livecd_has_a_package_owned_publisher():
     """The packaged /usr/bin/gentoo.sh must not resolve its helper as /usr/scripts."""
     src = GENTOO.read_text()
-    ebuild = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+    ebuild = shell_ebuild().read_text()
     overlay = (ROOT / "scripts/publish_overlay.sh").read_text()
     assert 'INSTALLED_PUBLISHER="/usr/local/libexec/posterchanos/publish_iso.sh"' in src
     assert 'doexe "${FILESDIR}/publish_iso.sh"' in ebuild

@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import textwrap
 
 import pytest
@@ -32,9 +33,16 @@ RELAY = os.path.join(ROOT, "static", "js", "client", "relay.js")
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 
-LIVE_A = "wss://alive-one/"
-LIVE_B = "wss://alive-two/"
-DEAD = "wss://never-answers/"
+# Fed to configure() WITH a trailing slash (how a real relay list spells them) and looked up WITHOUT
+# one, because the pool normalises a bare host + "/" to the bare host — two spellings of one origin
+# were opening two sockets to the same relay. The stub decides liveness on the normalised form for
+# the same reason: no server distinguishes "wss://host/" from "wss://host".
+LIVE_A_IN = "wss://alive-one/"
+LIVE_B_IN = "wss://alive-two/"
+DEAD_IN = "wss://never-answers/"
+LIVE_A = "wss://alive-one"
+LIVE_B = "wss://alive-two"
+DEAD = "wss://never-answers"
 
 # The query timeout. A test that trips the bug pays this in wall clock; a passing one pays ~nothing.
 TIMEOUT_MS = 6000
@@ -53,7 +61,13 @@ def _run(body, src_override=None):
         function FakeWS(url){
           this.url = url; this.readyState = 0; this.sent = [];
           FakeWS.opened.push(this);
-          const dead = (url === DEAD);
+          // ONE SERVER, EITHER SPELLING. `test_that_bug_is_what_the_old_code_did` runs the
+          // historical relay.js, which does not normalise and so opens "wss://host/", while the
+          // current one opens "wss://host". A stub that compares one exact string calls the dead
+          // relay alive for whichever of the two it is not looking at — silently turning the bug
+          // reproduction into a pass. Compare what a server would: the origin.
+          const bare = u => /^wss?:\/\/[^/?#]+\/$/i.test(u) ? u.slice(0, -1) : u;
+          const dead = (bare(url) === bare(DEAD));
           setTimeout(() => {
             if (dead){ this.readyState = 3; this.onerror && this.onerror({}); this.onclose && this.onclose({}); }
             else { this.readyState = 1; this.onopen && this.onopen(); }
@@ -95,12 +109,15 @@ def _run(body, src_override=None):
             "body": textwrap.indent(textwrap.dedent(body), "        "),
         }
     )
-    path = "/tmp/pcai-relay-eose-harness.js"
-    with open(path, "w") as f:
-        f.write(harness)
-    proc = subprocess.run(["node", path], capture_output=True, timeout=120)
-    assert proc.returncode == 0, proc.stderr.decode()[:3000]
-    return json.loads(proc.stdout.decode())
+    # A FIXED /tmp path is shared by every concurrent run — checkall runs the suites and ~20 browser
+    # checks at once, and two of them writing this file race over each other's harness. Own the file.
+    with tempfile.TemporaryDirectory(prefix="pcai-relay-eose-") as tmp:
+        path = os.path.join(tmp, "harness.js")
+        with open(path, "w") as f:
+            f.write(harness)
+        proc = subprocess.run(["node", path], capture_output=True, timeout=120)
+        assert proc.returncode == 0, proc.stderr.decode()[:3000]
+        return json.loads(proc.stdout.decode())
 
 
 # The relay.js that HAD the bug, addressed by BLOB, not by a revision.
@@ -124,7 +141,7 @@ BODY_DEAD_RELAY = """
     const t0 = Date.now();
     const evs = await Relay.query([{ ids: ['deadbeef'] }], %(t)s);
     out({ ms: Date.now() - t0, complete: evs.complete !== false, conns: Relay.urls().length });
-""" % {"a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B), "dead": json.dumps(DEAD), "t": TIMEOUT_MS}
+""" % {"a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN), "dead": json.dumps(DEAD_IN), "t": TIMEOUT_MS}
 
 
 def test_a_dead_relay_does_not_hold_every_query_to_the_timeout():
@@ -153,7 +170,7 @@ BODY_COLD_START = """
     const t0 = Date.now();
     const evs = await Relay.query([{ ids: ['deadbeef'] }], %(t)s);
     out({ ms: Date.now() - t0, complete: evs.complete !== false });
-""" % {"a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B), "t": TIMEOUT_MS}
+""" % {"a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN), "t": TIMEOUT_MS}
 
 
 def test_a_query_fired_before_the_sockets_open_still_gets_asked():
@@ -187,7 +204,7 @@ def test_a_relay_that_drops_mid_query_leaves_the_denominator():
         live[1].onmessage({ data: JSON.stringify(['EOSE', req[1]]) });       // the survivor answers
         const evs = await p;
         out({ ms: Date.now() - t0, complete: evs.complete !== false });
-    """ % {"a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B), "t": TIMEOUT_MS})
+    """ % {"a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN), "t": TIMEOUT_MS})
     assert r["ms"] < 1000, f"a dropped socket is still being waited on ({r['ms']}ms)"
 
 
@@ -197,10 +214,13 @@ def test_a_live_relay_that_never_answers_still_holds_the_gate():
     r = _run("""
         Relay.configure({ urls: [%(a)s, %(b)s], verify: false });
         await sleep(120);
-        FakeWS.opened.filter(w => w.readyState === 1 && w.url === %(b)s)[0]._stall = true;
+        // Configured with the slashed spelling, but a SOCKET carries the url the pool opened, which
+        // is the normalised one — look it up by that or the filter matches nothing and the stall is
+        // set on `undefined`.
+        FakeWS.opened.filter(w => w.readyState === 1 && w.url === %(bn)s)[0]._stall = true;
         const t0 = Date.now();
         const evs = await Relay.query([{ ids: ['deadbeef'] }], 800);
         out({ ms: Date.now() - t0, complete: evs.complete !== false });
-    """ % {"a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B)})
+    """ % {"a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN), "bn": json.dumps(LIVE_B)})
     assert r["ms"] >= 700, f"resolved in {r['ms']}ms — it stopped waiting for a relay that is up"
     assert r["complete"] is False, "it gave up on the timer, so the result is partial and must say so"

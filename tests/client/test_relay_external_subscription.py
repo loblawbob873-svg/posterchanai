@@ -1,4 +1,7 @@
 """Drive the shipped temporary external-relay subscription used by Remote Desktop."""
+# The pool NORMALISES a bare host + "/" to the bare host — two spellings of one origin were
+# opening two sockets to the same relay. What it reports back is therefore the bare form;
+# the rule under test (Ditto/Damus are refused) is unchanged.
 import json
 import shutil
 import subprocess
@@ -117,7 +120,7 @@ def test_ditto_and_damus_are_rejected_by_external_and_pool_constructors(tmp_path
       require({json.dumps(str(RELAY))});
       Relay.queryFrom(['wss://relay.ditto.pub/','wss://relay.damus.io/'],[{{kinds:[1059]}}],{{exact:true,purpose:'legacy explicit room'}})
         .then(events=>{{
-          Relay.configure({{urls:['wss://relay.ditto.pub/','wss://relay.damus.io/','wss://relay.good.example/'],verify:true}});
+          Relay.configure({{urls:['wss://relay.ditto.pub/','wss://relay.damus.io/','wss://relay.good.example'],verify:true}});
           const configured=Relay.urls();Relay.connect('wss://relay.damus.io/');
           console.log(JSON.stringify({{events,sockets:FakeWS.all,configured,afterConnect:Relay.urls()}}));
         }});
@@ -125,8 +128,8 @@ def test_ditto_and_damus_are_rejected_by_external_and_pool_constructors(tmp_path
     run = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=10)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == {
-        "events": [], "sockets": ["wss://relay.good.example/"],
-        "configured": ["wss://relay.good.example/"], "afterConnect": [],
+        "events": [], "sockets": ["wss://relay.good.example"],
+        "configured": ["wss://relay.good.example"], "afterConnect": [],
     }
 
 

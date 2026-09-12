@@ -432,10 +432,28 @@ def test_public_community_cards_do_not_fan_out_across_invite_relays():
 
 def test_concord_standard_controls_are_wired_not_decorative():
     assert 'id="cc-attach"' in CONCORD and 'file.onchange=async' in CONCORD
-    assert "input.onpaste=event=>" in CONCORD
-    assert "item.kind==='file'" in CONCORD
+    # PASTE IS ON THE DOCUMENT, NOT ON A CAPTURED `input`. `bind()` runs after every render and
+    # this pane re-renders on every arriving message, so a handler assigned to `input.onpaste` sat
+    # on a node no longer in the document and Ctrl+V did nothing at all — which is what
+    # "i tried ctrl v in concord chat room just now, where the fuck is the image!" was. The rule is
+    # that a pasted image reaches the composer, not which property it is assigned to.
+    assert "document.addEventListener('paste'" in CONCORD
+    assert "document.__pcCordPaste" in CONCORD, (
+        "the paste listener is no longer bound once, so a render would stack another and upload "
+        "the same screenshot repeatedly")
+    assert "liveComposer()" in CONCORD, (
+        "paste resolves the composer when the handler was installed rather than when the event "
+        "happens — the detached-node bug this was written for")
+    # Both clipboard lists are read: a screenshot arrives only in `files` on some platforms and
+    # only as an `items` entry on others, and reading one is why paste can work in one browser and
+    # not another. The item guard is written as a skip (`!== 'file'`), so match what ships.
+    assert "cd.files" in CONCORD and "cd.items" in CONCORD
+    assert "item.kind!=='file'" in CONCORD
     assert "String(item.type||'').startsWith('image/')" in CONCORD
-    assert 'event.preventDefault(); void uploadAttachments(images)' in CONCORD
+    assert "_cordPasteUpload" in CONCORD, (
+        "the uploader is captured from one render, so a screenshot pasted after switching rooms "
+        "would upload into the previous one")
+    assert 'event.preventDefault();' in CONCORD
     assert "pendingAttachments.set(url,tag)" in CONCORD
     assert "class=\"cc-plain-attachment\"" in CONCORD
     assert 'p.uploadBlob' in CONCORD

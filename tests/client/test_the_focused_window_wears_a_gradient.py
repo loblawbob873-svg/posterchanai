@@ -43,6 +43,19 @@ class TheRing(unittest.TestCase):
         self.assertIn("-webkit-mask-composite:xor", ring, "Safari/older WebKit spelling is missing")
         self.assertIn("border-radius:inherit", ring, "a square ring on a rounded window")
 
+    def test_the_ring_itself_does_not_animate(self):
+        """A continuously animating conic-gradient re-rasterises every frame for as long as a window
+        is focused. Measured after it shipped: the laptop desktop sat at ~125% CPU, 72% in one
+        process — "my desktop is running like shit". Decoration must not cost a core."""
+        ring = rule(".os-root.os-fx .osw.focused:not(.osw-document)::after{")
+        self.assertNotIn("animation:", ring)
+
+    def test_motion_is_behind_the_explicit_full_choice(self):
+        """`auto` is what most machines are on; only someone who asked for Full pays per frame."""
+        self.assertIn(".os-root.os-fx-motion .osw.focused:not(.osw-document)::after{", CSS)
+        os_js = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+        self.assertIn("root.classList.toggle('os-fx-motion', mode === 'full');", os_js)
+
     def test_the_angle_is_declared_or_it_cannot_animate(self):
         """A bare custom property is a string to the animation engine and will not interpolate."""
         self.assertRegex(CSS, r"@property --osw-ang\{[^}]*syntax:'<angle>'")
@@ -90,9 +103,48 @@ class TheRing(unittest.TestCase):
         """`anim-off` must DISABLE, never pause: a disabled animation resolves to the resting
         style, a paused one holds whatever keyframe it reached."""
         self.assertIn("body.anim-off *, body.anim-off *::before, body.anim-off *::after{ animation: none !important; }", CSS)
-        ring = rule(".os-root.os-fx .osw.focused:not(.osw-document)::after{")
+        ring = rule(".os-root.os-fx-motion .osw.focused:not(.osw-document)::after{")
         self.assertNotIn("animation-play-state", ring)
         self.assertNotIn("opacity:0", ring, "a ring that starts transparent can be stranded invisible")
+
+
+
+class ItLooksTheSameEverywhere(unittest.TestCase):
+    """One accent, every surface — asked as "can you do the window color thing on the webui too?"
+    and then "so consistent".
+
+    There are three places a focused window is drawn and they must not drift:
+      * the WEB client's windowed desktop      → this CSS
+      * PosterChanOS's PosterChan windows      → the same CSS (same os.js, same client.css)
+      * PosterChanOS's NATIVE windows          → wayfire.ini [decoration], which CSS cannot reach
+    """
+
+    def test_the_ring_is_not_gated_on_posterchanos(self):
+        """`.os-root.os-fx` is set by `applyDesktopEffects()`, which runs wherever the desktop is
+        mounted — the browser included. Nothing may narrow it to the shell.
+
+        Read the WHOLE SELECTOR LINE, not the rule body: a `html.pc-oswin ` prefix still contains
+        the substring we search for, so inspecting the body alone passes while the rule has been
+        narrowed to one platform. (Measured: this test was vacuous until it read the prefix.)"""
+        i = CSS.index(".os-root.os-fx .osw.focused:not(.osw-document)::after{")
+        selector = CSS[CSS.rfind("\n", 0, i) + 1:i]
+        for shell_only in ("pc-oswin", "os-shell", "standalone", "posterchanos", "body.os-on"):
+            self.assertNotIn(shell_only, selector,
+                             "the ring is gated to one platform: " + selector.strip())
+
+    def test_the_web_desktop_turns_the_effects_class_on(self):
+        os_js = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+        mount = os_js[os_js.index("root.className = 'os-root';"):]
+        self.assertIn("applyDesktopEffects();", mount[:400],
+                      "the desktop mounts without applying the effects class")
+
+    def test_the_compositor_and_the_css_use_one_token(self):
+        """A native app and a PosterChan window must agree on what "focused" looks like."""
+        ini = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini").read_text(encoding="utf-8")
+        neon = re.search(r"--neon:(#[0-9a-fA-F]{6})", CSS).group(1).lower()
+        active = re.search(r"^active_color\s*=\s*\\?#([0-9a-fA-F]{6})", ini, re.M).group(1).lower()
+        self.assertEqual("#" + active, neon)
+        self.assertIn("var(--neon)", rule(".os-root.os-fx .osw.focused:not(.osw-document)::after{"))
 
 
 if __name__ == "__main__":

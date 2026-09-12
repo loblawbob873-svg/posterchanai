@@ -23,8 +23,11 @@ def test_all_files_does_not_filter_to_only_root_folder():
     assert "const folders=[['','🗂 All']]" in body
 
 
+# The picker now asks for a BOUNDED page (`?limit=`) with an abort deadline, so the call is no
+# longer one literal string. What must not change is that it refuses a stale browser copy — pin
+# THAT, the way tests here are meant to pin rules rather than call text.
 def test_picker_listing_bypasses_a_stale_browser_cache():
-    assert "fetch(server+'/list/'+ME.pubkey,{cache:'no-store'})" in _picker()
+    assert "cache:'no-store'" in _picker()
 
 
 def test_all_listing_does_not_wait_forever_for_folder_index_hydration():

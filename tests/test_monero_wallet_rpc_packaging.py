@@ -4,13 +4,14 @@ import os
 import re
 import stat
 import subprocess
+from tests.overlay_paths import shell_ebuild
 
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "os/bin/pc-monero-wallet-rpc"
 PACKAGED_HELPER = ROOT / "os/overlay/app-misc/posterchanos-shell/files/pc-monero-wallet-rpc"
 UNIT = ROOT / "os/overlay/app-misc/posterchanos-shell/files/posterchan-monero-wallet-rpc.service"
-EBUILD = ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild"
+EBUILD = shell_ebuild()
 BIN_PACKAGE = ROOT / "os/overlay/net-p2p/monero-wallet-rpc-bin"
 BIN_EBUILD = BIN_PACKAGE / "monero-wallet-rpc-bin-0.18.5.1.ebuild"
 BIN_MANIFEST = BIN_PACKAGE / "Manifest"

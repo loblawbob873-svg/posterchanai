@@ -30,9 +30,23 @@ RELAY = os.path.join(ROOT, "static", "js", "client", "relay.js")
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 
-DEAD = "wss://never-answers/"
-LIVE_A = "wss://alive-one/"
-LIVE_B = "wss://alive-two/"
+# TWO SPELLINGS, ONE RELAY.
+#
+# These are fed to `configure()` WITH a trailing slash, because that is how they arrive from a real
+# relay list, and asserted WITHOUT one, because the pool normalises a bare host + "/" to the bare
+# host — RFC 3986 makes an empty path and "/" the same origin, and keeping both spellings opened two
+# sockets to one relay ("relay.poster.place is twice").
+#
+# The stub used to decide liveness with `url === DEAD` against the SLASHED form, so once the pool
+# started normalising, the dead relay stopped being recognised as dead and answered as a live one —
+# a fixture modelling a server that distinguishes "/" from "", which no server does. It compares the
+# normalised form now, so it agrees with both the RFC and the pool.
+DEAD_IN = "wss://never-answers/"
+LIVE_A_IN = "wss://alive-one/"
+LIVE_B_IN = "wss://alive-two/"
+DEAD = "wss://never-answers"
+LIVE_A = "wss://alive-one"
+LIVE_B = "wss://alive-two"
 
 
 def _run(body):
@@ -45,7 +59,9 @@ def _run(body):
         function FakeWS(url){
           this.url = url; this.readyState = 0; this.sent = [];
           FakeWS.opened.push(this);
-          const dead = (url === DEAD);
+          // One server, either spelling — see the note in test_client_relay_eose_gate.py.
+          const bare = u => /^wss?:\/\/[^/?#]+\/$/i.test(u) ? u.slice(0, -1) : u;
+          const dead = (bare(url) === bare(DEAD));
           setTimeout(() => {
             if (dead){ this.readyState = 3; this.onerror && this.onerror({}); this.onclose && this.onclose({}); }
             else { this.readyState = 1; this.onopen && this.onopen(); }
@@ -98,7 +114,7 @@ def test_a_reconnecting_first_relay_does_not_swallow_every_packet():
         await sleep(120);
         const ok = Relay.publishFast(%(pkt)s);
         out({ ok, landed: landed('pkt1'), conns: Relay.urls().length });
-    """ % {"dead": json.dumps(DEAD), "a": json.dumps(LIVE_A), "pkt": PACKET})
+    """ % {"dead": json.dumps(DEAD_IN), "a": json.dumps(LIVE_A_IN), "pkt": PACKET})
     assert r["conns"] == 2, "the dead relay should still be in the pool — it is retrying"
     assert r["ok"] is True, "the packet was dropped while a live socket was sitting there"
     assert r["landed"] == [LIVE_A]
@@ -113,7 +129,7 @@ def test_it_still_prefers_the_pools_primary_when_that_one_is_up():
         await sleep(120);
         const ok = Relay.publishFast(%(pkt)s);
         out({ ok, landed: landed('pkt1') });
-    """ % {"a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B), "pkt": PACKET})
+    """ % {"a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN), "pkt": PACKET})
     assert r["ok"] is True
     assert r["landed"] == [LIVE_A], "a realtime packet must not be fanned out across the pool"
 
@@ -124,7 +140,7 @@ def test_a_named_relay_that_is_down_falls_through_rather_than_dropping():
         await sleep(120);
         const ok = Relay.publishFast(%(pkt)s, %(dead)s);
         out({ ok, landed: landed('pkt1') });
-    """ % {"a": json.dumps(LIVE_A), "dead": json.dumps(DEAD), "pkt": PACKET})
+    """ % {"a": json.dumps(LIVE_A_IN), "dead": json.dumps(DEAD_IN), "pkt": PACKET})
     assert r["ok"] is True
     assert r["landed"] == [LIVE_A]
 
@@ -136,7 +152,7 @@ def test_with_nothing_connected_it_reports_the_failure():
         Relay.configure({ urls: [%(dead)s], verify: false });
         await sleep(120);
         out({ ok: Relay.publishFast(%(pkt)s), landed: landed('pkt1') });
-    """ % {"dead": json.dumps(DEAD), "pkt": PACKET})
+    """ % {"dead": json.dumps(DEAD_IN), "pkt": PACKET})
     assert r["ok"] is False
     assert r["landed"] == []
 
@@ -155,7 +171,7 @@ def test_a_realtime_packet_reaches_every_open_relay_not_just_one():
         await sleep(120);
         const n = Relay.publishFastAll(%(pkt)s);
         out({ n, landed: landed('pkt1').sort() });
-    """ % {"a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B), "pkt": PACKET})
+    """ % {"a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN), "pkt": PACKET})
     assert r["n"] == 2, r
     assert r["landed"] == sorted([LIVE_A, LIVE_B]), r
 
@@ -173,7 +189,7 @@ def test_the_fan_out_is_bounded_and_starts_with_the_primary():
     """ % {"pkt": PACKET})
     assert r["n"] == 3, r
     assert len(r["landed"]) == 3, r
-    assert r["landed"][0] == "wss://p-one/", f"the primary must be sent to first: {r}"
+    assert r["landed"][0] == "wss://p-one", f"the primary must be sent to first: {r}"
 
 
 def test_a_dead_first_relay_does_not_cost_the_others():
@@ -184,7 +200,7 @@ def test_a_dead_first_relay_does_not_cost_the_others():
         await sleep(120);
         const n = Relay.publishFastAll(%(pkt)s);
         out({ n, landed: landed('pkt1').sort() });
-    """ % {"dead": json.dumps(DEAD), "a": json.dumps(LIVE_A), "b": json.dumps(LIVE_B),
+    """ % {"dead": json.dumps(DEAD_IN), "a": json.dumps(LIVE_A_IN), "b": json.dumps(LIVE_B_IN),
            "pkt": PACKET})
     assert r["n"] == 2, r
     assert r["landed"] == sorted([LIVE_A, LIVE_B]), r

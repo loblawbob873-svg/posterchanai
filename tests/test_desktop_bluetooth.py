@@ -2,6 +2,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from tests.overlay_paths import shell_ebuild
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,7 +25,7 @@ class BluetoothBackend(unittest.TestCase):
         self.assertNotIn("sshd", services)
 
     def test_existing_install_gets_bluez_and_a_running_service(self):
-        src = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+        src = shell_ebuild().read_text()
         self.assertIn("net-wireless/bluez", src)
         self.assertIn("systemctl enable --now bluetooth.service", src)
 

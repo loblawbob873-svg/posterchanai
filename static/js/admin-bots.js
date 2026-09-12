@@ -178,19 +178,50 @@ function onBotFormChange() {
        are not hidden behind their features either; a place to PUT the value is not the same thing
        as the switch that uses it. */
     show('bot_grp_concord', isNostr);
-    /* The checkbox must never disagree with what Save will do. An invite in the box means
-       `--concord` is going into `modes`, so the feature reads as ON and says why it cannot be
-       turned off from here — a control that appears to refuse its own setting is worse than one
-       that explains itself. */
+    /* THE TICK BOX IS THE OPERATOR'S, and it used to be neither tickable nor untickable: an invite
+       in the field force-checked it AND set `disabled`, so "in bots, concord can never be
+       unchecked, wtf is this" was exactly right. A control that overrides the person using it is
+       not a control.
+       Pasting an invite still TICKS it once — that is the ordinary request and saves a second
+       click — but it never locks it, and a bot left with a room it is not listening to says so
+       here rather than being silently corrected (the manager logs the same mismatch). */
     { const inv = _val('bot_f_concord_invite'), box = _g('bot_ft_concord');
       if (box) {
-          if (inv && !box.checked) box.checked = true;
-          box.disabled = !!inv;
+          if (inv && box.dataset.pcSeenInvite !== '1' && !box.checked) box.checked = true;
+          box.dataset.pcSeenInvite = inv ? '1' : '';
+          box.disabled = false;
           const lbl = box.closest('label');
-          if (lbl) lbl.title = inv
-              ? 'This bot has a community saved, so it answers when mentioned there. Clear the '
-                + 'invite link above to stop it.'
-              : (lbl.dataset.baseTitle || lbl.title);
+          if (lbl) lbl.title = (inv && !box.checked)
+              ? 'This bot has a community saved but the Concord listener is OFF — it will not '
+                + 'join that room. Tick this to enable it, or clear the invite link above.'
+              : (inv
+                 ? 'This bot answers when mentioned in the community saved above.'
+                 : (lbl.dataset.baseTitle || lbl.title));
+          /* THE OTHER MISMATCH, SAID ON THE FORM. Concord ticked with no invite is a bot that
+             starts its listener and joins nothing — the process is up, the box is ticked, and
+             every surface looks healthy. Measured on a real row: one of two Concord bots had no
+             `concord_invite` key at all, which is "i created a new bot with existing nsec and it
+             never joined the concord room". A tooltip is not enough for that one, because there is
+             nothing on screen to hover: the warning goes beside the invite field itself. */
+          { let note = _g('bot_concord_noroom');
+            if (!note) {
+                const field = _g('bot_f_concord_invite');
+                if (field && field.parentNode) {
+                    note = document.createElement('p');
+                    note.id = 'bot_concord_noroom';
+                    note.className = 'muted small';
+                    note.style.color = 'var(--warn, #e8b84b)';
+                    field.parentNode.insertBefore(note, field.nextSibling);
+                }
+            }
+            if (note) {
+                const missing = box.checked && !inv;
+                note.textContent = missing
+                    ? '⚠ Concord is on but no community is saved — this bot will not join any '
+                      + 'room. Paste the room’s invite link above.'
+                    : '';
+                note.hidden = !missing;
+            } }
       } }
 
     // Per-feature sections appear only when their feature is enabled.
@@ -281,14 +312,15 @@ function _buildModes(type, platform) {
     const modes = new Set();
     if (_g('bot_ft_reply').checked) modes.add('--' + platform);          // reply on own platform
     Object.entries(BOT_FEATURES).forEach(([cid, flag]) => { if (_g(cid).checked) modes.add(flag); });
-    /* A SAVED ROOM MEANS THE BOT JOINS IT. Reported as "i don't see bot in room despite what the
-       UI says", and the row bore it out: the invite was stored, its fragment intact, "Test join"
-       had answered 200 — and `modes` was `--nostr`, because the Concord feature checkbox was never
-       ticked. So the bot held a room it never opened, silently, and every surface an operator can
-       see said things were fine.
-       Pasting an invite IS the request. The checkbox still turns it off, but it can only do that
-       for a bot that has no room saved — see `onBotFormChange`, which keeps the two in step. */
-    if (_val('bot_f_concord_invite')) modes.add('--concord');
+    /* SAVE RECORDS WHAT THE FORM SHOWS, and derives nothing of its own.
+       A saved room must still mean the bot joins it -- "i don't see bot in room despite what the UI
+       says" was a stored invite, fragment intact, "Test join" answering 200, and `modes='--nostr'`
+       because the Concord box was never ticked. But deriving `--concord` from the invite HERE, at
+       save, produced the opposite complaint -- "In bots, concord can never be unchecked, wtf is
+       this" -- since unticking the box was undone by the very save it triggered.
+       Both are the same cause: a decision made where the operator cannot see it. So pasting an
+       invite ticks the box in `onBotFormChange`, on screen and once, and this function reads the
+       box. The common path still works, and the switch still belongs to the person looking at it. */
     return [...modes].join(',');
 }
 

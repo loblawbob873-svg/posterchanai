@@ -187,17 +187,21 @@ def test_the_bridge_opens_a_real_community_and_speaks_in_it():
 
 # ───────────────────── a saved room is a request to join it ─────────────────────
 
-def test_a_bot_with_an_invite_is_spawned_with_the_listener():
-    """REPORTED AS "i don't see bot in room despite what the UI says", and the row bore it out.
+def test_a_bot_with_an_invite_is_spawned_with_exactly_the_modes_it_was_saved_with():
+    """REPORTED TWICE, FROM OPPOSITE DIRECTIONS, AND BOTH REPORTS WERE RIGHT.
 
-    `concord_invite` was stored with its fragment intact and "Test join" answered 200, while the
-    bot's `modes` column said `--nostr`. It held a community it never opened: nothing broken,
-    nothing logged, every surface an operator can see reporting success. The invite and the
-    listener were two separate controls, and only one of them had been used.
+    First: "i don't see bot in room despite what the UI says". The row bore it out — `concord_invite`
+    stored with its fragment intact, "Test join" answering 200, and `modes='--nostr'`. The bot held a
+    community it never opened; nothing broken, nothing logged.
 
-    The form derives the mode from the field now, but deriving it HERE is what makes bots that are
-    ALREADY saved work without anybody re-opening them — and covers rows written by the API or the
-    migration seed, which never touch the form.
+    The fix was to derive `--concord` from the invite at SPAWN, here. That worked, and produced:
+    "In bots, concord can never be unchecked, wtf is this" — a decision re-derived on every start
+    cannot be turned off by anybody, so the checkbox was decoration.
+
+    The cause of both is a decision made where the operator cannot see it. The derivation is a
+    DEFAULT now, applied once at the point a bot is created (the admin form ticks the box on screen;
+    `bots._concord_default` does the same for the REST API and the migration seed), plus a one-shot
+    backfill for rows that predate it. Spawn honours the row exactly.
     """
     from app.services.bot_manager_service import _cmd_for
 
@@ -205,14 +209,84 @@ def test_a_bot_with_an_invite_is_spawned_with_the_listener():
         cmd = _cmd_for({"platform": "nostr", "modes": list(existing), "config": cfg})
         return [a for a in cmd if a.startswith("--")]
 
+    invite = {"concord_invite": "https://poster.place/invite/naddr1abc#secret"}
     assert modes({}) == ["--nostr"], "a bot with no room must not be given the listener"
-    assert modes({"concord_invite": "https://poster.place/invite/naddr1abc#secret"}) == \
-        ["--nostr", "--concord"], "a bot with a room saved was spawned without the listener"
-    # Idempotent: an operator who ticked the box too must not get it twice.
-    assert modes({"concord_invite": "https://poster.place/invite/naddr1abc#secret"},
-                 existing=("--nostr", "--concord")).count("--concord") == 1
-    # Whitespace is not a room.
-    assert modes({"concord_invite": "   "}) == ["--nostr"]
+    assert modes(invite) == ["--nostr"], (
+        "spawn is deriving --concord from the invite again — that is what made the checkbox "
+        "impossible to untick, because every restart undid it")
+    assert modes(invite, existing=("--nostr", "--concord")) == ["--nostr", "--concord"], (
+        "a bot saved WITH the listener must still be spawned with it")
+
+
+def test_a_concord_bot_with_no_room_says_so():
+    """A BOT THAT JOINS NOTHING MUST NOT LOOK HEALTHY.
+
+    Measured on this deployment: of the two bots carrying `--concord`, one had no `concord_invite`
+    key in its config at all. Its process was up, its checkbox was ticked, its nsec was valid, and
+    it sat in no community — with nothing in any log and nothing on any screen to say why. That is
+    "i created a new bot with existing nsec and it never joined the concord room".
+
+    The opposite mismatch (an invite with the listener off) was already reported; this is the same
+    failure with the two halves swapped, and it was the one nothing watched for.
+    """
+    import inspect
+    from app.services import bot_manager_service as mgr
+
+    src = inspect.getsource(mgr._cmd_for)
+    assert '"--concord" in modes and not invite' in src, (
+        "nothing notices a Concord bot with no community saved — it starts, joins nothing, and "
+        "reports success")
+    assert "NO community invite saved" in src
+
+    js = (ROOT / "static/js/admin-bots.js").read_text()
+    assert "bot_concord_noroom" in js, (
+        "the bot form no longer warns when Concord is ticked with no invite")
+    assert "will not join any" in js
+    # It must be a VISIBLE note, not a tooltip: with no invite there is nothing on screen to hover.
+    assert "note.textContent" in js and "note.hidden" in js
+
+
+def test_creating_a_bot_with_an_invite_gives_it_the_listener():
+    """The default lives where a row is BORN, so the callers with no form still work.
+
+    The admin form ticks the box visibly; this is the same decision for the REST API and the
+    first-start migration seed, which never open a form. It is a default and not a rule: modes that
+    already mention `--concord` are returned untouched, and an UPDATE never calls this at all, so an
+    operator's untick survives every later save and restart.
+    """
+    from app.routers.bots import _concord_default
+
+    invite = {"concord_invite": "https://poster.place/invite/naddr1abc#secret"}
+    assert _concord_default("--nostr", invite) == "--nostr,--concord"
+    assert _concord_default("", invite) == "--concord"
+    # No room saved: nothing is added, whatever the config looks like.
+    assert _concord_default("--nostr", {}) == "--nostr"
+    assert _concord_default("--nostr", {"concord_invite": "   "}) == "--nostr"
+    # Already decided: returned verbatim, never duplicated.
+    assert _concord_default("--nostr,--concord", invite) == "--nostr,--concord"
+
+
+def test_the_backfill_runs_once_and_never_re_derives(tmp_path):
+    """A backfill that ran on every boot WOULD BE the spawn-time forcing, one layer down.
+
+    An operator who unticks Concord on a bot that still holds an invite must find it unticked after
+    the next restart, so the marker is written even when the sweep changed nothing.
+    """
+    import inspect as _inspect
+    from app import database
+
+    src = _inspect.getsource(database._backfill_concord_modes)
+    assert 'settings_store.get("bots_concord_mode_backfilled"' in src, (
+        "the backfill no longer checks its marker — it would re-add --concord on every start, "
+        "which is exactly the behaviour it replaced")
+    assert 'settings_store.set("bots_concord_mode_backfilled", "1")' in src
+    # The marker must be set OUTSIDE the `if changed:` branch, or a run that matched nothing repeats
+    # for ever and reverts the first untick that happens after it.
+    set_at = src.index('settings_store.set("bots_concord_mode_backfilled"')
+    changed_at = src.index("if changed:")
+    assert src[changed_at:set_at].count("\n        ") >= 1
+    assert not src[set_at - 200:set_at].rstrip().endswith("changed += 1"), (
+        "the marker looks conditional on having changed something")
 
 
 def test_the_listener_says_so_when_it_has_no_room():

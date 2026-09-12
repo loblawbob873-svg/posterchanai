@@ -197,6 +197,9 @@
     const full=mode==='full'||(mode==='auto'&&!touch);
     root.classList.toggle('os-fx',full);
     root.classList.toggle('os-fx-off',!full);
+    /* Motion costs a repaint per frame for as long as a window is focused, so it rides the
+       EXPLICIT "Full" choice only — never `auto`, which is what most machines are on. */
+    root.classList.toggle('os-fx-motion', mode === 'full');
   }
   function applyDesktopStyle(){
     if(!root) return;
@@ -8521,7 +8524,7 @@
     { const b = $('#os-net-relays', panel); if(b) b.onclick = (e) => {
         e.stopPropagation(); hideNet();
         if(popupKind()) _popupTell('pick', 'settings');
-        else openApp('settings', 'Settings', '#i-gear');
+        else { openApp('settings', 'Settings', '#i-gear'); _revealRelaySetting(); }
       }; }
   }
 
@@ -8788,6 +8791,27 @@
         paint(($('#os-q', menu) || {}).value || '');
       }, () => {});
     }catch(_){}
+  }
+  /* A BUTTON LABELLED "Relays…" HAS TO LAND ON THE RELAYS. It opened Settings at the top and left
+   * you to find them — reported as "clicking the Relays button on the taskbar only brings you to
+   * settings, not Relays". Settings is a long screen and the relay switch is well down it.
+   *
+   * POLLED, not delayed: the settings screen paints asynchronously (and may wait on the network
+   * for the instance pane), so any fixed timeout is either a stall or a miss. Give up quietly
+   * after two seconds — landing on Settings is the old behaviour and is not worth an error. */
+  function _revealRelaySetting(){
+    let n = 0;
+    const tick = () => {
+      const el = document.getElementById('set-relays-on');
+      if(el){
+        const row = el.closest('.fld') || el;
+        try{ row.scrollIntoView({ block:'center' }); }catch(_){ }
+        try{ el.focus({ preventScroll:true }); }catch(_){ }
+        return;
+      }
+      if(++n < 40) setTimeout(tick, 50);
+    };
+    tick();
   }
   function toggleStart(force){
     /* Every handler in the menu below ends with `toggleStart(false)`. In the window that means the

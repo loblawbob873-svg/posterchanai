@@ -1,12 +1,13 @@
 from pathlib import Path
 import re
 import subprocess
+from tests.overlay_paths import shell_ebuild
 
 
 ROOT = Path(__file__).parents[1]
 CODE = (ROOT / "static/js/client/code.js").read_text()
 CSS = (ROOT / "static/css/client.css").read_text()
-SHELL = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+SHELL = shell_ebuild().read_text()
 # Located by GLOB, never by version: this file used to name ngit-2.6.3.ebuild, so a bump renamed
 # the ebuild out from under the test and the test went red for the bump rather than for a bug.
 NGIT_EBUILD = sorted((ROOT / "os/overlay/dev-vcs/ngit").glob("ngit-*.ebuild"))[-1]

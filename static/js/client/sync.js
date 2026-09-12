@@ -79,6 +79,17 @@
         w = next;
       }
     }catch(_){ /* cross-origin or gone */ }
+    /* NO PRIMARY FOUND MEANS NO WRITER, AND THAT MUST STAY A REFUSAL.
+     *
+     * Falling back to this document's own `pcFs` here looks like the fix for "this device has no
+     * filesystem access" and is the one thing this function exists to prevent: every surface that
+     * says `backgroundOwner:false` would answer with ITSELF, so two windows on one device both
+     * sweep and both publish, which is the two-writer state the whole resolver is built around.
+     * `tests/client/test_folder_sync_finds_the_primary_surface.py` pins it with a chain of three
+     * secondaries and with an `opener` cycle; both must answer null.
+     *
+     * The refusal the report was actually about is a PICKING problem, and it belongs to FS_PICK
+     * below — not here. */
     return null;
   };
 
@@ -97,7 +108,12 @@
    * window they are looking at, and `pcFs` is exposed per-page by the same preload talking to the
    * same main process, so this document's own bridge is the right one to ask. The sweep still goes
    * through `FS()` and still refuses, so the one-writer rule is untouched. */
-  const FS_PICK = () => FS() || window.pcFs || null;
+  /* Two resolvers, deliberately, because they answer two different questions. Collapsing them into
+     one (`const FS_PICK = FS`) and giving FS() a fallback fixed the dead button and broke the
+     one-writer rule in the same edit — the fallback made every secondary surface claim to be the
+     writer. Picking is safe from any surface: it is a person pressing a button in the window they
+     are looking at, and it writes nothing. */
+  const FS_PICK = () => FS() || (typeof window !== 'undefined' ? (window.pcFs || null) : null);
 
   /* And when there is genuinely no bridge, SAY SO rather than greying the control out. */
   const FS_WHY = () => {
@@ -739,7 +755,7 @@
    * Reading is the expensive part (one hash per trashed file), so it yields and holds the wake lock
    * like the check does — a tablet reclaims a renderer that loops for minutes without either. */
   async function reconcileTrash(folderId, only){
-    const fs2 = FS(); if(!fs2 || !fs2.listTrash){ PC.toast('this device has no filesystem access'); return null; }
+    const fs2 = FS_PICK(); if(!fs2 || !fs2.listTrash){ PC.toast('this device has no filesystem access'); return null; }
     if(typeof fs2.hashFile !== 'function'){
       PC.toast('this build cannot read files back to check them — use Restore, then Empty trash');
       return restoreTrash(folderId, only);
@@ -846,7 +862,7 @@
   }
 
   async function restoreTrash(folderId, only){
-    const fs2 = FS(); if(!fs2 || !fs2.listTrash){ PC.toast('this device has no filesystem access'); return null; }
+    const fs2 = FS_PICK(); if(!fs2 || !fs2.listTrash){ PC.toast('this device has no filesystem access'); return null; }
     let rows = [];
     try{ rows = await fs2.listTrash(folderId) || []; }catch(_){}
     if(only && only.length){ const want = new Set(only); rows = rows.filter(r => want.has(r.at)); }
@@ -3103,7 +3119,8 @@
   function _paintNow(){
     const feed = document.getElementById('feed'); if(!feed) return;
     const list = folders();
-    const fs = FS();
+    // What the SCREEN can offer, not who may write — a secondary surface still shows its cards.
+    const fs = FS_PICK();
     // Ask the platform once per visit, then repaint. Cheap (a config read on desktop, a permissions
     // query on Android) and it is the only way to notice a grant that this identity has not mapped.
     if(fs && granted === null){
@@ -3239,7 +3256,8 @@
         each one lives here and it rejoins the same folder; nothing is re-uploaded.</p>
         ${elsewhere.map(f => `<div class="sync-orphan"><span>🔄 ${PC.enc(f.key)}
             <span class="muted small">· ${f.n} file${f.n === 1 ? '' : 's'}</span></span>
-          <button class="btn btn-neon small sync-attach" data-key="${PC.enc(f.key)}"
+          <button class="btn btn-neon small sync-attach${fs ? '' : ' disabled'}" data-key="${PC.enc(f.key)}"
+            ${fs ? '' : `title="${PC.enc(FS_WHY())}"`}
             >Set up on this device…</button></div>`).join('')}</div>` : ''}
       ${_acct === 'error' ? '<p class="muted small">(Couldn’t check what your other devices sync just now.)</p>' : ''}
       ${orphans.length ? `<div class="sync-orphans"><b>Already allowed on this device</b>
@@ -3266,7 +3284,7 @@
     { const bg = document.getElementById('sync-bg');
       if(bg) bg.onchange = async () => {
         ClientSettings.set('syncBgCheck', bg.checked);
-        try{ await FS().backgroundCheck(bg.checked, 180); }
+        try{ await FS_PICK().backgroundCheck(bg.checked, 180); }
         catch(e){ PC.toast('could not change that: ' + ((e && e.message) || e)); }
       }; }
 
@@ -3489,7 +3507,7 @@
       { const rl = card.querySelector('.sync-relink');
         if(rl) rl.onclick = async () => {
           try{
-            const picked = await FS().pick();
+            const picked = await FS_PICK().pick();
             if(!picked) return;
             const l = folders();
             if(l.some(x => x.id === picked.id && x.id !== id)){ PC.toast('that folder is already syncing'); return; }

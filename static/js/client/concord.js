@@ -263,6 +263,7 @@
    * repaint — which is the ordinary case in a live room, since browsing the drive takes seconds —
    * and it is silently lost. `captureComposer` and `clearComposer` already re-query for this exact
    * reason; this is the same lookup with a name. */
+  let _cordPasteUpload = null;   // the CURRENT render's uploader — see the paste binding in bind()
   function liveComposer(){
     return (document.querySelector&&document.querySelector('#cc-input'))||(PC()&&PC().$&&PC().$('#cc-input'))||null;
   }
@@ -3256,7 +3257,56 @@
     if(attach&&file)attach.onclick=()=>{ if(!p.blossomPicker||!p.modal){file.click();return;} p.modal(`<h3>Attach to #${p.enc(state.channel||'general')}</h3><p class="muted">Choose a new file from this device or reuse one from Files.</p><div class="cc-attach-choices"><button class="btn btn-ghost" id="cc-attach-device">From device</button><button class="btn btn-neon" id="cc-attach-blossom">📁 Files</button></div>`,root=>{ const local=root.querySelector('#cc-attach-device'),blossom=root.querySelector('#cc-attach-blossom'); local.onclick=()=>{p.closeModal();file.click();}; blossom.onclick=()=>{p.closeModal();p.blossomPicker(null,insertBlossomAttachment,{title:'📁 Attach from Files'});}; }); };
     const uploadAttachments=async files=>{ for(const f of files){ if(f.size>20*1024*1024){ p.toast(f.name+' is too large (20 MB max)'); continue; } try{ p.toast('uploading '+f.name+'…'); const isXdc=/\.xdc$/i.test(f.name)||f.type==='application/x-webxdc'||f.type==='application/webxdc+zip'||f.type==='application/vnd.webxdc+zip',bytes=isXdc?new Uint8Array(await f.arrayBuffer()):null,url=await p.uploadBlob(f,{keep:true}),mime=isXdc?'application/vnd.webxdc+zip':String(f.type||'application/octet-stream'),tag=['imeta',`url ${url}`,`m ${mime}`,`name ${String(f.name||'file').slice(0,120)}`]; if(isXdc){ const sha=bytesHex(await crypto.subtle.digest('SHA-256',bytes)),topic=mintWebxdcTopic(),name=f.name.replace(/\.xdc$/i,'').slice(0,80);tag.push(`x ${sha}`,`webxdc-topic ${topic}`,`webxdc ${topic}`,`summary ${name}`); }pendingAttachments.set(url,tag); const box=liveComposer(); if(!box)throw new Error('the composer went away while '+f.name+' was uploading'); box.value+=(box.value&&!/\s$/.test(box.value)?' ':'')+url; box.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){ p.toast('could not attach '+f.name+(e&&e.message?': '+e.message:'')); } } };
     if(file&&input)file.onchange=async()=>{ await uploadAttachments([...file.files]); file.value=''; };
-    if(input)input.onpaste=event=>{ const images=[...(event.clipboardData&&event.clipboardData.items||[])].filter(item=>item.kind==='file'&&String(item.type||'').startsWith('image/')).map(item=>item.getAsFile&&item.getAsFile()).filter(Boolean); if(!images.length)return; event.preventDefault(); void uploadAttachments(images); };
+    /* PASTE IS BOUND TO THE DOCUMENT, NOT TO A CAPTURED #cc-input.
+     *
+     * `bind()` runs after a render, and `input` here is the element as it was at that moment — but
+     * this pane re-renders on every arriving message, profile, icon and decrypted attachment, and
+     * each render REPLACES the composer node. The handler then sat on a node no longer in the
+     * document and Ctrl+V did nothing at all, silently: reported as "i tried ctrl v in concord chat
+     * room just now, where the fuck is the image!". It is the same detached-node bug the ATTACH
+     * button had, and `insertBlossomAttachment` above already shows the cure — resolve the composer
+     * when the event happens (`liveComposer()`), never when the handler is installed.
+     *
+     * `clipboardData.files` as well as `.items`: a screenshot pasted from some platforms arrives
+     * only in `files`, and reading one list alone is why a paste can work in one browser and not
+     * another. Bound ONCE (the flag), because bind() runs per render and stacking a listener per
+     * render would upload the same screenshot N times. */
+    /* The LISTENER is installed once; the UPLOADER it calls is refreshed on every bind. Closing
+     * over the first render's `uploadAttachments` would pin the room and channel it was built for,
+     * so a screenshot pasted after switching rooms would upload into the previous one — a stale
+     * closure is exactly the bug this whole fix is about, one level up. */
+    _cordPasteUpload = uploadAttachments;
+    if(!document.__pcCordPaste){
+      document.__pcCordPaste = true;
+      document.addEventListener('paste', event=>{
+        const composer = liveComposer();
+        if(!composer) return;
+        /* WHOSE PASTE IS IT.  Requiring the composer to be FOCUSED was too strict for the way the
+           screen is actually used: you open a room, hit Ctrl+V, and the textarea has never been
+           clicked — so the paste was ignored and the report was the same as before the fix ("i
+           tried ctrl v in concord chat room just now, where the fuck is the image!").  A paste
+           belongs to this composer when the composer has focus, OR when nothing else does — the
+           document body and the room's own scroll container are not editors and hold no text a
+           person could be pasting into.  Any other input, textarea or contenteditable keeps it. */
+        const at = document.activeElement, tag = at && at.tagName;
+        const elsewhere = at && at !== composer &&
+          (tag === 'INPUT' || tag === 'TEXTAREA' || at.isContentEditable === true);
+        if(elsewhere) return;
+        const cd = event.clipboardData; if(!cd) return;
+        const seen = new Set(), images = [];
+        for(const f of [...(cd.files||[])]){
+          if(f && String(f.type||'').startsWith('image/')){ images.push(f); seen.add(f.name+':'+f.size); }
+        }
+        for(const item of [...(cd.items||[])]){
+          if(!item || item.kind!=='file' || !String(item.type||'').startsWith('image/')) continue;
+          const f = item.getAsFile && item.getAsFile();
+          if(f && !seen.has(f.name+':'+f.size)) images.push(f);
+        }
+        if(!images.length) return;
+        event.preventDefault();
+        if(_cordPasteUpload) void _cordPasteUpload(images);
+      });
+    }
     const members=$('#cc-members'); if(members)members.onclick=()=>{if(!window.matchMedia||window.matchMedia('(max-width:820px)').matches){$('#cc-members-dialog').classList.remove('hidden');return;}const pane=$('.cc-members-pane');if(!pane)return;const hide=localStorage.getItem('pc.concord.members.hidden')!=='1';pane.classList.toggle('hidden',hide);localStorage.setItem('pc.concord.members.hidden',hide?'1':'0');};
     const membersClose=$('#cc-members-close'); if(membersClose)membersClose.onclick=()=>$('#cc-members-dialog').classList.add('hidden');
     const banMember=async target=>{ const initial=saved(),room=initial[state.community],roomId=roomIdentity(room),viewer=p.viewer?p.viewer():{},bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader,loadKey=room&&(room.communityId||room.naddr),wraps=roomControls.get(loadKey); if(!bundle||!reader||!reader.createBanWrap||!wraps)return p.toast('community moderation is not ready');const scope=cordPlaneContext(p,bundle,wraps,room); if(p.uiConfirm&&!await p.uiConfirm('Ban this member from the community?',{ok:'Ban',danger:true}))return; try{if(!scope.current())throw new Error('Concord membership changed during confirmation');const made=await reader.createBanWrap(bundle,wraps,target,viewer.pubkey,p.signTemplate),relays=roomRelays(bundle);if(!scope.current())throw new Error('Concord membership changed while signing');const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays)); if(!accepted||!accepted.ok)throw new Error('community relays rejected the ban');if(!scope.current())throw new Error('Concord membership changed during moderation');/* A signer may keep this promise open while the owner changes rooms. Update the moderated room by durable identity instead of overwriting the newly active numeric index. */const latest=saved(),roomIndex=latest.findIndex(item=>roomIdentity(item)===roomId);if(roomIndex<0)throw new Error('community was removed while moderation was pending');latest[roomIndex].banned=made.banned;save(latest);render();p.toast('member banned'); }catch(e){p.toast('member was not banned: '+(e&&e.message||e));} };

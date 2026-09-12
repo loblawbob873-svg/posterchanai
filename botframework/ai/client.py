@@ -44,6 +44,33 @@ _headers = {
 }
 
 
+def _is_local_endpoint(url):
+    """Is this our OWN app, on this machine?"""
+    try:
+        from urllib.parse import urlsplit
+        host = (urlsplit(str(url or "")).hostname or "").lower()
+    except Exception:
+        return False
+    return host in ("127.0.0.1", "localhost", "::1", "0.0.0.0")
+
+
+def _request_headers(drop_auth=False):
+    """The headers for ONE request, built per call rather than frozen at import.
+
+    A BOT MUST NOT BE ABLE TO LOSE ITS OWN APP. `_headers` was built once when this module was
+    imported and always carried `Authorization: Bearer <key>`, so an empty or REVOKED key was sent
+    anyway — and the app answers 401 to a bad key while accepting an unauthenticated call from
+    loopback (measured: `with key: 401`, `no header: 200`). One deactivated row in `api_keys` then
+    silenced every AI reply the bots make, permanently, with nothing but a 401 in a log nobody
+    reads. Reported as: the bot never answered a Concord room, and disabling and re-enabling the
+    bot could not fix it — nothing in the bot's lifecycle touches that key.
+    """
+    h = dict(_headers)
+    if drop_auth or not (OPENAI_API_KEY or "").strip():
+        h.pop("Authorization", None)
+    return h
+
+
 def is_ai_configured():
     """Check if OpenAI/AI endpoint is properly configured.
 
@@ -327,10 +354,23 @@ def _generate_reply_inner(user_content, previous_content, ping, thread_history, 
         try:
             r = requests.post(
                 OPENAI_ENDPOINT,
-                headers=_headers,
+                headers=_request_headers(),
                 data=json.dumps(payload),
                 timeout=request_timeout,
             )
+            if r.status_code == 401 and _is_local_endpoint(OPENAI_ENDPOINT):
+                # OUR OWN APP REFUSED OUR KEY. It accepts an unauthenticated call from loopback, so
+                # the key is the only thing standing between this bot and a working reply — retry
+                # once without it rather than retrying the same rejection five times and going mute.
+                # Said out loud, because a silently-degraded auth path is how this hid for weeks.
+                print("[AI CLIENT] local endpoint refused our API key (401) — "
+                      "retrying unauthenticated; fix or re-issue the bot's key in Admin -> Bots")
+                r = requests.post(
+                    OPENAI_ENDPOINT,
+                    headers=_request_headers(drop_auth=True),
+                    data=json.dumps(payload),
+                    timeout=request_timeout,
+                )
 
             print(f"OpenAI Response Status: {r.status_code}")
             r.raise_for_status()

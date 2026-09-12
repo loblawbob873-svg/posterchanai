@@ -34,6 +34,7 @@ import contextlib
 import pytest
 
 from tests.wayfire_config import bindings
+from tests.overlay_paths import shell_ebuild
 
 
 @contextlib.contextmanager
@@ -49,7 +50,7 @@ FILES = ROOT / "os/overlay/app-misc/posterchanos-shell/files"
 SNAP = FILES / "pc-window-snap"
 CLOSE = FILES / "pc-window-close"
 
-EBUILD = ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild"
+EBUILD = shell_ebuild()
 OS_JS = ROOT / "static/js/client/os.js"
 
 

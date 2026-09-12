@@ -3,12 +3,13 @@ import subprocess
 import time
 import re
 from pathlib import Path
+from tests.overlay_paths import shell_ebuild
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ROOT / "os/overlay/app-misc/posterchanos-shell/files"
 LAUNCHER = FILES / "pc-compositor-session"
-EBUILD = ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild"
+EBUILD = shell_ebuild()
 GENTOO = ROOT / "os/gentoo.sh"
 
 

@@ -11,7 +11,15 @@ from app.services import fedi_nostr_writeback_service as writeback
 
 MARKER = ["client-mode", "fedi-only"]
 SOCIAL_KINDS = frozenset((1, 5, 6, 7, 16, 1068, 1018, 1111, 1311, 30023, 30311))
-SUPPORTED_KINDS = frozenset((1, 5, 6, 7, 16))
+# 1111 IS THE ORDINARY REPLY KIND, so leaving it out disabled REPLYING ENTIRELY in Fediverse-only
+# mode. `_commentScope` gives every reply to a kind-1 note a NIP-22 scope, so `replyKindFor` returns
+# 1111 for all of them — not just for the polls and articles this list was written to exclude. The
+# client refused before signing with "Fediverse-only mode cannot send this post type (kind 1111)",
+# which reads as one odd post type being unsupported rather than as "you cannot answer anybody".
+# The delivery path was already complete: `_handle` has a `kind in (1, 1111)` branch, `_is_reply`
+# and `_reply_parent_id` both understand NIP-22, and 1111 is in `_WRITEBACK_KINDS`. Only this
+# frozenset and its copy in app.js stood in the way.
+SUPPORTED_KINDS = frozenset((1, 5, 6, 7, 16, 1111))
 _locks = weakref.WeakValueDictionary()
 
 
@@ -88,7 +96,11 @@ async def route(db, user, ev, *, broadcast_only=False):
             if (ev["kind"] != 1 or writeback._is_reply(ev)) and not target:
                 return {"route": "fediverse", "ok": False, "msg": "This post has no Fediverse bridge target"}
             await writeback._handle(db, ev, private_user=user)
-            model = FediBridgeDelivered if ev["kind"] == 1 else FediBridgeAction
+            # A 1111 is delivered as a REPLY and records a FediBridgeDelivered row (see
+            # `_handle`), so asking FediBridgeAction about it finds nothing and reports
+            # "Fediverse delivery failed. Nothing was published to Nostr." about a reply that
+            # was in fact delivered — the worst possible answer, since the user then reposts.
+            model = FediBridgeDelivered if ev["kind"] in (1, 1111) else FediBridgeAction
             row = db.query(model).filter(model.nostr_event_id == ev["id"],
                                          model.nostr_pubkey == ev["pubkey"]).first()
             ok = bool(row)

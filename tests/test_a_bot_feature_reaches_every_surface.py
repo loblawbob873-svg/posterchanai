@@ -155,23 +155,54 @@ def test_the_invite_field_comes_before_the_features_that_use_it():
 
 
 def test_a_saved_room_means_the_bot_joins_it():
-    """THE TRAP THIS WHOLE FILE EXISTS TO CATCH, BUILT BY THE FIX FOR THE LAST ONE.
+    """THE TRAP THIS FILE EXISTS TO CATCH, AND THE ONE THE FIRST FIX FOR IT CREATED.
 
     Making the invite field always visible left the SWITCH somewhere else — the feature checkbox —
     so pasting a link and pressing Save produced a bot holding a room it never opened. Measured on
     the real row: `concord_invite` set with its fragment intact, "Test join" answering 200, and
-    `modes='--nostr'`. Nothing was broken, nothing logged, and every surface an operator can see
-    said it was fine. Reported as "i don't see bot in room despite what the UI says".
+    `modes='--nostr'`. Nothing broken, nothing logged, every surface saying it was fine. Reported as
+    "i don't see bot in room despite what the UI says".
 
-    A value that is stored and ignored is worse than a value you cannot store. Pasting an invite IS
-    the request, so `_buildModes` derives the mode from the FIELD, not only from the tickbox.
+    The first fix derived the mode inside `_buildModes`, i.e. at SAVE. That worked and produced the
+    opposite complaint — "In bots, concord can never be unchecked, wtf is this" — because a bot that
+    has ever held an invite could not be saved without the listener: unticking the box was undone by
+    the save it triggered. Two bugs, one cause: the decision was being made somewhere the operator
+    could not see.
+
+    So the derivation happens at the FORM, visibly. Pasting an invite TICKS the box (once — the
+    ordinary request, one less click), the box is never locked, and Save reads the box and nothing
+    else. If the two end up disagreeing, the form SAYS so instead of silently correcting either way.
+    That keeps the original bug impossible — a pasted invite still produces a joining bot — while
+    leaving the operator in charge of the switch.
     """
+    form = JS[JS.index("function onBotFormChange("):]
+    form = form[:form.index("\n  }\n")] if "\n  }\n" in form else form
+
+    # Pasting an invite ticks the box, so the mode IS derived from the field — on screen.
+    assert "bot_f_concord_invite" in form and "bot_ft_concord" in form, (
+        "the form no longer reads the invite alongside the Concord checkbox, so pasting a link "
+        "leaves the listener off and the bot never joins the room it was given")
+    assert "checked = true" in form, "pasting an invite no longer ticks the Concord box"
+
+    # ...but it is a default, never a lock. These two are what the second complaint was about.
+    assert "pcSeenInvite" in form, (
+        "the tick is no longer one-time, so unticking the box is undone on the next form change")
+    assert "box.disabled = false" in form, "the Concord checkbox is being disabled again"
+
+    # And Save must read the BOX, never the field — otherwise the tick is decorative.
     block = JS[JS.index("function _buildModes("):]
     block = block[:block.index("\n}")]
-    assert "bot_f_concord_invite" in block, (
-        "saving a bot no longer derives --concord from the invite it was given, so an operator can "
-        "store a room the bot will never join")
-    assert "'--concord'" in block
+    # `--concord` reaches the command line through the feature table, which is the single place
+    # every checkbox is mapped; asserting a literal here would just pin where the string is typed.
+    assert "bot_ft_concord: '--concord'" in JS, "the Concord feature lost its mode flag"
+    assert "BOT_FEATURES" in block, "Save no longer reads the feature checkboxes at all"
+    assert "bot_f_concord_invite" not in block, (
+        "Save derives --concord from the invite field again, which is what made the checkbox "
+        "impossible to untick")
+
+    # Nothing is silently ignored: a saved room with the listener off has to say so.
+    assert "will not " in form and "join that room" in form, (
+        "a bot holding a room it is not listening to no longer explains itself")
 
 
 def test_the_checkbox_cannot_disagree_with_what_save_will_do():

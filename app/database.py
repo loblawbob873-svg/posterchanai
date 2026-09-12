@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
 import os
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,54 @@ def _backfill_blob_owners():
             logger.info("[INIT] blossom: backfilled %d blob owner row(s)", n)
     except Exception as e:
         logger.warning("[INIT] blossom owner backfill skipped: %s", e)
+
+
+
+def _backfill_concord_modes():
+    """ONCE: give bots that already hold a room invite the listener that opens it.
+
+    A bot's Concord listener used to be re-derived from its invite at every spawn, which meant an
+    operator could not turn it off ("In bots, concord can never be unchecked, wtf is this"). That
+    derivation is now a DEFAULT APPLIED AT CREATION instead — so the switch belongs to whoever is
+    looking at it. Rows written before that change, or by the REST API, can hold an invite with no
+    `--concord` in `modes`, and on the first start after this upgrade they would quietly stop
+    joining: the exact "it worked yesterday" shape, with nothing in any log.
+
+    Run ONCE and recorded, because running it every boot is the re-derivation this replaced — an
+    operator's untick would be undone by the next restart. The marker is written even when nothing
+    matched, so a later untick is never revisited.
+    """
+    from sqlalchemy import text
+    from app.services import settings_store          # imported here, as everywhere else in this file
+    try:
+        if settings_store.get("bots_concord_mode_backfilled", "") == "1":
+            return
+    except Exception:
+        return          # settings unreadable → do nothing rather than guess at somebody's bots
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(
+                "SELECT id, modes, config FROM bots WHERE config LIKE '%concord_invite%'"
+            )).fetchall()
+            changed = 0
+            for bot_id, modes, config in rows:
+                try:
+                    invite = str((json.loads(config or "{}") or {}).get("concord_invite") or "").strip()
+                except Exception:
+                    continue
+                listed = [m for m in (modes or "").replace(",", " ").split() if m]
+                if not invite or "--concord" in listed:
+                    continue
+                listed.append("--concord")
+                conn.execute(text("UPDATE bots SET modes = :m WHERE id = :i"),
+                             {"m": ",".join(listed), "i": bot_id})
+                changed += 1
+        if changed:
+            logger.info("[INIT] bots: %d bot(s) holding a room invite were given --concord", changed)
+        settings_store.set("bots_concord_mode_backfilled", "1")
+    except Exception as e:
+        # No marker on failure, so the next start retries rather than skipping somebody's bots.
+        logger.warning("[INIT] concord mode backfill skipped: %s", e)
 
 
 # Columns that were REMOVED from the models. _run_migrations only ever ADDS (it diffs the model
@@ -281,6 +330,7 @@ def init_db():
     _run_migrations()   # add any columns missing from pre-existing tables (automatic schema upgrade)
     _drop_removed_columns()   # ...and drop the ones whose feature was removed (_run_migrations can't see those)
     _backfill_blob_owners()   # seed blossom_blob_owners from the pre-existing single-owner column
+    _backfill_concord_modes() # once: a bot already holding an invite keeps its listener
 
 
     # Create default settings if not exist

@@ -21,11 +21,12 @@ binding whose command is only bookkeeping is the shape to look for.
 import re
 import unittest
 from pathlib import Path
+from tests.overlay_paths import shell_ebuild
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ROOT / "os/overlay/app-misc/posterchanos-shell/files"
 CONFIG = FILES / "wayfire.ini"
-EBUILD = ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild"
+EBUILD = shell_ebuild()
 
 #: `pc-super used` is bookkeeping: it marks the modifier consumed so the release does not open Start.
 BOOKKEEPING = "/usr/local/bin/pc-super used"

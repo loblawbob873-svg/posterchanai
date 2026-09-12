@@ -5,13 +5,14 @@ import subprocess
 import textwrap
 
 import pytest
+from tests.overlay_paths import shell_ebuild
 
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = (ROOT / "desktop/remotecontrol.js").read_text()
 MAIN = (ROOT / "desktop/main.js").read_text()
 PRELOAD = (ROOT / "desktop/preload.js").read_text()
-EBUILD = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+EBUILD = shell_ebuild().read_text()
 
 
 def test_native_remote_input_is_shell_only_and_origin_guarded():

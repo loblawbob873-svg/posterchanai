@@ -7,11 +7,12 @@ one 60 Hz frame.  This is package/runtime behavior, not just an installer-only t
 """
 import re
 from pathlib import Path
+from tests.overlay_paths import shell_ebuild
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "os/overlay/app-misc/posterchanos-shell/files/foot"
-EBUILD = ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild"
+EBUILD = shell_ebuild()
 INSTALLER = ROOT / "os/gentoo.sh"
 
 

@@ -95,7 +95,11 @@ async def main():
                         "-t", "18", "-c:v", "libx264",
                         "-threads", "1", "-c:a", "aac", str(source)], check=True, timeout=30)
         Image.new("RGB", (600, 400), "#195d78").save(source.parent / "poster.jpg")
-        other = source.parent / "The Long Way Home.mkv"
+        # A PATHOLOGICAL TITLE, because that is the bug. "Media center UI gets messed up with long
+        # video title": a grid item defaults to `min-width:auto` and so refuses to shrink below its
+        # content, and an unbroken name is the case with no space to wrap at. Two tiles with ordinary
+        # names can never show it — the grid only goes uneven once one item refuses to fit its track.
+        other = source.parent / ("A" + "-title-that-simply-keeps-going" * 6 + "-with-no-spaces.mkv")
         shutil.copyfile(source, other)
         scanned, _ = media.scan(str(temp))
         library = {"id": "test", "name": "Movies & Shows", "owner": OWNER, "shared_with": [VIEWER],
@@ -267,6 +271,61 @@ async def main():
                         print(name, 'PASS: Jellyfin Quick Connect approval and disconnect UI', flush=True)
 
                         await browser.until("document.querySelector('.mc-tile img')?.complete")
+                        # MEASURE THE CROWD, NOT A CARD. Every tile shares one `1fr` track, so the
+                        # symptom is tiles of DIFFERENT widths and a grid wider than its own box —
+                        # neither of which is visible from any single tile.
+                        layout = json.loads(await browser.js("""JSON.stringify((()=>{
+                          const tiles=[...document.querySelectorAll('.mc-tile')];
+                          const grid=document.querySelector('.xdc-grid');
+                          return {widths:tiles.map(t=>Math.round(t.getBoundingClientRect().width)),
+                                  overflow: grid ? grid.scrollWidth-grid.clientWidth : 0,
+                                  page: document.documentElement.scrollWidth-innerWidth};
+                        })())"""))
+                        assert len(set(layout['widths'])) <= 1, (
+                            f"{name}: a long title made the tiles different widths {layout['widths']} — "
+                            "the grid track grew to fit it instead of the title being clipped")
+                        assert layout['overflow'] <= 1, (
+                            f"{name}: the media grid scrolls sideways by {layout['overflow']}px")
+                        assert layout['page'] <= 0, (
+                            f"{name}: a long title pushed the whole page wider by {layout['page']}px")
+                        # AND THE PLAYER TOOLBAR, which is where a long title actually lands as
+                        # unclamped text. The GRID was never at risk — `.xdc-tile` carries
+                        # `overflow:hidden`, which already resolves a grid item's automatic minimum
+                        # size to 0, so the three assertions above hold with or without any change
+                        # to the tile. (Kept because they are cheap and they pin that.)
+                        #
+                        # The toolbar is `flex-wrap:wrap` around an `<h3>` that had no ellipsis, so
+                        # a long name wrapped and pushed Full screen / Close player / Quality onto
+                        # another row. The test is NOT "the controls are on one row" — on a phone
+                        # they are legitimately meant to wrap, and asserting otherwise fails on a
+                        # correct layout. It is that the layout DOES NOT DEPEND ON THE TITLE: render
+                        # the same toolbar with a short name and a 190-character one and require the
+                        # same shape. That is viewport-independent and is exactly what was reported.
+                        async def _toolbar(text):
+                            await browser.js("document.querySelector('#mc-playback').hidden=false;"
+                                             "document.querySelector('#mc-playing').textContent="
+                                             + json.dumps(text))
+                            return json.loads(await browser.js("""JSON.stringify((()=>{
+                              const h=document.querySelector('#mc-playing');
+                              const bar=h.parentElement, r=h.getBoundingClientRect();
+                              return {barH: Math.round(bar.getBoundingClientRect().height),
+                                      titleH: Math.round(r.height),
+                                      spill: Math.round(r.right - bar.getBoundingClientRect().right)};
+                            })())"""))
+                        short = await _toolbar("Short name")
+                        long_name = await browser.js("document.querySelector('.mc-tile b').textContent")
+                        assert len(long_name) > 120, f"the long-title fixture is only {len(long_name)} chars"
+                        wide = await _toolbar(long_name)
+                        assert wide['spill'] <= 1, (
+                            f"{name}: the now-playing title escapes the toolbar by {wide['spill']}px")
+                        assert wide['titleH'] == short['titleH'], (
+                            f"{name}: a long title made the now-playing line {wide['titleH']}px tall "
+                            f"where a short one is {short['titleH']}px — it is wrapping, not clipping")
+                        assert wide['barH'] == short['barH'], (
+                            f"{name}: a long title grew the player toolbar from {short['barH']}px to "
+                            f"{wide['barH']}px, moving the controls")
+                        await browser.js("document.querySelector('#mc-playback').hidden=true")
+                        print(name, 'PASS: a long title is clipped and the player controls stay put', flush=True)
                         if name=='phone':
                             assert (await client.get(f'{app_url}/api/media-center/test/scan')).json()['state']=='running'
                             await browser.js("window.scanFirstCard=document.querySelector('.mc-tile');window.scanFirstImage=scanFirstCard.querySelector('img');document.querySelector('.mc-tile button').click();setTimeout(()=>document.querySelector('.mc-resume-dialog[open] button[value=start]')?.click(),100)",gesture=True)

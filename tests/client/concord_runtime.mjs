@@ -553,14 +553,66 @@ const file=control('cc-file'); file.files=[{name:'photo.png',size:1000}];
 await file.onchange();
 if(input.value!=='https://files.example/photo.png') throw new Error('attachment control failed');
 input.value='';
-let pastePrevented=false;
+/* PASTE IS DISPATCHED AT THE DOCUMENT, THE WAY A BROWSER DOES IT.
+ *
+ * This used to call `input.onpaste(...)` — the handler, directly, on the element it was bound to.
+ * That is the one thing that never happens in a browser, and it is exactly the failure: the pane
+ * re-renders on every arriving message and REPLACES the composer, so the handler sat on a detached
+ * node and Ctrl+V did nothing. The test was green for the whole life of the bug because it
+ * reproduced the bug and called it expected. */
+const firePaste=(clipboardData)=>{
+  let prevented=false;
+  const fn=documentListeners.get('paste');
+  if(!fn) throw new Error('no document paste listener was installed');
+  fn({clipboardData,preventDefault(){prevented=true;},target:document.activeElement});
+  return ()=>prevented;
+};
+document.activeElement=input;
 const pastedImage={name:'clipboard.png',type:'image/png',size:900};
-input.onpaste({clipboardData:{items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}]},preventDefault(){pastePrevented=true;}});
+let wasPrevented=firePaste({items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}],files:[]});
 await new Promise(resolve=>setTimeout(resolve,0));
-if(!pastePrevented || input.value!=='https://files.example/clipboard.png') throw new Error('clipboard image paste failed');
-input.value=''; pastePrevented=false;
-input.onpaste({clipboardData:{items:[{kind:'string',type:'text/plain'}]},preventDefault(){pastePrevented=true;}});
-if(pastePrevented) throw new Error('plain text paste was intercepted');
+if(!wasPrevented() || input.value!=='https://files.example/clipboard.png') throw new Error('clipboard image paste failed');
+
+/* AND AGAIN AFTER A RE-RENDER, which is the whole point: the composer node is replaced and the
+   paste must still reach the NEW one. */
+input.value='';
+/* From here on the harness replaces the composer on EVERY repaint, the way a browser does —
+   the new node is built by the render and the pane binds to THAT, never to the node it replaced. */
+replaceComposerOnWrite=true;
+PCConcord.render();
+const input2=control('cc-input');
+document.activeElement=input2;
+const second={name:'second.png',type:'image/png',size:901};
+wasPrevented=firePaste({items:[],files:[second]});
+await new Promise(resolve=>setTimeout(resolve,0));
+if(!wasPrevented() || input2.value!=='https://files.example/second.png')
+  throw new Error('paste stopped working after a re-render — the detached-composer bug');
+
+input2.value='';
+wasPrevented=firePaste({items:[{kind:'string',type:'text/plain'}],files:[]});
+if(wasPrevented()) throw new Error('plain text paste was intercepted');
+
+/* WHOSE PASTE IS IT.  Two different questions that were being asked as one.
+   A paste aimed at ANOTHER EDITOR is that editor's — the room must not take it. */
+const otherField={id:'somewhere-else',tagName:'INPUT',value:'',isContentEditable:false};
+document.activeElement=otherField;
+wasPrevented=firePaste({items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}],files:[]});
+if(wasPrevented()) throw new Error('paste was stolen from another field');
+
+/* But NOTHING focused is not another field, and conflating the two is the bug that was reported:
+   you open a room, press Ctrl+V, and the composer has never been clicked, so `activeElement` is the
+   body. Requiring focus meant the image went nowhere and said nothing — "i tried ctrl v in concord
+   chat room just now, where the fuck is the image!" AFTER the detached-node fix had supposedly
+   fixed paste. The room takes a paste that no editor has claimed. */
+document.activeElement=null;
+wasPrevented=firePaste({items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}],files:[]});
+await new Promise(resolve=>setTimeout(resolve,0));
+if(!wasPrevented()) throw new Error('a paste nothing else claimed did not reach the room');
+document.activeElement={id:'body',tagName:'BODY',isContentEditable:false};
+wasPrevented=firePaste({items:[{kind:'file',type:'image/png',getAsFile:()=>pastedImage}],files:[]});
+await new Promise(resolve=>setTimeout(resolve,0));
+if(!wasPrevented()) throw new Error('a paste with the body focused did not reach the room');
+document.activeElement=control('cc-input');
 control('cc-members').click();
 if(!control('cc-members-dialog').classList.removed.includes('hidden')) throw new Error('members control failed');
 await control('cc-notify').onclick();
@@ -569,11 +621,11 @@ const groupCallsBefore=calls.group;
 control('cc-call').click();
 if(calls.group===groupCallsBefore&&!calls.toasts.some(x=>x.includes('No other community members')))
   throw new Error('call control neither called hydrated members nor reported an empty room');
-input.value='hello concord';
+control('cc-input').value='hello concord';
 let prevented=false;
-input.onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
+control('cc-input').onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});
 if(prevented || data.has('pc.concord.test.'+rooms[0].naddr)) throw new Error('plain Enter sent a message');
-await input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){prevented=true;}});
+await control('cc-input').onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){prevented=true;}});
 const messages=JSON.parse(messageData.get('pc.concord.test.'+rooms[0].naddr));
 if(!prevented || messages.length!==1 || messages[0].text!=='hello concord' || messages[0].by!=='Test User')
   throw new Error('Ctrl+Enter send flow failed');
@@ -584,8 +636,8 @@ if(!prevented || messages.length!==1 || messages[0].text!=='hello concord' || me
 let releaseRace;
 PosterCordReader.createChatWrap=()=>new Promise(resolve=>{releaseRace=()=>resolve({
   rumorId:'e'.repeat(64),wrap:{kind:1059},ms:2345});});
-input.value='race once';
-const racing=input.onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
+control('cc-input').value='race once';
+const racing=control('cc-input').onkeydown({key:'Enter',ctrlKey:true,metaKey:false,preventDefault(){}});
 await new Promise(resolve=>setTimeout(resolve,0));
 const raceKey='pc.concord.test.'+rooms[0].naddr;
 const whilePending=JSON.parse(messageData.get(raceKey));

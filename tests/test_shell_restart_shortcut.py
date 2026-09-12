@@ -21,11 +21,12 @@ import re
 import subprocess
 
 from tests.wayfire_config import bindings, runs
+from tests.overlay_paths import shell_ebuild
 
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ROOT / "os/overlay/app-misc/posterchanos-shell/files"
-EBUILD = (ROOT / "os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild").read_text()
+EBUILD = shell_ebuild().read_text()
 
 
 def test_ctrl_alt_backspace_restarts_only_the_posterchan_shell():
