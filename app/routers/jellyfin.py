@@ -1122,7 +1122,25 @@ async def stopped(request: Request, body: dict = Body(default={}), auth=Depends(
     ticket = parse_qs(urlsplit(record.get('url') or '').query).get('ticket', [''])[0]
     if ticket:
         await media_call(request, auth, db, '/sessions/stop', 'POST', {'ticket': ticket})
-    _plays.pop(play_id, None)
+    # STOPPING IS NOT THE END OF THE PLAY SESSION, AND DROPPING THE RECORD BREAKS A BITRATE SWITCH.
+    #
+    # A client changes quality by reporting Stopped and immediately asking for the new rendition —
+    # with the SAME PlaySessionId. Popping the record made every request after that report 404
+    # ("Playback session expired; reopen the item"), which a TV shows as "Error During Playback" in
+    # the middle of a film. Measured on a real play, all within one second:
+    #
+    #   GET  Videos/<id>/master.m3u8   200      <- still fine
+    #   POST Sessions/Playing/Stopped  204      <- the record was popped here
+    #   GET  Videos/<id>/360p.m3u8     404
+    #   GET  Videos/<id>/master.m3u8   404      <- answered 200 a second earlier
+    #
+    # `master.m3u8` skips the profile check, so its own 200 -> 404 is proof the RECORD went, not the
+    # rendition. Keeping it loses nothing: the `ticket` in the url is an HMAC over (library, item,
+    # pubkey, expires) that media_center verifies BY SIGNATURE, so it stays valid until it expires
+    # whether or not a session is counted, and the `/sessions/stop` above has already given back the
+    # concurrent-stream slot — the only thing a stop actually frees. The record stays bounded
+    # exactly as before, by the 900s staleness check in play_record() and the 256-entry cap.
+    record['stopped'] = True
     return Response(status_code=204)
 
 
