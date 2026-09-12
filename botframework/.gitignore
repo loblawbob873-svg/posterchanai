@@ -24,3 +24,4 @@ test_*_output.png
 test_*_regen.png
 .aider*
 stickers/
+.concord_seen.json

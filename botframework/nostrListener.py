@@ -252,14 +252,40 @@ def _handle_media_command(note, command, arg):
         send_reply(note, "", video_bytes=v)
 
 
-def _dispatch(note, prompt_text, own, thread_history):
+def _dispatch(note, prompt_text, own, thread_history, reply=None, sender_key=None,
+              media_ok=True):
+    """Decide what this mention asks for and answer it.
+
+    ONE dispatcher, two transports. `reply` is how an answer LEAVES — the Nostr default posts a
+    note; Concord passes its own, which uploads any bytes and says them into the room. Everything
+    above that seam (which command, what it costs, what it says when it cannot) is shared, so the
+    two surfaces cannot drift into two different bots wearing one name.
+
+    `media_ok` is False on a transport that cannot hand this code an INBOUND file yet (Concord's
+    attachments are separately encrypted per room). It refuses those commands with a sentence
+    instead of doing nothing, which is the difference between "not supported here" and "broken".
+
+    THE CALLER IS THE MENTION GATE. Nothing in here checks whether the bot was addressed — both
+    listeners only reach this with a message that named the bot, and that is deliberate: a bot that
+    runs `geni` for any line of room chatter containing the word is a bot that gets removed.
+    """
+    # NOT `reply or (lambda ...: reply(...))` — that binds the lambda to its own name and recurses
+    # for ever on the Nostr path. Capture the note-bound sender under a different name.
+    _post = send_reply
+    reply = reply or (lambda text="", **kw: _post(note, text, **kw))
+    if sender_key is None:
+        sender_key = (note.get("user") or {}).get("pubkey", "") if isinstance(note, dict) else ""
     lower = prompt_text.lower()
     # Media / effect commands on an attached or linked file.
     media_cmd = next((c for c in MEDIA_COMMANDS if lower == c or lower.startswith(c + " ")), None)
     if media_cmd:
+        if not media_ok:
+            reply("📎 File commands like `%s` need an attachment, and I can't read attachments in "
+                  "a room yet — post the file on Nostr and tag me there." % media_cmd)
+            return
         arg = prompt_text[len(media_cmd):].strip()
         if media_cmd == "meme" and contains_bad_words(arg.lower()):
-            send_reply(note, "I cannot add that text to an image.")
+            reply("I cannot add that text to an image.")
         else:
             _handle_media_command(note, media_cmd, arg)
         return
@@ -268,10 +294,10 @@ def _dispatch(note, prompt_text, own, thread_history):
         parts = prompt_text.split(None, 1)
         url = parts[1].strip() if len(parts) > 1 else ""
         if not url:
-            send_reply(note, "Usage: screenshot <url>")
+            reply("Usage: screenshot <url>")
             return
         png, err = capture_screenshot(url)
-        send_reply(note, f"📸 {url}" if png else (err or "❌ Screenshot failed."), image_bytes=[png] if png else None)
+        reply(f"📸 {url}" if png else (err or "❌ Screenshot failed."), image_bytes=[png] if png else None)
         return
 
     if lower == "ytdl" or lower.startswith("ytdl "):
@@ -284,58 +310,58 @@ def _dispatch(note, prompt_text, own, thread_history):
         url, clip, compress = parse_ytdl_postaction(arg)
         if clip or compress:
             as_video = True
-        sender = (note.get("user") or {}).get("pubkey", "")
+        sender = sender_key
         elapsed = time.monotonic() - _ytdl_last_request.get(sender, 0.0)
         if not url:
-            send_reply(note, "Usage: ytdl <url> (audio), ytdl video <url>, or ytdl video <url> clip 0:10 0:30 compress")
+            reply("Usage: ytdl <url> (audio), ytdl video <url>, or ytdl video <url> clip 0:10 0:30 compress")
         elif elapsed < _YTDL_COOLDOWN_SECONDS:
-            send_reply(note, f"⏳ Please wait {int(_YTDL_COOLDOWN_SECONDS - elapsed)}s before another download.")
+            reply(f"⏳ Please wait {int(_YTDL_COOLDOWN_SECONDS - elapsed)}s before another download.")
         else:
             _ytdl_last_request[sender] = time.monotonic()
             data, mime, err = fetch_ytdl_media(url, video=as_video, clip=clip, compress=compress)
             if data and (as_video or (mime or "").startswith("video/")):
-                send_reply(note, f"🎬 {url}", video_bytes=data)
+                reply(f"🎬 {url}", video_bytes=data)
             elif data:
-                send_reply(note, f"🎵 {url}", audio_bytes=data)
+                reply(f"🎵 {url}", audio_bytes=data)
             else:
-                send_reply(note, f"❌ Download failed: {err or 'unknown error'}")
+                reply(f"❌ Download failed: {err or 'unknown error'}")
         return
 
     if lower in ("help", "/help", "commands", "?"):
-        send_reply(note, BOT_HELP_TEXT)
+        reply(BOT_HELP_TEXT)
         return
 
     if lower.startswith("search "):
         query = prompt_text[7:].strip()
         results, categories = smart_search(query)
-        send_reply(note, summarize_search_results(results, query, categories) if results else f'No results found for "{query}".')
+        reply(summarize_search_results(results, query, categories) if results else f'No results found for "{query}".')
         return
 
     if lower.startswith("images "):
         query = prompt_text[7:].strip()
         if contains_bad_words(query.lower()):
-            send_reply(note, "I cannot search for images with that content.")
+            reply("I cannot search for images with that content.")
             return
         reply_text, image_list = search_and_download_images(query, max_images=4)
-        send_reply(note, reply_text, image_bytes=image_list or None)
+        reply(reply_text, image_bytes=image_list or None)
         return
 
     if lower.startswith("news "):
         source = prompt_text[5:].strip()
         try:
-            send_reply(note, fetch_news_from_source(source, max_headlines=10))
+            reply(fetch_news_from_source(source, max_headlines=10))
         except Exception as e:
-            send_reply(note, f"Sorry, there was an error fetching news: {e}")
+            reply(f"Sorry, there was an error fetching news: {e}")
         return
 
     if "geni" in lower:
         if contains_bad_words(lower):
-            send_reply(note, "I cannot generate images for that content.")
+            reply("I cannot generate images for that content.")
             return
         from image_backend import generate_image_bytes_with_retries
         image_bytes = generate_image_bytes_with_retries(prompt_text, max_retries=10, retry_delay=30)
         if image_bytes:
-            send_reply(note, "Here is your image. Hope you like it.", image_bytes=image_bytes)
+            reply("Here is your image. Hope you like it.", image_bytes=image_bytes)
         else:
             print("[nostr] image generation returned None after retries")
         return
@@ -345,7 +371,7 @@ def _dispatch(note, prompt_text, own, thread_history):
             return
         narrate_prompt = re.sub(r"/narrate\s*", "", prompt_text, flags=re.IGNORECASE).strip()
         if not narrate_prompt:
-            send_reply(note, "Usage: /narrate <your message>")
+            reply("Usage: /narrate <your message>")
             return
         reply_text = generate_reply(narrate_prompt, thread_history=thread_history, ping=False, narrate_mode=True)
         if reply_text:
@@ -353,15 +379,15 @@ def _dispatch(note, prompt_text, own, thread_history):
             avatar_url = own.get("avatarUrl") if own else None
             video = generate_narration_video(reply_text, avatar_url) if avatar_url else None
             if video:
-                send_reply(note, "", video_bytes=video)
+                reply("", video_bytes=video)
             else:
-                send_reply(note, reply_text, audio_bytes=generate_speech_with_retries(reply_text))
+                reply(reply_text, audio_bytes=generate_speech_with_retries(reply_text))
         return
 
     # Plain reply.
     reply_text = generate_reply(prompt_text, thread_history=thread_history, ping=False)
     if reply_text:
-        send_reply(note, reply_text)
+        reply(reply_text)
 
 
 def process_random_replies():

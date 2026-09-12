@@ -107,13 +107,29 @@ def mentions(text: str, npub: str, pubkey_hex: str, names: list[str]) -> bool:
     if pubkey_hex and pubkey_hex.lower() in low:
         return True
     for name in names:
-        name = (name or "").strip().lower()
-        if not name:
-            continue
-        # `@name` on a word boundary: "@news" matches, "@newsletter" does not.
-        if re.search(r"(^|[^\w@])@" + re.escape(name) + r"(?![\w-])", low):
+        if re.search(_handle_re(name), low):
             return True
     return False
+
+
+def _handle_re(name: str) -> str:
+    """`@name` on a word boundary — WITH THE SPACES IN THE NAME TREATED AS A HANDLE.
+
+    A bot's display name is "PosterChan AI" and nobody can type a space into an @-mention, so what
+    people actually write is `@PosterChan_AI`. Matched literally, that name could only ever be hit
+    by `@PosterChan AI`, which no client offers and nobody types: measured in a real room, a request
+    addressed to `@PosterChan_AI` was not a mention at all and the bot ignored it in silence.
+    The separator is therefore any run of space/underscore/hyphen/dot, or none at all
+    (`@PosterChanAI`), which is every spelling of the same handle.
+
+    Still deliberately requires the `@`: bots are named things like "chess" and "news", and a
+    community saying those words in conversation must not be answered all day.
+    """
+    name = (name or "").strip().lower()
+    if not name:
+        return r"(?!)"                       # matches nothing
+    body = r"[\s_.\-]*".join(re.escape(w) for w in name.split())
+    return r"(^|[^\w@])@" + body + r"(?![\w-])"
 
 
 class RoomSession:
@@ -165,6 +181,56 @@ def open_room(room: _cc.Room, query) -> RoomSession:
     return session
 
 
+def _strip_address(text: str, npub: str, names) -> str:
+    """The message with the way it addressed us removed, so `geni a cat` is what the dispatcher sees.
+
+    A room message names the bot before it asks for anything — "@PosterChan AI geni a cat" — and
+    every command in `_dispatch` is matched from the START of the string (`lower.startswith(...)`).
+    Left in, the address makes every command an ordinary sentence and the bot answers prose about a
+    cat instead of drawing one.
+    """
+    out = str(text or "")
+    for n in sorted([n for n in (names or []) if n], key=len, reverse=True):
+        # The SAME spelling rule `mentions()` matched on, or a message it accepted as addressed to
+        # us keeps the address in its body and every command reads as prose.
+        body = r"[\s_.\-]*".join(re.escape(w) for w in n.strip().split())
+        out = re.sub(r"@?" + body + r"(?![\w-])[:,]?", " ", out, flags=re.I)
+    if npub:
+        out = re.sub(r"(nostr:)?" + re.escape(npub) + r"\b", " ", out, flags=re.I)
+    return re.sub(r"\s+", " ", out).strip()
+
+
+def _is_command(body: str) -> bool:
+    """Does this ask for a FEATURE, or is it just talking to us?
+
+    Deliberately a whitelist of the dispatcher's own openers. Anything else — which is almost
+    everything anyone says to a bot — goes to the ordinary generator, so adding commands here can
+    never turn ordinary conversation into a tool call.
+    """
+    low = str(body or "").strip().lower()
+    if not low:
+        return False
+    if low in ("help", "/help", "commands", "?"):
+        return True
+    if low in ("screenshot", "shot", "ss", "ytdl"):
+        return True
+    if low.startswith(("screenshot ", "shot ", "ss ", "ytdl ", "search ", "images ", "news ")):
+        return True
+    if "geni" in low or "/narrate" in low:
+        return True
+    return any(low == c or low.startswith(c + " ") for c in _media_commands())
+
+
+def _media_commands():
+    """Read from `bot_commands` at CALL time, never copied into a literal here — a second hand-typed
+    list of ~84 effect names is exactly how the Telegram copies drifted (see CLAUDE.md)."""
+    try:
+        from bot_commands import MEDIA_COMMANDS
+        return MEDIA_COMMANDS
+    except Exception:
+        return ()
+
+
 class Wire:
     """The relay I/O this listener needs, in one injectable object.
 
@@ -175,9 +241,12 @@ class Wire:
     live) is precisely the half a test with no relay can never check.
     """
 
-    def __init__(self, query, publish, identity, generate):
+    def __init__(self, query, publish, identity, generate, dispatch=None):
         self.query, self.publish = query, publish
         self.identity, self.generate = identity, generate
+        # The shared command dispatcher (nostrListener._dispatch bound to this transport). None in
+        # a test that only cares about plain replies.
+        self.dispatch = dispatch
 
 
 def live_wire() -> Wire:
@@ -207,20 +276,118 @@ def live_wire() -> Wire:
 
     def generate(text, msg):
         """The SAME generator its Nostr mentions use — a bot with one personality on the timeline
-        and another in a room is two bots wearing one name."""
+        and another in a room is two bots wearing one name.
+
+        That is `ai.generate_reply`, which is what `nostrListener` calls for every mention. This
+        used to import a `generate_message` from `bot_commands` that HAS NEVER EXISTED in this
+        package, and the failure was perfectly quiet: the import raised, the except logged at
+        WARNING — to a logger the bot never configures a handler for — `generate` returned "", and
+        `process_mentions` read that as "nothing to say" and moved on. So the bot joined the room,
+        read it, matched the mention, and then said nothing, every time, with the operator's only
+        evidence being silence in a chat room.
+
+        `ping=False` because a room reply is a reply, not a greeting. The sender's name is passed
+        as the previous turn's speaker so the model answers a person rather than a wall of text.
+        """
         try:
-            from bot_commands import generate_message
+            from ai import generate_reply, is_ai_configured
         except Exception as e:
             logger.warning(f"[concord] no generator available: {e}")
             return ""
-        sender = {"pubkey": msg.get("pubkey") or "", "name": msg.get("by") or "someone"}
+        if not is_ai_configured():
+            # A bot with no model configured cannot answer, and saying so once is the difference
+            # between "misconfigured" and "broken" for whoever is reading the log.
+            logger.warning("[concord] no AI is configured for this bot — it cannot answer mentions")
+            return ""
+        who = str(msg.get("by") or "").strip()
         try:
-            return (generate_message(text, sender) or "").strip()
+            return (generate_reply(text, previous_content=(f"{who} says:" if who else None),
+                                   ping=False) or "").strip()
         except Exception as e:
-            logger.warning(f"[concord] generate_message failed: {e}")
+            logger.warning(f"[concord] generate_reply failed: {type(e).__name__}: {e}")
             return ""
 
-    return Wire(query, publish, identity, generate)
+    def dispatch(body, send, sender_key):
+        """nostrListener's dispatcher, wearing the room transport. `media_ok=False`: a room's
+        inbound attachments are encrypted per room, so the file/effect commands say so rather than
+        silently doing nothing."""
+        import nostrListener as _nl
+        try:
+            _nl._dispatch(None, body, None, None, reply=send, sender_key=sender_key,
+                          media_ok=False)
+        except Exception as e:
+            logger.warning(f"[concord] command {body.split(' ')[0]!r} failed: "
+                           f"{type(e).__name__}: {e}")
+
+    return Wire(query, publish, identity, generate, dispatch)
+
+
+def _imeta(url: str, mime: str, name: str) -> list:
+    """A PUBLIC room attachment, in the shape `concord.js:publicAttachments` actually parses.
+
+    Fields are "key value" strings inside one `imeta` tag, and the parser REFUSES anything carrying
+    an `encryption-algorithm` or a non-https url — so a bot's picture must be plain and hosted, not
+    Armada-encrypted. (Room attachments a PERSON posts are encrypted per room; a bot cannot mint
+    that without the room's file key, which is why its media goes out public and its text does not.)
+    """
+    return ["imeta", f"url {url}", f"m {mime}", f"name {name}"]
+
+
+def _room_reply(room, cid: str, publish, relays):
+    """The Concord transport for `nostrListener._dispatch`.
+
+    Same answers as on the timeline, delivered into the room: any bytes the command produced are
+    uploaded to this bot's configured media host and named in an `imeta` tag, then the whole thing
+    goes out as ONE message — a picture and its caption arriving as two messages reads as a bot
+    talking to itself.
+    """
+    def send(text: str = "", image_bytes=None, video_bytes=None, audio_bytes=None, **_ignored):
+        import nostr as _mk
+        from app.services.nostr import media as _media
+        from nostr import _SECKEY, _MEDIA_CFG      # the bot's own identity + media host
+
+        # THE SHAPES ARE NORMALISED BY `nostr._to_media_list`, NEVER BY A SECOND COPY HERE.
+        # A command hands back bytes, a LIST of bytes, or a list of (bytes, mime) depending which
+        # command it was — measured: a first version of this iterated `image_bytes` directly, which
+        # walks a bare `bytes` one INTEGER at a time, and every geni reply died as
+        # "object supporting the buffer API required" after the picture had already been generated.
+        items = _mk._to_media_list(image_bytes, video_bytes, audio_bytes)
+
+        tags = []
+        for i, (data, mime) in enumerate(items):
+            if not data:
+                continue
+            try:
+                info = _mk._run(_media.upload(_MEDIA_CFG, _SECKEY, data, mime))
+            except Exception as e:
+                logger.warning(f"[concord] media upload failed: {type(e).__name__}: {e}")
+                continue
+            url = info.get("url")
+            if not url:
+                continue
+            ext = (mime.split("/")[-1] or "bin").split(";")[0]
+            tags.append(_imeta(url, info.get("mime") or mime, f"reply{i}.{ext}"))
+
+        if items and not tags:
+            # THE PICTURE WAS MADE AND THEN LOST, AND THE CAPTION MUST NOT CLAIM OTHERWISE.
+            # `geni`'s caption is "Here is your image. Hope you like it." — sent alone after every
+            # upload failed, that is the bot stating something untrue about work it really did do,
+            # and the reader has no way to tell it from a client that failed to render.
+            logger.warning("[concord] %d file(s) were made but none could be uploaded", len(items))
+            text = ((text + "\n\n") if text else "") + (
+                "⚠️ I made that but couldn't upload it just now — ask me again in a moment.")
+        if not text and not tags:
+            # Nothing to say AND nothing to show. Saying so is better than a silent no-op, which is
+            # the failure shape this whole listener has already been bitten by once.
+            logger.warning("[concord] a command produced neither text nor media — nothing sent")
+            return
+        made = room.say(cid, text or "", tags=tags or None)
+        wrap = made.get("wrap")
+        if not wrap:
+            logger.warning("[concord] the bridge built no wrap to publish")
+            return
+        publish(relays, wrap)
+    return send
 
 
 def process_mentions(state: dict | None = None, wire: Wire | None = None) -> int:
@@ -278,12 +445,30 @@ def process_mentions(state: dict | None = None, wire: Wire | None = None) -> int
                 continue                      # never answer ourselves
             if not mentions(text, npub, pk_hex, names):
                 continue
-            seen.add(mid)                     # mark BEFORE replying: a crash mid-reply must not
-                                              # make the next pass answer it again
             try:
+                # GENERATE FIRST, THEN MARK. The mark exists so a crash mid-PUBLISH cannot make the
+                # next pass answer twice — but marking before the generator ran meant a generator
+                # that produced nothing (no model configured, a bad import, a timeout) consumed the
+                # mention for ever. The bot then stayed silent about that question even once the
+                # generator was fixed, which is how a two-line import bug looked like a dead bot.
+                # Nothing has been said yet at this point, so there is nothing to double-send.
+                # EVERY COMMAND THE TIMELINE BOT HAS, BEHIND THE MENTION GATE.
+                # `_dispatch` is nostrListener's — one implementation, two transports — so `geni`,
+                # `search`, `images`, `news`, `screenshot`, `ytdl`, `/narrate` and `help` answer
+                # here exactly as they do on Nostr. It is only ever reached for a message that
+                # NAMED this bot (the `mentions()` guard above), which is the rule that keeps a bot
+                # welcome in somebody else's room.
+                body = _strip_address(text, npub, names)
+                if w.dispatch is not None and _is_command(body):
+                    w.dispatch(body, _room_reply(session.room, cid, w.publish, session.relays),
+                               author)
+                    seen.add(mid)
+                    sent += 1
+                    continue
                 reply = w.generate(text, msg)
                 if not reply:
-                    continue
+                    continue                  # deliberately NOT marked — ask us again and we'll try
+                seen.add(mid)                 # committed: from here a failure must not re-answer
                 made = session.room.say(cid, reply)
                 wrap = made.get("wrap")
                 if not wrap:

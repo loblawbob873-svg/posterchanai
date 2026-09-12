@@ -7711,7 +7711,10 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   background:color-mix(in srgb,var(--panel) 94%,transparent);
   -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
   transition:border-color .14s ease,box-shadow .14s ease}
-.os-root.os-fx .osw.focused:not(.osw-document){box-shadow:0 24px 68px rgba(0,0,0,.58),0 0 0 1px rgba(var(--accent-rgb),.12)}
+/* The focused glow. The flat `0 0 0 1px` ring it used to carry is now drawn by the turning
+   gradient below, so this layer is the BLOOM only — one shadow rule for one selector. */
+.os-root.os-fx .osw.focused:not(.osw-document){
+  box-shadow:0 24px 68px rgba(0,0,0,.58),0 0 22px -6px rgba(var(--accent-rgb),.42)}
 .os-root.os-fx .osw-bar{background:color-mix(in srgb,var(--panel2) 91%,transparent)}
 .os-root.os-fx .os-bar{box-shadow:0 -10px 32px rgba(0,0,0,.18)}
 /* Explicit low-power/OFF means off: it also removes the desktop's pre-existing frost and depth.
@@ -7955,6 +7958,42 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   .os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
 .osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
+
+/* THE FOCUSED WINDOW WEARS A TURNING GRADIENT, the way Hyprland draws its active border.
+ * ("can you add the nice cyberpunk border to windows like Hyprland does?")
+ *
+ * Drawn as a RING INSIDE the frame, not an outline around it: `.osw` is `overflow:hidden`, so
+ * anything at a negative inset is clipped away and would simply not appear. A pseudo-element with
+ * a conic gradient, masked so only the `padding` band paints, is what makes a gradient BORDER
+ * possible at all — a border-image cannot be rounded and `border-color` takes one colour.
+ *
+ * It uses the theme's OWN `--neon`/`--neon2`, so it is cyberpunk on cyberpunk and correct on the
+ * other eight themes rather than a hardcoded blue-pink stripe on a light one.
+ *
+ * GATED ON `.os-fx`, which is the existing "Desktop effects" setting (auto/full/off) and is
+ * already off on touch — a continuously animating border on every focused window is exactly the
+ * GPU cost that switch exists to control. No new setting for one decoration.
+ *
+ * `@property` is what makes an angle animatable; where it is unsupported the declaration is simply
+ * ignored, the gradient renders at its initial angle and the window keeps a static gradient ring
+ * instead of a broken one. `body.anim-off` (the client idles the GPU when backgrounded) sets
+ * `animation:none`, and a DISABLED animation resolves to the element's resting style — so the ring
+ * cannot be stranded mid-keyframe the way a `paused` one would be. */
+@property --osw-ang{syntax:'<angle>';initial-value:0deg;inherits:false}
+@keyframes osw-ring{to{--osw-ang:360deg}}
+.os-root.os-fx .osw.focused:not(.osw-document)::after{
+  content:'';position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;
+  z-index:3;
+  background:conic-gradient(from var(--osw-ang),
+    var(--neon), var(--neon2), var(--green), var(--neon2), var(--neon));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  animation:osw-ring 8s linear infinite}
+/* A turning border is motion. Somebody who asked the system for less of it keeps the ring and
+   loses the rotation — the window is still clearly the focused one. */
+@media(prefers-reduced-motion:reduce){
+  .os-root.os-fx .osw.focused:not(.osw-document)::after{animation:none}}
 .osw.osw-document,.osw.osw-document.focused{border-color:#4b5563;border-radius:4px;
   box-shadow:0 8px 24px rgba(0,0,0,.38)}
 .osw.osw-document .osw-bar{background:#20242b;border-bottom-color:#3d444d}
@@ -9625,6 +9664,34 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
    `.sms-msgs` keeps only what it needs to be a scroll container; `.dm-msgs` beside it in the markup
    supplies the padding and the scrolling. */
 .sms-msgs{flex:1;min-height:0}
+/* TAPBACKS. The chip row hangs off the bottom edge of the bubble it belongs to, the way every
+   messages app draws it, so it reads as "on" the message rather than as another message. The
+   bubble is already positioned by the DM styles; only `overflow:visible` is needed so a chip that
+   sits below the corner is not clipped. */
+/* SCOPED TO TEXTS, never `.bubble` itself: that class is the DM's and adding `position` to it
+   would move every absolutely-positioned thing in the DM screen too. */
+.sms-msgs .bubble{position:relative;overflow:visible}
+.sms-msgs .bubble:last-child{margin-bottom:10px}
+.bubble .sms-reacts{position:absolute;bottom:-9px;display:flex;gap:2px;z-index:1}
+.bubble.in .sms-reacts{left:8px}
+.bubble.out .sms-reacts{right:8px}
+.sms-react{display:inline-flex;align-items:center;gap:2px;font-size:11px;line-height:1;
+  padding:2px 5px;border-radius:999px;background:var(--bg2,#1b1b1f);
+  border:1px solid var(--line,#2c2c33);white-space:nowrap}
+.sms-react b{font-weight:600;font-size:10px;opacity:.75}
+/* The react button only appears on hover/focus, so a thread is not a wall of ☺. A phone has no
+   hover, so it is always visible under a coarse pointer — the control has to be reachable. */
+.sms-react-add{position:absolute;top:2px;opacity:0;border:0;background:none;cursor:pointer;
+  font-size:13px;line-height:1;padding:2px;color:var(--fg2,#9aa)}
+.bubble.in .sms-react-add{right:-20px}
+.bubble.out .sms-react-add{left:-20px}
+.bubble:hover .sms-react-add,.sms-react-add:focus-visible{opacity:1}
+@media (pointer:coarse){.sms-react-add{opacity:.55}}
+.sms-react-pick{position:fixed;z-index:60;display:flex;gap:2px;padding:4px;border-radius:999px;
+  background:var(--bg1,#141417);border:1px solid var(--line,#2c2c33);box-shadow:0 6px 20px #0008}
+.sms-react-pick button{border:0;background:none;cursor:pointer;font-size:18px;line-height:1;
+  padding:4px;border-radius:999px}
+.sms-react-pick button:hover,.sms-react-pick button.on{background:var(--bg2,#26262c)}
 /* PICTURE MESSAGES. The bubble's `white-space:pre-wrap` is for TEXT, and it puts a phantom line
    between stacked attachments (the newlines in the template) — so the caption gets its own element
    and the bubble's padding shrinks to a frame once there is a picture in it. */

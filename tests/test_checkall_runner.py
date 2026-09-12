@@ -112,3 +112,23 @@ def test_the_reason_is_bounded():
     """It is one row in a table, not the check's whole output."""
     out = "FAIL:\n" + "".join(f"  - problem number {i} with a long description\n" for i in range(80))
     assert len(checkall.summarise({"out": out})) <= 400
+
+
+def test_the_suites_never_read_or_write_a_bytecode_cache():
+    """A GATE ONCE FAILED ON A TEST THAT DID NOT EXIST.
+
+    It reported `test_overlay_audits_unified_messages_surface`, a function that had been renamed
+    out of the file. Source clean, `cpython-311` cache clean — and the `cpython-312` `.pyc` beside
+    them still held the deleted function, written when a different interpreter ran the suite over
+    an older copy. The run that picked that cache up executed code that is in no file and reported
+    it against a path that had changed, which is the most expensive kind of red: nobody can find it.
+
+    `-p no:cacheprovider` is pytest's own cache and does nothing here; `-B` is what turns bytecode
+    caching off. One second of compile time per run buys a suite whose failures are all real.
+    """
+    import re
+    src = pathlib.Path(__file__).resolve().parent.parent / "scripts/checkall.py"
+    body = src.read_text(encoding="utf-8")
+    run = body[body.index("def run_suite(suite, tmp):"):]
+    run = run[:run.index("\ndef ", 10)]
+    assert '[PY, "-B"]' in run, "the pytest suites can pick up a stale .pyc again"

@@ -193,14 +193,14 @@ def test_git_events_survive_a_stray_expiration_tag(store_factory):
         store = store_factory(loop, retention_days=0)
         # An ALREADY-expired event is never STORED (see _insert_one), so seed just-future and let it
         # lapse — seeding it in the past would assert against an empty table.
-        soon = int(time.time()) + 1
+        soon = int(time.time()) + 4   # headroom: see the note on the stray-expiration test
         await store.add_events_bulk(
             [_ev(i, kind=30617, expiration=soon, pubkey=f"{i:064x}") for i in range(1, 6)]
             + [_ev(i, kind=1617, expiration=soon) for i in range(10, 15)]
             + [_ev(i, kind=1, expiration=soon) for i in range(100, 120)])
         assert await store.count() == 30, "all 30 must be stored while still unexpired"
 
-        await asyncio.sleep(1.6)
+        await asyncio.sleep(max(0.6, soon - time.time() + 0.6))
         preview = await store.prune_preview()
         removed = await store.prune(chunk=4)
 
@@ -222,7 +222,7 @@ def test_datastore_docs_survive_a_stray_expiration_tag(store_factory):
     """
     async def go(loop):
         store = store_factory(loop, retention_days=0)
-        soon = int(time.time()) + 1
+        soon = int(time.time()) + 4   # headroom: see the note on the stray-expiration test
         # Addressable (30000-39999) → same pubkey+kind+d collapses to one. Distinct authors keep
         # five distinct rows, matching how the git test seeds its 30617s.
         await store.add_events_bulk(
@@ -230,7 +230,7 @@ def test_datastore_docs_survive_a_stray_expiration_tag(store_factory):
             + [_ev(i, kind=1, expiration=soon) for i in range(100, 110)])
         assert await store.count() == 15, "all 15 must be stored while still unexpired"
 
-        await asyncio.sleep(1.6)
+        await asyncio.sleep(max(0.6, soon - time.time() + 0.6))
         # Already visible, and still visible after the sweep: the notes never carried an expiration
         # at all. A read here that returned 10 would mean the tag was stored and is hiding them.
         assert len(await store.query([{"kinds": [30078], "limit": 50}])) == 5
@@ -260,14 +260,21 @@ def test_the_private_repo_list_survives_a_stray_expiration_tag(store_factory):
     """
     async def go(loop):
         store = store_factory(loop, retention_days=0)
-        soon = int(time.time()) + 1
+        # THE WINDOW HAS TO OUTLAST A BUSY MACHINE. `now + 1` failed in a full-suite run — `5 == 15`
+        # — while passing alone every time, which reads as a broken relay and is a slow clock: the
+        # count below filters on `expiration > now`, so once the second has elapsed the ten kind-1
+        # notes are hidden rather than missing, and exactly the five whose tag is STRIPPED remain.
+        # Writing 15 events takes longer than a second on a machine running the browser checks.
+        soon = int(time.time()) + 4
         # Replaceable (10000-19999) → same pubkey+kind collapses to one, so distinct authors.
         await store.add_events_bulk(
             [_ev(i, kind=10318, expiration=soon, pubkey=f"{i:064x}") for i in range(1, 6)]
             + [_ev(i, kind=1, expiration=soon) for i in range(100, 110)])
         assert await store.count() == 15, "all 15 must be stored while still unexpired"
 
-        await asyncio.sleep(1.6)
+        # Sleep PAST the stamp rather than a fixed span, so the wait cannot end early for the same
+        # reason the assertion above cannot end late.
+        await asyncio.sleep(max(0.6, soon - time.time() + 0.6))
         # A read of 0 here would mean the tag WAS stored and is hiding the lists — intact on disk
         # and invisible, which reads as corruption rather than policy.
         assert len(await store.query([{"kinds": [10318], "limit": 50}])) == 5
@@ -298,13 +305,13 @@ def test_the_password_vault_survives_every_cleaner(store_factory):
         # retention_days=0 → the age rule prunes everything it is ALLOWED to prune; max_events=1
         # forces the count cap to run too, on a store holding far more than one event.
         store = store_factory(loop, retention_days=0, max_events=1)
-        soon = int(time.time()) + 1
+        soon = int(time.time()) + 4   # headroom: see the note on the stray-expiration test
         vault = [_ev(i, kind=30078, age_days=400, expiration=soon, pubkey=f"{i:064x}")
                  for i in range(1, 6)]
         noise = [_ev(i, kind=1, age_days=400) for i in range(100, 120)]
         await store.add_events_bulk(vault + noise)
 
-        await asyncio.sleep(1.6)
+        await asyncio.sleep(max(0.6, soon - time.time() + 0.6))
         await store.prune(chunk=3)
         await store.prune(chunk=3)
 
@@ -348,7 +355,7 @@ def test_calendars_and_contacts_survive_every_cleaner(store_factory):
         store.paid_retention_days = 30
         store.set_subscribers([], ledger_ok=True)      # nobody has paid; the tiered rules may run
         stranger = "c" * 64
-        soon = int(time.time()) + 1
+        soon = int(time.time()) + 4   # headroom: see the note on the stray-expiration test
         # DISTINCT `d` tags. Kind 30078 is parameterized-replaceable, so events sharing one
         # (pubkey, kind, d) coordinate collapse to the newest — seven tagless events would prove
         # nothing except that replacement works.
@@ -392,7 +399,7 @@ def test_calendars_and_contacts_survive_every_cleaner(store_factory):
         await store.add_events_bulk(cal, origin="direct")
         await store.add_events_bulk(noise, origin="direct")
 
-        await asyncio.sleep(1.6)                       # let the expiration fall due
+        await asyncio.sleep(max(0.6, soon - time.time() + 0.6))                       # let the expiration fall due
         for _ in range(4):
             await store.prune(chunk=3)
 

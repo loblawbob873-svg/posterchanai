@@ -26742,6 +26742,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       controlPubkeys: groups.map((g) => g.pk),
       guestbookPubkeys: guestbookGroups(bundle).map(g=>g.pk),
       banned: [...folded.banned],
+      /* WHO MAY MODERATE, so a client can OFFER the action to the right people.
+       *
+       * The fold remains the authority on what is actually hidden (`chatModeration` applies
+       * MANAGE_MESSAGES *and* rank, per message). This list only decides whether to draw the
+       * control — publishing that decision here rather than shipping the roles out is what stops
+       * the rule being reimplemented, and drifting, in the UI. */
+      owner: String(community.owner || "").toLowerCase(),
+      moderators: [...new Set(folded.roster.grants.map(g => g.member))]
+        .filter(m => !folded.banned.has(m)
+                  && hasPermission(folded.roster, m, Permissions.MANAGE_MESSAGES)),
       members: [...new Set(folded.roster.grants.filter(g => g.roleIds.length && !folded.banned.has(g.member)).map(g => g.member))],
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
@@ -26812,11 +26822,41 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channelId: entityHex, name: body.name };
   }
+  /* MODERATION, WHICH THE FOLD HAS ALWAYS SUPPORTED AND NOTHING EVER SUPPLIED.
+   *
+   * `foldTimeline(opened, moderation)` consults `moderation.canDelete(deleter, author, act)` and
+   * was called here with ONE argument, so the branch was dead and only a SELF-delete ever removed
+   * anything. CORD defines the permission for this — `MANAGE_MESSAGES` ("Hide other members'
+   * messages") — and the whole role machinery is implemented above, so a community owner or a
+   * moderator could publish a deletion that every client, including their own, silently ignored.
+   * Reported as: "so concord admins can't delete spam or illegal posts?" They could not.
+   *
+   * The rule is `canActOnPosition`, unchanged and not reinvented: the owner always may, and anyone
+   * else needs MANAGE_MESSAGES *and* to outrank the message's author. Moderation cannot run
+   * upward, so a moderator cannot erase the owner or a senior moderator.
+   *
+   * A member with no role at all has no position, `outranks` is false, and the only deletion that
+   * removes their message is their own — which is exactly the behaviour that shipped before. */
+  function chatModeration(community, folded) {
+    const ownerHex = String(community.owner || "").toLowerCase();
+    return {
+      banned: folded.banned,
+      canDelete(deleterHex, authorHex) {
+        const d = String(deleterHex || "").toLowerCase(), a = String(authorHex || "").toLowerCase();
+        if (!d || d === a) return true;                 // self-delete, the pre-existing rule
+        if (folded.banned.has(d)) return false;         // a banned moderator moderates nothing
+        if (a === ownerHex) return d === ownerHex;      // nobody deletes the owner but the owner
+        const position = highestPosition(folded.roster, a) ?? Number.MAX_SAFE_INTEGER;
+        return canActOnPosition(folded.roster, d, ownerHex, position, Permissions.MANAGE_MESSAGES);
+      }
+    };
+  }
   async function inspectChat(bundle, controlWraps, channelId, chatWraps) {
-    const { channels } = control(bundle, controlWraps);
+    const { community, folded, channels } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not readable with this membership");
-    const events = await openChatBatch(chatWraps || [], channel), timeline = foldTimeline(events);
+    const events = await openChatBatch(chatWraps || [], channel),
+          timeline = foldTimeline(events, chatModeration(community, folded));
     return {
       deletions: timeline.deletions,
       reactionTimes: events.filter(ev=>ev.kind===KIND_REACTION).map(ev=>[ev.rumorId,ev.ms]),

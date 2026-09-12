@@ -1,5 +1,5 @@
 {
-  "sdk": "0.13.0",
+  "sdk": "1.0.0",
   "sha256": {
     "roku/components/data/VideoData.bs": "7fe39fc39416c3854354c75cdf722a713637663c0f079a74d036bebe51a83b9e",
     "roku/components/data/HomeData.bs": "d50e645ab877b0d7ecae43e67b6029c750253db01082ee959efe5c070380881b",

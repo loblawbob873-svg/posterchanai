@@ -67,7 +67,22 @@
     for(const chip of active.values()) (chipsByTarget[chip.target]||(chipsByTarget[chip.target]=[])).push(chip);
     return {chipsByTarget,consumedIds};
   }
-  const api={parse,project};
+  /* SENDING one. `SmsReactions.java` has had this since the native Texts app shipped; the web
+   * half could only ever READ a tapback, which is why the screen showed other people's reactions
+   * as chips and offered no way to answer one.
+   *
+   * The curly quotes are load-bearing and are NOT a typo for ASCII ones: this is the exact string
+   * iOS and Google Messages emit on an SMS fallback, and it is what every other phone's parser
+   * matches on. `parse` accepts either pair when reading (some senders use ASCII), but what we
+   * SEND has to be the interoperable one or the tapback lands on an iPhone as a line of text.
+   * Byte-identical to the Java, asserted across both languages in
+   * tests/test_sms_reactions_projection.py. */
+  function format(kind,remove,text){
+    if(typeof text!=='string' || !text) throw new Error('Missing reaction text');
+    for(const [k,,add,undo] of forms) if(k===kind) return (remove?undo:add)+' \u201c'+text+'\u201d';
+    throw new Error('Unknown reaction kind');
+  }
+  const api={parse,project,format,forms:forms.map(([kind,emoji])=>({kind,emoji}))};
   if(typeof module==='object' && module.exports) module.exports=api;
   else root.PCSmsReactions=api;
 })(typeof window==='object'?window:globalThis);

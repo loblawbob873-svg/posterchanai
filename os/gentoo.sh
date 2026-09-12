@@ -155,7 +155,7 @@ EMERGE_DEFAULT_OPTS="--jobs 5 --getbinpkg "
 # zstd is GLOBAL, not per-package: the live CD build compresses its squashfs with it and
 # dracut needs to be able to read that back, so a kernel/initramfs built without the flag
 # fails at "zstd is not supported" — after the whole image has been built.
-USE_FLAGS=" flatpak dracut -webp -ladspa -gpm npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager zstd opengl vulkan"
+USE_FLAGS=" flatpak dracut -webp -ladspa -gpm npm introspection lame systemd-boot dist-kernel luks cryptsetup kernel-install boot opus theora vpx kernel-install systemd firmware btrfs networkmanager zstd opengl vulkan x264 x265 vaapi qsv amf nvenc zimg svt-av1 vorbis fribidi truetype fontconfig opencl"
 # Physical GPUs plus VirGL, which is the accelerated virtio-gpu path used by QEMU/KVM. Without
 # virgl Mesa prints "virtio_gpu: driver missing" on the first installed boot: Sway starts, but EGL
 # cannot render and the VM remains a black screen even though the same live medium appeared fine.
@@ -163,7 +163,22 @@ VIDEO_CARDS="intel amdgpu radeon radeonsi virgl"
 #
 #PACKAGE CONFIGURATION
 BASE_PACKAGES="net-print/cups-filters net-misc/networkmanager net-wireless/bluez net-fs/sshfs app-shells/starship dev-util/sh sys-boot/plymouth sys-power/acpid app-arch/zip dev-python/virtualenv sys-apps/flatpak sys-power/powertop app-shells/bash-completion sys-power/cpupower media-libs/gexiv2 media-plugins/gst-plugins-pulse mail-mta/postfix app-admin/sysstat sys-apps/smartmontools net-fs/nfs-utils net-firewall/nftables dev-python/pip sys-fs/inotify-tools net-analyzer/nmap app-misc/screen app-portage/gentoolkit sys-fs/dosfstools app-admin/sudo sys-apps/systemd sys-apps/util-linux sys-apps/hwdata app-eselect/eselect-repository dev-vcs/git sys-block/parted sys-process/btop net-vpn/wireguard-tools app-editors/neovim app-misc/fastfetch sys-fs/btrfs-progs net-print/cups sys-firmware/seabios-bin sys-firmware/edk2-bin app-emulation/libvirt app-emulation/qemu app-emulation/virt-viewer app-emulation/spice-vdagent app-crypt/swtpm"
-SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 nls pam readline server ssl system zlib zstd uuid" "dev-build/meson test test-full" "dev-qt/qtwebengine bindist" "media-sound/sox -opus" "media-video/vlc -opus -theora -vpx" "media-video/ffmpeg webp libass libplacebo" "dev-qt/qtpositioning geoclue" "media-libs/libvpx postproc" "dev-python/pillow webp" "gui-libs/gtk colord sysprof" "media-libs/freetype harfbuzz" "dev-lang/php gmp sodium sysvipc calendar bcmath exif bzip2 intl ctype curl fileinfo filter gd iconv ssl posix session simplexml xmlreader xmlwriter zip zlib postgres png opcache jit cli fpm zip pdo" "net-im/synapse postgres" "net-p2p/qbittorrent webui" "app-crypt/certbot certbot-nginx" "acct-user/git gitea" "app-admin/vaultwarden web postgres" "media-gfx/imagemagick -postscript" "media-gfx/imagemagick -postscript dev-libs/jemalloc statsv" "media-libs/libsdl2 -pipewire vulkan opengl" "media-video/obs-studio pipewire wayland" "media-video/pipewire sound-server bluetooth" "x11-libs/libXrandr abi_x86_32" "mail-mta/postfix sasl" "app-emulation/qemu spice usbredir pipewire virgl" "app-emulation/libvirt qemu virt-network" "app-emulation/virt-viewer spice")
+# THE SAME ENCODERS THE APP ACTUALLY INVOKES, or this desktop can play media and not make any.
+# Measured from the source rather than guessed: `libx264` (127 call sites), `h264_vaapi` (66),
+# `h264_nvenc` (57), `h264_amf` (10), `libvpx`/`libvpx-vp9` (the alpha WebM path), `libmp3lame`,
+# `libopus`, the native `aac`, plus the `drawtext` filter (truetype+fontconfig) and `zscale` (zimg).
+# Stock ffmpeg USE carries almost none of them: on a real node it built with
+# `dav1d lame libass opus theora truetype vpx` and NO x264 and NO vaapi, so every encode fell back
+# to software or failed outright — which is why the operator was copying Jellyfin's ffmpeg binary
+# over /usr/bin/ffmpeg by hand, on every machine, after every update.
+#
+# IN USE_FLAGS, which is what this script writes into make.conf -- the same place the codecs
+# live on server1 and nas, so all three machines are configured one way. `nvenc`/`amf` cost only
+# their headers, so an image built for Intel/AMD still works on a machine that turns out to have
+# the other vendor's card in it. Only `webp` stays per-package: it is deliberately OFF globally
+# in this image and ffmpeg is the one consumer that needs it, so flipping it in USE_FLAGS would
+# rebuild @world for a single codec.
 # `vaapi` ON MESA IS WHAT PUTS A HARDWARE VIDEO ENCODER ON THIS MACHINE AT ALL.
 # Without it Mesa builds no VA driver, and MEASURED on the real box `/usr/lib64/dri/*_drv_video.so`
 # is EMPTY while the kernel is happily advertising the card's encode rings (`ring vcn_enc_0.0`).

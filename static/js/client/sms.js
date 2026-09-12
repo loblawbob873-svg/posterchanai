@@ -3691,6 +3691,57 @@
     return sent;
   }
 
+  /* TAPBACKS. An iPhone (and Google Messages on an SMS fallback) sends a reaction as a PLAIN TEXT
+   * MESSAGE reading `Loved “your message”`. Read literally — which is all this screen ever did —
+   * every reaction anybody sent arrived as its own bubble full of your own words quoted back, and
+   * a long conversation with an iPhone user became half tapback noise. The native Texts app has
+   * projected them into chips since it shipped (`SmsReactions.java`); `sms-reactions.js` is the
+   * same rule in JavaScript and was written, tested and then wired to NOTHING — the third-surface
+   * gap this repo keeps re-learning.
+   *
+   * The projection is an INFERENCE, never carrier metadata, so it is deliberately timid: the
+   * module refuses unless the thread's history is loaded, the target is unambiguous, and the row
+   * is a real send or receive. Anything it will not vouch for stays an ordinary message, which is
+   * exactly what the screen did before. */
+  function reactionsFor(t){
+    const none = { chips: Object.create(null), consumed: new Set() };
+    const R = window.PCSmsReactions;
+    /* `S.ready` is "this session has the archive", which is what `historyComplete` means here: a
+       reaction whose target has not loaded yet must stay text rather than attach to the wrong
+       message. Threads are keyed by one number, so `group` is false by construction. */
+    if(!R || !R.project || !S.ready || !t || !Array.isArray(t.msgs)) return none;
+    try{
+      const rows = t.msgs.map(m => ({
+        id: String(m.doc || ''), thread: String(t.key || ''),
+        actor: m.incoming ? String(t.address || '') : 'me',
+        body: String(m.body || ''), date: Number(m.date) || 0,
+        incoming: !!m.incoming,
+        /* Eligible = it really happened. A pending or failed send is not a reaction anybody
+           received, and treating one as such hides the message it quotes. */
+        eligible: !!m.incoming || (!m.pending && !m.failed),
+        group: false,
+      })).filter(r => r.id && Number.isSafeInteger(r.date) && r.date >= 0);
+      const p = R.project(rows, true);
+      return { chips: p.chipsByTarget || Object.create(null),
+               consumed: new Set(p.consumedIds || []) };
+    }catch(_){ return none; }
+  }
+
+  /* Who reacted, under the message they reacted to. One chip per emoji with a count, so a thread
+     with several people reads the way every messages app draws it. */
+  function chipsHtml(list, enc){
+    if(!list || !list.length) return '';
+    const byEmoji = new Map();
+    for(const c of list){
+      const seen = byEmoji.get(c.emoji) || { emoji: c.emoji, who: [] };
+      if(seen.who.indexOf(c.actor) < 0) seen.who.push(c.actor);
+      byEmoji.set(c.emoji, seen);
+    }
+    return '<span class="sms-reacts">' + [...byEmoji.values()].map(c =>
+      `<span class="sms-react" title="${enc(c.who.join(', '))}">${enc(c.emoji)}${
+        c.who.length > 1 ? `<b>${c.who.length}</b>` : ''}</span>`).join('') + '</span>';
+  }
+
   function paintThread(feed, enc){
     /* A focus change, attachment draft, receipt, contact refresh, or relay event can repaint the
        whole thread. Capture the OLD element before replacing it. Its data key is authoritative:
@@ -3722,7 +3773,13 @@
           </div>
         </div>
         ${blankNote(blankCount(t.msgs))}
-        <div class="sms-msgs dm-msgs" id="sms-msgs" data-thread-key="${enc(t.key)}">${t.msgs.map((m, i) => {
+        <div class="sms-msgs dm-msgs" id="sms-msgs" data-thread-key="${enc(t.key)}">${(()=>{
+          const _rx = reactionsFor(t);
+          /* The reaction rows are REMOVED from the list before grouping, not hidden with CSS:
+             `grp`/`cont` is computed from the PREVIOUS bubble, so leaving them in would break the
+             run-of-messages spacing around every tapback even while they drew nothing. */
+          const _shown = t.msgs.filter(m => !_rx.consumed.has(String(m.doc || '')));
+          return _shown.map((m, i) => {
           /* THE SAME BUBBLE AS A DM, not a second one that looks nearly like it.
            *
            * Texts had its own parallel set of classes -- sms-msg/sms-bub/sms-meta -- built to the
@@ -3734,7 +3791,7 @@
            * `.bubble .in/.out` and `.grp`/`.cont` are the DM's own, so Texts inherits its shape,
            * its spacing and any later change to either for free. What stays sms-specific is the
            * part DMs do not have: MMS attachments inside the bubble. */
-          const prev = t.msgs[i-1];
+          const prev = _shown[i-1];
           const grp = !prev || !!prev.incoming !== !!m.incoming ? ' grp' : ' cont';
           const atts = (m.parts||[]).map((p, j) => attHtml(p, enc, i, j)).join('')
             || (mmsWithoutMedia(m)
@@ -3751,8 +3808,11 @@
             + (m.body ? `<span class="b-txt">${messageTextHtml(m.body)}</span>` : '')
             + `<span class="b-meta">${enc(when(m.date))}${ambiguousMmsError(m.error)?' · carrier status pending':m.pending?' · sending':m.failed?' · not sent':''}</span>`
             + (retryable ? `<button class="btn small sms-retry" data-sms-retry="${enc(m.doc)}">Retry</button>` : '')
+            + chipsHtml(_rx.chips[String(m.doc || '')], enc)
+            + (m.body ? `<button class="sms-react-add" data-sms-react="${enc(m.doc)}" title="React" aria-label="React to this message">☺</button>` : '')
             + `</div>`;
-        }).join('')}</div>
+          }).join('');
+        })()}</div>
         ${S.attach?`<div class="sms-attachment-draft"><span>${ICO(String(S.attach.type||'').startsWith('video/')?'film':'image','b-ic')}<b>${enc(S.attach.name||'Attachment')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send</small></span><button id="sms-attach-clear" aria-label="Remove attachment">×</button></div>`:''}
         <div class="sms-compose">
           <button class="btn small" id="sms-attach" title="Add an attachment">${ICO('paperclip','b-ic')}</button>
@@ -3901,6 +3961,50 @@
         PC.toast(r.warning || (r.where === 'phone' ? 'retry accepted' :
           'retry queued for your phone'));
         paint();
+      };
+    });
+    /* REACTING. A tapback is an ordinary outgoing text whose BODY happens to be the interoperable
+     * form, so it rides the same `send` as anything else — no second send path, no second retry
+     * story, and it shows up on the other phone as a real reaction rather than a line of prose.
+     * Tapping the emoji you already sent sends the "Removed …" form, which is how every messages
+     * app spells taking one back. */
+    feed.querySelectorAll('[data-sms-react]').forEach(btn => {
+      btn.onclick = e => {
+        e.stopPropagation();
+        const R = window.PCSmsReactions;
+        const m = S.msgs.get(btn.dataset.smsReact);
+        if(!R || !R.format || !m || !m.body) return;
+        const thread = S.threads.find(x => x.key === S.open);
+        const mine = ((reactionsFor(thread).chips[String(m.doc||'')]) || [])
+          .find(c => c.actor === 'me');
+        /* A FIXED ROW OF SIX, not the app's emoji picker. The fallback protocol has words for
+           exactly these reactions and nothing else: offering the full picker would let somebody
+           choose 🦆, which can only be sent as a bare emoji — an ordinary message on the other
+           phone, not a reaction. (`openEmojiPopover` takes `anchored`/`unicodeOnly` and no way to
+           restrict the set, so misusing it would have meant rejecting most of what it offered.) */
+        document.querySelectorAll('.sms-react-pick').forEach(el => el.remove());
+        const pop = document.createElement('div');
+        pop.className = 'sms-react-pick';
+        pop.innerHTML = (R.forms || []).map(f =>
+          `<button data-kind="${f.kind}" title="${f.kind}"${
+            mine && mine.kind === f.kind ? ' class="on" aria-pressed="true"' : ''}>${f.emoji}</button>`).join('');
+        document.body.appendChild(pop);
+        const r = btn.getBoundingClientRect();
+        pop.style.left = Math.max(4, Math.min(r.left, window.innerWidth - pop.offsetWidth - 4)) + 'px';
+        pop.style.top = Math.max(4, r.top - pop.offsetHeight - 6) + 'px';
+        const shut = () => { pop.remove(); document.removeEventListener('pointerdown', away, true); };
+        const away = ev => { if(!pop.contains(ev.target) && ev.target !== btn) shut(); };
+        document.addEventListener('pointerdown', away, true);
+        pop.querySelectorAll('button').forEach(b => b.onclick = async () => {
+          shut();
+          const kind = b.dataset.kind;
+          /* Tapping the one you already sent takes it back — the "Removed …" form. */
+          const remove = !!mine && mine.kind === kind;
+          try{
+            await send(thread.address, R.format(kind, remove, m.body), null);
+            paint();
+          }catch(err){ PC.toast('reaction not sent: ' + (err && err.message || err)); }
+        });
       };
     });
     /* `.bubble[data-doc]`, because the bubble IS a DM bubble now and `data-doc` is what makes it a

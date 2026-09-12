@@ -461,8 +461,20 @@ def run_one(job, live, tmp, idx):
 
 
 def run_suite(suite, tmp):
+    """`-B`, AND THE REASON IS A FAILURE THAT COST A GREEN RUN.
+
+    A gate reported `test_overlay_audits_unified_messages_surface` failing — a test that had been
+    RENAMED and no longer existed in the file. The source and its `cpython-311` cache were clean;
+    the `cpython-312` `.pyc` beside them still held the deleted function, written when some other
+    interpreter ran the suite over an older copy. Whichever Python picked that cache up ran code
+    that is in no file, and reported it against a path that had long since changed.
+
+    `-p no:cacheprovider` is pytest's cache and does nothing about this. `-B` stops the suite
+    reading or writing bytecode caches at all, which costs a second of compile time per run and
+    removes the whole class — a suite that reports a failure nobody can find is worse than slow.
+    """
     t0 = time.time()
-    argv = [PY] + suite["argv"]
+    argv = [PY, "-B"] + suite["argv"]
     code, out = _captured(argv, ROOT, None, suite["secs"], tmp / (suite["name"] + ".log"))
     return dict(suite, secs_took=time.time() - t0, code=code, out=out.strip(),
                 cmd=" ".join(argv[1:]), name=suite["name"], registered=True)

@@ -31,6 +31,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OS_JS = (ROOT / "static/js/client/os.js").read_text(encoding="utf-8")
+SHELL_JS = (ROOT / "static/js/client/osshell.js").read_text(encoding="utf-8")
 MAIN = (ROOT / "desktop/main.js").read_text(encoding="utf-8")
 PRELOAD = (ROOT / "desktop/preload.js").read_text(encoding="utf-8")
 CSS = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
@@ -169,6 +170,28 @@ def test_scanned_program_launch_matrix_runs_end_to_end():
         cwd=ROOT, capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stdout + done.stderr
     assert "OK installed Start programs launch" in done.stdout
+
+
+def test_a_program_installed_while_the_shell_runs_launches_from_the_menu():
+    """The menu is a POPUP with its own realm and its own scan cache; the launch happens in the
+    DESKTOP window, whose cache was filled before the install. Reported as: emerge chrome, click it
+    in Start, "no such app" in a toaster — the list that could see Chrome was not the list doing
+    the launching."""
+    done = subprocess.run(
+        ["node", str(ROOT / "tests/client/start_installed_while_running_runtime.js")],
+        cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "OK a program installed while the shell runs launches from the menu" in done.stdout
+
+
+def test_the_launcher_repairs_a_stale_cache_rather_than_trusting_it():
+    """The rule, in the shipped source: a miss on an `app:` id re-scans BEFORE giving up, and only
+    on a miss — an ordinary press must not pay for a scan of every .desktop file on the machine."""
+    body = _fn(SHELL_JS, "  async function launch(appId){")
+    miss = body.index("machineApps(true)")
+    assert body.index("throw new Error('no such app')") > miss, \
+        "the launcher gives up before asking the disk"
+    assert body.count("machineApps(true)") == 1
 
 
 def test_closing_the_menu_in_a_window_closes_the_window():

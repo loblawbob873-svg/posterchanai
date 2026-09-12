@@ -81,6 +81,31 @@
     }catch(_){ /* cross-origin or gone */ }
     return null;
   };
+
+  /* WHY THERE IS A SECOND RESOLVER, AND WHY IT IS ONLY FOR PICKING.
+   *
+   * `FS()` answers "who may WRITE this device's folders", and its answer must stay the PRIMARY
+   * surface — one sweeper per device, or two windows publish over each other. But an Electron
+   * window created by the MAIN PROCESS has no `window.opener` at all, so the walk above has nothing
+   * to climb: it returns null, which the screen renders as a DISABLED "Set up on this device…"
+   * button. Reported twice, most recently as "Folder sync still not working after latest update on
+   * desktop, Set up on this device nothing happens" — and a disabled button is exactly what
+   * "nothing happens" looks like, because it explains nothing and fires no handler.
+   *
+   * No opener is not evidence of a second writer; it is evidence we could not ask — the distinction
+   * this codebase keeps re-learning. Opening a folder PICKER is a person pressing a button in the
+   * window they are looking at, and `pcFs` is exposed per-page by the same preload talking to the
+   * same main process, so this document's own bridge is the right one to ask. The sweep still goes
+   * through `FS()` and still refuses, so the one-writer rule is untouched. */
+  const FS_PICK = () => FS() || window.pcFs || null;
+
+  /* And when there is genuinely no bridge, SAY SO rather than greying the control out. */
+  const FS_WHY = () => {
+    if(FS_PICK()) return '';
+    if(!window.pcFs) return 'this app build has no filesystem access — use the desktop app or the '
+      + 'Android app to sync a folder';
+    return 'this window cannot reach the folder bridge — open Folder Sync from the main window';
+  };
   /* Sizes for the humans reading this screen.
    *
    * Local, and NOT app.js's `_fmtBytes`. That one exists but is not on `PC` — it is passed into
@@ -3214,7 +3239,7 @@
         each one lives here and it rejoins the same folder; nothing is re-uploaded.</p>
         ${elsewhere.map(f => `<div class="sync-orphan"><span>🔄 ${PC.enc(f.key)}
             <span class="muted small">· ${f.n} file${f.n === 1 ? '' : 's'}</span></span>
-          <button class="btn btn-neon small sync-attach" data-key="${PC.enc(f.key)}"${fs ? '' : ' disabled'}
+          <button class="btn btn-neon small sync-attach" data-key="${PC.enc(f.key)}"
             >Set up on this device…</button></div>`).join('')}</div>` : ''}
       ${_acct === 'error' ? '<p class="muted small">(Couldn’t check what your other devices sync just now.)</p>' : ''}
       ${orphans.length ? `<div class="sync-orphans"><b>Already allowed on this device</b>
@@ -3223,7 +3248,13 @@
         ${orphans.map(g => `<div class="sync-orphan"><span>${PC.enc(g.dir || g.id)}</span>
           <button class="btn btn-ghost small sync-adopt" data-oid="${PC.enc(g.id)}"
                   data-odir="${PC.enc(g.dir || '')}">Sync here</button></div>`).join('')}</div>` : ''}
-      ${fs ? '<button class="btn btn-neon" id="sync-add">Add a folder…</button>' : ''}
+      ${'' /* ALWAYS DRAWN. Gated on `fs`, this button VANISHED on any surface whose opener chain
+             could not reach the primary — which on the desktop is a window the main process made,
+             because such a window has no `window.opener` at all. The screen then showed a folder
+             list with no way to add to it and no reason given, which is indistinguishable from a
+             broken feature. It asks `FS_PICK` when pressed and says why if there is nothing to
+             ask. */}
+      <button class="btn btn-neon" id="sync-add">Add a folder…</button>
       ${(fs && fs.backgroundCheck) ? `<label class="sync-bg"><input type="checkbox" id="sync-bg"${
           ClientSettings.get('syncBgCheck', false) ? ' checked' : ''}>
         <span>Watch for changes in the background<br>
@@ -3272,8 +3303,13 @@
      * folder that never meets the first. All this needs is where it lives on this machine. */
     feed.querySelectorAll('.sync-attach').forEach(b => { b.onclick = async () => {
       const key = b.dataset.key;
+      const bridge = FS_PICK();
+      if(!bridge){ PC.toast(FS_WHY()); return; }
       try{
-        const picked = await FS().pick();
+        /* Measured in `desktop/main.js:pc:fs:pick`: a cancelled chooser answers `null` and a
+         * REFUSED one throws, so falsy here is always "the person closed the dialog" and is
+         * rightly silent. The failure path is the catch below, which does speak. */
+        const picked = await bridge.pick();
         if(!picked) return;
         const l = folders();
         if(l.some(x => x.id === picked.id)){ PC.toast('that folder is already syncing'); return; }
@@ -3297,8 +3333,13 @@
 
     const add = document.getElementById('sync-add');
     if(add) add.onclick = async () => {
+      /* `FS()` alone was a THROW waiting to happen as well as a dead button: with no bridge it is
+       * null and `FS().pick()` raises "Cannot read properties of null", which the catch below turns
+       * into "could not add that folder: …" — a failure message about the wrong thing. */
+      const bridge = FS_PICK();
+      if(!bridge){ PC.toast(FS_WHY()); return; }
       try{
-        const picked = await FS().pick();
+        const picked = await bridge.pick();
         if(!picked) return;
         /* A FOLDER THAT WILL BE FORGOTTEN ON RESTART HAS TO SAY SO NOW. The desktop stores this
          * mapping in the app's own config; if that write failed the pick works, the sweep works, and

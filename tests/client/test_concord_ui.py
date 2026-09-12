@@ -349,13 +349,39 @@ def test_concord_ctrl_or_cmd_enter_sends_without_breaking_plain_enter():
 
 
 def test_authors_can_delete_their_own_messages_after_relay_acceptance():
+    """An author deletes their own. This used to assert the literal `found.pubkey!==viewer.pubkey`,
+    i.e. "ONLY the author" — which was the bug behind "so concord admins can't delete spam or
+    illegal posts?". The author rule survives; it is simply no longer the only one, so the
+    assertion is on the RULE now rather than on the line that once expressed it."""
     assert 'data-cc-delete' in CONCORD
-    assert "found.pubkey!==viewer.pubkey" in CONCORD
-    assert "p.uiConfirm('Delete this message?',{ok:'Delete',danger:true})" in CONCORD
+    assert "const own=found.pubkey===viewer.pubkey;" in CONCORD
+    assert "if(!own&&!mayModerate){" in CONCORD, "a stranger can delete somebody else's message"
+    assert "p.uiConfirm(own?'Delete this message?'" in CONCORD
     assert "[['e',id],['k',String(found.kind||9)]],5" in CONCORD
     assert "messages.filter(m=>messageId(m)!==id)" in CONCORD
     assert "if(!removeMessageRow(id))preserveChatScroll(()=>render())" in CONCORD
     assert "above?Math.max(0,top-lost):top" in CONCORD
+
+
+def test_a_moderator_is_offered_the_control_and_the_fold_decides_the_rest():
+    """The UI only decides whether to OFFER removal; what a deletion actually removes is decided by
+    `cord-reader`'s fold, which applies CORD's MANAGE_MESSAGES *and* rank per message. Keeping the
+    rule in one place is what stops the two drifting."""
+    assert "current.moderators.indexOf(viewer.pubkey)>=0" in CONCORD
+    assert "canModerate&&m.pubkey!==ownerPk" in CONCORD, "a moderator is offered the owner's messages"
+    assert "opened.deletedMessageIds" in CONCORD, "the reader's verdict is ignored on screen"
+
+
+def test_the_moderation_flags_are_derived_where_they_are_used():
+    """`messagesPaneHtml` and the delete handler are SIBLINGS of the function that computes owner
+    state, not its closures. Reaching outward throws on the first message drawn / first click —
+    both measured by concord_runtime.mjs while this was written."""
+    pane = CONCORD[CONCORD.index("function messagesPaneHtml("):]
+    pane = pane[:pane.index("\n  function ", 10)]
+    assert "const canModerate=" in pane and "const ownerPk=" in pane
+    handler = CONCORD[CONCORD.index("$$('[data-cc-delete]')"):]
+    handler = handler[:handler.index("});", handler.index("mayModerate"))]
+    assert "const _ownerPk=" in handler, "the handler reads an enclosing isOwner"
 
 
 def test_owner_can_publish_an_interoperable_cord_ban():

@@ -83,10 +83,17 @@ app.whenReady().then(async()=>{
         try:
             if not xvfb:
                 compositor=subprocess.Popen(['wayfire','-c',str(config)],env=env,stdout=log,stderr=log,start_new_session=True)
-                deadline=time.monotonic()+10
+                # A REAL COMPOSITOR STARTING ON A BUSY MACHINE. Ten seconds is plenty when this
+                # file runs alone (it comes up in ~2s) and not enough inside the full suite, which
+                # runs ~100 browser checks beside it — measured: these tests failed the gate on
+                # 'fixture compositor failed to start' and then passed in isolation, 5 in 2.49s.
+                # A test that only passes on an idle box reports the load, not the code.
+                deadline=time.monotonic()+60
                 while not [p for p in runtime.glob('wayland-*') if not p.name.endswith('.lock')]:
                     assert compositor.poll() is None,(tmp_path/'compositor.log').read_text()
-                    assert time.monotonic()<deadline,'fixture compositor failed to start'
+                    assert time.monotonic()<deadline,(
+                        'fixture compositor failed to start within 60s: '
+                        + (tmp_path/'compositor.log').read_text()[-800:])
                     time.sleep(.05)
                 env['WAYLAND_DISPLAY']=next(p.name for p in runtime.glob('wayland-*') if not p.name.endswith('.lock'))
             readfd,writefd=os.pipe()

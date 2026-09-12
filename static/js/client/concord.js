@@ -2268,7 +2268,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);if(!currentOwner())return;
-      const applyControl=wraps=>{if(!currentOwner())return 0;const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
+      const applyControl=wraps=>{if(!currentOwner())return 0;const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
@@ -2732,12 +2732,29 @@
   function mergeCordTimeline(prior,opened,p,scope){
     const owner=deliveryOwner(p);
     if(mergeCordTimeline.owner!==owner){mergeCordTimeline.owner=owner;mergeCordTimeline.deleted=new Map();}
+    /* THE READER'S VERDICT IS THE AUTHORITY ON WHO MAY DELETE WHAT.
+     *
+     * This file re-derives deletion from `opened.deletions` — "a signed delete must match the
+     * message's own author" — which is the SELF-delete rule and nothing else. It is applied to
+     * messages already on screen, so it overrode the fold: a moderator's deletion removed the
+     * message from `opened.messages` and this merge put it straight back from `prior`.
+     *
+     * `deletedMessageIds` is what `inspectChat` concluded after applying CORD's MANAGE_MESSAGES
+     * rule (permission + outranks, owner always). Honouring it is what makes a room moderatable;
+     * the author rule below stays exactly as it was, so nothing a person could delete before
+     * stops being deletable. */
+    const moderated=new Set(opened.deletedMessageIds||[]);
     const tombstones=mergeCordTimeline.deleted,deletes=new Map((opened.deletions||[]).map(([id,authors])=>[id,new Set(authors)])),old=new Map(prior.map(m=>[messageId(m),m]));
     const incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{},before=old.get(m.id),edited=tags=>Number(((tags||[]).find(t=>t[0]==='edited')||[])[1]||0),keepEdit=before&&edited(before.tags)>edited(m.tags);return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:keepEdit?before.text:m.text,at:m.at,kind:m.kind,tags:keepEdit?before.tags:m.tags||[],remote:true};});
     const merged=mergeRelayMessages(prior.map(m=>({...m})),incoming),byId=new Map(merged.map(m=>[messageId(m),m]));
     for(const [id,m] of byId){
       const key=scope+'\n'+id;
-      if(deletes.get(id)?.has(m.pubkey)||tombstones.get(key)===m.pubkey){tombstones.set(key,m.pubkey);byId.delete(id);}
+      /* A moderated id is remembered under the ACTOR that removed it, not the author — the author
+         never signed anything. Recorded in the same tombstone map so an incremental read that no
+         longer carries the deletion (a bounded history page) cannot resurrect it. */
+      if(moderated.has(id)){tombstones.set(key,'@mod');byId.delete(id);continue;}
+      if(deletes.get(id)?.has(m.pubkey)||tombstones.get(key)===m.pubkey||tombstones.get(key)==='@mod'){
+        tombstones.set(key,tombstones.get(key)==='@mod'?'@mod':m.pubkey);byId.delete(id);}
     }
     while(tombstones.size>5000)tombstones.delete(tombstones.keys().next().value);
     const reactionTimes=new Map(opened.reactionTimes||[]),reactionIds=new Map(opened.reactionIds||[]),urls=new Map(opened.reactionUrls||[]);
@@ -2860,6 +2877,9 @@
       const assign=(key,value)=>{if(value!==undefined&&JSON.stringify(room[key])!==JSON.stringify(value)){room[key]=value;changed=true;}};
       assign('name',info.name||room.name); assign('description',info.description===undefined?room.description:info.description);
       assign('banned',Array.isArray(info.banned)?info.banned:room.banned||[]);
+      /* Alongside `banned`, and for the same reason: the room object is what the UI reads
+         when it decides whether to OFFER the remove control. */
+      assign('moderators',Array.isArray(info.moderators)?info.moderators:room.moderators||[]);
       if(await applyRoomIconMetadata(room,info,loadKey,seed))changed=true;
       if(!context.membershipCurrent())return;
       const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
@@ -2955,6 +2975,15 @@
       +`<button id="cc-retry-channel" class="cc-welcome-retry">Try these relays again</button></div>`;
   }
   function messagesPaneHtml(p,messages,current,viewer,me){
+    /* DERIVED HERE, not read from `render()`. This function is a SIBLING of render, not its
+       closure — the same trap `bind()` documents above, and referring to render's locals throws on
+       the first message drawn (caught by concord_runtime.mjs: "canModerate is not defined").
+       `current` is the room and is already a parameter, so both facts come off it. */
+    const ownerPk=String((current&&current.cord&&current.cord.bundle&&
+      (current.cord.bundle.owner||current.cord.bundle.creator_npub))||'');
+    const canModerate=(!!ownerPk&&ownerPk===viewer.pubkey)
+      ||(Array.isArray(current&&current.moderators)
+         && current.moderators.indexOf(viewer.pubkey)>=0);
     const joinedRooms=''; // Active communities use the server rail/channel navigator, not home-page cards.
     return `${state.community==null?`<div class="cc-discover"><div class="concord-mark">C</div><h2>Find your community</h2><p>Join an Armada-compatible CORD-05 invite or create a public relay community.</p><div class="cc-primary-actions"><button class="btn btn-neon" id="cc-create">Create community</button><button class="btn btn-ghost" id="cc-welcome-join">Join with invite</button></div>${joinedRooms}<section class="cc-public"><div><h3>Public communities</h3><small>Public CORD invites discovered on Armada relays</small></div>${discovered.length?discovered.map((r,i)=>{const pr=p.profOf?p.profOf(r.source.pubkey):{};return `<button data-cc-discover="${i}" class="cc-public-room"><span class="cc-public-icon">${publicRoomIcon(p,r)}</span><span class="cc-public-copy"><b>${p.enc(r.name)}</b><small>${p.enc((r.description||'Public Concord community').slice(0,120))}</small><em>${p.enc(pr.name||pr.display_name||'Nostr community')}</em></span><strong>Join</strong></button>`;}).join(''):(discoveryLoaded?'<div class="cc-public-empty"><b>No public communities found</b><span>Publish or paste a public Armada/CORD invite to list it.</span></div>':'<div class="cc-public-empty"><b>Searching relays…</b><span>Looking for public Armada/CORD invite notes.</span></div>')}</section></div>`:(messages.length?`${state.thread?`<div class="cc-thread-bar"><button id="cc-thread-back" aria-label="Back to channel">\u2190 Back</button><b>Thread</b><span>${p.enc(String((messages.find(x=>messageId(x)===state.thread)||{}).by||''))}</span></div>`:''}<div class="cc-message-list">${(()=>{
           /* A THREAD WHOSE ROOT IS NOT HERE MUST NOT EMPTY THE CHANNEL.
@@ -2972,7 +3001,7 @@
           const _t=threadView(messages,state.thread);
           if(!_t.length){ state.thread=null; return messages; }
           return _t;
-        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_replies=(threadIndex(messages).get(mid)||[]).length,_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply?`<div class="cc-message-reply"><b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${_replies&&!state.thread?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&m.pubkey===viewer.pubkey?'':'hidden'}" title="Delete message">⌫</button></div></div></article>`;}).join('')}</div>`:emptyChannelHtml(p,current))}`;
+        })().map(m=>{const mp=p.profOf?p.profOf(m.pubkey):{},mid=messageId(m),_replies=(threadIndex(messages).get(mid)||[]).length,_canZap=!!(current&&current.cord&&!current.local&&m.pubkey&&m.pubkey!==viewer.pubkey&&p.payPrivateConcordZap);return `<article class="cc-message${messageMentionsViewer(m,viewer,me)?' cc-mentions-me':''}" data-message-id="${p.enc(mid)}"><img class="cc-message-avatar" src="${p.enc(mp.picture||p.LOGO||'')}" alt=""><div class="cc-message-body">${m.reply?`<div class="cc-message-reply"><b>@${p.enc(m.reply.by||'member')}</b> ${p.enc(String(m.reply.text||'').slice(0,100))}</div>`:''}<b>${p.enc(m.by)}</b><time>${new Date(m.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</time>${messageContentHtml(p,m,current,state.channel)}${deliveryHtml(p,m)}<div class="cc-reactions">${reactionSummary(p,m)}${zapSummary(p,m)}</div><div class="cc-message-actions" role="toolbar" aria-label="Message actions"><button class="cc-action-trigger" data-cc-actions="${p.enc(mid)}" aria-expanded="false" title="Message actions">⋯</button><button data-cc-react="${p.enc(mid)}" title="Add reaction">☺</button>${_canZap?`<button data-cc-zap="${p.enc(mid)}" title="Private zap">⚡</button>`:''}<button data-cc-reply="${p.enc(mid)}" title="Reply">↩</button>${_replies&&!state.thread?`<button class="cc-thread-open" data-cc-thread="${p.enc(mid)}" title="Open thread">${_replies} ${_replies===1?'reply':'replies'}</button>`:''}<button data-cc-delete="${p.enc(mid)}" class="cc-delete-action ${m.pubkey&&(m.pubkey===viewer.pubkey||(canModerate&&m.pubkey!==ownerPk))?'':'hidden'}" title="${m.pubkey===viewer.pubkey?'Delete message':'Remove this message'}">⌫</button></div></div></article>`;}).join('')}</div>`:emptyChannelHtml(p,current))}`;
   }
   function render(){
     // An explicit/user render supersedes any coalesced background paint. A focusout listener from
@@ -3043,6 +3072,13 @@
     const messages=current&&(current.local||current.cord||current.protocol==='nip29')?paintedMessages(current):[];
     const ownerPk=String((current&&current.cord&&current.cord.bundle&&(current.cord.bundle.owner||current.cord.bundle.creator_npub))||''),
       isOwner=!!ownerPk&&ownerPk===viewer.pubkey,banned=new Set(current&&current.banned||[]),
+      /* MAY THIS VIEWER MODERATE? The room's control stream says so (`inspectControl.moderators`
+         = everyone holding CORD's MANAGE_MESSAGES). Used ONLY to decide whether to offer the
+         control: what a deletion actually removes is decided by the fold, which applies the
+         permission and the rank ordering per message. A stale or missing list therefore costs an
+         offered button that the fold declines, never a message removed by somebody who may not. */
+      canModerate=isOwner||(Array.isArray(current&&current.moderators)
+        && current.moderators.indexOf(viewer.pubkey)>=0),
       memberPks=current?roomParticipants(current,viewer.pubkey).filter(pk=>!banned.has(pk)):[];
     let membersHidden=localStorage.getItem('pc.concord.members.hidden')==='1';
     const memberRows=memberPks.map(pk=>{const pr=p.profOf?p.profOf(pk):{},name=pk===viewer.pubkey?me:(pr.display_name||pr.name||pk.slice(0,12)+'…');return `<button class="cc-member" data-cc-member="${p.enc(pk)}" aria-label="${p.enc(name)} — ${pk===ownerPk?'Owner':'Member'}"><img src="${p.enc(pr.picture||p.LOGO||'')}" alt=""><span><b>${p.enc(name)}</b><small>${pk===ownerPk?'Owner':'Member'}</small></span></button>`;}).join('');
@@ -3365,7 +3401,24 @@
     const dismissBlur=()=>closeMessageActions();
     document.addEventListener('pointerdown',dismissPointer,true);document.addEventListener('keydown',dismissKey,true);window.addEventListener('blur',dismissBlur);
     actionDismissOff=()=>{document.removeEventListener('pointerdown',dismissPointer,true);document.removeEventListener('keydown',dismissKey,true);window.removeEventListener('blur',dismissBlur);};
-    $$('[data-cc-delete]').forEach(button=>button.onclick=async()=>{ closeMessageActions();const room=saved()[state.community],storeId=channelStoreId(room,state.channel),messages=testMessages(storeId),id=button.dataset.ccDelete,found=messages.find(m=>messageId(m)===id),viewer=p.viewer?p.viewer():{}; if(!found||!viewer.pubkey||found.pubkey!==viewer.pubkey)return; const confirmed=p.uiConfirm?await p.uiConfirm('Delete this message?',{ok:'Delete',danger:true}):true; if(!confirmed)return; button.disabled=true; try{ if(!room.local)await publishCordMessage(p,room,state.channel,'',[['e',id],['k',String(found.kind||9)]],5); saveTestMessages(storeId,messages.filter(m=>messageId(m)!==id)); if(!removeMessageRow(id))preserveChatScroll(()=>render()); }catch(e){ button.disabled=false; p.toast('message was not deleted: '+(e&&e.message||e)); } });
+    $$('[data-cc-delete]').forEach(button=>button.onclick=async()=>{ closeMessageActions();const room=saved()[state.community],storeId=channelStoreId(room,state.channel),messages=testMessages(storeId),id=button.dataset.ccDelete,found=messages.find(m=>messageId(m)===id),viewer=p.viewer?p.viewer():{}; if(!found||!viewer.pubkey)return;
+      /* A MODERATOR MAY REMOVE SOMEBODY ELSE'S. This used to refuse anything but a self-delete and
+         return SILENTLY, so an owner clearing spam pressed a button that did nothing and said
+         nothing. The kind-5 goes out the same way either way; what differs is who the fold will
+         let it remove, and that is checked there rather than restated here. */
+      const own=found.pubkey===viewer.pubkey;
+      /* Derived from `room`, never from an enclosing `isOwner`: this handler is a sibling of the
+         function that defines one, and reaching for it throws on the first click (measured by
+         concord_runtime.mjs: "isOwner is not defined"). Same rule as `bind()` documents. */
+      const _ownerPk=String((room&&room.cord&&room.cord.bundle&&
+        (room.cord.bundle.owner||room.cord.bundle.creator_npub))||'');
+      const mayModerate=(!!_ownerPk&&_ownerPk===viewer.pubkey)
+        ||(Array.isArray(room&&room.moderators)
+           && room.moderators.indexOf(viewer.pubkey)>=0);
+      if(!own&&!mayModerate){ p.toast('only this message\u2019s author or a moderator can remove it'); return; }
+      const confirmed=p.uiConfirm?await p.uiConfirm(own?'Delete this message?'
+        :'Remove this message from the room? Everyone will stop seeing it.',
+        {ok:own?'Delete':'Remove',danger:true}):true; if(!confirmed)return; button.disabled=true; try{ if(!room.local)await publishCordMessage(p,room,state.channel,'',[['e',id],['k',String(found.kind||9)]],5); saveTestMessages(storeId,messages.filter(m=>messageId(m)!==id)); if(!removeMessageRow(id))preserveChatScroll(()=>render()); }catch(e){ button.disabled=false; p.toast('message was not deleted: '+(e&&e.message||e)); } });
     /* VOTING IS A MESSAGE TOO — kind 1018 into this channel's own stream, which is what makes the
      * answers readable by everybody in the room and by nobody outside it. `response` is Armada's
      * tag (its reader collects exactly that), and the `e` tag names the poll. A single-choice poll

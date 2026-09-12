@@ -41,6 +41,70 @@ _STABLE_AFTER = 60.0
 # there forever reading "disconnected" and make the panel report streams that no longer exist.
 _STATUS: dict = {}
 
+# A REQ IS A MESSAGE WITH A SIZE LIMIT, AND THE DM INBOX'S FILTER OUTGREW IT.
+#
+# The targeted streams (DM inbox, DVM) filter on `#p` = every operator pubkey — which is three keys
+# per registered user, so it GROWS with the user base. At 2,090 users that is 4,180 keys and a
+# 284 KB REQ, and measured on 2026-09-11 against all 30 configured upstreams, **29 of them refused
+# it**: thirteen killed the socket without a word, the rest said why —
+#   `bad req: total filter items too large`   (strfry's maxFilterLimit)
+#   `message too large (284303 > 262144)`     (a 256 KB frame cap)
+# The same filter cut to 500 or 1,000 keys was accepted by 22/30, the other eight failing for
+# unrelated reasons (auth-required, DNS, HTTP status) at EVERY size.
+#
+# Nothing said so. The subscription reported "firehose connected" on every reconnect, the WoT
+# stream (which carries no `#p`) kept delivering ~36k events a day, and the only visible symptom
+# was that the relay stopped receiving NIP-17 gift wraps entirely — no inbound DMs, no Concord room
+# traffic from other relays — from 2026-09-09 10:54 onwards. The status file is where it showed:
+# 0 events EVER on (DM inbox) and (DVM) against 67,165 on (WoT).
+#
+# So an oversized filter is SPLIT into several REQs on the SAME socket (relays allow many
+# subscriptions per connection; strfry's default is 20). 500 is half the largest size measured good
+# here and matches strfry's own default limit, which is the number a relay we have never probed is
+# most likely to use.
+_MAX_FILTER_ITEMS = 500
+
+# Chunking cannot be unbounded: a connection has a subscription cap too. Past this the stream says
+# so and subscribes to what fits — LOUDLY, because the alternative is the silence that hid this bug
+# for two days. `_MAX_FILTER_ITEMS * _MAX_SUBS` = 10,000 keys, i.e. ~3,300 users at three keys each.
+_MAX_SUBS = 20
+
+# Filter fields whose length is a SET SIZE and must never be chunked — splitting `kinds` would ask
+# each sub-REQ for a different kind, which is a different question, not a smaller one.
+_NEVER_CHUNKED = frozenset({"kinds", "since", "until", "limit", "search"})
+
+
+def _chunks(flt: dict) -> list:
+    """Recursive half: bound every array field, no cap. Chunks the LONGEST oversized field and
+    recurses, so a filter with two long lists is still split correctly."""
+    long = [(len(v), k) for k, v in flt.items()
+            if k not in _NEVER_CHUNKED and isinstance(v, (list, tuple))
+            and len(v) > _MAX_FILTER_ITEMS]
+    if not long:
+        return [flt]
+    _, key = max(long)
+    vals = list(flt[key])
+    out = []
+    for i in range(0, len(vals), _MAX_FILTER_ITEMS):
+        out.extend(_chunks({**flt, key: vals[i:i + _MAX_FILTER_ITEMS]}))
+    return out
+
+
+def _split_filter(flt: dict, label: str = "", url: str = "") -> list:
+    """One filter in, one-or-more REQ-able filters out — every array field bounded by
+    `_MAX_FILTER_ITEMS` and the whole set bounded by `_MAX_SUBS`. The cap is applied ONCE, here,
+    rather than inside the recursion, so the warning is one line about the real filter and not one
+    per level of a split nobody asked about."""
+    out = _chunks(flt)
+    if len(out) > _MAX_SUBS:
+        big = max(((len(v), k) for k, v in flt.items()
+                   if k not in _NEVER_CHUNKED and isinstance(v, (list, tuple))), default=(0, "?"))
+        logger.warning("[nostr-relay] firehose %s%s: filter needs %d subscriptions (%s has %d "
+                       "items); subscribing to the first %d — events for the rest will NOT arrive",
+                       url, label, len(out), big[1], big[0], _MAX_SUBS)
+        out = out[:_MAX_SUBS]
+    return out
+
 
 def _mark(url: str, label: str, connected: bool = None, event: bool = False) -> None:
     st = _STATUS.setdefault((url, label), {"connected": False, "events": 0, "since": 0, "last": 0})
@@ -84,12 +148,17 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
             # Generous frame cap: long-form articles (kind 30023) can be large; too small a
             # cap would raise on a big event and drop the whole upstream connection.
             async with _connect(relay_url, direct, max_size=4 * 1024 * 1024) as ws:
-                sub = uuid.uuid4().hex[:16]
                 # Small look-back on (re)connect so a brief drop doesn't lose events.
                 flt = {"kinds": kinds, "since": int(time.time()) - 120}
                 if extra:
                     flt.update(extra)
-                await ws.send(json.dumps(["REQ", sub, flt]))
+                # One REQ per chunk, all on THIS socket (see _split_filter). Ordinary filters split
+                # into exactly one, so the common path is unchanged.
+                subs, refused = set(), False
+                for part in _split_filter(flt, label, relay_url):
+                    sub = uuid.uuid4().hex[:16]
+                    subs.add(sub)
+                    await ws.send(json.dumps(["REQ", sub, part]))
                 logger.info("[nostr-relay] firehose connected: %s%s", relay_url, label)
                 _mark(relay_url, label, connected=True)
                 # THE BACKOFF IS NOT RESET HERE, and that one line was a reconnect storm.
@@ -119,12 +188,25 @@ async def _run_one(relay_url: str, kinds: list, on_event, stop: asyncio.Event, d
                     except (ValueError, TypeError):
                         continue
                     if (isinstance(msg, list) and len(msg) >= 3
-                            and msg[0] == "EVENT" and msg[1] == sub):
+                            and msg[0] == "EVENT" and msg[1] in subs):
                         _mark(relay_url, label, event=True)
                         try:
                             await on_event(msg[2])
                         except Exception as e:
                             logger.debug("[nostr-relay] firehose on_event error: %s", e)
+                    elif isinstance(msg, list) and msg and msg[0] in ("CLOSED", "NOTICE"):
+                        # A REFUSED SUBSCRIPTION LOOKED EXACTLY LIKE A QUIET ONE, and that is what
+                        # cost two days of inbound DMs: the relay answered "total filter items too
+                        # large", we never read the message, and the stream sat there logged as
+                        # `firehose connected` delivering nothing. An upstream that bothers to say
+                        # why is the cheapest diagnosis there is — say it once per stream per
+                        # session (a relay that NOTICEs every event must not fill the journal).
+                        if msg[0] == "NOTICE" or (len(msg) >= 2 and msg[1] in subs):
+                            if not refused:
+                                refused = True
+                                logger.warning("[nostr-relay] firehose %s%s refused a "
+                                               "subscription: %s", relay_url, label,
+                                               str(msg[-1])[:200])
         except Exception as e:
             logger.debug("[nostr-relay] firehose %s dropped: %s", relay_url, e)
         finally:

@@ -296,6 +296,20 @@
      * a fresh scan here would be a disk full of files parsed between the press and the program. */
     if(!app && String(appId || '').startsWith('app:'))
       app = (_apps || []).find(a => a.id === appId);
+    /* A MISS IS A STALE CACHE FAR MORE OFTEN THAN A WRONG ID, so ask the disk before giving up.
+     *
+     * The scan is cached FOR THE SESSION, and the start menu is its own popup WINDOW — a separate
+     * realm with its own copy of this module. The popup rescans (`allApps(true)`) every time it
+     * opens, so a program installed while the shell is running appears in the menu immediately;
+     * the click is then posted back to the DESKTOP window, whose cache was filled before the
+     * install and never refreshed. Reported as: "if user installs chrome with emerge, i click on
+     * chrome from start menu, says no such app in toaster" — the menu and the launcher were reading
+     * two different lists, and the one that could see Chrome was not the one doing the launching.
+     *
+     * Only on a miss, so the ordinary press still costs nothing. */
+    if(!app && String(appId || '').startsWith('app:')){
+      try{ app = (await machineApps(true) || []).find(a => a.id === appId); }catch(_){}
+    }
     if(!app) throw new Error('no such app');
     /* A VIEW APP IS NOT A PROCESS. There is nothing to spawn and nothing to wait for a window from
      * — "launch" means open the screen, in a window on this desktop like every other app. */

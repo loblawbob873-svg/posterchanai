@@ -7097,8 +7097,33 @@
   const _profQ = new Set(); let _profT = null;
   const _profMiss = new Map();   // pubkey -> ts of a lookup that returned nothing (throttle retries)
   const _PROF_MISS_TTL = 300000; // 5 min before re-asking the relay for a not-found profile
+  /* THE RAIL IS A SEPARATE FACT FROM THE PROFILE, and asking for it only when the profile is
+   * MISSING is why the ɱ mark kept arriving late.
+   *
+   * The NIP-A3 targets ride the profile REQ — one query, two filters — which is right. But this
+   * function returns early for an author whose kind-0 is already cached, and that is the common
+   * case: anyone you have seen before, and every author in a batch the feed already resolved. For
+   * them the 10133 filter was never sent at all, so `_advertises()` stayed false and the card drew
+   * with no mark. Opening the post issues its own query, the rail lands, and the icon appears —
+   * reported exactly that way: "the monero/lightning icon don't show on the post until after you
+   * click on it".
+   *
+   * A cold cache always worked, which is precisely why it survived: a test that signs in fresh and
+   * looks at a stranger's post takes the branch that was never broken. `_railAsked` tracks the
+   * rail's OWN state so a cached profile still costs one 10133 the first time, and never twice. */
+  const _railAsked = new Set();
+  function needRails(pk){
+    /* `_railAsked` alone, deliberately: `_payRails` is declared ~5,000 lines below this and a
+       `const` is in the temporal dead zone until then, so naming it here would throw if anything
+       ever asked for a rail during module evaluation. This set answers the same question. */
+    if(!pk || _railAsked.has(pk)) return;
+    _railAsked.add(pk);
+    _profQ.add(pk); if(!_profT) _profT=setTimeout(flushProfiles,120);
+  }
   function needProfile(pk){
-    if(!pk || Store.haveProfile(pk)) return;
+    if(!pk) return;
+    needRails(pk);                       // independent of the kind-0 cache — see above
+    if(Store.haveProfile(pk)) return;
     const miss=_profMiss.get(pk); if(miss && Date.now()-miss < _PROF_MISS_TTL) return;  // don't hammer
     _profQ.add(pk); if(!_profT) _profT=setTimeout(flushProfiles,120);
   }
@@ -7251,7 +7276,9 @@
     const now=Date.now();
     // Only back off when the read actually reached a live relay. Caching a miss we never really asked for
     // is what made a cold-start profile stay blank for minutes instead of resolving on the next feed pass.
-    if(live) for(const pk of pks){ if(!got.has(pk)) _profMiss.set(pk, now); }   // relay has no profile yet → back off
+    /* Only for authors we actually lacked a profile for. A pubkey queued purely to learn its RAIL
+       already has a kind-0, and marking it missing would back off a profile we hold. */
+    if(live) for(const pk of pks){ if(!got.has(pk) && !Store.haveProfile(pk)) _profMiss.set(pk, now); }
     if(_profMiss.size>5000){ for(const k of _profMiss.keys()){ _profMiss.delete(k); if(_profMiss.size<=4000) break; } }
     if(changed){ renderMe(); decorateProfiles(); }
   }
