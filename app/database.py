@@ -160,7 +160,13 @@ def _backfill_concord_modes():
                 changed += 1
         if changed:
             logger.info("[INIT] bots: %d bot(s) holding a room invite were given --concord", changed)
-        settings_store.set("bots_concord_mode_backfilled", "1")
+        # `put`, NOT `set` — settings_store has no `set`. The AttributeError was caught by the
+        # `except` below and logged as "backfill skipped", so the UPDATEs COMMITTED (the
+        # `with engine.begin()` block had already exited) while the marker never did. The sweep
+        # therefore re-ran on EVERY start, which is exactly the re-derivation it was written to
+        # stop: an operator who unticks Concord on a bot that still holds an invite had that
+        # choice silently undone by the next restart.
+        settings_store.put("bots_concord_mode_backfilled", "1")
     except Exception as e:
         # No marker on failure, so the next start retries rather than skipping somebody's bots.
         logger.warning("[INIT] concord mode backfill skipped: %s", e)

@@ -49,8 +49,43 @@ CONTROL_LIMIT = 1000
 COLD_START_SECONDS = 300
 
 
+def _say(msg: str, *a) -> None:
+    """STDOUT, NOT `logger.info` — THE BOT FRAMEWORK CONFIGURES NO LOGGING HANDLERS.
+
+    `main.py` never calls `logging.basicConfig`, so the root logger holds no handler and Python
+    falls back to `logging.lastResort`, a stderr handler whose level is WARNING. Every
+    `logger.warning` in this file therefore reaches the journal and every `logger.info` is dropped
+    on the floor — including the one line that says the bot joined a room.
+
+    Measured on this deployment: a listener that had opened its room and decrypted 384 messages out
+    of #general printed "Starting Concord listener..." and then nothing, for hours. That is
+    byte-identical to a listener that is wedged, and it was read as one for two days. The silence
+    was the only evidence there was, and it said the opposite of what was true.
+    """
+    print("[concord] " + (msg % a if a else msg), flush=True)
+
+
+#: How often the listener states what it is actually seeing. A 20s poll cannot report every pass
+#: without making the journal useless, and reporting only when something CHANGES is what produced
+#: the silence this exists to end — a quiet room and a dead listener must not look the same.
+REPORT_SECONDS = int(os.getenv("CONCORD_REPORT_SECONDS", "900"))
+
+
 def _seen_path() -> str:
     return os.getenv("CONCORD_SEEN_FILE") or ".concord_seen.json"
+
+
+def _hello_path() -> str:
+    """Deliberately NOT the seen file. `_Seen` evicts oldest-first at its cap, and the announcement
+    marker is written once and then never touched again — kept among four thousand message ids it
+    would be one of the first entries dropped, and the bot would introduce itself a second time in
+    a room it had been sitting in for months."""
+    return os.getenv("CONCORD_HELLO_FILE") or ".concord_hello.json"
+
+
+def _announce_enabled() -> bool:
+    return (os.getenv("CONCORD_ANNOUNCE", "1") or "").strip().lower() not in (
+        "0", "false", "no", "off")
 
 
 class _Seen:
@@ -142,8 +177,12 @@ class RoomSession:
     when it started goes quietly deaf in exactly the room that is growing.
     """
 
-    def __init__(self, room: _cc.Room, relays: list[str]) -> None:
+    def __init__(self, room: _cc.Room, relays: list[str], name: str = "",
+                 community_id: str = "") -> None:
         self.room, self.relays = room, relays
+        #: Carried so the log can name the ROOM rather than an naddr, and so the announcement
+        #: marker is keyed on the community rather than on a link that can be re-issued.
+        self.name, self.community_id = str(name or ""), str(community_id or "")
         self.channels: list[dict] = []
         self.control_pubkeys: list[str] = []
 
@@ -177,9 +216,77 @@ def open_room(room: _cc.Room, query) -> RoomSession:
             + " — either those relays are unreachable from this node, or the invite was revoked")
     opened = room.open(events)
     relays = [r for r in (opened.get("relays") or []) if r] or boot
-    session = RoomSession(room, relays)
+    session = RoomSession(room, relays, name=opened.get("name") or "",
+                          community_id=opened.get("communityId") or "")
     session.refresh_controls(query)
     return session
+
+
+def _handle_for(names, npub: str) -> str:
+    """The spelling a person can actually type. A display name has spaces in it and no client offers
+    a space inside an @-handle, so the handle is the name with its runs of whitespace collapsed to
+    `_` — the same spelling `_handle_re()` already matches on."""
+    first = str((names or [""])[0] or "").strip()
+    return ("@" + re.sub(r"\s+", "_", first)) if first else npub
+
+
+def _announce(session: "RoomSession", w, npub: str, names) -> None:
+    """SAY HELLO ONCE PER ROOM, BECAUSE JOINING PUBLISHES NOTHING AND A SILENT MEMBER DOES NOT EXIST.
+
+    `open_room` is a pure READ: it fetches the bundle, decrypts the control stream and reads. Not
+    one byte goes out, so from every other member's side the bot is simply not there.
+
+    A room's visible roster is the CORD-02 GUESTBOOK — kind-3306 `join` wraps on the guestbook
+    transport group — plus anyone the control plane granted a role to, plus (in this client only)
+    anyone OBSERVED speaking. The shipped `cord-reader.js` exports createChatWrap / createBanWrap /
+    createChannelWrap / createMetadataWrap / createWebxdcWrap / createPlaneAuth and NO guestbook
+    writer, so neither this bot nor the web client can publish a join. Measured on the live room:
+    14 guestbook events, 12 members, and the bot in none of them while it was decrypting 384
+    messages out of that room's only channel.
+
+    That is a DEADLOCK, not a cosmetic problem. `concord.js:roomParticipants` feeds BOTH the member
+    list and the @-mention picker, so a bot nobody can see is a bot nobody can tab-complete, so it
+    is never mentioned, so it never speaks, so it never enters the one bucket it could have entered
+    — observed activity. It stays invisible for ever, which is exactly what was reported.
+
+    One message, once per community, ever. "It never speaks unprompted" is a rule about
+    CONVERSATION; this is the bot stating that it is present and how to address it, which the
+    protocol gives it no other way to say. `CONCORD_ANNOUNCE=0` turns it off for an operator who
+    would rather the bot stayed hidden.
+    """
+    if not _announce_enabled():
+        return
+    channel = next((c for c in session.channels
+                    if c.get("id") and (c.get("streamPubkeys") or [])), None)
+    if channel is None:
+        return
+    hello = _Seen(_hello_path(), cap=64)
+    key = "hello:%s:%s" % (session.community_id, channel.get("id"))
+    if hello.has(key):
+        return
+    handle = _handle_for(names, npub)
+    who = str((names or [""])[0] or "").strip() or "This bot"
+    text = ('%s is here and reading this channel. Say %s (or %s) and I will answer — '
+            '"%s help" lists what I can do.' % (who, handle, npub, handle))
+    try:
+        made = session.room.say(str(channel.get("id")), text)
+        wrap = made.get("wrap")
+        if not wrap:
+            logger.warning("[concord] the bridge built no wrap for the join announcement")
+            return
+        took = w.publish(session.relays, wrap)
+    except Exception as e:
+        logger.warning("[concord] could not announce myself: %s: %s", type(e).__name__, e)
+        return
+    # MARK ON EVIDENCE, NEVER ON THE ATTEMPT. A transport that answers with a count and says nobody
+    # took it has announced nothing; one that answers nothing at all (None) did not raise, so it is
+    # taken as sent rather than re-announcing every twenty seconds for ever.
+    if took is not None and not took:
+        logger.warning("[concord] no relay accepted the join announcement — retrying next pass")
+        return
+    hello.add(key)
+    _say("announced myself in #%s as %s — I am in this room's member list and its @ picker now",
+         channel.get("name"), handle)
 
 
 def _strip_address(text: str, npub: str, names) -> str:
@@ -431,13 +538,24 @@ def process_mentions(state: dict | None = None, wire: Wire | None = None) -> int
         # A fresh session answers only what arrives from now on (minus a small grace), never the
         # backlog it just decrypted.
         st.setdefault("floor_ms", int(time.time() * 1000) - COLD_START_SECONDS * 1000)
-        logger.info(f"[concord] joined {room!r} — {len(session.channels)} channel(s)")
+        st["announce"] = True
+        _say("joined %s — %d channel(s): %s", session.name or repr(room),
+             len(session.channels),
+             ", ".join("#" + str(c.get("name") or "?") for c in session.channels)
+             or "(none)")
 
     seen: _Seen = st.setdefault("seen", _Seen(_seen_path()))
     npub, pk_hex, names = w.identity()
 
+    # Armed by the join above, so identity is resolved first and a re-entered pass cannot
+    # announce twice even before the marker file is written.
+    if st.pop("announce", False):
+        _announce(session, w, npub, names)
+
     sent = 0
+    chans = readable = matched = 0
     for channel in session.refresh_controls(query):
+        chans += 1
         cid = str(channel.get("id") or "")
         streams = [p for p in (channel.get("streamPubkeys") or []) if p]
         if not cid or not streams:
@@ -453,6 +571,7 @@ def process_mentions(state: dict | None = None, wire: Wire | None = None) -> int
         except _cc.ConcordError as e:
             logger.warning(f"[concord] could not read #{channel.get('name')}: {e}")
             continue
+        readable += len(read.get("messages") or [])
         for msg in (read.get("messages") or []):
             mid = str(msg.get("id") or "")
             # `at` is MILLISECONDS (foldTimeline's `ms`), not a unix second. Comparing it against a
@@ -467,6 +586,7 @@ def process_mentions(state: dict | None = None, wire: Wire | None = None) -> int
                 continue                      # never answer ourselves
             if not mentions(text, npub, pk_hex, names):
                 continue
+            matched += 1
             try:
                 # GENERATE FIRST, THEN MARK. The mark exists so a crash mid-PUBLISH cannot make the
                 # next pass answer twice — but marking before the generator ran meant a generator
@@ -496,10 +616,27 @@ def process_mentions(state: dict | None = None, wire: Wire | None = None) -> int
                 if not wrap:
                     logger.warning("[concord] the bridge built no wrap to publish")
                     continue
-                w.publish(session.relays, wrap)
+                took = w.publish(session.relays, wrap)
+                # A REPLY NO RELAY TOOK IS NOT A REPLY. `relay.publish` answers with the
+                # number of relays that accepted and this return was thrown away, so a room
+                # whose relays all refuse our writes looked exactly like a room the bot was
+                # answering happily.
+                if took is not None and not took:
+                    logger.warning("[concord] the reply in #%s was accepted by NO relay — "
+                                   "nobody in the room will see it", channel.get("name"))
                 sent += 1
             except Exception as e:
                 logger.warning(f"[concord] reply failed in #{channel.get('name')}: {e}")
+    # WHAT THIS PASS ACTUALLY SAW, on a clock. "Nothing is happening here" and "nothing here
+    # works" were the same log line — which is to say, no line at all.
+    now = time.time()
+    if sent or matched or (st.get("reported_at", 0) + REPORT_SECONDS) <= now:
+        st["reported_at"] = now
+        # Counted from the pass itself, and `getattr` for the name: a caller may hand in its own
+        # session object (the feature-parity tests do), and a REPORT line must never be the thing
+        # that takes a working pass down.
+        _say("%s: %d channel(s), %d message(s) readable, %d addressed to me, %d answered",
+             getattr(session, "name", "") or "room", chans, readable, matched, sent)
     return sent
 
 

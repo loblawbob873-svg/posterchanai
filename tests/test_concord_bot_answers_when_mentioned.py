@@ -38,6 +38,20 @@ NODE = shutil.which("node")
 BOTS = ROOT / "botframework"
 
 
+@pytest.fixture(autouse=True)
+def _no_stray_state(tmp_path, monkeypatch):
+    """EVERY TEST HERE DRIVES A FULL PASS, AND A FULL PASS NOW INTRODUCES THE BOT.
+
+    Two things follow. The introduction writes a marker whose default path is `.concord_hello.json`
+    IN THE CURRENT DIRECTORY — i.e. the working tree of whichever node is running the suite, which
+    is the one thing a check here may never touch. And it publishes, so a test counting publishes
+    would be counting two different features at once. It has its own file
+    (`test_a_concord_bot_is_visible_in_the_room_it_joined.py`); here it is off.
+    """
+    monkeypatch.setenv("CONCORD_HELLO_FILE", str(tmp_path / "hello.json"))
+    monkeypatch.setenv("CONCORD_ANNOUNCE", "0")
+
+
 @pytest.fixture(scope="module")
 def room():
     """A real community, minted once for every test here."""

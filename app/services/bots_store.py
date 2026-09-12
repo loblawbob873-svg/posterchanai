@@ -13,7 +13,9 @@ The relay is the only datastore (always on).
 """
 
 import asyncio
+import json
 import logging
+import re
 
 from app.models import Bot
 from app.services import nostr_store as store
@@ -66,6 +68,50 @@ async def delete_bot(db, name: str, *, force: bool = False) -> bool:
         return False
 
 
+def _vet(rec: dict) -> dict:
+    """A RELAY DOC IS NOT A FORM POST, AND IT RE-SEEDS THE ROW ON EVERY BOOT.
+
+    `bots.py:_vet_config` refuses a `concord_invite` holding a private key — but only on the two
+    paths that go through a route. This one does not: `hydrate` writes whatever the operator-signed
+    doc says straight onto the row, so a value stored before that guard existed (or by an older
+    build, or by another node) is re-applied at every startup and a correction made in the UI is
+    undone by the next restart. Measured on this deployment: a live bot whose `concord_invite` was
+    byte-identical to its `nostr_nsec` — a PRIVATE KEY in the field the code hands to the CORD
+    parser and exports as `CONCORD_INVITE`. Same shape as the legacy `settings` table re-seeding a
+    deleted setting (CLAUDE.md): deleting it in one place looks like it worked.
+
+    A hydrate must never RAISE — that would take out every other bot in the same pass — so the bad
+    key is DROPPED and named. The bot then reports "listener ON but NO community invite saved",
+    which is true and actionable, rather than carrying a credential down a path built for a room
+    link. Nothing here echoes the value: it is a secret whichever field it landed in.
+    """
+    raw = rec.get("config")
+    if not isinstance(raw, str) or "concord_invite" not in raw:
+        return rec
+    try:
+        cfg = json.loads(raw)
+    except (ValueError, TypeError):
+        return rec
+    if not isinstance(cfg, dict):
+        return rec
+    inv = str(cfg.get("concord_invite") or "").strip()
+    if not inv:
+        return rec
+    if inv.startswith(("nsec1", "ncryptsec1")):
+        why = "a private key, not a room link"
+    elif not re.match(r"^(https?://|naddr1|cord:)", inv, re.I):
+        why = "not an invite link"
+    elif "#" not in inv:
+        why = "an invite link whose # fragment (the room key) was cut off"
+    else:
+        return rec
+    logger.warning("[bots-store] %s: the stored concord_invite is %s — dropping it rather than "
+                   "writing it into CONCORD_INVITE. Paste the room's invite link in Admin -> Bots.",
+                   rec.get("name"), why)
+    cfg.pop("concord_invite", None)
+    return {**rec, "config": json.dumps(cfg)}
+
+
 def _apply(db, rec: dict) -> bool:
     """UPSERT a Bot row from a relay config record (keyed by name). Returns True if changed."""
     name = rec.get("name")
@@ -76,6 +122,7 @@ def _apply(db, rec: dict) -> bool:
     if created:
         b = Bot(name=name)
         db.add(b)
+    rec = _vet(rec)
     changed = created
     for f in BOT_FIELDS:
         if f == "name":
