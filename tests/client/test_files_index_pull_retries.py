@@ -143,7 +143,14 @@ function makeIdx(opts){
 class FilesIndexPullRetries(unittest.TestCase):
     def test_picker_keeps_indexed_folders_even_when_current_blob_filter_is_empty(self):
         app = (Path(__file__).resolve().parents[2] / "static/js/client/app.js").read_text()
-        self.assertIn("FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f)).map", app)
+        # THE RULE, NOT THE CALL TEXT. The bar must be built from the index and must consult
+        # isEncFolder — but the exact expression changed when a caller was given a way to ASK for
+        # encrypted folders (the Meme Builder needs Music, which is one), and a literal match
+        # turned that into a failure about index pulls.
+        bar = app[app.index("const folders=[['','\U0001f5c2 All']]"):]
+        bar = bar[:bar.index(";")]          # the whole statement — it wraps onto a second line
+        self.assertIn("FilesIdx.folders()", bar, "the picker's folder bar is not read from the index")
+        self.assertIn("isEncFolder", bar, "the folder bar no longer distinguishes encrypted folders")
 
     @classmethod
     def setUpClass(cls):

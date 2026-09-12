@@ -57,11 +57,17 @@ def test_the_mode_is_set_before_any_content_is_written():
     """A file created 0644 and chmodded afterwards is briefly readable by anyone who is looking.
     The temp file is opened with the mode, and os.replace carries it across."""
     import inspect
-    src = inspect.getsource(settings_store._save_local_file)
+    # The write moved into ONE publisher shared by both writers — _save_local_file and
+    # bump_counter, which also rewrites the whole file and used to publish it 0644. Pin the rule
+    # where the rule now lives, rather than the name of the variable being dumped.
+    src = inspect.getsource(settings_store._publish_local)
     opened = src.index("os.open(tmp")
-    dumped = src.index("json.dump(merged")
+    dumped = src.index("json.dump(")
     assert opened < dumped, "content is written before the mode is set"
     assert "0o600" in src
+    # …and the mode must be applied to the DESCRIPTOR, since O_CREAT's mode is ignored when the
+    # temp file already exists — a leftover 0644 .tmp would otherwise take the secrets as-is.
+    assert "fchmod" in src, "the mode is not applied to an already-existing temp file"
 
 # The LIVE node's own file is checked by scripts/check_secrets_not_world_readable.py, not here:
 # tests/conftest.py redirects `_LOCAL_PATH` to a tmp dir for every test (rightly — a test must not

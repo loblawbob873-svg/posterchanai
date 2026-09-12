@@ -204,7 +204,13 @@ def test_mobile_picker_identifies_each_file_beside_a_real_preview():
     assert 'class="fname"' in picker
     assert "_fmtBytes(b.size||0)" in picker
     assert "enc(fmtBytes(" not in picker
-    assert "onPick({url, type, ext, name})" in picker
+    # THE CONTRACT, NOT THE CALL TEXT. This used to pin the literal
+    # `onPick({url, type, ext, name})`, so adding a field the caller needs broke a test about
+    # filenames. What matters is that every field a caller reads is handed over.
+    onpick = picker[picker.index("onPick({"):]
+    onpick = onpick[:onpick.index("})") + 2]
+    for field in ("url", "type", "ext", "name"):
+        assert field in onpick, f"the picker no longer hands its caller `{field}`: {onpick}"
     assert ".bp-explorer .bp-pick-card .fname" in CSS
 
 
