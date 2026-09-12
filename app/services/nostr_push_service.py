@@ -564,6 +564,15 @@ async def _dm_handler(ev: dict):
                    "wid": str(ev.get("id") or "")}
         for subs in targets.values():
             for sub in subs:
+                # THE DEVICE'S OWN ANSWER, asked here like everywhere else. This handler was the one
+                # sender in the subsystem that never asked: the poller, the channel poller, mail and
+                # reminders all call `allows_row`, and a DM — the loudest, most frequent push there
+                # is — went out to every registered device whatever its row said. Turning "Direct
+                # messages" off did nothing at all, on any node, for any phone. See push_prefs:
+                # unset, unreadable and unknown still mean SEND, so this can only ever honour a
+                # preference somebody explicitly switched off.
+                if not push_prefs.allows_row(sub, "dm"):
+                    continue
                 await asyncio.to_thread(push_service.send, sub, payload)
     except Exception as e:
         logger.warning(f"[nostr-push] dm handler error: {e}")

@@ -90,7 +90,15 @@ def allows_row(sub, kind_type: str) -> bool:
 
     Reading a preference must never be able to cost more than the preference itself, which is the
     same rule the fail-open default in `allows` exists for.
+
+    A DICT IS A SUBSCRIPTION TOO, and reading one with `getattr` alone is how the DM push ignored
+    every preference on the node. `direct_push_service.subscription_dict` is the shape the call and
+    DM handlers carry, and `getattr({...}, "prefs", None)` is None for it — indistinguishable, by
+    construction, from a device that has never been configured. So it failed open on every row,
+    permanently and silently, which is the exact bug this module exists to close.
     """
+    if isinstance(sub, dict):
+        return allows(sub.get("prefs"), kind_type)
     return allows(getattr(sub, "prefs", None), kind_type)
 
 

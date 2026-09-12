@@ -91,3 +91,55 @@ def test_an_unset_row_still_fails_open():
     from app.services import push_prefs
     assert push_prefs.allows(None, "email") is True
     assert push_prefs.allows("", "email") is True
+
+
+# `nostr_push_service` is marked None above — "classifies per event; checked separately" — and
+# "separately" meant `test_push_selective_delivery.py`, which drives `_poll()`. That module holds
+# FOUR senders (`_poll`, `_poll_channels`, `_call_handler`, `_dm_handler`) and the marker exempted all
+# of them, so the DM push — the loudest and most frequent notification the node sends — shipped with
+# no filter at all and this file said the senders were covered. A per-MODULE exemption cannot see a
+# function; this walks them.
+
+_UNGATED_ON_PURPOSE = {
+    # A call has no toggle and must ring whatever else is switched off — `push_prefs.allows`
+    # returns True for "call" by design, so a gate here would be decoration. Stated, not implied.
+    "_call_handler",
+}
+
+
+def _sending_functions(module: str):
+    """{function name: source} for every function in `module` that calls push_service.send."""
+    import ast
+    src = (SERVICES / module).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    out = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = ast.get_source_segment(src, node) or ""
+        if "push_service.send" in body:
+            out[node.name] = body
+    return out
+
+
+def test_every_sender_inside_the_nostr_watcher_reads_the_toggles():
+    senders = _sending_functions("nostr_push_service.py")
+    assert senders, "found no senders at all — the walk is broken, not the module"
+    for name, body in sorted(senders.items()):
+        if name in _UNGATED_ON_PURPOSE:
+            continue
+        assert "push_prefs.allows_row(" in body, (
+            f"nostr_push_service.{name} pushes without asking the device's preferences; add the "
+            "check or name it in _UNGATED_ON_PURPOSE with the reason")
+        assert body.index("allows_row(") < body.index("push_service.send"), \
+            f"{name}: sends before it checks"
+
+
+def test_the_deliberately_ungated_senders_are_still_the_ones_we_named():
+    """An exemption is only safe while it is small and still true. A new handler joining the module
+    must not inherit one — that is precisely how `_dm_handler` was covered by a marker meant for
+    `_poll`."""
+    senders = set(_sending_functions("nostr_push_service.py"))
+    assert _UNGATED_ON_PURPOSE <= senders, "an exemption names a function that no longer sends"
+    assert senders == {"_poll", "_poll_channels", "_call_handler", "_dm_handler"}, (
+        "the set of push senders in nostr_push_service changed: %s" % sorted(senders))

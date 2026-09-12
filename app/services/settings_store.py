@@ -106,6 +106,26 @@ def _load_local_file() -> dict:
         return {}
 
 
+def _publish_local(tmp, payload):
+    """Write `payload` to `tmp` at 0600 and atomically publish it as the local settings file.
+
+    The mode is set on the TEMP file and carried across by os.replace, so the published file is
+    never momentarily readable; and it is applied on every write, so a file that already exists
+    with loose permissions is tightened rather than preserved.
+
+    A FUNCTION rather than four lines repeated twice, because the repetition is exactly what
+    failed: _save_local_file() was hardened after the relay database password was measured at
+    -rw-r--r-- on a host with five other user accounts, and bump_counter() — which also rewrites
+    the WHOLE file, secrets included — was left on a plain json.dump, so every metric increment
+    put 0644 straight back, moments after anyone tightened it by hand.
+    """
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(payload, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, _LOCAL_PATH)
+
+
 def _save_local_file() -> None:
     """Persist local-only keys to the JSON file — merging with what's on disk, under a lock.
 
@@ -145,11 +165,7 @@ def _save_local_file() -> None:
             # The mode is set on the TEMP file and carried across by os.replace, so the published
             # file is never momentarily readable; and it is applied on every write, so a file that
             # already exists with loose permissions is tightened rather than preserved.
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                json.dump(merged, f)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, _LOCAL_PATH)
+            _publish_local(tmp, merged)
             try:
                 fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
             except OSError:
@@ -190,9 +206,12 @@ def bump_counter(key: str, day: str, metric: str, n: int = 1) -> None:
             data = dict(sorted(data.items())[-90:])       # bounded: ~90 days is more than any chart
             disk[key] = json.dumps(data, separators=(",", ":"))
             tmp = _LOCAL_PATH + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(disk, f)
-            os.replace(tmp, _LOCAL_PATH)
+            # SAME 0600 PUBLISH AS save_local(). This path exists only to bump a counter, which is
+            # why it was written as a plain json.dump — but it rewrites the WHOLE file, secrets
+            # included, and a default-mode temp carried 0644 across os.replace. So every metric
+            # increment silently re-published the relay database password world-readable, moments
+            # after anyone tightened it by hand. One helper now, so a third writer cannot undo it.
+            _publish_local(tmp, disk)
             with _lock:                                   # keep this process's cache in step
                 _CACHE[key] = disk[key]
             try:

@@ -7918,6 +7918,22 @@
     if (VIEW==='translate') return renderTranslate();
     if (VIEW==='admin') return renderAdmin();
     if (VIEW==='profile') return renderProfile(ME.pubkey);
+    /* THE DESKTOP'S OWN SCREENS, FROM EVERY DOOR — not just from a popped-out window.
+     *
+     * os.js builds four screens this chain knows nothing about (__ossettings, __tasks, __vms,
+     * __remote) and owns their renderers in EXTRA_RENDER. app.js consulted PCOS.renderExtra() in
+     * exactly ONE place: routeFromPath(), behind `_inWin()`. So a window that was opened as a
+     * window worked, and every other way in — the start menu, a launcher tile, switchView() from
+     * anywhere — set VIEW and painted nothing at all.
+     *
+     * Reproduced on a real desktop: switchView('__vms') left VIEW === '__vms' with the previous
+     * screen still on it, and on a feed that was empty it printed "Nothing here can show __vms".
+     * Reported exactly that way. One hook here covers all four screens and every entry point; the
+     * routeFromPath() call stays, because it must run BEFORE switchView for a landing window. */
+    if (VIEW && VIEW.charAt(0) === '_'){
+      try{ if(window.PCOS && typeof PCOS.renderExtra === 'function' && PCOS.renderExtra(VIEW)) return; }
+      catch(_){ }
+    }
     /* NOTHING MATCHED, AND THE SPINNER IS ALREADY ON SCREEN.
      *
      * This chain is `if(VIEW===x) return render_x()` all the way down and then it simply ENDS, so a
@@ -17650,6 +17666,64 @@
     // not for the API call — so cross-origin CORS can never block an upload again.
     return _serverOrigin() + '/blossom';   // real instance origin (https://localhost in the bundled app is useless)
   }
+
+  /* ONE STUCK FETCH TAKES THE WHOLE MEDIA HOST DOWN FOR THE REST OF THE SESSION.
+   *
+   * Chromium keeps a pool of 6 sockets PER ORIGIN. A fetch that is never answered and never aborted
+   * holds one of them for as long as the page lives, so six of them retire the origin permanently —
+   * and nothing reports it, because the requests do not fail: they queue. Measured on a real desktop
+   * after ~16 minutes of ordinary use:
+   *
+   *   fetch https://poster.place/client/config          -> 405 in 6ms
+   *   fetch https://media.poster.place/list/<pubkey>    -> still pending at 60,000ms
+   *   fetch https://media.poster.place/<sha> (1.35 MB)  -> resolved after 303,290ms, 0 bytes
+   *   same blob, curl on the SAME machine               -> 200, 1,348,335 bytes, 26ms
+   *
+   * CDP showed `Network.requestWillBeSent` and then nothing at all, and firing three more fetches
+   * opened NO new socket — proof the request never reached the network. Restarting the shell fixed
+   * it instantly, which is what made this look like a dozen unrelated features breaking at random:
+   * Files "times out", a folder shows nothing, an upload that genuinely succeeded never appears,
+   * and the wallpaper picker says there are no pictures. Every one of those is this.
+   *
+   * The ceiling is on TIME-TO-HEADERS, not on the transfer. fetch() resolves when the headers land
+   * and the body streams afterwards, so a 4 GB download is untouched while a request that never
+   * gets a single byte is released. A caller that passes its own signal is left completely alone. */
+  (function boundMediaFetches(){
+    // Kept INSIDE: this function is lifted whole by its test, and a constant left outside would make
+    // the guard pass a review and throw the moment it actually fired.
+    const _MEDIA_HEADERS_TIMEOUT_MS = 45000;
+    if (typeof window === 'undefined' || typeof window.fetch !== 'function') return;
+    if (window.__pcMediaFetchBound) return;
+    window.__pcMediaFetchBound = true;
+    const _fetch = window.fetch.bind(window);
+    // `/<sha>`, `/<sha>.png`, `/list/<pubkey>`, each optionally under a mount path.
+    const BLOSSOM_SHAPE = /^\/(?:[^/]+\/)*(?:list\/)?[0-9a-f]{64}(?:\.[a-z0-9]{1,8})?$/i;
+    function _watched(url){
+      try{
+        const u = new URL(url, location.href);
+        if (!/^https?:$/.test(u.protocol)) return false;
+        if (u.origin === location.origin) return false;   // same-origin: not the pool at issue
+        let ms = ''; try{ ms = mediaServer() || ''; }catch(_){ ms = ''; }
+        if (ms){ try{ if (new URL(ms, location.href).origin === u.origin) return true; }catch(_){} }
+        return BLOSSOM_SHAPE.test(u.pathname);
+      }catch(_){ return false; }
+    }
+    window.fetch = function(input, init){
+      let url = '', hasSignal = !!(init && init.signal);
+      try{
+        if (typeof input === 'string'){ url = input; }
+        else if (input && typeof input === 'object'){ url = input.url || ''; if (input.signal) hasSignal = true; }
+      }catch(_){ url = ''; }
+      if (hasSignal || !_watched(url)) return _fetch(input, init);
+      let ctl; try{ ctl = new AbortController(); }catch(_){ return _fetch(input, init); }
+      const timer = setTimeout(() => { try{ ctl.abort(); }catch(_){ } }, _MEDIA_HEADERS_TIMEOUT_MS);
+      let p;
+      try{ p = _fetch(input, Object.assign({}, init || {}, { signal: ctl.signal })); }
+      catch(e){ clearTimeout(timer); throw e; }
+      return p.then(r => { clearTimeout(timer); return r; },
+                    e => { clearTimeout(timer); throw e; });
+    };
+  })();
   const NOSTR_BUILD='https://nostr.build';   // NIP-96 fallback host (not Blossom — uploads via uploadNip96)
   let _blossomOK=null;   // built-in Blossom upload permission for ME: true/false once checked, null=unknown
   // The effective UPLOAD target as {url, proto}. proto is 'blossom' (BUD-02 PUT /upload + kind-24242) or
@@ -21509,7 +21583,6 @@
       <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
         ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
-        ${(!_syncRoot && _filesFolder && _filesFolder!=='Music') ? `<button class="folder-chip delfolder" id="bl-delfolder" title="Delete this folder"><svg class="ic b-ic" aria-hidden="true"><use href="#i-trash"></use></svg>Delete “${enc(_filesFolder)}”</button>` : ''}
       </div></div></section>` + _fxSyncedHTML() + _fxHostHTML()
       + `${_standalone()?'':`<button class="fx-tree-head${_filesTab==='ai'?' active':''}" data-files-mode="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg><b>AI Chat files</b></button>`}`
       + `${IS_ADMIN?`<button class="fx-tree-head${_filesTab==='admin'?' active':''}" data-files-mode="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg><b>Storage admin</b></button>`:''}</div>`;
@@ -21619,6 +21692,30 @@
     $$('[data-files-mode]',r).forEach(b=>b.onclick=()=>{
       _filesAdminPk=null; _filesTab=b.dataset.filesMode; renderBlossom();
     });
+    /* A FOLDER'S ACTIONS BELONG TO THE FOLDER, not to the list of places you can go.
+     *
+     * "Delete “<name>”" was a chip in the sidebar's folder LIST: a destructive button sitting among
+     * the navigation chips, in a column 220px wide, so on any folder with a real name the label ran
+     * out of the panel and the trash icon was clipped. Reported in exactly those words — "the delete
+     * button doesn't even fit in the space", "the icon is cut off", "why would you put a delete
+     * button there". It also put Delete one mis-click from the folder above it while navigating.
+     *
+     * Every file manager answers this the same way and so does this one now: right-click (or
+     * long-press) the folder. Nothing is deleted without the same confirmation as before, and the
+     * files themselves are never deleted — they move to All. */
+    $$('.folder-chip[data-folder]', r).forEach(chip => {
+      const name = chip.dataset.folder || '';
+      if(!name || name === 'Music') return;      // built in; there is nothing to remove
+      chip.title = name + ' — right-click for folder actions';
+      chip.oncontextmenu = async e => {
+        e.preventDefault(); e.stopPropagation();
+        if(await uiConfirm('Delete folder “' + name + '”? Its files move to All — the files themselves aren\'t deleted.')){
+          FilesIdx.removeFolder(name);
+          if(_filesFolder === name) _filesFolder = '';
+          renderBlossom();
+        }
+      };
+    });
     /* A HEADING IN THE SIDEBAR IS A PLACE, NOT A DISCLOSURE TRIANGLE.
      * These three used to only collapse their tree on a desktop, so clicking "Blossom", "Synced
      * Folders" or "My Computer" from anywhere else in Files opened a list and left you standing
@@ -21722,7 +21819,6 @@
         renderBlossom();
       }catch(err){ toast('could not forget it: ' + ((err && err.message) || err)); }
     });
-    { const df=$('#bl-delfolder',r); if(df) df.onclick=async()=>{ if(await uiConfirm('Delete folder “'+_filesFolder+'”? Its files move to All — the files themselves aren\'t deleted.')){ FilesIdx.removeFolder(_filesFolder); _filesFolder=''; renderBlossom(); } }; }
     _fxBindChipDrop(r);
     /* Opening Files must never summon a remote signer. Discovery is encrypted, so make it an
      * explicit action instead of a background side effect of drawing the sidebar. */
@@ -32680,8 +32776,23 @@
      * intent. */
     const P = _capPlugin('PosterChanPush', 'notify');   // the same plugin _pushPlugin() resolves
     if(P){
+      /* THE TYPE MUST BE RESOLVED HERE, or the native per-device filter fails open on exactly the
+       * notifications the user switched off.
+       *
+       * PushPlugin.notify now asks DirectPushStore whether this device still wants this type —
+       * the same list the server's push filter reads — because the notification a RUNNING client
+       * draws goes through the SAME builder, channel and tag scheme as a server push and was the
+       * one door with nothing on it. On the packaged app the WebView is alive nearly always, so
+       * "I am still getting push notifications for stuff I said not to push" was mostly this copy.
+       *
+       * But only the DM and reminder call sites ever set `opts.type`. notifPing (likes, reposts,
+       * replies, quotes, mentions, zaps), mail, Concord and SMS pass `notificationType` or nothing,
+       * so the plugin was handed '' and the new gate would fail open on precisely those. The
+       * `opts.type ||` prefix stays ahead of the fallback: `_notificationType` matches
+       * `tag === 'pc-reminder'` exactly while the real tag is `pc-reminder-<id>`, so replacing it
+       * outright would lose the reminders type instead of gaining the rest. */
       try{ const r = P.notify({ title:String(title||'PosterChan'), body:clean,
-                                type:(opts&&opts.type)||'', tag:(opts&&opts.tag)||'',
+                                type:(opts&&opts.type)||_notificationType(opts), tag:(opts&&opts.tag)||'',
                                 route:(opts&&opts.route)||'notifications' });
            if(r && r.catch) r.catch(()=>{}); }catch(_){}
       return null;      // no handle to give back: the tap is wired natively, to MainActivity

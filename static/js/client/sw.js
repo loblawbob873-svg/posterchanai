@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1740';
+const CACHE = 'pc-nostr-v1742';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -220,7 +220,7 @@ self.addEventListener('activate', e => {
     ks.filter(k => k.startsWith('pc-')
                 && k !== CACHE && k !== MEDIA_CACHE && k !== DRIVE_CACHE && k !== SHARE_CACHE
                 && k !== CONFIG_CACHE && k !== WEBXDC_CACHE).map(k => caches.delete(k))
-  )).then(()=>self.clients.claim()));
+  )).then(()=>_purgeMisfiledListings()).then(()=>self.clients.claim()));
 });
 
 // Stale-while-revalidate for app code (shell + our JS/CSS): serve the CACHED copy instantly so a cold
@@ -430,9 +430,53 @@ async function trimCache(cache, max, key){
  * with "open this note once while online" quietly untrue for them.
  *
  * `mode !== 'navigate'` so a 64-hex route can never be pinned cache-first as a page. */
+/* A 64-HEX LAST SEGMENT IS NOT ENOUGH TO CALL SOMETHING A BLOB, and the one route that proves it is
+ * the listing every Files screen and every media picker depends on.
+ *
+ * BUD-02's listing is `GET <server>/list/<pubkey>` — and a pubkey is 64 hex characters, exactly like
+ * a sha256. So this predicate matched EVERY listing the client has ever made and handed it to
+ * cacheFirstBlob, which is built for content-addressed bytes that can never change: the response was
+ * served from DRIVE_CACHE on every later call, and `_cacheBlobLater` fetched a SECOND copy to store.
+ * On this deployment that listing is 37,483 descriptors / 9.7 MB and it changes on every upload.
+ *
+ * Measured on a real desktop: `poster.place/client/config` answered the app in 12ms while
+ * `media.poster.place/list/<pubkey>?limit=3` — 13 KB, 0.58s from a shell on the SAME machine —
+ * timed out at 8s inside it. The user-visible shape was not "slow": a file uploaded to a folder
+ * never appeared, because Files was being shown a listing cached from before the upload, for ever.
+ * That is one report of "I still can't upload files to Backgrounds", one of "change desktop picture
+ * still says no pic", and one of "can't even see the contents of Backgrounds" — all three the cache,
+ * none of them the upload.
+ *
+ * So the hash must NAME the resource, not be an ARGUMENT to a route. `_NOT_A_BLOB_ROUTE` lists the
+ * Blossom routes that take a 64-hex argument; anything else keeps the old behaviour, including a
+ * user's own server root with a path prefix (`https://host/blossom/<sha>`), which is why this is
+ * still anchored to the last segment rather than to a fixed mount path. */
+const _NOT_A_BLOB_ROUTE = new Set(['list', 'upload', 'mirror', 'report']);
 function isDriveBlob(url, req){
-  return /\/[0-9a-f]{64}(\.[a-z0-9]{1,8})?$/i.test(url.pathname)
-    && req.mode !== 'navigate' && req.destination !== 'image' && req.destination !== 'video';
+  const m = /\/([0-9a-f]{64})(\.[a-z0-9]{1,8})?$/i.exec(url.pathname);
+  if (!m) return false;
+  const before = url.pathname.slice(0, m.index).split('/').filter(Boolean).pop() || '';
+  if (_NOT_A_BLOB_ROUTE.has(before.toLowerCase())) return false;
+  return req.mode !== 'navigate' && req.destination !== 'image' && req.destination !== 'video';
+}
+/* The fix above stops POISONING the cache; it cannot un-poison it. An installed client already holds
+ * listings in DRIVE_CACHE, and a cache hit is checked before the network — so without this sweep the
+ * very users who reported the bug would keep being served the same stale listing after updating.
+ * Runs once per activation, over one cache, and deletes only entries this predicate now rejects. */
+async function _purgeMisfiledListings(){
+  try{
+    const cache = await caches.open(DRIVE_CACHE);
+    const keys = await cache.keys();
+    let gone = 0;
+    for (const req of keys){
+      let path; try { path = new URL(req.url).pathname; } catch(_) { continue; }
+      const m = /\/([0-9a-f]{64})(\.[a-z0-9]{1,8})?$/i.exec(path);
+      if (!m) continue;
+      const before = path.slice(0, m.index).split('/').filter(Boolean).pop() || '';
+      if (_NOT_A_BLOB_ROUTE.has(before.toLowerCase())){ await cache.delete(req); gone++; }
+    }
+    if (gone) console.log('[sw] dropped ' + gone + ' misfiled listing response(s) from ' + DRIVE_CACHE);
+  }catch(_){ /* storage unavailable: nothing cached can be served either */ }
 }
 async function cacheFirstBlob(req){
   /* THE PAGE'S RESPONSE IS NEVER DERIVED FROM ANYTHING THIS FUNCTION TOUCHES.
@@ -470,6 +514,19 @@ async function cacheFirstBlob(req){
  * waiting on. Bounded by the same rules as before (200, octet-stream, no Range, size cap) and by a
  * small queue, so opening a note with dozens of attachments cannot put dozens of extra downloads in
  * flight at once. */
+/* A 45s ceiling on TIME-TO-HEADERS for background cache fills. The body still streams freely once
+ * the headers arrive, so a large blob is unaffected; a request that never gets a byte is released
+ * instead of owning a socket for ever. Returns {} where AbortSignal.timeout is unavailable rather
+ * than failing the fetch — an unbounded warm-up is still better than no attachment cache at all. */
+function _cacheWarmSignal(){
+  try {
+    if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout)
+      return { signal: AbortSignal.timeout(45000) };
+    const c = new AbortController();
+    setTimeout(() => { try { c.abort(); } catch (_) {} }, 45000);
+    return { signal: c.signal };
+  } catch (_) { return {}; }
+}
 const _blobQueue = [];
 let _blobFetching = 0;
 function _cacheBlobLater(req){
@@ -485,7 +542,12 @@ async function _pumpBlobCache(){
   try {
     const cache = await caches.open(DRIVE_CACHE);
     if (!(await cache.match(url))) {
-      const r = await fetch(url);
+      /* BOUNDED, because this is a request nobody is waiting for. An un-aborted fetch holds one of
+       * the origin's six sockets for the life of the page, and six of them retire the host for the
+       * whole session — every later listing, thumbnail and attachment then queues for ever with no
+       * error anywhere. A cache warmer is the worst possible thing to let do that: it is invisible,
+       * so the damage is attributed to whatever the user happened to open next. */
+      const r = await fetch(url, _cacheWarmSignal());
       const ct = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
       const len = +(r.headers.get('content-length') || 0);
       const opaque = !ct || ct === 'application/octet-stream' || ct === 'binary/octet-stream';

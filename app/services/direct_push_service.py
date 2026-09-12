@@ -38,12 +38,23 @@ def token_digest(token: str) -> str:
 
 
 def subscription_dict(row) -> dict:
-    """Transport-neutral shape consumed by push_service.send()."""
+    """Transport-neutral shape consumed by push_service.send().
+
+    `prefs` RIDES ALONG, and it is not decoration. Every caller that filters — the poller, the
+    channel poller — holds the ORM row and asks `push_prefs.allows_row(row, ...)`. The two handlers
+    that go through `_subs_for` (calls and DMs) hold only this dict, and a dict has no `prefs`
+    attribute, so `allows_row` read None off it and answered "send" for every device no matter what
+    that device had said. A call is meant to ring regardless; a DM was not, and every phone that
+    switched DMs off went on buzzing for them with the row in the database saying otherwise.
+    Carrying the column here is what lets the filter be asked at all. pywebpush reads only
+    `endpoint` and `keys`, so the extra key costs nothing on the Web Push path.
+    """
     return {
         "id": row.id,
         "transport": getattr(row, "transport", None) or "webpush",
         "endpoint": row.endpoint,
         "keys": {"p256dh": row.p256dh, "auth": row.auth},
+        "prefs": getattr(row, "prefs", None),
     }
 
 

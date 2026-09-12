@@ -254,6 +254,30 @@ public class PushPlugin extends Plugin {
         String tag = call.getString("tag", null);
         String route = call.getString("route", "notifications");
         try {
+            /* THIS PHONE'S OWN ANSWER GOVERNS EVERY NATIVE NOTIFICATION, not only the ones the
+             * server sent. `PushEventService.deliver` has asked DirectPushStore since the filter
+             * shipped; this method — the other caller of the same builder — never did, and it is
+             * the one that runs whenever the WebView is alive. On the packaged app that is most of
+             * the time: the direct-push service is a foreground service, "stay connected" is a
+             * foreground service, and the launcher build IS the home app. So a person who switched
+             * likes off under "Push notifications on this device" went on getting an OS notification
+             * for every like — drawn through this builder, on the same channel, with the same tag
+             * scheme, INDISTINGUISHABLE from the push they had just silenced. Two filters at the
+             * two ends of the server path, and a third door beside them standing open.
+             *
+             * Fails OPEN exactly like both others (see DirectPushStore.allowsType and
+             * app/services/push_prefs.py): unset, unparseable, unknown and a typeless payload all
+             * still draw. It can only ever honour a preference somebody explicitly switched off.
+             *
+             * `call.resolve()` rather than a rejection: not drawing because the user said not to is
+             * a success. A reject lands in the client's catch, which reads it as "notifications are
+             * broken on this device". */
+            if (!DirectPushStore.allowsType(getContext(), type)) {
+                JSObject silenced = new JSObject();
+                silenced.put("shown", false);
+                call.resolve(silenced);
+                return;
+            }
             /* SAY THAT THE CLIENT SPOKE FOR THIS DM, so the blind server push does not say it again
              * a few seconds later. Recorded BEFORE the draw, not after: `show` can throw, and a
              * notification the client believes it raised is exactly the one the push must not
