@@ -907,11 +907,34 @@ function createWindow(assignment) {
       items.push({ label: 'Copy link address', click: () => clipboard.writeText(params.linkURL) });
       items.push({ type: 'separator' });
     }
+    /* AN IMAGE HAD NO ENTRIES AT ALL, so right-clicking one built a menu of cut/copy/paste with
+       every item DISABLED (an image is not editable and selects nothing). On Wayland a native menu
+       is its own window, so the whole interaction was "a window appears and the menu does nothing"
+       — reported exactly that way. `copyImageAt` is used rather than `clipboard.writeImage`,
+       because writeImage does not take the Wayland selection (the same reason the screenshot path
+       verifies with `wl-paste`), and because it copies the DECODED image Chromium already holds
+       instead of re-fetching a URL that may be an authenticated blob. */
+    if (params.mediaType === 'image' && params.srcURL) {
+      items.push({ label: 'Copy image', click: () => created.webContents.copyImageAt(params.x, params.y) });
+      items.push({ label: 'Save image…', click: () => created.webContents.downloadURL(params.srcURL) });
+      // A data: or blob: source is this page's own memory: there is no address another program
+      // could open, so offering one would put a string on the clipboard that resolves nowhere.
+      if (/^https?:/i.test(params.srcURL)) {
+        items.push({ label: 'Copy image address', click: () => clipboard.writeText(params.srcURL) });
+        items.push({ label: 'Open image in browser', click: () => shell.openExternal(params.srcURL) });
+      }
+      items.push({ type: 'separator' });
+    }
     const canEdit = params.isEditable;
     items.push({ role: 'cut', enabled: canEdit && params.editFlags.canCut });
     items.push({ role: 'copy', enabled: params.editFlags.canCopy });
     items.push({ role: 'paste', enabled: canEdit && params.editFlags.canPaste });
     if (canEdit) items.push({ role: 'selectAll' });
+    /* NEVER POP AN ALL-DEAD MENU. On Wayland this is a real window appearing on screen, so a menu
+       in which nothing can be clicked is indistinguishable from a bug — which is how the missing
+       image case was reported. If every item is disabled, show nothing at all. */
+    const usable = items.some(i => i.type !== 'separator' && i.enabled !== false);
+    if (!usable) return;
     Menu.buildFromTemplate(items).popup({ window: created });
   });
 

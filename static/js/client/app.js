@@ -6517,7 +6517,8 @@
   // clear-all, which we honour) — so cross-device removals propagate normally.
   function _persistMutes(){ const u=[...MUTED].filter(p=>p!==ME.pubkey);
     ClientSettings.set('mutedUsers', u); ClientSettings.set('mutedWords', [...MUTED_WORDS]); ClientSettings.set('mutedThreads', [...MUTED_THREADS]); ClientSettings.set('mutedUsersCount', u.length); }
-  let _followShrinkWarned=false;   // one line per session, not one per refresh
+  let _followShrinkWarned=false;
+  let _followShortReads = 0;   // short reads seen this session (see the guard below)   // one line per session, not one per refresh
   function _followSafetyMembers(){
     let best=ClientSettings.get('followsSafetyCache',[])||[];
     const live=[...FOLLOWS].filter(p=>p!==ME.pubkey); if(live.length>best.length) best=live;
@@ -6588,8 +6589,25 @@
       const incoming=new Set(ev.tags.filter(t=>t[0]==='p'&&t[1]).map(t=>t[1]));
       const held=[...FOLLOWS].filter(p=>p!==ME.pubkey).length;
       if(held>=8 && incoming.size < Math.floor(held/2)){
-        if(!_followShrinkWarned){ _followShrinkWarned=true;
-          toast('kept your '+held+' follows — a relay answered with only '+incoming.size); }
+        /* QUIET FOR A BLIP, ONCE WHEN IT IS A PATTERN.
+         *
+         * This used to interrupt with a toast the first time a relay answered short, which is bad
+         * UI for something the user cannot act on and did not cause — reported as "that debugging
+         * message about kept follows" and "terrible UI". But it cannot go silent either: this is
+         * the guard between a short read and somebody's whole follow list, and it exists BECAUSE a
+         * silent refusal let a real loss go unnoticed.
+         *
+         * A SINGLE short read costs nothing — the list is kept, the guard worked, and one slow
+         * relay is weather. It is only worth a person's attention once it KEEPS happening, because
+         * that means a relay in their list is persistently serving a truncated follow list, which
+         * they can actually act on (drop it, or check it). So: count always, log always, and say
+         * it once, on the third time, naming the thing they can do something about. */
+        _followShortReads = (_followShortReads || 0) + 1;
+        try{ console.warn('[follows] kept '+held+' follows; a relay answered with '+incoming.size
+                          +' (occurrence '+_followShortReads+')'); }catch(_){}
+        if(_followShortReads >= 3 && !_followShrinkWarned){ _followShrinkWarned=true;
+          toast('A relay keeps sending back a partial follow list ('+incoming.size+' of '+held
+                +'). Your follows are intact — check your relays in Settings if this continues.'); }
         console.warn('[follows] refused a shrinking read:',incoming.size,'<',held,'from',ev.id);
       } else { FOLLOWS = incoming; _persistFollows(); }
     }

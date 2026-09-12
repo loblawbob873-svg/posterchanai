@@ -57,7 +57,7 @@ MUTATIONS = [
     (
         "the focused window frame stops using the client's palette",
         "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini",
-        "active_color = \\#3ce8ffff",
+        "active_color = \\#1e525fff",
         "active_color = \\#ff00ffff",
         "tests/test_window_frame_matches_the_client.py",
     ),

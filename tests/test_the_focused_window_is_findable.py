@@ -41,12 +41,34 @@ def _colour(key):
 
 class TheFocusedBorderIsVisible(unittest.TestCase):
 
-    def test_the_focused_frame_is_the_accent_not_a_surface(self):
-        """THE BUG: `--bg2` is a panel surface. As a border it is invisible against the desktop."""
+    def test_the_focused_frame_is_findable_without_being_the_accent_itself(self):
+        """TWO REPORTS, ONE LINE, AND THE ANSWER IS BETWEEN THEM.
+
+        First: `--bg2` is a panel SURFACE, and as a frame against a `--bg` desktop it is a dark grey
+        line on a nearly-black one — "where the fuck is the hyprland color around the entire
+        windows". So this test used to demand the raw accent.
+
+        Then it got the raw accent, and: "firefox is now a bright cyan window title?". Wayfire's
+        `active_color` is not a border colour — it fills the whole TITLEBAR — so `--neon` does not
+        outline a window, it repaints its chrome in full cyan.
+
+        The frame must therefore be DERIVED from the accent, not equal to it: `--frame-focus`, which
+        is `--neon` at ~30% over `--bg2`. Still one palette (the token lives in client.css, so a
+        hand-typed hex cannot drift back in), still obviously the focused window, not a headline."""
         active = _colour("active_color")
-        self.assertTrue(active.startswith(_token("neon")),
-                        "focused border is %s, not the accent %s" % (active, _token("neon")))
-        self.assertFalse(active.startswith(_token("bg2")), "focused border is the panel surface again")
+        self.assertTrue(active.startswith(_token("frame-focus")),
+                        "focused frame is %s, not the frame token %s" % (active, _token("frame-focus")))
+        self.assertFalse(active.startswith(_token("bg2")),
+                         "focused frame is the panel surface again — invisible against the desktop")
+        self.assertFalse(active.startswith(_token("neon")),
+                         "focused frame is the raw accent again — that is a cyan titlebar, not a border")
+
+    def test_the_frame_colour_is_still_a_client_token(self):
+        """The rule the tone-down must not cost: the compositor and the client keep ONE palette, so
+        the frame cannot be a hex somebody typed into wayfire.ini."""
+        css = (ROOT / "static/css/client.css").read_text()
+        self.assertIn("--frame-focus:", css,
+                      "the frame colour is no longer defined in the client palette")
 
     def test_an_unfocused_window_recedes(self):
         """Only one window is focused; if every frame is bright, none of them reads as focused."""
@@ -67,8 +89,18 @@ class TheFocusedBorderIsVisible(unittest.TestCase):
         """A native app and one of ours must agree about what "focused" looks like."""
         ring = CSS[CSS.index(".os-root.os-fx .osw.focused:not(.osw-document)::after{"):]
         ring = ring[:ring.index("}")]
+        # The RING is a thin gradient outline drawn by the client, so it keeps the full accent; the
+        # compositor FRAME is a filled titlebar and takes the derived tone. Same family, different
+        # jobs — which is why this test checks they agree in ORIGIN, not in exact value.
         self.assertIn("var(--neon)", ring)
-        self.assertTrue(_colour("active_color").startswith(_token("neon")))
+        # They agree in ORIGIN, not in exact value: `--frame-focus` IS `--neon` blended towards the
+        # surface, so both layers are the same accent doing two different jobs. Demanding the same
+        # literal is what put a cyan titlebar on every window.
+        self.assertTrue(_colour("active_color").startswith(_token("frame-focus")))
+        self.assertNotEqual(_token("frame-focus"), _token("bg2"),
+                            "the frame token collapsed back onto the panel surface")
+        self.assertNotEqual(_token("frame-focus"), _token("neon"),
+                            "the frame token is just the accent — that is the cyan titlebar again")
 
 
 if __name__ == "__main__":

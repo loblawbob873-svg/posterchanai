@@ -39,6 +39,12 @@
      palette — it also clips on wide-gamut displays and vibrates against dark backgrounds. These sit a
      few degrees off primary with the saturation pulled back: same unmistakable cyan/magenta identity,
      but it looks chosen. --accent-rgb/--accent2-rgb MUST track them (dozens of rgba(var(--accent-rgb),…)). */
+  --frame-focus:#1e525f;  /* the FOCUSED WINDOW FRAME, and it lives here so the compositor and
+     the client keep one palette. Wayfire's `active_color` fills the whole TITLEBAR, not a
+     border, so the raw --neon turned every focused window into a bright cyan bar ("firefox
+     is now a bright cyan window title?"). This is --neon at ~30% over --bg2: findable at a
+     glance, quiet enough to be chrome. Keep it a TOKEN — os/overlay/.../wayfire.ini is
+     checked against this file so a hand-typed hex cannot drift back in. */
   --neon:#3ce8ff; --neon2:#ff5cf0; --cyan:#3ce8ff; --green:#00ff88; --amber:#ffcf2b; --accent-rgb:60,232,255; --accent2-rgb:255,92,240;
   --danger:#ff6b8b;   /* delete/danger action color; overridden per-theme so it stays readable */
   /* A hairline is STRUCTURE, not decoration. At .22 cyan every card, input and divider was an accent-

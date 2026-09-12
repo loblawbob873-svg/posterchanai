@@ -303,8 +303,12 @@
         }
         return state;
       }
+      /* THE SERVER'S OWN WORDING COUNTS. This matched three phrases and the node says a FOURTH —
+         "The wallet is not caught up with the Monero network yet" — so a wallet that was merely
+         catching up was reported as unavailable. Two surfaces, one state, different vocabulary. */
       const _fail={available:false,error:detail,network:'stagenet',
-             busy:/did not answer|is busy|still reading the chain/i.test(String(detail||''))};
+             busy:/did not answer|is busy|still reading the chain|not caught up|catching up|scanning/i
+                    .test(String(detail||''))};
       if(seq === _probeSeq) state=_fail;
     }
     return state;
@@ -839,6 +843,32 @@
     let s=await _bounded(probe(!!force));
     if(PC.VIEW!=='wallet')return;
     if(s === TIMED_OUT){
+      /* A WALLET THAT IS CATCHING UP IS SLOW, AND SLOW IS NOT DEAD.
+         Measured on this node: `sync_state` reported `scanning: true` while the probe was timing
+         out, so the screen said "The wallet did not answer" about a wallet that was reading blocks
+         perfectly normally — reported as "why am I seeing 'The wallet did not answer' when
+         accessing my monero wallet on desktop". `/sync-state` is a separate cheap route that exists
+         precisely to explain a slow wallet, so ask it before reaching for the dead card. */
+      try{
+        const st = await Promise.race([
+          request('/api/wallet/xmr/sync-state').catch(()=>null),
+          /* SHORT, BECAUSE THIS RUNS AFTER A TIMEOUT THE USER IS ALREADY WAITING OUT.
+             At 4000ms the screen took 6518ms end to end and tripped the 5s ceiling
+             `test_the_wallet_screen_never_spins_for_ever` exists to hold. `sync-state` is a cheap
+             local read: if it cannot answer in a second the wallet is not merely scanning. */
+          new Promise(r => setTimeout(()=>r(null), 1000))
+        ]);
+        if(st && st.scanning && PC.VIEW==='wallet'){
+          const fb = document.getElementById('feed');
+          if(fb){
+            fb.innerHTML = '<div class="mw-wrap"><header class="mw-head">'
+              + '<span class="mw-logo">\u0271</span><div><h2>Monero Wallet</h2>'
+              + '<span class="mw-net">LOCAL WALLET</span></div></header>' + busyHtml() + '</div>';
+            bind();
+          }
+          return;
+        }
+      }catch(_){ }
       /* NO ANSWER IS A STATE, NOT A REASON TO KEEP SPINNING. Say so, and leave a way to ask again. */
       const f3 = document.getElementById('feed');
       if(f3 && !state) f3.innerHTML = '<div class="mw-wrap"><header class="mw-head">'

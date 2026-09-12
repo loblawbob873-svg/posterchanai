@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import asyncio as _asyncio
 import time
 
 import concord as _cc
@@ -255,8 +256,29 @@ def live_wire() -> Wire:
     from app.services.nostr import nostr_service as _svc
 
     def query(relays, filters):
+        """A room read that ALWAYS COMES BACK.
+
+        `relay.query` carries a 12s per-relay deadline, and that deadline is armed INSIDE the
+        socket — after the connect and before the close. Anything that stalls outside it (an
+        opening handshake a peer never completes, a close handshake it never answers) is not
+        covered, and `asyncio.run` then waits for ever. Measured on this deployment: a bot joined
+        its room at 01:58 and sat at this line for SIX AND A HALF HOURS using zero CPU, with the
+        process up, the thread alive and nothing in any log — indistinguishable from a quiet room,
+        which is why it read as "the bots never joined".
+
+        The `except` below cannot help: a hang is not an exception. So the whole call gets a
+        wall-clock ceiling. A timed-out pass returns nothing and the caller simply tries again on
+        the next poll, which is exactly what it does for a relay that answered nothing.
+        """
+        budget = float(os.getenv("CONCORD_QUERY_TIMEOUT", "45"))
+        async def _bounded():
+            return await _asyncio.wait_for(_svc.relay.query(relays, filters), timeout=budget)
         try:
-            return _mk._run(_svc.relay.query(relays, filters)) or []
+            return _mk._run(_bounded()) or []
+        except _asyncio.TimeoutError:
+            logger.warning("[concord] a room read did not come back within %ss — the listener is "
+                           "not wedged, it gave up and will retry", budget)
+            return []
         except Exception as e:
             logger.warning(f"[concord] relay query failed: {e}")
             return []

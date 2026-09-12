@@ -62,7 +62,22 @@ const run = new Function('kind3', 'person', `return (async()=>{
   await fetchFollows();
   out.afterShortRead = [...FOLLOWS].filter(p => p !== ME.pubkey).length;
   out.cachedAfterShortRead = ClientSettings.get('followsCount', 0);
-  out.said = globalThis.toasts.length;
+  // ONE short read is weather: the list is kept and nothing is said. Interrupting for a single
+  // slow relay is noise about a decision the user did not cause and cannot act on.
+  out.saidAfterOne = globalThis.toasts.length;
+
+  // Three is a PATTERN — a relay persistently serving a truncated list — and that IS actionable.
+  globalThis.relayAnswer = kind3(2, 'short');
+  await fetchFollows();
+  globalThis.relayAnswer = kind3(2, 'short');
+  await fetchFollows();
+  out.afterThreeShortReads = [...FOLLOWS].filter(p => p !== ME.pubkey).length;
+  out.saidAfterThree = globalThis.toasts.length;
+
+  // ...and it must not keep saying it.
+  globalThis.relayAnswer = kind3(2, 'short');
+  await fetchFollows();
+  out.saidAfterFour = globalThis.toasts.length;
 
   // A genuine, ordinary shrink (an unfollow or two) must STILL be adopted — the guard is about
   // wipes, not about refusing every list that got shorter.

@@ -389,7 +389,56 @@ def _posterchan_client_allowed(config, headers, connection):
     if origin and origin in origins:
         return True
     ua = _one_header(headers, "User-Agent")
-    return bool(re.search(r"(?:^|[\s;(])PosterChan(?:AI)?(?:/|[\s;)]|$)", ua, re.I))
+    if re.search(r"(?:^|[\s;(])PosterChan(?:AI)?(?:/|[\s;)]|$)", ua, re.I):
+        return True
+    # A REMOTE SIGNER IS NOT "ANOTHER CLIENT", AND REFUSING IT BREAKS LOGGING IN.
+    #
+    # `nostrconnect://` names OUR relay (`_ncRelays` returns `CFG.relay_url`) and the SIGNER dials
+    # it — Amber, on a phone, as a native app: no Origin header, its own User-Agent, a public IP.
+    # Every branch above therefore misses it and this returned False, so "Login with Amber" died at
+    # the handshake with a 403 the user never sees. NIP-55 (Amber signing locally for our own app)
+    # and `bunker://` (the signer names its own relay) were never affected — only the QR flow, which
+    # is the one we tell people to use.
+    #
+    # So the connection is allowed and CONFINED: kind 24133 and nothing else, enforced per message
+    # in `_on_event`/`_on_req`. That keeps the switch's actual intent — this is not a general-purpose
+    # relay for other people's clients — while leaving the one kind that is pure signer transport.
+    # 24133 is EPHEMERAL: nothing is stored, it is only fanned out to whoever is subscribed, so this
+    # grants no storage and no read access to anything the relay holds.
+    return "signer"
+
+
+# What a socket that is NOT a PosterChan client may still do. Two things, and both are things the
+# node would be broken without:
+#
+#   24133  NIP-46 remote signing. `nostrconnect://` names OUR relay and the SIGNER dials it, so
+#          refusing this is refusing the Amber QR login the sign-in screen offers.
+#   4/13/1059  INBOUND DMs. If this relay is in a user's NIP-65/10050 inbox list — which is the
+#          point of running one — then somebody on Damus or Amethyst MUST be able to publish a gift
+#          wrap here, or their message is never delivered and neither end is told. These kinds
+#          already bypass the WoT gate by design (`_DM_KINDS`: a gift wrap's author is a throwaway
+#          key, so the relay accepts it for being ADDRESSED to one of ours), so allowing the socket
+#          adds no policy that the relay did not already apply to everyone who could connect.
+_RESTRICTED_WRITE_KINDS = frozenset({24133, 4, 13, 1059})
+
+
+def _restricted_traffic(typ, msg) -> bool:
+    """May a confined (non-PosterChan) socket send this message?
+
+    WRITES are the signer channel and inbound DMs. READS are the signer channel only: delivering a
+    DM needs no subscription, and reading one is what the switch is deliberately excluding. A REQ
+    filter with no `kinds` asks for EVERYTHING, so it is refused rather than read generously.
+    """
+    if typ in ("CLOSE", "AUTH", "PING", "PONG"):
+        return True
+    if typ == "EVENT" and len(msg) >= 2:
+        return isinstance(msg[1], dict) and msg[1].get("kind") in _RESTRICTED_WRITE_KINDS
+    if typ == "REQ" and len(msg) >= 3:
+        filters = [f for f in msg[2:] if isinstance(f, dict)]
+        if not filters:
+            return False
+        return all(f.get("kinds") == [24133] for f in filters)
+    return False
 
 
 class _OutQ:
@@ -705,9 +754,12 @@ class RelayServer:
         try:
             hdrs = request.headers
             if hdrs.get("Upgrade", "").lower() == "websocket":
-                if not _posterchan_client_allowed(self.cfg, hdrs, connection):
+                verdict = _posterchan_client_allowed(self.cfg, hdrs, connection)
+                if not verdict:
                     return Response(403, "Forbidden", Headers({"Content-Type": "text/plain; charset=utf-8"}),
                                     b"use a PosterChan client")
+                # "signer" = allowed onto the socket but confined to NIP-46 (see the gate above).
+                setattr(connection, "_pcai_signer_only", verdict == "signer")
                 try:
                     setattr(connection, "_pcai_ip", _client_ip(hdrs, connection))
                     host = _one_header(hdrs, "Host") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"
@@ -898,6 +950,13 @@ class RelayServer:
         if not isinstance(msg, list) or not msg:
             return
         typ = msg[0]
+        if getattr(conn, "_pcai_signer_only", False) and not _restricted_traffic(typ, msg):
+            # Said out loud rather than dropped: a signer that is refused must be able to report why,
+            # and a silent drop is indistinguishable from a relay that is simply slow.
+            self._send(conn, ["NOTICE", "this relay serves PosterChan clients; another client may "
+                                        "deliver a DM here or carry a NIP-46 signing session, "
+                                        "nothing else"])
+            return
         if typ == "EVENT" and len(msg) >= 2:
             await self._on_event(conn, msg[1])
         elif typ == "REQ" and len(msg) >= 2:

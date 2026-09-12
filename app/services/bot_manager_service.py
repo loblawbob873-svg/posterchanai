@@ -525,8 +525,20 @@ def _cmd_for(bot_dict: dict) -> list:
     # That keeps what the original fix was really for — the failure was invisible, not unfixable —
     # while leaving the decision with the person. The form derives the mode when an invite is saved,
     # which is what covers the ordinary path.
-    cfg = bot_dict.get("config") or {}
-    invite = str(cfg.get("concord_invite") or "").strip() if isinstance(cfg, dict) else ""
+    # `bot_to_dict` FLATTENS the JSON config into the top level — there is no "config" key on this
+    # dict. Reading one returned None, so `invite` was always "" and BOTH warnings below were wrong:
+    # the "invite but no listener" one could never fire (which is why it never caught anything in
+    # the months it existed), and the "listener but no invite" one fired about every Concord bot,
+    # including a correctly configured one whose CONCORD_INVITE reaches the process fine. The nested
+    # form is still accepted because callers in tests and the API hand a raw row-shaped dict.
+    nested = bot_dict.get("config")
+    if isinstance(nested, str):
+        try:
+            nested = json.loads(nested)
+        except (ValueError, TypeError):
+            nested = None
+    invite = str(bot_dict.get("concord_invite")
+                 or (nested or {}).get("concord_invite") or "").strip()
     name = bot_dict.get("name") or bot_dict.get("id")
     if invite and "--concord" not in modes:
         logger.warning("[BOTS] %s has a Concord invite but the Concord listener is switched OFF — "

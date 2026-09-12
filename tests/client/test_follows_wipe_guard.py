@@ -62,9 +62,20 @@ class FollowsSurviveAShortRead(unittest.TestCase):
         self.assertEqual(got["cachedAfterShortRead"], 40,
                          "the short read wrote itself into followsCount — this is the ratchet: the "
                          "write guard now measures against 2 and lets every wipe through")
-        self.assertEqual(got["said"], 1,
-                         "the refusal must be said out loud exactly once; silent is how the "
-                         "original loss went unnoticed, per-refresh is spam")
+        # QUIET FOR A BLIP, ONCE FOR A PATTERN. This used to demand a notice on the FIRST short
+        # read, and that is bad UI for something the user did not cause and cannot act on —
+        # "terrible UI to have those stupid messages". It cannot go silent either: this guard
+        # exists because a silent refusal let a real follows loss go unnoticed. A single slow relay
+        # is weather; a relay that KEEPS serving a truncated list is a thing they can act on.
+        self.assertEqual(got["saidAfterOne"], 0,
+                         "one short read interrupted the user — the list was never at risk")
+        self.assertEqual(got["afterThreeShortReads"], 40,
+                         "the guard stopped holding once the short reads repeated")
+        self.assertEqual(got["saidAfterThree"], 1,
+                         "a relay persistently serving a partial list says nothing — silent is how "
+                         "the original loss went unnoticed")
+        self.assertEqual(got["saidAfterFour"], 1,
+                         "it repeats per refresh, which is the spam this replaced")
 
         # …and the thing it must not break.
         self.assertEqual(got["afterOrdinaryShrink"], 38,

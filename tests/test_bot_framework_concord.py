@@ -218,31 +218,58 @@ def test_a_bot_with_an_invite_is_spawned_with_exactly_the_modes_it_was_saved_wit
         "a bot saved WITH the listener must still be spawned with it")
 
 
-def test_a_concord_bot_with_no_room_says_so():
-    """A BOT THAT JOINS NOTHING MUST NOT LOOK HEALTHY.
+def test_a_concord_bot_with_no_room_says_so(caplog):
+    """A BOT THAT JOINS NOTHING MUST NOT LOOK HEALTHY — AND THE CHECK MUST READ THE REAL SHAPE.
 
-    Measured on this deployment: of the two bots carrying `--concord`, one had no `concord_invite`
-    key in its config at all. Its process was up, its checkbox was ticked, its nsec was valid, and
-    it sat in no community — with nothing in any log and nothing on any screen to say why. That is
-    "i created a new bot with existing nsec and it never joined the concord room".
+    Measured: of the two bots carrying `--concord`, one had no invite. Its process was up, its
+    checkbox ticked, its nsec valid, and it sat in no community with nothing to say why.
 
-    The opposite mismatch (an invite with the listener off) was already reported; this is the same
-    failure with the two halves swapped, and it was the one nothing watched for.
+    THE FIRST VERSION OF THIS TEST GREPPED THE SOURCE and passed over a broken check. `bot_to_dict`
+    FLATTENS the JSON config into the top level, so `bot_dict.get("config")` is always None: the
+    warning fired about every Concord bot including a correctly configured one, and its older twin
+    ("an invite but no listener") could never fire at all. A rule test that reads the code cannot
+    see that; this one RUNS the function against the dict the manager actually passes.
     """
-    import inspect
+    import logging
     from app.services import bot_manager_service as mgr
 
-    src = inspect.getsource(mgr._cmd_for)
-    assert '"--concord" in modes and not invite' in src, (
-        "nothing notices a Concord bot with no community saved — it starts, joins nothing, and "
-        "reports success")
-    assert "NO community invite saved" in src
+    def warnings_for(**bot):
+        bot.setdefault("platform", "nostr")
+        bot.setdefault("name", "probe")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=mgr.logger.name):
+            mgr._cmd_for(bot)
+        return " ".join(r.getMessage() for r in caplog.records)
 
+    invite = "https://poster.place/invite/naddr1abc#secret"
+
+    # THE FLAT SHAPE, which is what `bot_to_dict` produces and the manager really uses.
+    said = warnings_for(modes=["--nostr", "--concord"], concord_invite=invite)
+    assert "NO community invite" not in said, (
+        "a correctly configured Concord bot is being reported as having no room")
+
+    said = warnings_for(modes=["--nostr", "--concord"])
+    assert "NO community invite" in said, "a listener with no room says nothing"
+
+    said = warnings_for(modes=["--nostr"], concord_invite=invite)
+    assert "listener is switched OFF" in said, (
+        "a bot holding a room it does not listen to says nothing — the original report")
+
+    said = warnings_for(modes=["--nostr"])
+    assert said.strip() == "", "a bot with neither is warned about anyway"
+
+    # And the nested shape a raw row / API caller hands over must behave identically.
+    said = warnings_for(modes=["--nostr", "--concord"], config={"concord_invite": invite})
+    assert "NO community invite" not in said
+    said = warnings_for(modes=["--nostr", "--concord"], config=json.dumps({"concord_invite": invite}))
+    assert "NO community invite" not in said, "a JSON-string config is not parsed"
+
+
+def test_the_form_warns_about_a_listener_with_no_room():
     js = (ROOT / "static/js/admin-bots.js").read_text()
-    assert "bot_concord_noroom" in js, (
-        "the bot form no longer warns when Concord is ticked with no invite")
+    assert "bot_concord_noroom" in js
     assert "will not join any" in js
-    # It must be a VISIBLE note, not a tooltip: with no invite there is nothing on screen to hover.
+    # A VISIBLE note, not a tooltip: with no invite there is nothing on screen to hover.
     assert "note.textContent" in js and "note.hidden" in js
 
 
