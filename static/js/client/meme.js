@@ -1880,12 +1880,47 @@
   // ➕ (with record-a-voice-over beside it), but nobody hunting for a track they already uploaded
   // should have to find that first. Route by the blob's type, exactly as the local-file path does.
   function pickBlossom(){
-    PC.blossomPicker(null, ({ url, type }) => {
+    PC.blossomPicker(null, async ({ url, type, sha, enc, name }) => {
+      /* AN ENCRYPTED TRACK HAS TO BECOME A FETCHABLE ONE, because the render is server-side.
+       *
+       * The Music folder is stored encrypted, so what the picker hands back for one of its files is
+       * the address of CIPHERTEXT. That plays as nothing in the preview, and — the part that
+       * matters — `POST /client/meme/render` sends `layers[].src` and the SERVER fetches it, so a
+       * decrypted `blob:` URL would preview locally and then fail at render. Either way the user
+       * gets a track that does not work, which is worse than the folder being missing.
+       *
+       * So decrypt it here and put it through the SAME path a file picked off the device takes:
+       * upload, then use the resulting URL. That is `addMediaFiles`, unchanged. A meme is published,
+       * so its audio has to be publicly fetchable regardless — this is inherent to the feature, not
+       * an extra exposure — but it does put a plaintext copy on the drive, so say so rather than
+       * doing it silently. */
+      if(enc && sha){
+        const st = document.getElementById('mb-status');
+        try{
+          if(st) st.textContent = 'decrypting ' + (name || 'track') + '…';
+          const local = await PC.encFileUrl(sha);
+          if(!local) throw new Error('it could not be decrypted on this device');
+          const blob = await (await fetch(local)).blob();
+          const file = new File([blob], name || 'track', { type: type || blob.type || 'audio/mpeg' });
+          if(st) st.textContent = '';
+          toast('adding a playable copy of ' + (name || 'that track') + ' to your drive');
+          await addMediaFiles([file]);
+        }catch(e){
+          if(st) st.textContent = '';
+          toast('could not use that file — ' + ((e && e.message) || e));
+        }
+        return;
+      }
       addLayer(/^audio\//.test(type||'') ? 'audio' : /^video\//.test(type||'') ? 'video' : 'image', url);
       render();
     }, {
       title: '📁 Add from Files',
       filter: b => /^(image|video|audio)\//.test(b.type||''),
+      // Music lives in an ENCRYPTED folder, which every picker hides by default; the builder can
+      // decrypt and re-publish what it picks, so it opts in. Without this the Music folder is
+      // absent from this sheet entirely — which contradicts the note below about music living
+      // "where every other file is".
+      allowEncrypted: true,
       empty: 'Nothing on your Blossom drive yet — upload some in the Files tab.',
     });
   }

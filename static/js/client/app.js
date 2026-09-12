@@ -19191,12 +19191,17 @@
       }catch(_){}
       // Same filter as the Files grid: hide the octet-stream noise (encrypted ciphertext, stale/live
       // index blobs, unnamed binaries) — none of it renders as media in a post, and it floods the picker.
-      list = list.filter(b=>{
+      /* Named, because a folder's rows no longer all come from the listing (see `_folderRows`) and a
+       * synthesised one must pass exactly the same hygiene — otherwise ciphertext, index blobs and
+       * the caller's own narrowing apply to half the grid. */
+      const _keep = b => {
         if(b.sha256===FilesIdx._lastIndexSha) return false;        // the encrypted Files index blob itself
         const m=FilesIdx.meta(b.sha256);
-        if(m && m.enc) return false;                               // encrypted ciphertext — not publicly viewable
+        // Encrypted ciphertext is not publicly viewable, so it stays out unless the caller has said
+        // it can decrypt and re-publish what it picks (see `allowEncrypted` above).
+        if(m && m.enc && !opts.allowEncrypted) return false;
         if(!m && /octet-stream/.test(b.type||'') && !mimeForName(b.name||'')) return false;
-        if(FilesIdx.isEncFolder(FilesIdx.folderOf(b.sha256))) return false;   // ditto for a whole encrypted folder
+        if(!opts.allowEncrypted && FilesIdx.isEncFolder(FilesIdx.folderOf(b.sha256))) return false;   // ditto for a whole encrypted folder
         /* Normalize old/typeless Blossom rows before a caller filters them. The Files index knows
          * the original name and MIME; applying `video/*` to the server's octet-stream placeholder
          * made an MP4 visible in Files but absent from Texts' Attach Files picker. */
@@ -19208,18 +19213,67 @@
           b.type=mimeForName(b.name||'')||b.type||'';
         if(opts.filter && !opts.filter(b)) return false;            // caller's own narrowing (e.g. media only)
         return true;
-      });
+      };
+      list = list.filter(_keep);
       const grid=bg.querySelector('#bp-grid'), fbar=bg.querySelector('#bp-folders'), explorer=bg.querySelector('.bp-explorer'), locations=bg.querySelector('.bp-locations');
       locations.onclick=()=>{ const open=explorer.classList.toggle('bp-locations-on'); locations.setAttribute('aria-expanded',open?'true':'false'); };
       explorer.addEventListener('click',e=>{ if(explorer.classList.contains('bp-locations-on')&&!e.target.closest('.bp-folders')&&!e.target.closest('.bp-locations')){ e.preventDefault();e.stopPropagation();closeOrDrawer(); } },true);
       // The folder bar represents the encrypted index, not this request's filtered blob listing.
       // Hiding a folder with no currently selectable public blob made real folders (for example a
       // Social folder containing encrypted items) appear deleted after a partial list or filter.
+      /* MUSIC IS AN ENCRYPTED FOLDER, and that is why it was in no picker in the whole app.
+       *
+       * `isEncFolder()` answers TRUE for the literal name 'Music' — correct, because tracks ARE
+       * stored encrypted — and every picker filtered the folder bar with `!isEncFolder(f)`. So the
+       * one folder a Meme Builder user most wants was the one folder that could never be opened.
+       * Measured on a real drive: the picker listed 22 folders, all of them, except Music.
+       *
+       * That also contradicted a deliberate decision recorded in meme.js: the dedicated
+       * "🎵 Music or a voice-over" entry was REMOVED on the grounds that "music is where every
+       * other file is ... pickBlossom's filter already allows it". It did not.
+       *
+       * `allowEncrypted` is opt-in, so every existing caller is byte-for-byte unchanged — a
+       * composer that publishes a URL still must not offer ciphertext nobody else can fetch. */
       const folders=[['','🗂 All']].concat(
-        FilesIdx.folders().filter(f=>!FilesIdx.isEncFolder(f)).map(f=>[f,'📁 '+f]));
+        FilesIdx.folders().filter(f=>opts.allowEncrypted||!FilesIdx.isEncFolder(f)).map(f=>[f,'📁 '+f]));
       let cur='', sort='date';
+      /* A FOLDER'S CONTENTS COME FROM THE INDEX, NOT FROM THE NEWEST-N WINDOW.
+       *
+       * The listing above is deliberately bounded (`?limit=2000`) because a full BUD-02 listing on
+       * this deployment is 37,483 blobs / 9.7 MB and awaiting it made the picker a permanent
+       * spinner. But the grid then filtered that WINDOW by folder, so every folder whose files are
+       * older than the newest 2000 rendered as "Nothing in this folder." — a drive that plainly has
+       * the files, reported empty. Measured on a real account:
+       *
+       *     Memes 79 files -> 0 shown      Anime 75 -> 0      Blacks 60 -> 0
+       *     Jews  60       -> 0            Notes 1146 -> 0    Music 2444 -> 0
+       *     Messages 2903  -> 89 shown     Posts 50 -> 48
+       *
+       * i.e. almost every folder in the attach sheet was empty. That is a worse failure than the
+       * spinner it replaced: a hang is visibly broken, and this looks like the files are gone.
+       *
+       * The encrypted index already holds every file's hash, name, type, size and folder — it is
+       * the thing that KNOWS what is in a folder, and it is local. So a folder is drawn from it,
+       * with any listing row we happen to hold preferred (it carries the server's own url/size),
+       * and nothing is fetched. "All" keeps the bounded window, which is what makes it instant. */
+      const _folderRows = f => {
+        if(!f) return list;
+        const have = new Map(list.map(b => [b.sha256, b]));
+        const out = list.filter(b => (FilesIdx.folderOf(b.sha256) || '') === f);
+        const files = (FilesIdx._norm && FilesIdx._norm().files) || {};
+        for(const sha in files){
+          if(have.has(sha)) continue;                       // already in the window, already listed
+          const m = files[sha] || {};
+          if((m.folder || '') !== f) continue;
+          const row = { sha256: sha, url: server.replace(/\/$/,'') + '/' + sha,
+                        size: Number(m.size) || 0, type: m.mime || mimeForName(m.name || '') || '',
+                        name: m.name || '', uploaded: Number(m.ts) || 0 };
+          if(_keep(row)) out.push(row);                     // same hygiene as every listing row
+        }
+        return out;
+      };
       const draw=()=>{
-        const shown=list.filter(b=> cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur).slice().sort((a,b)=>{
+        const shown=_folderRows(cur).slice().sort((a,b)=>{
           if(sort==='name')return String((FilesIdx.meta(a.sha256)||{}).name||a.name||'').localeCompare(String((FilesIdx.meta(b.sha256)||{}).name||b.name||''));
           if(sort==='size')return (Number(b.size)||0)-(Number(a.size)||0);
           return (Number(b.uploaded||b.created_at)||0)-(Number(a.uploaded||a.created_at)||0);
@@ -19234,7 +19288,7 @@
            * itself already carries the name and size. Keep the same metadata directly under the
            * preview and return it to the caller so an MMS part is not named with its blob hash. */
           const when=Number(b.uploaded||b.created_at)||0;
-          return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(_fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small>${when?`<small class="bp-pick-date">${enc(new Date(when*1000).toLocaleDateString())}</small>`:''}</span></button>`;
+          return `<button type="button" class="file-card bp-pick-card" data-url="${enc(b.url)}" data-type="${enc(type)}" data-name="${enc(name)}" data-sha="${enc(b.sha256)}"><span class="bp-pick-preview">${blobThumb(Object.assign({},b,{type}),ext)}</span><span class="meta"><b class="fname">${enc(fileLabel(name,ext,b.size))}</b><small>${enc(_fmtBytes(b.size||0))}${type?' · '+enc(type.replace(/;.*/,'')):''}</small>${when?`<small class="bp-pick-date">${enc(new Date(when*1000).toLocaleDateString())}</small>`:''}</span></button>`;
         }).join('')
           /* "I could not ask" is never "you have nothing" — the same rule the drive check and the
              admin store scan follow. An empty grid after a failed listing used to read as an empty
@@ -19251,13 +19305,18 @@
           const bareType=type.replace(/;.*/, '').trim().toLowerCase();
           const ext=_MIME_EXT[bareType]||''; const url=el.dataset.url;
           const name=el.dataset.name||'';
+          /* `sha` and `enc` ride along for a caller that asked for encrypted files: `url` is the
+           * CIPHERTEXT address, which is useless on its own, so such a caller needs the hash to
+           * decrypt from and a flag telling it that it must. Callers that did not opt in never see
+           * an encrypted blob, so these two fields change nothing for them. */
+          const sha=el.dataset.sha||''; const isEnc=!!((FilesIdx.meta(sha)||{}).enc);
           close();
           /* A CALLBACK THAT THREW USED TO BE INDISTINGUISHABLE FROM A FILE NOBODY PICKED.
            * `catch(_){}` swallowed everything, so a caller whose insert failed left the picker
            * closing over a composer that never changed — no error, no toast, nothing in the
            * console. It is what hid the Concord attach bug for as long as it existed. The catch
            * stays (a throwing caller must not break the picker) but it SAYS so. */
-          if(onPick){ try{ onPick({url, type, ext, name}); }
+          if(onPick){ try{ onPick({url, type, ext, name, sha, enc:isEnc}); }
                       catch(e){ console.error('[blossomPicker] the caller could not take that file', e);
                                 toast('could not attach that file'+(e&&e.message?': '+e.message:'')); }
                       return; }
@@ -28245,7 +28304,7 @@
                selection to act on (.mail-bulk:not(:has(.btn)) in client.css). NO BACKTICKS IN
                HERE: this comment lives inside a template literal, and one would close it and take
                the whole module out at parse time. -->
-          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
+          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-folders-open" id="mail-folders-open" title="Browse folders" aria-label="Browse folders">📂</button><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
           <div class="mail-bulk"><span class="mail-bulk-act" id="mail-bulk-act"></span></div>
           <div class="mail-items" id="mail-items"><div class="spinner"></div></div>
         </div>
@@ -28267,6 +28326,7 @@
         } }
       { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ this.q=s.value.trim(); this.loadList(); },300); }; } }
       $('#mail-refresh',root).onclick=()=>this.sync(true);
+      { const fb=$('#mail-folders-open',root); if(fb) fb.onclick=()=>this.browseFolders(); }
       /* Decide from the SELECTION, never from the box's own checked state.
        *
        * The box is not a source of truth: updateBulk() rewrites it on every redraw as
@@ -28349,6 +28409,65 @@
       box.querySelectorAll('.mail-folder[data-folder]').forEach(b=> b.onclick=()=>this.selectFolder(b.dataset.folder));
       const more=box.querySelector('#mail-more');
       if(more) more.onclick=()=> openMenuPopover(more, rest.map(f=>[f,this._folderLabel(f)]), v=>this.selectFolder(v));
+    },
+    /* BROWSE EVERY FOLDER — the one thing the strip above cannot do.
+     *
+     * `.mail-folders` is ONE row by design (two cost 130px of a 553px phone, permanently), so it
+     * shows INBOX/Sent/Drafts, the folder you are in, and a "More" popover for the rest. Two things
+     * follow from that, and together they are "there is no way to browse the damn email folders":
+     * the More button only exists when `_folderChoices()` returned something beyond the pinned
+     * three, so a mailbox whose folder list has not loaded — or an All-inboxes view before
+     * `_allFolders` lands — offers no way out of Inbox at all; and even when it is there, a popover
+     * anchored to a chip in a sideways-scrolling strip is not a folder browser.
+     *
+     * This is a sheet, so it costs NOTHING when closed — which is the constraint that was asked for.
+     * It lists every folder, filters as you type (a real mailbox has dozens), says plainly when the
+     * list has not been read yet rather than showing an empty box, and can fetch it on the spot. */
+    browseFolders(){
+      const all = this._folderChoices() || [];
+      const cur = this.folder;
+      const rows = f => `<button class="btn btn-ghost full mail-fbrowse${f===cur?' on':''}" data-folder="${enc(f)}">${this._folderLabel(f)}</button>`;
+      const empty = `<div class="muted small" style="padding:10px 2px">
+          This account's folder list hasn't been read yet — that is why only Inbox, Sent and Drafts
+          are offered. Fetching it asks the mail server for the list.</div>`;
+      modal(`<h3>📂 Folders${this.acct && this.acct!=='__all' ? ' · '+enc(this.acct) : ''}</h3>
+        <input class="input" id="mail-fbrowse-q" placeholder="🔍 Filter folders…" autocomplete="off">
+        <div id="mail-fbrowse-list" style="max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:4px;margin-top:8px">
+          ${all.length ? all.map(rows).join('') : empty}
+        </div>
+        <div class="row" style="justify-content:space-between;margin-top:10px">
+          <button class="btn btn-ghost small" id="mail-fbrowse-reload">↻ Fetch folder list</button>
+          <button class="btn btn-ghost small" id="mail-fbrowse-close">Close</button>
+        </div>`, box => {
+        const list = box.querySelector('#mail-fbrowse-list');
+        const bind = () => list.querySelectorAll('[data-folder]').forEach(b =>
+          b.onclick = () => { closeModal(); this.selectFolder(b.dataset.folder); });
+        bind();
+        { const q = box.querySelector('#mail-fbrowse-q');
+          if(q) q.oninput = () => { const t = q.value.trim().toLowerCase();
+            list.querySelectorAll('[data-folder]').forEach(b => {
+              const hit = !t || (b.dataset.folder + ' ' + b.textContent).toLowerCase().includes(t);
+              /* style.display, not the `hidden` attribute: `.btn.full:has(.b-ic){display:flex}` is an
+               * AUTHOR rule and would beat the UA's `[hidden]{display:none}` the moment a folder
+               * label carries an icon — a filter that silently stops filtering. */
+              b.style.display = hit ? '' : 'none'; }); }; }
+        { const c = box.querySelector('#mail-fbrowse-close'); if(c) c.onclick = () => closeModal(); }
+        { const r = box.querySelector('#mail-fbrowse-reload');
+          if(r) r.onclick = async () => {
+            r.disabled = true; const was = r.textContent; r.textContent = 'Fetching…';
+            /* Say what happened either way. A reload that silently redraws the same three folders
+             * is indistinguishable from a button that does nothing, which is the whole complaint. */
+            try{
+              await this.loadFolders();
+              const now = this._folderChoices() || [];
+              list.innerHTML = now.length ? now.map(rows).join('')
+                : '<div class="muted small" style="padding:10px 2px">The mail server did not return a folder list.</div>';
+              bind();
+              if(now.length <= all.length) toast('folder list refreshed — ' + now.length + ' folder(s)');
+            }catch(e){ toast('could not read the folder list' + ((e && e.message) ? ': ' + e.message : '')); }
+            finally{ r.disabled = false; r.textContent = was; }
+          }; }
+      });
     },
     async selectFolder(f){
       this.folder=f; this.openUid=null; this.q=''; this.msgs=[]; this.convSent=[]; if(this.sel) this.sel.clear();
