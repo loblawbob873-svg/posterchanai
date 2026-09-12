@@ -293,6 +293,15 @@ CHECKS = {
     "check_article_editor":            dict(group="ui", secs=600),
 
     # --- browser checks that drive a page they build themselves ----------------------------------
+    # CONTENT, not layout: it seeds a drive whose folders are all OUTSIDE the newest-N listing
+    # window and then asserts every one of them is LISTED and NON-EMPTY on the attach picker, the
+    # Files view and the desktop wallpaper picker. Three bugs shipped in one week where a surface
+    # rendered perfectly and showed none of the user's files, and every check that covered those
+    # surfaces measured whether they DREW, never whether anything was in them. Self-contained and
+    # fast (~3s): it serves static/ itself and lifts the functions out of the shipped app.js.
+    "check_your_files_are_reachable":  dict(group="ui", secs=240,
+                                            why="every folder on the drive is reachable from every "
+                                                "surface that offers your files"),
     "check_composer_toolbar":          dict(group="ui", secs=420),
     "check_quote_modal":               dict(group="ui", secs=420),
     "check_meme_timeline":             dict(group="ui", secs=420),
