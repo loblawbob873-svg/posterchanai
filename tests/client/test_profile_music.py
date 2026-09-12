@@ -48,7 +48,11 @@ def extract(name):
 def test_own_profile_music_edit_save_reopen_and_play_lifecycle(width):
     edit_at = APP.index("function editProfile(")
     edit = APP[edit_at:APP.index("\n  // Show the relays", edit_at)]
-    functions = "\n".join((extract("_profileMusicFields"), extract("_profileMusicHtml"), extract("_bindPaymentTargetEditor"), edit))
+    # `_kind0Tags` too: editProfile calls it to carry the NIP-30 name emoji through a kind-0
+    # republish, and a lift that omits it throws INSIDE the save — publish is never reached and the
+    # failure reads as "the music row did not persist", which is nothing to do with music.
+    functions = "\n".join((extract("_profileMusicFields"), extract("_profileMusicHtml"),
+                           extract("_bindPaymentTargetEditor"), extract("_kind0Tags"), edit))
     script = f'''
     const ME={{pubkey:'a'.repeat(64)}},LOGO='',ClientSettings={{get:()=>false,set(){{}}}};
     let profile={{name:'Alice',about:'hello'}},published=null,toasts=[];
@@ -56,8 +60,8 @@ def test_own_profile_music_edit_save_reopen_and_play_lifecycle(width):
     const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
     const xmrOf=()=>'',bchDirect=()=>'',isXmrAddr=()=>false,isBchAddr=()=>false;
     const toast=s=>toasts.push(s),uploadBlob=async()=>'',renderMe=()=>{{}};
-    const Store={{saveProfile(e){{profile=JSON.parse(e.content)}}}};
-    async function publish(kind,content){{published={{kind,content}};return {{ok:true}}}}
+    const Store={{saveProfile(e){{profile=JSON.parse(e.content)}},profileEmojis(){{return null}}}};
+    async function publish(kind,content,tags){{published={{kind,content,tags}};return {{ok:true}}}}
     function closeModal(){{const n=document.querySelector('.modal-bg');if(n)n.remove()}}
     function modal(html,mount){{closeModal();const bg=document.createElement('div');bg.className='modal-bg';bg.innerHTML='<div class="modal glass">'+html+'</div>';document.body.appendChild(bg);mount(bg.firstElementChild)}}
     function renderProfileView(){{const page=document.querySelector('#page');page.innerHTML='<div class="prof"><button id="edit-prof">Edit</button><div id="prof-music">'+_profileMusicHtml(profile)+'</div></div>';page.querySelector('#edit-prof').onclick=()=>editProfile(profile)}}

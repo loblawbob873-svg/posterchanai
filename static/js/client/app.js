@@ -541,6 +541,9 @@
    * from every client on the network the first time they edit anything, with nothing to say so, and
    * there is no way to get it back from the UI. Three call sites had the empty array; they all take
    * this instead. Returns [] when there are none, which is the same thing they were passing. */
+  /* Callers pass `ME && ME.pubkey`, not `ME.pubkey`: the argument is evaluated in the CALLER, outside
+   * this function's guard, so a null ME there throws before the helper can defend itself — and it
+   * would throw inside the profile save, which is the one place that must not fail. */
   function _kind0Tags(pk){
     try{
       const em = (typeof Store !== 'undefined' && Store.profileEmojis && Store.profileEmojis(pk)) || null;
@@ -4713,7 +4716,7 @@
       let r = null;
       for (let i=0; i<2 && !(r && r.ok); i++){
         try{ await Relay.ready(8000); }catch(_){}
-        try{ r = await publish(0, JSON.stringify(prof), _kind0Tags(ME.pubkey), {quiet:true}); }catch(_){}
+        try{ r = await publish(0, JSON.stringify(prof), _kind0Tags(ME && ME.pubkey), {quiet:true}); }catch(_){}
       }
       if (!(r && r.ok)) toast('couldn’t save your profile — open Edit Profile and hit Save');
     }
@@ -30891,7 +30894,7 @@
         } else if(_bchWas){
           delete meta.bch; delete meta.bitcoincash_address; delete meta.bch_address; delete meta.bitcoincash;
         }
-        closeModal(); { const r=await publish(0, JSON.stringify(meta), _kind0Tags(ME.pubkey));   // failure toast by publish()
+        closeModal(); { const r=await publish(0, JSON.stringify(meta), _kind0Tags(ME && ME.pubkey));   // failure toast by publish()
           if(r && r.ok){ Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); } } };
     });
   }

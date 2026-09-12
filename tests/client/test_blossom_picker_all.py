@@ -18,8 +18,22 @@ def test_all_files_builds_urls_for_standard_blossom_list_entries():
 
 
 def test_all_files_does_not_filter_to_only_root_folder():
+    """THE RULE, NOT THE CALL TEXT.
+
+    This pinned the literal `cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur`, which stopped
+    matching when folder rows moved out of the bounded listing window and into the index — a change
+    made because that filter was showing 0 of 79 files in a folder. What must hold is that "All"
+    (cur === '') is NOT narrowed to one folder, and that a named folder IS matched on its own name.
+    """
     body = _picker()
-    assert "cur==='' || (FilesIdx.folderOf(b.sha256)||'')===cur" in body
+    rows = body[body.index("const _folderRows"):]
+    rows = rows[:rows.index("\n      };") + 1]
+    assert "if(!f) return list;" in rows, \
+        "All files no longer means the whole list — it is being filtered to a folder"
+    assert "FilesIdx.folderOf" in rows, \
+        "a named folder is no longer matched by the file's own folder"
+    assert "=== f" in rows or "===f" in rows, \
+        "the folder comparison is gone"
     assert "const folders=[['','🗂 All']]" in body
 
 
