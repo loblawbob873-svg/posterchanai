@@ -533,6 +533,21 @@
    * would quietly un-hide Email, Terminal and the rest everywhere else. */
   const NAV_LOCKED = new Set(['settings', 'bookmarks', 'blossom']);
   const NAV_OFF = 'nav-off';        // ours; NEVER `hidden`, which applyInstanceGating owns and resets
+  /* A kind-0 REPLACES the whole document, and its NIP-30 name emoji live in the TAGS.
+   *
+   * Store keeps them on the record rather than on `meta` — deliberately, so editing a profile
+   * cannot pollute the publishable content — which means every `publish(0, JSON.stringify(meta), [])`
+   * in this client silently DROPS them. Someone whose display name contains a custom emoji loses it
+   * from every client on the network the first time they edit anything, with nothing to say so, and
+   * there is no way to get it back from the UI. Three call sites had the empty array; they all take
+   * this instead. Returns [] when there are none, which is the same thing they were passing. */
+  function _kind0Tags(pk){
+    try{
+      const em = (typeof Store !== 'undefined' && Store.profileEmojis && Store.profileEmojis(pk)) || null;
+      if(!em) return [];
+      return Object.keys(em).map(k => ['emoji', k, em[k]]);
+    }catch(_){ return []; }
+  }
   function _navKey(el){
     if(!el) return '';
     if(el.dataset && el.dataset.view) return el.dataset.view;
@@ -3547,6 +3562,7 @@
   /* IS THIS PAGE A WINDOW? Three separate places set a view during boot and each has to ask, so it
    * is one guarded call rather than three copies of the same try/catch — and short enough not to
    * push the code it guards out of the fixed slices other tests read. */
+  let _extraPaintedFor = '';   // the desktop screen this feed already holds (see renderView)
   function _inWin(){ try{ return !!(window.PCOSWin && PCOSWin.isWindow()); }catch(_){ return false; } }
 
   async function routeFromPath(){
@@ -4697,7 +4713,7 @@
       let r = null;
       for (let i=0; i<2 && !(r && r.ok); i++){
         try{ await Relay.ready(8000); }catch(_){}
-        try{ r = await publish(0, JSON.stringify(prof), [], {quiet:true}); }catch(_){}
+        try{ r = await publish(0, JSON.stringify(prof), _kind0Tags(ME.pubkey), {quiet:true}); }catch(_){}
       }
       if (!(r && r.ok)) toast('couldn’t save your profile — open Edit Profile and hit Save');
     }
@@ -7931,7 +7947,17 @@
      * Reported exactly that way. One hook here covers all four screens and every entry point; the
      * routeFromPath() call stays, because it must run BEFORE switchView for a landing window. */
     if (VIEW && VIEW.charAt(0) === '_'){
-      try{ if(window.PCOS && typeof PCOS.renderExtra === 'function' && PCOS.renderExtra(VIEW)) return; }
+      /* ONLY WHEN THE SCREEN ACTUALLY CHANGED. `renderView` is called INCIDENTALLY — an outbox
+       * flush, a relay reconnect — with no check on which view is open, and `renderExtra` reaches
+       * `_paintExtraInFeed`, whose own contract is "TEAR THE PREVIOUS ONE DOWN FIRST". So an
+       * unconditional call here would kill and rebuild a live Remote Desktop session, or restart
+       * Task Manager's polling and lose its scroll, every time a relay reconnected, with nothing
+       * having asked to leave the screen. Before this hook existed those repaints fell through to
+       * the `_was` restore below, which is an exact no-op — so a repeat must behave the same way. */
+      const repeat = (_extraPaintedFor === VIEW) && _was && _was.indexOf('spinner') < 0;
+      if(repeat){ if(feed) feed.innerHTML = _was; return; }
+      try{ if(window.PCOS && typeof PCOS.renderExtra === 'function' && PCOS.renderExtra(VIEW)){
+             _extraPaintedFor = VIEW; return; } }
       catch(_){ }
     }
     /* NOTHING MATCHED, AND THE SPINNER IS ALREADY ON SCREEN.
@@ -17709,11 +17735,28 @@
       }catch(_){ return false; }
     }
     window.fetch = function(input, init){
-      let url = '', hasSignal = !!(init && init.signal);
+      let url = '', method = 'GET', hasSignal = !!(init && init.signal);
       try{
         if (typeof input === 'string'){ url = input; }
-        else if (input && typeof input === 'object'){ url = input.url || ''; if (input.signal) hasSignal = true; }
+        else if (input && typeof input === 'object'){
+          url = input.url || '';
+          /* A Request ALWAYS carries a non-null `signal`, whether or not the caller supplied one
+           * (verified), so reading it as "the caller brought its own" would silently exempt every
+           * Request-shaped call from the ceiling. Only an explicit init.signal counts. */
+          if (typeof input.method === 'string') method = input.method;
+        }
+        if (init && typeof init.method === 'string') method = init.method;
       }catch(_){ url = ''; }
+      /* NEVER BOUND A BODY-SENDING REQUEST. For a GET, `fetch` resolves when the response headers
+       * land and the body streams afterwards, so a ceiling here bounds the WAIT and not the
+       * transfer. For an upload the headers do not arrive until the body has been sent, so the same
+       * ceiling becomes a total-upload ceiling: `uploadBlob` PUTs to `mediaServer()` with no signal
+       * of its own, and on the desktop, the APK, a standalone build and any custom-server web user
+       * that origin is exactly what `_watched` matches. A 300 MB video — or a 16 MB Folder Sync
+       * chunk on a phone uplink — would abort at 45s, and uploadBlob's catch reports an AbortError
+       * as "check that the server allows cross-origin (CORS) uploads", i.e. a working server
+       * blamed, for ever, for every file above about 45s of uplink. */
+      if (!/^(GET|HEAD)$/i.test(method)) return _fetch(input, init);
       if (hasSignal || !_watched(url)) return _fetch(input, init);
       let ctl; try{ ctl = new AbortController(); }catch(_){ return _fetch(input, init); }
       const timer = setTimeout(() => { try{ ctl.abort(); }catch(_){ } }, _MEDIA_HEADERS_TIMEOUT_MS);
@@ -30848,7 +30891,7 @@
         } else if(_bchWas){
           delete meta.bch; delete meta.bitcoincash_address; delete meta.bch_address; delete meta.bitcoincash;
         }
-        closeModal(); { const r=await publish(0, JSON.stringify(meta), []);   // failure toast by publish()
+        closeModal(); { const r=await publish(0, JSON.stringify(meta), _kind0Tags(ME.pubkey));   // failure toast by publish()
           if(r && r.ok){ Store.saveProfile({pubkey:ME.pubkey,created_at:Math.floor(Date.now()/1000),content:JSON.stringify(meta)}); toast('profile saved'); renderMe(); renderProfileView(ME.pubkey); } } };
     });
   }
@@ -32912,6 +32955,12 @@
        * outright would lose the reminders type instead of gaining the rest. */
       try{ const r = P.notify({ title:String(title||'PosterChan'), body:clean,
                                 type:(opts&&opts.type)||_notificationType(opts), tag:(opts&&opts.tag)||'',
+                                /* Which of the two preference sets governs this card. On screen it
+                                 * is an APP ALERT (already gated client-side); backgrounded it is
+                                 * standing in for a push, so the per-device push answers apply. The
+                                 * two panes say they are separate answers, and this is the line
+                                 * that keeps that true. */
+                                foreground: !(typeof document!=='undefined' && document.hidden),
                                 route:(opts&&opts.route)||'notifications' });
            if(r && r.catch) r.catch(()=>{}); }catch(_){}
       return null;      // no handle to give back: the tap is wired natively, to MainActivity
@@ -39311,7 +39360,7 @@
     /* Shared-feed modules may finish network/deferred work after navigation. They must ask who owns
      * the feed before painting; otherwise a late Concord render can replace Code (and vice versa). */
     isView: view => VIEW === view,
-    $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, needProfile, niceNip05, LOGO, toast,
+    $, $$, enc, publish, sendDm, safePk, nip05Resolve, profOf, kind0Tags: _kind0Tags, needProfile, niceNip05, LOGO, toast,
     viewer: () => {
       const stored = ME && ME.pubkey ? Store.profile(ME.pubkey) : null;
       const profile = stored || {};

@@ -169,6 +169,32 @@ def test_the_silenced_notification_is_not_recorded_as_one_the_client_spoke_for()
 
 # ---- 3. the half this worker does not own ---------------------------------------------------------
 
+def test_the_two_preference_sets_stay_separate():
+    """The device PUSH answers must not veto an APP ALERT while the app is on screen.
+
+    DirectPushStore holds the push answer, and its pane says verbatim that it is "a separate answer
+    from the app alerts above". A notification raised by a RUNNING client is an app alert, already
+    gated client-side by notificationAllowed(). Applied unconditionally, the closed-app answer
+    silences the in-app one on the only platform where this is the sole OS-notification path — so
+    somebody who turns Likes off for push and leaves it on for app alerts would get nothing, ever,
+    with the App-alerts switch left decorative and nothing on screen to say so.
+
+    Backgrounded it IS standing in for a push (same builder, channel and tag), so there the push
+    answer is the right one to ask.
+    """
+    java = (ROOT / "mobile/android/app/src/main/java/place/poster/app/push/PushPlugin.java").read_text()
+    assert "boolean foreground = call.getBoolean(\"foreground\"" in java, \
+        "the plugin cannot tell an app alert from a stand-in push"
+    assert "!foreground && !DirectPushStore.allowsType(" in java, \
+        "the per-device push filter is applied to on-screen app alerts too"
+    # …and the client has to actually send it, or the default (false) filters everything.
+    app = (ROOT / "static/js/client/app.js").read_text()
+    notify = app[app.index("_capPlugin('PosterChanPush', 'notify')"):]
+    notify = notify[:notify.index("return null;")]
+    assert "foreground:" in notify, "osNotify does not tell the plugin whether the app is on screen"
+    assert "document.hidden" in notify, "the foreground flag is not derived from page visibility"
+
+
 def test_the_client_tells_the_plugin_which_kind_of_notification_this_is():
     app = (ROOT / "static/js/client/app.js").read_text()
     fn = app[app.index("  function osNotify(title, body, opts){"):]

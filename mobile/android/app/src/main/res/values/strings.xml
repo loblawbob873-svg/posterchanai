@@ -173,6 +173,10 @@
     <string name="tel_delete_entry">Remove from recents</string>
     <string name="tel_copy_number">Copy number</string>
     <string name="tel_text_number">Send a text</string>
+    <string name="tel_wait_title">Send the rest of the number?</string>
+    <string name="tel_wait_body">This number waits here before sending %1$s</string>
+    <string name="tel_wait_send">Send</string>
+    <string name="tel_wait_skip">Not now</string>
     <string name="sms_notifications_disabled">Text notifications are disabled. Tap to enable alerts.</string>
     <string name="tel_return_call">Return to call</string>
     <string name="sms_react">React to message</string>

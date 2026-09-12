@@ -596,6 +596,11 @@ class SettingsResponse(BaseModel):
     bt_proxy_host: str = ""
     bt_proxy_port: str = "8118"
     bt_listen_port: str = "6881"
+    # Torrent RSS feeds (Torrents → Feeds). OFF by default: a poller that adds downloads on its own
+    # is not something a node should start doing because it was upgraded.
+    torrent_rss_enabled: str = "false"
+    torrent_rss_interval_minutes: str = "30"
+    torrent_rss_max_per_poll: str = "5"   # per feed per poll — the bound on a feed with no filter
     # Built-in Tor settings (ON by default — matches database.py default_settings; the UI/GET-settings
     # fallback was "false", so on a fresh install Tor read as disabled even though the seed enabled it).
     tor_enabled: str = "true"

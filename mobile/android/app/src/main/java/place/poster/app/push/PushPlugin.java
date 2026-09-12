@@ -253,6 +253,9 @@ public class PushPlugin extends Plugin {
         String type = call.getString("type", "");
         String tag = call.getString("tag", null);
         String route = call.getString("route", "notifications");
+        /* Default FALSE — a client too old to send this is one that cannot have been
+              * updated to send the type either, and the gate fails open on a blank type anyway. */
+            boolean foreground = call.getBoolean("foreground", Boolean.FALSE);
         try {
             /* THIS PHONE'S OWN ANSWER GOVERNS EVERY NATIVE NOTIFICATION, not only the ones the
              * server sent. `PushEventService.deliver` has asked DirectPushStore since the filter
@@ -272,7 +275,19 @@ public class PushPlugin extends Plugin {
              * `call.resolve()` rather than a rejection: not drawing because the user said not to is
              * a success. A reject lands in the client's catch, which reads it as "notifications are
              * broken on this device". */
-            if (!DirectPushStore.allowsType(getContext(), type)) {
+            /* ONLY WHEN THE APP IS NOT ON SCREEN, because these are two different questions and the
+             * settings panes say so. DirectPushStore holds the PUSH answer — its pane reads "What
+             * reaches you when the app is CLOSED … these are a separate answer from the app alerts
+             * above" — while a notification raised by a RUNNING client is an app alert, already
+             * gated by `notificationAllowed()` on the client side.
+             *
+             * Applied unconditionally, the closed-app answer vetoes the in-app one on the only
+             * platform where this is the sole OS-notification path (the WebView has no Notifications
+             * API), so somebody who turns Likes off for push and leaves it on for app alerts gets
+             * nothing, ever, and the App-alerts switch becomes decorative with nothing on screen to
+             * say so. Backgrounded, though, this card IS standing in for a push — same builder, same
+             * channel, same tag — so the push answer is the right one to ask. */
+            if (!foreground && !DirectPushStore.allowsType(getContext(), type)) {
                 JSObject silenced = new JSObject();
                 silenced.put("shown", false);
                 call.resolve(silenced);

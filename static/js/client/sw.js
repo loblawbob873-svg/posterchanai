@@ -9,7 +9,7 @@
  * cross-origin response, whose status is masked to 0, so an avatar host's 404/blip would be stored as
  * "valid" and served forever, breaking that avatar on every later view (the "no avatars" bug). Opaque
  * third-party avatars still load fresh via the browser's own HTTP cache, which already dedupes them. */
-const CACHE = 'pc-nostr-v1742';
+const CACHE = 'pc-nostr-v1743';
 const MEDIA_CACHE = 'pc-media-v2';        // bump → drops the old (possibly poisoned) media cache on activate
 // Content-addressed blobs fetched by JS rather than by an element: the ENCRYPTED DRIVE — Notes
 // attachments, music tracks, an offloaded note body, the files index. They land in their OWN cache,
@@ -87,6 +87,7 @@ const SHELL = [
   '/static/js/client/webxdc-iroh.js',
   '/static/js/client/news.js',
   '/static/js/client/websearch.js',
+  '/static/js/client/torrents.js',
   '/static/js/client/term.js',
   '/static/js/client/code.js',
   '/static/js/client/preview.js',
@@ -514,17 +515,23 @@ async function cacheFirstBlob(req){
  * waiting on. Bounded by the same rules as before (200, octet-stream, no Range, size cap) and by a
  * small queue, so opening a note with dozens of attachments cannot put dozens of extra downloads in
  * flight at once. */
-/* A 45s ceiling on TIME-TO-HEADERS for background cache fills. The body still streams freely once
- * the headers arrive, so a large blob is unaffected; a request that never gets a byte is released
- * instead of owning a socket for ever. Returns {} where AbortSignal.timeout is unavailable rather
- * than failing the fetch — an unbounded warm-up is still better than no attachment cache at all. */
+/* A 45s ceiling on the WHOLE background cache fill — headers AND body, because a signal cannot be
+ * cleared once the headers land the way the client's own guard does (app.js clears its timer on
+ * resolve; `cache.put` reads the body here, inside the same abort scope). So this is deliberately a
+ * total-time bound, and the trade is stated rather than discovered: a blob near DRIVE_MAX_BYTES on a
+ * link slower than ~180 KB/s is never warmed. That costs a re-download on the next open, which is
+ * what happened before this cache existed; an unbounded warm-up costs one of the origin's six
+ * sockets for the life of the page, which costs every other media request on the page. Returns {}
+ * where AbortSignal.timeout is unavailable rather than failing the fetch. */
 function _cacheWarmSignal(){
   try {
     if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout)
       return { signal: AbortSignal.timeout(45000) };
     const c = new AbortController();
-    setTimeout(() => { try { c.abort(); } catch (_) {} }, 45000);
-    return { signal: c.signal };
+    const t = setTimeout(() => { try { c.abort(); } catch (_) {} }, 45000);
+    // Clear it on settle, or every warm-up leaves a 45s timer alive in the worker.
+    try { c.signal.addEventListener('abort', () => clearTimeout(t), { once: true }); } catch (_) {}
+    return { signal: c.signal, _clear: () => clearTimeout(t) };
   } catch (_) { return {}; }
 }
 const _blobQueue = [];

@@ -219,8 +219,19 @@ public class DialerActivity extends PcActivity {
         if (i == null) return;
         Uri d = i.getData();
         if (d == null || !"tel".equalsIgnoreCase(String.valueOf(d.getScheme()))) return;
+        // `getSchemeSpecificPart` ALREADY decodes. Decoding it a second time is not a tidy-up: it
+        // is how `tel:100%25` (a literal `%`) becomes a truncated number, and it can only ever
+        // change a string that was right.
         String raw = d.getSchemeSpecificPart();
-        typed = Dial.clean(raw == null ? "" : Uri.decode(raw));
+        if (raw == null) raw = "";
+        // AND IT STOPS AT THE `#`. `tel:*21*15550100#` — how a web page or another app writes a
+        // call-forwarding code, unencoded — parses as ssp `*21*15550100` with the rest as a
+        // FRAGMENT, so the prefilled number is missing its terminator and `isServiceCode` no longer
+        // recognises it: the screen offers to place a call to a number that is not one. Putting the
+        // fragment back is a no-op for the encoded form, where `getFragment()` is null.
+        String frag = d.getFragment();
+        if (frag != null) raw = raw + "#" + frag;
+        typed = Dial.clean(raw);
     }
 
     @Override
@@ -290,9 +301,11 @@ public class DialerActivity extends PcActivity {
         backBtn.setImageDrawable(tint(R.drawable.ic_pc_close, pal.muted));
         padToggle.setImageDrawable(tint(R.drawable.ic_pc_grid, pal.accent));
         padToggle.setBackground(Skin.pill(this, pal, Skin.alpha(pal.accent, 0.16), true));
+        // `true` = the pause keys. Long press on `*` types `,` (two seconds) and on `#` types `;`
+        // (wait until I say so), which is the only way to enter a phone-tree number by hand.
         Keypad.build(this, pad, pal, keySizeDp(), new Keypad.Press() {
             @Override public void onKey(char digit) { typed = Dial.press(typed, digit); drawNumber(); reload(); }
-        });
+        }, true);
         Keypad.onLongPress(pad, '1', new Runnable() {
             // HOLDING "1" CALLS VOICEMAIL. It has done since before smartphones, and the number is
             // the SIM's own — never the literal "1", which just dials a stranger.
@@ -408,7 +421,10 @@ public class DialerActivity extends PcActivity {
     private void placeNumber(String raw) {
         String num = Dial.telPart(raw);
         if (num.isEmpty()) { say(getString(R.string.tel_nothing_to_call)); return; }
-        Uri tel = Uri.parse("tel:" + Uri.encode(num));
+        // ENCODED BY `Dial`, not by `Uri.encode`, so the rule is RUN by a test rather than trusted:
+        // an unencoded `#` is a URI fragment, and `tel:+18005550100,,123#` reaches the platform as
+        // `tel:+18005550100,,123` with the extension silently gone.
+        Uri tel = Uri.parse(Dial.telUri(raw));
         if (Dial.isServiceCode(num)) {
             try { startActivity(new Intent(Intent.ACTION_DIAL, tel)); return; }
             catch (Throwable ignored) { }

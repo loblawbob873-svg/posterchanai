@@ -19,9 +19,29 @@ from pathlib import Path
 OS_JS = Path(__file__).resolve().parents[2] / "static" / "js" / "client" / "os.js"
 
 
+def _code_only(src):
+    """Blank out /* … */ and // … comments, preserving offsets so ordering tests stay meaningful."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        two = src[i:i + 2]
+        if two == "/*":
+            j = src.find("*/", i + 2); j = n if j < 0 else j + 2
+            out.append(" " * (j - i)); i = j
+        elif two == "//":
+            j = src.find("\n", i); j = n if j < 0 else j
+            out.append(" " * (j - i)); i = j
+        else:
+            out.append(src[i]); i += 1
+    return "".join(out)
+
+
 class UnreadDrive(unittest.TestCase):
     def setUp(self):
-        self.src = OS_JS.read_text()
+        # STRIP COMMENTS. The previous version searched the raw text, and the FIRST occurrence of
+        # "ensure" inside _fillWallpaperPicker was the comment above the call — so deleting the
+        # `await idx.ensure()` and keeping the prose left the test passing. That is exactly the
+        # vacuous proof this repo keeps rediscovering, committed in a test written to prevent one.
+        self.src = _code_only(OS_JS.read_text())
         m = re.search(r"async function _fillWallpaperPicker\(m\)\{.*?\n  \}", self.src, re.S)
         self.assertIsNotNone(m, "_fillWallpaperPicker not found — the fix is gone")
         self.fill = m.group(0)
@@ -47,6 +67,16 @@ class UnreadDrive(unittest.TestCase):
         """A drive that really has no Backgrounds still gets the instructions."""
         self.assertIn("No pictures yet", self.fill)
         self.assertIn("os-bg-files", self.fill, "the 'Open Files' way out was lost")
+
+    def test_the_read_is_bounded(self):
+        """ensure() -> pull() -> _pull() asks a REMOTE SIGNER first, which may be a phone that is
+        asleep, and the index fetch after it is root-relative so the client's media ceiling does not
+        cover it. Unraced, the panel sits on "Reading your drive…" for ever with ✕ as the only exit
+        — a worse third state than the wrong answer it replaced."""
+        self.assertIn("Promise.race", self.fill,
+                      "the wallpaper picker awaits the index with no ceiling; it can hang for ever")
+        self.assertRegex(self.fill, r"setTimeout\(.*?,\s*\d{3,}\s*\)",
+                         "no timeout value in the race")
 
     def test_the_picker_paints_before_it_waits(self):
         """A panel that appears only after a network read is indistinguishable from a dead button."""

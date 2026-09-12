@@ -71,8 +71,11 @@ def test_a_gated_sender_checks_before_it_sends():
             continue
         src = (SERVICES / name).read_text(encoding="utf-8")
         guard = src.index(f'allows_row(row, "{toggle}")')
-        send = src.index("push_service.send", guard - 4000 if guard > 4000 else 0)
-        assert guard < src.index("push_service.send", guard), f"{name}: sends before it checks"
+        # BOTH INDICES FROM 0. This was `src.index("push_service.send", guard)`, which searches FROM
+        # the guard and therefore always answers >= guard — the assertion could not be False, only
+        # raise ValueError when no send followed at all. It never tested "sends before it checks".
+        send = src.index("push_service.send")
+        assert guard < send, f"{name}: sends before it checks"
 
 
 def test_the_toggle_name_is_not_the_payload_type():

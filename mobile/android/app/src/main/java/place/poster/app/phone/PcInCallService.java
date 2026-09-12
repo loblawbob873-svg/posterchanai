@@ -44,11 +44,57 @@ public class PcInCallService extends InCallService {
 
     private final List<Call> calls = new ArrayList<Call>();
 
+    /**
+     * A `;` IN A NUMBER STOPS THE CALL DEAD UNTIL THIS APP SAYS OTHERWISE, and nothing said so.
+     *
+     * `+18005550100;123#` is a phone tree with a WAIT in it: telephony dials the first part, then
+     * hands the rest back here and waits to be told to send it. The only way to answer is
+     * `Call.postDialContinue(boolean)`, and the only place the platform ever asks is
+     * `Call.Callback.onPostDialWait` — which this callback did not override. So the remainder was
+     * never sent, on any call, ever: no exception, no log, and a screen showing a perfectly normal
+     * connected call that had simply stopped halfway through the number somebody dialled.
+     *
+     * The remainder is REMEMBERED rather than sent straight away, because a wait is a question: the
+     * caller asked to be in the loop, and the screen asks them. `,` needs none of this — a pause is
+     * counted out by the radio and this callback is never invoked for one.
+     */
+    private static volatile Call postDialCall;
+    private static volatile String postDialRest = "";
+
     private final Call.Callback cb = new Call.Callback() {
         @Override public void onStateChanged(Call call, int state) { changed(); }
         @Override public void onDetailsChanged(Call call, Call.Details details) { changed(); }
-        @Override public void onCallDestroyed(Call call) { changed(); }
+        @Override public void onCallDestroyed(Call call) { clearPostDial(call); changed(); }
+        @Override public void onPostDialWait(Call call, String remaining) {
+            postDialCall = call;
+            postDialRest = remaining == null ? "" : remaining;
+            changed();
+        }
     };
+
+    /** What the call is waiting to send, or "" when nothing is waiting. */
+    public static String postDialWaiting() {
+        Call c = postDialCall;
+        if (c == null || CallRules.isOver(stateOf(c))) return "";
+        return postDialRest;
+    }
+
+    /**
+     * Send the rest of the number, or abandon it. EITHER ANSWER MUST BE GIVEN: a call left
+     * un-continued waits for the length of the call, so "not now" is `postDialContinue(false)` and
+     * never silence.
+     */
+    public static void postDialContinue(boolean send) {
+        Call c = postDialCall;
+        postDialCall = null;
+        postDialRest = "";
+        if (c == null) return;
+        try { c.postDialContinue(send); } catch (Throwable ignored) { }
+    }
+
+    private static void clearPostDial(Call call) {
+        if (call != null && call == postDialCall) { postDialCall = null; postDialRest = ""; }
+    }
 
     @Override
     public void onCallAdded(Call call) {
@@ -74,6 +120,7 @@ public class PcInCallService extends InCallService {
         super.onCallRemoved(call);
         if (call == null) return;
         try { call.unregisterCallback(cb); } catch (Throwable ignored) { }
+        clearPostDial(call);
         synchronized (calls) { calls.remove(call); }
         boolean none;
         synchronized (calls) { none = calls.isEmpty(); }
@@ -99,6 +146,11 @@ public class PcInCallService extends InCallService {
             for (Call c : calls) { try { c.unregisterCallback(cb); } catch (Throwable ignored) { } }
             calls.clear();
         }
+        // The post-dial holder is STATIC and outlives this instance. Unbound, every Call we held is
+        // dead, so leaving it set keeps a dead Call reachable for the life of the process and lets
+        // `postDialWaiting()` answer about a call nobody is on.
+        postDialCall = null;
+        postDialRest = "";
         if (INSTANCE == this) INSTANCE = null;
         super.onDestroy();
     }

@@ -104,7 +104,10 @@
         if(!cur||typeof cur!=='object'||!Object.keys(cur).length)
           throw Error('Could not read your current profile — open Edit profile and set it there, so nothing else is lost.');
         const meta={...cur, nip05:address};
-        const made=await p.publish(0, JSON.stringify(meta), []);
+        /* Carry the NIP-30 name emoji through. They live in the kind-0's TAGS, not in `meta`
+           (Store keeps them off meta on purpose), so an empty array here destroys them — the same
+           class of loss the guard above refuses, one field over. */
+        const made=await p.publish(0, JSON.stringify(meta), (p.kind0Tags&&p.kind0Tags(pk))||[]);
         if(made&&made.ok===false) throw Error(made.msg||'Could not publish your profile.');
         status.textContent='Checking\u2026';
         await refresh(true);

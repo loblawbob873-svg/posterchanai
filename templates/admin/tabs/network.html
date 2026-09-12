@@ -187,4 +187,24 @@
             <small>Port for incoming peer connections</small>
         </div>
     </fieldset>
+
+    <fieldset>
+        <legend>Torrent RSS Feeds</legend>
+        <div class="form-group">
+            <label for="torrent_rss_enabled">
+                <input type="checkbox" id="torrent_rss_enabled" name="torrent_rss_enabled"> Poll subscribed torrent RSS feeds
+            </label>
+            <small>Subscriptions and per-feed title filters live in the client: <strong>Torrents &rarr; Feeds</strong>. Off by default &mdash; with this unticked the feeds are listed and can be checked by hand, but nothing downloads on a timer. The first poll of a new feed adds nothing; it learns the backlog so subscribing can&rsquo;t start its whole history.</small>
+        </div>
+        <div class="form-group">
+            <label for="torrent_rss_interval_minutes">Poll Interval (minutes)</label>
+            <input type="number" id="torrent_rss_interval_minutes" name="torrent_rss_interval_minutes" value="30" min="5" max="1440">
+            <small>How often the worker checks every enabled feed</small>
+        </div>
+        <div class="form-group">
+            <label for="torrent_rss_max_per_poll">Max New Torrents Per Feed Per Poll</label>
+            <input type="number" id="torrent_rss_max_per_poll" name="torrent_rss_max_per_poll" value="5" min="1" max="50">
+            <small>The bound on a feed whose filter matches everything</small>
+        </div>
+    </fieldset>
 </div>

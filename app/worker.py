@@ -53,6 +53,11 @@ _SCHEDULERS = [
     # independently spendable outputs here; the operator-only timer cannot see these funds.
     ("monero-user-outputs", "app.services.monero_user_wallets",
      "start_user_wallet_output_scheduler"),
+    # Torrent RSS subscriptions → this node's torrent client. In the WORKER because a poll is N
+    # feed fetches over Tor, which is exactly the long await that must not share the request loop.
+    # The job is always scheduled and the TICK reads `torrent_rss_enabled` from the (relay-hydrated)
+    # settings store, so turning it on in Admin takes effect at the next tick, not the next restart.
+    ("torrent-rss", "app.services.torrent_rss_service", "start_torrent_rss_scheduler"),
 ]
 
 _worker_process: Optional[subprocess.Popen] = None

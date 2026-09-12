@@ -44,6 +44,7 @@ public class InCallActivity extends PcActivity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean padOpen = false;
     private String shownFor = "";
+    private android.app.AlertDialog waitAsk;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -140,6 +141,24 @@ public class InCallActivity extends PcActivity {
         super.onStop();
         PcInCallService.setWatcher(null);
         main.removeCallbacks(tick);
+        // A dialog outliving its activity is a leaked window, so it always goes. WHETHER IT ANSWERS
+        // DEPENDS ON WHETHER WE ARE COMING BACK, and that distinction is the whole point: a
+        // `cancel` answers "no" through the listener below, and answering "no" THROWS THE REST OF
+        // THE NUMBER AWAY for good — there is no second ask, because telephony asked once. Doing
+        // that every time the screen stops meant glancing at another app while the phone tree
+        // connected silently abandoned the extension somebody dialled, with nothing on screen when
+        // they came back to say why the call had stopped halfway through the number.
+        //
+        // So: `cancel` (answer) only when this activity is actually going — `dismiss` otherwise,
+        // which fires no listener and leaves the wait pending for `onStart`'s `draw()` to ask
+        // again. An unanswered wait costs nothing but a call that is still waiting; an answered one
+        // is unrecoverable.
+        try {
+            if (waitAsk != null && waitAsk.isShowing()) {
+                if (isFinishing()) waitAsk.cancel(); else waitAsk.dismiss();
+            }
+        } catch (Throwable ignored) { }
+        waitAsk = null;
     }
 
     /** THE ONLY REPEATING THING IN THIS FEATURE, and it repeats because it displays seconds. */
@@ -216,7 +235,54 @@ public class InCallActivity extends PcActivity {
         }
 
         drawStatus();
+        askPostDial();
         if (!num.equals(shownFor)) { shownFor = num; paintContext(num); }
+    }
+
+    /**
+     * A `;` IN THE NUMBER IS A QUESTION, AND SOMEBODY HAS TO ANSWER IT.
+     *
+     * Dialling `+18005550100;123#` connects, then stops: telephony hands the rest back and waits.
+     * Until PcInCallService started listening for that, nothing ever answered and the remainder was
+     * never sent — a call that looked completely normal and had simply given up halfway through the
+     * number. The answer is the caller's to give, which is the whole difference between `;` and
+     * `,`, so it is asked here rather than sent automatically.
+     *
+     * EVERY WAY OUT OF THIS DIALOG ANSWERS. Cancelled, backed out of, or dismissed because the
+     * screen went away — all of them say "no", because a wait that is never answered lasts as long
+     * as the call and takes the keypad's own tones with it.
+     */
+    private void askPostDial() {
+        final String rest = PcInCallService.postDialWaiting();
+        if (rest.isEmpty()) return;
+        if (waitAsk != null && waitAsk.isShowing()) return;
+        try {
+            waitAsk = new android.app.AlertDialog.Builder(this)
+                    .setTitle(R.string.tel_wait_title)
+                    .setMessage(getString(R.string.tel_wait_body, Dial.pretty(rest)))
+                    .setPositiveButton(R.string.tel_wait_send,
+                            new android.content.DialogInterface.OnClickListener() {
+                                @Override public void onClick(android.content.DialogInterface d, int w) {
+                                    PcInCallService.postDialContinue(true);
+                                }
+                            })
+                    .setNegativeButton(R.string.tel_wait_skip,
+                            new android.content.DialogInterface.OnClickListener() {
+                                @Override public void onClick(android.content.DialogInterface d, int w) {
+                                    PcInCallService.postDialContinue(false);
+                                }
+                            })
+                    .setOnCancelListener(new android.content.DialogInterface.OnCancelListener() {
+                        @Override public void onCancel(android.content.DialogInterface d) {
+                            PcInCallService.postDialContinue(false);
+                        }
+                    })
+                    .create();
+            waitAsk.show();
+        } catch (Throwable t) {
+            // No window to ask in (the screen is going away). Answering is still mandatory.
+            PcInCallService.postDialContinue(false);
+        }
     }
 
     /** An active control takes the accent; an inactive one takes the panel. */

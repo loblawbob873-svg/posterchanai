@@ -78,9 +78,25 @@ class ExtraScreensOpen(unittest.TestCase):
         """It must only claim the desktop's own names, never a real view."""
         fall = self.app.index("Nothing here can show")
         hook_at = self.app[:fall].rindex("PCOS.renderExtra")
-        ctx = self.app[max(0, hook_at - 400):hook_at]
+        # Look back to the start of the enclosing block rather than a fixed number of characters —
+        # a byte window silently stops covering the thing it checks the moment the block grows.
+        block = self.app[:hook_at].rindex("if (VIEW")
+        ctx = self.app[block:hook_at]
         self.assertRegex(ctx, r"VIEW\.charAt\(0\)\s*===\s*'_'",
                          "the hook is not restricted to the desktop's underscore-prefixed names")
+
+    def test_an_incidental_repaint_does_not_tear_the_screen_down(self):
+        """renderView is called INCIDENTALLY — an outbox flush, a relay reconnect — with no check on
+        which view is open, and renderExtra reaches _paintExtraInFeed, whose contract is "TEAR THE
+        PREVIOUS ONE DOWN FIRST". Unconditional, that kills and rebuilds a live Remote Desktop
+        session and restarts Task Manager's polling every time a relay reconnects."""
+        fall = self.app.index("Nothing here can show")
+        hook_at = self.app[:fall].rindex("PCOS.renderExtra")
+        block = self.app[self.app[:hook_at].rindex("if (VIEW"):hook_at]
+        self.assertIn("_extraPaintedFor", block,
+                      "the hook repaints an already-painted desktop screen on every incidental call")
+        self.assertIn("_was", block,
+                      "a repeat repaint does not restore what was on screen")
 
     def test_a_missing_desktop_is_not_an_exception(self):
         """In a browser tab or the APK there is no PCOS; the chain must fall through, not throw."""

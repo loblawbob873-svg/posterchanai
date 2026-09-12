@@ -42,6 +42,12 @@ const baseFetch = (input, init) => new Promise((resolve, reject) => {
   started.push({url, bounded: !!sig});
   if (sig) sig.addEventListener('abort', () => { settled++; reject(Object.assign(new Error('aborted'), {name:'AbortError'})); });
 });
+// A real Request always exposes a non-null `signal`, which is the trap finding #7 named.
+class FakeRequest {
+  constructor(url, opts){ this.url = url; this.method = (opts && opts.method) || 'GET';
+                          this.signal = { aborted: false, addEventListener(){} }; }
+}
+globalThis.FakeRequest = FakeRequest;
 const window = { fetch: baseFetch };
 globalThis.window = window;
 globalThis.AbortController = AbortController;
@@ -55,7 +61,9 @@ const cases = %s;
 (async () => {
   const out = [];
   for (const c of cases) {
-    const p = window.fetch(c.url, c.init || undefined);
+    const input = c.asRequest ? new FakeRequest(c.url, {method: c.method || 'GET'}) : c.url;
+    const init = c.init || (c.method ? {method: c.method} : undefined);
+    const p = window.fetch(input, init);
     p.catch(()=>{});
     out.push({url: c.url, bounded: started[started.length-1].bounded});
   }
@@ -99,6 +107,52 @@ class StuckMediaFetch(unittest.TestCase):
         ])
         for row in got:
             self.assertTrue(row["bounded"], "unbounded: " + row["url"])
+
+    def test_an_upload_is_never_bounded(self):
+        """THE REGRESSION THIS FILE SHIPPED WITH.
+
+        For a GET, fetch resolves on the response HEADERS and the body streams after, so a ceiling
+        bounds the wait. For an upload the headers do not arrive until the body has been SENT, so
+        the same ceiling is a total-upload ceiling. uploadBlob PUTs to mediaServer() with no signal
+        of its own, and on desktop/APK/standalone/custom-server that origin is exactly what the
+        guard matches — so a 300 MB video, or a 16 MB Folder Sync chunk on a phone uplink, aborted
+        at 45s and was reported to the user as a CORS misconfiguration on a working server.
+        """
+        got = _harness("https://media.poster.place", [
+            {"url": "https://media.poster.place/upload", "method": "PUT"},
+            {"url": "https://media.poster.place/upload", "method": "POST"},
+            {"url": "https://media.poster.place/" + SHA, "method": "DELETE"},
+            {"url": "https://nostr.build/api/v2/nip96/upload", "method": "POST"},
+        ])
+        for row in got:
+            self.assertFalse(row["bounded"],
+                             "a body-sending request is bounded — uploads will abort: " + row["url"])
+
+    def test_a_read_is_still_bounded_when_the_method_is_spelled_out(self):
+        """Exempting uploads must not exempt the reads the ceiling exists for."""
+        got = _harness("https://media.poster.place", [
+            {"url": "https://media.poster.place/list/" + PUBKEY, "method": "GET"},
+            {"url": "https://media.poster.place/" + SHA, "method": "HEAD"},
+        ])
+        for row in got:
+            self.assertTrue(row["bounded"], "a read stopped being bounded: " + row["url"])
+
+    def test_a_request_object_does_not_smuggle_past_the_ceiling(self):
+        """A Request ALWAYS has a non-null .signal, so reading it as the caller's own exempts
+        every Request-shaped call silently. Latent when found; it would never announce itself."""
+        got = _harness("https://media.poster.place", [
+            {"url": "https://media.poster.place/list/" + PUBKEY, "asRequest": True},
+            {"url": "https://media.poster.place/" + SHA, "asRequest": True},
+        ])
+        for row in got:
+            self.assertTrue(row["bounded"],
+                            "a Request-shaped read skipped the ceiling: " + row["url"])
+
+    def test_a_request_object_that_is_an_upload_is_still_exempt(self):
+        got = _harness("https://media.poster.place", [
+            {"url": "https://media.poster.place/upload", "asRequest": True, "method": "PUT"},
+        ])
+        self.assertFalse(got[0]["bounded"], "a Request-shaped upload is bounded")
 
     def test_a_caller_with_its_own_signal_is_left_alone(self):
         """renderBlossom already aborts at 12s; the guard must not fight an explicit signal."""

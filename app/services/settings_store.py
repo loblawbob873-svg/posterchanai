@@ -119,7 +119,16 @@ def _publish_local(tmp, payload):
     the WHOLE file, secrets included — was left on a plain json.dump, so every metric increment
     put 0644 straight back, moments after anyone tightened it by hand.
     """
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_CREAT's mode applies ONLY when the file is created. A `.tmp` left behind at 0644 by a
+    # pre-fix `bump_counter` that was killed mid-write (OOM, a restart) would be reused as-is, and
+    # the DSN would land in a world-readable inode and only THEN be chmod'd — with anyone who had
+    # already opened that inode reading every later version through the held fd. fchmod on the
+    # descriptor closes both cases; O_NOFOLLOW refuses a symlink planted at the temp path.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except OSError:
+        pass
     with os.fdopen(fd, "w") as f:
         json.dump(payload, f)
     os.chmod(tmp, 0o600)

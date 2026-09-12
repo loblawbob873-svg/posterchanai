@@ -204,6 +204,21 @@ class LibtorrentService:
         self._owners_path = self.resume_dir / ".owners.json"
         self._owners: dict[str, int] = self._load_owners()
 
+        # PER-FILE SELECTION REQUESTED BEFORE THE METADATA EXISTED.
+        #
+        # A magnet link carries no file list, so "download only these two episodes" cannot be put on
+        # the handle at add time — there is nothing to index into yet. The request is recorded here
+        # and swept onto the handle by _apply_pending_selections(), which the alert loop runs on
+        # every 2s tick (deliberately a sweep and not a metadata_received_alert branch: the alert
+        # fires exactly once, and a restart between the alert and the apply would lose the selection
+        # with nothing to say so).
+        #
+        # Persisted for the same reason: the metadata for a torrent with no live peers can take
+        # longer than the next deploy, and a forgotten selection does not fail — it QUIETLY
+        # downloads every file the user deselected, which is the whole thing they asked not to have.
+        self._select_path = self.resume_dir / ".select.json"
+        self._pending_select: dict[str, list[int]] = self._load_select()
+
         # The .notified / .owners JSON files are written from BOTH the alert thread
         # (torrent_finished / restore) and request handlers (add/remove), so serialize
         # every write: an interleaved/partial write corrupts the JSON and, once the
@@ -471,6 +486,11 @@ class LibtorrentService:
         proxy_was_down = False
 
         while self._running:
+            # Apply any per-file selection that was requested while the torrent was still fetching
+            # metadata (a magnet has no file list at add time). Cheap: a no-op dict lookup unless
+            # something is actually pending.
+            self._apply_pending_selections()
+
             # Periodic resume-data save (~every 30s = 15 * 2s). Without this, resume data was only
             # saved on a clean shutdown — so a kill/restart (or our frequent deploys) dropped every
             # torrent added since the last save. Now a restart loses at most ~30s of progress, never
@@ -971,24 +991,191 @@ class LibtorrentService:
                 del self._owners[info_hash]
                 self._save_owners()
 
+            # A selection outlives nothing: keeping it would re-apply to a later re-add of the same
+            # torrent, silently refusing files the user did not deselect this time.
+            if self._pending_select.pop(info_hash, None) is not None:
+                self._save_select()
+
             return True
         return False
 
-    def get_files(self, info_hash: str) -> list[dict]:
-        """Get file list for a torrent."""
+    # ------------------------------------------------------------------ per-file selection
+    #
+    # libtorrent's per-file priority is the mechanism: 0 means "do not download this file", 1-7 are
+    # download priorities with 4 the default. Nothing here ever DELETES a file — deselecting simply
+    # stops fetching the pieces it needs, so re-selecting it later resumes rather than restarts.
+
+    DONT_DOWNLOAD = 0
+    NORMAL_PRIORITY = 4
+
+    def _load_select(self) -> dict:
+        """Load the persisted info_hash -> [wanted file indices] map (selections made before the
+        torrent's metadata arrived)."""
+        try:
+            if self._select_path.exists():
+                import json
+                raw = json.loads(self._select_path.read_text())
+                return {str(k): [int(i) for i in v] for k, v in raw.items()}
+        except Exception as e:
+            logger.debug(f"[BT] could not load pending file selections: {e}")
+        return {}
+
+    def _save_select(self) -> None:
+        # Same atomic + serialized write as _save_owners: written from request handlers (select on
+        # add) and from the alert thread (the sweep clearing an applied entry), so an interleaved
+        # write would corrupt the JSON — and an unreadable .select.json downloads everything.
+        try:
+            import os, json
+            with self._file_lock:
+                tmp = self._select_path.with_name(self._select_path.name + ".tmp")
+                tmp.write_text(json.dumps(self._pending_select))
+                os.replace(tmp, self._select_path)
+        except Exception as e:
+            logger.error(f"[BT] could not save pending file selections: {e}")
+
+    def _info_for(self, info_hash: str):
+        """(handle, torrent_info) for a torrent whose metadata has arrived, else (handle|None, None)."""
         handle = self.torrents.get(info_hash)
         if not handle:
+            return None, None
+        try:
+            if not handle.is_valid():
+                return handle, None
+        except Exception:
+            return handle, None
+        try:
+            info = handle.torrent_file()
+        except Exception:
+            return handle, None
+        return handle, (info if info and info.num_files() else None)
+
+    def set_file_priorities(self, info_hash: str, priorities: dict) -> bool:
+        """Set priorities for individual files, by index. Keys absent from `priorities` keep the
+        priority they already have — a partial update must never silently re-enable a file the user
+        turned off, which is what rebuilding the whole vector from a partial map would do."""
+        handle, info = self._info_for(info_hash)
+        if handle is None or info is None:
+            return False
+        try:
+            current = list(handle.file_priorities())
+        except Exception:
+            current = [self.NORMAL_PRIORITY] * info.num_files()
+        if len(current) < info.num_files():
+            current += [self.NORMAL_PRIORITY] * (info.num_files() - len(current))
+        changed = False
+        for idx, prio in priorities.items():
+            try:
+                i = int(idx)
+                p = max(0, min(7, int(prio)))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= i < info.num_files() and current[i] != p:
+                current[i] = p
+                changed = True
+        if changed:
+            handle.prioritize_files(current)
+            logger.info(f"[BT] file priorities updated for {info_hash}: "
+                        f"{sum(1 for p in current if p)} of {len(current)} file(s) wanted")
+        return True
+
+    def select_files(self, info_hash: str, wanted) -> str:
+        """Download ONLY the files whose index is in `wanted` (everything else → priority 0).
+
+        Returns "applied" when it went straight onto the handle, "pending" when the torrent is still
+        fetching metadata and the selection was recorded for the sweep, or "unknown" for a torrent
+        this service does not have. `wanted=None` clears any selection (download everything).
+        """
+        if info_hash not in self.torrents:
+            return "unknown"
+        if wanted is None:
+            if self._pending_select.pop(info_hash, None) is not None:
+                self._save_select()
+            handle, info = self._info_for(info_hash)
+            if info is not None:
+                handle.prioritize_files([self.NORMAL_PRIORITY] * info.num_files())
+            return "applied" if info is not None else "pending"
+
+        want = {int(i) for i in wanted}
+        handle, info = self._info_for(info_hash)
+        if info is None:
+            # No metadata yet (the ordinary case for a magnet added with a selection). Record it;
+            # the sweep applies it the moment the file list exists.
+            self._pending_select[info_hash] = sorted(want)
+            self._save_select()
+            logger.info(f"[BT] file selection for {info_hash} deferred until metadata "
+                        f"({len(want)} file(s) wanted)")
+            return "pending"
+        handle.prioritize_files([
+            (self.NORMAL_PRIORITY if i in want else self.DONT_DOWNLOAD)
+            for i in range(info.num_files())
+        ])
+        if self._pending_select.pop(info_hash, None) is not None:
+            self._save_select()
+        logger.info(f"[BT] file selection applied to {info_hash}: "
+                    f"{len(want)} of {info.num_files()} file(s)")
+        return "applied"
+
+    def _apply_pending_selections(self) -> None:
+        """Put any deferred selection onto its handle once the metadata has landed. Runs on every
+        alert-loop tick; a no-op while nothing is pending."""
+        if not self._pending_select:
+            return
+        for info_hash, wanted in list(self._pending_select.items()):
+            if info_hash not in self.torrents:
+                # Removed while waiting — drop it rather than keeping it for ever, or a later
+                # re-add of the same torrent inherits a selection nobody asked for this time.
+                self._pending_select.pop(info_hash, None)
+                self._save_select()
+                continue
+            try:
+                _handle, info = self._info_for(info_hash)
+                if info is None:
+                    continue
+                self.select_files(info_hash, wanted)
+            except Exception as e:
+                logger.debug(f"[BT] deferred file selection for {info_hash} failed: {e}")
+
+    def pending_selection(self, info_hash: str):
+        """The selection recorded for a torrent still waiting on metadata, or None."""
+        w = self._pending_select.get(info_hash)
+        return list(w) if w is not None else None
+
+    def get_files(self, info_hash: str) -> list[dict]:
+        """Get file list for a torrent, with each file's index, priority and own progress.
+
+        `index` and `priority` are what make selection possible at all: the client has to be able to
+        name a file the way prioritize_files() names it (its position in the torrent), and it has to
+        be able to show which files are currently switched off. `wanted` is priority != 0 spelled
+        out, so a client never has to know libtorrent's numbering to draw a checkbox.
+        """
+        handle, info = self._info_for(info_hash)
+        if handle is None or info is None:
             return []
 
-        info = handle.torrent_file()
-        if not info:
-            return []
+        try:
+            prios = list(handle.file_priorities())
+        except Exception:
+            prios = []
+        try:
+            done = list(handle.file_progress())
+        except Exception:
+            done = []
 
         files = []
         for i in range(info.num_files()):
             f = info.files().file_path(i)
-            s = info.files().file_size(i)
-            files.append({"path": f, "size": s})
+            size = info.files().file_size(i)
+            prio = int(prios[i]) if i < len(prios) else self.NORMAL_PRIORITY
+            got = int(done[i]) if i < len(done) else 0
+            files.append({
+                "index": i,
+                "path": f,
+                "size": size,
+                "priority": prio,
+                "wanted": prio != 0,
+                "downloaded": got,
+                "progress": (got / size) if size else 0.0,
+            })
 
         return files
 

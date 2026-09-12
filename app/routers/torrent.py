@@ -123,11 +123,32 @@ def get_remote_server_url(db: Session) -> Optional[str]:
 class AddTorrentRequest(BaseModel):
     magnet: str = ""
     torrent_url: str = ""  # a .torrent URL — the server downloads + adds it (add_torrent_file)
+    # Download ONLY these file indices (everything else gets libtorrent priority 0). None = the
+    # whole torrent, which is what every existing caller sends and therefore what it keeps doing.
+    # A magnet has no file list at add time, so a selection sent with one is recorded and applied
+    # the moment the metadata lands — see LibtorrentService.select_files.
+    files: Optional[list[int]] = None
 
 
 class TorrentActionRequest(BaseModel):
     num: int
     delete_files: Optional[bool] = False
+
+
+class TorrentFilesRequest(BaseModel):
+    num: int
+    # Either: `files` = the complete set of indices to download (everything else switched off), or
+    # `priorities` = a PARTIAL map of index → libtorrent priority (0-7) leaving the rest alone.
+    files: Optional[list[int]] = None
+    priorities: Optional[dict[str, int]] = None
+
+
+class FeedRequest(BaseModel):
+    url: str = ""
+    title: str = ""
+    include: str = ""
+    exclude: str = ""
+    enabled: Optional[bool] = True
 
 
 def get_bt_service(db: Session):
@@ -322,13 +343,32 @@ async def add_torrent(
             info_hash = service.add_torrent_file(_data, user_id=current_user.id if current_user else None)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Couldn't add .torrent: {e}")
-        return {"info_hash": info_hash, "message": "Torrent added"}
+        return {"info_hash": info_hash, "message": "Torrent added",
+                "selection": _apply_selection(service, info_hash, body.files)}
 
     if not body.magnet.startswith("magnet:"):
         raise HTTPException(status_code=400, detail="Invalid magnet link")
 
     info_hash = service.add_magnet(body.magnet, user_id=current_user.id if current_user else None)
-    return {"info_hash": info_hash, "message": "Torrent added"}
+    return {"info_hash": info_hash, "message": "Torrent added",
+            "selection": _apply_selection(service, info_hash, body.files)}
+
+
+def _apply_selection(service, info_hash: str, files):
+    """Put an add-time file selection onto a freshly added torrent.
+
+    Returns "" when no selection was asked for — the caller must be able to tell "you chose
+    everything" from "your choice was recorded", because with a magnet the choice is almost always
+    PENDING (no metadata yet) and a client that reported it as applied would show a file list it
+    had not actually filtered.
+    """
+    if files is None:
+        return ""
+    try:
+        return service.select_files(info_hash, list(files))
+    except Exception as e:
+        logger.error(f"[TORRENT] could not apply file selection to {info_hash}: {e}")
+        return "failed"
 
 
 @router.post("/pause")
@@ -450,3 +490,181 @@ async def get_torrent_info(
         "save_path": t.save_path,
         "files": files,
     }
+
+
+# ---------------------------------------------------------------- per-file selection
+#
+# A torrent is often a season pack, a discography or a game with six language packs — and the whole
+# of it is a download nobody asked for. libtorrent's per-file priority is the mechanism (0 = do not
+# download) and nothing here deletes anything: a file switched off simply stops being fetched, and
+# switching it back on resumes rather than restarts.
+
+@router.get("/files/{num}")
+async def list_torrent_files(
+    num: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """The files inside a torrent, each with its index, size, priority and own progress."""
+    if get_remote_server_url(db):
+        return await forward_to_remote(db, request, f"/files/{num}")
+
+    service = get_bt_service(db)
+    if not service:
+        raise HTTPException(status_code=503, detail="Torrent client not configured")
+
+    info_hash = service.get_hash_by_number(num)
+    if not info_hash:
+        raise HTTPException(status_code=404, detail="Torrent not found")
+
+    files = service.get_files(info_hash)
+    pending = None
+    try:
+        pending = service.pending_selection(info_hash)
+    except AttributeError:
+        pending = None
+    # An EMPTY list is "the metadata has not arrived yet", not "this torrent has no files", and the
+    # two need different words on screen — a magnet shows nothing for its first few seconds and a
+    # client that said "no files" would be reporting a fault.
+    return {"info_hash": info_hash, "num": num, "files": files,
+            "metadata": bool(files), "pending_selection": pending}
+
+
+@router.post("/files")
+async def set_torrent_files(
+    body: TorrentFilesRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """Choose which files inside a torrent to download."""
+    if get_remote_server_url(db):
+        return await forward_to_remote(db, request, "/files", method="POST",
+                                       json_body={"num": body.num, "files": body.files,
+                                                  "priorities": body.priorities})
+
+    service = get_bt_service(db)
+    if not service:
+        raise HTTPException(status_code=503, detail="Torrent client not configured")
+
+    info_hash = service.get_hash_by_number(body.num)
+    if not info_hash:
+        raise HTTPException(status_code=404, detail="Torrent not found")
+
+    if body.priorities is not None:
+        if not service.set_file_priorities(info_hash, body.priorities):
+            raise HTTPException(status_code=409,
+                                detail="That torrent has no file list yet (still fetching metadata)")
+        return {"message": "Priorities updated", "selection": "applied",
+                "files": service.get_files(info_hash)}
+
+    if body.files is None:
+        raise HTTPException(status_code=400, detail="Send `files` (indices to download) or `priorities`")
+    # An EMPTY selection would pause the torrent by the back door — every file at priority 0 leaves
+    # a download that can never finish and says nothing about why. Refuse it and name the button
+    # that does what they meant.
+    if not body.files:
+        raise HTTPException(status_code=400,
+                            detail="Select at least one file, or use Pause to stop the whole torrent")
+
+    state = service.select_files(info_hash, list(body.files))
+    if state == "unknown":
+        raise HTTPException(status_code=404, detail="Torrent not found")
+    return {"message": "Selection saved", "selection": state,
+            "files": service.get_files(info_hash)}
+
+
+# ---------------------------------------------------------------- RSS feeds
+#
+# These are NOT forwarded to bt_server_url: the subscription list is a decision made on the node
+# somebody administers, and the poller resolves bt_server_url itself when it adds. Forwarding the
+# feed CRUD as well would put the list on the remote node, where this node's UI cannot show it.
+
+@router.get("/feeds")
+async def list_feeds(
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """The torrent RSS subscriptions on this node."""
+    from app.services import torrent_rss_service as trss
+    try:
+        feeds = trss.list_feeds()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "feeds": feeds,
+        "enabled": settings_store.get_bool("torrent_rss_enabled"),
+        "interval_minutes": settings_store.get("torrent_rss_interval_minutes") or "30",
+        "max_per_poll": settings_store.get("torrent_rss_max_per_poll") or "5",
+    }
+
+
+@router.post("/feeds")
+async def add_feed(
+    body: FeedRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """Subscribe to a torrent RSS feed. The URL goes through the news reader's SSRF guard."""
+    from app.services import torrent_rss_service as trss
+    try:
+        feed = trss.add_feed(body.url, body.title, body.include, body.exclude,
+                             True if body.enabled is None else bool(body.enabled))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"feed": feed, "message": "Feed added"}
+
+
+@router.post("/feeds/{feed_id}")
+async def edit_feed(
+    feed_id: str,
+    body: FeedRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """Edit a subscription's title, filters or enabled state."""
+    from app.services import torrent_rss_service as trss
+    try:
+        feed = trss.update_feed(feed_id, url=body.url or None, title=body.title,
+                                include=body.include, exclude=body.exclude, enabled=body.enabled)
+    except ValueError as e:
+        raise HTTPException(status_code=400 if "URL" in str(e) else 404, detail=str(e))
+    return {"feed": feed, "message": "Feed updated"}
+
+
+@router.delete("/feeds/{feed_id}")
+async def delete_feed(
+    feed_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """Unsubscribe. The torrents it already added are left alone — removing a subscription is not
+    an instruction to delete what it downloaded."""
+    from app.services import torrent_rss_service as trss
+    if not trss.remove_feed(feed_id):
+        raise HTTPException(status_code=404, detail="No such feed")
+    return {"message": "Feed removed"}
+
+
+@router.post("/feeds/{feed_id}/check")
+async def check_feed(
+    feed_id: str,
+    add: bool = Query(False, description="Actually add what matches, instead of previewing it"),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_torrent_user)
+):
+    """Poll one feed now.
+
+    Defaults to a PREVIEW (`add=false`): it fetches, filters and reports what WOULD be taken without
+    adding anything or marking anything seen. That is what makes a filter writable — a filter you
+    cannot try is one you find out about after it has downloaded the wrong season.
+    """
+    from app.services import torrent_rss_service as trss
+    feed = trss.get_feed(feed_id)
+    if not feed:
+        raise HTTPException(status_code=404, detail="No such feed")
+    result = await trss.poll_feed(feed, dry_run=not add)
+    return result

@@ -7611,9 +7611,19 @@
     let ok = false, why = '';
     try{
       const idx = PC().filesIdx && PC().filesIdx();
-      // `ensure()` resolves TRUE only when the index was really materialised; a failed attempt
-      // leaves nothing behind and the next open tries again.
-      ok = idx && idx.ensure ? !!(await idx.ensure()) : true;
+      /* RACED, like every other caller of ensure(). `ensure()` → `pull()` → `_pull()` begins by
+       * asking the SIGNER for a kind-27235, and with a remote signer that is a phone which may be
+       * slow, busy or asleep; the index fetch after it is root-relative, so the client's media
+       * ceiling does not cover it either. Unraced, the panel sits on "Reading your drive…" for ever
+       * with the ✕ as the only way out — which is a worse third state than the wrong answer it
+       * replaced, because at least that one could be argued with. The other two callers use 12000
+       * and 4000; this is a person waiting on a panel, so it takes the shorter end. */
+      const answered = idx && idx.ensure
+        ? await Promise.race([idx.ensure().then(v => !!v),
+                              new Promise(r => setTimeout(() => r(null), 8000))])
+        : true;
+      if(answered === null) why = 'it is taking too long to read';
+      ok = answered === true;
     }catch(e){ ok = false; why = (e && (e.message || e.name)) || ''; }
     if(!m.isConnected) return;
     const pics = ok ? backgrounds() : [];

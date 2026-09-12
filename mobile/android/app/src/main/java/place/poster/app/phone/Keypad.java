@@ -41,6 +41,23 @@ public final class Keypad {
      */
     public static void build(final Context ctx, LinearLayout host, PcTheme.Palette pal,
                              int size, final Press press) {
+        build(ctx, host, pal, size, press, false);
+    }
+
+    /**
+     * THE PAUSE KEYS, and why they are a parameter rather than always on.
+     *
+     * `,` (two seconds) and `;` (wait until I say so) are what a stored phone-tree number is made
+     * of — `+18005550100,,123#` dials the extension for you. Until they were here there was NO WAY
+     * TO TYPE ONE: `Dial` accepted both characters and the pad could not produce either, so the
+     * feature existed everywhere except where a person could reach it.
+     *
+     * They belong to the DIALER's pad only. The in-call pad sends DTMF down a live call, where a
+     * pause means nothing at all — a key that types one there is a key that does nothing, and a
+     * hint under it is a promise the screen cannot keep.
+     */
+    public static void build(final Context ctx, LinearLayout host, PcTheme.Palette pal,
+                             int size, final Press press, boolean pauses) {
         if (host == null) return;
         host.removeAllViews();
         host.setOrientation(LinearLayout.VERTICAL);
@@ -50,7 +67,12 @@ public final class Keypad {
             r.setGravity(Gravity.CENTER);
             for (int col = 0; col < 3; col++) {
                 final int i = row * 3 + col;
-                r.addView(key(ctx, pal, size, KEYS[i], SUBS[i], press));
+                // WHICH KEY HOLDS WHAT IS `Dial`'s, not this file's. Keypad cannot be run by a
+                // test (it builds Views); Dial has no Android in it and is run by one. A rule that
+                // lives only in the half nothing can execute is a rule nobody checks.
+                char held = Dial.held(KEYS[i].charAt(0), pauses);
+                String sub = held == Dial.PAUSE || held == Dial.WAIT ? String.valueOf(held) : SUBS[i];
+                r.addView(key(ctx, pal, size, KEYS[i], sub, held, press));
             }
             host.addView(r, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -86,7 +108,7 @@ public final class Keypad {
     }
 
     private static View key(final Context ctx, final PcTheme.Palette pal, int size,
-                            final String digit, String sub, final Press press) {
+                            final String digit, String sub, final char held, final Press press) {
         final LinearLayout cell = new LinearLayout(ctx);
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setGravity(Gravity.CENTER);
@@ -151,11 +173,12 @@ public final class Keypad {
         });
         // LONG PRESS ON ZERO IS `+`, and it is not a nicety: it is the only way to type an
         // international number on a phone keypad, and its absence is the single most-reported thing
-        // missing from a hand-rolled dialer.
-        if ("0".equals(digit)) {
+        // missing from a hand-rolled dialer. `*` and `#` hold the two pause characters, for the
+        // same reason: nothing else on this pad can produce them.
+        if (held != 0) {
             cell.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override public boolean onLongClick(View v) {
-                    if (press != null) press.onKey('+');
+                    if (press != null) press.onKey(held);
                     return true;
                 }
             });
