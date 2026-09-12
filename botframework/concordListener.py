@@ -261,8 +261,17 @@ def _announce(session: "RoomSession", w, npub: str, names) -> None:
     if channel is None:
         return
     hello = _Seen(_hello_path(), cap=64)
-    key = "hello:%s:%s" % (session.community_id, channel.get("id"))
-    if hello.has(key):
+    # KEYED ON THIS BOT TOO. Every bot on a node runs with cwd=botframework/, so they SHARE this
+    # file; without the npub the first bot to announce in a room marks the key for all of them and
+    # the second one stays invisible for ever — the exact condition this function exists to break,
+    # reintroduced for every bot after the first.
+    key = "hello:%s:%s:%s" % (npub, session.community_id, channel.get("id"))
+    # …and the key this file used BEFORE the npub was added, so a room a bot has already introduced
+    # itself in is not introduced again just because the marker's shape changed. Changing a dedup
+    # key without honouring the old one is a second announcement in every room that was already
+    # done — the precise spam this whole marker exists to prevent.
+    legacy = "hello:%s:%s" % (session.community_id, channel.get("id"))
+    if hello.has(key) or hello.has(legacy):
         return
     handle = _handle_for(names, npub)
     who = str((names or [""])[0] or "").strip() or "This bot"
