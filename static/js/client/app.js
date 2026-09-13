@@ -581,7 +581,24 @@
       const group = key.indexOf('group:') === 0;
       if(group && btn.closest('.nav-group') && btn.closest('.nav-group').classList.contains('hidden')) return;
       seen.add(key);
-      out.push({ key, label: _navLabel(btn) || key, group, sub: btn.classList.contains('sub'),
+      /* A ROW THAT RENDERS AS NOTHING IS WORSE THAN A ROW WITH AN UGLY NAME.
+       *
+       * Reported on Android: "User Settings -> Side Bar there is an actual blank entry". A blank
+       * switch is unusable — you cannot tell what you would be turning off — and it is invisible to
+       * every test that reads markup rather than pixels. `_navLabel` reads the FIRST <span>'s text
+       * nodes, and a group header carries two spans (label, chevron) while several rows carry a
+       * badge inside theirs, so there are a few ways for it to come back empty on a build whose
+       * nav differs from this one. The `|| key` fallback only helps while the key is printable, so
+       * the last resort names the view outright. Whatever the nav does, this row says something. */
+      /* "Has characters" is not "renders something". `String.trim()` removes whitespace, but NOT a
+       * zero-width space, a joiner, or a BOM — a label of "\u200b" is truthy, survives trim, and
+       * draws a row with nothing in it. That is the one way a blank row is still reachable here,
+       * and the likeliest on a build whose labels come from a different source than this one's. */
+      const printable = t => /[^\s\u200b-\u200f\u2028\u2029\ufeff]/.test(String(t || ''));
+      const read = String(_navLabel(btn) || '').trim();
+      const shown = printable(read) ? read : (printable(key) ? String(key).trim() : '');
+      out.push({ key, label: shown || ('Unnamed item (' + (btn.dataset.view || btn.id || '?') + ')'),
+                 group, sub: btn.classList.contains('sub'),
                  locked, off: !locked && off.has(key) });
     });
     /* Report a Bug is the one movable thing that is NOT a nav row — it lives with the app links in
