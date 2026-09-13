@@ -29,7 +29,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'os/overlay/gui-libs/posterchan-wayfire-shell/files/posterchan-shell.cpp'
 METADATA = ROOT / 'os/overlay/gui-libs/posterchan-wayfire-shell/files/posterchan-shell.xml'
-EBUILD = ROOT / 'os/overlay/gui-libs/posterchan-wayfire-shell/posterchan-wayfire-shell-1.0.1.ebuild'
+# FOUND, NOT SPELLED OUT. A revision bump RENAMES the ebuild — that is the whole mechanism by which
+# a change reaches an installed machine (see test_a_config_change_actually_reaches_the_machine) — so
+# hardcoding the filename means this file goes red on exactly the commit that releases its own fix.
+_EB_DIR = ROOT / 'os/overlay/gui-libs/posterchan-wayfire-shell'
+_EBUILDS = sorted(_EB_DIR.glob('posterchan-wayfire-shell-*.ebuild'))
+assert _EBUILDS, 'no posterchan-wayfire-shell ebuild in ' + str(_EB_DIR)
+EBUILD = _EBUILDS[-1]
 
 PROBE = r'''
 #include <wayfire/plugin.hpp>
