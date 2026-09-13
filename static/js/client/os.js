@@ -2352,6 +2352,7 @@
     /* Displays is one settings page, not the gatekeeper for every page. A missing/crashed display
        bridge must not also erase Appearance, Power and About. Degrade this page locally. */
     let outs=[], power={}, system={}, machineIdentity='', displayError='',powerError='',systemError='',identityError='';
+    let pointerConfine={available:false,on:false};
     /* Each page owns its own bridge. Waiting for displays, power and system information before
        drawing Appearance or Installation media made those genuinely separate sections share one
        failure mode: a hung display daemon left the whole Settings app on a spinner. Read only what
@@ -2369,6 +2370,13 @@
             else{ outs=[]; displayError = r.timedOut
               ? 'The display service did not answer. It may be busy or stopped — this page will not load until it does.'
               : 'Could not read displays: '+r.error; } }
+      /* Asked SEPARATELY from the monitor list, and never allowed to fail the page: a machine with
+         no window manager answers null for `status()` while this switch still has an answer, and a
+         compositor too old to carry the setting must show nothing rather than an inert toggle. */
+      if(window.pcDisplays && typeof pcDisplays.pointerConfine === 'function'){
+        const c = await _settingsRead(pcDisplays.pointerConfine(), 'pointer confinement');
+        pointerConfine = (c.ok && c.value) || { available:false, on:false };
+      }
       if(!alive()) return;
     }
     if(_osSettingsPage==='power'){
@@ -2459,7 +2467,8 @@
            <b>${i+1}</b><span>${enc(r.label)}</span><small>${r.w} × ${r.h}</small></button>`).join('')}</div>
         <div class="os-display-controls"></div>
         ${window.pcDisplays?`<div class="os-set-actions"><button class="btn" data-detect>Detect displays</button>
-          <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}`:`${displayError?'':`<div class="empty">No displays were detected. Reconnect a display, then reopen Settings.</div>`}`}</section></section>
+          <button class="btn primary" data-apply>Preview and apply</button><span class="muted" data-status></span></div>`:''}`:`${displayError?'':`<div class="empty">No displays were detected. Reconnect a display, then reopen Settings.</div>`}`}</section>
+        ${pointerConfine.available?`<section class="os-setting-row os-set-control"><div><b>Keep the mouse in a fullscreen game</b><span>While a fullscreen window is in front, the pointer stays on its monitor instead of sliding onto the next one. Switch away from the window, or turn this off, to release it.</span></div><label class="os-set-switch"><input data-pointer-confine type="checkbox" ${pointerConfine.on?'checked':''} aria-label="Keep the mouse in a fullscreen game"><span>${pointerConfine.on?'On':'Off'}</span></label></section>`:''}</section>
         <section data-settings-page="appearance" ${_osSettingsPage==='appearance'?'':'hidden'}><header class="os-set-pagehead"><div>${iconSvg('i-palette')}</div><span><h2>Appearance</h2><p>Choose modern desktop depth or a flat low-power presentation.</p></span></header>
         <section class="os-setting-row os-set-control"><div><b>Desktop experience</b><span>Choose PosterChan's desktop or a complete macOS-style layout with a menu bar, floating Dock, launcher and matching windows.</span></div><select data-desktop-style aria-label="Desktop experience"><option value="posterchan" ${settings().get(STYLE_KEY,'posterchan')!=='mac'?'selected':''}>PosterChan</option><option value="mac" ${settings().get(STYLE_KEY,'posterchan')==='mac'?'selected':''}>macOS-style</option></select></section>
         <section class="os-setting-row os-set-control"><div><b>Display scale</b><span>How large text and controls are drawn in PosterChan. A 4K-class monitor starts at 125% so it is readable at its native resolution &mdash; the screens themselves stay at 100%, which is what keeps games sharp and full speed.</span></div><select data-ui-scale aria-label="Display scale">${UI_SCALE_CHOICES.map(n=>`<option value="${n}" ${n===uiScaleEffective()?'selected':''}>${Math.round(n*100)}%</option>`).join('')}</select></section>
@@ -2634,6 +2643,24 @@
       };
       const desktopStyle=host.querySelector('[data-desktop-style]');if(desktopStyle)desktopStyle.onchange=()=>{
         settings().set(STYLE_KEY,desktopStyle.value==='mac'?'mac':'posterchan');applyDesktopStyle();
+      };
+      /* The switch is ROLLED BACK when the compositor refuses it, and says why. A toggle that
+         moves and then quietly does nothing is the shape this repo keeps rediscovering — and this
+         one can genuinely fail, since the helper writes the stored answer and the live compositor
+         separately and reports when only the first of those landed. */
+      const confine=host.querySelector('[data-pointer-confine]'); if(confine)confine.onchange=async()=>{
+        confine.disabled=true;
+        try{
+          const r=await pcDisplays.setPointerConfine(confine.checked);
+          confine.checked=!!(r&&r.on);
+          const s=confine.parentElement.querySelector('span'); if(s)s.textContent=confine.checked?'On':'Off';
+          PC().toast(confine.checked?'The mouse will stay on a fullscreen window\u2019s monitor'
+                                     :'The mouse can move between monitors again');
+        }catch(e){
+          confine.checked=!confine.checked;
+          const s=confine.parentElement.querySelector('span'); if(s)s.textContent=confine.checked?'On':'Off';
+          PC().toast(String(e&&e.message||e));
+        }finally{ confine.disabled=false; }
       };
       const awake=host.querySelector('[data-keep-awake]'); if(awake)awake.onchange=async()=>{
         awake.disabled=true;try{await pcPower.setKeepAwake(awake.checked);const s=awake.parentElement.querySelector('span');if(s)s.textContent=awake.checked?'On':'Off';PC().toast(awake.checked?'Computer will stay awake':'Normal sleep behavior restored');}catch(e){awake.checked=!awake.checked;PC().toast(String(e&&e.message||e));}finally{awake.disabled=false;}
@@ -6273,7 +6300,7 @@
           box.innerHTML = '<div class="wgt-dim">No instance to ask — this client is running on its own.</div>';
           return;
         }
-        box.innerHTML = _statCells(st).map(c => `<span class="wgt-stc${c.live ? ' live' : ''}">
+        box.innerHTML = _statCells(st).map(c => `<span class="wgt-stc${c.live ? ' live' : ''}" title="${enc(c.tip || c.label)}">
             ${iconSvg(c.icon)}<b>${enc(_wgtCount(c.n))}</b><i>${enc(c.label)}</i></span>`).join('');
         box.onclick = (ev) => { if(ev.target.closest('.wgt-stc')) openApp('stats'); };
       },
@@ -6479,11 +6506,19 @@
   function _statCells(st){
     const n = (v) => Math.max(0, Number(v) || 0);
     const live = n(st && st.streams);
-    return [{ icon: 'i-wot',       n: n(st && st.users),  label: 'WoT' },
-            { icon: 'i-livedot',   n: n(st && st.online), label: 'online' },
-            { icon: 'i-relay-dot', n: n(st && st.relay),  label: 'on relay' },
-            { icon: 'i-stream',    n: live,               label: 'live', live: live > 0 },
-            { icon: 'i-call',      n: n(st && st.calls),  label: 'in call' }];
+    /* `tip` — an unlabelled headcount that moves is read as a fault. "on relay" went 7 -> 72 when
+     * router.lan's nginx stopped folding the whole internet into one address, and the CORRECT number
+     * was reported as a bug. Both renderers below show this. */
+    const sockets = n(st && st.relay_sockets), mine = n(st && st.relay_internal);
+    const relayTip = sockets > 0
+      ? n(st && st.relay).toLocaleString() + ' distinct client addresses, from ' + sockets.toLocaleString()
+        + ' open connections' + (mine > 0 ? ' (' + mine.toLocaleString() + ' of them this machine\u2019s own)' : '')
+      : 'people connected to this relay right now';
+    return [{ icon: 'i-wot',       n: n(st && st.users),  label: 'WoT',      tip: 'people in this relay\u2019s web of trust' },
+            { icon: 'i-livedot',   n: n(st && st.online), label: 'online',   tip: 'people using this site right now' },
+            { icon: 'i-relay-dot', n: n(st && st.relay),  label: 'on relay', tip: relayTip },
+            { icon: 'i-stream',    n: live,               label: 'live', live: live > 0, tip: 'live streams right now' },
+            { icon: 'i-call',      n: n(st && st.calls),  label: 'in call',  tip: 'people in a call right now' }];
   }
   const _wgtCount = (n) => { const v = Math.max(0, Number(n) || 0);
     try{ return v.toLocaleString(); }catch(_){ return String(v); } };
@@ -8519,7 +8554,7 @@
      * always" rule stated in both comments, which is two places to rename a counter and one place to
      * forget. Only the markup differs: a tray row is a line of text, the widget is a grid of tiles. */
     return `<div class="os-stats os-net-stats">${_statCells(st).map(c =>
-              `<span class="os-stat${c.n > 0 ? ' on' : ''}" title="${enc(c.label)}">${iconSvg(c.icon)}<b>${
+              `<span class="os-stat${c.n > 0 ? ' on' : ''}" title="${enc(c.tip || c.label)}">${iconSvg(c.icon)}<b>${
                 enc(String(c.n || 0))}</b><i>${enc(c.label)}</i></span>`).join('')}</div>`;
   }
 

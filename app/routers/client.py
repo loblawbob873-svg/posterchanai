@@ -495,6 +495,8 @@ async def client_stats(request: Request, v: str = ""):
     online = _record_viewer(request, v)
     members = 0
     relay_conns = 0
+    sockets = 0
+    relay_internal = 0
     calls = 0
     try:
         from app.services.nostr_relay.thread import relay_status
@@ -503,10 +505,19 @@ async def client_stats(request: Request, v: str = ""):
         # Deduped-by-IP count = distinct PEOPLE connected to the relay right now (not raw sockets, which
         # also count multi-tab/federation/scrapers). Falls back to raw conns if the relay didn't dedup.
         relay_conns = int(st.get("online", st.get("conns", 0)) or 0)
+        # WHAT THAT NUMBER IS MADE OF, shipped beside it. "72 people are now on the relay?" is a fair
+        # question to ask of a bare count, and the answer needs two more figures to be checkable: the
+        # raw socket count it was deduped FROM, and how many of those addresses are this node's own
+        # machines rather than people (see RelayServer.online_breakdown). Both are 0 when a relay
+        # subprocess on an older build doesn't report them — a reader must render that as "not
+        # reported" and never as "no sockets".
+        sockets = int(st.get("conns", 0) or 0)
+        relay_internal = int(st.get("online_internal", 0) or 0)
         calls = int(st.get("calls", 0) or 0)
     except Exception:
         pass
     return JSONResponse({"users": members, "online": online, "relay": relay_conns,
+                         "relay_sockets": sockets, "relay_internal": relay_internal,
                          "calls": calls, "streams": await _live_stream_count()})
 
 

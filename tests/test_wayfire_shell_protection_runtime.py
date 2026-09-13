@@ -70,9 +70,24 @@ def compositor(tmp_path):
         pytest.skip('Wayfire development headers unavailable')
     probe = tmp_path/'probe.cpp'
     probe.write_text(PROBE)
+    # The plugin's pointer-constraint check needs a protocol header WLROOTS DOES NOT INSTALL, so it
+    # is generated here exactly as posterchan-wayfire-shell's ebuild generates it. Skipping instead
+    # of building without it: a build that silently drops the guard is not the shipped plugin, and
+    # this test exists to run the shipped plugin.
+    if not shutil.which('wayland-scanner'):
+        pytest.skip('wayland-scanner is required to build the plugin')
+    protocols = subprocess.run(['pkg-config','--variable=pkgdatadir','wayland-protocols'],
+                               capture_output=True, text=True)
+    xml = Path(protocols.stdout.strip() or '/nonexistent')/'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml'
+    if protocols.returncode or not xml.exists():
+        pytest.skip('wayland-protocols is not installed')
+    subprocess.run(['wayland-scanner','server-header',str(xml),
+                    str(tmp_path/'pointer-constraints-unstable-v1-protocol.h')],
+                   check=True, capture_output=True, timeout=30)
     for source, name in ((PLUGIN, 'posterchan-shell'), (probe, 'test-probe')):
-        subprocess.run(['g++','-std=c++17','-fPIC','-shared',str(source),'-o',str(tmp_path/f'lib{name}.so'),
-                        *flags.stdout.split()], check=True, capture_output=True, timeout=30)
+        subprocess.run(['g++','-std=c++17','-fPIC','-shared','-I',str(tmp_path),str(source),
+                        '-o',str(tmp_path/f'lib{name}.so'),
+                        *flags.stdout.split()], check=True, capture_output=True, timeout=60)
     runtime=tmp_path/'runtime'; runtime.mkdir(mode=0o700)
     config=tmp_path/'wayfire.ini'
     config.write_text('[core]\nplugins = ipc ipc-rules move resize posterchan-shell test-probe\nxwayland = false\n')

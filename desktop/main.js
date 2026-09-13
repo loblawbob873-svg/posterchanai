@@ -2988,6 +2988,11 @@ ipcMain.handle('pc:display:status', (e) => {
 ipcMain.handle('pc:display:preview', (e, rows) => { fsGuard(e); return displays().preview(rows); });
 ipcMain.handle('pc:display:confirm', (e, token) => { fsGuard(e); return displays().confirm(token); });
 ipcMain.handle('pc:display:revert', (e, token) => { fsGuard(e); return displays().revert(token); });
+/* The pointer-confinement switch is not part of `pc:display:status`: that answers an ARRAY of
+ * monitors, and a machine with no window manager answers null for it. This one is asked of the
+ * compositor helper directly, so it still has an answer on a single-monitor machine. */
+ipcMain.handle('pc:display:pointer-confine', (e) => { fsGuard(e); return require('./displays.js').pointerConfine(); });
+ipcMain.handle('pc:display:pointer-confine-set', (e, on) => { fsGuard(e); return require('./displays.js').setPointerConfine(!!on); });
 ipcMain.handle('pc:liveusb:devices', (e) => { fsGuard(e); return liveusb.devices(); });
 ipcMain.handle('pc:liveusb:status', (e) => { fsGuard(e); return liveusb.status(); });
 ipcMain.handle('pc:liveusb:build', (e, dir, home) => { fsGuard(e); return liveusb.build(String(dir||''), !!home); });

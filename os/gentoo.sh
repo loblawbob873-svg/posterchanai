@@ -2364,7 +2364,7 @@ PROFILE
 			return 1
 		fi
 	done
-	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-screenshot pc-monero-wallet-rpc update-posterchan; do
+	for helper in foot pc-super pc-provision-user pc-session-switch pc-session-auth pc-compositor-session pc-wayfire-action pc-wayfire-health pc-shell-start pc-shell-start-wayfire pc-shell-restart pc-window-cycle pc-window-snap pc-window-close pc-key pc-idle pc-pointer-confine pc-screenshot pc-monero-wallet-rpc update-posterchan; do
 		if [ -f "$PCOS_TREE/bin/$helper" ]; then
 			cp -f "$PCOS_TREE/bin/$helper" ${TARGET}/usr/local/bin/$helper
 		elif [ -f "$PCOS_TREE/overlay/app-misc/posterchanos-shell/files/$helper" ]; then

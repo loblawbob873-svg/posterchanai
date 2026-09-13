@@ -187,7 +187,9 @@
         <h3 class="st-sec">🌐 This server <span class="st-rangelbl">${enc(rangeWord())}</span></h3>
         <div class="st-tiles">
           ${tile(`events ${rangeWord()}`, nf(W.events), 'Events published directly to this server in the selected range (not federated-in)')}
-          ${tile(`people active ${rangeWord()}`, nf(W.people), 'Distinct pubkeys that published to this server in the selected range')}
+          ${tile(`people active ${rangeWord()}`, nf(W.people), 'Distinct pubkeys that published to this server in the selected range. '
+            + 'Excludes the throwaway keys NIP-17 signs every DM with, and zap-receipt services \u2014 counting those '
+            + 'reported 19,347 \u201cpeople\u201d over 30 days on a node with 128 names, of which 16,590 were gift wraps.')}
           ${tile('notes '+rangeWord(), nf(sum(S.notes||[])))}
           ${tile('zaps '+rangeWord(), nf(sum(S.zaps||[])))}
         </div>
@@ -337,7 +339,8 @@
           : `🟢 Relay running${upFor?` · up for <b>${enc(upFor)}</b>`:''}`}</div>
 
         <div class="st-tiles">
-          ${tile('people connected', nf(R.online), 'Distinct client IPs with a websocket open right now')}
+          ${tile('people connected', nf(R.online), 'Distinct client IPs with a websocket open right now'
+            + (R.online_internal > 0 ? ' \u2014 ' + nf(R.online_internal) + ' of them this node\u2019s own machines' : ''))}
           ${tile('open sockets', nf(R.conns), 'Raw connection count — one person can hold several (tabs, PWA, signer)')}
           ${tile('open subscriptions', num(R.subs), 'REQ filters the relay is matching every stored event against')}
           ${tile('web of trust', nf(R.members), 'Pubkeys allowed to publish here and whose posts are synced in')}

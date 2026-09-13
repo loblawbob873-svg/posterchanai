@@ -158,6 +158,22 @@ async def flush_calls() -> None:
 # local counters), and `db_bytes` is genuine on-disk footprint, so those stay as-is.
 _LOCAL = "origin = 'direct'"
 
+# A PUBKEY IS NOT ALWAYS A PERSON, and on this relay the exceptions outnumber the people.
+#
+# * kind 1059 (NIP-59 gift wrap, i.e. every DM) is signed by a **fresh throwaway key per message**
+#   — that is the whole point of the wrapper. Counting distinct pubkeys therefore counted one extra
+#   "person" per DM ever sent here. Measured on poster.place 2026-09-12: 321 "people active" in 24h
+#   of which **238 were gift wraps** (real: 81), and 19,347 over 30 days of which **16,590 were gift
+#   wraps** (real: 2,727) — a headcount that grows with message volume, on a node with 128 registered
+#   names.
+# * kind 9735 (zap receipt) is signed by the LNURL service that settled the payment, not by either
+#   the zapper or the zapped. It is a machine, and always the same handful of them.
+#
+# Only the DISTINCT-PUBKEY counts use this. Event totals are untouched: those events really did
+# happen here, and a DM is real activity — it just isn't a new neighbour.
+_ONE_TIME_KINDS = (1059, 9735)
+_PERSON_PUBKEY = "CASE WHEN kind NOT IN (%s) THEN pubkey END" % ", ".join(str(k) for k in _ONE_TIME_KINDS)
+
 
 def _series(db, now: int):
     """One grouped scan per window → {window: {metric: [counts...]}} aligned to fixed buckets.
@@ -184,7 +200,7 @@ def _series(db, now: int):
         # Per-window totals so the range selector actually applies to the summary sections. Without
         # these, Network / Games / AI showed all-time figures that never moved when you switched
         # range, which reads as broken. Measured: 0.01s / 0.08s / 0.50s for the three windows.
-        row = db.execute(text("SELECT count(*), count(DISTINCT pubkey) FROM events "
+        row = db.execute(text("SELECT count(*), count(DISTINCT " + _PERSON_PUBKEY + ") FROM events "
                               "WHERE created_at >= :s AND created_at <= :n AND " + _LOCAL),
                          {"s": start, "n": now}).first()
         win_events, win_people = int(row[0] or 0), int(row[1] or 0)
@@ -271,6 +287,12 @@ def _relay(now: int, origins: dict) -> dict:
         "members": int(st.get("members", 0) or 0),      # web-of-trust size
         "conns": int(st.get("conns", 0) or 0),          # raw sockets
         "online": int(st.get("online", 0) or 0),        # deduped by IP = people
+        # How many of those addresses are THIS NODE's own machines (the app's LAN address, another
+        # node, the proxy) rather than people. They stay inside `online` — a LAN-only instance has no
+        # other kind of client, so subtracting them would report 0 people to a house full of them —
+        # so the only way the figure can be checked is to say how many there are. None = a relay on
+        # an older build that doesn't report it, which must render as "not reported", never as 0.
+        "online_internal": st.get("online_internal"),
         "subs": st.get("subs"),                         # open REQ subscriptions (None = not reported)
         "accepted": st.get("accepted"),
         "rejected": st.get("rejected"),
@@ -317,8 +339,8 @@ def _totals(db, now: int, origins: dict):
         "events_24h":    int(_direct.get("day", 0)),
         "notes":         scalar("SELECT count(*) FROM events WHERE kind=1 AND " + _LOCAL),
         "streams":       scalar("SELECT count(*) FROM events WHERE kind=30311 AND " + _LOCAL),
-        "pubkeys_24h":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 86400}),
-        "pubkeys_30d":   scalar("SELECT count(DISTINCT pubkey) FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 2592000}),
+        "pubkeys_24h":   scalar("SELECT count(DISTINCT " + _PERSON_PUBKEY + ") FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 86400}),
+        "pubkeys_30d":   scalar("SELECT count(DISTINCT " + _PERSON_PUBKEY + ") FROM events WHERE created_at >= :s AND " + _LOCAL, {"s": now - 2592000}),
         "profiles":      scalar("SELECT count(*) FROM events WHERE kind=0 AND " + _LOCAL),
         "ai_requests":   scalar("""SELECT count(*) FROM event_tags
                                     WHERE tag = 'd' AND value LIKE 'pcai:msg:%'"""),
@@ -392,7 +414,7 @@ def _compute() -> dict:
     """The blocking half: opens its OWN session because it runs in a worker thread.
 
     Never call this on the event loop. It is ~1.2s of synchronous SQL (dominated by the 30-day scan
-    and the two count(DISTINCT pubkey) queries), which on the loop would stall every websocket,
+    and the two distinct-person counts), which on the loop would stall every websocket,
     stream and chat request on the node for that whole second.
     """
     from app.database import SessionLocal

@@ -14,7 +14,8 @@
 set -eu
 
 CONF="${PC_POINTER_CONFINE_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/posterchanos/pointer-confine}"
-OPTION=posterchan-shell/confine_pointer_to_fullscreen
+# The option name is spelled inside the quoted heredoc below, which cannot interpolate a shell
+# variable -- so there is deliberately no second copy of it up here to drift from that one.
 
 read_pref() {
     v=""

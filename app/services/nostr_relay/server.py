@@ -907,22 +907,55 @@ class RelayServer:
         except Exception:
             pass   # diagnostics must never break teardown
 
-    def online_count(self) -> int:
-        """A closer estimate of *people* online than the raw socket count: distinct client IPs
+    def online_breakdown(self) -> dict:
+        """WHAT THE "PEOPLE ONLINE" FIGURE IS MADE OF — reported, not just totalled.
+
+        `online` is a closer estimate of *people* than the raw socket count: distinct client IPs
         among live connections, so one person's multiple tabs / PWA + signer / reconnects collapse
         to one. Each connection with an unknown IP (extraction failed) counts as its own, and the
-        whole thing falls back to the raw connection count if no IPs were captured at all."""
+        whole thing falls back to the raw connection count if no IPs were captured at all.
+
+        The parts are published because the total on its own is unfalsifiable, and this number has
+        already been wrong in BOTH directions without anything on screen to say so:
+
+        * Under-reported: until the router trusted the Cloudflare tunnel's own source address,
+          nginx ignored `CF-Connecting-IP` and shipped `X-Real-IP: <our WAN address>` to the relay
+          for every external client. The entire internet deduped to ONE ip — the relay reported
+          **7 people against 293 open sockets** — and "7" is exactly what a quiet relay looks like.
+          `conns` beside `online` is what makes that visible: 7 people holding 293 sockets is not a
+          quiet relay, it is a broken measurement.
+        * Over-reported: our own machines (the app's own LAN address, another node, the proxy) hold
+          sockets here too, and they are not people. They are counted in `online` — deliberately,
+          because a LAN-only instance is one where EVERY real person is a private address and
+          subtracting them would report "0 people" to a house full of them — but `internal` says how
+          many of the total they are, so the figure can be reconciled instead of argued about.
+
+        Loopback (this node's own bots/app/worker, which dial 127.0.0.1) is not a person and is in
+        neither count; `loopback_conns` reports it so the sockets still add up."""
+        conns = int(self._conns)
         if not self._conn_ips:
-            return self._conns   # no IPs captured at all → raw fallback
+            # No IPs captured at all → raw fallback, and SAY it is a fallback: "measured: False"
+            # is the difference between "one person with 7 tabs" and "we could not tell".
+            return {"online": conns, "conns": conns, "remote": 0, "internal": 0,
+                    "unknown": 0, "loopback_conns": 0, "measured": False}
         _local = {"127.0.0.1", "::1", "localhost"}
-        known, unknown = set(), 0
+        remote, internal, unknown, loopback = set(), set(), 0, 0
         for ip in self._conn_ips.values():
-            if ip and ip not in _local:
-                known.add(ip)              # a real remote person
-            elif not ip:
+            if not ip:
                 unknown += 1               # IP unknown → count this conn on its own
-            # loopback (our own bots / internal) is skipped — not a person online
-        return len(known) + unknown
+            elif ip in _local:
+                loopback += 1              # our own bots / app / worker — never a person online
+            elif self._is_internal(ip):
+                internal.add(ip)           # one of our own machines out on the LAN
+            else:
+                remote.add(ip)             # a real remote person
+        return {"online": len(remote) + len(internal) + unknown, "conns": conns,
+                "remote": len(remote), "internal": len(internal),
+                "unknown": unknown, "loopback_conns": loopback, "measured": True}
+
+    def online_count(self) -> int:
+        """The headline "people online" figure — see online_breakdown() for what it is made of."""
+        return int(self.online_breakdown()["online"])
 
     def active_calls(self) -> int:
         """Distinct people who exchanged call signaling (kind-25050) in the last ~2 minutes — a live

@@ -164,3 +164,29 @@ def test_mac_experience_themes_system_settings_content_not_only_window_buttons()
                    ".os-root.os-style-mac .os-set-main",
                    ".os-root.os-style-mac .os-set-card"):
         assert marker in css
+def test_the_fullscreen_pointer_switch_is_drawn_bound_and_rolled_back():
+    """The switch has three halves that can each be missing silently.
+
+    It has to be READ (a page that never asks draws the row unchecked for ever), DRAWN only when the
+    machine can answer (a compositor plugin older than the setting must show no control rather than
+    an inert one -- displays.js answers `available:false` for that), and BOUND with a null check and
+    a rollback. A toggle bound as `querySelector(x).onclick = ...` throws when the row is absent and
+    takes every handler after it with it; one that moves and then quietly does nothing is the other
+    half of the same failure.
+    """
+    render = OS[OS.index("async function renderSystemSettings()"):
+                OS.index("function openTaskManager", OS.index("async function renderSystemSettings()"))]
+    assert "pcDisplays.pointerConfine()" in render, "the page never asks for the current state"
+    assert "pointerConfine.available?" in render, \
+        "the row must not be drawn on a machine whose compositor cannot answer"
+    assert "data-pointer-confine" in render
+    assert "const confine=host.querySelector('[data-pointer-confine]'); if(confine)" in render, \
+        "an unguarded binding takes every handler below it when the row is absent"
+    assert "pcDisplays.setPointerConfine(confine.checked)" in render
+    assert "confine.checked=!confine.checked;" in render, "a refused change must be rolled back"
+    bridge = (ROOT / "desktop/preload.js").read_text()
+    assert "pointerConfine: () => ipcRenderer.invoke('pc:display:pointer-confine')" in bridge
+    assert "setPointerConfine: on => ipcRenderer.invoke('pc:display:pointer-confine-set'" in bridge
+    displays = (ROOT / "desktop/displays.js").read_text()
+    assert "pc-pointer-confine" in displays, "the helper is the one writer; the bridge must use it"
+    assert "if(answer === 'unsupported') return { available:false, on:false };" in displays

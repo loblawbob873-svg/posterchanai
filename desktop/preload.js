@@ -423,6 +423,8 @@ if (isOurPage) {
     preview: rows => ipcRenderer.invoke('pc:display:preview', Array.isArray(rows) ? rows : []),
     confirm: token => ipcRenderer.invoke('pc:display:confirm', String(token||'')),
     revert: token => ipcRenderer.invoke('pc:display:revert', String(token||'')),
+    pointerConfine: () => ipcRenderer.invoke('pc:display:pointer-confine'),
+    setPointerConfine: on => ipcRenderer.invoke('pc:display:pointer-confine-set', !!on),
   });
 
   contextBridge.exposeInMainWorld('pcRemoteControl', {

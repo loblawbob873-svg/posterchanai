@@ -1178,10 +1178,17 @@ async def _main(cfg: dict) -> None:
         try:
             tmp = _paths["status"] + ".tmp"
             with open(tmp, "w") as f:
+                # The PARTS of the people count, not only the total — an operator asked to believe
+                # "72 people" needs to see it is 69 remote clients, 3 of our own machines and 260
+                # sockets. See RelayServer.online_breakdown for why the total alone is unfalsifiable.
                 try:
-                    online = int(server.online_count())
+                    b = dict(server.online_breakdown())
+                    online = int(b.pop("online"))
+                    b.pop("conns", None)                # written below from the same reading
+                    parts = {"online_" + k: v for k, v in b.items()}
                 except Exception:
                     online = int(getattr(server, "_conns", 0) or 0)
+                    parts = {}
                 try:
                     calls = int(server.active_calls())
                 except Exception:
@@ -1189,6 +1196,7 @@ async def _main(cfg: dict) -> None:
                 json.dump({"running": True, "members": len(gate.members()),
                            "conns": int(getattr(server, "_conns", 0) or 0),   # raw live socket count
                            "online": online,                                  # deduped by client IP = people now
+                           **parts,                                           # online_remote/_internal/_unknown/_loopback_conns/_measured
                            "calls": calls,                                    # people in a call right now (kind-25050)
                            "pid": os.getpid(), "ts": int(time.time()),
                            "started": _started,
@@ -1764,8 +1772,13 @@ def relay_status() -> dict:
         calls = int(st.get("calls", 0))         # people in a call right now
         block_purge = st.get("block_purge")
         prune = st.get("prune")
+        # "online_*" = what the people count is made of (see RelayServer.online_breakdown). Optional
+        # like the rest of `extra`: a relay subprocess still running an older build reports none of
+        # them, and every reader must render that as "not reported", never as zero.
         extra = {k: st[k] for k in ("outbox", "private_outbox", "firehose", "subs",
-                                    "accepted", "rejected", "started", "ts") if k in st}
+                                    "accepted", "rejected", "started", "ts",
+                                    "online_remote", "online_internal", "online_unknown",
+                                    "online_loopback_conns", "online_measured") if k in st}
         if not alive:
             alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:

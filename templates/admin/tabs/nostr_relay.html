@@ -158,10 +158,28 @@
             var btn=document.getElementById('relayRefreshWotBtn');
             var stat=document.getElementById('relayWotStatus');
             if(!btn) return;
-            // Show current member count on load.
+            /* Show the WoT size AND who is connected right now — with the figure SPELLED OUT.
+               "72 people are now on the relay?" was a fair question to ask of a bare count, and the
+               operator screen is where it has to be answerable. The people count is distinct client
+               IPs, so it needs the raw socket count it was deduped from (72 people holding 293
+               sockets is a healthy relay; 7 people holding 293 sockets is a broken measurement, and
+               that one really happened — see RelayServer.online_breakdown) and the number of those
+               addresses that are this node's own machines rather than people. A relay on an older
+               build reports neither, and then this says so instead of printing a confident 0. */
+            function nf(n){ try{ return Number(n).toLocaleString(); }catch(_){ return String(n); } }
             fetch('/api/admin/nostr-relay/status').then(function(r){return r.json();}).then(function(s){
-                if(s && s.running) stat.textContent='WoT: '+s.members+' members';
-                else stat.textContent='relay not running';
+                if(!(s && s.running)){ stat.textContent='relay not running'; return; }
+                var line='WoT: '+nf(s.members)+' members';
+                if(s.online!=null){
+                    line+=' · '+nf(s.online)+' connected right now';
+                    var made=[];
+                    if(s.conns!=null) made.push('distinct client IPs across '+nf(s.conns)+' open sockets');
+                    else made.push('distinct client IPs');
+                    if(s.online_internal) made.push(nf(s.online_internal)+' of them this node’s own machines');
+                    if(s.online_measured===false) made.push('addresses unavailable — raw socket count');
+                    line+=' ('+made.join(', ')+')';
+                }
+                stat.textContent=line;
             }).catch(function(){});
             btn.addEventListener('click', function(){
                 btn.disabled=true; stat.textContent='Rebuilding from upstream relays…';

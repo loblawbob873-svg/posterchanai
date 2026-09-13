@@ -6354,7 +6354,7 @@
       return a;
     }catch(_){ return ''; }
   }
-  let _lastOnline=0, _lastRelay=0;   // cached for the mobile More sheet (which is built synchronously)
+  let _lastOnline=0, _lastRelay=0, _lastRelayTitle='';   // cached for the mobile More sheet (built synchronously)
   /* Did /client/stats ever ANSWER? Surfaces that read the cached numbers need to tell "the network is
    * quiet" apart from "there is no server to ask" — a standalone/instance-less build has no stats
    * endpoint at all, and rendering the zeroed defaults there states 0 WoT and 0 online as measured
@@ -6364,10 +6364,13 @@
   async function updateUserCount(onlineOnly){
     const uc=$('#user-count');
     let online=0, users=Number(CFG.users)||0, relay=0, streams=0, calls=0;
+    let relaySockets=0, relayInternal=0;
     try{
       const s=await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json());
       online=Number(s.online)||0;
       relay=Number(s.relay)||0;
+      relaySockets=Number(s.relay_sockets)||0;
+      relayInternal=Number(s.relay_internal)||0;
       streams=Number(s.streams)||0;
       calls=Number(s.calls)||0;
       _statsFetched=true;
@@ -6384,7 +6387,23 @@
     // "on relay" the old label read as a third headcount of this instance rather than the network graph.
     if(users>0) parts.push(`<span class="uc-stat" title="People in this relay’s web of trust">${WOT_ICON} ${users.toLocaleString()} WoT</span>`);
     if(online>0) parts.push(`<span class="uc-stat">${LIVE_ICON} ${online.toLocaleString()} online</span>`);
-    if(relay>0) parts.push(`<span class="uc-stat" title="People connected to this relay right now">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
+    /* SAY WHAT THE FIGURE IS, because an unlabelled headcount that moves is read as a fault.
+     *
+     * This number went from 7 to 72 overnight and was reported as "72 people are now on the relay?
+     * looks like you fucked up something else there too" — and 72 was the CORRECT one. router.lan's
+     * nginx trusted only 192.168.0.1 in `set_real_ip_from` while the cloudflared tunnel dials the
+     * site's public address, so the whole internet arrived as one IP and counted once; the fix on
+     * 2026-09-04 turned that into real per-client addresses. A number nobody can reconcile is worth
+     * as little as a wrong one, so it now carries what it was deduped from. */
+    if(relay>0){
+      const relayTitle = relaySockets > 0
+        ? relay.toLocaleString() + ' distinct client addresses, from ' + relaySockets.toLocaleString()
+          + ' open connections'
+          + (relayInternal > 0 ? ' (' + relayInternal.toLocaleString() + ' of them this node\u2019s own machines)' : '')
+        : 'People connected to this relay right now';
+      _lastRelayTitle = relayTitle;      // the ☰ More sheet is built synchronously; same words there
+      parts.push(`<span class="uc-stat" title="${enc(relayTitle)}">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);
+    }
     // Live activity — ALWAYS shown (even 0) so the streamers/callers counts are always visible; the
     // pulsing red dot only appears when a stream is actually live.
     parts.push(`<span class="uc-stat uc-live" title="Live streams right now">${streams>0?'<span class="uc-dot"></span>':''}${STREAM_ICON} ${streams.toLocaleString()} live</span>`);
@@ -16575,7 +16594,7 @@
     const _net=[
       _wot?`<span title="People in this relay’s web of trust">${WOT_ICON} ${_wot.toLocaleString()} WoT</span>`:'',
       _lastOnline?`<span>${LIVE_ICON} ${_lastOnline.toLocaleString()} online</span>`:'',
-      _lastRelay?`<span title="People connected to this relay right now">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:'',
+      _lastRelay?`<span title="${enc(_lastRelayTitle||'People connected to this relay right now')}">${RELAY_ICON} ${_lastRelay.toLocaleString()} on relay</span>`:'',
     ].join('');
     const _act=`<span title="Live streams right now">${STREAM_ICON} ${_lastStreams.toLocaleString()} live</span><span title="People in a call right now">${CALL_ICON} ${_lastCalls.toLocaleString()} in call</span>`;
     const _stat=`<div class="more-stats muted small">${_net?`<div class="ms-row">${_net}</div>`:''}<div class="ms-row">${_act}</div></div>`;

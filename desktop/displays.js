@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 
 const TRANSFORMS = new Set(['normal','90','180','270','flipped','flipped-90','flipped-180','flipped-270']);
 const quote = s => '"' + String(s).replace(/(["\\])/g, '\\$1') + '"';
@@ -221,4 +222,36 @@ class Displays {
   }
 }
 
-module.exports={Displays,publicOutput,modeText,validate,commands,snapshot};
+/* KEEPING THE MOUSE ON THE MONITOR A FULLSCREEN WINDOW IS USING.
+ *
+ * It belongs on the Displays page because it is a question about monitors: "the cursor is leaving
+ * the monitor on a full screen game" is only ever asked by somebody with more than one. The
+ * compositor owns the switch (posterchan-shell/confine_pointer_to_fullscreen) and
+ * /usr/local/bin/pc-pointer-confine is the one writer -- it sets the running compositor AND stores
+ * the answer for the next sign-in, so this bridge must never write either half itself.
+ *
+ * "unsupported" IS A REAL ANSWER and is not folded into "off": it means this machine's compositor
+ * plugin is older than the setting, and drawing an off switch for it would offer a control that
+ * silently does nothing. */
+const POINTER_HELPER = process.env.PC_POINTER_CONFINE_HELPER || '/usr/local/bin/pc-pointer-confine';
+function pointerHelper(args){
+  return new Promise((resolve, reject) => {
+    execFile(POINTER_HELPER, args, { timeout: 5000 }, (err, stdout, stderr) => {
+      if(err) return reject(new Error(String(stderr||err.message||err).trim().split('\n').pop()));
+      resolve(String(stdout||'').trim().split('\n').pop());
+    });
+  });
+}
+async function pointerConfine(){
+  let answer;
+  try { answer = await pointerHelper(['status']); }
+  catch(_){ return { available:false, on:false }; }
+  if(answer === 'unsupported') return { available:false, on:false };
+  return { available:true, on: answer === 'on' };
+}
+async function setPointerConfine(on){
+  await pointerHelper([on ? 'on' : 'off']);
+  return pointerConfine();
+}
+
+module.exports={Displays,publicOutput,modeText,validate,commands,snapshot,pointerConfine,setPointerConfine};
