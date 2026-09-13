@@ -57,7 +57,11 @@ class El {
   // Only the sidebar's own shape: a nav-item's <span> holds the label text plus badge elements.
   querySelector(sel){
     if(sel === '.nav-grouphd' || sel === 'use') return this._q1(sel);
-    if(sel !== 'span') throw new Error('stub querySelector: ' + sel);
+    /* `span` OR `span, b`: the sidebar labels its rows with a <span> and the phone's bottom bar with
+       a <b>, and _navLabel asks for both. This stub models the SIDEBAR, so either spelling resolves
+       to the same label holder. The throw below stays — a selector nobody modelled must fail loudly
+       rather than answer null and quietly test nothing, which is how it caught this change. */
+    if(sel !== 'span' && sel !== 'span, b') throw new Error('stub querySelector: ' + sel);
     if(!this._cls.has('nav-item')) return null;
     const self = this;
     return { childNodes: [{ nodeType: 3, textContent: self.label }],

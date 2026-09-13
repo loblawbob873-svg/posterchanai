@@ -1,0 +1,115 @@
+#!/bin/sh
+# Keep the mouse pointer on the monitor a fullscreen window is using -- on, off, or report.
+#
+# WHY A HELPER AND NOT A LINE IN wayfire.ini. /etc/wayfire.ini is owned by portage: an
+# `etc-update --automode -5` replaces a hand-edited one, and there is nowhere in it for a person's
+# own answer to live. This is pc-idle's shape exactly -- a number (here a yes/no) in a file the
+# identity owns, pushed into the running compositor through `wayfire/set-config-options`, and
+# applied once from [autostart] so it survives a reboot.
+#
+# THE COMPOSITOR IS THE ONE PLACE THE ANSWER IS KEPT WHILE THE SESSION RUNS. `status` reads the
+# plugin's own IPC rather than this file, because the file is what somebody asked for and the IPC
+# is what is actually happening -- and those were allowed to disagree once already, when
+# Settings -> Power wrote an idle timeout nothing read.
+set -eu
+
+CONF="${PC_POINTER_CONFINE_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/posterchanos/pointer-confine}"
+OPTION=posterchan-shell/confine_pointer_to_fullscreen
+
+read_pref() {
+    v=""
+    [ -r "$CONF" ] && v="$(tr -dc 'a-z' <"$CONF" 2>/dev/null | head -c 5)"
+    # OFF is the default and the safe answer: a pointer that cannot leave a monitor is a trap if it
+    # fires on the wrong window, so an unreadable or missing file must never turn it on.
+    [ "$v" = "true" ] && echo true || echo false
+}
+
+write_pref() {
+    mkdir -p "$(dirname "$CONF")" 2>/dev/null || true
+    printf '%s\n' "$1" >"$CONF"
+}
+
+wf() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 - "$@" <<'PY'
+import glob, json, os, socket, struct, sys
+
+path = os.environ.get("WAYFIRE_SOCKET") or ""
+if not path:
+    # A control pressed in the shell inherits the session environment; a helper run by hand, or
+    # from [autostart] before that import has happened, does not. Discover it the way the desktop's
+    # own backend does.
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    found = sorted(glob.glob(os.path.join(runtime, "wayfire-wayland-*.socket")),
+                   key=lambda p: os.stat(p).st_mtime, reverse=True)
+    path = found[0] if found else ""
+if not path:
+    raise SystemExit(1)
+
+def call(method, data):
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(2.0)
+    s.connect(path)
+    body = json.dumps({"method": method, "data": data}).encode()
+    s.sendall(struct.pack("<I", len(body)) + body)
+    head = b""
+    while len(head) < 4:
+        part = s.recv(4 - len(head))
+        if not part:
+            raise SystemExit(1)
+        head += part
+    n = struct.unpack("<I", head)[0]
+    buf = b""
+    while len(buf) < n:
+        part = s.recv(n - len(buf))
+        if not part:
+            raise SystemExit(1)
+        buf += part
+    s.close()
+    return json.loads(buf)
+
+if sys.argv[1] == "set":
+    out = call("wayfire/set-config-options",
+               {"posterchan-shell/confine_pointer_to_fullscreen": sys.argv[2] == "true"})
+    raise SystemExit(0 if out.get("result") == "ok" else 1)
+
+# REPORT WHAT THE COMPOSITOR IS DOING, and say so plainly when the plugin is not loaded at all --
+# an old posterchan-wayfire-shell answers "No such method", which must not read as "off".
+out = call("posterchan-shell/pointer-confinement", {})
+if out.get("result") != "ok":
+    # Exit 0: this IS an answer, and the shell must not fall back to the stored file and print a
+    # second, contradictory line under it.
+    print("unsupported")
+    raise SystemExit(0)
+print("on" if out.get("enabled") else "off")
+PY
+}
+
+case "${1:-status}" in
+  on|off)
+      want=false; [ "$1" = "on" ] && want=true
+      write_pref "$want"
+      wf set "$want" || {
+          echo "saved, but this session did not accept it — it applies at the next sign-in" >&2
+          exit 1
+      }
+      ;;
+  toggle)
+      [ "$(read_pref)" = "true" ] && exec "$0" off || exec "$0" on
+      ;;
+  apply)
+      # [autostart]: the session has just started, so a failure here is not worth a message on a
+      # console nobody is reading. The stored answer is still the answer at the next sign-in.
+      wf set "$(read_pref)" >/dev/null 2>&1 || true
+      ;;
+  get)
+      read_pref
+      ;;
+  status)
+      wf status || { [ "$(read_pref)" = "true" ] && echo on || echo off; }
+      ;;
+  *)
+      echo "usage: pc-pointer-confine [status|get|on|off|toggle|apply]" >&2
+      exit 64
+      ;;
+esac
