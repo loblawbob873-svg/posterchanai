@@ -44,16 +44,23 @@ const NAV_LOCKED = new Set(['settings','bookmarks','blossom']);
 const navHiddenSet = () => new Set();
 const ITEMS = %s;
 function el(spec){
-  const spans = spec.spans.map(html => ({
+  // Each label carries its TAG, and querySelector honours the selector — otherwise the stub cannot
+  // tell `span` from `b` and a test for exactly that distinction passes whatever the code does.
+  const mk = (tag, html) => ({ tag,
     childNodes: [...html.matchAll(/>([^<]*)</g)].length ? [] : [{nodeType:3, textContent: html}],
     cloneNode(){ const t = html.replace(/<[^>]*>/g,''); return {
       querySelectorAll(){ return []; }, get textContent(){ return t; } }; },
     querySelectorAll(){ return []; },
-  }));
+  });
+  const labels = (spec.spans || []).map(h => mk('span', h))
+              .concat((spec.bolds || []).map(h => mk('b', h)));
   return {
     dataset: spec.dataset || {}, id: spec.id || '',
     classList: { contains: c => (spec.classes||[]).includes(c) },
-    querySelector: () => spans[0] || null,
+    querySelector: sel => {
+      const want = String(sel).split(',').map(x => x.trim());
+      return labels.find(l => want.includes(l.tag)) || null;
+    },
   };
 }
 const nodes = ITEMS.map(el);
@@ -100,6 +107,17 @@ class NoBlankRow(unittest.TestCase):
             self.assertTrue(visible,
                             "a label of %r drew a row with nothing in it" % ch)
             self.assertIn("ghost", rows[0]["label"])
+
+    def test_a_bold_label_is_read_too(self):
+        """The phone's bottom bar writes `<b>Home</b>`; the sidebar writes `<span>Home</span>`.
+
+        `_navLabel` read only `span`, so any row using the bar's markup answered '' — the shape most
+        likely to put an unlabelled switch in front of somebody, since both markups carry the same
+        `nav-item` class.
+        """
+        rows = _rows([{"dataset": {"view": "home"}, "spans": [], "bolds": ["Home"]}])
+        self.assertEqual(rows[0]["label"], "Home",
+                         "a <b>-labelled nav row is still read as unlabelled")
 
     def test_a_real_label_is_untouched(self):
         rows = _rows([{"dataset": {"view": "notes"}, "spans": ["Notes"]}])

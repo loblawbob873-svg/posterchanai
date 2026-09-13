@@ -561,7 +561,12 @@
   }
   // The row's own words, minus the badge counters that live inside the same <span>.
   function _navLabel(btn){
-    const span = btn.querySelector('span'); if(!span) return '';
+    /* `span, b` — NOT `span`. The phone's bottom bar labels its rows `<b>Home</b>` while the
+     * sidebar uses `<span>Home</span>`, so a reader that only knows about spans returns '' for
+     * every bar-shaped row. Nothing puts those in the sidebar today, but the two markups exist side
+     * by side for the same class name, and a label that silently reads as empty is how a switch
+     * ends up with nothing written on it. */
+    const span = btn.querySelector('span, b'); if(!span) return '';
     let t = [...span.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim();
     if(!t){ const c = span.cloneNode(true); c.querySelectorAll('.badge, .pill, i').forEach(n => n.remove()); t = (c.textContent || '').trim(); }
     return t;

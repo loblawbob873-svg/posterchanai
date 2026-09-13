@@ -4,7 +4,14 @@
 #include <wayfire/plugins/ipc/ipc-helpers.hpp>
 #include <wayfire/plugins/ipc/ipc-method-repository.hpp>
 #include <wayfire/plugins/common/shared-core-data.hpp>
+#include <wayfire/core.hpp>
+#include <wayfire/seat.hpp>
+#include <wayfire/output.hpp>
+#include <wayfire/output-layout.hpp>
+#include <wayfire/option-wrapper.hpp>
+#include <wayfire/signal-definitions.hpp>
 #include <wayland-server-core.h>
+#include <algorithm>
 #include <map>
 #include <set>
 #include <limits>
