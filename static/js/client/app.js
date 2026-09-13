@@ -18670,7 +18670,7 @@
   // NIP-96 upload (nostr.build et al.): discover the endpoint from /.well-known/nostr/nip96.json,
   // POST multipart with a NIP-98 (kind-27235) Authorization header, and read the file URL out of the
   // returned nip94_event tags. Used when the target proto is 'nip96' (Blossom uploadBlob can't talk to it).
-  async function uploadNip96(file, server){
+  async function uploadNip96(file, server, opts){
     const base=server.replace(/\/+$/,'');
     let api=base+'/api/v2/nip96/upload';
     try{ const wk=await fetch(base+'/.well-known/nostr/nip96.json').then(r=>r.ok?r.json():null);
@@ -18686,6 +18686,27 @@
     const url=(tags.find(t=>t[0]==='url')||[])[1] || (d&&d.url) || '';
     if(!url) throw new Error('nostr.build: no URL in the upload response');
     try{ const t=file.type||''; if(/^(image|video)\//.test(t)){ const x=(tags.find(t=>t[0]==='x')||[])[1]; _MEDIA_META.set(url,{ m:t, x:x||undefined, dim:await _mediaDim(file) }); } }catch(_){}
+    /* A NIP-96 UPLOAD MUST REPORT ITS CONTENT HASH, OR FILES THROWS THE FILE AWAY.
+     *
+     * uploadBlob's Blossom path ends with `opts.hashOut.sha = <the hash it computed>`, and every
+     * drive caller reads that: `const sha = stored.sha || _shaFromUrl(url); if(!sha) throw new
+     * Error('upload completed without a content hash')`. This function returned the URL and NOTHING
+     * ELSE, from a branch that leaves BEFORE uploadBlob computes a hash at all — so on any client
+     * routed to NIP-96 the bytes uploaded fine and were then discarded by the caller, every time.
+     * Reported for four days as "I still can't upload to Blossom from File Manager to Backgrounds":
+     * the toast says "0 added · 1 failed" and the folder stays empty, while the file IS on a server.
+     * Nothing in any log, because the throw is caught per file and shown only as a ✗.
+     *
+     * The hash to report is the STORED blob's, which on NIP-96 is the `x` tag — the server may
+     * transform what it was given (strip EXIF, transcode), so our local hash would address bytes
+     * that are not there. `ox` (the original) is the next best, and only if neither is a real
+     * sha256 do we fall back to hashing what we sent. */
+    if(opts && opts.hashOut && typeof opts.hashOut==='object'){
+      const pick = k => { const v=(tags.find(t=>t[0]===k)||[])[1]||''; return /^[0-9a-f]{64}$/i.test(v) ? v.toLowerCase() : ''; };
+      let sha = pick('x') || pick('ox');
+      if(!sha){ try{ sha = await sha256hex(await file.arrayBuffer()); }catch(_){ sha=''; } }
+      if(sha) opts.hashOut.sha = sha;
+    }
     return url;
   }
   // ONE signature for a whole multi-file upload. Every Blossom upload needs a signed kind-24242 auth, and
@@ -18740,7 +18761,7 @@
      * in the drive smaller, lossier, stripped of its capture date and under a DIFFERENT sha256 than
      * the original it claims to be a copy of — with nothing in the UI to say so. */
     if(!(opts && opts.noCompress)) file=await compressMedia(file);
-    if(tgt.proto==='nip96') return await uploadNip96(file, server);
+    if(tgt.proto==='nip96') return await uploadNip96(file, server, opts);
     const buf=await file.arrayBuffer(); const hash=await sha256hex(buf);
     // Reuse the BATCH auth when this blob's hash is one it already commits to (BUD-01 allows many `x` tags,
     // and the server checks membership). That turns "sign once per file" into ONE signature for the whole
