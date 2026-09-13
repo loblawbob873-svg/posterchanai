@@ -302,6 +302,15 @@ CHECKS = {
     "check_your_files_are_reachable":  dict(group="ui", secs=240,
                                             why="every folder on the drive is reachable from every "
                                                 "surface that offers your files"),
+    # Torrents was the last big screen in the client with no browser check at all — the coverage
+    # was server-side only, and a test of /api/torrent cannot see a view. Two of its rules are its
+    # own: this list repaints itself IN PLACE every 2s, so a fast path that blanks the box or
+    # forgets to rebind leaves a screen that is correct for two seconds and dead afterwards.
+    "check_torrents_show_what_you_are_downloading":
+                                       dict(group="ui", secs=240,
+                                            why="the torrents screen shows the torrents, its tabs "
+                                                "switch, and its 2s repaint keeps the rows and "
+                                                "their buttons"),
     "check_composer_toolbar":          dict(group="ui", secs=420),
     "check_quote_modal":               dict(group="ui", secs=420),
     "check_meme_timeline":             dict(group="ui", secs=420),
