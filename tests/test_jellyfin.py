@@ -189,6 +189,14 @@ def test_hls_ticket_translation_client_bandwidth_and_stop(api, monkeypatch):
     assert c.post('/jellyfin/Items/' + item['Id'] + '/PlaybackInfo', headers=h,
                   json={'MaxStreamingBitrate': 1000}).json()['ErrorCode'] == 'NoCompatibleStream'
     assert c.post('/jellyfin/Sessions/Playing/Stopped', headers=h, json={'PlaySessionId': info['PlaySessionId']}).status_code == 204
+    # A STOP REPORT IS NOT INSTANT REVOCATION, because a client changes rendition by reporting
+    # Stopped and asking for the new one in the same breath. Asserting 404 here is what let a
+    # bitrate switch end a film with "Error During Playback" on a real TV: master.m3u8 answered 200,
+    # the client reported Stopped, and every request after it 404'd. A stop still ENDS streaming,
+    # after the grace, which is the part this line was really protecting. Access itself is the
+    # signed ticket and `authenticate`; revoking a permission has its own path and its own test.
+    assert c.get(segment).status_code == 200
+    jf._plays[info['PlaySessionId']]['stopped'] -= jf._STOP_GRACE + 1
     assert c.get(segment).status_code == 404
 
 
@@ -758,6 +766,8 @@ def test_android_tv_accepts_file_source_and_can_release_transcode(api):
     assert api.client.delete(url, headers=headers(second)).status_code == 204
     assert info['PlaySessionId'] in jf._plays
     assert api.client.delete(url, headers=headers(first)).status_code == 204
+    # RELEASING A TRANSCODE IS AN EXPLICIT TEARDOWN, not a rendition switch, so this one really
+    # does drop the record — unlike a Stopped REPORT, which a client sends mid-film.
     assert info['PlaySessionId'] not in jf._plays
     assert api.client.delete(url, headers=headers(first)).status_code == 204
 
@@ -1159,7 +1169,9 @@ def test_roku_audio_metadata_artwork_and_item_only_playback_reports(api, monkeyp
                   json={'ItemId':item['Id']}).status_code == 404
     assert c.post('/jellyfin/Sessions/Playing/Stopped', headers=h,
                   json={'ItemId':item['Id'], 'PositionTicks':30000000}).status_code == 204
-    assert info['PlaySessionId'] not in jf._plays
+    # Marked stopped rather than dropped (see jf._STOP_GRACE), so a rendition switch still
+    # works; it stops serving once the grace has passed.
+    assert jf._plays[info['PlaySessionId']].get('stopped')
     # Clearing volatile caches does not prevent an authenticated saved item reopening.
     jf._audio_art.clear(); jf._locators.clear()
     assert c.get(art_url).status_code == 401

@@ -54,5 +54,11 @@ assert.equal(playlist.status,200);
 assert.equal(playlist.headers.get('cache-control'),'private, no-store');
 await promisify(execFile)('ffmpeg',['-v','error','-i',stream,'-t','2','-f','null','-'],{timeout:45000,encoding:'utf8'});
 await getSessionApi(api).reportPlaybackStopped({playbackStopInfo:{ItemId:items[0].Id,PlaySessionId:info.PlaySessionId}});
-assert.equal((await fetch(stream)).status,404);
+// A STOP REPORT IS NOT INSTANT REVOCATION. A client changes rendition by reporting Stopped and
+// asking for the new one in the same breath, so 404 here is what ended a real film on a real TV
+// with "Error During Playback". The stream is still served for _STOP_GRACE and then stops — the
+// expiry itself is asserted in tests/test_a_bitrate_switch_does_not_end_the_film.py, which can age
+// the record; from out here all this can honestly say is that reporting a stop does not break the
+// session the client is still using.
+assert.equal((await fetch(stream)).status,200);
 console.log('PASS: official Jellyfin SDK discovery, Quick Connect, browsing, playback URL, real FFmpeg decode, stop');

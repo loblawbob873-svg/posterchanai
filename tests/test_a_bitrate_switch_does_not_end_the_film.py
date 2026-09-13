@@ -84,6 +84,31 @@ class BitrateSwitch(unittest.TestCase):
         self.assertTrue(jellyfin._plays[self.play_id].get("stopped"),
                         "nothing records that the client reported a stop")
 
+    def test_a_stop_still_ends_streaming_once_the_grace_has_passed(self):
+        """Keeping the record must not mean a stop never stops anything.
+
+        A rendition switch re-requests in milliseconds; a real stop is never followed by anything.
+        The grace is what lets one work without the other becoming permanent.
+        """
+        self._stop()
+        jellyfin._plays[self.play_id]["stopped"] -= jellyfin._STOP_GRACE + 1
+        with self.assertRaises(Exception) as caught:
+            jellyfin.play_record(_Auth(), self.play_id, "879a7455759d34030e7df3b8fd9ec95e")
+        self.assertEqual(getattr(caught.exception, "status_code", None), 404)
+
+    def test_playing_again_clears_the_mark(self):
+        """A client that switched rendition reports Playing straight after its Stopped. Leaving the
+        mark would expire it 60s later, mid-film, for the same reason the pop did instantly."""
+        import asyncio
+        self._stop()
+        with mock.patch.object(jellyfin, "media_call", new=mock.AsyncMock(return_value={})), \
+             mock.patch.object(jellyfin, "persist_progress", new=mock.AsyncMock()):
+            asyncio.run(jellyfin.progress(
+                request=mock.Mock(), body={"PlaySessionId": self.play_id},
+                auth=_Auth(), db=mock.Mock()))
+        self.assertNotIn("stopped", jellyfin._plays[self.play_id],
+                         "a resumed session is still marked stopped and will expire mid-film")
+
     def test_it_is_still_bounded(self):
         """Not popping must not mean growing without limit."""
         import inspect

@@ -880,10 +880,21 @@ async def image(uid: str, request: Request, auth=Depends(authenticate_image), db
     return await media_call(request, auth, db, f"/{lib['id']}/art/{item['id']}")
 
 
+# A stop report is not an authorization boundary — access is the signed ticket and `authenticate`,
+# and revoking a permission cuts playback off through its own path. But a stop should still END
+# streaming eventually, which is what the suite was protecting when it asserted a segment 404s after
+# one. Both hold with a grace: a client changes rendition by reporting Stopped and asking for the new
+# one in the same breath, which is milliseconds, while a real stop is never followed by anything.
+_STOP_GRACE = 60.0
+
+
 def play_record(auth, play_id, uid=None):
     record = _plays.get(play_id)
     if (not record or time.monotonic() - record['seen'] > 900 or record['token'] != digest(auth.token)
             or (uid and record['item'] != uid)):
+        raise HTTPException(404, 'Playback session expired; reopen the item')
+    stopped_at = record.get('stopped')
+    if stopped_at and time.monotonic() - stopped_at > _STOP_GRACE:
         raise HTTPException(404, 'Playback session expired; reopen the item')
     record['seen'] = time.monotonic()
     _plays.move_to_end(play_id)
@@ -1108,6 +1119,10 @@ async def progress(request: Request, body: dict = Body(default={}), auth=Depends
         _plays[play_id] = record
         while len(_plays) > 256:
             _plays.popitem(last=False)
+    # A session being reported on is not a stopped one: a client that switched rendition reports
+    # Playing again straight after its Stopped, and leaving the mark would expire it 60s later
+    # mid-film for the same reason the pop did instantly.
+    record.pop('stopped', None)
     await persist_progress(request, auth, db, record, body)
     return Response(status_code=204)
 
@@ -1140,7 +1155,7 @@ async def stopped(request: Request, body: dict = Body(default={}), auth=Depends(
     # whether or not a session is counted, and the `/sessions/stop` above has already given back the
     # concurrent-stream slot — the only thing a stop actually frees. The record stays bounded
     # exactly as before, by the 900s staleness check in play_record() and the 256-entry cap.
-    record['stopped'] = True
+    record['stopped'] = time.monotonic()
     return Response(status_code=204)
 
 
