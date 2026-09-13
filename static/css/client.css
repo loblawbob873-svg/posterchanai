@@ -7715,9 +7715,25 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
    the desktop toasts (345) or the right-click menu (420) — an unbounded focus counter did exactly
    that after a few hundred view switches, and every one of those panels then opened invisibly
    behind a window. Anything new that must sit over the desktop goes ABOVE 200, never in the band. */
+/* EVERY WINDOW WEARS ITS BORDER, FOCUSED OR NOT, AND IT IS A `border` -- NOT A PSEUDO-ELEMENT AND
+   NOT AN EFFECT.
+
+   The gradient ring further down is real and correct and is gated on THREE things, each of which is
+   a way to draw nothing: `.os-root.os-fx` (the Desktop-effects switch, which is off on touch and off
+   on low power), `.focused`, and a masked `::after` inside an `overflow:hidden` box. An UNFOCUSED
+   window was left with `1px solid var(--line)` -- `rgba(125,210,255,.16)`, which over the panel
+   composites to (39,53,73) against a (10,10,15) desktop. Measured off a real screen, not estimated:
+   that is the same "it was there the whole time and invisible" the compositor frame was reported
+   for, and invisible is indistinguishable from absent.
+
+   A `border` cannot be clipped by the frame it is part of, cannot be covered by content, needs no
+   mask and no @property, and is painted whatever the effects switch says. So the two states live
+   here as two strengths of the theme's own accent -- which is what Hyprland's `col.active_border`
+   and `col.inactive_border` actually are. 2px, not 1: these desks run 3840x2560, where one CSS
+   pixel of hairline is the thing being asked about. */
 .osw{position:absolute;display:flex;flex-direction:column;min-width:420px;min-height:260px;
-  background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
-  box-shadow:0 18px 50px rgba(0,0,0,.55)}
+  background:var(--panel);border:2px solid rgba(var(--accent-rgb),.24);border-radius:12px;
+  overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.55)}
 .os-root.os-fx .osw:not(.osw-document){
   background:color-mix(in srgb,var(--panel) 94%,transparent);
   -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
@@ -7967,7 +7983,7 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 @media(max-width:1180px){.os-root.os-style-mac .os-mac-menu{inset-inline-end:min(390px,46vw)}
   .os-root.os-style-mac .os-mac-menu button{padding-inline:6px}.os-root.os-style-mac .os-tray{gap:4px}
   .os-root.os-style-mac .os-task{flex-basis:43px;width:43px}}
-.osw.focused{border-color:color-mix(in srgb, var(--neon) 55%, var(--line));
+.osw.focused{border-color:rgba(var(--accent-rgb),.85);
   box-shadow:0 22px 64px rgba(0,0,0,.62)}
 
 /* THE FOCUSED WINDOW WEARS A TURNING GRADIENT, the way Hyprland draws its active border.
@@ -10223,6 +10239,33 @@ html.pc-oswin body{padding-top:38px}
    that is actually available. `min-height:0` because `.main` is a grid child and `auto` there is
    its content, which puts the overflow straight back. */
 html.pc-oswin #app,html.pc-oswin .main{height:100%!important;min-height:0!important}
+/* A POPPED-OUT WINDOW IS A REAL TOPLEVEL AND FELL BETWEEN BOTH BORDER MECHANISMS.
+ *
+ * Reported as "desktop and laptop still missing the window border thing like hyprland" and measured
+ * on both machines before this was written. `window-rules/list-views` over Wayfire's IPC answers, on
+ * the desk:
+ *
+ *     5,7  place.poster.desktop  "PosterChan Desktop"              3840x2560   (one per output)
+ *     13   place.poster.desktop  "PosterChan Window - terminal"    1653x998
+ *     199  place.poster.desktop  "PosterChan Window - calendar"    3053x2205
+ *
+ * Every window on those screens is a COMPOSITOR TOPLEVEL, not an in-page `.osw`. So:
+ *
+ *   - `.osw`'s border above never applies to it -- different element, different document;
+ *   - and `wayfire.ini`'s `[decoration]` deliberately does not either: `ignore_views` excludes
+ *     `app_id is "place.poster.desktop"` and `title contains "PosterChan Window"`, which it MUST,
+ *     because the full-output desktop shell is that same app_id and a frame around the wallpaper
+ *     is absurd. Forcing decorations back on would also give each of these a Wayfire titlebar on
+ *     top of the `#pc-oswin-chrome` one below -- two title bars per window.
+ *
+ * Confirmed by scanning `grim` output column by column: not one accent pixel down either window's
+ * edge, focused or not. The border was never drawn by anything; it is drawn here, by the only party
+ * that owns the whole surface. Inside the toplevel rather than around it, which is where a client
+ * can draw -- visually the same edge Hyprland paints, and above the title bar so it traces all four
+ * sides. `pointer-events:none` keeps every pixel of it clickable through. */
+#pc-oswin-frame{position:fixed;z-index:2147483641;inset:0;pointer-events:none;
+  border:2px solid rgba(var(--accent-rgb),.24)}
+#pc-oswin-frame.focused{border-color:rgba(var(--accent-rgb),.85)}
 #pc-oswin-chrome{position:fixed;z-index:2147483640;inset:0 0 auto;height:38px;box-sizing:border-box;
   display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 12px;color:var(--text);
   /* THE TITLE BAR OF A POPPED-OUT WINDOW IS THE ONE PEOPLE ACTUALLY LOOK AT, and it was a purple

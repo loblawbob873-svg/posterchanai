@@ -20,9 +20,13 @@ CONF="${PC_POINTER_CONFINE_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/posterchanos/
 read_pref() {
     v=""
     [ -r "$CONF" ] && v="$(tr -dc 'a-z' <"$CONF" 2>/dev/null | head -c 5)"
-    # OFF is the default and the safe answer: a pointer that cannot leave a monitor is a trap if it
-    # fires on the wrong window, so an unreadable or missing file must never turn it on.
-    [ "$v" = "true" ] && echo true || echo false
+    # ON IS THE DEFAULT, AND THIS IS THE FALLBACK THAT DECIDES IT. `apply` runs from [autostart]
+    # and pushes this answer into the compositor a moment after wayfire has read its own config,
+    # so a "false" here would quietly undo the `confine_pointer_to_fullscreen = true` in
+    # wayfire.ini on every single sign-in -- the setting correct in two files and off on the
+    # machine. Only the literal word `false` in this file turns it off; anything else, including
+    # no file at all, is on.
+    [ "$v" = "false" ] && echo false || echo true
 }
 
 write_pref() {

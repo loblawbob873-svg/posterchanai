@@ -254,8 +254,15 @@ def test_a_fullscreen_window_keeps_the_pointer_on_its_own_monitor(compositor):
         assert 'error' not in answer, answer
         time.sleep(.3)
 
-    # OFF is the shipped default, and the default must let the pointer go where it likes.
-    assert rpc(sock, 'posterchan-shell/pointer-confinement')['enabled'] is False
+    # ON IS THE SHIPPED DEFAULT NOW, and this is the assertion that reads it out of the BUILT
+    # PLUGIN rather than out of the .xml -- the two can disagree, and only this one is what a
+    # machine gets. (It shipped off; "no other os makes you fucking toggle the cursor guard".)
+    assert rpc(sock, 'posterchan-shell/pointer-confinement')['enabled'] is True, \
+        'the compositor did not come up confining; the metadata default did not reach the plugin'
+
+    # And OFF still means off, which is the whole of "keeping the IPC toggle". Turning it off must
+    # let the pointer go wherever it likes, fullscreen window or not.
+    _enable(sock, False)
     stage(game, True)
     assert push()['x'] > box['x'] + box['width'], 'the switch is off; nothing may hold the pointer'
 
@@ -310,24 +317,75 @@ def test_the_pointer_is_confined_not_captured(compositor):
     assert moved['x'] == elsewhere['x'] + 25, moved
 
 
-def test_the_option_is_declared_off_and_the_package_that_carries_it_is_required():
-    """Three files have to agree or the switch is silently inert on a real machine."""
+def test_the_option_is_declared_on_and_the_package_that_carries_it_is_required():
+    """Three files have to agree or the switch is silently inert on a real machine.
+
+    IT NOW SHIPS ON. "no other os makes you fucking toggle the cursor guard" -- and the argument it
+    shipped off under (a pointer that cannot leave a monitor is a trap if it fires on the wrong
+    window) describes something bounded and reversible, while the cursor walking out of a fullscreen
+    game onto the second screen is what actually happens on the hardware this ships to.
+
+    THE DEFAULT LIVES IN THREE PLACES AND THE LAST ONE WINS. wayfire reads the .xml default, the
+    shipped wayfire.ini then states it explicitly, and a moment later [autostart] runs
+    `pc-pointer-confine apply`, which pushes the PERSON'S stored answer over the top of both. Leave
+    the helper's no-file fallback at "false" and the setting is correct in two files and off on
+    every machine, every sign-in, with nothing anywhere to say so.
+    """
     xml = METADATA.read_text()
     assert 'confine_pointer_to_fullscreen' in xml, \
         'an option missing from the metadata cannot be set over IPC at all'
-    assert '<default>false</default>' in xml, 'this must ship OFF'
+    assert '<default>true</default>' in xml, 'this must ship ON'
     ini = (ROOT / 'os/overlay/app-misc/posterchanos-shell/files/wayfire.ini').read_text()
-    assert 'confine_pointer_to_fullscreen = false' in ini
+    assert 'confine_pointer_to_fullscreen = true' in ini
     assert 'pc-pointer-confine apply' in ini, \
         'without an autostart line the choice is forgotten at every sign-in'
     shell = next((ROOT / 'os/overlay/app-misc/posterchanos-shell').glob('posterchanos-shell-*.ebuild')).read_text()
-    assert '>=gui-libs/posterchan-wayfire-shell-1.0.1' in shell, \
-        'emerge -u only pulls a dependency it is told a version for; without this the old plugin stays'
+    # Derived from the overlay, never typed: `emerge -u` only pulls a dependency it is told a
+    # version for, so a revbump of the plugin that leaves this floor behind ships the new .so to
+    # nobody -- and a floor hardcoded here would go stale at the next bump instead of catching it.
+    plugin = next((ROOT / 'os/overlay/gui-libs/posterchan-wayfire-shell').glob('*.ebuild'))
+    version = plugin.stem.replace('posterchan-wayfire-shell-', '')
+    assert f'>=gui-libs/posterchan-wayfire-shell-{version}' in shell, \
+        (f'the overlay carries {version} and posterchanos-shell still asks for an older floor; '
+         'emerge -u will leave the installed plugin exactly where it is')
     assert ' pc-pointer-confine ' in shell, 'the helper has to be installed'
     assert 'wayland-scanner' in EBUILD.read_text(), \
         'wlroots ships no generated protocol header, so the constraint guard would not compile'
     gentoo = (ROOT / 'os/gentoo.sh').read_text()
     assert ' pc-pointer-confine ' in gentoo, 'a fresh install copies the helpers itself'
+
+
+@pytest.mark.parametrize('stored,expected', [
+    (None, 'true'),        # a machine nobody has ever touched this on
+    ('', 'true'),          # and one whose file is empty or half-written
+    ('garbage', 'true'),
+    ('true\n', 'true'),
+    ('false\n', 'false'),  # the ONE way to turn it off, and it still works
+])
+def test_the_helper_defaults_to_on_and_only_the_word_false_turns_it_off(tmp_path, stored, expected):
+    """RUN the shipped helper, because this fallback is what [autostart] pushes every sign-in.
+
+    `apply` sets the compositor from `read_pref`, so this function -- not the .xml and not
+    wayfire.ini -- is what a person ends the session start with.
+    """
+    if not shutil.which('sh'):
+        pytest.skip('no POSIX shell')
+    conf = tmp_path / 'pointer-confine'
+    if stored is not None:
+        conf.write_text(stored)
+    for helper in (ROOT / 'os/bin/pc-pointer-confine',
+                   ROOT / 'os/overlay/app-misc/posterchanos-shell/files/pc-pointer-confine'):
+        answer = subprocess.run(['sh', str(helper), 'get'], capture_output=True, text=True,
+                                env={**os.environ, 'PC_POINTER_CONFINE_CONF': str(conf)})
+        assert answer.stdout.strip() == expected, (helper.name, stored, answer.stdout, answer.stderr)
+
+
+def test_both_copies_of_the_helper_are_the_same_file():
+    """One is installed by the ebuild and one by os/gentoo.sh; a fix applied to one is applied to no
+    machine that took the other route."""
+    a = (ROOT / 'os/bin/pc-pointer-confine').read_bytes()
+    b = (ROOT / 'os/overlay/app-misc/posterchanos-shell/files/pc-pointer-confine').read_bytes()
+    assert a == b, 'os/bin and the overlay copy of pc-pointer-confine have drifted' 
 def test_a_missing_metadata_file_does_not_take_the_whole_desktop_down(tmp_path):
     """The .so without its .xml must degrade to "off", never kill the compositor.
 

@@ -324,6 +324,29 @@
         +'<button data-action="close" title="Close" aria-label="Close">×</button></span>';
       bar.querySelector('.pc-oswin-title').textContent=String(state.label||state.view||'PosterChan');
       (root.document.body||root.document.documentElement).prepend(bar);
+      /* THE WINDOW'S BORDER, because nothing else on this surface draws one.
+       *
+       * A popped-out window is a real compositor toplevel, so the desktop's `.osw` border never
+       * reaches it; and Wayfire's `[decoration]` is told to ignore this app_id on purpose -- the
+       * full-output desktop shell shares it, and forcing decorations back on would add a second
+       * title bar above the one this function just installed. Measured on the desk and the laptop
+       * before this was added: not one accent pixel anywhere down either window's edge.
+       *
+       * So the border is drawn INSIDE the toplevel, which is the part a client owns. Same edge
+       * Hyprland paints, above the title bar so it traces all four sides, and click-through.
+       *
+       * Focus is read from `document.hasFocus()` rather than remembered from the last event: a
+       * window can be opened already blurred, and a latch set before the fact is the shape this
+       * repo keeps rediscovering. Bare `focus`/`blur` on the window -- NOT capture -- because a
+       * capturing listener also fires for every input and button inside the page, which asks the
+       * question thousands of times to get the same answer. */
+      const frame=root.document.createElement('div');
+      frame.id='pc-oswin-frame'; frame.setAttribute('aria-hidden','true');
+      (root.document.body||root.document.documentElement).prepend(frame);
+      const paintFocus=()=>{ try{ frame.classList.toggle('focused', root.document.hasFocus()); }catch(_){ } };
+      root.addEventListener('focus',paintFocus); root.addEventListener('blur',paintFocus);
+      try{ root.document.addEventListener('visibilitychange',paintFocus); }catch(_){ }
+      paintFocus();
       bar.querySelector('[data-action="close"]').onclick=()=>root.close();
       /* THE COMPOSITOR IS THE BETTER ANSWER AND NOT THE ONLY ONE.
        *

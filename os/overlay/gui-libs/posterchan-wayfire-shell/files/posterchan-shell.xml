@@ -5,8 +5,8 @@
     <_long>Disable interactive movement and resize only for registered desktop surfaces, and optionally keep the mouse pointer on the monitor a fullscreen window is using.</_long>
     <option name="confine_pointer_to_fullscreen" type="bool">
       <_short>Keep the pointer on a fullscreen window's monitor</_short>
-      <_long>While a fullscreen window is focused, the pointer cannot leave the monitor it is on. Off by default: a pointer that cannot leave a monitor is a trap if it fires on the wrong window. A client that takes a pointer-constraints-v1 grab of its own is left alone.</_long>
-      <default>false</default>
+      <_long>While a fullscreen window is focused, the pointer cannot leave the monitor it is on. ON by default: a cursor sliding off a fullscreen game onto a second monitor is the failure, and no other desktop asks first. Turn it off in System Settings -&gt; Displays, or with `pc-pointer-confine off`. A client that takes a pointer-constraints-v1 grab of its own is left alone, and a single-monitor machine is never affected.</_long>
+      <default>true</default>
     </option>
   </plugin>
 </wayfire>

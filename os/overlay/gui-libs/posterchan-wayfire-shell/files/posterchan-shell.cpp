@@ -125,10 +125,15 @@ class posterchan_shell_t : public wf::plugin_interface_t
      * `wlr_cursor_absolute_to_layout_coords` has no inverse available to a plugin. Every mouse and
      * every laptop touchpad is relative; force-fullscreen covers exactly the same set.
      *
-     * OFF BY DEFAULT (`confine_pointer_to_fullscreen`, settable live over
+     * ON BY DEFAULT (`confine_pointer_to_fullscreen`, settable live over
      * `wayfire/set-config-options`, which is what /usr/local/bin/pc-pointer-confine and System
-     * Settings -> Displays use). A pointer that cannot leave a monitor is a trap when it fires on
-     * the wrong window, so this is something a person turns on. */
+     * Settings -> Displays use). It shipped off, on the argument that a pointer which cannot leave
+     * a monitor is a trap when it fires on the wrong window -- and the answer to that was "no other
+     * OS makes you fucking toggle the cursor guard". The trap is hypothetical and bounded: nothing
+     * happens on a single monitor, nothing happens outside a fullscreen window, a client's own
+     * pointer grab is left alone, and one command turns it off. The cursor walking out of a game
+     * onto the second screen is what actually happens. The default lives in the .xml beside this
+     * file -- never here, see below. */
     /* LOOKED UP, NOT WRAPPED, AND A MISSING OPTION IS SIMPLY "OFF".
      *
      * `wf::option_wrapper_t` throws when the option is not declared, and the throw reaches
@@ -137,8 +142,13 @@ class posterchan_shell_t : public wf::plugin_interface_t
      * without its XML: "No such option ... Fatal error: Segmentation fault" and no desktop at all.
      * The .so and the .xml ship in one package so they should never separate, but "should never"
      * is not a reason to let a stale or hand-copied metadata file cost somebody their machine with
-     * only a text console as the way back. Absent, the option resolves to false, which is the
-     * behaviour that shipped before this feature existed. */
+     * only a text console as the way back.
+     *
+     * ABSENT, THE OPTION STILL RESOLVES TO FALSE -- deliberately, and NOT to the .xml's new `true`.
+     * A missing declaration does not mean "the operator wants the default", it means this .so and
+     * its metadata have come apart, and the safe reading of a broken install is the behaviour that
+     * shipped before the feature existed. The default that people actually get is the one declared
+     * in posterchan-shell.xml, which ships in this same package. */
     static constexpr const char *CONFINE_OPTION = "posterchan-shell/confine_pointer_to_fullscreen";
     std::shared_ptr<wf::config::option_t<bool>> confine_option;
     bool confine()
