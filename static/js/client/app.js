@@ -20271,11 +20271,15 @@
           // Did we actually GET the index? A pointer that names a blob we couldn't fetch or decrypt is
           // the dangerous case: the server HAS folders, we're holding an empty default, and the next
           // save would replace theirs with ours. Flag it and refuse to write until a pull succeeds.
-          if(idx){ this._pullOk=true; if(!this._dirty && !this._saving) this._synced(); }
+          /* `_pullBlocked` is CLEARED on every successful read, not only on a reset. It is latched
+           * state describing one attempt, and a flag that can only ever go true would keep naming
+           * an unreadable index long after the read recovered — so the message below would blame
+           * the wrong thing for the rest of the session. */
+          if(idx){ this._pullOk=true; this._pullBlocked=false; if(!this._dirty && !this._saving) this._synced(); }
           else if(ptr.indexSha || (ptr.files && Object.keys(ptr.files).length)) this._pullBlocked=true;
-          else this._pullOk=true;                 // a pointer with nothing in it: server really is empty
+          else { this._pullOk=true; this._pullBlocked=false; }   // a pointer with nothing in it: server really is empty
         } else if(r && r.ok){
-          this._pullOk=true;                      // server has no index at all — a fresh drive, safe to save
+          this._pullOk=true; this._pullBlocked=false;  // server has no index at all — a fresh drive, safe to save
         }
       }catch(_){
         /* A THROW HERE USED TO MEAN "STILL LOADING", FOR EVER.
@@ -20330,8 +20334,22 @@
       if(!this._pullOk){
         await this.pull();
         if(!this._pullOk){
-          console.warn('files-index: server index unreadable — not saving (would overwrite it)');
-          try{ toast('⚠️ Couldn\'t read your folders from the server — not saving, so your existing folders aren\'t overwritten. Try reloading.'); }catch(_){}
+          /* TWO DIFFERENT PROBLEMS, AND THEY NEED TWO DIFFERENT SENTENCES.
+           *
+           * `_pullBlocked` means the server HAS an index and this device could not READ it — a
+           * missing drive key, or an index blob that would not fetch or decrypt. Reloading does not
+           * help with that; it is about this device's key, and the fix is to unlock the drive or
+           * open it where the key is. Everything else here is "we could not ask the server at all",
+           * where reloading is exactly right. Until now both printed the same "try reloading",
+           * which sent people to re-do the one thing that could not work. The flag that tells them
+           * apart was set on every pull and read by nothing. */
+          const blocked = this._pullBlocked;
+          console.warn('files-index: ' + (blocked
+            ? 'server HAS an index this device could not read — not saving (would overwrite it)'
+            : 'could not read the server index — not saving (would overwrite it)'));
+          try{ toast(blocked
+            ? '⚠️ Your folders are on the server but this device couldn\'t unlock them — nothing was saved, so they aren\'t overwritten. Open your drive (or check your drive key) and try again.'
+            : '⚠️ Couldn\'t read your folders from the server — not saving, so your existing folders aren\'t overwritten. Try reloading.'); }catch(_){}
           return false;
         }
       }
