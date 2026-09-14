@@ -4015,6 +4015,7 @@
     let changed = JSON.stringify(nativeTasks.map(r => [r.id,r.title,r.focused,r.stashed]))
                !== JSON.stringify(rows.map(r => [r.id,r.title,r.focused,r.stashed]));
     nativeTasks = rows;
+    _sweepNativePreviews(rows);
     const alive = new Set(rows.map(r => Number(r.id)));
     for(const id of [..._nativeDecorated]) if(!alive.has(id)) _nativeDecorated.delete(id);
     if(pcWM.decorate) for(const r of rows){
@@ -4250,6 +4251,15 @@
    * the chooser appearing and being removed again 38ms later, twice, on every press.
    *
    * Both halves of "alt tab is complete garbage" reduce to this one line reading half the desk. */
+  /* Native Alt+Tab previews, kept across gestures. Swept in the same place the task list is
+   * reconciled, so it can only ever hold windows that still exist. */
+  const _nativePreviewCache=new Map();
+  function _sweepNativePreviews(rows){
+    try{
+      const alive=new Set((rows||[]).map(r=>Number(r&&r.id)).filter(Number.isFinite));
+      for(const id of [..._nativePreviewCache.keys()]) if(!alive.has(id)) _nativePreviewCache.delete(id);
+    }catch(_){ }
+  }
   const _switchRows=()=>{
     const rows=[];
     for(const w of wins){
@@ -4404,7 +4414,19 @@
          * Ordinary live Firefox/Telegram therefore showed an empty generic card in Alt+Tab even
          * though the compositor can capture it safely. Cache once per switch gesture (grim is not
          * a paint primitive), and never write into a chooser that has since closed/redrawn. */
-        s.nativePreviews=s.nativePreviews||new Map();const key=Number(e.native);
+        /* THE CACHE OUTLIVES THE GESTURE, OR EVERY PRESS PAYS FOR THE CAPTURE AGAIN.
+         *
+         * It lived on the switch session, so releasing Alt threw it away and the next Alt+Tab
+         * started from nothing: `pcWM.preview` is a compositor screen capture, and `apply` refuses
+         * to write into a chooser that has since closed — so whenever the capture lost the race with
+         * the gesture, that card stayed blank. Reported as "previews sometimes missing", and
+         * "sometimes" is exactly the shape of a race against a screenshot.
+         *
+         * Keyed on the native id and swept against the live window list, so a closed application
+         * cannot leave a stale picture behind, and a long-lived one is captured once instead of once
+         * per press. A picture a few seconds old is the right trade here: the alternative on screen
+         * is no picture at all. */
+        s.nativePreviews=_nativePreviewCache;const key=Number(e.native);
         const apply=data=>{if(!data||_altSwitch!==s||!p.isConnected)return;
           p.style.backgroundImage=`url("${String(data).replace(/["\\]/g,'')}")`;p.classList.remove('empty');};
         if(s.nativePreviews.has(key))apply(s.nativePreviews.get(key));
