@@ -42,6 +42,13 @@ map $http_upgrade $connection_upgrade {
     ''      close;
 }
 
+# websockets' HTTP parser accepts GET only. Fetch the same headers for HEAD
+# without forwarding HEAD upstream; nginx suppresses the body for the client.
+map $request_method $poster_relay_method {
+    default $request_method;
+    HEAD GET;
+}
+
 upstream posterchanai_app   { server 127.0.0.1:3051; }
 upstream posterchanai_relay { server 127.0.0.1:3052; }
 # CODE, if this node runs it. 127.0.0.1 ASSUMES NGINX AND CODE ARE THE SAME MACHINE, which is the
@@ -148,12 +155,14 @@ server {
     # version of that block is in nostr-docker.conf.example.)
     location = /relay {
         proxy_pass http://posterchanai_relay/relay;
+        proxy_method $poster_relay_method;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
     # NIP-11 relay info + the relay's welcome page (GET https://example.com/relay-info).
     location = /relay-info {
         proxy_pass http://posterchanai_relay/;
+        proxy_method $poster_relay_method;
     }
 
     # ---- Chat WebSocket (/ws/chat/<id>) ------------------------------------
@@ -254,12 +263,13 @@ server {
 #       # name. Rewriting to /relay would hand every visitor a path this server block doesn't serve.
 #       location / {
 #           proxy_pass http://posterchanai_relay;
+#           proxy_method $poster_relay_method;
 #           proxy_read_timeout 3600s;
 #           proxy_send_timeout 3600s;
 #       }
 #
 #       # NIP-05 for name@relay.example.com (the relay answers it, and sets CORS itself).
-#       location = /.well-known/nostr.json { proxy_pass http://posterchanai_relay; }
+#       location = /.well-known/nostr.json { proxy_pass http://posterchanai_relay; proxy_method $poster_relay_method; }
 #   }
 
 # -----------------------------------------------------------------------------
