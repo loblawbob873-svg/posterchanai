@@ -182,7 +182,24 @@ crash_scan() {   # $1 = label
 crash_scan launch
 
 say "the process is actually up"
-if adb shell pidof $PKG >/dev/null 2>&1; then ok "running"; else fail "the app is not running after launch"; fi
+# WAIT FOR IT, DO NOT SAMPLE IT ONCE.
+#
+# This asked `pidof` a single time and called a miss a failure. On a loaded CI emulator that is a
+# race, and it produced a verdict that contradicted itself INSIDE ONE RUN: "FAIL: the app is not
+# running after launch" at the top, "ok: still running" at the bottom, with the instrumented suite
+# green at 117/117 — and the whole gate red on a commit that had nothing to do with it. A gate that
+# cries wolf is a gate people learn to ignore, which is how this one stayed red for eight runs once
+# before.
+#
+# The end-of-cycle check keeps its single sample on purpose: there the question is "did it SURVIVE",
+# so a miss at that instant is exactly the failure. Here the question is "did it COME UP", and the
+# honest form of that is a bounded wait — an app that never starts still fails, after 30s.
+_up=""
+for _ in $(seq 1 30); do
+  if adb shell pidof $PKG >/dev/null 2>&1; then _up=1; break; fi
+  sleep 1
+done
+if [ -n "$_up" ]; then ok "running"; else fail "the app is not running 30s after launch"; fi
 
 say "background it — screen off, which is where every report starts"
 adb shell input keyevent KEYCODE_HOME
