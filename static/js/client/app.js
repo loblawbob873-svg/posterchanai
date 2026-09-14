@@ -10369,10 +10369,26 @@
           const scan=document.createElement('button');scanButton=scan;scan.className='btn btn-ghost small';scan.textContent='Rescan';row.append(' ',scan);update();
           scan.onclick=()=>act(scan,async()=>{await api('/'+lib.id+'/scan','POST');lib.scan={state:'running',count:0};update();schedulePoll(0);toast('Scan started. You can keep browsing.');});
           const share=document.createElement('details');share.className='mc-share';
-          share.innerHTML='<summary>Share with Nostr users</summary><p class="muted">Enter npubs, separated by commas or newlines. Users sign in on this server. Remove a key to revoke access. Nothing is federated.</p><textarea aria-label="Nostr public keys" rows="3" style="width:100%"></textarea><button>Save sharing</button>';
+          /* SAY WHAT IT TAKES, AND SAY THAT IT WORKED.
+           *
+           * "Enter npubs" was true and unhelpful: the owner knows the person as
+           * `matthew@poster.place` — a name THIS node granted — and had no way to type it, so they
+           * used the profile permission instead. That grants the Media Center FEATURE and not the
+           * library, and the share silently never happened. The server accepts a granted name now;
+           * this is the half that tells anyone so.
+           *
+           * And the save said NOTHING on success, so "I shared it" and "I thought I shared it" felt
+           * identical — which is how this went a day without being noticed. It reports what the
+           * server stored, which is also the only honest confirmation: a name that resolved to
+           * nobody cannot be counted. */
+          share.innerHTML='<summary>Share with Nostr users</summary><p class="muted">One per line: an npub, a public key, or a name this server granted (e.g. <b>someone@'+enc((CFG&&CFG.nip05_domain)||'this server')+'</b>). They sign in here. Remove an entry to revoke access. Nothing is federated.</p><textarea aria-label="Nostr public keys" rows="3" style="width:100%"></textarea><button>Save sharing</button><span class="mc-share-done muted small" style="margin-inline-start:8px"></span>';
           share.querySelector('textarea').value=lib.shared_with.join('\n');
           share.querySelector('button').onclick=()=>act(share.querySelector('button'),async()=>{
-            await api('/'+lib.id+'/sharing','PUT',{shared_with:share.querySelector('textarea').value.split(/[\s,]+/).filter(Boolean)});
+            const saved=await api('/'+lib.id+'/sharing','PUT',{shared_with:share.querySelector('textarea').value.split(/[\s,]+/).filter(Boolean)});
+            const n=((saved&&saved.shared_with)||[]).length;
+            const said=share.querySelector('.mc-share-done');
+            if(said){ said.textContent = n ? ('✓ shared with '+n+' '+(n===1?'person':'people')) : '✓ sharing cleared'; }
+            toast(n ? ('Shared with '+n+' '+(n===1?'person':'people')) : 'Sharing cleared');
           });row.append(share);
         }
         open.onclick=()=>act(open,async()=>{

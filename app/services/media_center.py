@@ -167,6 +167,40 @@ def normalize_pubkey(value):
     return key.lower()
 
 
+def resolve_share_key(value):
+    """Accept the name a person is actually known by, not only the key they never see.
+
+    Sharing took an npub or 64 hex characters and nothing else, so the owner — who knows the account
+    as `matthew@poster.place`, granted it a NIP-05 name from this very node, and had just ticked its
+    Media Center permission — had no way to type it. They used the profile permission instead, which
+    grants the FEATURE and not the library, and the share silently never happened.
+
+    A NIP-05 address is resolved ONLY against this node's own registry (`nostr_relay_nip05_names`),
+    never against a profile's self-declared `nip05`: anyone may write that claim into their own
+    kind-0, and honouring it here would let a stranger be handed somebody else's library by typing a
+    name they do not hold. The registry is the half this node signs for.
+    """
+    v = (value or "").strip()
+    if not v:
+        raise ValueError("Enter an npub, a public key, or a name this server granted")
+    if v.startswith("npub1") or re.fullmatch(r"[0-9a-fA-F]{64}", v):
+        return normalize_pubkey(v)
+    local = v.split("@", 1)[0].strip().lower()
+    if not local or not re.fullmatch(r"[a-z0-9._-]{1,64}", local):
+        raise ValueError("Use an npub, a 64-character public key, or a name this server granted")
+    try:
+        from app.services import settings_store
+        from app.services.nostr_relay.thread import _parse_nip05
+        names, _ = _parse_nip05(settings_store.get("nostr_relay_nip05_names", "") or "", "")
+    except Exception:
+        names = {}
+    hit = {str(k).lower(): val for k, val in (names or {}).items()}.get(local)
+    if not hit:
+        raise ValueError("This server has not granted the name %r. Use their npub or public key."
+                         % v)
+    return str(hit).lower()
+
+
 def can_read(library, pubkey):
     return bool(pubkey) and (library["owner"] == pubkey or pubkey in library.get("shared_with", []))
 

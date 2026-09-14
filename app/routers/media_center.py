@@ -502,7 +502,7 @@ async def share(library_id: str, body: Sharing, user=Depends(get_media_admin)):
     async with media.mutation_lock:
         library = await library_for(library_id, media.identity(user), owner=True)
         try:
-            library["shared_with"] = sorted({media.normalize_pubkey(key.strip()) for key in body.shared_with})
+            library["shared_with"] = sorted({media.resolve_share_key(key) for key in body.shared_with if (key or '').strip()})
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         await media.write("library:" + library_id, library)
