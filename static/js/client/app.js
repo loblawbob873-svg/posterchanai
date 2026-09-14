@@ -16480,12 +16480,40 @@
       this._save(out); return dead.size; },
     // Sync to/from a single encrypted Nostr event (kind-30078 pcai:drafts under the storage key),
     // so drafts written on one device appear on another. Push is debounced.
+    /* A SYNC THAT WAS REFUSED IS NOT A SYNC, AND THIS ONE COULD NOT TELL.
+     *
+     * It awaited the POST and threw the answer away inside `catch(_){}` — and `fetch` does not throw
+     * on an HTTP error, so a 503 ("relay rejected the write, not saved") was indistinguishable from
+     * success. That matters because `pull()` unions by id and newest-ts-wins and deliberately never
+     * drops a draft: if the removal never reached the server, the server's copy comes back on the
+     * next load. Reported as "lots of my fedi replies get stuck in drafts" — the reply HAD been
+     * posted (no kind-1 or kind-1111 refusal exists anywhere in the relay log); it was the drafts
+     * document that would not save, silently.
+     *
+     * So: read the verdict, retry a refusal a couple of times with backoff — these failures are
+     * transient by nature (a superseded AUTH challenge, a relay that blinked) — and if it still will
+     * not land, SAY SO once rather than leaving someone to discover it by watching a draft
+     * resurrect. `_syncFailed` keeps it to one message per failing run, not one per keystroke. */
     _sync(a){ if(typeof ME==='undefined'||!ME) return; const owner=ME.pubkey; clearTimeout(this._t); this._t=setTimeout(async()=>{
       if(!ME||ME.pubkey!==owner)return;
-      try{ const auth=await selfProof();
+      for(let attempt=0; attempt<3; attempt++){
         if(!ME||ME.pubkey!==owner)return;
-        await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({pubkey:owner,auth:auth,drafts:a})}); }catch(_){} }, 900); },
+        let landed=false;
+        try{ const auth=await selfProof();
+          if(!ME||ME.pubkey!==owner)return;
+          const res=await fetch('/client/drafts',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({pubkey:owner,auth:auth,drafts:a})});
+          let body=null; try{ body=await res.json(); }catch(_){ body=null; }
+          landed = !!(res && res.ok && (!body || body.ok !== false));
+        }catch(_){ landed=false; }
+        if(landed){ this._syncFailed=false; return; }
+        if(attempt<2) await new Promise(r=>setTimeout(r, 1200*(attempt+1)));
+      }
+      if(!this._syncFailed){
+        this._syncFailed=true;
+        try{ toast('Your drafts could not be saved to the server — they are safe on this device, but a draft you send may come back until this succeeds.'); }catch(_){ }
+      }
+    }, 900); },
     async pull(){ if(typeof ME==='undefined'||!ME) return; const owner=ME.pubkey;
       try{ const auth=await selfProof();
         if(!ME||ME.pubkey!==owner)return;
