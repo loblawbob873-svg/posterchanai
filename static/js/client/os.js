@@ -2035,7 +2035,19 @@
          * second window. */
         let live = '';
         try{ live = String((PC() && PC().VIEW) || ''); }catch(_){ live = ''; }
-        if(live && live !== view){
+        /* NEVER FOR A DOCUMENT, OR THIS RE-ENTERS ITSELF FOR EVER.
+         *
+         * switchView now recognises `doc:post:<id>` and opens the post — the floor that stops a
+         * post window being rendered as a view. But a document reaching THIS line means openDoc →
+         * openApp already found a window for it, so calling switchView here sends it straight back
+         * through openThread → openDoc → openApp → here: a loop that throws the reader around the
+         * app. Reported as "Social is completely fucked now ... trying to open a post does not open
+         * a post and jumps me around".
+         *
+         * The branch exists to take a window that was navigated INSIDE (Social → a profile) back to
+         * the app its launcher names. A document window has no app to return to — it IS the
+         * document — so there is nothing here for it to do. */
+        if(live && live !== view && String(view || '').indexOf('doc:') !== 0){
           existing.appView = view; existing.appPath = '';
           repainting++;
           try{ PC().switchView && PC().switchView(view); }catch(_){ }

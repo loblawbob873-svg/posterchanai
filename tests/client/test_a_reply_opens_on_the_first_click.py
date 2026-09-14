@@ -81,7 +81,7 @@ POPOUT_STUB = """(() => {
 })()"""
 
 
-async def run(open_social_first, popout=False):
+async def run(open_social_first, popout=False, open_twice=False):
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     profile = tempfile.mkdtemp(prefix='pc-reply-click-')
@@ -131,10 +131,17 @@ async def run(open_social_first, popout=False):
 
                 # The id of a real post, then ONE request to open it — the click's own endpoint.
                 await b.js("window.__target = window.__events[0].id")
-                await b.js("__PC.openThread(window.__target)")
+                await b.js("(() => { window.__stack=null; window.addEventListener('error', e => { if(/Maximum call stack|too much recursion/i.test(String(e.message||''))) window.__stack=String(e.message); }); __PC.openThread(window.__target); return true; })()")
                 await asyncio.sleep(1.5)
+                if open_twice:
+                    # The SECOND open finds an existing window for this document and takes
+                    # openApp's reuse branch — the path that re-entered switchView for ever.
+                    await b.js("__PC.openThread(window.__target)")
+                    await asyncio.sleep(1.5)
                 out = await b.js(PROBE)
                 out['popped'] = await b.js("window.__popped || []")
+                out['stack'] = await b.js("window.__stack || ''")
+                out['alive'] = await b.js("!!(window.__PC && __PC.me && __PC.me())")
                 out['routed'] = await b.js("window.__routed || ''")
                 return out
         finally:
@@ -213,3 +220,49 @@ def test_every_route_into_a_window_knows_a_post_is_not_a_view():
         assert any('openThread' in src[i:i + 600] for i in guards), (
             '%s matches a post window and does not open the post — the next thing it reaches is '
             'switchView, which sets VIEW to a name nothing routes' % name)
+
+
+def test_switchview_itself_refuses_to_render_a_post_window_as_a_view():
+    """THE FLOOR, so a third route cannot repeat this.
+
+    Fixing each caller as it is discovered is how the same bug shipped twice: `routeFromPath` was
+    covered, the oswin.js re-route was not, and the second one printed "Nothing here can show
+    doc:post:43698d01…" on a real desktop. switchView does not validate its argument — it sets VIEW,
+    renders nothing, and leaves an apology — so it is the one place that every caller, including the
+    one written next, already passes through.
+    """
+    app = (Path(__file__).resolve().parents[2] / 'static/js/client/app.js').read_text(encoding='utf-8')
+    start = app.index('function switchView(')
+    head = app[start:start + 1400]
+    assert 'doc:post:' in head, (
+        'switchView does not recognise a post window. Every caller then has to remember, and the '
+        'two that exist already got it wrong once each.')
+    assert 'openThread' in head, (
+        'switchView matches a post window and does not open it')
+    # It has to come before the body does anything else, or VIEW is already wrong.
+    assert head.index('doc:post:') < head.index('openEmojiPopover'), (
+        'the guard runs after switchView has begun changing state')
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='no Chrome')
+def test_opening_the_same_post_twice_is_stable():
+    """Opening the same post twice must stay stable — and this does NOT reach the reuse branch.
+
+    Stated plainly because it matters: this was written to catch a re-entry through openApp's reuse
+    branch (switchView -> openThread -> openDoc -> openApp -> reuse -> switchView). It does not, and
+    it passes with that guard reverted. `openDoc` short-circuits on an existing document window
+    before `openApp` is ever called, so the second open never takes the path the guard protects.
+
+    Kept because opening the same post twice IS worth pinning — a stack overflow or a dead client
+    here would be caught — but it must not be read as proof that the re-entry is covered. It is not.
+    Covering it needs a harness that can reach openApp with a doc view and an existing window, which
+    the PCOSWin stub cannot produce because it registers no in-page window.
+    """
+    state = asyncio.run(run(open_social_first=True, popout=True, open_twice=True))
+    print('twice=%r' % (state,))
+    assert not state['stack'], (
+        'opening the same post twice re-entered itself: %s' % state['stack'])
+    assert state['alive'], 'the client stopped responding after the second open'
+    posts = [v for v in state['popped'] if 'post:' in v]
+    assert len(posts) <= 2, (
+        'the reuse path asked the shell for a window every time round a loop: %r' % posts)

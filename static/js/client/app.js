@@ -7701,6 +7701,22 @@
   }
 
   function switchView(v, quiet){
+    /* A DOCUMENT WINDOW IS NOT A VIEW, AND THIS IS THE FUNNEL EVERY CALLER GOES THROUGH.
+     *
+     * switchView does not validate its argument: hand it a name nothing routes and it sets VIEW,
+     * renders nothing, and leaves "Nothing here can show <name>" on the screen. A post window is
+     * called `doc:post:<event id>`, and TWO separate paths carry a view into a window — the first
+     * paint (`routeFromPath`) and the re-route of an already-open one (oswin.js's BroadcastChannel
+     * handler). I fixed one, shipped, and the other produced exactly that message:
+     * "Nothing here can show doc:post:43698d01…".
+     *
+     * Fixing each caller as it is discovered is how that happens twice. The guard belongs HERE,
+     * where every caller — including whichever one is written next — already arrives. The explicit
+     * handlers in those two paths stay: they are more direct, and this is the floor under them. */
+    {
+      const _pw = /^doc:post:([0-9a-f]{64})$/i.exec(String(v || ''));
+      if(_pw && typeof openThread === 'function'){ openThread(_pw[1]); return; }
+    }
     if(typeof openEmojiPopover==='function' && openEmojiPopover.closeActive)openEmojiPopover.closeActive();
     /* Leaving the screen stops the narration. The chip is fixed to the viewport, so without this it
        outlives the post it belongs to and offers to stop something the reader can no longer see. */
