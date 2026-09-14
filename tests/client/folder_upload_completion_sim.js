@@ -59,7 +59,13 @@ globalThis.failIndex=()=>{globalThis.saveOK=false;};`,context);
   if(!calls.files.some(x=>x[0]==='c'.repeat(64)))throw new Error('hashless CDN URL was not indexed');
   context.failIndex();
   await context.run([{name:'c.jpg',type:'image/jpeg',size:30,webkitRelativePath:'More/c.jpg'}]);
-  if(!calls.toasts.some(x=>/Uploaded — folder list waiting to save.*1 added/.test(x)))
+  /* THE RULE IS "DO NOT CLAIM IT SAVED", NOT ONE PARTICULAR SENTENCE. This matched the literal
+     "waiting to save", so rewording the summary — to stop describing a REFUSED write as merely
+     queued, and to name the cause — failed here while the behaviour it guards was unchanged. Pin
+     the two things that actually matter: the summary must not open with the success word, and it
+     must say the folder list was not saved. */
+  const failed=calls.toasts.filter(x=>/1 added/.test(x)).pop()||'';
+  if(/^Done\b/.test(failed) || !/not saved/i.test(failed))
     throw new Error('failed index was announced as complete: '+calls.toasts);
   if(context.uploading()!==0)throw new Error('failed index save left upload busy');
   context.saveOK=true; context.encrypted=true;
