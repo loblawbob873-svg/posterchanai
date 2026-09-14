@@ -116,7 +116,20 @@ class TheOverlayPinsSomethingThatExists(unittest.TestCase):
         step = wf[advance:publish]
         self.assertIn("git/refs/tags/desktop-latest", step)
         self.assertIn('-f sha="$GITHUB_SHA" -F force=true', step)
-        self.assertIn('test "$actual" = "$GITHUB_SHA"', step)
+        # THE RULE IS "THE TAG MUST NOT BE LEFT BEHIND", NOT ONE SHELL LINE.
+        #
+        # This pinned the literal `test "$actual" = "$GITHUB_SHA"`, which made the step's ONLY
+        # correct behaviour a strict-equality check — and strict equality is what turned two
+        # overlapping runs into a failed desktop release twice in one day: the later commit wins the
+        # PATCH (correctly) and the earlier run then fails for reading back exactly what it should.
+        # So pin what the step is for: it READS the tag back, and it fails when the tag names
+        # something that is not this build or a descendant of it.
+        self.assertIn('actual="$(gh api', step)
+        self.assertIn('$GITHUB_SHA', step)
+        self.assertIn("exit 1", step)
+        self.assertIn("is-ancestor", step,
+                      "a superseding build must be recognised as newer rather than failing the "
+                      "release; without this the check is strict equality again")
         self.assertIn("target_commitish: ${{ github.sha }}", wf[publish:])
 
     def test_bump_refuses_a_desktop_payload_without_concord(self):
