@@ -565,8 +565,35 @@ class RelayServer:
         and the radio briefly suspends (the "no new posts after ~2-3 min" symptom). The client ignores an
         unrecognised NOTICE; one tiny frame per connection per 40s."""
         try:
+            waited = 0
             while True:
                 await asyncio.sleep(40)
+                # A CONFINED SOCKET THAT NEVER SIGNS ANYTHING IS JUST HOLDING A CONNECTION.
+                #
+                # `posterchan_clients_only` admits an unrecognised client rather than refusing it at
+                # the handshake, and that is deliberate: Amber's QR login dials this relay as a
+                # native app with no Origin and a public IP, so a refusal there breaks signing in.
+                # The socket is confined to kind 24133 instead — and if it is not actually a signer
+                # it then sits there forever doing nothing, which is why the connection count stays
+                # high while every one of those sockets is already unable to read or write anything.
+                #
+                # Two keepalive periods to do signer work, then closed. A real NIP-46 session
+                # subscribes or publishes 24133 immediately (it is dialled FOR that) and is marked on
+                # its first such message, so it is never swept. Nothing a PosterChan client does can
+                # reach this: the flag is only ever set for sockets the gate confined. It says why
+                # rather than dropping silently, and the NOTICE is given a moment to leave first.
+                waited += 40
+                if (getattr(conn, "_pcai_signer_only", False)
+                        and not getattr(conn, "_pcai_signer_used", False)
+                        and waited >= 80):
+                    self._send(conn, ["NOTICE", "this relay serves PosterChan clients; this "
+                                                "connection did no signer work and is being closed"])
+                    await asyncio.sleep(0.2)
+                    try:
+                        await conn.close(code=1008, reason="use a PosterChan client")
+                    except Exception:
+                        pass
+                    return
                 self._send(conn, ["NOTICE", "keepalive"])
         except asyncio.CancelledError:
             pass

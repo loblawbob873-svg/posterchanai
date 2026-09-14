@@ -118,5 +118,44 @@ class TheConfinementIsWired(unittest.TestCase):
                       "nothing enforces the confinement, so a signer socket is a full relay client")
 
 
+class AConfinedSocketDoesNotLingerForEver(unittest.TestCase):
+    """The gate ADMITS an unrecognised client instead of refusing it — Amber's QR login dials this
+    relay as a native app with no Origin and a public IP, so a handshake refusal breaks signing in.
+    The cost is that a socket which is not really a signer holds a connection for ever while being
+    unable to read or write anything, which is why the connection count stays high. It is swept.
+
+    A real NIP-46 session is dialled FOR 24133 and subscribes or publishes immediately, so it is
+    marked on its first such message and must never be swept."""
+
+    def _src(self):
+        import inspect
+        return inspect.getsource(S)
+
+    def test_signer_work_marks_the_socket(self):
+        src = self._src()
+        self.assertTrue('setattr(conn, "_pcai_signer_used", True)' in src,
+                        "nothing records that a confined socket did the job it was admitted for, "
+                        "so the sweep below would close real signer sessions")
+
+    def test_an_idle_confined_socket_is_closed_and_told_why(self):
+        src = self._src()
+        self.assertTrue('not getattr(conn, "_pcai_signer_used", False)' in src,
+                        "the sweep does not consult the marker — it would close signers too")
+        self.assertTrue('use a PosterChan client' in src,
+                        "a swept socket is dropped without being told why")
+        keep = src[src.index("async def _keepalive"):]
+        keep = keep[:keep.index("\n    async def ", 1)] if "\n    async def " in keep[1:] else keep
+        self.assertIn("waited", keep,
+                      "the sweep is not in the keepalive loop, so nothing ever runs it")
+
+    def test_the_sweep_cannot_touch_an_ordinary_client(self):
+        """Guarded on the confined flag, which only the gate sets."""
+        src = self._src()
+        window = src[src.index("waited += 40"):src.index("waited += 40") + 700]
+        self.assertTrue('_pcai_signer_only' in window,
+                      "the sweep is not gated on the socket being a CONFINED one — it would close "
+                      "ordinary PosterChan clients on a timer")
+
+
 if __name__ == "__main__":
     unittest.main()
