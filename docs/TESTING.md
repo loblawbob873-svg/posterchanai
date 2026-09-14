@@ -315,6 +315,9 @@ browsers. `--list` remains available. The operating system releases the advisory
 runner exits or crashes; never delete the lock file to bypass a running suite. Direct focused
 pytest commands remain available, so coordinate those with any active full run.
 
+Ctrl-C cancels queued browser checks, stops each running check's own process group and exits 130.
+It does not wait for the rest of the queue or signal unrelated application services.
+
 Missing-event retry tests use a virtual timeout clock while executing the shipped JavaScript.
 They preserve debounce, backoff, delayed query responses and recovery timing without waiting for
 real minutes. The clock itself checks deadline ordering, cancellation and promise continuations.

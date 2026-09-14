@@ -55,6 +55,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -427,7 +428,7 @@ def git_head():
         return "unknown"
 
 
-def _captured(argv, cwd, env, timeout, output_path):
+def _captured(argv, cwd, env, timeout, output_path, cancel_event=None):
     """Run without a captured PIPE that grandchildren can keep open forever.
 
     Several browser checks launch Chrome and then exit. If Chrome inherits subprocess.PIPE,
@@ -436,6 +437,8 @@ def _captured(argv, cwd, env, timeout, output_path):
     the parent result is available the instant the process exits. A timed-out job owns a process
     group so its browser children are stopped with it instead of leaking into later checks.
     """
+    if cancel_event is not None and cancel_event.is_set():
+        return 130, "[checkall] cancelled before starting"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w+", encoding="utf-8", errors="replace") as out:
         kwargs = dict(cwd=cwd, env=env, stdout=out, stderr=subprocess.STDOUT)
@@ -445,8 +448,23 @@ def _captured(argv, cwd, env, timeout, output_path):
             kwargs["start_new_session"] = True
         p = subprocess.Popen(argv, **kwargs)
         timed_out = False
+        cancelled = False
         try:
-            p.wait(timeout=timeout)
+            if cancel_event is None:
+                p.wait(timeout=timeout)
+            else:
+                deadline = time.monotonic() + timeout
+                while p.poll() is None:
+                    if cancel_event.is_set():
+                        cancelled = True
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(argv, timeout)
+                    try:
+                        p.wait(timeout=min(0.2, remaining))
+                    except subprocess.TimeoutExpired:
+                        pass
         except subprocess.TimeoutExpired:
             timed_out = True
             try:
@@ -481,16 +499,23 @@ def _captured(argv, cwd, env, timeout, output_path):
                     os.killpg(p.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                p.wait()
+            elif cancelled:
+                subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                p.wait()
         out.flush()
         out.seek(0)
         text = out.read()
+    if cancelled:
+        return 130, text + "\n[checkall] cancelled"
     if timed_out:
         text += f"\n[checkall] killed after {timeout}s"
         return 124, text
     return p.returncode, text
 
 
-def run_one(job, live, tmp, idx):
+def run_one(job, live, tmp, idx, cancel_event=None):
     """Run one check in its own process, with its own port, profile and clock."""
     env = dict(os.environ)
     env["PC_CHECK_PORT"] = str(PORT_BASE + idx)
@@ -509,7 +534,8 @@ def run_one(job, live, tmp, idx):
         for key, value in (job.get("live_env") or {}).items():
             env[key] = str(value).replace("{live}", live)
     t0 = time.time()
-    code, out = _captured(argv, ROOT, env, job["secs"], tmp / (job["name"] + ".log"))
+    options = {"cancel_event": cancel_event} if cancel_event is not None else {}
+    code, out = _captured(argv, ROOT, env, job["secs"], tmp / (job["name"] + ".log"), **options)
     return dict(job, secs_took=time.time() - t0, code=code, out=out.strip(),
                 cmd=" ".join(argv[1:]))
 
@@ -721,6 +747,9 @@ def main():
     except RunnerBusy as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("Interrupted; running checks stopped and queued checks cancelled.", file=sys.stderr)
+        return 130
 
 
 def _execute(args, suites, checks, tmp, chrome, say):
@@ -774,11 +803,21 @@ def _execute(args, suites, checks, tmp, chrome, say):
             + (" (this node is serving live traffic — throttled; --jobs N overrides)" if gentle else "")
             + (f", {len(serial)} memory-heavy check(s) serialized" if serial else "")
             + f"{C['off']}")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            futs = {pool.submit(run_one, c, args.live, tmp, i): c
+        cancelled = threading.Event()
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs)
+        try:
+            futs = {pool.submit(run_one, c, args.live, tmp, i, cancelled): c
                     for i, c in enumerate(parallel)}
             for f in concurrent.futures.as_completed(futs):
                 report(f.result())
+        except BaseException:
+            # The executor context manager waits for its entire queue on Ctrl-C. Cancel that
+            # queue first, and ask running checks to reap only their own process groups.
+            cancelled.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
         for i, c in enumerate(serial, start=len(parallel)):
             report(run_one(c, args.live, tmp, i))
 

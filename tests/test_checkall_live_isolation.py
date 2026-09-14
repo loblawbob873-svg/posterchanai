@@ -85,7 +85,7 @@ def test_real_service_checks_require_explicit_live_mode(tmp_path, monkeypatch, l
     monkeypatch.setattr(module, "SUITES", [])
     monkeypatch.setattr(module, "have_chrome", lambda: "/test/chrome")
     monkeypatch.setattr(module, "have_node", lambda: "/test/node")
-    def capture(argv, cwd, env, timeout, log):
+    def capture(argv, cwd, env, timeout, log, **kwargs):
         calls.append((argv, env))
         return 0, "OK"
     monkeypatch.setattr(module, "_captured", capture)
