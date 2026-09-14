@@ -680,12 +680,12 @@ unmaskPackages() {
 }
 
 updateOS() {
-    /usr/bin/emerge --sync
-    #/usr/bin/emerge -uDN @world --autounmask-write
-	#/usr/sbin/etc-update -q --automode -5
-	/usr/bin/emerge -uDN @world
-    /usr/bin/emerge -c
-    bootloader
+	# A slot conflict is an unsuccessful update, not permission to clean up the
+	# installed tree or rewrite its bootloader. Preserve Portage's failure status.
+	/usr/bin/emerge --sync || return $?
+	/usr/bin/emerge -uDN @world || return $?
+	/usr/bin/emerge -c || return $?
+	bootloader
 }
 
 configurePortage() {
