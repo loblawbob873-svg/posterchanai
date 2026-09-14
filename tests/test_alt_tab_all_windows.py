@@ -226,3 +226,30 @@ def test_only_one_place_forwards_a_tick_to_a_renderer():
     assert "if (name === 'tick') continue;" in sub, "the subscribe loop forwards ticks again"
     # `subscribe` must still NAME tick: the socket's list is fixed on first subscription.
     assert "const NAMES = ['window', 'workspace', 'output', 'tick'];" in main
+
+
+RATE_SIM = ROOT / "tests/client/alt_tab_rate_sim.js"
+
+
+def test_alt_tab_holds_up_over_sixty_presses_not_one():
+    """MEASURED AS A RATE, because "sometimes" is what was reported.
+
+    "alt+tab is severely broke, not sure how it passed the test suite: some times barely shows the
+    window list, previews sometimes missing."
+
+    It passed because every other Alt+Tab test opens the chooser ONCE, under ideal conditions, and
+    asserts that it opened. Neither reported fault is visible that way. A native row's title arrives
+    SEPARATELY from the window, so a chooser opened in that gap used to drop the row — the list was
+    short purely because a window was young. And a preview is a compositor screenshot whose `apply`
+    refuses to write into a chooser that has since closed, so caching it per-gesture meant every
+    press re-captured everything and whichever capture lost the race left a blank card.
+
+    This drives the shipped switcher sixty times with the two genuinely nondeterministic things
+    jittered — when a title lands, and when a capture resolves — and asserts the invariants on EVERY
+    press. Verified against a pre-fix copy of os.js (via PC_INSTALLED_OS_JS, so no git stash is
+    needed in a shared tree): it fails on the first invariant.
+    """
+    run = subprocess.run(["node", str(RATE_SIM)], capture_output=True, text=True, check=False)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "list short 0" in run.stdout, run.stdout
+    assert "blank-after-warm 0" in run.stdout, run.stdout
