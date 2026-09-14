@@ -10189,6 +10189,15 @@
    * the new post arrive through its own subscription, with nothing to hand back. */
   function renderComposePopup(){
     document.body.classList.add('os-popup-body', 'os-popup-compose');
+    /* A REPLY OPENED FROM THE DESKTOP IS A WINDOW ON THAT DESKTOP, AND HAS TO LOOK LIKE ONE.
+     * Reported as "one reply modal did not have the rounder corners / window border, not sure how
+     * to explain it" — and the reason it is hard to explain is that it is the same composer either
+     * way: in the page it is a `.modal` with its own 18px radius, but here it is a compositor
+     * toplevel whose card deliberately fills the whole window (`.os-popup-compose .modal` zeroes
+     * the radius so the 72%-opaque backdrop stops painting a hard dark box around it). That left
+     * the one surface on the desk with no border of any kind. `installFrame` is the SAME element
+     * and the same focus rule a popped-out window gets — not a second copy. */
+    try{ if(window.PCOSWin && PCOSWin.installFrame) PCOSWin.installFrame(); }catch(_){ }
     let arg = {};
     try{ arg = JSON.parse(new URLSearchParams(window.location.search).get('pcarg') || '{}'); }
     catch(_){ }

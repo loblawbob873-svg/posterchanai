@@ -57,7 +57,7 @@ ACCENT = 150
 
 def _installChrome():
     """The shipped popped-out-window chrome, sliced out of oswin.js rather than retyped."""
-    start = OSWIN.index('  function installChrome(state){')
+    start = OSWIN.index('  function installFrame(){')
     return OSWIN[start:OSWIN.index('  const API = {', start)]
 
 
@@ -146,6 +146,40 @@ window.__hasFocus = true;
 Object.defineProperty(document, 'hasFocus', { value: () => window.__hasFocus });
 installChrome({ view:'terminal', label:'terminal', shared:false });
 """ % _installChrome()
+
+
+# --------------------------------------------------- a reply composer opened as its own window
+#
+# THE FIFTH SURFACE, and the one that shipped without a border because nothing here looked at it.
+# Reported as "ok one reply modal did not have the rounder corners / window border, not sure how to
+# explain it" — hard to explain because it is the same composer either way. In the page it is a
+# `.modal` with its own 18px radius; opened from the desktop it is a compositor toplevel whose card
+# deliberately fills the window (`.os-popup-compose #modal-root .modal` zeroes the radius, so the
+# 72%-opaque backdrop stops painting a hard dark box around the card). That left one window on the
+# desk with no border of any kind, while every other window on it had one.
+#
+# It runs the SHIPPED `installFrame` — the same function oswin.js calls — against the shipped
+# `.os-popup-compose` markup, so a frame that stops being installed here fails here.
+COMPOSE = """
+const root = window;
+%s
+window.__hasFocus = true;
+Object.defineProperty(document, 'hasFocus', { value: () => window.__hasFocus });
+document.body.className = 'os-popup-body os-popup-compose';
+document.body.innerHTML = '<div id="modal-root"><div class="modal-bg">'
+  + '<div class="modal"><h3>Reply</h3></div></div></div>';
+installFrame();
+""" % _installChrome()
+
+
+def test_a_reply_opened_as_its_own_window_has_a_border_like_every_other_window(page):
+    """The composer is the same composer; the WINDOW has to look like a window."""
+    with _open(page, _page('', COMPOSE)):
+        assert page.evaluate("!!document.getElementById('pc-oswin-frame')"), (
+            "a reply composer opened from the desktop installs no border element. It is a "
+            "compositor toplevel like every other window on that desk, and it was the only one "
+            "without a frame — the card fills the whole window, so nothing else can draw one.")
+        _measure_popped_out(page)
 
 
 def test_a_popped_out_window_draws_its_own_border_in_both_focus_states(page):
@@ -260,3 +294,4 @@ def test_the_border_is_the_theme_accent_and_not_a_typed_colour():
         assert 'var(--accent-rgb)' in block, f'{rule} paints a border from outside the palette: {block}'
     assert '#pc-oswin-frame.focused{border-color:rgba(var(--accent-rgb)' in CSS
     assert '.osw.focused{border-color:rgba(var(--accent-rgb)' in CSS
+

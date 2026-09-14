@@ -10429,14 +10429,22 @@ html.pc-oswin .main{margin:0;max-width:none;width:100%;min-width:0}
    this is what that stamp does. Both hosts are spared, because the compose popup draws into
    `#modal-root` and every other popup into `#os-popup-host`; the rules below then take over with
    no visible change. It only ever hides, so it cannot alter what a popup finally draws. */
-html.pc-popup-boot body > *:not(#os-popup-host):not(#modal-root){display:none!important}
+html.pc-popup-boot body > *:not(#os-popup-host):not(#modal-root):not(#pc-oswin-frame){display:none!important}
 .os-popup-body:not(.os-popup-compose) > *:not(#os-popup-host){display:none!important}
 #os-popup-host{display:block;position:fixed;inset:0;overflow:hidden}
 /* A COMPOSE popup shows the client's own modal layer instead of a host of its own — the composer is
    the client's, drawn by the client, and #modal-root is where every modal already goes. Written as
    its own rule rather than an exception to the one above, because `:not(#id)` carries an ID's
    specificity and no class-only rule can override it. */
-.os-popup-body.os-popup-compose > *:not(#modal-root){display:none!important}
+/* …AND THE WINDOW'S OWN BORDER, which this rule hid for as long as it existed. `#pc-oswin-frame`
+   is a body child like everything else the popup does not want, so "show only the composer" also
+   meant "show no frame" — and the composer's card deliberately fills the whole window (see below),
+   so there was nothing else on that surface able to draw an edge. Reported as "one reply modal did
+   not have the rounder corners / window border, not sure how to explain it": it is the only window
+   on the desktop that had none. Measured, not reasoned — the frame computed
+   `display:none` with a 0x0 box while its border-width and accent colour were both correct, which
+   is exactly the shape a rule-reading test cannot see. */
+.os-popup-body.os-popup-compose > *:not(#modal-root):not(#pc-oswin-frame){display:none!important}
 /* THE BACKDROP IS THE WINDOW HERE, AND A BACKDROP DRAWN IN ITS OWN WINDOW IS JUST A BLACK BOX.
    `.modal-bg` is `rgba(4,2,12,.72)` + a blur + `padding:24px 16px`, and on the web that is right:
    it dims the PAGE the composer is covering. A reply opened from the desktop is its own compositor

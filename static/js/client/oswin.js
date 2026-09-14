@@ -324,6 +324,27 @@
     return state;
   }
 
+  /* THE BORDER, ON ITS OWN, BECAUSE MORE THAN ONE KIND OF WINDOW NEEDS IT.
+   *
+   * Exported rather than left inside `installChrome` because a popped-out view is not the only
+   * compositor toplevel the client puts on the desk: a REPLY opened from the desktop is its own
+   * window too (`os.js renderComposePopup`), and it had no frame at all — reported as "one reply
+   * modal did not have the rounder corners / window border, not sure how to explain it". It is the
+   * same window on the same desktop and it must look like one, so it is the same element and the
+   * same focus rule rather than a second copy that can drift from this one. */
+  function installFrame(){
+    try{
+      if(root.document.getElementById('pc-oswin-frame')) return;
+      const frame=root.document.createElement('div');
+      frame.id='pc-oswin-frame'; frame.setAttribute('aria-hidden','true');
+      (root.document.body||root.document.documentElement).prepend(frame);
+      const paintFocus=()=>{ try{ frame.classList.toggle('focused', root.document.hasFocus()); }catch(_){ } };
+      root.addEventListener('focus',paintFocus); root.addEventListener('blur',paintFocus);
+      try{ root.document.addEventListener('visibilitychange',paintFocus); }catch(_){ }
+      paintFocus();
+    }catch(_){ }
+  }
+
   function installChrome(state){
     try{
       if(root.document.getElementById('pc-oswin-chrome'))return;
@@ -351,13 +372,7 @@
        * repo keeps rediscovering. Bare `focus`/`blur` on the window -- NOT capture -- because a
        * capturing listener also fires for every input and button inside the page, which asks the
        * question thousands of times to get the same answer. */
-      const frame=root.document.createElement('div');
-      frame.id='pc-oswin-frame'; frame.setAttribute('aria-hidden','true');
-      (root.document.body||root.document.documentElement).prepend(frame);
-      const paintFocus=()=>{ try{ frame.classList.toggle('focused', root.document.hasFocus()); }catch(_){ } };
-      root.addEventListener('focus',paintFocus); root.addEventListener('blur',paintFocus);
-      try{ root.document.addEventListener('visibilitychange',paintFocus); }catch(_){ }
-      paintFocus();
+      installFrame();
       bar.querySelector('[data-action="close"]').onclick=()=>root.close();
       /* THE COMPOSITOR IS THE BETTER ANSWER AND NOT THE ONLY ONE.
        *
@@ -384,7 +399,8 @@
     }catch(_){ }
   }
 
-  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt, PARAM, TITLE };
+  const API = { isWindow, viewOf, desktop, enabled, open, routeExisting, routable, adopt,
+                installFrame, PARAM, TITLE };
   root.PCOSWin = API;
   if(typeof module !== 'undefined' && module.exports) module.exports = API;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

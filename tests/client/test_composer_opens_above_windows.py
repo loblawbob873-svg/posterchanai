@@ -102,10 +102,34 @@ def test_closing_the_modal_closes_the_window():
 def test_the_modal_layer_is_what_the_compose_popup_shows():
     """The general popup rule hides everything but the popup host; a composer has no host of its
     own because the composer is the CLIENT's, drawn into #modal-root. Written as a separate rule
-    because `:not(#id)` carries an ID's specificity and no class-only rule can override it."""
+    because `:not(#id)` carries an ID's specificity and no class-only rule can override it.
+
+    ASSERTED AS THE RULE, NOT THE SELECTOR TEXT. This used to compare the whole declaration
+    character for character, so adding one exemption to it failed here while the behaviour was
+    exactly as described — and it would have passed just as happily against a rule that hid nothing
+    at all, since it never asked what the selector DOES. What matters is the shape: each popup kind
+    hides its body's children except the host that kind draws into.
+
+    The compose exemptions are listed because each one is load-bearing and silent when missing:
+    `#modal-root` is the composer itself, and `#pc-oswin-frame` is the window's own border — a body
+    child like any other, so "show only the composer" also meant "show no frame", which is why the
+    one window on the desktop with no edge was a reply (see
+    tests/client/test_a_window_has_a_visible_border.py, which measures it in pixels).
+    """
     tight = CSS.replace(" ", "")
-    assert ".os-popup-body:not(.os-popup-compose)>*:not(#os-popup-host){display:none!important}" in tight
-    assert ".os-popup-body.os-popup-compose>*:not(#modal-root){display:none!important}" in tight
+    general = ".os-popup-body:not(.os-popup-compose)>*:not(#os-popup-host){display:none!important}"
+    assert general in tight, "an ordinary popup no longer hides the client behind its host"
+
+    import re
+    found = re.search(r"\.os-popup-body\.os-popup-compose>\*:not\([^{]*\{display:none!important\}",
+                      tight)
+    assert found, "the compose popup does not hide the client's own page behind the composer"
+    rule = found.group(0)
+    for keep in ("#modal-root", "#pc-oswin-frame"):
+        assert ":not(%s)" % keep in rule, (
+            "%s is hidden in a compose popup. #modal-root is the composer and #pc-oswin-frame is "
+            "the window's own border; both are body children, so this rule hides them unless it "
+            "says otherwise." % keep)
 
 
 def test_the_gate_itself():
