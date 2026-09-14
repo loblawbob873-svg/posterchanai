@@ -24278,7 +24278,15 @@
     catch(e){ indexErr=String((e&&e.message)||e||'index save failed'); }
     _uploadBatchAuth=null;   // the batch auth never outlives its batch (it commits only to THESE hashes)
     _uploading=Math.max(0, _uploading-1);
-    const completion=_uploadCancel?'Stopped':(indexSaved?'Done':'Uploaded — folder list waiting to save');
+    /* "Uploaded — folder list waiting to save" was true and useless. It is the sentence somebody
+     * reads when their file has reached the server and their folder is still empty, and it names no
+     * cause, suggests no action, and reads as if the save is merely queued when it may have been
+     * REFUSED. Measured on a live node: eight uploads, eight relay refusals of the index write, and
+     * nothing anywhere said so. Whatever the save knows about why, say it here. */
+    let _why = '';
+    try{ _why = (typeof Relay!=='undefined' && Relay._authBail) ? Relay._authBail : (indexErr||''); }catch(_){ _why = indexErr||''; }
+    const completion=_uploadCancel?'Stopped':(indexSaved?'Done'
+      :('Uploaded — folder list NOT saved'+(_why?': '+_why:'')));
     const summary=`${completion} — ✓ ${ok} added${dup?(' · ↺ '+dup+' already there'):''}${skip?(' · ⏭ '+skip+' skipped'):''}${fail?(' · ✗ '+fail+' failed'):''}`
       + (!indexSaved && indexErr ? ` — ${indexErr}` : '')
       + ((skip||dup) && why ? ` — ${why}` : '');

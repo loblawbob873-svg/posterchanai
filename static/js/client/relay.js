@@ -190,7 +190,20 @@
     _authenticate(conn, wantPubkey){
       if(wantPubkey && conn.authPubkeys.has(wantPubkey))return Promise.resolve(true);
       if(conn._authPromise)return conn._authPromise;
-      if(!conn.challenge || !this._authSigner)return Promise.resolve(false);
+      /* SAY WHY IT GAVE UP. Measured on a live node: a client's kind-30078 writes (the drive
+       * index, notes, settings, calendars) were refused `auth-required` eight times for eight
+       * uploads, while the relay logged NEITHER an AUTH success NOR an AUTH failure — i.e. this
+       * function returned false without ever transmitting, and there was no way to tell which of
+       * its guards did it. The shipped logic is correct (a harness drives the real code through
+       * challenge → AUTH → replay), so the bug is always a STATE this bails on, and the state is
+       * exactly what was invisible. Recorded, never thrown: declining AUTH is a normal outcome on
+       * logged-out screens and must not look like an exception. */
+      if(!conn.challenge || !this._authSigner){
+        this._authBail = !conn.challenge
+          ? 'this relay never sent an AUTH challenge on this socket'
+          : 'no signer is registered for relay authentication';
+        return Promise.resolve(false);
+      }
       // Start the signer inside the promise chain. Local/locked signers can reject by throwing
       // synchronously, while extension and remote signers reject asynchronously; both mean "this
       // connection remains unauthenticated" and must take the same contained path. Evaluating the
@@ -203,7 +216,13 @@
         this._authSigner===signer&&this._authOwner===ownerReader&&(!ownerReader||ownerReader()===owner);
       const attempt=Promise.resolve().then(()=>current()?signer({kind:22242,created_at:Math.floor(Date.now()/1000),content:'',
         tags:[['relay',conn.url],['challenge',String(challenge)]]}):null).then(ev=>new Promise(resolve=>{
-          if(!current()||!ev||!ev.id||(wantPubkey&&ev.pubkey!==wantPubkey))return resolve(false);
+          if(!current()||!ev||!ev.id||(wantPubkey&&ev.pubkey!==wantPubkey)){
+            this._authBail = !ev ? 'the signer declined to sign the relay challenge'
+              : (wantPubkey&&ev.pubkey!==wantPubkey
+                  ? 'the signer signed as '+String(ev.pubkey||'').slice(0,12)+'… but the document is authored by '+String(wantPubkey||'').slice(0,12)+'…'
+                  : 'the connection changed while the challenge was being signed');
+            return resolve(false);
+          }
           const tm=setTimeout(()=>{this._okWaiters.delete(ev.id);resolve(false);},8000);
           this._okWaiters.set(ev.id,{auth:true,conn,socket,settle:r=>{clearTimeout(tm);const ok=current()&&r&&r.ok;if(ok&&ev.pubkey)conn.authPubkeys.add(ev.pubkey);resolve(!!ok);}});
           conn._send(['AUTH',ev]);
