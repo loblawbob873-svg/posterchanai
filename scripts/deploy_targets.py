@@ -245,7 +245,7 @@ _INERT_SUFFIXES = (".md",
 #
 # NOT the run-*.sh launchers: those ARE each unit's ExecStart, so a change there genuinely needs a
 # restart and must keep falling through to the shared/everything branch.
-_INERT_FILES = ("sync.sh", "install.sh",
+_INERT_FILES = ("sync.sh", "install.sh", "test.sh",
                 # Container build/orchestration. Irrelevant to a systemd node — nothing running on
                 # these boxes loads them — so a compose/Dockerfile edit must restart NOTHING. Left
                 # unmapped they meant "everything", which is how fixing a Docker doc would have

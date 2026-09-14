@@ -169,11 +169,11 @@ class Mapping(unittest.TestCase):
         self.assertEqual(dt.units_for(["botframework/main.py"]), [dt.APP])
 
     def test_deploy_tooling_restarts_nothing(self):
-        """sync.sh and install.sh are read fresh by whoever runs them and imported by no service.
+        """Deployment and test launchers are read fresh by whoever runs them and imported by no service.
         They were UNMAPPED, which means "could affect anything" and therefore every unit — so editing
         sync.sh restarted the relay and put every connected web client into "reconnecting". The
         tooling that exists to avoid downtime was causing it."""
-        for p in ("sync.sh", "install.sh"):
+        for p in ("sync.sh", "install.sh", "test.sh"):
             self.assertEqual(dt.units_for([p]), [], p)
 
     def test_the_native_app_projects_restart_nothing(self):
