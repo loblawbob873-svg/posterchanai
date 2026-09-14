@@ -80,8 +80,9 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          # The action's default includes the retired "tools" SDK package.
-          packages: 'platform-tools'
+          # Install the emulator before wrapping its executable below; fresh runners lack it.
+          # The action's default also includes the retired "tools" SDK package.
+          packages: 'platform-tools emulator'
 
       - name: Install Capacitor deps
         working-directory: mobile
