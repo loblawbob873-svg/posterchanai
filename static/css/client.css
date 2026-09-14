@@ -39,7 +39,7 @@
      palette — it also clips on wide-gamut displays and vibrates against dark backgrounds. These sit a
      few degrees off primary with the saturation pulled back: same unmistakable cyan/magenta identity,
      but it looks chosen. --accent-rgb/--accent2-rgb MUST track them (dozens of rgba(var(--accent-rgb),…)). */
-  --frame-focus:#1e525f;  /* the FOCUSED WINDOW FRAME, and it lives here so the compositor and
+  --frame-focus:#257281;  /* the FOCUSED WINDOW FRAME, and it lives here so the compositor and
      the client keep one palette. Wayfire's `active_color` fills the whole TITLEBAR, not a
      border, so the raw --neon turned every focused window into a bright cyan bar ("firefox
      is now a bright cyan window title?"). This is --neon at ~30% over --bg2: findable at a

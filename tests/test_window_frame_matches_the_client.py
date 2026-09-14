@@ -55,6 +55,30 @@ class TestTheFrameUsesThePalette(unittest.TestCase):
 
 
 class TestTheReasonItIsNotThemedIsRecorded(unittest.TestCase):
+    def test_a_native_frame_is_the_same_WEIGHT_as_a_posterchan_one(self):
+        """Two windows side by side on one screen must not be two different thicknesses.
+
+        A PosterChan window draws its own 4px frame (`#pc-oswin-frame`); a native window is
+        decorated by Wayfire at `border_size`. They drifted, and it was reported: "firefox does not
+        have the window border color that posterchan windows have ... not even the same color".
+
+        The COLOURS cannot be identical and that is not an oversight: Wayfire's `active_color` fills
+        the whole titlebar rather than the border alone, so the raw accent makes Firefox a bright
+        cyan bar — that shipped once and was reported immediately. Same weight, and the same accent
+        family, is what is actually available. The weight has no such excuse.
+        """
+        import re as _re
+        css = CSS
+        m = _re.search(r"#pc-oswin-frame\{[^}]*?border:(\d+)px", css, _re.S)
+        self.assertTrue(m, "the PosterChan window frame no longer declares a pixel border")
+        client_px = int(m.group(1))
+        n = _re.search(r"^border_size\s*=\s*(\d+)", INI, _re.M)
+        self.assertTrue(n, "border_size is not set in wayfire.ini")
+        self.assertEqual(int(n.group(1)), client_px,
+                         "a native window is %spx and a PosterChan window is %spx — side by side on "
+                         "the same screen that reads as two kinds of window"
+                         % (n.group(1), client_px))
+
     def test_the_config_says_why_it_cannot_follow_the_user_theme(self):
         """There are seven themes switched at runtime and this is a static compositor file; the one
         way to change it live is the rewrite that killed a session. Someone will ask why -- the
