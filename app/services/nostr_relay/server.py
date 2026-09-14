@@ -983,6 +983,10 @@ class RelayServer:
         if not isinstance(msg, list) or not msg:
             return
         typ = msg[0]
+        if getattr(conn, "_pcai_signer_only", False) and _restricted_traffic(typ, msg) \
+                and typ in ("EVENT", "REQ"):
+            # It is doing the one job it was admitted for. Stop counting it down.
+            setattr(conn, "_pcai_signer_used", True)
         if getattr(conn, "_pcai_signer_only", False) and not _restricted_traffic(typ, msg):
             # Said out loud rather than dropped: a signer that is refused must be able to report why,
             # and a silent drop is indistinguishable from a relay that is simply slow.
