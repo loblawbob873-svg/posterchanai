@@ -31,6 +31,31 @@ final class MmsDraft {
         } catch (Throwable ignored) { return Integer.toHexString(String.valueOf(address).hashCode()); }
     }
 
+    /* THE TYPED MESSAGE IS A DRAFT TOO, and it is filed the same way the picture is: under the
+     * conversation, never in an Activity field.
+     *
+     * ThreadActivity is `singleTop`, and the SMS notification opens it with CLEAR_TOP — so tapping
+     * the card for an incoming text while the screen is already open does NOT build a new screen,
+     * it calls onNewIntent. That changed `address` and reloaded the list while leaving the compose
+     * box exactly as it was, so a half-typed reply to one person was sitting in somebody else's
+     * conversation, and send() -- which reads the CURRENT address -- would have sent it to them.
+     * Reported as the text input field containing the message of a different, incoming message.
+     *
+     * Stored beside the attachment draft rather than held in a field, because the two events that
+     * take this screen away (a notification hand-over, and Android destroying a backgrounded
+     * activity) are the two that must not lose it. */
+    static String text(Context ctx, String address) {
+        if (address == null || address.isEmpty()) return "";
+        return prefs(ctx).getString(key(address) + ".text", "");
+    }
+
+    static void setText(Context ctx, String address, String body) {
+        if (address == null || address.isEmpty()) return;
+        String k = key(address) + ".text";
+        if (body == null || body.isEmpty()) prefs(ctx).edit().remove(k).apply();
+        else prefs(ctx).edit().putString(k, body).apply();
+    }
+
     private static File dir(Context ctx) { return new File(ctx.getFilesDir(), "mms-drafts"); }
     private static File media(Context ctx, String key) { return new File(dir(ctx), key + ".media"); }
     private static android.content.SharedPreferences prefs(Context ctx) {

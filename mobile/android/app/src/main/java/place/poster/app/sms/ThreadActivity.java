@@ -204,6 +204,16 @@ public class ThreadActivity extends PcActivity {
             CharSequence extra = i.getCharSequenceExtra(Intent.EXTRA_TEXT);
             if (extra != null) body = extra.toString();
         }
+        /* THE COMPOSER BELONGS TO THE CONVERSATION, and this is the one place the conversation can
+         * change under it. This activity is `singleTop` and SmsNotifier opens it with CLEAR_TOP, so
+         * tapping the card for an incoming text while the screen is already open reaches
+         * onNewIntent rather than building a new screen: `address` moved, the list reloaded, and
+         * the compose box kept whatever had been typed for the person we just left. send() reads
+         * the CURRENT address, so the next tap of Send would have delivered it to the wrong person.
+         * Hand it over BEFORE the `?body=` prefill below, which only fills an EMPTY box -- left
+         * after it, the prefill from an `sms:?body=` link is swallowed by the previous
+         * conversation's draft. */
+        if (a != null && !a.isEmpty() && !a.equals(address)) handOverComposer(a);
         if (input != null && !body.isEmpty() && input.getText().length() == 0) input.setText(body);
         if (a != null && !a.isEmpty()) address = a;
         if (t > 0) threadId = t;
@@ -249,6 +259,14 @@ public class ThreadActivity extends PcActivity {
         // opened so the saved name replaces the number and the Add contact button disappears.
         PhoneBook.forget();
         if (name != null) applySkin();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // A backgrounded activity can be destroyed outright, and the draft must outlive that for the
+        // same reason the picture does. Written on the way out rather than on every keystroke.
+        if (input != null) MmsDraft.setText(this, address, input.getText().toString());
     }
 
     @Override
@@ -379,6 +397,7 @@ public class ThreadActivity extends PcActivity {
         if (!r.ok) { say(r.error.isEmpty() ? getString(R.string.sms_failed) : r.error); return; }
         // Cleared only once the row exists. If the send throws, what somebody typed is still there.
         input.setText("");
+        MmsDraft.setText(this, address, "");
         updateCount();
         reload();
     }
@@ -447,6 +466,22 @@ public class ThreadActivity extends PcActivity {
     private void stageAttachment(byte[] bytes, String mime, String name) throws Exception {
         attachmentDraft = MmsDraft.save(this, address, bytes, mime, name);
         attachment = null; capturedAttachment = null;
+        paintAttachmentDraft();
+    }
+
+    /** Park what is typed under the conversation being left, and show the one being opened. */
+    private void handOverComposer(String next) {
+        if (input == null) return;
+        MmsDraft.setText(this, address, input.getText().toString());
+        input.setText(MmsDraft.text(this, next));
+        input.setSelection(input.getText().length());
+        updateCount();
+        /* The in-flight pick travels with nothing: its durable half is MmsDraft, which is keyed by
+         * address, but these three fields are not, and sendMms() falls back to them. reload() calls
+         * restoreAttachmentDraft(), which loads whatever the conversation being OPENED has staged. */
+        attachment = null; capturedAttachment = null; attachmentDraft = null;
+        // Immediately, not when reload()'s provider read comes back: until then the chip on screen
+        // is the PREVIOUS conversation's photo, over the message list of this one.
         paintAttachmentDraft();
     }
 
@@ -657,6 +692,7 @@ public class ThreadActivity extends PcActivity {
                 attachmentDraft = null; attachment = null; capturedAttachment = null;
                 discardPendingCamera(); paintAttachmentDraft();
                 input.setText("");
+                MmsDraft.setText(ThreadActivity.this, address, "");
                 updateCount();
                 say("Sent as a private link.");
                 reload();
@@ -726,6 +762,7 @@ public class ThreadActivity extends PcActivity {
             attachment = null; capturedAttachment = null;
             discardPendingCamera();
             input.setText("");
+            MmsDraft.setText(this, address, "");
             updateCount();
             say(getString(R.string.sms_mms_sent));
             reload();

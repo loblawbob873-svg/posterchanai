@@ -236,7 +236,23 @@
        offset. `bottom` is intent: new content may keep a person at latest only when they were
        already there. */
     scroll: Object.create(null),
-    attach: null,         // File waiting in the open conversation's composer
+    /* THE COMPOSER BELONGS TO THE CONVERSATION -- not to the render, and not to the module.
+     *
+     * This was one File (`attach`) and a text box with no state at all, and each half was wrong in
+     * the opposite direction. The FILE outlived the conversation it was staged in: every deliberate
+     * way of leaving a thread called clearAttachment() by hand, but `land()` -- tapping the
+     * notification for an incoming message -- does not, so a photo staged for one person arrived in
+     * somebody else's composer already labelled "ready to send", and Send put it on the carrier to
+     * them. The TEXT had the opposite defect: it lived only in the DOM, and paint() replaces #feed
+     * wholesale on every incoming message, receipt, contact refresh and relay event, so a half-typed
+     * reply was thrown away by somebody else texting you. Reported as the text field carrying the
+     * wrong conversation's message.
+     *
+     * Keyed on the thread, exactly like `scroll` and `S.sending` above: a repaint cannot lose it,
+     * and no conversation can be shown a draft that was not typed in it. Nothing has to REMEMBER to
+     * clear anything on the way out, which is what made the old shape fail at the one exit nobody
+     * wrote a clear for. */
+    draft: Object.create(null),   // thread key -> {text, file} waiting in that conversation
     /* THE FLOOR FOR NOTIFICATIONS, set once when the module loads. A first sync pulls a phone's
        whole history through the subscription, and every one of those is "new" to this device — a
        thousand notifications for messages read weeks ago. Only something that arrived AFTER this
@@ -244,7 +260,15 @@
     since: Date.now() - 120000,
   };
   let blossomLaunch=false;
-  function clearAttachment(){ S.attach=null; }
+  function draftFor(k){ return S.draft[String(k||'')] || {text:'', file:null}; }
+  /* An empty draft is DELETED rather than stored empty: these entries hold a File, and a map that
+     only ever grows would keep the bytes of every picture anybody ever changed their mind about. */
+  function setDraft(k, patch){
+    const id = String(k||''); if(!id) return;
+    const d = Object.assign({text:'', file:null}, S.draft[id], patch);
+    if(!d.text && !d.file) delete S.draft[id]; else S.draft[id] = d;
+  }
+  function clearAttachment(k){ setDraft(k === undefined ? S.open : k, {file:null}); }
   function isMmsFile(file){ return !!file&&(/^(?:image|video)\//i.test(file.type||'')||/\.(?:jpe?g|png|gif|webp|heic|heif|avif|mp4|m4v|mov|webm|3gp)$/i.test(file.name||'')); }
   /* Native and browser pickers do not always supply File.type (notably files selected by extension
    * from mounted/network storage). Keep one inference rule for direct-radio and remote outbox MMS;
@@ -3508,7 +3532,7 @@
       paint();
     };
     feed.querySelectorAll('.sms-thread').forEach(b => {
-      b.onclick = () => { clearAttachment(); S.open = b.dataset.k; paint(); };
+      b.onclick = () => { S.open = b.dataset.k; paint(); };
     });
     noteWhere();
   }
@@ -3752,12 +3776,21 @@
       const oldKey = oldList.dataset.threadKey || '';
       if(oldKey) S.scroll[oldKey] = scrollState(oldList);
     }
+    /* AND THE CARET, for the same reason as the scroll offset. The draft itself survives on S.draft
+       now, but a repaint landing while somebody is mid-word still rebuilds the element under them:
+       without this their cursor jumps to the end of what they were editing and the keyboard closes.
+       Read from the OLD element and only when it actually had focus -- never focus a composer
+       nobody was typing in, which on a phone would raise the keyboard by itself. */
+    const oldIn = feed.querySelector && feed.querySelector('#sms-in');
+    const hadFocus = !!(oldIn && typeof document !== 'undefined' && document.activeElement === oldIn);
+    const caret = hadFocus ? [oldIn.selectionStart, oldIn.selectionEnd] : null;
     const t = S.threads.find(x => x.key === S.open);
     if(!t){ S.open = ''; return paint(); }
     const who = whoIs((t.msgs[t.msgs.length-1] || {}).name, t.address);
     /* An archived message can carry the name the phone knew when it arrived. That is useful for
        the title, but it is not proof the card still exists: after deleting the contact it would
        hide the only way to add them back. Ask the current Contacts index for button visibility. */
+    const draft = draftFor(t.key);
     let savedContact = false;
     try{ savedContact = !!(window.PCContacts && PCContacts.nameFor && PCContacts.nameFor(t.address)); }
     catch(_){ }
@@ -3813,18 +3846,18 @@
             + `</div>`;
           }).join('');
         })()}</div>
-        ${S.attach?`<div class="sms-attachment-draft"><span>${ICO(String(S.attach.type||'').startsWith('video/')?'film':'image','b-ic')}<b>${enc(S.attach.name||'Attachment')}</b><small>${enc(fmtBytes(S.attach.size))} · ready to send</small></span><button id="sms-attach-clear" aria-label="Remove attachment">×</button></div>`:''}
+        ${draft.file?`<div class="sms-attachment-draft"><span>${ICO(String(draft.file.type||'').startsWith('video/')?'film':'image','b-ic')}<b>${enc(draft.file.name||'Attachment')}</b><small>${enc(fmtBytes(draft.file.size))} · ready to send</small></span><button id="sms-attach-clear" aria-label="Remove attachment">×</button></div>`:''}
         <div class="sms-compose">
           <button class="btn small" id="sms-attach" title="Add an attachment">${ICO('paperclip','b-ic')}</button>
           <input id="sms-file" type="file" hidden>
           <input id="sms-camera" type="file" accept="image/*" capture="environment" hidden>
           <button class="btn small" id="sms-emoji" title="Add emoji" aria-label="Add emoji">${ICO('smile','b-ic')}</button>
           ${(PC.gifEnabled && PC.gifEnabled())?`<button class="btn small" id="sms-gif" title="Add GIF" aria-label="Add GIF">${ICO('film','b-ic')}</button>`:''}
-          <input class="input" id="sms-in" placeholder="Text message">
+          <input class="input" id="sms-in" placeholder="Text message" value="${enc(draft.text)}">
           <button class="btn btn-neon" id="sms-send">${ICO('send','b-ic')}Send</button>
         </div>
       </div>`;
-    PC.$('#sms-back').onclick = () => { clearAttachment(); S.open = ''; paint(); };
+    PC.$('#sms-back').onclick = () => { S.open = ''; paint(); };
     const addContact=PC.$('#sms-add-contact');if(addContact)addContact.onclick=()=>{
       window.__PC_CONTACT_ADD_PHONE=String(t.address||'');
       PC.switchView('contacts');
@@ -3836,6 +3869,11 @@
       if(PC.copyValue)PC.copyValue(String(t.address||''),'','number copied');
     };
     const input = PC.$('#sms-in'), btn = PC.$('#sms-send');
+    /* Every keystroke, not a debounce: the repaint that destroys this element is triggered by
+       somebody ELSE (a message arriving, a receipt landing), so there is no moment we control in
+       which to flush. The emoji and GIF pickers dispatch `input` for exactly this reason. */
+    input.oninput = () => setDraft(t.key, {text: input.value});
+    if(hadFocus) try{ input.focus(); if(caret) input.setSelectionRange(caret[0], caret[1]); }catch(_){ }
     const emojiBtn = PC.$('#sms-emoji');
     emojiBtn.onclick = () => PC.openEmojiPopover(emojiBtn, (emoji, close) => {
       const start = Number.isInteger(input.selectionStart) ? input.selectionStart : input.value.length;
@@ -3848,7 +3886,7 @@
     if(gifBtn) gifBtn.onclick = () => { if(PC.gifPicker) PC.gifPicker(input); };
     const pick = PC.$('#sms-file'), camera = PC.$('#sms-camera'), attachBtn = PC.$('#sms-attach');
     const acceptFile = file => {
-      if(file){ S.attach=file; paint(); }
+      if(file){ setDraft(t.key, {file}); paint(); }
       return !!file;
     };
     const fromBlossom = () => PC.blossomPicker(null, async ({url,type,ext,name}) => {
@@ -3913,7 +3951,7 @@
       acceptFile(file); pick.value='';
     };
     camera.onchange=()=>{acceptFile((camera.files||[])[0]||null);camera.value='';};
-    const clear=PC.$('#sms-attach-clear');if(clear)clear.onclick=()=>{clearAttachment();paint();};
+    const clear=PC.$('#sms-attach-clear');if(clear)clear.onclick=()=>{clearAttachment(t.key);paint();};
     /* THE BUTTON'S DISABLED STATE DOES NOT GUARD THE KEYBOARD. Two Enter keydowns can arrive while
        the first radio/upload promise is pending; programmatic clicks can do the same. Without a
        function-level latch both calls pass the empty-body check and put the same message on the
@@ -3925,7 +3963,7 @@
      * element did — and `paint()` runs on every incoming message, receipt, contact refresh and relay
      * event (the comment above this renderer lists them). A repaint landing while the first send was
      * still awaiting the radio built a NEW composer with a FRESH latch, still holding the typed text
-     * and with S.attach not yet cleared (it is cleared only after the await returns). A second Enter
+     * and with the staged file not yet cleared (it is cleared only after the await returns). A second Enter
      * then sent the same body and the same picture again. Reported as "the picture I sent her just
      * sent twice".
      *
@@ -3936,15 +3974,16 @@
     const go = async () => {
       if(S.sending.has(sendKey)) return;
       const body = input.value.trim();
-      if(!body && !S.attach) return;
-      const attachment=S.attach;
+      const attachment = draftFor(t.key).file;
+      if(!body && !attachment) return;
       S.sending.add(sendKey);
       btn.disabled = true;
       try{
         const r = await send(t.address, body, attachment);
         if(!r.ok){ PC.toast(r.error || 'could not send'); return; }
         input.value = '';
-        if(S.attach===attachment)clearAttachment();
+        setDraft(t.key, {text:''});
+        if(draftFor(t.key).file === attachment) clearAttachment(t.key);
         /* `link` is already a successful local SMS send: the media was encrypted into Files and
          * its private link crossed this phone's radio. Calling that "waiting for your phone" made a
          * completed oversize send look stuck. Only queued/queued-link are genuinely waiting on a
@@ -4091,7 +4130,7 @@
   async function composeNew(){
     const to = await PC.uiPrompt('Phone number');
     if(!to) return;
-    clearAttachment(); S.open = key(to);
+    S.open = key(to);
     if(!S.threads.some(t => t.key === S.open)){
       S.threads.unshift({ key:S.open, address:to, msgs:[], date:0, unread:0 });
     }
@@ -4133,7 +4172,7 @@
     const contactLanding=String(window.__PC_SMS_OPEN_ADDRESS||'').trim();
     if(contactLanding){
       delete window.__PC_SMS_OPEN_ADDRESS;
-      clearAttachment(); S.open=key(contactLanding);
+      S.open=key(contactLanding);
       if(!S.threads.some(t=>t.key===S.open))
         S.threads.unshift({key:S.open,address:contactLanding,msgs:[],date:0,unread:0});
       paint();
@@ -4306,7 +4345,7 @@
   init();
 
   window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
-                   openBlossom: address => { const to=String(address||'').trim();if(!to)return;clearAttachment();S.open=key(to);if(!S.threads.some(t=>t.key===S.open))S.threads.unshift({key:S.open,address:to,msgs:[],date:0,unread:0});blossomLaunch=true;paint(); },
+                   openBlossom: address => { const to=String(address||'').trim();if(!to)return;S.open=key(to);if(!S.threads.some(t=>t.key===S.open))S.threads.unshift({key:S.open,address:to,msgs:[],date:0,unread:0});blossomLaunch=true;paint(); },
                    // Clear the archive's latches and walk the whole phone again -- see rescan().
                    rescan, resetArchiveMarkers,
                    // The oversized-attachment fallback — see sendAsLink.

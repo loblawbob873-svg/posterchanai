@@ -10,22 +10,32 @@ def test_selected_mms_is_visible_and_removable_before_send():
     assert 'class="sms-attachment-draft"' in JS
     assert 'ready to send' in JS
     assert 'id="sms-attach-clear"' in JS
-    assert "clear.onclick=()=>{clearAttachment();paint();}" in JS
+    # The × clears THIS conversation's staged file, not "the" staged file: there is no longer one.
+    assert "clear.onclick=()=>{clearAttachment(t.key);paint();}" in JS
     assert ".sms-attachment-draft{" in CSS
 
 
 def test_attachment_cannot_leak_to_another_recipient():
-    assert "b.onclick = () => { clearAttachment(); S.open = b.dataset.k; paint(); };" in JS
-    assert "PC.$('#sms-back').onclick = () => { clearAttachment(); S.open = ''; paint(); };" in JS
-    assert "clearAttachment(); S.open = key(to);" in JS
+    """Structurally, now — this used to be a list of the exits somebody had remembered to clear.
+
+    That list was the bug: every deliberate way of leaving a thread called `clearAttachment()`, and
+    `land()` (tapping the notification for an incoming message) did not, so a photo staged for one
+    person arrived in the next conversation already labelled "ready to send". A staged file is
+    filed under the conversation it was staged in, so there is nothing to remember and no exit left
+    to miss. The behaviour itself is measured in the rendered composer by
+    tests/client/test_sms_composer_belongs_to_the_conversation.py.
+    """
+    assert "S.attach" not in JS, "the staged file is module-wide again"
+    assert "draft: Object.create(null)" in JS
+    assert "setDraft(t.key, {file})" in JS, "a staged file is not filed under its conversation"
 
 
 def test_send_captures_the_displayed_file_and_allows_documents_as_links():
     assert "if(!isMmsFile(file) ||" in JS
     assert 'id="sms-file" type="file"' in JS
-    assert "const attachment=S.attach;" in JS
+    assert "const attachment = draftFor(t.key).file;" in JS
     assert "send(t.address, body, attachment)" in JS
-    assert "if(S.attach===attachment)clearAttachment();" in JS
+    assert "if(draftFor(t.key).file === attachment) clearAttachment(t.key);" in JS
 
 
 def test_video_uses_the_same_mms_route_on_phone_and_remote_clients():

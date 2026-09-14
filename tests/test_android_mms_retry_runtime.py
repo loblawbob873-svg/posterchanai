@@ -113,7 +113,9 @@ class DraftHarness {
   h=new DraftHarness();h.send();check(SmsSender.calls==1,"normal SMS still sends");
  }
 }
-class MmsDraft {static String READY="ready",FAILED="failed";static class Value {String state,error;Value(String s,String e){state=s;error=e;}}}
+class MmsDraft {static String READY="ready",FAILED="failed";static class Value {String state,error;Value(String s,String e){state=s;error=e;}}
+ // A sent message stops being a draft — see test_android_composer_belongs_to_the_conversation.py.
+ static void setText(Object ctx,String address,String body){}}
 class MmsFailures {static boolean indeterminate(String error){return error.startsWith("delivery unknown");}}
 class SmsSender {static int calls;static class Result {boolean ok=true;String error="";}static Result send(Object c,String a,String b,long t){calls++;return new Result();}}
 class R {static class string {static int sms_not_default=1,sms_failed=2;}}
