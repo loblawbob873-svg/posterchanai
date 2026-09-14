@@ -3919,13 +3919,26 @@
        function-level latch both calls pass the empty-body check and put the same message on the
        carrier twice. Keep the latch around the whole attempt, including failures, and release it
        in `finally` so a rejected plugin call cannot permanently disable this conversation. */
-    let sending = false;
+    /* ...AND THE LATCH MUST OUTLIVE THE RENDER, WHICH THIS ONE DID NOT.
+     *
+     * `let sending` was declared inside the paint, so it existed only for as long as that composer
+     * element did — and `paint()` runs on every incoming message, receipt, contact refresh and relay
+     * event (the comment above this renderer lists them). A repaint landing while the first send was
+     * still awaiting the radio built a NEW composer with a FRESH latch, still holding the typed text
+     * and with S.attach not yet cleared (it is cleared only after the await returns). A second Enter
+     * then sent the same body and the same picture again. Reported as "the picture I sent her just
+     * sent twice".
+     *
+     * Keyed on the conversation and held on module state, so no repaint can reset it and two
+     * different threads can still be sent to at once. Released in the same `finally`. */
+    S.sending = S.sending || new Set();
+    const sendKey = String(t.address || '');
     const go = async () => {
-      if(sending) return;
+      if(S.sending.has(sendKey)) return;
       const body = input.value.trim();
       if(!body && !S.attach) return;
       const attachment=S.attach;
-      sending = true;
+      S.sending.add(sendKey);
       btn.disabled = true;
       try{
         const r = await send(t.address, body, attachment);
@@ -3941,7 +3954,7 @@
                  : 'waiting for your phone to send it');
         paint();
       }finally{
-        sending = false;
+        S.sending.delete(sendKey);
         btn.disabled = false;
       }
     };
