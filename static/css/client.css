@@ -10263,9 +10263,21 @@ html.pc-oswin #app,html.pc-oswin .main{height:100%!important;min-height:0!import
  * that owns the whole surface. Inside the toplevel rather than around it, which is where a client
  * can draw -- visually the same edge Hyprland paints, and above the title bar so it traces all four
  * sides. `pointer-events:none` keeps every pixel of it clickable through. */
+/* THICKER THAN THE IN-PAGE WINDOWS, AND ROUNDED, FOR TWO MEASURED REASONS.
+ *
+ * THICKNESS: these monitors are 3840x2560. A 2px CSS edge that reads correctly in a browser window
+ * is physically hair-thin there — reported as "the thickness for the window border is better on
+ * webui than the actual OS". The in-page `.osw` sits on a desktop the same page draws, so it only
+ * has to separate two surfaces; this one is the whole visible boundary of a compositor toplevel and
+ * is the only thing saying where the window ends.
+ *
+ * CORNERS: reported as "the fucking corners are not drawn", and they were not. The frame was a
+ * SQUARE border at inset:0 inside a toplevel whose corners the compositor rounds — so the four
+ * corner pixels it painted were exactly the ones clipped away, leaving four disconnected edges.
+ * Matching the rounding pulls the stroke inside the visible surface, so it closes. */
 #pc-oswin-frame{position:fixed;z-index:2147483641;inset:0;pointer-events:none;
-  border:2px solid rgba(var(--accent-rgb),.24)}
-#pc-oswin-frame.focused{border-color:rgba(var(--accent-rgb),.85)}
+  border:4px solid rgba(var(--accent-rgb),.38);border-radius:11px}
+#pc-oswin-frame.focused{border-color:rgba(var(--accent-rgb),.92)}
 #pc-oswin-chrome{position:fixed;z-index:2147483640;inset:0 0 auto;height:38px;box-sizing:border-box;
   display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 12px;color:var(--text);
   /* THE TITLE BAR OF A POPPED-OUT WINDOW IS THE ONE PEOPLE ACTUALLY LOOK AT, and it was a purple

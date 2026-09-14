@@ -19842,6 +19842,22 @@
   }
   async function renderBlossom(){
     const feed=$('#feed');
+    /* AND REPAINT WHEN THE DRIVE ACTUALLY ARRIVES.
+     *
+     * Nothing did. The index is pulled once per session and the ONLY thing that redrew this screen
+     * afterwards was the manual Refresh button — so opening Files before the pull finished left the
+     * built-in default on screen until the user clicked something, which is precisely what was
+     * reported ("i had to click again to see all my blossom folders"). Saying "Loading your
+     * folders…" without ever replacing it would just be an honest hang.
+     *
+     * Fires at most once: `ensure()` sets `_pullDone`, so the redraw cannot re-enter this branch.
+     * Guarded on still being on this screen, because the pull outlives the view that started it. */
+    if(!FilesIdx._pullDone){
+      const _wasTab=_filesTab;
+      Promise.resolve().then(()=>FilesIdx.ensure()).catch(()=>{}).then(()=>{
+        if(VIEW==='blossom' && _filesTab===_wasTab) renderBlossom();
+      });
+    }
     /* One Explorer-style navigation tree replaces the duplicate row of source tabs. */
     feed.innerHTML='<div id="files-pane"></div>';
     const pane=$('#files-pane',feed);
@@ -21763,11 +21779,26 @@
    * .folder-chip[data-folder] and every handler they had still finds them. */
   function _fxSideHTML(){
     const folders = FilesIdx.folders();
+    /* A DRIVE THAT HAS NOT LOADED IS NOT A DRIVE WITH ONE FOLDER IN IT.
+     *
+     * FilesIdx starts life holding its own default — `folders: ['Music']` — and this sidebar drew
+     * that default as though it were the answer. Nothing repaints when the real index lands either
+     * (only the manual Refresh button does), so Files opened showing Music and Posts and STAYED
+     * that way until the user clicked something else: "webui showing Music and posts only in
+     * Files", which reads as every other folder having been deleted. Nothing was: the index simply
+     * had not arrived.
+     *
+     * Guarded on the DEFAULT, not on `_pullDone` alone — a warm client holding a cached list has
+     * something real to show and must keep showing it while it refreshes behind. This only
+     * suppresses the case where the list IS the built-in default and we have not yet been told
+     * otherwise. See the cache-first rule in CLAUDE.md: never dress an empty answer as an answer. */
+    const _idxUnknown = !FilesIdx._pullDone && folders.length <= 1;
     return `<div class="fx-side-mobile-head" id="fx-locations-panel"><b>Locations</b><button class="fx-nb" id="fx-locations-close" aria-label="Close locations"><svg class="ic b-ic" aria-hidden="true"><use href="#i-close"></use></svg></button></div><div class="fx-tree"><section class="fx-tree-node">
       <button class="fx-tree-head${(!_hostOn&&!_syncRoot)?' active':''}${_fxMobileSource==='blossom'?' mobile-on':''}" data-fxtoggle="blossom" aria-expanded="${_fxBlossomOpen?'true':'false'}"><span class="chev">${_fxBlossomOpen?'▾':'▸'}</span><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg><b>Files</b></button>
       <div class="fx-tree-children${_fxBlossomOpen?'':' hidden'}" data-fxtree="blossom"><div class="folder-bar">
         <button class="folder-chip${(!_syncRoot&&_filesFolder==='')?' active':''}" data-folder=""><svg class="ic b-ic" aria-hidden="true"><use href="#i-folder"></use></svg>All</button>
-        ${folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
+        ${_idxUnknown ? '<span class="muted small" id="fx-folders-loading">Loading your folders…</span>'
+          : folders.map(f=>`<button class="folder-chip${(!_syncRoot&&_filesFolder===f)?' active':''}" data-folder="${enc(f)}">${f==='Music'?'🎵':(FilesIdx.isEncFolder(f)?'🔒':'📁')} ${enc(f)}</button>`).join('')}
       </div></div></section>` + _fxSyncedHTML() + _fxHostHTML()
       + `${_standalone()?'':`<button class="fx-tree-head${_filesTab==='ai'?' active':''}" data-files-mode="ai"><svg class="ic b-ic" aria-hidden="true"><use href="#i-ai"></use></svg><b>AI Chat files</b></button>`}`
       + `${IS_ADMIN?`<button class="fx-tree-head${_filesTab==='admin'?' active':''}" data-files-mode="admin"><svg class="ic b-ic" aria-hidden="true"><use href="#i-shield"></use></svg><b>Storage admin</b></button>`:''}</div>`;

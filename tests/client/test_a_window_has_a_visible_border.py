@@ -179,6 +179,35 @@ def _measure_popped_out(page):
                 f'{name} popped-out window: the {side} edge is {distance:.0f} from the page behind '
                 f'it (need {floor}); strongest pixel {colour}')
 
+    # THE CORNERS, which the edge scan above cannot see and which were the actual report
+    # ("the fucking corners are not drawn"). Two separate things are checked, because a browser
+    # CANNOT reproduce the cause:
+    #   1. the stroke closes around each corner (measurable here);
+    #   2. the frame is ROUNDED (a rule, not a pixel). The corners went missing because a SQUARE
+    #      border at inset:0 puts its corner pixels exactly where the compositor rounds the toplevel
+    #      away. Nothing rounds anything in headless Chrome, so a square frame's corners look
+    #      perfect here — which is precisely why this has to be pinned as a rule instead.
+    for cx, cy in ((0, 0), (899, 0), (0, 599), (899, 599)):
+        box = [focused.getpixel((min(899, max(0, cx + dx)), min(599, max(0, cy + dy))))
+               for dx in range(-22, 23) for dy in range(-22, 23)]
+        interior = focused.getpixel((450, 300))
+        best = max(_distance(p, interior) for p in box)
+        assert best >= VISIBLE, (
+            f'the border does not close at corner ({cx},{cy}): strongest pixel within 22px is '
+            f'{best:.0f} from the page behind it (need {VISIBLE}). Four edges that do not meet '
+            'read as four lines, not a window.')
+
+    css = (Path(__file__).resolve().parents[2] / 'static/css/client.css').read_text(encoding='utf-8')
+    rule = css.split('#pc-oswin-frame{', 1)[1].split('}', 1)[0]
+    assert 'border-radius' in rule, (
+        'the window frame lost its border-radius. A square frame at inset:0 paints its corners '
+        'exactly where the compositor rounds the toplevel away, so on the real desktop the corners '
+        'disappear while looking perfect in every browser test.')
+    width = int(rule.split('border:', 1)[1].split('px', 1)[0].strip())
+    assert width >= 3, (
+        f'the window border is {width}px. These are 3840x2560 panels; a 2px edge that reads fine in '
+        'a browser is hair-thin there, which is what "better on webui than the actual OS" meant.')
+
     lit, _ = _edge(focused, 40, 0, 300)
     dim, _ = _edge(blurred, 40, 0, 300)
     assert lit > dim * 1.5, (
