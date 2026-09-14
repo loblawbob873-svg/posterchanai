@@ -265,6 +265,14 @@
              validate its argument and would fall through to the timeline under the right title. */
           else if(EXTRA_VIEWS.includes(v) && root.PCOS && typeof root.PCOS.renderExtra==='function')
             root.PCOS.renderExtra(v);
+          /* A POST WINDOW IS NOT A VIEW, AND THIS IS THE SECOND PLACE THAT HAS TO KNOW IT.
+           *
+           * `routeFromPath` learned it for the window's FIRST paint; this is the re-route a window
+           * gets while it is already open, and it still handed `doc:post:<id>` to switchView —
+           * which does not validate its argument, so VIEW became a name nothing routes and the
+           * window printed "Nothing here can show doc:post:43698d01…". Same rule, both paths. */
+          else if(/^doc:post:[0-9a-f]{64}$/i.test(v) && root.__PC && typeof root.__PC.openThread==='function')
+            root.__PC.openThread(v.slice('doc:post:'.length));
           else if(root.__PC&&typeof root.__PC.switchView==='function')root.__PC.switchView(v);
         }catch(_){}
         try{root.focus();}catch(_){}

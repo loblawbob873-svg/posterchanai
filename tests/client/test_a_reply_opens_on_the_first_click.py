@@ -187,3 +187,29 @@ def test_the_popped_out_desktop_opens_one_window_for_the_post():
         % (state['popped'],))
     assert len(posts) == 1, (
         'one request to open a post asked for %d windows: %r' % (len(posts), posts))
+
+
+def test_every_route_into_a_window_knows_a_post_is_not_a_view():
+    """TWO paths carry a view into a window, and covering one is how this regressed.
+
+    `routeFromPath` runs on the window's FIRST paint. The BroadcastChannel handler in oswin.js runs
+    when a window that is ALREADY OPEN is re-routed. The first fix covered only the former, so a
+    re-routed post window called `switchView('doc:post:<id>')` — which does not validate its
+    argument — and printed "Nothing here can show doc:post:43698d01…".
+
+    Pinned as a rule in both files, because the failure is structural: switchView accepts anything.
+    """
+    app = (Path(__file__).resolve().parents[2] / 'static/js/client/app.js').read_text(encoding='utf-8')
+    oswin = (Path(__file__).resolve().parents[2] / 'static/js/client/oswin.js').read_text(encoding='utf-8')
+
+    for name, src in (('app.js routeFromPath', app), ('oswin.js re-route', oswin)):
+        assert 'doc:post:' in src, '%s no longer knows about post windows at all' % name
+        # Somewhere in this file, a post-window guard must lead to openThread. Spelled loosely on
+        # purpose: the two files write the same regex with and without a capture group, and pinning
+        # one spelling is how a rule test stops testing the rule.
+        import re as _re
+        guards = [m.start() for m in _re.finditer(r'doc:post:\(?\[0-9a-f\]\{64\}', src)]
+        assert guards, '%s has no post-window guard' % name
+        assert any('openThread' in src[i:i + 600] for i in guards), (
+            '%s matches a post window and does not open the post — the next thing it reaches is '
+            'switchView, which sets VIEW to a name nothing routes' % name)

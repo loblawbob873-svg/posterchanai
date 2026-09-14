@@ -20,6 +20,8 @@ class Classes {
   constructor(names='') { this.s = new Set(names.split(/\s+/).filter(Boolean)); }
   add(...xs) { xs.forEach(x => this.s.add(x)); }
   contains(x) { return this.s.has(x); }
+  remove(...xs) { xs.forEach(x => this.s.delete(x)); }
+  toggle(x, on) { if(on===undefined) return this.s.has(x)?this.s.delete(x):this.s.add(x); return on?this.s.add(x):this.s.delete(x); }
 }
 class El {
   constructor(name='') { this.children=[];this.parent=null;this.style={backgroundImage:'',
@@ -84,6 +86,33 @@ const rows=__switchRows();
 ok('every window on this screen is a row, hosted or not',rows.length===4);
 ok('the compositor windows are there by name',
    ['Telegram','Firefox','Terminal'].every(t=>rows.some(r=>r.title===t)));
+
+/* 1a. A WINDOW WHOSE TITLE HAS NOT ARRIVED IS STILL A WINDOW.
+ *
+ * Reported as "sometimes barely shows the window list". A title lands SEPARATELY from the window —
+ * Firefox and XWayland clients announce themselves before their class/title, which the
+ * reconciliation code in os.js says in its own comment — and the switcher dropped any row without
+ * one. So the chooser hid windows purely for being young, intermittently, which is exactly how it
+ * was described. The taskbar drops them deliberately (a button that renames itself a moment later
+ * is worse than one that appears a moment later); that reasoning does not transfer here, because a
+ * window missing from Alt+Tab has no keyboard route to it at all. */
+{
+  const saved=nativeTasks;
+  nativeTasks=[...saved,{id:900,title:'',appId:'org.telegram.desktop',focused:false,stashed:false},
+                        {id:901,title:'   ',appId:'',class:'',focused:false,stashed:false}];
+  const withNameless=__switchRows();
+  ok('a window with no title yet is still reachable from Alt+Tab',
+     withNameless.some(r=>r.native===900));
+  ok('...and it is named after the application rather than blank',
+     (withNameless.find(r=>r.native===900)||{}).title==='org.telegram.desktop');
+  ok('a window with nothing to call it at all is still listed',
+     withNameless.some(r=>r.native===901));
+  ok('...under a label, never an empty string',
+     String((withNameless.find(r=>r.native===901)||{}).title||'').trim().length>0);
+  ok('and the named windows are all still there',
+     ['Telegram','Firefox','Terminal'].every(t=>withNameless.some(r=>r.title===t)));
+  nativeTasks=saved;
+}
 
 /* 1b. ORDER IS CREATION ORDER, NOT FOCUS ORDER. sway moves the focused floating window to the end
  *     of its list, so `nativeTasks` arrives in a different order after every focus change — and

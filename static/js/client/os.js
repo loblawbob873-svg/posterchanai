@@ -4281,7 +4281,21 @@
     for(const r of (nativeTasks||[])){
       if(!r||r.id==null)continue;
       const id=Number(r.id); if(!Number.isFinite(id))continue;
-      const title=String(r.title||'').trim(); if(!title)continue;
+      /* A WINDOW WITH NO NAME YET IS STILL A WINDOW, AND ALT+TAB IS THE ONLY WAY TO REACH IT.
+       *
+       * This dropped any native row whose title had not arrived — reported as "sometimes barely
+       * shows the window list". A title is metadata that lands SEPARATELY from the window: Firefox
+       * and XWayland clients in particular announce `window::new` before class/title, and the
+       * reconciliation comment elsewhere in this file says exactly that. So the chooser was hiding
+       * windows purely because they were young.
+       *
+       * The taskbar drops them for a good reason — a nameless button that renames itself a moment
+       * later is worse than one that appears a moment later — but that reasoning does not transfer
+       * here: a window missing from Alt+Tab has no keyboard route at all. Fall back to the
+       * application's own identity, and only then to a generic label. */
+      const title=String(r.title||'').trim()
+                || String(r.appId||r.app_id||r.class||r.label||'').trim()
+                || 'Untitled window';
       /* A hosted app is in BOTH lists for as long as `pc_os_host_native` is on. One window, one
        * row: the frame wins, because it is the thing that carries the preview and the focus. */
       if(rows.some(x=>x.native===id))continue;

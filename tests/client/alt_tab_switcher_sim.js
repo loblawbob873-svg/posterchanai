@@ -8,6 +8,8 @@ class Classes {
   constructor(names='') { this.s = new Set(names.split(/\s+/).filter(Boolean)); }
   add(...xs) { xs.forEach(x => this.s.add(x)); }
   contains(x) { return this.s.has(x); }
+  remove(...xs) { xs.forEach(x => this.s.delete(x)); }
+  toggle(x, on) { if(on===undefined) return this.s.has(x)?this.s.delete(x):this.s.add(x); return on?this.s.add(x):this.s.delete(x); }
 }
 class El {
   constructor(name='') { this.children=[];this.parent=null;this.style={backgroundImage:'',
