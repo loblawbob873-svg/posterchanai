@@ -486,10 +486,25 @@ jobs:
               -f ref="refs/tags/desktop-latest" -f sha="$GITHUB_SHA" >/dev/null
           fi
           actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/desktop-latest" --jq .object.sha)"
-          test "$actual" = "$GITHUB_SHA" || {
-            echo "::error::desktop-latest names $actual, not $GITHUB_SHA"
-            exit 1
-          }
+          # A NEWER RUN WINNING THIS RACE IS THE CORRECT OUTCOME, NOT A FAILURE.
+          #
+          # Two pushes close together give two overlapping runs. Both PATCH the tag; the later
+          # commit lands last, which is exactly what should happen — and then the EARLIER run read
+          # the tag back, found the newer sha, and failed the whole desktop build. It happened twice
+          # in one day, each time blocking a desktop release for a reason that was not a problem:
+          #   "desktop-latest names 9c5dfe7d…, not e84161d8…"
+          # What this step is actually for is making sure the tag is not left behind on something
+          # OLDER than us. So ask that question instead: if the tag names a commit that has ours as
+          # an ancestor, a newer build superseded us and there is nothing wrong.
+          if [ "$actual" != "$GITHUB_SHA" ]; then
+            git fetch --quiet origin "$actual" 2>/dev/null || git fetch --quiet --unshallow 2>/dev/null || true
+            if git merge-base --is-ancestor "$GITHUB_SHA" "$actual" 2>/dev/null; then
+              echo "::notice::desktop-latest advanced to $actual, which is newer than $GITHUB_SHA — superseded, not broken"
+            else
+              echo "::error::desktop-latest names $actual, which is NOT a descendant of $GITHUB_SHA"
+              exit 1
+            fi
+          fi
 
       - name: Publish rolling release
         uses: softprops/action-gh-release@v2
