@@ -1087,3 +1087,36 @@ def test_scan_status_after_restart_reports_saved_incomplete_catalog(api):
     docs['library:abc']['scan_incomplete'] = True
     assert client.get('/api/media-center/abc/scan').json() == {'state': 'interrupted'}
     assert client.get('/api/media-center').json()['libraries'][0]['scan']['state'] == 'interrupted'
+
+
+def test_an_empty_listing_says_whether_libraries_exist_that_this_viewer_cannot_open(api):
+    """A media-allowed viewer with nothing shared must not be answered the same way as a viewer on a
+    server holding no media at all.
+
+    Granting somebody the Media Center permission and sharing a library with them are two separate
+    acts. On this deployment only the first was performed, so the recipient's client received
+    `{"libraries": []}` — a 200 that is indistinguishable from "this server has no media" and told
+    nobody that a second step existed. The listing therefore reports what it MEASURED: the key the
+    ACL was actually evaluated against, and how many libraries this server holds that this viewer
+    cannot open.
+    """
+    client, docs, user, folder = api
+    seed(docs, folder)
+    docs["library:other"] = {**docs["library:abc"], "id": "other", "name": "Music", "shared_with": []}
+    docs["index"]["ids"].append("other")
+
+    user.nostr_npub, user.is_admin = VIEWER, False
+    shared = client.get("/api/media-center").json()
+    assert [lib["id"] for lib in shared["libraries"]] == ["abc"]
+    assert shared["viewer"] == VIEWER and shared["unshared"] == 1
+
+    docs["library:abc"]["shared_with"] = []
+    refused = client.get("/api/media-center").json()
+    assert refused["libraries"] == [] and refused["can_create"] is False
+    # The whole point: an empty list still distinguishes "nothing is shared with me" from "nothing
+    # is here", and carries the key its owner has to be given.
+    assert refused["unshared"] == 2 and refused["viewer"] == VIEWER
+
+    docs["index"]["ids"], user.nostr_npub, user.is_admin = [], OWNER, True
+    empty = client.get("/api/media-center").json()
+    assert empty["libraries"] == [] and empty["unshared"] == 0 and empty["viewer"] == OWNER

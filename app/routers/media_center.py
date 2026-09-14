@@ -355,8 +355,18 @@ def queue_scan(library, background):
 async def list_libraries(user=Depends(get_media_user)):
     pubkey = media.identity(user)
     config = await media.limits()
-    return {"libraries": [public_library(lib, pubkey, admin=user.is_admin) for lib in await media.libraries() if media.can_read(lib, pubkey)],
-            "can_create": bool(user.is_admin and pubkey), "profiles": media.allowed_profiles(config)}
+    held = await media.libraries()
+    readable = [lib for lib in held if media.can_read(lib, pubkey)]
+    # AN EMPTY LIST IS TWO DIFFERENT ANSWERS, and they need different words on screen: this server
+    # holds no libraries at all, or it holds libraries and none names this viewer's key. Granting a
+    # user the Media Center permission is a SEPARATE act from sharing a library with them, so the
+    # second state is the ordinary one for somebody who has just been let in — and reported as
+    # "I cannot see the media library" by a person whose screen said only that they owned nothing.
+    # `viewer` is the key this server actually evaluated the ACL against (a delegated proxy hop can
+    # carry a different one), which is also the key its owner has to be given.
+    return {"libraries": [public_library(lib, pubkey, admin=user.is_admin) for lib in readable],
+            "can_create": bool(user.is_admin and pubkey), "profiles": media.allowed_profiles(config),
+            "viewer": pubkey, "unshared": len(held) - len(readable)}
 
 
 @router.post("", status_code=201)

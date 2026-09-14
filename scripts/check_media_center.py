@@ -185,6 +185,7 @@ async def main():
             'X-Test-Viewer':new URLSearchParams(location.search).get('viewer')||'OWNER'}});
           let _aiToken='fixture',_aiAuth={};const _setAiToken=t=>{_aiToken=t;};const ensureAiSession=async()=>({});
           const loadHls=async()=>{};const toast=s=>{window.lastToast=s;};
+          const copyValue=(v,msg)=>{window.lastCopied=v;window.lastToast=msg||'copied';return Promise.resolve(true);};
         """.replace("'OWNER'", json.dumps(OWNER))
         @app.get("/", response_class=HTMLResponse)
         async def page():
@@ -193,7 +194,7 @@ async def main():
                     "<link rel='stylesheet' href='/static/css/media-center-ui.css'>"
                     "<style>body{display:block!important;margin:0!important;padding:12px}#feed{width:100%;max-width:1500px;margin:auto}</style>"
                     "<main id='feed'></main><script src='/static/js/client/sprite.js'></script><script src='/static/vendor/hls/hls.min.js'></script><script>" + bootstrap + functions +
-                    "renderMediaCenter().then(async()=>{await document.querySelector('.mc-library-open').onclick();document.title='READY';});</script><script src='/static/js/client/media-center-ui.js'></script>")
+                    "renderMediaCenter().then(async()=>{await document.querySelector('.mc-library-open')?.onclick?.();document.title='READY';});</script><script src='/static/js/client/media-center-ui.js'></script>")
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error"))
         nas_server = uvicorn.Server(uvicorn.Config(nas, host="127.0.0.1", port=0, log_level="error"))
         nas_task = asyncio.create_task(nas_server.serve())
@@ -374,6 +375,42 @@ async def main():
                     documents['index']['ids'].append('private')
                     before_share = await client.get(f'{app_url}/api/media-center', headers={'X-Test-Viewer': VIEWER})
                     assert before_share.json()['libraries'] == [], before_share.text
+                    assert before_share.json()['unshared'] == 2, before_share.text
+
+                    # THE SCREEN A RECIPIENT ACTUALLY GETS BEFORE ANYONE SHARES ANYTHING. Being given
+                    # the Media Center permission and being given a library are two separate acts, and
+                    # only the first has happened here — the state a real account was left in, and
+                    # reported as "I cannot see the media library". This viewer can never create a
+                    # library, so "My libraries" is not their tab and "No libraries of your own yet."
+                    # is not an answer to anything they can do: it reads as "this server has no media"
+                    # and names no next step, which is why the share that was never made looked
+                    # identical to one that was. Driven in a browser at phone width because the fault
+                    # is what is on screen; the API assertion above cannot see any of it.
+                    await browser.call("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844,
+                                                                              "deviceScaleFactor": 1, "mobile": False})
+                    stranded = await browser.call("Target.createTarget", {"url": f"{app_url}/?viewer=" + VIEWER})
+                    pages = (await client.get(f"http://127.0.0.1:{CDP_PORT}/json/list")).json()
+                    stranded_page = next(p for p in pages if p["id"] == stranded["targetId"])
+                    async with websockets.connect(stranded_page["webSocketDebuggerUrl"], max_size=32 * 1024 * 1024) as stranded_ws:
+                        lonely = Browser(stranded_ws)
+                        await lonely.call("Page.enable")
+                        await lonely.call("Emulation.setDeviceMetricsOverride", {"width": 390, "height": 844,
+                                                                                 "deviceScaleFactor": 1, "mobile": False})
+                        await lonely.until("document.title==='READY'")
+                        assert await lonely.js("document.querySelector('#mc-tab-shared').getAttribute('aria-selected')==='true'"), (
+                            'a viewer who cannot create a library was landed on "My libraries"')
+                        empty = await lonely.js("document.querySelector('#mc-libraries').textContent")
+                        assert 'No libraries of your own' not in empty, empty
+                        assert 'you cannot open' in empty, empty
+                        assert VIEWER in await lonely.js("document.querySelector('#mc-libraries code')?.textContent||''"), empty
+                        await lonely.js("document.querySelector('.mc-share-key button').click()", gesture=True)
+                        await lonely.until("window.lastCopied===" + json.dumps(VIEWER))
+                        assert await lonely.js('document.documentElement.scrollWidth<=innerWidth'), (
+                            'the shared key widened the page')
+                        await lonely.screenshot('stranded-viewer.png')
+                    await browser.call("Target.closeTarget", {"targetId": stranded["targetId"]})
+                    print('PASS: a viewer with nothing shared is told what is missing and given the key to hand over', flush=True)
+
                     shared = await client.put(f'{app_url}/api/media-center/test/sharing',
                         headers={'X-Test-Viewer': OWNER}, json={'shared_with':[VIEWER]})
                     assert shared.status_code == 200 and shared.json()['shared_with'] == [VIEWER], shared.text

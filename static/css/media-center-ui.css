@@ -33,3 +33,12 @@
 .mc-actions-menu .mc-device-row>.btn{width:auto;flex:none}
 .mc-actions-menu .mc-device-row>div{flex:1;min-width:0}
 .mc-actions-menu .mc-tool-body h4{width:100%;white-space:normal}
+
+/* The empty "Shared with me" state is prose plus the viewer's own key, inside a flex row built for
+   library buttons: both take a full line, and the 64-character key wraps instead of widening the
+   page (the grid/page-overflow assertions in scripts/check_media_center.py cover a phone). */
+.mc-libraries>p{flex:1 1 100%;min-width:0;margin:0}
+.mc-libraries>p.mc-share-key{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.mc-libraries>p.mc-share-key code{flex:1 1 220px;min-width:0;overflow-wrap:anywhere;font-size:12px;
+  background:var(--bg2);border-radius:var(--r-sm,8px);padding:6px 8px}
+.mc-libraries>p.mc-share-key>.btn{flex:none;width:auto}

@@ -10137,7 +10137,12 @@
       if(VIEW!=='media-center'||renderGeneration!==_mediaCenterRenderGeneration)return;
       const ownCount=data.libraries.filter(lib=>!lib.shared_with_me).length,sharedCount=data.libraries.length-ownCount;
       if(openLibraryId){const requested=data.libraries.find(lib=>lib.id===openLibraryId);if(requested)_mediaCenterLibraryTab=requested.shared_with_me?'shared':'mine';}
-      if(!_mediaCenterLibraryTab)_mediaCenterLibraryTab=ownCount||!sharedCount?'mine':'shared';
+      // A VIEWER WHO CANNOT CREATE A LIBRARY CAN NEVER HAVE ONE OF THEIR OWN, so "My libraries" is
+      // never the tab to land them on and "No libraries of your own yet." is never the thing to tell
+      // them. With nothing shared yet that message was the whole screen: it answers a question they
+      // did not ask, names nothing they can act on, and reads exactly like "this server has no media"
+      // — which is how a share that was never made looked identical to one that was.
+      if(!_mediaCenterLibraryTab)_mediaCenterLibraryTab=ownCount||(!sharedCount&&data.can_create)?'mine':'shared';
       const visibleLibraries=data.libraries.filter(lib=>Boolean(lib.shared_with_me)===(_mediaCenterLibraryTab==='shared'));
 
       feed.innerHTML=`<div class="mc-gallery"><div class="xdc-gal-top"><div class="muted"><h2>Media Center</h2>Your movies, shows and music. Pick a library and press play.</div><span class="mc-private">Private · Server library</span></div><div class="mc-library-tabs" role="tablist" aria-label="Media libraries"><button id="mc-tab-mine" type="button" role="tab" aria-controls="mc-library-panel" aria-selected="${_mediaCenterLibraryTab==='mine'}" tabindex="${_mediaCenterLibraryTab==='mine'?0:-1}">My libraries <span>${ownCount}</span></button><button id="mc-tab-shared" type="button" role="tab" aria-controls="mc-library-panel" aria-selected="${_mediaCenterLibraryTab==='shared'}" tabindex="${_mediaCenterLibraryTab==='shared'?0:-1}">Shared with me <span>${sharedCount}</span></button></div><div id="mc-library-panel" role="tabpanel" aria-labelledby="mc-tab-${_mediaCenterLibraryTab}"><div class="mc-tools">
@@ -10323,7 +10328,32 @@
         if(VIEW==='media-center')await renderMediaCenter(library.id);
       });};
       const libs=$('#mc-libraries');
-      if(!visibleLibraries.length){libs.textContent=_mediaCenterLibraryTab==='shared'?'No libraries have been shared with you yet. Ask the owner to share with your Nostr public key.':'No libraries of your own yet.';$('#mc-folder-nav').hidden=true;}
+      if(!visibleLibraries.length){
+        libs.replaceChildren();$('#mc-folder-nav').hidden=true;
+        if(_mediaCenterLibraryTab!=='shared')libs.textContent='No libraries of your own yet.';
+        else{
+          // The server counts what it holds and cannot show this viewer, so the two empty states are
+          // told apart by a measurement rather than by a guess. An older or unpatched media node
+          // sends neither field; the sentence then falls back to what it always said.
+          const waiting=Number(data.unshared)||0,message=document.createElement('p');
+          message.className='muted';
+          message.textContent=waiting?('No libraries have been shared with you yet. This server has '+waiting+
+            (waiting===1?' library':' libraries')+' you cannot open — send its owner the key below and ask them to share.')
+            :'No libraries have been shared with you yet. Ask the owner to share with your Nostr public key.';
+          libs.append(message);
+          if(data.viewer){
+            // THE KEY THE SERVER ACTUALLY CHECKED, not one the page derived: the owner pastes this
+            // exact string into "Share with Nostr users", and a delegated proxy hop is the one place
+            // it could differ from the key this browser signed in with.
+            const row=document.createElement('p');row.className='mc-share-key';
+            const key=document.createElement('code');key.textContent=data.viewer;
+            const copy=document.createElement('button');copy.type='button';copy.className='btn btn-ghost small';
+            copy.textContent='Copy my key';
+            copy.onclick=()=>copyValue(data.viewer,'key copied — send it to the library owner');
+            row.append(key,' ',copy);libs.append(row);
+          }
+        }
+      }
       for(const lib of visibleLibraries){
         const row=document.createElement('div');row.className='mc-library';
         const open=document.createElement('button');open.className='btn btn-ghost mc-library-open';row.append(open);
