@@ -547,15 +547,43 @@
             // into an eight-second timeout.
             this._okWaiters.delete(m[1]); w.settle({ok:false,msg:m[3]||'auth rejected'}); return;
           }
-          w.authTried=w.authTried||new Set();
-          if(this._authRequired(m[3])&&!w.authTried.has(conn.url)){
+          /* ONE STALE CHALLENGE MUST NOT COST THE WRITE.
+           *
+           * This allowed a single AUTH attempt per relay, ever, for a given publish. Measured on the
+           * live relay: 5719 successful AUTHs against 40 refusals, and 40 of the 43 refusals were
+           * `invalid: AUTH challenge does not match` with signed-for and observed IDENTICAL — i.e.
+           * not a credential or proxy problem, a RACE. The relay mints a fresh challenge per
+           * connection, so a signature produced across a reconnect is simply late, and retrying with
+           * the current challenge is exactly the right answer.
+           *
+           * Giving up instead meant the kind-30078 write was refused for good, and those are the
+           * app's own documents: drafts (`pcai:drafts`), notes, settings, the desktop layout. A
+           * refused drafts write is why a reply that WAS posted came back — the send removes the
+           * draft locally and the removal never reaches the relay. Reported as "lots of my fedi
+           * replies get stuck in drafts".
+           *
+           * Keyed on the CHALLENGE, not a count: a second attempt happens only when the relay has
+           * since issued a different one, so a genuinely rejected key still fails immediately
+           * instead of looping. */
+          w.authTried=w.authTried||new Map();
+          if(!(w.authTried instanceof Map)) w.authTried=new Map();
+          const _triedFor=w.authTried.get(conn.url);
+          if(this._authRequired(m[3]) && _triedFor!==(conn.challenge||'')){
             // A signed NIP-78 event must be replayed after same-owner connection AUTH. Do not count
             // the pre-auth refusal as final; it is the relay's challenge flow, not a failed write.
-            w.authTried.add(conn.url);
+            w.authTried.set(conn.url, conn.challenge||'');
             const socket=conn.ws;
             this._authenticate(conn,w.event&&w.event.kind===1059&&this._authOwner?this._authOwner():w.event&&w.event.pubkey).then(ok=>{
               if(conn.ws!==socket||this._okWaiters.get(w.event.id)!==w)return;
               if(ok)conn._send(['EVENT',w.event]);
+              /* A REFUSED AUTH IS NOT ALWAYS A REFUSED KEY. The relay answers a signature made
+               * against a superseded challenge with `invalid: AUTH challenge does not match` and
+               * issues a fresh one in the same breath — measured live, that is 40 of 43 refusals,
+               * with signed-for and observed identical. Settling the publish here threw the write
+               * away over a race. If a newer challenge has arrived, send the event again: that
+               * restarts the auth-required exchange, and `authTried` (keyed on the challenge) lets
+               * exactly one more attempt through before giving up for real. */
+              else if((conn.challenge||'') && (conn.challenge||'')!==w.authTried.get(conn.url)) conn._send(['EVENT',w.event]);
               else {w.no=(w.no||0)+1;w.why='auth rejected';if(w.sent&&w.no>=w.sent){this._okWaiters.delete(w.event.id);w.settle({ok:false,msg:w.why});}}
             });
             return;

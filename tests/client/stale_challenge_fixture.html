@@ -1,0 +1,41 @@
+<!doctype html><meta charset="utf-8"><body><script>
+window.__log=[];
+class FakeWS {
+  static OPEN=1; static CONNECTING=0; static CLOSING=2; static CLOSED=3;
+  constructor(url){ this.url=String(url); this.readyState=0; this.authed=false;
+    setTimeout(()=>{ this.readyState=1; this.onopen&&this.onopen(new Event('open'));
+      this._msg(['AUTH','challenge-1']); }, 5); }
+  _msg(d){ this.onmessage&&this.onmessage(new MessageEvent('message',{data:JSON.stringify(d)})); }
+  send(raw){ const m=JSON.parse(raw);
+    if(m[0]==='EVENT'){ const ev=m[1]; window.__log.push('EVENT:'+ev.kind);
+      if(!this.authed){ this._msg(['OK',ev.id,false,'auth-required: authenticate as the NIP-78 event author']); }
+      else { window.__accepted=true; this._msg(['OK',ev.id,true,'']); } return; }
+    if(m[0]==='AUTH'){ const ev=m[1];
+      const ch=(ev.tags.find(t=>t[0]==='challenge')||[])[1]||'';
+      window.__log.push('AUTH:'+ch);
+      if(ch==='challenge-1'){
+        // the stale-challenge race, exactly as the live relay reports it
+        this._msg(['OK',ev.id,false,'invalid: AUTH challenge does not match']);
+        this._msg(['AUTH','challenge-2']);        // a fresh one
+      } else if(ch==='challenge-2'){ this.authed=true; this._msg(['OK',ev.id,true,'']); }
+      else { this._msg(['OK',ev.id,false,'invalid: AUTH challenge does not match']); }
+      return; }
+  }
+  close(){ this.readyState=3; this.onclose&&this.onclose(new Event('close')); }
+}
+window.WebSocket=FakeWS;
+</script>
+<script src="/static/js/client/relay.js"></script>
+<script>
+(async () => {
+  const KEY='ab'.repeat(32);
+  Relay.setAuthSigner(tpl => Object.assign({}, tpl, {id:'a'+Math.random().toString(16).slice(2),
+      pubkey:KEY, sig:'s'.repeat(128)}), () => KEY);
+  Relay.configure({ urls:['ws://fixture.invalid/relay'], verify:false });
+  await new Promise(r=>setTimeout(r,120));
+  const ev={ id:'draft1', kind:30078, pubkey:KEY, created_at:Math.floor(Date.now()/1000),
+             tags:[['d','pcai:drafts']], content:'x', sig:'y'.repeat(128) };
+  const res = await Relay.publish(ev, 6000);
+  window.__result = { ok: !!(res&&res.ok), msg:(res&&res.msg)||'', accepted: !!window.__accepted, frames: window.__log };
+})();
+</script>
