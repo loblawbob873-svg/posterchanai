@@ -133,8 +133,17 @@ def _shoot(tmp, css_text, body, tag, html_class="", body_class=""):
             fh.write(css_text)
     page = os.path.join(tmp, tag + ".html")
     with open(page, "w", encoding="utf-8") as fh:
+        # ANIMATIONS OFF, and this is not cosmetic. `.note` carries `animation: noteRise .3s both`,
+        # which STARTS at opacity:0 — so a card screenshotted at two different moments is two
+        # different pictures, and the diff reports every pixel as changed no matter what the
+        # decoration did. Measured: this file passed alone and failed with the full suite running,
+        # on the one surface built from a real timeline card. Nothing here is asking about
+        # animation; it is asking which layer paints over which, and a still frame answers that
+        # exactly. (This is the same class of bug as `anim-off` freezing cards at opacity 0 — see
+        # tests/client/test_anim_off_never_hides_content.py.)
         fh.write('<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="client.css">'
-                 "<style>html,body{margin:0;height:100%}</style>"
+                 "<style>html,body{margin:0;height:100%}"
+                 "*,*::before,*::after{animation:none!important;transition:none!important}</style>"
                  '<html class="' + html_class + '"><body class="' + body_class + '">'
                  + body + "</body>")
     png = os.path.join(tmp, tag + ".png")

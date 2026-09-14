@@ -14,6 +14,15 @@ def test_os_back_is_an_explicit_live_check():
     assert jobs["check_os_back"]["group"] == "live"
 
 
+def test_public_overlay_comparison_is_an_explicit_live_check():
+    """An unpublished package pin cannot equal the currently published overlay."""
+    jobs = {job["name"]: job for job in checkall.discover()}
+    job = jobs["check_gentoo_overlay"]
+    assert job["registered"] is True
+    assert job["group"] == "live"
+    assert job["live_args"] == []  # Uses the Gentoo host, not the app's URL.
+
+
 def test_finished_check_does_not_wait_for_a_grandchild_holding_stdout():
     """A browser inherited the old PIPE and froze ./test.sh after pytest had already exited."""
     code = (
@@ -114,21 +123,22 @@ def test_the_reason_is_bounded():
     assert len(checkall.summarise({"out": out})) <= 400
 
 
-def test_the_suites_never_read_or_write_a_bytecode_cache():
-    """A GATE ONCE FAILED ON A TEST THAT DID NOT EXIST.
-
-    It reported `test_overlay_audits_unified_messages_surface`, a function that had been renamed
-    out of the file. Source clean, `cpython-311` cache clean — and the `cpython-312` `.pyc` beside
-    them still held the deleted function, written when a different interpreter ran the suite over
-    an older copy. The run that picked that cache up executed code that is in no file and reported
-    it against a path that had changed, which is the most expensive kind of red: nobody can find it.
-
-    `-p no:cacheprovider` is pytest's own cache and does nothing here; `-B` is what turns bytecode
-    caching off. One second of compile time per run buys a suite whose failures are all real.
-    """
-    import re
-    src = pathlib.Path(__file__).resolve().parent.parent / "scripts/checkall.py"
-    body = src.read_text(encoding="utf-8")
-    run = body[body.index("def run_suite(suite, tmp):"):]
-    run = run[:run.index("\ndef ", 10)]
-    assert '[PY, "-B"]' in run, "the pytest suites can pick up a stale .pyc again"
+def test_the_suites_never_read_or_write_a_bytecode_cache(tmp_path, monkeypatch):
+    """Run a real import with stale bytecode whose size and timestamp still match the source."""
+    import py_compile
+    module = tmp_path / "cached_probe.py"
+    module.write_text("value = 'old'\n")
+    cached = pathlib.Path(py_compile.compile(str(module), doraise=True))
+    original_cache = cached.read_bytes()
+    stamp = module.stat()
+    module.write_text("value = 'new'\n")
+    os.utime(module, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    monkeypatch.setattr(checkall, "ROOT", tmp_path)
+    monkeypatch.setattr(checkall, "PY", sys.executable)
+    suite = dict(name="probe", group="unit", secs=10,
+                 argv=["-c", "import sys, cached_probe; assert sys.dont_write_bytecode; "
+                       "assert cached_probe.value == 'new', cached_probe.value"])
+    result = checkall.run_suite(suite, tmp_path / "logs")
+    assert result["code"] == 0, result["out"]
+    assert cached.read_bytes() == original_cache, "the runner rewrote the checkout cache"
+    assert not list((tmp_path / "logs").rglob("*.pyc")), "the runner wrote new bytecode"

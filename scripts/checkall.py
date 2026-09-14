@@ -51,6 +51,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -138,6 +139,15 @@ CHECKS = {
     "check_no_android_signing_history": dict(group="unit", secs=120, serial=True),
     # --- need a live instance -------------------------------------------------------------------
     "check_auth_gate":                 dict(group="live", secs=300),
+    # This compares the published Gentoo overlay with this checkout. Before publication a changed
+    # package pin must differ; run the strict public comparison after deploying with --live.
+    "check_gentoo_overlay":            dict(group="live", secs=420, live_args=[]),
+    # These checks use real accounts/services, despite having previously defaulted to the offline
+    # groups. Keep their traffic opt-in, and serialize it beside other cold-session checks.
+    "check_drive_fresh_pair":          dict(group="live", secs=600, serial=True),
+    "check_sync_card":                 dict(group="live", secs=420, serial=True),
+    "check_concord_live_invite":       dict(group="live", secs=420, serial=True, live_args=[]),
+    "check_signer_transport":          dict(group="live", secs=420, serial=True, live_args=[]),
     "check_client_icon_themes":        dict(group="live", secs=600),
     "check_client_mobile":             dict(group="live", secs=600),
     "check_dm_video_live":             dict(group="live", secs=420),
@@ -271,8 +281,9 @@ CHECKS = {
     # Web Search measured as a RATE, not once. "Usually does not work the first time" passed every
     # single-shot check there was; the number was 3 of 10, and the seven failures were HTTP 200 with
     # an empty result list at the 12s engine-timeout wall. Needs real network and this node's own
-    # SearXNG, so it skips cleanly where there is neither.
-    "check_websearch_rate":            dict(group="unit", secs=420, serial=True,
+    # SearXNG. This is live service traffic, not a unit test: its searches can delay other users'
+    # realtime messages. Opt in with --live; the script checks THIS node and accepts trials, not URL.
+    "check_websearch_rate":            dict(group="live", secs=420, serial=True, live_args=[],
                                             why="searches answer at a rate, not once in three"),
     "check_notes_mobile":              dict(group="ui", secs=600),
     # Picture messages in Texts, on a device that is not the phone. The node simulator has no DOM,
@@ -479,21 +490,17 @@ def run_one(job, live, tmp, idx):
 
 
 def run_suite(suite, tmp):
-    """`-B`, AND THE REASON IS A FAILURE THAT COST A GREEN RUN.
+    """Run current source even when checkout bytecode has matching timestamps and sizes.
 
-    A gate reported `test_overlay_audits_unified_messages_surface` failing — a test that had been
-    RENAMED and no longer existed in the file. The source and its `cpython-311` cache were clean;
-    the `cpython-312` `.pyc` beside them still held the deleted function, written when some other
-    interpreter ran the suite over an older copy. Whichever Python picked that cache up ran code
-    that is in no file, and reported it against a path that had long since changed.
-
-    `-p no:cacheprovider` is pytest's cache and does nothing about this. `-B` stops the suite
-    reading or writing bytecode caches at all, which costs a second of compile time per run and
-    removes the whole class — a suite that reports a failure nobody can find is worse than slow.
+    -B prevents writes only: Python can still read an old .pyc. Give each invocation a fresh
+    cache prefix too, including reruns sharing a log directory. Child interpreters inherit the
+    isolated location, and it is removed once the suite's process group has been reaped.
     """
     t0 = time.time()
     argv = [PY, "-B"] + suite["argv"]
-    code, out = _captured(argv, ROOT, None, suite["secs"], tmp / (suite["name"] + ".log"))
+    with tempfile.TemporaryDirectory(prefix="pc-suite-pycache-") as cache:
+        env = {**os.environ, "PYTHONPYCACHEPREFIX": cache}
+        code, out = _captured(argv, ROOT, env, suite["secs"], tmp / (suite["name"] + ".log"))
     return dict(suite, secs_took=time.time() - t0, code=code, out=out.strip(),
                 cmd=" ".join(argv[1:]), name=suite["name"], registered=True)
 

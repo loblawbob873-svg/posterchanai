@@ -1,6 +1,9 @@
 """The release suite must not manufacture relay failures by load-testing its own live checks."""
 import importlib.util
 from pathlib import Path
+import sys
+
+import pytest
 
 
 def _checkall():
@@ -47,3 +50,32 @@ def test_installed_account_gate_keeps_the_external_electron_port():
     discovered = next(c for c in module.discover()
                       if c["name"] == "check_installed_desktop_account")
     assert discovered["env"]["PC_CHECK_PORT"] == "9223"
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_real_service_checks_require_explicit_live_mode(tmp_path, monkeypatch, live):
+    module = _checkall()
+    names = {"check_drive_fresh_pair", "check_sync_card", "check_concord_live_invite",
+             "check_signer_transport", "check_websearch_rate"}
+    jobs = [job for job in module.discover() if job["name"] in names]
+    assert len(jobs) == len(names)
+    calls = []
+    monkeypatch.setattr(module, "discover", lambda: jobs)
+    monkeypatch.setattr(module, "SUITES", [])
+    monkeypatch.setattr(module, "have_chrome", lambda: "/test/chrome")
+    monkeypatch.setattr(module, "have_node", lambda: "/test/node")
+    monkeypatch.setattr(module, "_captured", lambda argv, *args: (calls.append(argv) or (0, "OK")))
+    argv = ["checkall", "--tmp", str(tmp_path), "--jobs", "1"]
+    if live:
+        argv += ["--live", "https://test.invalid"]
+    monkeypatch.setattr(sys, "argv", argv)
+    assert module.main() == 0
+    if not live:
+        assert calls == [], "the default suite started real service traffic"
+        return
+    assert len(calls) == len(names)
+    for call in calls:
+        name = Path(call[1]).stem
+        expected = ["https://test.invalid"] if name in {"check_drive_fresh_pair", "check_sync_card"} else []
+        assert call[2:] == expected
+        assert module.CHECKS[name]["serial"] is True

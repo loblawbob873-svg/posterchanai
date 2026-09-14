@@ -227,13 +227,71 @@ bug back — revert the fix, or patch the shipped file in place — and confirm 
 assertion that cannot fail is worse than no assertion: it is a green row that says the area is
 covered.
 
+**Then make the suite prove it, every run.** By hand is a one-off; `tests/
+test_the_suite_can_actually_fail.py` is the same proof run for ever. Add a line naming the file, a
+single-occurrence needle, the replacement that reintroduces the bug, and the test that must go red:
+
+```python
+(
+    "the theme's CRT sheet goes back on top of every photo, document and wallpaper",
+    "static/css/client.css",
+    ".scanlines{position:fixed;inset:0;pointer-events:none;z-index:-1;",
+    ".scanlines{position:fixed;inset:0;pointer-events:none;z-index:9990;",
+    "tests/client/test_decoration_never_crosses_a_document.py",
+),
+```
+
+It mutates a throwaway worktree (never the working tree — concurrent browser checks read these files
+from disk), runs the target **clean first** and requires exit 0, then applies the mutation and
+requires exit **1** exactly. Both halves are load-bearing and both were added after they went wrong
+here:
+
+- **the clean run** — every assertion below it reads an exit code, and a test that cannot RUN in the
+  worktree returns a non-zero one for reasons that have nothing to do with the mutation. Without it,
+  an entry whose target had been renamed reported that the suite catches a bug it had never seen.
+- **exactly 1** — pytest answers `5` for "collected no tests", `4` for a usage error and `2`/`3` when
+  it breaks. Accepting any non-zero read every one of those as proof that the guard works.
+
+**Name the file that exercises the BRANCH, not the one whose title matches.** The folder-sync entry
+was first pointed at `test_delete_and_restore_symmetry.py`, which stubs `hasBlob: async () => true`
+throughout — the store always confirms, so deleting the confirmation changed nothing there and the
+entry passed while proving nothing. The refusal is owned by `test_fs_bridge.py` (`store_has="false"`
+/ `"null"`) and `exec_sim.js`. The harness found that itself, on its first run, which is the point.
+
+Keep the list short and load-bearing: each entry costs two pytest subprocesses, and a slow suite is
+a suite people skip.
+
+Mutation probes reuse pytest's current interpreter so they also run in worktrees and containers
+without a local `venv-unified/`. Each probe has a five-minute timeout; unexpected results include
+the last 8 KB of pytest output. The snapshot includes binary diffs as well as staged new tests.
+
+### Service regression coverage
+
+- Scheduled posts: cancellation during a publish pass, retry/recovery, ownership, pruning, and
+  UTC timestamps on a forced non-UTC host.
+- Saved searches: account isolation, duplicate pins, query normalization, and length limits.
+- GPU health: failed probes cannot trigger resets; Intel free memory is converted to used memory.
+- XRP codec: real isolated SDK signing, wallet ownership, address/tag validation, and testnet
+  rejection. Uses throwaway keys without broadcasting; skips explicitly when the SDK is absent.
+- Screenshot comparisons disable animation so frame timing cannot masquerade as overlay damage.
+
+The suite runner also isolates Python's bytecode cache for each run. `-B` prevents cache writes,
+but cannot prevent stale cache reads by itself. A runtime test creates stale bytecode with the
+same source timestamp and size, then verifies that the runner imports the updated source.
+
+`check_gentoo_overlay` belongs to the live group: it compares the published overlay with the
+checkout, so run it **after** publishing a package-pin change:
+`./test.sh --only gentoo_overlay --live https://poster.place`.
+
+Live search-rate, fresh-drive pairing, sync-card, public Concord invite, and signer-transport checks
+also require `--live`. They run serially because they contact real services. Search-rate and signer
+transport check this node's services; the Concord check uses its configured public invite. The two
+account checks use the supplied instance URL. Default offline runs do not start these checks.
+
 ---
 
 ## Known standing state
 
-- `check_css_scale` reports ~330 off-scale CSS values. Real, worth paying down, **advisory**: it is
-  a design-scale lint over `client.css`, not a question of whether the app works. A check that is
-  red on every single run is a check everybody learns to scroll past — which is the same disease as
-  a green board that covered nothing — so it has its own verdict and does not block a deploy.
-  `./test.sh --strict` makes it fail if you want to hold the line.
+- `check_css_scale` passes on the current stylesheet. It remains an **advisory** design-scale lint;
+  `./test.sh --strict` makes future violations block the run.
 - In the container, ~80 tests skip because the AI stack is not installed. They say so.

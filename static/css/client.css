@@ -9712,9 +9712,11 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 .bubble.in .sms-reacts{left:8px}
 .bubble.out .sms-reacts{right:8px}
 .sms-react{display:inline-flex;align-items:center;gap:2px;font-size:11px;line-height:1;
-  padding:2px 5px;border-radius:999px;background:var(--bg2,#1b1b1f);
+  padding:2px 6px;border-radius:999px;background:var(--bg2,#1b1b1f);
   border:1px solid var(--line,#2c2c33);white-space:nowrap}
-.sms-react b{font-weight:600;font-size:10px;opacity:.75}
+/* 11px, the bottom of the ladder, not 10: the count sits beside the emoji and is already held back
+   by weight and opacity, so it does not need a step the scale does not have. */
+.sms-react b{font-weight:600;font-size:11px;opacity:.75}
 /* The react button only appears on hover/focus, so a thread is not a wall of ☺. A phone has no
    hover, so it is always visible under a coarse pointer — the control has to be reachable. */
 .sms-react-add{position:absolute;top:2px;opacity:0;border:0;background:none;cursor:pointer;
@@ -9725,7 +9727,7 @@ html.osfr-on body > .app, html.osfr-on #os-root{ visibility:hidden; }
 @media (pointer:coarse){.sms-react-add{opacity:.55}}
 .sms-react-pick{position:fixed;z-index:60;display:flex;gap:2px;padding:4px;border-radius:999px;
   background:var(--bg1,#141417);border:1px solid var(--line,#2c2c33);box-shadow:0 6px 20px #0008}
-.sms-react-pick button{border:0;background:none;cursor:pointer;font-size:18px;line-height:1;
+.sms-react-pick button{border:0;background:none;cursor:pointer;font-size:17px;line-height:1;
   padding:4px;border-radius:999px}
 .sms-react-pick button:hover,.sms-react-pick button.on{background:var(--bg2,#26262c)}
 /* PICTURE MESSAGES. The bubble's `white-space:pre-wrap` is for TEXT, and it puts a phantom line
