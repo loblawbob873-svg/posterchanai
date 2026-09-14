@@ -5202,6 +5202,13 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             prev = await store.get_doc(port, "pcai:files-index", seckey=sk, strict=True)
         except Exception as e:
             logger.warning("[client] files-index: cannot read current index, refusing to write: %s", e)
+            # SAY WHICH. This refusal is the one a user experiences as "I cannot upload to that
+            # folder" — the bytes reach Blossom, the folder list does not record them, and the
+            # folder stays empty. It answered 503 and logged NOTHING, so four days of reports had no
+            # server-side trace to read at all and every diagnosis was guesswork.
+            logger.warning("[files-index] save REFUSED for %s: the current index could not be read "
+                        "(strict read failed — relay unreachable, slow, or refusing); nothing was "
+                        "written, so the existing folder list is intact", pk[:12])
             return JSONResponse({"ok": False, "error": "index unavailable, not saved"}, status_code=503)
 
         mk_kept = None
@@ -5258,6 +5265,9 @@ async def files_index(data: FilesIndexReq, db: Session = Depends(get_db)):
             cand = data.index.get("indexSha")
             if in_use is not None and cand not in in_use:
                 _expire_unreferenced_index(db, cand, 7)
+            logger.warning("[files-index] save REFUSED for %s: the relay rejected or never acked the "
+                        "write; nothing was stored, so the folder list still lacks whatever was "
+                        "just uploaded", pk[:12])
             return JSONResponse({"ok": False, "error": "relay rejected the write, not saved"},
                                 status_code=503)
 
