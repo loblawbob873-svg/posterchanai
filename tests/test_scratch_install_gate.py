@@ -487,13 +487,12 @@ def test_a_declined_upgrade_is_judged_by_its_cause_not_its_count():
     # The sweep in the installer must not hand abi_x86_32 to a package skipped for another reason —
     # it changes nothing and writes a meaningless USE line on every install, for ever.
     body = SH[SH.index("buildGentoo() {"):SH.index("finalizeInstall() {")]
-    assert "/abi_x86_32/ {if (atom != \"\")" in body, \
-        "the sweep takes every skipped atom again, ABI-related or not"
+    assert "| skippedABI32Packages)" in body, "the sweep must use the shared ABI parser"
 
-    # And the awk actually selects that way: edk2-bin (pinned) out, ncurses (ABI) in.
+    # Execute the shared parser: edk2-bin (pinned) out, ncurses (ABI) in.
     import subprocess
-    program = body[body.index("awk '") + 5:]
-    program = program[:program.index("' | sort -u")]
+    program = SH[SH.index("skippedABI32Packages() {"):]
+    program = program[:program.index("\n}\n") + 3] + "\nskippedABI32Packages"
     log = (
         "WARNING: One or more updates/rebuilds have been skipped due to a dependency conflict:\n"
         "\nsys-firmware/edk2-bin:0\n"
@@ -502,5 +501,5 @@ def test_a_declined_upgrade_is_judged_by_its_cause_not_its_count():
         "\nsys-libs/ncurses:0\n"
         "  (ncurses-6.5 ...) ABI_X86=\"(64) -32\" conflicts with\n"
         "    >=sys-libs/ncurses-5.9-r3:=[unicode(+),abi_x86_32(-)] required by (readline)\n")
-    got = subprocess.run(["awk", program], input=log, capture_output=True, text=True)
+    got = subprocess.run(["bash", "-c", program], input=log, capture_output=True, text=True)
     assert got.stdout.split() == ["sys-libs/ncurses"], got.stdout

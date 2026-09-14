@@ -189,7 +189,7 @@ SPECIAL_PACKAGE_USE=("kde-apps/kio-extras samba mtp" "app-db/postgresql icu lz4 
 # same wall from the other side (`vaInitialize failed: unknown libva error` in shell.log, i.e. no
 # accelerated video decode in the client either). This does not configure anybody's OBS; it makes
 # the hardware encoder exist so it can be chosen.
-SPECIAL_PACKAGE_USE+=("gui-wm/wayfire X dbus gles3" "gui-libs/wlroots x11-backend vulkan" "gui-wm/gamescope libei pipewire wsi-layer" "media-libs/mesa vulkan wayland vaapi")
+SPECIAL_PACKAGE_USE+=("gui-wm/wayfire X dbus gles3" "gui-wm/gamescope libei pipewire wsi-layer" "media-libs/mesa vulkan wayland vaapi")
 #
 # External desktop monitors expose brightness over DDC/CI rather than /sys/class/backlight.
 BASE_PACKAGES="www-client/firefox-bin $BASE_PACKAGES"
@@ -614,6 +614,7 @@ systemMounts() {
 
 unmaskPackages() {
 
+	refreshUpdateDependencyPolicy || return $?
 	mkdir -p /etc/portage/package.use
 	for i in "${SPECIAL_PACKAGE_USE[@]}"; do
 		NAME=$(echo $i | cut -d ' ' -f1)
@@ -677,6 +678,103 @@ unmaskPackages() {
 		return 1
 	fi
 
+}
+
+# Read Portage's skipped-update diagnostic, not the whole dependency graph: unrelated
+# exact-version pins (for example QEMU firmware) must never gain an ABI flag.
+skippedABI32Packages() {
+	awk '/have been skipped due to a dependency conflict/ {s=1; next}
+			       !s {next}
+			       /^[a-z0-9][a-z0-9-]*\/[A-Za-z0-9._+-]+/ {atom=$0; sub(/:.*/, "", atom); next}
+			       /^[^[:space:]]/ {atom=""}
+			       /abi_x86_32/ {if (atom != "") {print atom; atom=""}}' | sort -u
+}
+
+# Refresh only the dependency settings this installer owns. Old images need these before
+# world resolution too; rerunning unmaskPackages would overwrite unrelated operator policy.
+refreshUpdateDependencyPolicy() {
+	local policy_path=/etc/portage/package.use policy_legacy policy_tmp
+	local managed_name=posterchan-update-deps
+	if [ -L "$policy_path" ]; then
+		echo "Cannot migrate symlinked USE configuration: $policy_path" >&2
+		return 1
+	fi
+	if [ -f "$policy_path" ]; then
+		policy_legacy=$(mktemp "${policy_path}.XXXXXX") || return 1
+		mv -- "$policy_path" "$policy_legacy" || return 1
+		if ! mkdir -- "$policy_path"; then
+			mv -- "$policy_legacy" "$policy_path"
+			return 1
+		fi
+		mv -- "$policy_legacy" "$policy_path/00-local" || return 1
+	fi
+	mkdir -p -- "$policy_path" || return 1
+	if [ -d "$policy_path/$managed_name" ]; then
+		echo "Managed USE policy is a directory: $policy_path/$managed_name" >&2
+		return 1
+	fi
+	policy_tmp=$(mktemp "$policy_path/.posterchan-update-deps.XXXXXX") || return 1
+	# The pinned Wayfire uses wlroots 0.19 with its X11 backend. Preserve those flags
+	# when Portage rebuilds that slot against a newer glslang ABI. GnuTLS must keep
+	# the tools/PKCS#11 support required by the installed desktop dependency graph.
+	if printf '%s\n' \
+		'gui-libs/wlroots:0.19 x11-backend vulkan' \
+		'net-libs/gnutls pkcs11 tools' >"$policy_tmp" \
+		&& chmod 0644 "$policy_tmp" \
+		&& mv -f -- "$policy_tmp" "$policy_path/posterchan-update-deps"; then
+		return 0
+	fi
+	rm -f -- "$policy_tmp"
+	echo "Could not write $policy_path/posterchan-update-deps" >&2
+	return 1
+}
+
+# Portage can return success while declining ABI rebuilds. Resolve first and preserve
+# only the 32-bit flags named by its skipped-update diagnostics, with a bounded retry.
+prepareUpdateDependencies() {
+	refreshUpdateDependencyPolicy || return $?
+	local diagnostic skipped attempt status policy_tmp atom
+	local policy_path=/etc/portage/package.use/posterchan-update-abi
+	diagnostic=$(mktemp) || return 1
+	for attempt in 0 1 2 3; do
+		if /usr/bin/emerge -puDN @world >"$diagnostic" 2>&1; then
+			status=0
+		else
+			status=$?
+		fi
+		cat -- "$diagnostic"
+		if [ "$status" -ne 0 ]; then
+			rm -f -- "$diagnostic"
+			return "$status"
+		fi
+		skipped=$(skippedABI32Packages <"$diagnostic")
+		if [ -z "$skipped" ]; then
+			rm -f -- "$diagnostic"
+			return 0
+		fi
+		if [ "$attempt" -eq 3 ]; then
+			echo "ABI dependency policy did not converge; refusing world update: $skipped" >&2
+			rm -f -- "$diagnostic"
+			return 1
+		fi
+		# Keep this separate from the fixed compositor policy, which is refreshed above.
+		# Refuse links so an old or operator-owned target cannot be overwritten indirectly.
+		if [ -L "$policy_path" ] || [ -d "$policy_path" ]; then
+			echo "Cannot update non-regular ABI policy: $policy_path" >&2
+			rm -f -- "$diagnostic"
+			return 1
+		fi
+		policy_tmp=$(mktemp "${policy_path}.XXXXXX") || { rm -f -- "$diagnostic"; return 1; }
+		if ( if [ -f "$policy_path" ]; then cat -- "$policy_path" || exit 1; fi
+			while IFS= read -r atom; do printf '%s abi_x86_32\n' "$atom"; done <<<"$skipped"
+		) >"$policy_tmp" && sort -u -o "$policy_tmp" "$policy_tmp" \
+			&& chmod 0644 "$policy_tmp" && mv -f -- "$policy_tmp" "$policy_path"; then
+			:
+		else
+			rm -f -- "$policy_tmp" "$diagnostic"
+			return 1
+		fi
+	done
 }
 
 updateOS() {
@@ -955,10 +1053,7 @@ buildGentoo() {
 		# into package.use on every install, three times, for ever. awk keeps each atom only if its
 		# own conflict detail mentions the ABI.
 		skipped="$(chroot $TARGET /usr/bin/emerge -uDNp @world 2>&1 \
-			| awk '/have been skipped due to a dependency conflict/ {s=1; next}
-			       !s {next}
-			       /^[a-z0-9][a-z0-9-]*\/[A-Za-z0-9._+-]+/ {atom=$0; sub(/:.*/, "", atom); next}
-			       /abi_x86_32/ {if (atom != "") {print atom; atom=""}}' | sort -u)"
+			| skippedABI32Packages)"
 		[ -n "$skipped" ] || break
 		echo -e "\033[1;33m  giving abi_x86_32 to: $(echo $skipped)\033[0m"
 		mkdir -p "$TARGET/etc/portage/package.use"

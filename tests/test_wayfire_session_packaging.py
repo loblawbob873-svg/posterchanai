@@ -185,7 +185,7 @@ def test_the_wayfire_session_is_shipped_whole(tmp_path=None):
     assert "gui-wm/wayfire" in gentoo
     # Gentoo's Wayfire build references the Vulkan renderer helper.  Keeping
     # wlroots' Vulkan backend explicit prevents a load-time undefined symbol.
-    assert '"gui-libs/wlroots x11-backend vulkan"' in gentoo
+    assert re.search(r"[\"']gui-libs/wlroots(?::0\.19)? x11-backend vulkan[\"']", gentoo)
     # Gamescope requires SDL's OpenGL or GLES backend in addition to Vulkan.
     assert '"media-libs/libsdl2 -pipewire vulkan opengl"' in gentoo
     # THE FLAGS, NOT THE LITERAL LINE. Pinned as an exact string this asserted that nobody may ever

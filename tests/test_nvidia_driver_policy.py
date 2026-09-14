@@ -22,7 +22,7 @@ SRC = (ROOT / "os/gentoo.sh").read_text(encoding="utf-8")
 def _run_unmask(tmp_path):
     """Execute unmaskPackages() with /etc/portage redirected under tmp_path."""
     body = SRC[SRC.index("unmaskPackages() {"):]
-    body = body[:body.index("\n}\n") + 3]
+    body = body[:body.index("\nupdateOS() {")]
     etc = tmp_path / "etc/portage"
     etc.mkdir(parents=True)
     decls = "\n".join(l for l in SRC.splitlines()
@@ -53,7 +53,7 @@ def test_an_operators_own_entries_survive(tmp_path):
     etc.mkdir(parents=True)
     (etc / "package.mask").write_text("sys-apps/theirs\n")
     body = SRC[SRC.index("unmaskPackages() {"):]
-    body = body[:body.index("\n}\n") + 3]
+    body = body[:body.index("\nupdateOS() {")]
     decls = "\n".join(l for l in SRC.splitlines()
                       if l.startswith(("LICENSED_PACKAGES=", "PINNED_PACKAGES=", "MASKED_PACKAGES=")))
     script = decls + "\n" + body.replace("/etc/portage", str(etc)) + "\nSPECIAL_PACKAGE_USE=()\nunmaskPackages\n"
