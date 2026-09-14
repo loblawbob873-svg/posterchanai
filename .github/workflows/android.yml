@@ -68,6 +68,9 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default includes the retired "tools" SDK package.
+          packages: 'platform-tools'
 
       # No `|| npm install` fallback. That fallback defeated the whole point: mobile/package-lock.json was
       # missing @capacitor/clipboard, so `npm ci` failed on EVERY run and the build silently re-resolved
