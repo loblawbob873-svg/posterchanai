@@ -17,6 +17,19 @@
    * shows a couple of dozen messages; everything past that is scrollback and belongs behind the
    * paint, not in front of it. */
   const FIRST_PAINT_WRAPS=60;
+  /* ...AND A WRAP IS NOT A MESSAGE, WHICH IS WHY 60 OF THEM SOMETIMES SHOWS ALMOST NOTHING.
+   *
+   * The budget above is a decrypt cost, counted in envelopes. What lands on screen is what those
+   * envelopes FOLD into, and reactions, edits, deletions and control events all consume one without
+   * adding a line — so an active channel can spend the whole allowance and paint a handful of
+   * messages. Reported as "concord caching always caches a little bit of the room history and then
+   * loads the new content": the screenful arrives, it is too short, and the rest visibly fills in
+   * behind it.
+   *
+   * So the first paint asks for a screenful of MESSAGES and tops up ONCE if it did not get one. The
+   * fast path is unchanged — a channel whose 60 envelopes already fold into a screenful never pays
+   * for the second read. */
+  const FIRST_PAINT_MESSAGES=24;
   const DISCOVER_RELAYS=['wss://relay.dreamith.to'];
   const LEGACY_RECOVERY_RELAYS=['wss://relay.ditto.pub','wss://relay.damus.io'];
   /* A community's invite is authoritative about where its encrypted stream lives. Appending the
@@ -2360,7 +2373,21 @@
            * scrolling up still finds history. */
           const quick=await cachedEnvelopePage(envelopeCacheKey(loadKey,cachedHead.id),FIRST_PAINT_WRAPS);
           if(quick.length){
-            try{ await applyChannel(cachedHead,quick); cachedHistoryRendered=true; }
+            try{
+              await applyChannel(cachedHead,quick); cachedHistoryRendered=true;
+              /* Only when the allowance was actually SPENT (a short page means the cache simply
+               * holds no more, and re-reading it would find the same thing). One top-up, never a
+               * loop: if the deeper page still folds short, the channel really is that quiet and
+               * the background prefetch behind this covers the rest. */
+              if(quick.length>=FIRST_PAINT_WRAPS){
+                let _shown=0;
+                try{ _shown=(testMessages(channelStoreId(room,cachedHead.name))||[]).length; }catch(_){ _shown=FIRST_PAINT_MESSAGES; }
+                if(_shown<FIRST_PAINT_MESSAGES){
+                  const deeper=await cachedEnvelopePage(envelopeCacheKey(loadKey,cachedHead.id),FIRST_PAINT_WRAPS*5);
+                  if(deeper.length>quick.length) await applyChannel(cachedHead,deeper);
+                }
+              }
+            }
             catch(e){ if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
                       cachedStale.push(cachedHead.name); }
           }
