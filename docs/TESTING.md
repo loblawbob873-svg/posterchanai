@@ -288,6 +288,19 @@ also require `--live`. They run serially because they contact real services. Sea
 transport check this node's services; the Concord check uses its configured public invite. The two
 account checks use the supplied instance URL. Default offline runs do not start these checks.
 
+The signer, reconnect, and bulk-lane NIP-46 browser checks also require `--live`: their relay
+fixtures are disposable, but their web page comes from the existing app at `http://127.0.0.1:3051`.
+They retain that node-local HTTP endpoint when `--live` is supplied because their loopback `ws://`
+fixtures would be blocked as mixed content from an HTTPS page. The supplied URL instead controls
+`check_nostrconnect_remote_signer` (which also contacts Primal's relay), `check_files_home_navigates`,
+`check_composer_survives_a_desktop_click`, and `check_os_window_controls_are_reachable`.
+
+Installed account/Office and Admin prune-preview checks require `--live` too. They attach to the
+existing Electron renderer on CDP port 9223 and use its configured account/backend, regardless of
+the supplied URL. Run them against an isolated diagnostic renderer. Installed ASAR extraction
+checks remain in the default suite; they inspect packaged code without a live account. Explicit
+`--only` selection does not bypass the `--live` requirement.
+
 ### Reliable selection and retry timing
 
 Every comma-separated `--only` selector must match an available check or suite. Empty selectors

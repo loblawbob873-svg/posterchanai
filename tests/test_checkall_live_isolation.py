@@ -54,30 +54,51 @@ def test_installed_account_gate_keeps_the_external_electron_port():
 
 
 @pytest.mark.parametrize("live", [False, True])
-def test_real_service_checks_require_explicit_live_mode(tmp_path, monkeypatch, live):
+@pytest.mark.parametrize("explicit_selection", [False, True])
+def test_real_service_checks_require_explicit_live_mode(tmp_path, monkeypatch, live, explicit_selection):
     module = _checkall()
     monkeypatch.setattr(module, "_runner_lock", nullcontext)
-    names = {"check_drive_fresh_pair", "check_sync_card", "check_concord_live_invite",
-             "check_signer_transport", "check_websearch_rate"}
-    jobs = [job for job in module.discover() if job["name"] in names]
-    assert len(jobs) == len(names)
+    supplied_url = {
+        "check_drive_fresh_pair", "check_sync_card", "check_nostrconnect_remote_signer",
+        "check_files_home_navigates", "check_composer_survives_a_desktop_click",
+        "check_os_window_controls_are_reachable",
+    }
+    existing_endpoint = {
+        "check_concord_live_invite", "check_signer_transport", "check_websearch_rate",
+        "check_nip46_signer", "check_nip46_reconnect", "check_nip46_bulk_lane",
+        "check_installed_desktop_account", "check_installed_admin_prune_preview",
+    }
+    names = supplied_url | existing_endpoint
+    # Positive controls: package extraction and isolated browser fixtures still run offline.
+    offline = {"check_installed_code_package_release", "check_installed_document_apps_release",
+               "check_installed_wm_release", "check_your_files_are_reachable"}
+    selected = names | offline
+    jobs = [job for job in module.discover() if job["name"] in selected]
+    assert len(jobs) == len(selected)
     calls = []
     monkeypatch.setattr(module, "discover", lambda: jobs)
     monkeypatch.setattr(module, "SUITES", [])
     monkeypatch.setattr(module, "have_chrome", lambda: "/test/chrome")
     monkeypatch.setattr(module, "have_node", lambda: "/test/node")
-    monkeypatch.setattr(module, "_captured", lambda argv, *args: (calls.append(argv) or (0, "OK")))
+    def capture(argv, cwd, env, timeout, log):
+        calls.append((argv, env))
+        return 0, "OK"
+    monkeypatch.setattr(module, "_captured", capture)
     argv = ["checkall", "--tmp", str(tmp_path), "--jobs", "1"]
+    if explicit_selection:
+        argv += ["--only", ",".join(sorted(selected))]
     if live:
         argv += ["--live", "https://test.invalid"]
     monkeypatch.setattr(sys, "argv", argv)
     assert module.main() == 0
-    if not live:
-        assert calls == [], "the default suite started real service traffic"
-        return
-    assert len(calls) == len(names)
-    for call in calls:
+    called = {Path(call[1]).stem for call, env in calls}
+    assert called == (selected if live else offline), "live service selection or offline coverage changed"
+    assert len(calls) == len(called), "a selected check ran more than once"
+    for call, env in calls:
         name = Path(call[1]).stem
-        expected = ["https://test.invalid"] if name in {"check_drive_fresh_pair", "check_sync_card"} else []
+        expected = ["https://test.invalid"] if name in supplied_url else []
         assert call[2:] == expected
-        assert module.CHECKS[name]["serial"] is True
+        if name in names:
+            assert module.CHECKS[name]["serial"] is True
+        if name in {"check_installed_desktop_account", "check_installed_admin_prune_preview"}:
+            assert env["PC_CHECK_PORT"] == "9223"

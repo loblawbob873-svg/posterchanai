@@ -165,13 +165,22 @@ CHECKS = {
     # Kills a relay under a live session and takes the signer away under a live request. Slow by
     # construction: the waits ARE the check (7s down is longer than the retry that used to be all
     # there was, and the "answered in under 55s" bound is what separates a re-send from the ceiling).
-    # These two create their own ws:// loopback relays. Running the page over HTTPS makes Chromium
+    # These checks create their own ws:// loopback relays but load this node's existing
+    # HTTP app on localhost:3051. --live opts them in; its URL must not replace that HTTP base.
+    # The signer transports are disposable; the app and its login sessions are real.
+    # Running the page over HTTPS makes Chromium
     # correctly block that mixed-content socket and reports the security policy as a signer fault.
-    "check_nip46_reconnect":           dict(group="ui", secs=600),
+    "check_nip46_reconnect":           dict(group="live", secs=600, serial=True, live_args=[]),
+    "check_nip46_bulk_lane":           dict(group="live", secs=420, serial=True, live_args=[]),
     # Four complete remote-signer negotiations, including a deliberately 16s approval. Running it
     # beside six Chrome-heavy UI checks starves its timers and produced two false login failures;
     # alone it repeatedly passes. This is a protocol timing test, not a CPU contention benchmark.
-    "check_nip46_signer":              dict(group="ui", secs=420, serial=True),
+    "check_nip46_signer":              dict(group="live", secs=420, serial=True, live_args=[]),
+    # These load the supplied running app; the remote-signer check also uses Primal's real relay.
+    "check_nostrconnect_remote_signer": dict(group="live", secs=420, serial=True),
+    "check_files_home_navigates":      dict(group="live", secs=420, serial=True),
+    "check_composer_survives_a_desktop_click": dict(group="live", secs=420, serial=True),
+    "check_os_window_controls_are_reachable": dict(group="live", secs=420, serial=True),
     "check_os_apps":                   dict(group="live", secs=900),
     # Two browsers, three pairings, and a clock-skew case that has to time out to prove it works.
     "check_qr_device_login":           dict(group="live", secs=900, serial=True),
@@ -226,14 +235,15 @@ CHECKS = {
     "check_code_editor":               dict(group="ui", secs=420),
     # Unlike every self-contained Chrome check, this attaches to an already-running installed
     # Electron process. Its port is intentionally fixed and must not be replaced by the per-check
-    # collision-avoidance port assigned below.
-    "check_installed_desktop_account": dict(group="ui", secs=420, serial=True,
+    # collision-avoidance port assigned below. Account/Office and Admin use real services through
+    # that existing renderer. --live opts them in but its URL does not select the renderer's backend.
+    "check_installed_desktop_account": dict(group="live", secs=420, serial=True, live_args=[],
                                               env={"PC_CHECK_PORT": "9223"}),
     "check_installed_native_files": dict(group="ui", secs=90, serial=True,
                                            env={"PC_CHECK_PORT": "9223"}),
     # These attach to the installed renderer on the same fixed loopback CDP endpoint. Keep them
     # serial with the account/native gates: both temporarily change the active app/window focus.
-    "check_installed_admin_prune_preview": dict(group="ui", secs=240, serial=True,
+    "check_installed_admin_prune_preview": dict(group="live", secs=240, serial=True, live_args=[],
                                                    env={"PC_CHECK_PORT": "9223"}),
     "check_installed_system_settings": dict(group="ui", secs=90, serial=True,
                                                env={"PC_CHECK_PORT": "9223"}),
