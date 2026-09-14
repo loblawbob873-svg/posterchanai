@@ -10381,7 +10381,7 @@
            * identical — which is how this went a day without being noticed. It reports what the
            * server stored, which is also the only honest confirmation: a name that resolved to
            * nobody cannot be counted. */
-          share.innerHTML='<summary>Share with Nostr users</summary><p class="muted">One per line: an npub, a public key, or a name this server granted (e.g. <b>someone@'+enc((CFG&&CFG.nip05_domain)||'this server')+'</b>). They sign in here. Remove an entry to revoke access. Nothing is federated.</p><textarea aria-label="Nostr public keys" rows="3" style="width:100%"></textarea><button>Save sharing</button><span class="mc-share-done muted small" style="margin-inline-start:8px"></span>';
+          share.innerHTML='<summary>Share with Nostr users</summary><p class="muted">One per line: an npub, a public key, or a name this server granted (e.g. <b>someone@'+enc((typeof CFG!=='undefined'&&CFG&&CFG.nip05_domain)||'this server')+'</b>). They sign in here. Remove an entry to revoke access. Nothing is federated.</p><textarea aria-label="Nostr public keys" rows="3" style="width:100%"></textarea><button>Save sharing</button><span class="mc-share-done muted small" style="margin-inline-start:8px"></span>';
           share.querySelector('textarea').value=lib.shared_with.join('\n');
           share.querySelector('button').onclick=()=>act(share.querySelector('button'),async()=>{
             const saved=await api('/'+lib.id+'/sharing','PUT',{shared_with:share.querySelector('textarea').value.split(/[\s,]+/).filter(Boolean)});

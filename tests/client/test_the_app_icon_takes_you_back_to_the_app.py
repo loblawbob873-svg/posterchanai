@@ -62,8 +62,15 @@ def test_it_repaints_the_apps_own_view():
 def test_it_only_repaints_when_the_view_actually_differs():
     """An ordinary focus must stay free — this runs on every icon press."""
     branch = _same_view_branch()
-    assert re.search(r"if\(live && live !== view\)", branch), (
+    # The RULE is "only when the live view differs", not one spelling of the condition. The guard
+    # gained a second clause — a document window has no app to return to, and sending one back
+    # through switchView re-enters openThread -> openDoc -> openApp -> here — and pinning the exact
+    # text made that fix look like a regression.
+    assert re.search(r"if\(live && live !== view", branch), (
         "the repaint is unconditional; focusing a window you are already on would redraw it")
+    assert "doc:" in branch, (
+        "the repaint no longer excludes document windows, so opening a post that already has a "
+        "window re-enters itself through switchView")
 
 
 def test_it_reads_the_live_view_defensively():

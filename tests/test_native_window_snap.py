@@ -213,6 +213,22 @@ def test_the_snap_helper_is_installed_by_the_package():
 
 
 
+def _client_border_px():
+    """The pixel weight of a PosterChan window's own frame.
+
+    Same argument as `_client_token` below, applied to the OTHER half of a frame: these asserted the
+    literal `3`, so when the client frame went to 4px to match, a native window stayed 3px and two
+    windows side by side read as two kinds of window — while both tests passed. The rule is "a
+    native frame is the same weight as a PosterChan one"; tests/test_window_frame_matches_the_client
+    owns it in full.
+    """
+    import re as _re
+    css = (ROOT / "static/css/client.css").read_text(encoding="utf-8")
+    m = _re.search(r"#pc-oswin-frame\{[^}]*?border:(\d+)px", css, _re.S)
+    assert m, "the PosterChan window frame no longer declares a pixel border"
+    return int(m.group(1))
+
+
 def _client_token(name):
     """A colour from the client's :root palette.
 
@@ -251,7 +267,7 @@ def test_firefox_and_telegram_cannot_lose_the_native_snap_container():
     ignore = sections()["decoration"]["ignore_views"].lower()
     for app in ("firefox", "telegram", "org.telegram.desktop"):
         assert app not in ignore, f"{app} is excluded from decoration and would come up frameless"
-    assert int(sections()["decoration"]["border_size"]) == 3
+    assert int(sections()["decoration"]["border_size"]) == _client_border_px()
     assert "preferred_decoration_mode = server" in CONFIG.read_text(encoding="utf-8")
 
 
@@ -317,7 +333,7 @@ def test_the_native_chrome_is_package_owned_rather_than_migrated():
     """Same reason as above: the palette lives in the shipped config, not in a copy per account."""
     decoration = sections()["decoration"]
     assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("frame-focus"))
-    assert int(decoration["border_size"]) == 3
+    assert int(decoration["border_size"]) == _client_border_px()
 
 
 

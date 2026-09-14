@@ -53,11 +53,28 @@ PY = str(ROOT / "venv-unified/bin/python")
 #
 # Keep this list SHORT and load-bearing. Each entry costs one pytest subprocess, and a slow suite is
 # a suite people skip — which is its own way of having no tests.
+def _current_active_color():
+    """The frame colour as it is TODAY, not as it was when this list was written.
+
+    This entry carried the literal `active_color = \\#1e525fff`. That is a value the product is
+    expected to change — it moved to #257281 to bring a native window's frame into the same accent
+    family as a PosterChan one — and when it did, the needle matched nothing, the mutation was never
+    applied, and this canary failed for a reason that had nothing to do with the suite's ability to
+    fail. A mutation harness that goes red whenever the code it mutates is edited teaches people to
+    edit the harness, which is the opposite of what it is for.
+    """
+    import re as _re
+    ini = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini").read_text(encoding="utf-8")
+    m = _re.search(r"^active_color = .+$", ini, _re.M)
+    assert m, "wayfire.ini no longer sets active_color — this mutation has nothing to bite on"
+    return m.group(0)
+
+
 MUTATIONS = [
     (
         "the focused window frame stops using the client's palette",
         "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini",
-        "active_color = \\#1e525fff",
+        _current_active_color(),
         "active_color = \\#ff00ffff",
         "tests/test_window_frame_matches_the_client.py",
     ),

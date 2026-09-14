@@ -227,6 +227,17 @@ async def main():
                                                                                   "deviceScaleFactor": 1, "mobile": False})
                         await browser.call("Page.navigate", {"url": f"{app_url}/"})
                         await browser.until("document.title==='READY'")
+                        # WAIT FOR THE TAB, DO NOT SAMPLE FOR IT ONCE. `document.title==='READY'`
+                        # says the fixture is ready, not that renderMediaCenter has painted — this
+                        # queried the element in the same turn and read `null` off a page that was
+                        # about to have it. The same single-sample mistake as the Android launch
+                        # gate: a miss here is "not yet", never "not there", and a tab that never
+                        # appears still fails when the wait runs out.
+                        # WAIT FOR THE TAB, DO NOT SAMPLE FOR IT ONCE. `document.title==='READY'` says the
+                        # fixture is ready, not that renderMediaCenter has painted. Same rule as the
+                        # Android launch gate: a miss is "not yet", never "not there", and a tab that
+                        # genuinely never appears still fails when the wait runs out.
+                        await browser.until("!!document.querySelector('#mc-tab-mine')")
                         assert await browser.js("document.querySelector('#mc-tab-mine').getAttribute('aria-selected')==='true'")
                         await browser.js("document.querySelector('#mc-tab-shared').click()", True)
                         await browser.until("document.querySelector('#mc-libraries')?.textContent.includes('No libraries have been shared')")

@@ -46,7 +46,12 @@ class ReadAloudControls(unittest.TestCase):
         watch = self.app[self.app.index("function _narrateChip("):][:1400]
         self.assertIn("IntersectionObserver", watch, "scrolling away does not stop it")
         self.assertIn("isIntersecting", watch)
-        sv = self.app[self.app.index("function switchView(v, quiet)"):][:600]
+        # SKIP THE PROSE. This took the first 600 characters of switchView, so a comment added
+        # at the top of the function pushed the code it checks out of the window and the test
+        # failed for a change that did not touch narration. Strip the comments first.
+        import re as _re
+        _raw = self.app[self.app.index("function switchView(v, quiet)"):][:4000]
+        sv = _re.sub(r"/\*.*?\*/", "", _raw, flags=_re.S)[:600]
         self.assertIn("stopNarration", sv, "leaving the screen leaves it reading")
 
     def test_the_chip_is_fixed_to_the_viewport(self):
