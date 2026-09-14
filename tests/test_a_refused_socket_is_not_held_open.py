@@ -239,6 +239,67 @@ class TheConfinedGraceIsItsOwnClock(unittest.TestCase):
         self.assertIsNone(conn.closed, "a recognised client was swept by the stranger grace")
 
 
+class ARefusedStrangerIsNotAPersonOnline(unittest.TestCase):
+    """THE FIGURE THE REPORT WAS ACTUALLY ABOUT: "103 people connected despite 7 being online".
+
+    Closing refused sockets faster does not lower that number, and this is the measurement that says
+    why: occupancy is arrival rate times hold time, and a refused client redials, so we set the hold
+    time and THEY set the arrival rate. Cutting the grace from 80s to 30s cut the hold time roughly
+    threefold and their reconnect rate rose roughly threefold with it — 2,925 closes an hour became
+    8,380, and the socket count barely moved.
+
+    So the honest fix is the label, not another timer. Of 2,114 sockets closed in fifteen minutes on
+    this node, 2,095 were confined strangers and 13 were real clients. `confined` reports how many of
+    the LIVE sockets are in that state, so a reader can say "7 people, and 96 strangers being turned
+    away" instead of "103 people".
+
+    It is reported, never subtracted: a confined socket IS a connection, and the operator asked how
+    many connections there are.
+    """
+
+    def _breakdown(self, conns):
+        srv = S.RelayServer.__new__(S.RelayServer)
+        srv._conns = len(conns)
+        srv._conn_ips = conns
+        return srv.online_breakdown()
+
+    def test_a_confined_socket_is_counted_and_named(self):
+        class _C:
+            def __init__(self, confined, used=False):
+                self._pcai_signer_only = confined
+                self._pcai_signer_used = used
+        conns = {}
+        for i in range(9):
+            conns[_C(True)] = "93.184.216.%d" % i           # strangers, refused
+        for i in range(2):
+            conns[_C(False)] = "198.51.100.%d" % i          # real clients
+        conns[_C(True, used=True)] = "203.0.113.7"          # a live NIP-46 signer, doing its job
+        b = self._breakdown(conns)
+        self.assertEqual(b["conns"], 12, "every socket is still a connection")
+        self.assertEqual(b["confined"], 9,
+                         "the refused sockets are not reported, so the figure reads as people using "
+                         "the relay when they are people being turned away from it")
+        self.assertGreaterEqual(b["online"], 1, "real clients must still be counted as people")
+
+    def test_a_signer_at_work_is_not_reported_as_refused(self):
+        class _C:
+            def __init__(self):
+                self._pcai_signer_only = True
+                self._pcai_signer_used = True
+        self.assertEqual(self._breakdown({_C(): "93.184.216.34"})["confined"], 0,
+                         "a live NIP-46 session was reported as a refused stranger")
+
+    def test_the_fallback_reading_still_carries_the_key(self):
+        """No IPs captured at all is a measurement failure, and every reader must find the key it
+        looks for rather than an absent one it renders as something else."""
+        srv = S.RelayServer.__new__(S.RelayServer)
+        srv._conns = 4
+        srv._conn_ips = {}
+        b = srv.online_breakdown()
+        self.assertIn("confined", b)
+        self.assertIs(b["measured"], False)
+
+
 class TheGateNeverFailsOpen(unittest.TestCase):
     """A SOCKET ADMITTED WITHOUT A VERDICT GETS FULL SERVICE, AND THAT IS HOW THE SWITCH GOES OFF.
 

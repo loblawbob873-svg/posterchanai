@@ -6369,13 +6369,14 @@
   async function updateUserCount(onlineOnly){
     const uc=$('#user-count');
     let online=0, users=Number(CFG.users)||0, relay=0, streams=0, calls=0;
-    let relaySockets=0, relayInternal=0;
+    let relaySockets=0, relayInternal=0, relayConfined=0;
     try{
       const s=await fetch('/client/stats?v='+encodeURIComponent(_viewerId())).then(r=>r.json());
       online=Number(s.online)||0;
       relay=Number(s.relay)||0;
       relaySockets=Number(s.relay_sockets)||0;
       relayInternal=Number(s.relay_internal)||0;
+      relayConfined=Number(s.relay_confined)||0;
       streams=Number(s.streams)||0;
       calls=Number(s.calls)||0;
       _statsFetched=true;
@@ -6401,10 +6402,19 @@
      * 2026-09-04 turned that into real per-client addresses. A number nobody can reconcile is worth
      * as little as a wrong one, so it now carries what it was deduped from. */
     if(relay>0){
+      /* AND HOW MANY OF THEM ARE BEING TURNED AWAY. With `posterchan_clients_only` on, a stranger's
+       * client is admitted and CONFINED — it cannot read one event — but it is still a socket and
+       * still a distinct address, so it counts here. Measured on this node: of 2,114 sockets closed
+       * in fifteen minutes, 2,095 were confined strangers against 13 real clients, which is how the
+       * figure reads "103 people" on a relay seven people are using. Closing them faster does not
+       * lower it (a refused client redials, so occupancy is arrival rate times hold time and we set
+       * the hold time, not the arrival rate) — saying so does. */
       const relayTitle = relaySockets > 0
         ? relay.toLocaleString() + ' distinct client addresses, from ' + relaySockets.toLocaleString()
           + ' open connections'
           + (relayInternal > 0 ? ' (' + relayInternal.toLocaleString() + ' of them this node\u2019s own machines)' : '')
+          + (relayConfined > 0 ? ' \u2014 ' + relayConfined.toLocaleString() + ' are clients this relay is '
+             + 'refusing, and are not people using it' : '')
         : 'People connected to this relay right now';
       _lastRelayTitle = relayTitle;      // the ☰ More sheet is built synchronously; same words there
       parts.push(`<span class="uc-stat" title="${enc(relayTitle)}">${RELAY_ICON} ${relay.toLocaleString()} on relay</span>`);

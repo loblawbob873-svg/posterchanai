@@ -6558,9 +6558,15 @@
      * router.lan's nginx stopped folding the whole internet into one address, and the CORRECT number
      * was reported as a bug. Both renderers below show this. */
     const sockets = n(st && st.relay_sockets), mine = n(st && st.relay_internal);
+    /* `confined` — sockets `posterchan_clients_only` admitted and then refused everything. They are
+     * connections and are counted as such, but they are not people using the relay, and not saying
+     * so is what makes the figure read as a fault. See RelayServer.online_breakdown. */
+    const refused = n(st && st.relay_confined);
     const relayTip = sockets > 0
       ? n(st && st.relay).toLocaleString() + ' distinct client addresses, from ' + sockets.toLocaleString()
         + ' open connections' + (mine > 0 ? ' (' + mine.toLocaleString() + ' of them this machine\u2019s own)' : '')
+        + (refused > 0 ? ' \u2014 ' + refused.toLocaleString() + ' are clients this relay is refusing, and are '
+           + 'not people using it' : '')
       : 'people connected to this relay right now';
     return [{ icon: 'i-wot',       n: n(st && st.users),  label: 'WoT',      tip: 'people in this relay\u2019s web of trust' },
             { icon: 'i-livedot',   n: n(st && st.online), label: 'online',   tip: 'people using this site right now' },

@@ -1778,7 +1778,8 @@ def relay_status() -> dict:
         extra = {k: st[k] for k in ("outbox", "private_outbox", "firehose", "subs",
                                     "accepted", "rejected", "started", "ts",
                                     "online_remote", "online_internal", "online_unknown",
-                                    "online_loopback_conns", "online_measured") if k in st}
+                                    "online_loopback_conns", "online_confined",
+                                    "online_measured") if k in st}
         if not alive:
             alive = (time.time() - st.get("ts", 0)) < 90 and _pid_alive(st.get("pid"))
     except Exception:

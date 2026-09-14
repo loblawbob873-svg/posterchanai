@@ -513,11 +513,17 @@ async def client_stats(request: Request, v: str = ""):
         # reported" and never as "no sockets".
         sockets = int(st.get("conns", 0) or 0)
         relay_internal = int(st.get("online_internal", 0) or 0)
+        # Sockets `posterchan_clients_only` admitted and CONFINED — refused every read, waiting to
+        # be closed. They are connections and are counted as such; they are not people, and saying
+        # so is the difference between "103 people are on your relay" and "7 people are, and 96
+        # strangers are being turned away". See RelayServer.online_breakdown.
+        relay_confined = int(st.get("online_confined", 0) or 0)
         calls = int(st.get("calls", 0) or 0)
     except Exception:
         pass
     return JSONResponse({"users": members, "online": online, "relay": relay_conns,
                          "relay_sockets": sockets, "relay_internal": relay_internal,
+                         "relay_confined": relay_confined,
                          "calls": calls, "streams": await _live_stream_count()})
 
 

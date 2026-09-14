@@ -1055,15 +1055,32 @@ class RelayServer:
           many of the total they are, so the figure can be reconciled instead of argued about.
 
         Loopback (this node's own bots/app/worker, which dial 127.0.0.1) is not a person and is in
-        neither count; `loopback_conns` reports it so the sockets still add up."""
+        neither count; `loopback_conns` reports it so the sockets still add up.
+
+        * MISCOUNTED A THIRD WAY, and this is the one that produced "there are 103 people connected
+          to the relay despite 7 being online". With `posterchan_clients_only` on, a stranger's
+          client is admitted and CONFINED: it cannot read one event, and every request it makes is
+          refused. It is still a socket and still a distinct address, so it was counted as a person
+          online — and the population is large and persistent, because a refused client redials.
+          Measured here: of 2,114 sockets closed in fifteen minutes, 2,095 were confined strangers
+          against 13 real clients. Closing them faster does not reduce the figure (they redial
+          faster; occupancy is arrival rate times hold time, and this population's arrival rate is
+          whatever we make it) — so `confined` reports how many of the live sockets are refused,
+          which turns an alarming number into a legible one. A reader shows people and strangers
+          separately; it must never subtract one from the other silently, because a confined socket
+          IS a connection and the operator asked how many connections there are."""
         conns = int(self._conns)
         if not self._conn_ips:
             # No IPs captured at all → raw fallback, and SAY it is a fallback: "measured: False"
             # is the difference between "one person with 7 tabs" and "we could not tell".
             return {"online": conns, "conns": conns, "remote": 0, "internal": 0,
-                    "unknown": 0, "loopback_conns": 0, "measured": False}
+                    "unknown": 0, "loopback_conns": 0, "confined": 0, "measured": False}
         _local = {"127.0.0.1", "::1", "localhost"}
         remote, internal, unknown, loopback = set(), set(), 0, 0
+        # Sockets the client filter admitted but confined — refused every read, waiting to be closed.
+        confined = sum(1 for conn in self._conn_ips
+                       if getattr(conn, "_pcai_signer_only", False)
+                       and not getattr(conn, "_pcai_signer_used", False))
         for ip in self._conn_ips.values():
             if not ip:
                 unknown += 1               # IP unknown → count this conn on its own
@@ -1074,8 +1091,8 @@ class RelayServer:
             else:
                 remote.add(ip)             # a real remote person
         return {"online": len(remote) + len(internal) + unknown, "conns": conns,
-                "remote": len(remote), "internal": len(internal),
-                "unknown": unknown, "loopback_conns": loopback, "measured": True}
+                "remote": len(remote), "internal": len(internal), "unknown": unknown,
+                "loopback_conns": loopback, "confined": confined, "measured": True}
 
     def online_count(self) -> int:
         """The headline "people online" figure — see online_breakdown() for what it is made of."""
