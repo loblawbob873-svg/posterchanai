@@ -327,3 +327,16 @@ slowdowns can be traced to individual tests.
 - `check_css_scale` passes on the current stylesheet. It remains an **advisory** design-scale lint;
   `./test.sh --strict` makes future violations block the run.
 - In the container, ~80 tests skip because the AI stack is not installed. They say so.
+
+
+## OS update regression coverage
+
+The installer refreshes its own dependency policy before resolving an update, preserving other
+Portage configuration files. It checks a read-only world plan for skipped 32-bit rebuilds and
+retains only the ABI flags named by those warnings. The parser excludes unrelated version pins,
+including QEMU firmware, and clears its state before later binary-package diagnostics.
+
+Bash execution tests cover the old-image Wayfire/glslang dependency settings, preservation of
+operator configuration, bounded ABI convergence, and failed sync/resolution/update/cleanup steps.
+A failed update cannot continue into package cleanup or bootloader changes. On a live desktop,
+verify with a pretend update first and defer package installation or restarts as appropriate.

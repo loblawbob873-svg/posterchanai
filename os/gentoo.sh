@@ -781,6 +781,7 @@ updateOS() {
 	# A slot conflict is an unsuccessful update, not permission to clean up the
 	# installed tree or rewrite its bootloader. Preserve Portage's failure status.
 	/usr/bin/emerge --sync || return $?
+	prepareUpdateDependencies || return $?
 	/usr/bin/emerge -uDN @world || return $?
 	/usr/bin/emerge -c || return $?
 	bootloader

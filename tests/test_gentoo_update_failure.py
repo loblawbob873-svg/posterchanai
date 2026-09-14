@@ -10,10 +10,11 @@ SOURCE = Path(__file__).resolve().parents[1] / 'os/gentoo.sh'
 
 @pytest.mark.parametrize('failure,expected', [
     ('--sync', ['emerge --sync']),
-    ('-uDN', ['emerge --sync', 'emerge -uDN @world']),
-    ('-c', ['emerge --sync', 'emerge -uDN @world', 'emerge -c']),
-    ('bootloader', ['emerge --sync', 'emerge -uDN @world', 'emerge -c', 'bootloader']),
-    ('', ['emerge --sync', 'emerge -uDN @world', 'emerge -c', 'bootloader']),
+    ('policy', ['emerge --sync', 'policy']),
+    ('-uDN', ['emerge --sync', 'policy', 'emerge -uDN @world']),
+    ('-c', ['emerge --sync', 'policy', 'emerge -uDN @world', 'emerge -c']),
+    ('bootloader', ['emerge --sync', 'policy', 'emerge -uDN @world', 'emerge -c', 'bootloader']),
+    ('', ['emerge --sync', 'policy', 'emerge -uDN @world', 'emerge -c', 'bootloader']),
 ])
 def test_update_stops_at_the_first_failed_step(failure, expected):
     source = SOURCE.read_text()
@@ -25,6 +26,10 @@ def test_update_stops_at_the_first_failed_step(failure, expected):
 /usr/bin/emerge() {
   echo "emerge $*"
   if [ "$1" = "$FAIL_STEP" ]; then return 23; fi
+}
+prepareUpdateDependencies() {
+  echo policy
+  if [ "$FAIL_STEP" = policy ]; then return 23; fi
 }
 bootloader() {
   echo bootloader
