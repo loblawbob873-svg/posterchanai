@@ -25,7 +25,14 @@ class Browser:
         self.sequence+=1
         await self.ws.send(json.dumps({'id':self.sequence,'method':method,'params':params or {}}))
         while True:
-            message=json.loads(await asyncio.wait_for(self.ws.recv(),15))
+            # 15s was too tight, and the way it failed was misleading. These suites run CONCURRENTLY
+            # with the browser checks on a node that is also serving live traffic, so a single
+            # Runtime.evaluate can sit behind a page grinding through ~70 sequential IndexedDB
+            # writes. The call then dies as a bare TimeoutError attributed to whichever test drew
+            # the short straw — test_concord_pending_delivery_cache went red in the full suite and
+            # passed alone, which is the signature of a budget, not a bug. Raising it cannot turn a
+            # passing test red; it only stops a slow answer being reported as no answer.
+            message=json.loads(await asyncio.wait_for(self.ws.recv(),60))
             if message.get('id')==self.sequence:
                 assert 'error' not in message,message
                 return message.get('result',{})

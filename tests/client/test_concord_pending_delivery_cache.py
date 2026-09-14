@@ -65,11 +65,18 @@ def test_pending_delivery_survives_history_eviction_and_ack_does_not_resurrect(t
             browser=Browser(ws)
             await browser.call('Page.enable')
             await browser.call('Page.navigate',{'url':f'http://127.0.0.1:{server.server_port}/index.html'})
-            for _ in range(150):
+            # ~70 sequential IndexedDB writes plus two eviction-pressure batches. 15s of budget was
+            # enough alone and not enough inside the full suite, where this runs beside the browser
+            # checks on a node serving live traffic. A test that only fails when the machine is busy
+            # reports nothing about the code.
+            budget=600   # 60s
+            for _ in range(budget):
                 result=await browser.js('window.__result||null')
                 if result:return result
                 await asyncio.sleep(.1)
-            raise AssertionError('IndexedDB delivery scenario did not complete')
+            state=await browser.js("({err:window.__error||null,step:window.__step||null})")
+            raise AssertionError(
+                'IndexedDB delivery scenario did not complete within %ds: %r' % (budget//10, state))
     try:
         result=asyncio.run(run())
         assert result.get('ok'),result
