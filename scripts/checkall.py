@@ -43,6 +43,9 @@ Exit code: 0 only if nothing failed. Skips do not fail the run, but they are imp
 """
 import argparse
 import concurrent.futures
+from contextlib import contextmanager
+import fcntl
+import hashlib
 import json
 import os
 import pathlib
@@ -348,10 +351,10 @@ CHECKS = {
 # node subprocesses, and knowing WHICH half went red is most of the diagnosis.
 SUITES = [
     dict(name="tests", group="unit", secs=2700,
-         argv=["-m", "pytest", "tests/", "-q", "--ignore=tests/client", "-p", "no:cacheprovider"],
+         argv=["-m", "pytest", "tests/", "-q", "--ignore=tests/client", "-p", "no:cacheprovider", "--durations=20"],
          detail="services, routers, relay, media — no browser"),
     dict(name="tests/client", group="client", secs=2700,
-         argv=["-m", "pytest", "tests/client/", "-q", "-p", "no:cacheprovider"],
+         argv=["-m", "pytest", "tests/client/", "-q", "-p", "no:cacheprovider", "--durations=20"],
          detail="the shipped client JS, run under node against stubs"),
 ]
 
@@ -591,6 +594,37 @@ def _default_jobs():
     return jobs
 
 
+class RunnerBusy(RuntimeError):
+    """Another runner owns this checkout's browser ports and test resources."""
+
+
+@contextmanager
+def _runner_lock():
+    # Worktrees share the same resources. Use the common git directory as the identity;
+    # the kernel releases the lock even after SIGKILL, so a stale PID never blocks a run.
+    common = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=ROOT,
+                            capture_output=True, text=True, timeout=10)
+    identity = (ROOT / common.stdout.strip()).resolve() if common.returncode == 0 else ROOT.resolve()
+    key = hashlib.sha256(str(identity).encode()).hexdigest()[:20]
+    path = pathlib.Path(tempfile.gettempdir()) / f"pc-checkall-{os.getuid()}-{key}.lock"
+    with path.open("a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock.seek(0)
+            owner = lock.read().strip() or "owner information pending"
+            raise RunnerBusy(f"Another test suite is running ({owner}). Wait for it to finish; "
+                             "no checks were started.") from None
+        try:
+            lock.seek(0)
+            lock.truncate()
+            lock.write(f"PID {os.getpid()}, checkout {ROOT}")
+            lock.flush()
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Run every PosterChanAI check and report.")
     ap.add_argument("--live", metavar="URL",
@@ -611,13 +645,22 @@ def main():
     ap.add_argument("--json", metavar="FILE", help="also write the full result as JSON")
     ap.add_argument("--tmp", default="", help="scratch dir for chrome profiles")
     args = ap.parse_args()
+    if args.jobs < 0:
+        ap.error("--jobs must be zero (automatic) or a positive number")
 
     checks = discover()
     suites = list(SUITES)
     groups = set(args.group or (["unit", "client", "ui", "lint"]
                                 + (["live"] if args.live else [])))
-    if args.only:
+    if args.only is not None:
         want = [w.strip() for w in args.only.split(",") if w.strip()]
+        if not want:
+            ap.error("--only requires at least one check name")
+        names = [job["name"] for job in checks + suites]
+        unmatched = [w for w in want if not any(w in name for name in names)]
+        if unmatched:
+            ap.error("--only matched no checks for: " + ", ".join(unmatched)
+                     + "; use --list to see available checks")
         checks = [c for c in checks if any(w in c["name"] for w in want)]
         suites = [s for s in suites if any(w in s["name"] for w in want)]
         groups = {"unit", "client", "ui", "lint", "live"}
@@ -650,6 +693,15 @@ def main():
             say(f"  {c['group']:<7} {c['name']}{mark}")
         return 0
 
+    try:
+        with _runner_lock():
+            return _execute(args, suites, checks, tmp, chrome, say)
+    except RunnerBusy as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+
+def _execute(args, suites, checks, tmp, chrome, say):
     t0 = time.time()
     results = []
 

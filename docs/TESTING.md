@@ -288,6 +288,25 @@ also require `--live`. They run serially because they contact real services. Sea
 transport check this node's services; the Concord check uses its configured public invite. The two
 account checks use the supplied instance URL. Default offline runs do not start these checks.
 
+### Reliable selection and retry timing
+
+Every comma-separated `--only` selector must match an available check or suite. Empty selectors
+and typos exit 2 before executing anything, including when another selector is valid. Use `--list`
+to find names. Negative `--jobs` values also fail before starting the suites.
+
+One `checkall.py` run may own a repository at a time, including its linked worktrees. A competing
+run exits 2 and names the owner's PID and checkout; wait for that run instead of starting duplicate
+browsers. `--list` remains available. The operating system releases the advisory lock when the
+runner exits or crashes; never delete the lock file to bypass a running suite. Direct focused
+pytest commands remain available, so coordinate those with any active full run.
+
+Missing-event retry tests use a virtual timeout clock while executing the shipped JavaScript.
+They preserve debounce, backoff, delayed query responses and recovery timing without waiting for
+real minutes. The clock itself checks deadline ordering, cancellation and promise continuations.
+Mutation probes require these tests to catch dropped retry queues and frozen sockets spending the
+permanent retry budget. Production timers are unchanged. Suite logs also record the 20 slowest pytest cases, so future
+slowdowns can be traced to individual tests.
+
 ---
 
 ## Known standing state

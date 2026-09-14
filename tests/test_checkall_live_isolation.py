@@ -1,4 +1,5 @@
 """The release suite must not manufacture relay failures by load-testing its own live checks."""
+from contextlib import nullcontext
 import importlib.util
 from pathlib import Path
 import sys
@@ -55,6 +56,7 @@ def test_installed_account_gate_keeps_the_external_electron_port():
 @pytest.mark.parametrize("live", [False, True])
 def test_real_service_checks_require_explicit_live_mode(tmp_path, monkeypatch, live):
     module = _checkall()
+    monkeypatch.setattr(module, "_runner_lock", nullcontext)
     names = {"check_drive_fresh_pair", "check_sync_card", "check_concord_live_invite",
              "check_signer_transport", "check_websearch_rate"}
     jobs = [job for job in module.discover() if job["name"] in names]

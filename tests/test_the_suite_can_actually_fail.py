@@ -73,6 +73,21 @@ def _current_active_color():
 
 MUTATIONS = [
     (
+        "a frozen relay spends the permanent missing-event retry budget",
+        "static/js/client/app.js",
+        "const answered = live && !threw && evs.complete !== false;",
+        "const answered = true;",
+        "tests/client/test_need_event_retry.py",
+    ),
+    (
+        "missing events are dropped instead of queued for another attempt",
+        "static/js/client/app.js",
+        "map.set(id,n); _evQ.add(id); if(n>worst) worst=n;",
+        "map.set(id,n); if(n>worst) worst=n;",
+        "tests/client/test_need_event_retry.py",
+    ),
+
+    (
         "the focused window frame stops using the client's palette",
         "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini",
         _current_active_color(),

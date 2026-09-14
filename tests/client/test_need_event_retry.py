@@ -99,8 +99,8 @@ const Relay = {
 };
 """
     return subprocess.run(
-        ["node", "-e", boot + "\n".join(parts) + "\n" + script],
-        capture_output=True, timeout=180)
+        ["node", "-e", (ROOT / "tests/client/virtual_timeout_clock.js").read_text() + boot + "\n".join(parts) + "\n" + script],
+        capture_output=True, timeout=10)
 
 
 def _run(script):
@@ -118,8 +118,8 @@ class NeedEventRetry(unittest.TestCase):
         got = _run("""
         (async () => {
           needEvent('a'.repeat(64));
-          await new Promise(r => setTimeout(r, 250));      // let the 150ms debounce fire
-          await new Promise(r => setTimeout(r, 1200));     // …and the first retry
+          await advance(250);      // let the 150ms debounce fire
+          await advance(1200);     // …and the first retry
           console.log(JSON.stringify({ asks: ASKS.length }));
         })();""")
         self.assertGreaterEqual(got["asks"], 2, "a lost fetch was never retried")
@@ -130,10 +130,10 @@ class NeedEventRetry(unittest.TestCase):
         got = _run("""
         (async () => {
           needEvent('b'.repeat(64));
-          await new Promise(r => setTimeout(r, 40000));
+          await advance(40000);
           console.log(JSON.stringify({ asks: ASKS.length, max: _EV_TRIES_MAX }));
         })();""")
-        self.assertLessEqual(got["asks"], got["max"] + 1,
+        self.assertEqual(got["asks"], got["max"] + 1,
                              f"it kept asking: {got['asks']} times")
 
     def test_an_answer_stops_the_retries(self):
@@ -142,7 +142,7 @@ class NeedEventRetry(unittest.TestCase):
           const id = 'c'.repeat(64);
           ANSWER = (ids) => ids.map(i => ({ id: i, pubkey: 'p' }));
           needEvent(id);
-          await new Promise(r => setTimeout(r, 3000));
+          await advance(3000);
           console.log(JSON.stringify({ asks: ASKS.length, tries: _evTries.size, has: !!Store.get(id) }));
         })();""")
         self.assertEqual(got["asks"], 1, "it asked again for something it already had")
@@ -156,16 +156,24 @@ class NeedEventRetry(unittest.TestCase):
         (async () => {
           Relay.query = async () => { throw new Error('no relay is up'); };
           needEvent('d'.repeat(64));
-          await new Promise(r => setTimeout(r, 2500));
+          await advance(2500);
           console.log(JSON.stringify({ queued: _evQ.size + _evTries.size }));
         })();""")
         self.assertGreater(got["queued"], 0, "a rejection dropped the id instead of re-queueing it")
 
     def test_the_attempt_map_cannot_grow_without_limit(self):
-        src = APP.read_text(encoding="utf-8")
-        assert "_evTries.size>2000" in src, (
-            "a long session scrolling a busy feed would grow the counter map for ever")
-        assert "_evStalls.size>2000" in src, "the stall counter needs the same bound"
+        got = _run("""
+        (async () => {
+          for (let i = 0; i < 2001; i++) {
+            _evTries.set(String(i), 1);
+            _evStalls.set(String(i), 1);
+          }
+          needEvent('9'.repeat(64));
+          await advance(150);
+          console.log(JSON.stringify({ tries: _evTries.size, stalls: _evStalls.size }));
+        })();""")
+        self.assertLessEqual(got["tries"], 2000, "the attempt map grew without a bound")
+        self.assertLessEqual(got["stalls"], 2000, "the stall map grew without a bound")
 
     def test_a_pocket_full_of_dead_sockets_does_not_end_the_asking(self):
         """The APK bug, end to end.
@@ -184,11 +192,11 @@ class NeedEventRetry(unittest.TestCase):
             await new Promise(r => setTimeout(r, 300));          // the query's own timeout, shortened
             return DEAD ? answer([], false) : answer(f[0].ids.map(i => ({ id:i, pubkey:'p' }))); };
           needEvent(id);
-          await new Promise(r => setTimeout(r, 16000));          // 16s in a pocket
+          await advance(16000);          // 16s in a pocket
           needEvent(id);                                         // the redraw on resume re-queues it
-          await new Promise(r => setTimeout(r, 2000));           // …and the socket is still dead
+          await advance(2000);           // …and the socket is still dead
           DEAD = false;                                          // relays healthy from here
-          await new Promise(r => setTimeout(r, 40000));
+          await advance(40000);
           console.log(JSON.stringify({ has: !!Store.get(id), asks: ASKS.length }));
         })();""")
         self.assertTrue(got["has"],
@@ -206,7 +214,7 @@ class NeedEventRetry(unittest.TestCase):
           Relay.ready = async () => false;
           Relay.query = async (f) => { ASKS.push(f[0].ids.slice()); return answer([], false); };
           needEvent(id);
-          await new Promise(r => setTimeout(r, 4000));
+          await advance(4000);
           console.log(JSON.stringify({ asks: ASKS.length, queued: _evQ.size }));
         })();""")
         self.assertEqual(got["asks"], 1)
@@ -222,7 +230,7 @@ class NeedEventRetry(unittest.TestCase):
           Relay.ready = async () => false;
           Relay.query = async (f) => { ASKS.push(f[0].ids.slice()); return answer([], false); };
           needEvent(id);
-          await new Promise(r => setTimeout(r, 40000));
+          await advance(40000);
           console.log(JSON.stringify({ asks: ASKS.length }));
         })();""")
         self.assertLessEqual(got["asks"], 2, f"it kept asking a dead relay: {got['asks']} times")
