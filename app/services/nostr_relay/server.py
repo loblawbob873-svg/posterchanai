@@ -1067,6 +1067,13 @@ class RelayServer:
                         self._relay_urls.get(conn, ""))
             self._send(conn, ["OK", eid, False, why])
             return
+        # LOG THE SUCCESS, NOT ONLY THE FAILURE. NIP-78 (30078) — the drive index, notes, settings,
+        # calendars — is refused unless this socket has authenticated as the event's author. When a
+        # client's writes were being refused for want of auth, the relay logged the refusal and
+        # nothing else, so there was no way to tell "the client never tried" from "the client tried
+        # and we rejected it" — two completely different bugs that look identical from here.
+        logger.info("[nostr-relay] AUTH ok for %s… (this socket may now write its NIP-78 docs)",
+                    str(ev["pubkey"])[:12])
         self._auth_pubkeys.setdefault(conn, set()).add(ev["pubkey"])
         self._send(conn, ["OK", eid, True, ""])
 
