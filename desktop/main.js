@@ -379,8 +379,25 @@ function wireInsecureContent() {
 // Google refuses OAuth from a user agent it can identify as an embedded browser
 // (disallowed_useragent), and Electron's default UA advertises exactly that:
 // `posterchan/1.0.3 ... Electron/x.y.z`. Underneath it is plain Chromium of the stated Chrome/NNN
-// version, so drop the two tokens and present that. Nothing else keys off the UA — the client picks
-// its layout from viewport/pointer, never this string.
+// version, so drop the two tokens and present that.
+//
+// THE UA IS LOAD-BEARING FOR THE RELAY'S CLIENT GATE, AND THIS STRIPS THE TOKEN IT MATCHES.
+// `_posterchan_client_allowed` (app/services/nostr_relay/server.py) admits a socket carrying
+// `PosterChan` in its User-Agent, and the replace below deletes precisely that token — so with
+// `nostr_relay_posterchan_clients_only` on, this app is NOT admitted on its UA. It gets in on its
+// ORIGIN instead: `app://posterchan`, one of the defaults built in thread.py's `posterchan_origins`.
+// Measured against the live relay from a public Tor exit on 2026-09-14 — `app://posterchan` gets
+// full service, an unrecognised client is confined to NIP-46. A probe from the LAN proves nothing
+// here: LAN DNS resolves poster.place to 192.168.0.1 and the socket takes the `peer_private`
+// exemption before the gate is ever consulted.
+//
+// So do NOT answer a relay-side lockout by restoring the token here — that re-breaks Google OAuth,
+// which is the only reason this function exists. Answer it by keeping `app://posterchan` in
+// `nostr_relay_posterchan_origins`, remembering that a non-empty operator value REPLACES the whole
+// default list rather than adding to it. The one link in that chain established only in production
+// and not by a test: that Electron actually SENDS that Origin on its relay socket.
+//
+// The client's LAYOUT still never keys off this string — that comes from viewport/pointer.
 function wirePlainUserAgent() {
   try {
     app.userAgentFallback = app.userAgentFallback

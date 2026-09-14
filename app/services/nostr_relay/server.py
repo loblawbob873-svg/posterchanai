@@ -573,6 +573,8 @@ class RelayServer:
     # An early close is rate-limited PER ADDRESS, not counted: this is the valve that keeps the
     # cure from becoming the disease (see _note_refused).
     _EARLY_CLOSE_EVERY = 20.0
+    # How long a confined socket may hold a connection without doing any signer work.
+    SIGNER_GRACE = 30.0
     _REFUSED_MAX = 4096
 
     def _note_refused(self, ip: str) -> bool:
@@ -631,27 +633,31 @@ class RelayServer:
         and the radio briefly suspends (the "no new posts after ~2-3 min" symptom). The client ignores an
         unrecognised NOTICE; one tiny frame per connection per 40s."""
         try:
-            waited = 0
-            while True:
-                await asyncio.sleep(40)
-                # A CONFINED SOCKET THAT NEVER SIGNS ANYTHING IS JUST HOLDING A CONNECTION.
-                #
-                # `posterchan_clients_only` admits an unrecognised client rather than refusing it at
-                # the handshake, and that is deliberate: Amber's QR login dials this relay as a
-                # native app with no Origin and a public IP, so a refusal there breaks signing in.
-                # The socket is confined to kind 24133 instead — and if it is not actually a signer
-                # it then sits there forever doing nothing, which is why the connection count stays
-                # high while every one of those sockets is already unable to read or write anything.
-                #
-                # Two keepalive periods to do signer work, then closed. A real NIP-46 session
-                # subscribes or publishes 24133 immediately (it is dialled FOR that) and is marked on
-                # its first such message, so it is never swept. Nothing a PosterChan client does can
-                # reach this: the flag is only ever set for sockets the gate confined. It says why
-                # rather than dropping silently, and the NOTICE is given a moment to leave first.
-                waited += 40
-                if (getattr(conn, "_pcai_signer_only", False)
-                        and not getattr(conn, "_pcai_signer_used", False)
-                        and waited >= 80):
+            # A CONFINED SOCKET THAT NEVER SIGNS ANYTHING IS JUST HOLDING A CONNECTION, AND IT IS ON
+            # ITS OWN CLOCK — a much shorter one than a client's keepalive.
+            #
+            # `posterchan_clients_only` admits an unrecognised client rather than refusing it at the
+            # handshake, and that is deliberate: Amber's QR login dials this relay as a native app
+            # with no Origin and a public IP, so a refusal there breaks signing in. The socket is
+            # confined to kind 24133 instead — and if it is not actually a signer it then sits there
+            # doing nothing, which is why the connection count stays high while every one of those
+            # sockets is already unable to read or write anything.
+            #
+            # SIGNER_GRACE is 30s and used to be two keepalive periods (80s), which was two
+            # keepalive periods for no reason other than that the sweep was written inside the
+            # keepalive loop. A NIP-46 session subscribes or publishes 24133 within about a second of
+            # dialling — it MUST, or it cannot receive the request it was dialled for — and the first
+            # such message marks it, so a signer is never swept at any of these numbers. What the
+            # difference buys is measured: after the early-close fix, 265 confined sockets in twelve
+            # minutes were still being held the full 80s because they never said anything at all, and
+            # that hold time is most of the connection count the operator sees.
+            #
+            # An inbound DM sender is marked used too (kind 1059 passes the confinement), so a
+            # stranger delivering a gift wrap is not swept mid-delivery.
+            if getattr(conn, "_pcai_signer_only", False):
+                await asyncio.sleep(self.SIGNER_GRACE)
+                if not getattr(conn, "_pcai_signer_used", False):
+                    # Said out loud rather than dropped, and the NOTICE is given a moment to leave.
                     self._send(conn, ["NOTICE", "this relay serves PosterChan clients; this "
                                                 "connection did no signer work and is being closed"])
                     await asyncio.sleep(0.2)
@@ -660,6 +666,8 @@ class RelayServer:
                     except Exception:
                         pass
                     return
+            while True:
+                await asyncio.sleep(40)
                 self._send(conn, ["NOTICE", "keepalive"])
         except asyncio.CancelledError:
             pass

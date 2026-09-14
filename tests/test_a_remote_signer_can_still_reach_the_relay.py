@@ -19,6 +19,8 @@ The fix is not "allow everyone": the signer is let onto the socket and confined 
 is ephemeral — stored nowhere, fanned out only to whoever subscribed — so it grants no storage and
 no read access to anything the relay holds.
 """
+import asyncio
+import json
 import unittest
 
 from app.services.nostr_relay import server as S
@@ -127,40 +129,83 @@ class TheConfinementIsWired(unittest.TestCase):
 class AConfinedSocketDoesNotLingerForEver(unittest.TestCase):
     """The gate ADMITS an unrecognised client instead of refusing it — Amber's QR login dials this
     relay as a native app with no Origin and a public IP, so a handshake refusal breaks signing in.
-    The cost is that a socket which is not really a signer holds a connection for ever while being
-    unable to read or write anything, which is why the connection count stays high. It is swept.
+    The cost is that a socket which is not really a signer holds a connection while being unable to
+    read or write anything, which is why the connection count stays high. It is swept.
 
     A real NIP-46 session is dialled FOR 24133 and subscribes or publishes immediately, so it is
-    marked on its first such message and must never be swept."""
+    marked on its first such message and must never be swept.
 
-    def _src(self):
-        import inspect
-        return inspect.getsource(S)
+    THESE RUN THE SWEEP. They used to read `inspect.getsource(S)` and assert that strings like
+    `waited` and `waited += 40` appeared in it — which pinned the shape of the loop rather than the
+    rule, and broke the moment the confined sweep was moved onto its own timer, while the behaviour
+    they describe was intact throughout. A test that greps an implementation cannot tell you whether
+    the sweep works; it can only tell you whether it was rewritten.
+    """
+
+    def _swept(self, confined=True, used=False, grace=0.05, wait=0.6):
+        """Run the real keepalive against a fake socket and report whether it was closed."""
+        srv = S.RelayServer.__new__(S.RelayServer)
+        srv.cfg = {"posterchan_clients_only": True}
+        sent = []
+        srv._send = lambda conn, msg: sent.append(msg)
+
+        class _Sock:
+            closed = None
+
+            async def close(self, code=1000, reason=""):
+                self.closed = (code, reason)
+
+        conn = _Sock()
+        conn._pcai_signer_only = confined
+        conn._pcai_signer_used = used
+        original = S.RelayServer.SIGNER_GRACE
+        try:
+            S.RelayServer.SIGNER_GRACE = grace
+            async def go():
+                task = asyncio.ensure_future(srv._keepalive(conn))
+                await asyncio.sleep(wait)
+                task.cancel()
+            asyncio.run(go())
+        finally:
+            S.RelayServer.SIGNER_GRACE = original
+        return conn.closed, sent
 
     def test_signer_work_marks_the_socket(self):
-        src = self._src()
-        self.assertTrue('setattr(conn, "_pcai_signer_used", True)' in src,
+        """The marker the sweep depends on, set by the real dispatcher on real signer traffic."""
+        srv = S.RelayServer.__new__(S.RelayServer)
+        srv.cfg = {"posterchan_clients_only": True, "max_message_size": 262144}
+        srv._send = lambda conn, msg: None
+
+        async def _noop(*a, **kw):
+            return None
+        srv._on_req = _noop
+
+        class _Sock:
+            pass
+        conn = _Sock()
+        conn._pcai_signer_only = True
+        asyncio.run(srv._dispatch(conn, json.dumps(["REQ", "s", {"kinds": [24133]}])))
+        self.assertTrue(getattr(conn, "_pcai_signer_used", False),
                         "nothing records that a confined socket did the job it was admitted for, "
-                        "so the sweep below would close real signer sessions")
+                        "so the sweep closes real signer sessions")
 
     def test_an_idle_confined_socket_is_closed_and_told_why(self):
-        src = self._src()
-        self.assertTrue('not getattr(conn, "_pcai_signer_used", False)' in src,
-                        "the sweep does not consult the marker — it would close signers too")
-        self.assertTrue('use a PosterChan client' in src,
+        closed, sent = self._swept()
+        self.assertIsNotNone(closed, "a confined socket that never signed anything was held anyway")
+        self.assertEqual(closed[0], 1008)
+        self.assertIn("PosterChan", closed[1])
+        self.assertTrue(any("did no signer work" in str(m) for m in sent),
                         "a swept socket is dropped without being told why")
-        keep = src[src.index("async def _keepalive"):]
-        keep = keep[:keep.index("\n    async def ", 1)] if "\n    async def " in keep[1:] else keep
-        self.assertIn("waited", keep,
-                      "the sweep is not in the keepalive loop, so nothing ever runs it")
+
+    def test_a_live_signer_session_is_never_swept(self):
+        closed, _ = self._swept(used=True)
+        self.assertIsNone(closed, "a NIP-46 session that was doing signer work was swept — this is "
+                                  "somebody's login dropping mid-handshake")
 
     def test_the_sweep_cannot_touch_an_ordinary_client(self):
-        """Guarded on the confined flag, which only the gate sets."""
-        src = self._src()
-        window = src[src.index("waited += 40"):src.index("waited += 40") + 700]
-        self.assertTrue('_pcai_signer_only' in window,
-                      "the sweep is not gated on the socket being a CONFINED one — it would close "
-                      "ordinary PosterChan clients on a timer")
+        closed, _ = self._swept(confined=False)
+        self.assertIsNone(closed, "the sweep is not gated on the socket being a CONFINED one — it "
+                                  "closes ordinary PosterChan clients on a timer")
 
 
 if __name__ == "__main__":

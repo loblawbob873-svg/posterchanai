@@ -167,6 +167,78 @@ class ARefusedSocketIsNotHeldOpen(unittest.TestCase):
                              "unbounded state a stranger can drive")
 
 
+class TheConfinedGraceIsItsOwnClock(unittest.TestCase):
+    """A socket that says NOTHING is the other half of the connection count.
+
+    The early close only reaches a client that asks for something. Measured twelve minutes after it
+    shipped: 1,173 confined sockets, 408 closed on their refusal — and 265 still held the full 80s
+    because they never spoke at all. That 80s was never a considered number; it was two keepalive
+    periods, because the sweep lived inside the keepalive loop.
+
+    A NIP-46 session subscribes or publishes 24133 within about a second of dialling — it must, or it
+    cannot receive the request it was dialled for — so the grace only has to cover a dial, not a
+    human. It is its own 30s timer now, and a signer that has done any signer work is never swept at
+    any value, which is what makes the number safe to lower.
+    """
+
+    def test_the_grace_covers_a_dial_not_a_session(self):
+        self.assertLessEqual(S.RelayServer.SIGNER_GRACE, 40,
+                             "a confined socket that never speaks is held for %ss — that hold time "
+                             "IS the connection count the operator is looking at"
+                             % S.RelayServer.SIGNER_GRACE)
+        self.assertGreaterEqual(S.RelayServer.SIGNER_GRACE, 10,
+                                "too tight to cover a signer dialling over a slow radio")
+
+    def test_a_socket_that_did_signer_work_is_never_swept(self):
+        """The rule the number depends on. Run the real sweep with the grace shortened."""
+        srv, conn = _server(), _Conn()
+        conn._pcai_signer_used = True
+        original = S.RelayServer.SIGNER_GRACE
+        try:
+            S.RelayServer.SIGNER_GRACE = 0.05
+            async def go():
+                task = asyncio.ensure_future(srv._keepalive(conn))
+                await asyncio.sleep(0.4)
+                task.cancel()
+            asyncio.run(go())
+        finally:
+            S.RelayServer.SIGNER_GRACE = original
+        self.assertIsNone(conn.closed,
+                          "a live NIP-46 session was swept — this is somebody's login dropping "
+                          "mid-handshake")
+
+    def test_a_silent_confined_socket_is_closed_and_told_why(self):
+        srv, conn = _server(), _Conn()
+        original = S.RelayServer.SIGNER_GRACE
+        try:
+            S.RelayServer.SIGNER_GRACE = 0.05
+            async def go():
+                task = asyncio.ensure_future(srv._keepalive(conn))
+                await asyncio.sleep(0.6)
+                task.cancel()
+            asyncio.run(go())
+        finally:
+            S.RelayServer.SIGNER_GRACE = original
+        self.assertIsNotNone(conn.closed, "a confined socket that never spoke was held anyway")
+        self.assertEqual(conn.closed[0], 1008)
+        self.assertTrue(any("did no signer work" in str(m) for m in srv.sent),
+                        "closed without saying why")
+
+    def test_a_posterchan_client_is_never_on_this_clock(self):
+        srv, conn = _server(), _Conn(confined=False)
+        original = S.RelayServer.SIGNER_GRACE
+        try:
+            S.RelayServer.SIGNER_GRACE = 0.05
+            async def go():
+                task = asyncio.ensure_future(srv._keepalive(conn))
+                await asyncio.sleep(0.4)
+                task.cancel()
+            asyncio.run(go())
+        finally:
+            S.RelayServer.SIGNER_GRACE = original
+        self.assertIsNone(conn.closed, "a recognised client was swept by the stranger grace")
+
+
 class TheGateNeverFailsOpen(unittest.TestCase):
     """A SOCKET ADMITTED WITHOUT A VERDICT GETS FULL SERVICE, AND THAT IS HOW THE SWITCH GOES OFF.
 
