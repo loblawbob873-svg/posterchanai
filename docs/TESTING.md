@@ -1,8 +1,8 @@
 # Testing — one command, and what it means
 
 ```bash
-./test.sh                               # everything this machine can check on its own  (~10 min)
-./test.sh --live https://poster.place   # …plus the checks that need a running instance (~25 min)
+./test.sh                               # everything this machine can check on its own
+./test.sh --live https://poster.place   # …plus the checks that need a running instance
 ./test.sh --docker                      # all of it in a container, nothing published to the host
 ```
 

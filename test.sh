@@ -1,7 +1,7 @@
 #!/bin/bash
 # PosterChanAI — run every check, and say what passed and what did not.
 #
-#   ./test.sh                              everything this machine can check on its own (~10 min)
+#   ./test.sh                              everything this machine can check on its own
 #   ./test.sh --live https://poster.place  …plus the checks that need a running instance
 #   ./test.sh --docker                     all of it in a container, nothing published to the host
 #   ./test.sh --group ui                   just the browser checks
