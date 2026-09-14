@@ -295,9 +295,11 @@ fixtures would be blocked as mixed content from an HTTPS page. The supplied URL 
 `check_nostrconnect_remote_signer` (which also contacts Primal's relay), `check_files_home_navigates`,
 `check_composer_survives_a_desktop_click`, and `check_os_window_controls_are_reachable`.
 
-Installed account/Office and Admin prune-preview checks require `--live` too. They attach to the
-existing Electron renderer on CDP port 9223 and use its configured account/backend, regardless of
-the supplied URL. Run them against an isolated diagnostic renderer. Installed ASAR extraction
+Every check that attaches to an existing Electron renderer requires `--live`: account/Office,
+Admin prune-preview, native Files, System Settings, Code, Code focus, native focus, snap, and
+handoff. They use CDP port 9223 and the renderer's configured account/backend, regardless of the
+supplied URL. Even account-independent checks change focus or move desktop windows. Run them
+against an isolated diagnostic renderer with disposable native windows. Installed ASAR extraction
 checks remain in the default suite; they inspect packaged code without a live account. Explicit
 `--only` selection does not bypass the `--live` requirement.
 

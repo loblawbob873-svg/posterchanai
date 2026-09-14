@@ -63,11 +63,16 @@ def test_real_service_checks_require_explicit_live_mode(tmp_path, monkeypatch, l
         "check_files_home_navigates", "check_composer_survives_a_desktop_click",
         "check_os_window_controls_are_reachable",
     }
+    installed_renderer = {
+        "check_installed_desktop_account", "check_installed_admin_prune_preview",
+        "check_installed_native_files", "check_installed_system_settings",
+        "check_installed_code", "check_installed_code_focus", "check_installed_native_focus",
+        "check_installed_native_snap", "check_installed_native_handoff",
+    }
     existing_endpoint = {
         "check_concord_live_invite", "check_signer_transport", "check_websearch_rate",
         "check_nip46_signer", "check_nip46_reconnect", "check_nip46_bulk_lane",
-        "check_installed_desktop_account", "check_installed_admin_prune_preview",
-    }
+    } | installed_renderer
     names = supplied_url | existing_endpoint
     # Positive controls: package extraction and isolated browser fixtures still run offline.
     offline = {"check_installed_code_package_release", "check_installed_document_apps_release",
@@ -100,5 +105,5 @@ def test_real_service_checks_require_explicit_live_mode(tmp_path, monkeypatch, l
         assert call[2:] == expected
         if name in names:
             assert module.CHECKS[name]["serial"] is True
-        if name in {"check_installed_desktop_account", "check_installed_admin_prune_preview"}:
+        if name in installed_renderer:
             assert env["PC_CHECK_PORT"] == "9223"
