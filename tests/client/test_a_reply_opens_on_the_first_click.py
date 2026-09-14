@@ -59,7 +59,29 @@ PROBE = """(() => {
 })()"""
 
 
-async def run(open_social_first):
+# THE POPPED-OUT PATH, WHICH NO BROWSER TEST COULD REACH UNTIL NOW.
+#
+# On PosterChanOS a view is a real compositor toplevel: os.js `openApp` calls `popOutView`, and when
+# that succeeds it sets `_openedReal` and returns null — a shape `openDoc` alone knows how to read.
+# A headless browser cannot make such a window, so os.js's own comment says every browser-driven
+# check passes through here blind. This stub does not fake a window manager; it only makes
+# `PCOSWin.enabled()` true and records what `open()` was asked for, which is exactly enough to drive
+# that branch and see whether ONE request to open a post produces ONE window for that post.
+POPOUT_STUB = """(() => {
+  window.__popped = [];
+  window.PCOSWin = {
+    enabled: () => true,
+    isWindow: () => false,
+    viewOf: () => '',
+    adopt: () => {},
+    routeExisting: (v) => { window.__routed = String(v || ''); },
+    open: (view, label, hint) => { window.__popped.push(String(view || '')); return true; },
+  };
+  return true;
+})()"""
+
+
+async def run(open_social_first, popout=False):
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     profile = tempfile.mkdtemp(prefix='pc-reply-click-')
@@ -97,6 +119,8 @@ async def run(open_social_first):
                   document.querySelector('#nsec-input').value=NostrTools.nip19.nsecEncode(key);
                   document.querySelector('#btn-nsec-login').click()})()""")
                 await b.until("!!__PC.me() && document.querySelectorAll('.note').length>=12")
+                if popout:
+                    await b.js(POPOUT_STUB)
                 await b.js("PCOS.enter()")
                 await asyncio.sleep(0.8)
 
@@ -109,7 +133,10 @@ async def run(open_social_first):
                 await b.js("window.__target = window.__events[0].id")
                 await b.js("__PC.openThread(window.__target)")
                 await asyncio.sleep(1.5)
-                return await b.js(PROBE)
+                out = await b.js(PROBE)
+                out['popped'] = await b.js("window.__popped || []")
+                out['routed'] = await b.js("window.__routed || ''")
+                return out
         finally:
             proc.terminate()
             try:
@@ -141,3 +168,22 @@ def test_an_open_social_window_does_not_swallow_the_first_click():
         'with Social already open, the first click to open a post did nothing — the user has to '
         'click twice. Same call, same post; the only difference is that a Social window existed '
         'when it ran: %r' % (state,))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='no Chrome')
+def test_the_popped_out_desktop_opens_one_window_for_the_post():
+    """The branch os.js says browser checks cannot reach — now reached.
+
+    With views popped out as real toplevels, ONE request to open a post must ask the shell for
+    exactly ONE window, and that window must be for the post. Asking for none is the reported double
+    click (nothing happens, you click again); asking twice is a duplicate window.
+    """
+    state = asyncio.run(run(open_social_first=True, popout=True))
+    print('popout=%r' % (state,))
+    posts = [v for v in state['popped'] if 'post:' in v]
+    assert posts, (
+        'with the desktop popping views out as real windows, opening a post asked the shell for no '
+        'window at all — which is exactly "nothing happened, I clicked again". asked for: %r'
+        % (state['popped'],))
+    assert len(posts) == 1, (
+        'one request to open a post asked for %d windows: %r' % (len(posts), posts))

@@ -156,6 +156,9 @@
   function routable(view){
     const v = String(view || '');
     if(EXTRA_VIEWS.includes(v)) return true;
+    // A post window is named `doc:post:<event id>` — colons and all — so it fails the plain
+    // identifier test below. It is routable because the child can fetch that id; see popOutView.
+    if(/^doc:post:[0-9a-f]{64}$/i.test(v)) return true;
     if(!v || !/^[a-z0-9_-]+$/i.test(v)) return false;
     try{ return !!root.document.querySelector('.nav-item[data-view="' + v + '"]'); }
     catch(_){ return false; }

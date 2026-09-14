@@ -3603,6 +3603,11 @@
        * exact shape has already shipped once ("System settings just loaded a social feed"). The
        * desktop's own renderer draws it; if it cannot, we fall through rather than paint a lie. */
       if(v && window.PCOS && typeof PCOS.renderExtra === 'function' && PCOS.renderExtra(v)) return;
+      /* A POST WINDOW IS NOT A VIEW EITHER. `switchView('doc:post:<id>')` would set VIEW to a name
+       * nothing routes and fall through to the timeline under a window titled "Post" — the same
+       * shape as the System Settings lie above. Open the post instead. */
+      const _post = /^doc:post:([0-9a-f]{64})$/i.exec(v || '');
+      if(_post){ openThread(_post[1]); return; }
       if(v){ switchView(v); return; }
     }
     const e = _entityFromPath();

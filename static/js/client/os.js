@@ -1834,6 +1834,19 @@
     const extra = EXTRA_WINDOWS[raw];
     if(extra) return extra.view;
     const v = raw;
+    /* A POST IS THE ONE DOCUMENT THAT CAN BE REBUILT FROM ITS OWN NAME, SO IT POPS OUT.
+     *
+     * Every `doc:` view was refused here, and on a desk where views are real toplevels that is the
+     * reported "clicking a reply has to be done twice": with Social popped out, opening a post made
+     * an IN-PAGE window on the desktop page — behind the Social toplevel the user is looking at — so
+     * nothing appeared to happen. Clicking again, from the desktop, showed it. Reproduced:
+     * opening Social asked the shell for a `global` window, and opening a post asked it for none.
+     *
+     * Only `doc:post:<id>`. The rest of the `doc:` family (a file, a folder listing, System
+     * Settings) is built from state this page holds and a fresh renderer could not reconstruct from
+     * the view string alone — which is what the blanket refusal was protecting, and still does. A
+     * post is an event id: the child looks it up exactly as a shared link would. */
+    if(/^doc:post:[0-9a-f]{64}$/i.test(v)) return v;
     if(!v || v.indexOf('doc:') === 0 || v.indexOf('__') === 0 || v.indexOf('folder:') === 0) return '';
     if(!/^[a-z0-9_-]+$/i.test(v)) return '';
     try{ return document.querySelector('.nav-item[data-view="' + v + '"]') ? v : ''; }
