@@ -192,22 +192,28 @@ pending.then(()=>console.log(JSON.stringify(added))).catch(e=>{console.error(e);
         self.assertIn(".osw.osw-document", self.css)
         self.assertIn(".osw-slot.office-win{opacity:1;overflow:hidden;padding:10px}", self.css)
         self.assertIn(".osw-slot.pv-win{opacity:1;overflow:hidden;padding:0}", self.css)
-        self.assertIn(".pc-document-focus .scanlines", self.css)
-        self.assertIn("classList.remove('pc-document-focus')", osjs)
+        # The scanline suppression that used to be asserted here is GONE, and deliberately: the
+        # theme's CRT sheet is an underlay now, so a document window is never painted through it
+        # and no class has to follow focus to say so. Pinned in pixels, on this very surface, by
+        # tests/client/test_decoration_never_crosses_a_document.py.
 
-    def test_minimising_the_last_document_restores_desktop_effects(self):
-        """Document chrome is a focus state, not a sticky preference.
+    def test_minimising_the_last_document_still_redraws_the_taskbar(self):
+        """What is left of the old "restore the desktop effects" branch, and why it shrank.
 
-        With Preview as the only visible window, minimise has no successor to pass through
-        ``focusWin``.  That branch must explicitly restore the desktop just like close does.
+        Minimising the only visible window has no successor to pass through ``focusWin``, so this
+        branch used to carry a second job: clearing the `pc-document-focus` class, which otherwise
+        outlived the window that set it and left the desktop undecorated. That class is gone (the
+        decoration is an underlay — nothing to suppress), and with it a state that had to be cleared
+        from three places. The taskbar redraw is the real work and must stay.
         """
         osjs = _read("static/js/client/os.js")
         start = osjs.index("function minimise(w)")
         body = osjs[start:osjs.index("function taskbarMove(w)", start)]
         no_successor = body[body.index("if(next) focusWin(next)"):]
-        self.assertIn("classList.remove('pc-document-focus')", no_successor)
-        self.assertLess(no_successor.index("classList.remove('pc-document-focus')"),
-                        no_successor.index("drawBar()"))
+        self.assertIn("drawBar()", no_successor,
+                      "minimising the last window no longer redraws the taskbar, so it keeps "
+                      "showing the window as open")
+        self.assertNotIn("pc-document-focus", body)
 
     def test_android_pdfs_use_the_bundled_renderer(self):
         src = _read("static/js/client/preview.js")

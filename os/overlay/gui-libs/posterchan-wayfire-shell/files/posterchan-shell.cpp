@@ -17,6 +17,7 @@
 #include <map>
 #include <set>
 #include <limits>
+#include <cmath>
 
 class posterchan_shell_t : public wf::plugin_interface_t
 {
@@ -233,6 +234,21 @@ class posterchan_shell_t : public wf::plugin_interface_t
     void init() override
     {
         confine_option = wf::get_core().config->get_option<bool>(CONFINE_OPTION);
+        methods->register_method("posterchan-shell/set-cursor", [] (wf::json_t data)
+        {
+            if (!data.has_member("x") || !data.has_member("y") ||
+                !(data["x"].is_double() || data["x"].is_int64() || data["x"].is_uint64()) ||
+                !(data["y"].is_double() || data["y"].is_int64() || data["y"].is_uint64()))
+                return wf::ipc::json_error("Invalid cursor position");
+            const double x = data["x"].as_double(), y = data["y"].as_double();
+            if (!std::isfinite(x) || !std::isfinite(y) || std::abs(x) > 100000 || std::abs(y) > 100000)
+                return wf::ipc::json_error("Invalid cursor position");
+            wf::get_core().warp_cursor({x, y});
+            const auto at = wf::get_core().get_cursor_position();
+            auto out = wf::ipc::json_ok();
+            out["x"] = at.x; out["y"] = at.y;
+            return out;
+        });
         methods->register_method("posterchan-shell/set-views", [this] (wf::json_t data)
         {
             return protect(data);
@@ -246,6 +262,7 @@ class posterchan_shell_t : public wf::plugin_interface_t
     void fini() override
     {
         on_pointer_motion.disconnect();
+        methods->unregister_method("posterchan-shell/set-cursor");
         methods->unregister_method("posterchan-shell/pointer-confinement");
         methods->unregister_method("posterchan-shell/set-views");
         for (const auto& [id, actions] : saved) restore(id, actions);

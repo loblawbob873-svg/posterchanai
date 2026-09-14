@@ -23541,7 +23541,7 @@
        * maximise, sit behind another window and be dragged between monitors like everything else.
        * `modal()` can do none of that — it is one centred box with a backdrop. */
       const bodyHTML = `<div class="office-head"><h3>📝 ${enc(file.name)}</h3><span class="muted small">Changes are temporary until you tap Save.</span></div>
-        <iframe class="office-frame pc-doc" name="${frameName}" title="Office editor"></iframe>
+        <iframe class="office-frame" name="${frameName}" title="Office editor"></iframe>
         <form class="office-launch" method="post" action="${enc(session.editor_url)}" target="${frameName}">
           <input type="hidden" name="access_token" value="${enc(session.token)}"><input type="hidden" name="access_token_ttl" value="${session.expires*1000}"></form>
         <div class="row office-actions"><button class="btn btn-ghost" id="office-close">Close</button><button class="btn btn-ghost" id="office-pdf">Save as PDF…</button><button class="btn btn-ghost" id="office-saveas">Save As…</button><button class="btn btn-neon" id="office-save">Save</button></div>`;
@@ -28012,7 +28012,7 @@
      * dropped for the SYNC, which was never the expensive half. */
     try{ Mail.refreshIfStale(); }catch(_){}
     if(mounted && Mail.root===mounted) return;      // already up — never remount
-    feed.innerHTML='<div id="mail-root" class="mail-root pc-doc"></div>';
+    feed.innerHTML='<div id="mail-root" class="mail-root"></div>';
     return Mail.render($('#mail-root',feed));
   }
   // Unread mail, on its own nav badge. It used to bump the DM badge, which said "you have messages"
@@ -38739,7 +38739,7 @@
   async function _rdSwitchScreen(){
     if(!_call||!_call.remoteDesktop||!_call.caller||!_call.pc)return;
     const activeCall=_call,old=activeCall.local;let next;
-    try{next=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:20,max:30}},audio:false});}
+    try{next=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:false});}
     catch(e){if(e&&e.name!=='NotAllowedError')toast(_mediaErrMsg(e));return;}
     if(!_call||_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
     const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
@@ -38795,23 +38795,74 @@
     return {x:Math.max(0,Math.min(1,(e.clientX-left)/Math.max(1,width))),
             y:Math.max(0,Math.min(1,(e.clientY-top)/Math.max(1,height)))};
   }
+  let _rdViewerCleanup=null;
   function _rdBindViewer(video){
-    if(!video||video.dataset.rdControl)return;video.dataset.rdControl='1';let px=null,py=null;
-    const active=()=>!!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted);
-    const point=e=>_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
-    video.addEventListener('pointerdown',e=>{if(!active())return;px=e.clientX;py=e.clientY;try{video.setPointerCapture(e.pointerId);}catch(_){} const p=point(e);_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:true,x:p.x,y:p.y}});e.preventDefault();});
-    // Mouse movement must work while merely hovering. The old px===null guard initialized px only
-    // on pointerdown, effectively turning remote control into drag-only control.
-    video.addEventListener('pointermove',e=>{if(!active()){px=py=null;return;}const p=point(e);
-      _rdSend({t:'input',e:{type:'absolute',x:p.x,y:p.y}});
-      px=e.clientX;py=e.clientY;e.preventDefault();});
-    const up=e=>{if(!active())return;px=e.clientX;py=e.clientY;const p=point(e);_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false,x:p.x,y:p.y}});e.preventDefault();};
-    video.addEventListener('pointerup',up);video.addEventListener('pointercancel',up);video.addEventListener('pointerleave',()=>{px=py=null;});
-    video.addEventListener('wheel',e=>{if(!active())return;_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});
-    video.addEventListener('contextmenu',e=>{if(active())e.preventDefault();});
+    if(!video||video.dataset.rdControl)return;
+    if(_rdViewerCleanup)_rdViewerCleanup();
+    video.dataset.rdControl='1';video.tabIndex=0;
+    const session=_call,held=new Set(),keys=new Set(),listeners=[];
+    let position={x:.5,y:.5},locked=false;
+    const active=()=>_call===session&&!!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted)&&!video.closest('.call-mini');
+    const listen=(target,name,fn,opts)=>{target.addEventListener(name,fn,opts);listeners.push(()=>target.removeEventListener(name,fn,opts));};
+    const point=e=>{
+      if(document.pointerLockElement===video)return position;
+      return position=_rdVideoPoint(video,e,_call&&_call.remoteGeometry);
+    };
+    const release=()=>{
+      if(_call===session){
+        for(const button of held)_rdSend({t:'input',e:{type:'button',button,down:false,x:position.x,y:position.y}});
+        for(const code of keys)_rdSend({t:'input',e:{type:'key',code,down:false}});
+      }
+      held.clear();keys.clear();
+    };
+    const unlock=()=>{release();if(document.pointerLockElement===video)document.exitPointerLock();if(document.activeElement===video)video.blur();};
+    video.rdUnlock=unlock;
+    listen(video,'pointerdown',e=>{
+      if(!active()||e.button>2)return;
+      video.focus({preventScroll:true});
+      try{video.setPointerCapture(e.pointerId);}catch(_){}
+      const p=point(e);held.add(e.button);
+      _rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:true,x:p.x,y:p.y}});
+      if(e.pointerType==='mouse'&&document.pointerLockElement!==video&&video.requestPointerLock){
+        try{const pending=video.requestPointerLock();if(pending&&pending.catch)pending.catch(()=>{});}catch(_){}
+      }
+      e.preventDefault();
+    });
+    listen(video,'pointermove',e=>{
+      if(!active())return;
+      if(document.pointerLockElement===video){
+        // Reuse the exact contain transform, including letterboxing and every viewer resize.
+        const r=video.getBoundingClientRect(),g=_call.remoteGeometry;
+        const vw=video.videoWidth||(g&&g.width)||r.width,vh=video.videoHeight||(g&&g.height)||r.height;
+        const scale=Math.min(r.width/vw,r.height/vh);
+        position={x:Math.max(0,Math.min(1,position.x+e.movementX/Math.max(1,vw*scale))),
+                  y:Math.max(0,Math.min(1,position.y+e.movementY/Math.max(1,vh*scale)))};
+      }
+      const p=point(e);_rdSend({t:'input',e:{type:'absolute',x:p.x,y:p.y}});e.preventDefault();
+    });
+    const up=e=>{if(!held.delete(e.button))return;const p=point(e);_rdSend({t:'input',e:{type:'button',button:Math.min(2,e.button|0),down:false,x:p.x,y:p.y}});e.preventDefault();};
+    listen(video,'pointerup',up);
+    listen(video,'pointercancel',release);
+    listen(video,'lostpointercapture',()=>{if(document.pointerLockElement!==video)release();});
+    listen(video,'wheel',e=>{if(!active())return;const p=point(e);_rdSend({t:'input',e:{type:'absolute',x:p.x,y:p.y}});_rdSend({t:'input',e:{type:'wheel',dy:Math.max(-12,Math.min(12,Math.sign(e.deltaY)))}});e.preventDefault();},{passive:false});
+    listen(video,'contextmenu',e=>{if(active())e.preventDefault();});
+    listen(document,'pointerlockchange',()=>{
+      const next=document.pointerLockElement===video;
+      if(locked&&!next){release();video.blur();}locked=next;
+      if(next&&!active())unlock();
+    });
+    listen(window,'blur',unlock);
+    listen(document,'visibilitychange',()=>{if(document.hidden)unlock();});
+    listen(video,'blur',()=>{if(document.pointerLockElement!==video)release();});
+    for(const name of ['keydown','keyup'])listen(document,name,e=>{
+      if(!active()||(document.activeElement!==video&&document.pointerLockElement!==video))return;
+      if(e.code==='Escape'){unlock();return;}
+      const code=_RD_KEYS[e.code];if(!code)return;
+      const down=name==='keydown';if(down)keys.add(code);else if(!keys.delete(code))return;
+      e.preventDefault();e.stopPropagation();_rdSend({t:'input',e:{type:'key',code,down}});
+    },true);
+    _rdViewerCleanup=()=>{unlock();listeners.forEach(off=>off());delete video.dataset.rdControl;delete video.rdUnlock;_rdViewerCleanup=null;};
   }
-  document.addEventListener('keydown',e=>{if(!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted))return;const c=_RD_KEYS[e.code];if(!c)return;e.preventDefault();_rdSend({t:'input',e:{type:'key',code:c,down:true}});},true);
-  document.addEventListener('keyup',e=>{if(!(_call&&_call.remoteDesktop&&!_call.caller&&_call.controlGranted))return;const c=_RD_KEYS[e.code];if(!c)return;e.preventDefault();_rdSend({t:'input',e:{type:'key',code:c,down:false}});},true);
   // getUserMedia failures were all reported as "permission needed", which is wrong in the most common
   // case: on an insecure origin (http:// on a LAN IP) navigator.mediaDevices is undefined, the browser
   // never prompts, and there is genuinely nothing for the user to click — hence "no way to do it".
@@ -38829,7 +38880,7 @@
      * the viewer sends no camera or microphone back. Keeping it on the call transport gives it the
      * same encrypted Nostr signaling and TURN fallback without pretending a camera call is a
      * desktop-sharing session. */
-    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:20,max:30}},audio:false});
+    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:false});
     if(remoteGuest) return Promise.resolve(new MediaStream());
     return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
   }
@@ -39028,6 +39079,7 @@
   function _hangup(silent){ if(_call){ if(!silent) _callSend(_call.peer, {v:1, callId:_call.id, t:'bye'}); _callTeardown(); } }
   function _callTeardown(){
     if(!_call) return;
+    if(_rdViewerCleanup)_rdViewerCleanup();
     try{ clearTimeout(_call.timeout); }catch(_){}
     try{ clearTimeout(_call.iceFailureTimer); }catch(_){}
     try{ if(_call.signalClose) _call.signalClose(); }catch(_){}
@@ -39285,6 +39337,7 @@
 
   function _callUI(){
     let el=document.getElementById('call-overlay');
+    if(_call&&!_call.controlGranted){const v=document.getElementById('call-remote');if(v&&v.rdUnlock)v.rdUnlock();}
     if(!_call){ if(el) el.remove(); _ringtone(false); _callWake(false); _callService(false); return; }
     _callWake(true);
     _callService(true, { video:!!_call.video, state:_call.state||'', name:_callSvcName(_call.peer) });
@@ -39305,7 +39358,7 @@
     const av=document.getElementById('call-av'); if(av) av.src=(p.picture||LOGO);
     const nm=document.getElementById('call-name'); if(nm) nm.textContent=(p.name||p.display_name||'anon');
     const stx=document.getElementById('call-status'); if(stx) stx.textContent=_call.remoteDesktop
-      ? (_call.state==='ringing' ? 'wants to share a desktop' : 'remote desktop · '+_callStatus())
+      ? (_call.state==='ringing' ? 'wants to share a desktop' : 'remote desktop · '+_callStatus()+(!_call.caller&&_call.controlGranted?' · Click screen to capture mouse · Esc to release':''))
       : _callStatus();
     const hasLocalVid=_hasLiveVideo(_call.local), hasRemoteVid=_hasLiveVideo(_call.remote);
     const showVid=hasLocalVid||hasRemoteVid;
@@ -39360,6 +39413,7 @@
   // the media rides the PeerConnection, not the DOM, so this never interrupts the call. Shared by 1:1 + group.
   function _setOverlayMini(id, on){
     const el=document.getElementById(id); if(!el) return;
+    if(on){const v=el.querySelector('#call-remote');if(v&&v.rdUnlock)v.rdUnlock();}
     el.classList.toggle('call-mini', !!on);
     if(on) toast('call minimized — tap it to return');
   }

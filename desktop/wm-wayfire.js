@@ -197,6 +197,10 @@ class WayfireWM{
   }
   _event(msg){const event=String(msg.event||'');let name=event.startsWith('view-')?'window':event.startsWith('output-')?'output':event.includes('workspace')?'workspace':event==='posterchan-tick'?'tick':'';if(!name)return;if(name==='output')this._forgetOutputs();const raw=msg.view||msg.data&&msg.data.view;const ev={change:event,payload:msg.payload||msg.data&&msg.data.payload};if(raw)ev.wayfireView=this._toGlobal(normalizeView(raw),this._origins);for(const fn of(this.listeners.get(name)||[]))try{fn(ev);}catch(_){}}
   version(){return this._send('list-methods').then(r=>({human_readable:'Wayfire IPC',methods:r&&r.methods||[]}));}
+  async setCursor(x,y){
+    const r=await this._send('posterchan-shell/set-cursor',{x,y});
+    return !!r&&r.result==='ok';
+  }
   /* VIEW GEOMETRY IS OUTPUT-LOCAL AND EVERYTHING ABOVE READS IT AS GLOBAL.
    *
    * Measured on a two-monitor desk: DP-1 at x=0 and DP-2 at x=3840, and BOTH full-screen shell

@@ -112,7 +112,16 @@ async def authenticate(request: Request, db=Depends(get_db)):
     uid = token.split('.', 1)[0]
     if not re.fullmatch('[a-f0-9]{32}', uid):
         raise HTTPException(401, 'Jellyfin app login required')
-    record = await media.read(account_key(uid)) or {}
+    # `read_account`, not `read`: this runs on EVERY request, including a `.ts` segment every two
+    # seconds, and a plain read opens a fresh websocket to the relay each time. One slow handshake
+    # used to raise straight out of this dependency and answer a video segment with a 500, which
+    # ends playback. See media_center.read_account.
+    try:
+        record = await media.read_account(account_key(uid)) or {}
+    except Exception as error:
+        # Say what happened, in the status a client can act on. An unhandled exception here is a
+        # 500 in the middle of a film; this is "ask me again", which is what it actually means.
+        raise HTTPException(503, 'Media Center could not check your session just now') from error
     session = next((s for s in record.get('sessions', []) if
                     s['expires'] > time.time() and hmac.compare_digest(s['hash'], digest(token))), None)
     user = find_user(db, record['pubkey']) if session else None
@@ -163,7 +172,7 @@ async def authenticate_image(request: Request, db=Depends(get_db)):
     item = request.path_params['uid'].replace('-', '').lower()
     grant = _audio_art.get(item) if not tag else None
     if grant and grant['expires'] > time.time():
-        record = await media.read(account_key(grant['uid'])) or {}
+        record = await media.read_account(account_key(grant['uid'])) or {}
         session = next((s for s in record.get('sessions', [])
                         if s['id'] == grant['sid'] and s['expires'] > time.time()), None)
         user = find_user(db, record['pubkey']) if session else None
@@ -174,7 +183,7 @@ async def authenticate_image(request: Request, db=Depends(get_db)):
     if not match:
         raise HTTPException(401, 'Private artwork requires authorization')
     uid, sid, expires, signature = match.groups()
-    record = await media.read(account_key(uid)) or {}
+    record = await media.read_account(account_key(uid)) or {}
     session = next((s for s in record.get('sessions', []) if s['id'] == sid and s['expires'] > time.time()), None)
     item = request.path_params['uid'].replace('-', '').lower()
     payload = f"{uid}.{sid}.{expires}"
@@ -207,6 +216,7 @@ async def revoke_device(device_id: str, user=Depends(native.get_media_user)):
             raise HTTPException(404, 'Connected device not found')
         record['sessions'] = [session for session in sessions if session['id'] != device_id]
         await media.write(key, record)
+        media.forget_account(key)
     return Response(status_code=204)
 
 
@@ -214,6 +224,7 @@ async def revoke_device(device_id: str, user=Depends(native.get_media_user)):
 async def account_disable(user=Depends(native.get_media_user)):
     async with _account_lock:
         await media.write(account_key(account_id(user)), {})
+        media.forget_account(account_key(account_id(user)))
         for key, entry in list(_quick.items()):
             if entry.get('pubkey') == media.identity(user):
                 _quick.pop(key, None)
@@ -435,6 +446,7 @@ async def redeem_quick(body: QuickSecret, db=Depends(get_db)):
         record['pubkey'] = media.identity(user)
         record['sessions'] = [s for s in record.get('sessions', []) if s['expires'] > time.time()][-15:] + [session]
         await media.write(account_key(uid), record)
+        media.forget_account(account_key(uid))
         _quick.pop(key, None)  # Consume only after the encrypted token record is acknowledged.
     return {'User': await hydrated_user(user), 'AccessToken': token, 'ServerId': SERVER_ID,
             'SessionInfo': session_dto(session, user)}
@@ -465,6 +477,7 @@ async def logout(auth=Depends(authenticate)):
         record = await media.read(account_key(auth.uid)) or {}
         record['sessions'] = [s for s in record.get('sessions', []) if s['hash'] != digest(auth.token)]
         await media.write(account_key(auth.uid), record)
+        media.forget_account(account_key(auth.uid))
     return Response(status_code=204)
 
 

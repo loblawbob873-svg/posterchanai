@@ -457,3 +457,16 @@ def test_a_missing_metadata_file_does_not_take_the_whole_desktop_down(tmp_path):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=3)
+
+
+def test_remote_cursor_warps_to_exact_layout_coordinates(compositor):
+    sock, views, outputs = compositor
+    for output in outputs:
+        box = output['geometry']
+        for dx, dy in [(0,0), (box['width']-1,box['height']-1), (100,200)]:
+            point = {'x':box['x']+dx,'y':box['y']+dy}
+            result = rpc(sock,'posterchan-shell/set-cursor',point)
+            assert result.get('result') == 'ok', result
+            assert (result['x'],result['y']) == (point['x'],point['y'])
+    for invalid in [{'x':'100','y':200}, {'x':100001,'y':0}, {'x':0}]:
+        assert rpc(sock,'posterchan-shell/set-cursor',invalid).get('result') != 'ok'

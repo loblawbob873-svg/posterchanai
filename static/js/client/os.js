@@ -1494,11 +1494,9 @@
       }
     }catch(_){}
     wins.forEach(x => x.el.classList.toggle('focused', x === w));
-    /* A document must not have the theme's CRT scanline sheet painted over its white page. Keep
-     * the user's theme everywhere else; suppress only page-wide decorative effects while a neutral
-     * document application owns focus. */
-    document.documentElement.classList.toggle('pc-document-focus',
-      !!(w.el && w.el.classList.contains('osw-document')));
+    /* Nothing to suppress on focus any more: the theme's CRT sheet is an UNDERLAY (client.css,
+     * `.scanlines`), so a document window is never painted through it and this no longer has to
+     * track which window owns focus — or remember to clear the class when none does. */
     w.el.style.zIndex = String(nextZ());
     if(w.min){ w.min = false; w.el.classList.remove('minimised'); }
     /* FOCUS IS TWO THINGS FOR A NATIVE WINDOW: our stacking order changed, so what has to be
@@ -4179,10 +4177,7 @@
     if(opts && opts.preserveFocus) drawBar();
     else{
       const next = wins.filter(x => !x.min).pop();
-      if(next) focusWin(next); else{
-        document.documentElement.classList.remove('pc-document-focus');
-        drawBar();
-      }
+      if(next) focusWin(next); else drawBar();
     }
   }
 
@@ -4195,15 +4190,7 @@
     if(nativeWins().length) nsync();
     if(realFeed && realFeed.parentElement === w.body) releaseFeed(true);   // it is coming back
     const next = wins.filter(x => !x.min).pop();
-    if(next) focusWin(next); else{
-      /* `pc-document-focus` describes the VISIBLE focused workspace, not the last window which
-       * happened to own focus.  Minimising the only Preview/Office/Email window used to leave this
-       * class behind, so the document's scanline suppression leaked onto the bare desktop until a
-       * different window was opened.  closeWin already clears the state in this same no-successor
-       * transition; minimise must do so too. */
-      document.documentElement.classList.remove('pc-document-focus');
-      drawBar();
-    }
+    if(next) focusWin(next); else drawBar();
   }
 
   /* Taskbar recovery for a window whose title bar is awkward or partly outside the display. The

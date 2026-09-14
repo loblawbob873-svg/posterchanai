@@ -1606,6 +1606,13 @@ function wm() {
   if (!_wm) { const { WM } = require('./wm.js'); _wm = new WM(); }
   return _wm;
 }
+// Position in compositor layout coordinates, without uinput mouse acceleration or origin resets.
+remotecontrol.setPositioner(async(x,y)=>{
+  const manager=wm();
+  if(manager.setCursor)return manager.setCursor(x,y);
+  const result=await manager.command('seat seat0 cursor set '+x+' '+y);
+  return Array.isArray(result)&&result.every(r=>r.success);
+});
 /* One renderer per output needs one compositor view per renderer. Kept empty on a single-output
  * session, where the existing window sees everything. Scratchpad rows have no real workspace, so
  * remember the last non-scratch owner; otherwise every monitor would adopt the same minimised app. */

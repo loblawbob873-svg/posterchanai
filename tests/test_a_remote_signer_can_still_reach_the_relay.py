@@ -44,15 +44,21 @@ def _verdict(ua="", origin="", peer="93.184.216.34", on=True):
 
 
 class TheHandshakeGate(unittest.TestCase):
+    # The verdict says WHY it admitted (see _posterchan_client_allowed): every admitting answer is
+    # truthy and only "signer" confines, so these assert the RULE — admitted, and not confined.
+    def _admitted(self, v, why):
+        self.assertTrue(v, "admitted")
+        self.assertEqual(v, why)
+
     def test_a_posterchan_client_is_admitted_outright(self):
-        self.assertIs(_verdict(ua="PosterChan/1.0"), True)
-        self.assertIs(_verdict(origin="https://poster.place"), True)
+        self._admitted(_verdict(ua="PosterChan/1.0"), "ua")
+        self._admitted(_verdict(origin="https://poster.place"), "origin")
 
     def test_the_lan_is_admitted_outright(self):
-        self.assertIs(_verdict(peer="192.168.0.42"), True)
+        self._admitted(_verdict(peer="192.168.0.42"), "lan")
 
     def test_the_switch_off_admits_everything(self):
-        self.assertIs(_verdict(ua="Amber/1.0", on=False), True)
+        self._admitted(_verdict(ua="Amber/1.0", on=False), "off")
 
     def test_a_remote_signer_is_admitted_as_a_signer_not_refused(self):
         """The regression this file exists for: this used to be False, i.e. a 403 at the handshake."""

@@ -26,7 +26,8 @@ def test_native_remote_input_is_shell_only_and_origin_guarded():
 
 
 def test_native_remote_input_is_bounded_and_rate_limited():
-    assert "(e.type==='move'||e.type==='absolute') && now-lastAt<16" in NATIVE
+    assert "e.type==='move' && now-lastAt<16" in NATIVE
+    assert "pendingCursor.x=x;pendingCursor.y=y" in NATIVE
     assert "Math.abs(dx)>240||Math.abs(dy)>240" in NATIVE
     assert "e.type==='wheel'" in NATIVE
     assert "KEY_CODES.has(code)" in NATIVE
@@ -42,16 +43,11 @@ def test_absolute_remote_pointer_maps_through_the_host_display():
     assert "screen.getCursorScreenPoint()" in MAIN
     assert "remoteAbsolutePoint(screen.getAllDisplays()" in MAIN
     assert "screen.getDisplayNearestPoint(cursor)" in MAIN
-    # ABSOLUTE PLACEMENT IS ydotool NOW, and that is a fix rather than a rename. It was
-    # `swaymsg seat0 cursor set` -- a Sway command, on a session where the binary is not even
-    # installed -- so every absolute packet failed while relative motion, clicks and keys all
-    # worked: the remote pointer read as STUCK, not as a missing program.
-    # Asserted on the CODE, not on the file: the comment above `setCursor` names the command it
-    # replaced, which is the sentence a future reader most needs and the one a bare
-    # `"swaymsg" not in NATIVE` would forbid.
-    body = NATIVE.split("function setCursor(", 1)[1].split("\nfunction ", 1)[0]
-    assert "swaymsg" not in body, body
-    assert "'mousemove','--absolute'" in body
+    # Shell input uses direct compositor coordinates; legacy standalone callers retain ydotool.
+    assert 'remotecontrol.setPositioner(async(x,y)=>' in MAIN
+    assert 'manager.setCursor(x,y)' in MAIN
+    assert "'posterchan-shell/set-cursor',{x,y}" in (ROOT/'desktop/wm-wayfire.js').read_text()
+
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -146,3 +142,46 @@ def test_position_and_button_are_atomic_ordered_and_duplicate_release_is_ignored
         ["/usr/bin/ydotool", ["mousemove", "--absolute", "-x", "300", "-y", "400"]],
         ["/usr/bin/ydotool", ["click", "0x80"]],
     ]
+
+
+def test_direct_positioning_and_release_wait_for_pending_press():
+    js = f"""
+      const cp=require('child_process'),calls=[];
+      cp.execFile=(file,args,opts,cb)=>setTimeout(()=>{{calls.push(args);cb(null);}},5);
+      const rc=require({json.dumps(str(ROOT / 'desktop/remotecontrol.js'))});
+      rc.setPositioner(async(x,y)=>{{calls.push(['warp',x,y]);return true;}});
+      (async()=>{{
+        const right=rc.input({{type:'button',button:2,down:true,x:-100,y:200}});
+        const middle=rc.input({{type:'button',button:1,down:true,x:300,y:400}});
+        const key=rc.input({{type:'key',code:42,down:true}});
+        const release=rc.release();
+        await Promise.all([right,middle,key,release]);
+        console.log(JSON.stringify(calls.filter(c=>c[0]!=='--user')));
+      }})();
+    """
+    run = subprocess.run(['node','-e',js],capture_output=True,text=True,timeout=10)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == [
+        ['warp',-100,200], ['click','0x41'], ['warp',300,400], ['click','0x42'],
+        ['key','42:1'], ['key','42:0'], ['click','0x81','0x82']]
+
+
+def test_motion_coalesces_to_final_point_without_crossing_button_barriers():
+    js = f"""
+      const calls=[],cp=require('child_process');
+      cp.execFile=(f,a,o,cb)=>{{calls.push(a);cb(null);}};
+      const rc=require({json.dumps(str(ROOT / 'desktop/remotecontrol.js'))});
+      rc.setPositioner(async(x,y)=>{{calls.push(['warp',x,y]);return true;}});
+      (async()=>{{
+        const jobs=[];
+        for(let i=0;i<100;i++)jobs.push(rc.input({{type:'absolute',x:i,y:i}}));
+        jobs.push(rc.input({{type:'button',button:0,down:true,x:100,y:100}}));
+        for(let i=101;i<200;i++)jobs.push(rc.input({{type:'absolute',x:i,y:i}}));
+        jobs.push(rc.release());await Promise.all(jobs);
+        console.log(JSON.stringify(calls.filter(c=>c[0]!=='--user')));
+      }})();
+    """
+    run=subprocess.run(['node','-e',js],capture_output=True,text=True,timeout=10)
+    assert run.returncode == 0,run.stderr
+    assert json.loads(run.stdout) == [
+        ['warp',99,99],['warp',100,100],['click','0x40'],['warp',199,199],['click','0x80']]

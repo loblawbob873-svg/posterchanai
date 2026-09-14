@@ -42,6 +42,7 @@ _rate_lock = asyncio.Lock()
 _rate_due = {}
 _failed_encoders = {}
 _catalog_cache = {}
+_account_cache = {}          # account key -> (record, when it was read)
 _segment_jobs = {}
 art_slots = asyncio.Semaphore(2)
 subtitle_slots = asyncio.Semaphore(1)
@@ -466,6 +467,66 @@ async def save_user_data(library_id, viewer, item_id, update):
 async def read(key):
     return await nostr_store.get_doc(settings_store._port(), NS + key,
                                     seckey=settings_store._operator_seckey(None), strict=True)
+
+
+# How long an account record is trusted without re-reading it, and how long a cached one may still
+# answer once the relay has stopped answering.
+ACCOUNT_FRESH = 30.0
+ACCOUNT_STALE_OK = 600.0
+_ACCOUNT_MAX = 256
+
+
+async def read_account(key):
+    """The account record behind a Jellyfin token — cached, because it is read PER REQUEST.
+
+    A PLAYER FETCHES A SEGMENT EVERY TWO SECONDS, AND EVERY ONE OF THEM WAS A FRESH WEBSOCKET TO THE
+    RELAY. `jellyfin.authenticate` reads this document to find the session that matches the token, so
+    the read sat in front of every `.ts` in a stream — and `nostr_store._ws_query` opens its own
+    socket per call. Reported as "jellyfin stopped playing twice"; measured in the journal as
+
+        authenticate -> media_center.read -> nostr_store.get_doc -> _ws_query
+        TimeoutError: timed out during opening handshake
+        GET /jellyfin/Videos/<id>/480p-188.ts -> 500 Internal Server Error
+
+    i.e. one slow websocket handshake ended somebody's film. Nothing was wrong with the media, the
+    token or the session; the request simply could not open a socket in time, and an unhandled
+    exception in an auth dependency is a 500 on a video segment.
+
+    THE FAILURE MODE THIS FIXES IS "COULD NOT ASK", AND IT IS ANSWERED THE WAY THIS REPO ANSWERS IT
+    EVERYWHERE ELSE: could-not-ask is never a denial. A record that was read successfully keeps
+    answering for `ACCOUNT_STALE_OK` while the relay is unreachable, so a blip costs nobody their
+    playback. That is a deliberate trade with a bound: a session revoked DURING a relay outage stays
+    usable until the outage ends or ten minutes pass, whichever is first. Every other gate still runs
+    per request against the database — `media_allowed`, the user lookup, `require_user` — so this
+    caches WHICH SESSIONS EXIST, never whether the account may watch.
+
+    A missing record is not cached: an account created a second ago must be able to log in.
+    """
+    now = time.time()
+    hit = _account_cache.get(key)
+    if hit and now - hit[1] < ACCOUNT_FRESH:
+        return hit[0]
+    try:
+        record = await read(key)
+    except Exception as error:
+        if hit and now - hit[1] < ACCOUNT_STALE_OK:
+            logger.warning("[media-center] account read failed (%s) — answering from the copy read "
+                           "%.0fs ago rather than ending a session", type(error).__name__, now - hit[1])
+            return hit[0]
+        raise
+    if record:
+        if len(_account_cache) >= _ACCOUNT_MAX:
+            _account_cache.pop(min(_account_cache, key=lambda k: _account_cache[k][1]), None)
+        _account_cache[key] = (record, now)
+    else:
+        _account_cache.pop(key, None)
+    return record
+
+
+def forget_account(key):
+    """Drop the cached record — called wherever sessions are written, so a login, a logout or a
+    revocation takes effect at once instead of at the end of the freshness window."""
+    _account_cache.pop(key, None)
 
 
 async def write(key, value):

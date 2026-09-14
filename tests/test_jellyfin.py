@@ -40,7 +40,8 @@ def api(request, monkeypatch, tmp_path):
     monkeypatch.setattr(media, 'mutation_lock', asyncio.Lock())
     monkeypatch.setattr(media, '_progress_lock', asyncio.Lock())
     monkeypatch.setattr(jf, '_account_lock', asyncio.Lock())
-    for cache in (jf._quick, jf._approvals, jf._plays, jf._locators, jf._audio_art, media._sessions, media._catalog_cache):
+    for cache in (jf._quick, jf._approvals, jf._plays, jf._locators, jf._audio_art, media._sessions, media._catalog_cache,
+                  media._account_cache):
         cache.clear()
     monkeypatch.setattr(native.settings_store, 'get', lambda key, default=None:
                         'http://nas.lan' if proxied and node.get() == 'edge' and key == 'media_center_server_url' else default)

@@ -241,7 +241,6 @@
        Marked HERE and not at the two host sites, because this is the one function both of them go
        through (a desktop window's slot and the full-screen sheet), and the class then lives and
        dies with the element rather than with a page-level flag somebody has to remember to clear. */
-    try { host.classList.add('pc-doc'); } catch (_) {}
     host.innerHTML = bodyHTML(name, mime, size, kind);
     var q = function (s) { return host.querySelector(s); };
     var cleanup = function () {};

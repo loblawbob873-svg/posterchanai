@@ -198,12 +198,12 @@ def test_same_identity_viewer_requests_control_automatically_on_channel_open():
 
 def test_remote_pointer_moves_without_requiring_a_pressed_button():
     start = APP.index("function _rdBindViewer(video)")
-    block = APP[start:APP.index("document.addEventListener('keydown'", start)]
+    block = APP[start:APP.index("  // getUserMedia failures", start)]
     move = block[block.index("pointermove"):block.index("const up=", block.index("pointermove"))]
     assert "px===null)return" not in move
     assert "const p=point(e)" in move
     assert "type:'absolute',x:p.x,y:p.y" in move
-    assert "addEventListener('wheel'" in block
+    assert "listen(video,'wheel'" in block
 
 
 def test_remote_pointer_is_scaled_to_the_shared_monitor():

@@ -16,27 +16,35 @@ const KEY_CODES = new Set([
   ...Array.from({length:7}, (_,i)=>i+44),      // z..m
   12,13,26,27,39,40,41,43,51,52,53,           // punctuation
 ]);
-const BUTTONS = {0:'0', 1:'1', 2:'2'};
+const BUTTONS = {0:'0', 1:'2', 2:'1'};
+let positionCursor=null;
 let lastAt=0, started=false, queue=Promise.resolve();
+let pendingCursor=null;
 const heldKeys=new Set(),heldButtons=new Set();
 
 function run(args){
   return new Promise(resolve=>execFile('/usr/bin/ydotool', args, {timeout:1500},
     err=>resolve(!err)));
 }
-function enqueueJob(job){queue=queue.then(job,job);return queue;}
+function enqueueJob(job){pendingCursor=null;queue=queue.then(job,job);return queue;}
 function enqueue(args){return enqueueJob(()=>run(args));}
-/* ABSOLUTE POINTER PLACEMENT, ON EITHER COMPOSITOR.
- *
- * This was `swaymsg seat0 cursor set`, which is a Sway command -- and Sway is gone. On the Wayfire
- * session the binary was not even installed, so every absolute packet failed while relative motion,
- * clicks and keys all worked: it read as "the mouse is stuck", not as a missing program. ydotool is
- * already this module's input path for everything else and its `mousemove --absolute` speaks to the
- * kernel rather than to a compositor, so there is one path now instead of two. */
+/* The shell supplies direct compositor positioning in logical layout coordinates. ydotool's
+ * "absolute" mode resets to the top-left and emits relative motion, which applies acceleration
+ * and cannot represent negative monitor origins. Keep it only for standalone legacy callers. */
 function setCursor(x,y){
+  if(positionCursor)return Promise.resolve().then(()=>positionCursor(x,y)).catch(()=>false);
   return run(['mousemove','--absolute','-x',String(x),'-y',String(y)]);
 }
-function enqueueCursor(x,y){return enqueueJob(()=>setCursor(x,y));}
+function enqueueCursor(x,y){
+  if(pendingCursor){pendingCursor.x=x;pendingCursor.y=y;return pendingCursor.done;}
+  const move={x,y};
+  move.done=enqueueJob(async()=>{
+    await new Promise(resolve=>setTimeout(resolve,16));
+    if(pendingCursor===move)pendingCursor=null;
+    return setCursor(move.x,move.y);
+  });
+  pendingCursor=move;return move.done;
+}
 function start(){
   if(started) return;
   started=true;
@@ -46,9 +54,8 @@ function start(){
 async function input(raw){
   const e=raw && typeof raw==='object' ? raw : {};
   const now=Date.now();
-  // A remote browser can produce hundreds of pointermove events per second. Besides wasting CPU,
-  // that can starve the release packet behind a move backlog and leave a button held down.
-  if((e.type==='move'||e.type==='absolute') && now-lastAt<16) return false;
+  // Coalesce absolute motion without losing the final position. Relative deltas stay bounded.
+  if(e.type==='move' && now-lastAt<16) return false;
   lastAt=now; start();
   if(e.type==='move'){
     const dx=Math.round(Number(e.dx)),dy=Math.round(Number(e.dy));
@@ -87,17 +94,21 @@ async function input(raw){
   if(e.type==='key'){
     const code=Math.round(Number(e.code));
     if(!KEY_CODES.has(code)||typeof e.down!=='boolean') return false;
-    const ok=await enqueue(['key',code+':'+(e.down?1:0)]);
-    if(ok){if(e.down)heldKeys.add(code);else heldKeys.delete(code);}return ok;
+    return enqueueJob(async()=>{
+      const ok=await run(['key',code+':'+(e.down?1:0)]);
+      if(ok){if(e.down)heldKeys.add(code);else heldKeys.delete(code);}return ok;
+    });
   }
   return false;
 }
 
 async function release(){
-  const keys=[...heldKeys],buttons=[...heldButtons];heldKeys.clear();heldButtons.clear();
-  if(keys.length) await enqueue(['key',...keys.map(code=>code+':0')]);
-  if(buttons.length) await enqueue(['click',...buttons.map(b=>'0x8'+b)]);
-  return true;
+  return enqueueJob(async()=>{
+    const keys=[...heldKeys],buttons=[...heldButtons];
+    if(keys.length && await run(['key',...keys.map(code=>code+':0')]))heldKeys.clear();
+    if(buttons.length && await run(['click',...buttons.map(b=>'0x8'+b)]))heldButtons.clear();
+    return !heldKeys.size&&!heldButtons.size;
+  });
 }
 
-module.exports={input,release,KEY_CODES};
+module.exports={input,release,KEY_CODES,setPositioner:fn=>{positionCursor=fn;}};

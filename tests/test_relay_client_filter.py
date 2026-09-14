@@ -5,9 +5,16 @@ from app.services.nostr_relay.server import _posterchan_client_allowed, RelaySer
 
 CFG={'posterchan_clients_only':True,'posterchan_origins':['https://poster.place','app://posterchan','https://localhost','capacitor://localhost']}
 
-# THE GATE HAS THREE ANSWERS NOW, NOT TWO.
+# THE GATE HAS THREE ANSWERS NOW, NOT TWO — and it says WHICH.
 #
-# True   = a PosterChan client (or the LAN): full service, exactly as before.
+# 'lan' / 'origin' / 'ua' = a PosterChan client (or one of our own machines): full service, exactly
+#          as before. The verdict names the branch that admitted it rather than answering True,
+#          because that answer is carried onto the connection and printed on its `conn closed`
+#          line: "there are 100 connections and 7 people online" is a question no total can
+#          answer, and the operator needs to see which sockets are browsers on this node's own
+#          origin, which are LAN machinery, and which got in on a User-Agent anyone can type.
+#          Asserting the exact branch here is also the sharper security test: an origin that only
+#          LOOKS like ours must not be admitted at all, not merely admitted for some other reason.
 # 'signer' = ANOTHER client, admitted onto the socket and CONFINED to NIP-46 (24133) and inbound
 #          DMs (4/13/1059). It was False, i.e. a 403 at the handshake, and that refused two things
 #          this node cannot do without: the Amber QR login (`nostrconnect://` names OUR relay and
@@ -20,27 +27,27 @@ CFG={'posterchan_clients_only':True,'posterchan_origins':['https://poster.place'
 # What a confined socket may actually DO is the other half of the rule, and it is asserted in
 # tests/test_a_remote_signer_can_still_reach_the_relay.py — general reads and writes are refused
 # there, which is what keeps this from being "allow everyone".
-FULL, CONFINED = True, 'signer'
+CONFINED = 'signer'
 
 
 @pytest.mark.parametrize('headers,peer,allowed',[
-    ({'Origin':'https://poster.place'},'8.8.8.8',FULL),
-    ({'Origin':'app://posterchan'},'8.8.8.8',FULL),
-    ({'Origin':'https://localhost'},'8.8.8.8',FULL),
-    ({'Origin':'capacitor://localhost'},'8.8.8.8',FULL),
-    ({'User-Agent':'PosterChan/1.0'},'8.8.8.8',FULL),
-    ({'User-Agent':'Mozilla/5.0 PosterChanAI/1.0'},'8.8.8.8',FULL),
+    ({'Origin':'https://poster.place'},'8.8.8.8','origin'),
+    ({'Origin':'app://posterchan'},'8.8.8.8','origin'),
+    ({'Origin':'https://localhost'},'8.8.8.8','origin'),
+    ({'Origin':'capacitor://localhost'},'8.8.8.8','origin'),
+    ({'User-Agent':'PosterChan/1.0'},'8.8.8.8','ua'),
+    ({'User-Agent':'Mozilla/5.0 PosterChanAI/1.0'},'8.8.8.8','ua'),
     ({'User-Agent':'NotPosterChan/1.0'},'8.8.8.8',CONFINED),
     ({'Origin':'https://poster.place.attacker.test'},'8.8.8.8',CONFINED),
     ({'User-Agent':'OtherNostr/1.0'},'8.8.8.8',CONFINED),
     ({},'8.8.8.8',CONFINED),
-    ({},'127.0.0.1',FULL),
-    ({},'192.168.0.2',FULL),
+    ({},'127.0.0.1','lan'),
+    ({},'192.168.0.2','lan'),
     ({'X-Real-IP':'8.8.8.8'},'192.168.0.1',CONFINED),
     ({'X-Real-IP':'127.0.0.1'},'8.8.8.8',CONFINED),
 ])
 def test_client_filter(headers,peer,allowed):
-    assert _posterchan_client_allowed(CFG,Headers(headers),SimpleNamespace(remote_address=(peer,100))) is allowed
+    assert _posterchan_client_allowed(CFG,Headers(headers),SimpleNamespace(remote_address=(peer,100))) == allowed
 
 
 def test_a_lookalike_origin_never_gets_full_service():
@@ -50,12 +57,12 @@ def test_a_lookalike_origin_never_gets_full_service():
                           ({'X-Real-IP':'127.0.0.1'},'8.8.8.8'),
                           ({'User-Agent':'OtherNostr/1.0'},'8.8.8.8')):
         got = _posterchan_client_allowed(CFG,Headers(headers),SimpleNamespace(remote_address=(peer,100)))
-        assert got is not True, f"{headers} was granted FULL service"
+        assert got == CONFINED, f"{headers} was granted FULL service ({got!r})"
 
 
 def test_duplicate_header_is_not_a_client_identity():
     headers=Headers([('Origin','https://poster.place'),('Origin','https://other.test')])
-    assert _posterchan_client_allowed(CFG,headers,SimpleNamespace(remote_address=('8.8.8.8',10))) is not True
+    assert _posterchan_client_allowed(CFG,headers,SimpleNamespace(remote_address=('8.8.8.8',10))) == CONFINED
 
 
 def test_default_disabled_preserves_clients():

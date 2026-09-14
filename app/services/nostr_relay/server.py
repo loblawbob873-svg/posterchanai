@@ -370,9 +370,17 @@ def _client_ip(hdrs, connection) -> str:
 
 
 def _posterchan_client_allowed(config, headers, connection):
-    """Best-effort client filter, not software attestation: headers can be imitated."""
+    """Best-effort client filter, not software attestation: headers can be imitated.
+
+    Answers WHY, not just whether: "off", "lan", "origin", "ua", "signer" (admitted but confined to
+    NIP-46), or False (refused at the door). Every admitting value is truthy, so callers that only
+    ask `if not verdict` are unaffected. The reason is carried onto the connection and printed on
+    its `conn closed` line, because "there are 100 connections and 7 people" is a question no total
+    can answer — the operator needs to know which of them are browsers on this node's own origin,
+    which are LAN machinery, and which got in on a User-Agent anyone can type.
+    """
     if not config.get("posterchan_clients_only", False):
-        return True
+        return "off"
     import ipaddress
     peer = getattr(connection, "remote_address", None)
     try:
@@ -383,14 +391,14 @@ def _posterchan_client_allowed(config, headers, connection):
     # Internal bots, bridge, datastore and cluster traffic. A public socket cannot
     # gain this exemption by supplying a forged X-Real-IP header.
     if peer_private and client_private:
-        return True
+        return "lan"
     origin = _one_header(headers, "Origin").rstrip('/').lower()
     origins = {o.rstrip('/').lower() for o in config.get("posterchan_origins", [])}
     if origin and origin in origins:
-        return True
+        return "origin"
     ua = _one_header(headers, "User-Agent")
     if re.search(r"(?:^|[\s;(])PosterChan(?:AI)?(?:/|[\s;)]|$)", ua, re.I):
-        return True
+        return "ua"
     # A REMOTE SIGNER IS NOT "ANOTHER CLIENT", AND REFUSING IT BREAKS LOGGING IN.
     #
     # `nostrconnect://` names OUR relay (`_ncRelays` returns `CFG.relay_url`) and the SIGNER dials
@@ -420,6 +428,10 @@ def _posterchan_client_allowed(config, headers, connection):
 #          key, so the relay accepts it for being ADDRESSED to one of ours), so allowing the socket
 #          adds no policy that the relay did not already apply to everyone who could connect.
 _RESTRICTED_WRITE_KINDS = frozenset({24133, 4, 13, 1059})
+
+
+# Read-only stand-in for a server that was built without __init__ (test fixtures do this).
+_NO_RECORDS: dict = {}
 
 
 def _restricted_traffic(typ, msg) -> bool:
@@ -507,6 +519,8 @@ class RelayServer:
         self._neg: dict = {}   # conn -> {sub_id: negentropy item set} (NIP-77 sessions)
         self._outq: dict = {}  # conn -> bounded outbound queue (decouples slow clients)
         self._conn_ips: dict = {}  # conn -> client IP (for the deduped "online people" estimate)
+        # client IP -> when it last had a socket closed early. See _note_refused.
+        self._refused_at: dict = {}
         # NIP-42 state is connection-scoped. A client may authenticate multiple identities on one
         # socket; NIP-78 then permits each identity to read/write only its own app-data events.
         self._auth_challenges: dict = {}  # conn -> random challenge
@@ -556,6 +570,58 @@ class RelayServer:
                            "frames; see its 'conn closed' line for the total",
                            self._conn_ips.get(conn) or "?", q.maxlen)
 
+    # An early close is rate-limited PER ADDRESS, not counted: this is the valve that keeps the
+    # cure from becoming the disease (see _note_refused).
+    _EARLY_CLOSE_EVERY = 20.0
+    _REFUSED_MAX = 4096
+
+    def _note_refused(self, ip: str) -> bool:
+        """A confined socket just asked for something the filter refuses. Close it NOW?
+
+        THE COUNT WAS NEVER ABOUT ENFORCEMENT — IT WAS ABOUT HOW LONG A REFUSED SOCKET IS HELD.
+        With `posterchan_clients_only` ON, a stranger is admitted, refused every read, told why, and
+        closed at 80 seconds. Measured on this node in one hour: **137 distinct addresses, 2,925
+        closes** — every one refused everything, every one back inside three minutes. At an 80s grace
+        against a ~171s dial interval that is a ~47% duty cycle, i.e. ~65 sockets held permanently by
+        clients that cannot read a single event. The operator sees ~100 connections against 7 people
+        and reasonably concludes the switch does nothing.
+
+        A client that asks for ordinary content has PROVED it is not a NIP-46 signer — the one thing
+        the confinement exists to keep working — so there is nothing left to wait 80 seconds for. Its
+        socket is closed as soon as it says so, which takes the duty cycle to roughly one second.
+
+        WHAT THIS DELIBERATELY DOES NOT DO IS REFUSE THE HANDSHAKE. The first cut of this fix put the
+        address in a growing cooldown and 403'd its next dial. That is wrong, and wrong in a way that
+        would not have shown up here: the ban is keyed on an ADDRESS, and the addresses this
+        population arrives on are the most SHARED ones there are. Amber runs on a phone, behind
+        carrier CGNAT, thousands of subscribers to an address; a Tor exit is worse. The check would
+        have run at the handshake, before any socket exists and therefore before any signer work
+        could vouch for it — so one stranger's Damus asking for a timeline would have locked every
+        NIP-46 login behind that carrier out of the QR flow this node tells people to use, for 15
+        minutes and escalating, with a 403 nobody ever sees. Closing a socket costs its owner one
+        reconnect. Refusing a handshake costs a co-tenant their login.
+
+        The rate limit is the other half. Closing instantly invites a client that reconnects on close
+        to spin, so an address gets at most one early close every `_EARLY_CLOSE_EVERY` seconds; past
+        that its socket is held to the ordinary 80s sweep instead, which slows the loop down without
+        ever turning anyone away. Both outcomes are bounded, and neither can lock anybody out.
+        """
+        if not ip or self._is_internal(ip):
+            return False
+        now = time.time()
+        recent = self.__dict__.setdefault("_refused_at", {})
+        last = recent.get(ip, 0.0)
+        if now - last < self._EARLY_CLOSE_EVERY:
+            return False
+        recent[ip] = now
+        if len(recent) > self._REFUSED_MAX:
+            # Bounded. Anything outside the window is forgotten; a dropped record costs one early
+            # close that could have been held back, never correctness.
+            for k, v in list(recent.items()):
+                if now - v > self._EARLY_CLOSE_EVERY:
+                    recent.pop(k, None)
+        return True
+
     async def _keepalive(self, conn) -> None:
         """Push a tiny application-level NOTICE to the client every ~40s. Unlike a WebSocket PING frame —
         which a CDN (Cloudflare fronts this relay) may answer at its own edge, and whose idle-timeout
@@ -597,6 +663,14 @@ class RelayServer:
                 self._send(conn, ["NOTICE", "keepalive"])
         except asyncio.CancelledError:
             pass
+        except Exception:
+            pass
+
+    async def _close_refused(self, conn) -> None:
+        """Let the NOTICE drain, then close with the reason the switch has always carried."""
+        try:
+            await asyncio.sleep(0.25)
+            await conn.close(code=1008, reason="use a PosterChan client")
         except Exception:
             pass
 
@@ -780,13 +854,28 @@ class RelayServer:
         the cyberpunk welcome page explaining how to connect a client."""
         try:
             hdrs = request.headers
-            if hdrs.get("Upgrade", "").lower() == "websocket":
-                verdict = _posterchan_client_allowed(self.cfg, hdrs, connection)
+            # `_one_header`, not `hdrs.get`: websockets' Headers.get RAISES for a repeated header,
+            # and the whole body of this method is wrapped in `except Exception: return None` —
+            # which PROCEEDS with the handshake. So sending `Upgrade: websocket` twice threw past
+            # the gate and landed on a socket that was never marked confined, i.e. full service
+            # with the switch on. A client must not be able to opt out of the filter by repeating
+            # a header (the same shape `_one_header` was written for on X-Real-IP).
+            if _one_header(hdrs, "Upgrade").lower() == "websocket":
+                try:
+                    verdict = _posterchan_client_allowed(self.cfg, hdrs, connection)
+                except Exception:
+                    # Whatever went wrong, "admitted and unmarked" is the one answer that must not
+                    # come out of here. With the switch ON an unevaluable gate CONFINES the socket
+                    # — NIP-46 and inbound DMs still work, so a bug here cannot break signing in or
+                    # lose a message, but it cannot hand out general relay service either.
+                    logger.exception("[nostr-relay] client gate failed — confining the socket")
+                    verdict = "signer" if self.cfg.get("posterchan_clients_only", False) else "off"
                 if not verdict:
                     return Response(403, "Forbidden", Headers({"Content-Type": "text/plain; charset=utf-8"}),
                                     b"use a PosterChan client")
                 # "signer" = allowed onto the socket but confined to NIP-46 (see the gate above).
                 setattr(connection, "_pcai_signer_only", verdict == "signer")
+                setattr(connection, "_pcai_gate", verdict)
                 try:
                     setattr(connection, "_pcai_ip", _client_ip(hdrs, connection))
                     host = _one_header(hdrs, "Host") or f"{self.cfg.get('bind','')}:{self.cfg.get('port','')}"
@@ -927,9 +1016,9 @@ class RelayServer:
             bad = dropped or (remote and dur < 60) or (code is not None and code not in self._CLEAN_CLOSE)
             logger.log(
                 logging.INFO if bad else logging.DEBUG,
-                "[nostr-relay] conn closed ip=%s dur=%.1fs sent=%d dropped=%d subs=%d code=%s%s",
-                ip, dur, getattr(q, "sent", 0), dropped, self.subs.count(conn),
-                code, f" reason={reason!r}" if reason else "",
+                "[nostr-relay] conn closed ip=%s gate=%s dur=%.1fs sent=%d dropped=%d subs=%d code=%s%s",
+                ip, getattr(conn, "_pcai_gate", "?"), dur, getattr(q, "sent", 0), dropped,
+                self.subs.count(conn), code, f" reason={reason!r}" if reason else "",
             )
         except Exception:
             pass   # diagnostics must never break teardown
@@ -1020,6 +1109,11 @@ class RelayServer:
             self._send(conn, ["NOTICE", "this relay serves PosterChan clients; another client may "
                                         "deliver a DM here or carry a NIP-46 signing session, "
                                         "nothing else"])
+            if self._note_refused(getattr(conn, "_pcai_ip", "") or ""):
+                # It has proved it is not a signer, so there is nothing left to hold the socket for.
+                # The NOTICE above is given a moment to leave first — a silent close reads as a
+                # broken relay, and this is the one line that tells somebody what to do about it.
+                asyncio.create_task(self._close_refused(conn))
             return
         if typ == "EVENT" and len(msg) >= 2:
             await self._on_event(conn, msg[1])
