@@ -72,3 +72,114 @@ def test_gate_clears_filters_and_alternate_source_overrides(tmp_path):
     env = dict(os.environ, PYTHONPATH=str(tmp_path), **{name:'incorrect-source-or-filter' for name in overrides})
     result = subprocess.run([sys.executable, str(GATE)], env=env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.fixture
+def source_gate(tmp_path, monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('source_gate', GATE)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    repo = tmp_path / 'repository'
+    repo.mkdir()
+    def git(*args):
+        subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True)
+    git('init', '-q')
+    git('config', 'user.name', 'Regression Test')
+    git('config', 'user.email', 'regression@example.invalid')
+    (repo / 'static').mkdir()
+    (repo / 'static/code.js').write_text('original code')
+    git('add', '.')
+    git('commit', '-qm', 'fixture')
+    runner = tmp_path / 'runner'
+    runner.mkdir()
+    (runner / 'pytest.py').write_text('''import os,sys
+from pathlib import Path
+if os.environ.get('MUTATE_TEST_SOURCE') == 'tracked':
+    Path('static/code.js').write_text('code edited during tests')
+if os.environ.get('MUTATE_TEST_SOURCE') == 'untracked':
+    Path('static/new.js').write_text('new code during tests')
+report=next(a.split('=',1)[1] for a in sys.argv if a.startswith('--junitxml='))
+Path(report).write_text('<testsuites><testcase name="passing fixture"/></testsuites>')
+''')
+    monkeypatch.setenv('PYTHONPATH', str(runner))
+    return gate, repo, tmp_path / 'receipt.json', git
+
+
+@pytest.mark.parametrize('mutation', ['tracked', 'untracked'])
+def test_source_changed_during_passing_tests_cannot_get_a_receipt(source_gate, monkeypatch, mutation):
+    gate, repo, receipt, _ = source_gate
+    monkeypatch.setenv('MUTATE_TEST_SOURCE', mutation)
+    assert gate.run_gate(repo, receipt) == 1
+    assert not receipt.exists()
+
+
+@pytest.mark.parametrize('mutation', ['tracked', 'untracked', 'commit'])
+def test_change_after_tests_invalidates_receipt(source_gate, mutation):
+    gate, repo, receipt, git = source_gate
+    assert gate.run_gate(repo, receipt) == 0
+    assert gate.verify_receipt(receipt, repo) == 0
+    if mutation == 'commit':
+        git('commit', '--allow-empty', '-qm', 'concurrent work')
+    else:
+        (repo / ('static/code.js' if mutation == 'tracked' else 'static/new.js')).write_text('later edit')
+    assert gate.verify_receipt(receipt, repo) == 1
+
+
+def test_overlay_pin_update_keeps_client_test_receipt_valid(source_gate):
+    gate, repo, receipt, _ = source_gate
+    assert gate.run_gate(repo, receipt) == 0
+    overlay = repo / 'os/overlay/package.ebuild'
+    overlay.parent.mkdir(parents=True)
+    overlay.write_text('new verified package pin')
+    assert gate.verify_receipt(receipt, repo) == 0
+
+
+@pytest.mark.parametrize('content', [None, '', '{}', 'null'])
+def test_missing_or_invalid_receipt_cannot_authorize_push(source_gate, content):
+    gate, repo, receipt, _ = source_gate
+    if content is not None:
+        receipt.write_text(content)
+    assert gate.verify_receipt(receipt, repo) == 1
+
+
+def test_new_source_used_by_tests_must_be_staged_for_deployment(source_gate):
+    gate, repo, receipt, git = source_gate
+    (repo / 'static/new.js').write_text('new module required by the app')
+    assert gate.run_gate(repo, receipt) == 0
+    assert gate.verify_receipt(receipt, repo) == 1
+    git('add', 'static/new.js')
+    assert gate.run_gate(repo, receipt) == 0
+    assert gate.verify_receipt(receipt, repo) == 0
+
+
+def test_sync_stops_before_commit_when_test_receipt_is_stale(tmp_path):
+    (tmp_path / 'sync.sh').write_text((ROOT / 'sync.sh').read_text())
+    python = tmp_path / 'venv-unified/bin/python'
+    python.parent.mkdir(parents=True)
+    python.write_text('''#!/bin/sh
+case "$2" in
+--receipt) echo tested > "$3"; exit 0 ;;
+--verify) echo stale source; exit 1 ;;
+esac
+exit 99
+''')
+    python.chmod(0o755)
+    bindir = tmp_path / 'bin'
+    bindir.mkdir()
+    git = bindir / 'git'
+    git.write_text('''#!/bin/sh
+if [ "$1" = rev-parse ]; then echo 1234567890abcdef; exit 0; fi
+echo forbidden >> "$SIDE_EFFECT_LOG"
+kill -TERM "$PPID"
+exit 99
+''')
+    git.chmod(0o755)
+    sentinel = tmp_path / 'side-effects'
+    result = subprocess.run(['bash', 'sync.sh'], cwd=tmp_path,
+                            env=dict(os.environ, SKIP_LINT='1',
+                                     PATH=str(bindir)+':'+os.environ['PATH'], SIDE_EFFECT_LOG=str(sentinel)),
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert 'source changed after testing' in result.stdout
+    assert not sentinel.exists(), 'stale test results reached a commit or push'

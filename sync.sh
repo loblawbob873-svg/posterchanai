@@ -6,7 +6,9 @@ if [ ! -x venv-unified/bin/python ]; then
     echo "[sync] ABORT: venv-unified/bin/python is required for deployment regression checks"
     exit 1
 fi
-if ! venv-unified/bin/python scripts/deploy_regression_gate.py; then
+_regression_receipt=$(mktemp) || exit 1
+trap 'rm -f "$_regression_receipt"' EXIT
+if ! venv-unified/bin/python scripts/deploy_regression_gate.py --receipt "$_regression_receipt"; then
     echo "[sync] ABORT: required regression checks did not pass; nothing was deployed"
     exit 1
 fi
@@ -111,6 +113,10 @@ if [ -r "$_STAMP" ]; then
         _PREV_HEAD="$_s"
         echo "[sync] local services last restarted at ${_s:0:8}"
     fi
+fi
+if ! venv-unified/bin/python scripts/deploy_regression_gate.py --verify "$_regression_receipt"; then
+    echo "[sync] ABORT: source changed after testing; nothing was pushed"
+    exit 1
 fi
 git commit -a -m fix || true
 # Deploy to PRODUCTION. `origin` is now the NOSTR repo on the built-in GRASP host

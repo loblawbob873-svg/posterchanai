@@ -5,6 +5,9 @@ Uses isolated browser profiles, Electron sessions and fake filesystem/network ad
 A skipped test is missing coverage, so it blocks this gate just like a failed test.
 """
 from pathlib import Path
+import argparse
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -12,6 +15,10 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
+# Inputs exercised by this gate. The overlay updater may legitimately change its
+# package pin after testing; it does not change any of these client/test inputs.
+INPUTS = ('static', 'desktop', 'templates', 'scripts', 'tests',
+          '.github/workflows/desktop.yml', 'sync.sh')
 TESTS = (
     'tests/test_deploy_regression_gate.py',
     'tests/test_desktop_tag_readback.py',
@@ -25,7 +32,46 @@ TESTS = (
 )
 
 
-def run_gate(root=ROOT):
+def source_fingerprint(root):
+    def git(*args):
+        return subprocess.run(['git', *args], cwd=root, check=True, capture_output=True,
+                              timeout=30).stdout
+    digest = hashlib.sha256(git('rev-parse', '--verify', 'HEAD'))
+    digest.update(git('diff', '--no-ext-diff', '--no-textconv', '--binary', 'HEAD', '--', *INPUTS))
+    # git diff omits new, unstaged source files. Include them without following symlinks.
+    for name in sorted(git('ls-files', '--others', '--exclude-standard', '-z', '--', *INPUTS).split(b'\0')):
+        if not name:
+            continue
+        path = Path(root) / os.fsdecode(name)
+        digest.update(b'\0' + name + b'\0')
+        content = os.fsencode(os.readlink(path)) if path.is_symlink() else path.read_bytes()
+        digest.update(hashlib.sha256(content).digest())
+    return digest.hexdigest()
+
+
+def verify_receipt(path, root=ROOT):
+    try:
+        expected = json.loads(Path(path).read_text())['fingerprint']
+        if expected != source_fingerprint(root):
+            raise ValueError('tested source changed; rerun deployment checks')
+        unstaged = subprocess.run(['git', 'ls-files', '--others', '--exclude-standard', '-z',
+                                   '--', *INPUTS], cwd=root, check=True, capture_output=True,
+                                  timeout=30).stdout
+        if unstaged:
+            raise ValueError('stage new source files and rerun checks before deploying; git commit -a omits them')
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        print('[regressions] ABORT: cannot verify tested source: ' + str(error))
+        return 1
+    print('[regressions] tested source is unchanged')
+    return 0
+
+
+def run_gate(root=ROOT, receipt=None):
+    try:
+        before = source_fingerprint(root)
+    except (OSError, subprocess.SubprocessError) as error:
+        print('[regressions] ABORT: cannot identify source under test: ' + str(error))
+        return 1
     with tempfile.TemporaryDirectory(prefix='pc-deploy-regressions-') as directory:
         report = Path(directory) / 'results.xml'
         env = dict(os.environ, PYTEST_DISABLE_PLUGIN_AUTOLOAD='1', PC_REQUIRE_NATIVE_IPC_TEST='1')
@@ -61,9 +107,22 @@ def run_gate(root=ROOT):
             names = ', '.join(case.get('name', '?') for case in incomplete)
             print('[regressions] ABORT: required coverage failed or was skipped: ' + names)
             return 1
+        try:
+            if before != source_fingerprint(root):
+                raise ValueError('source changed while tests were running; rerun deployment checks')
+            if receipt:
+                Path(receipt).write_text(json.dumps({'fingerprint': before}))
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            print('[regressions] ABORT: ' + str(error))
+            return 1
         print('[regressions] PASS: ' + str(len(cases)) + ' required cases, none skipped')
         return 0
 
 
 if __name__ == '__main__':
-    raise SystemExit(run_gate())
+    parser = argparse.ArgumentParser(description=__doc__)
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--receipt', help='write a successful source fingerprint for this deploy')
+    action.add_argument('--verify', help='check a receipt immediately before committing')
+    args = parser.parse_args()
+    raise SystemExit(verify_receipt(args.verify) if args.verify else run_gate(receipt=args.receipt))

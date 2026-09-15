@@ -22,6 +22,12 @@ are cleared so the tests exercise the checkout being deployed. Install its Pytho
 from `scripts/deploy-regression-requirements.txt`; Node, Chrome, Electron, and Xvfb are also
 required. The gate is a fast minimum; continue running the broader suites appropriate to a change.
 
+The gate fingerprints the tested client, desktop, templates, scripts, tests and release workflow
+before and after running. `sync.sh` checks that receipt again immediately before committing.
+Edits or a concurrent commit invalidate it; new source files must be staged so `git commit -a`
+cannot silently omit them. The overlay package pin can still update after tests because it does
+not change these tested inputs.
+
 ---
 
 ## Why this exists
