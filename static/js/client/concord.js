@@ -1121,10 +1121,10 @@
     const live=new Set(info.registriesByCreator?.[context.pubkey]||[]);let refreshed=0;
     for(const entry of list.list.entries.filter(e=>e.community_id===bundle.community_id)){
       if(!context.isCurrent())throw new Error('Concord membership changed');
-      if(!live.has(api.details(entry).pubkey))continue;
       const status=await api.linkState(entry,guarded);
       if(!status.complete)throw new Error('Invitation relay sync is incomplete');
-      if(status.retired)continue;
+      if(status.retired){await api.forget(entry,guarded);continue;}
+      if(!live.has(api.details(entry).pubkey))continue;
       const event=await api.refreshEvent(entry,{...bundle,channels:[]},status.events,guarded);
       if(!guarded.isCurrent())throw new Error('Concord invitation permission changed');
       await context.publish(event,api.details(entry).relays);refreshed++;
