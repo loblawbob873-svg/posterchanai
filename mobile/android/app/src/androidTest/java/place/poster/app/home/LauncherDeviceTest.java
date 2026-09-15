@@ -52,6 +52,77 @@ public class LauncherDeviceTest {
     private Context ctx;
     private boolean wasEnabled;
 
+    @Test
+    public void fullHomeLongPressJitterStillOffersRemove() throws Exception {
+        HomeRoles.enableLauncherComponent(ctx, true);
+        ActivityScenario<HomeActivity> scenario = ActivityScenario.launch(HomeActivity.class);
+        final DeskView[] out = new DeskView[1];
+        try {
+            scenario.onActivity(a -> {
+                DeskView d = new DeskView(a);
+                d.bind(new DeskView.Host() {
+                    public View viewFor(Desk.Item item) { return new View(a); }
+                    public void onOpen(Desk.Item item) { throw new AssertionError("hold launched app"); }
+                    // Use the shipped Activity menu, including its real Remove action.
+                    public void onLongPress(Desk.Item item) { a.onLongPress(item); }
+                    public void onLongPressEmpty() { throw new AssertionError("full grid hit empty"); }
+                    public void onSwipeUp() { throw new AssertionError("hold opened drawer"); }
+                    public void onChanged() { throw new AssertionError("jitter moved shortcut"); }
+                    public int minSpanX(Desk.Item item) { return 1; }
+                    public int minSpanY(Desk.Item item) { return 1; }
+                    public int maxSpanX(Desk.Item item) { return 4; }
+                    public int maxSpanY(Desk.Item item) { return 5; }
+                    public boolean resizable(Desk.Item item) { return false; }
+                    public void onResized(Desk.Item item, int w, int h) { }
+                }, PcTheme.of("cyberpunk"));
+                java.util.List<Desk.Item> items = new java.util.ArrayList<>();
+                for (int i = 0; i < 20; i++) items.add(new Desk.Item("fixture:" + i, i % 4, i / 4, 1, 1));
+                d.setGrid(4, 5);
+                d.setItems(items);
+                // Attached independently so asynchronous launcher redraw cannot replace the fixture.
+                a.addContentView(d, new android.widget.FrameLayout.LayoutParams(400, 500));
+                out[0] = d;
+            });
+            final DeskView d = out[0];
+            boolean ready = false;
+            for (int i = 0; i < 50 && !ready; i++) {
+                final boolean[] value = {false};
+                scenario.onActivity(a -> value[0] = d.isAttachedToWindow() && d.getWidth() > 0);
+                ready = value[0];
+                if (!ready) Thread.sleep(100);
+            }
+            assertTrue("gesture fixture never attached", ready);
+            final long down = android.os.SystemClock.uptimeMillis();
+            scenario.onActivity(a -> sendDeskTouch(d, down, android.view.MotionEvent.ACTION_DOWN, 0));
+            boolean lifted = false;
+            for (int i = 0; i < 50 && !lifted; i++) {
+                final boolean[] value = {false};
+                scenario.onActivity(a -> value[0] = d.editingItem() != null);
+                lifted = value[0];
+                if (!lifted) Thread.sleep(50);
+            }
+            assertTrue("long press never lifted shortcut", lifted);
+            scenario.onActivity(a -> {
+                sendDeskTouch(d, down, android.view.MotionEvent.ACTION_MOVE, 1);
+                sendDeskTouch(d, down, android.view.MotionEvent.ACTION_MOVE, -1);
+                sendDeskTouch(d, down, android.view.MotionEvent.ACTION_UP, -1);
+                assertEquals(20, d.items().size());
+            });
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(
+                    ctx.getString(place.poster.app.R.string.home_remove_from_home)))
+                    .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+                    .check(androidx.test.espresso.assertion.ViewAssertions.matches(
+                            androidx.test.espresso.matcher.ViewMatchers.isDisplayed()));
+        } finally { scenario.close(); }
+    }
+
+    private static void sendDeskTouch(DeskView d, long down, int action, int jitter) {
+        android.view.MotionEvent event = android.view.MotionEvent.obtain(down,
+                android.os.SystemClock.uptimeMillis(), action,
+                d.cellW() / 2f + jitter, d.cellH() / 2f, 0);
+        try { d.dispatchTouchEvent(event); } finally { event.recycle(); }
+    }
+
     @Before
     public void setUp() {
         ctx = InstrumentationRegistry.getInstrumentation().getTargetContext();

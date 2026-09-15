@@ -74,7 +74,6 @@ public class DeskView extends ViewGroup {
     private Desk.Item editing;
     private boolean dragging, resizing;
     private int grabDx, grabDy, resizeEdge;
-    private float lastX, lastY;
     private final Rect tmp = new Rect();
     /* THE SWIPE-UP THAT OPENS THE DRAWER.
      *
@@ -296,7 +295,6 @@ public class DeskView extends ViewGroup {
         if (begun) return;
         begun = true;
         int cw = cellW(), ch = cellH();
-        lastX = x; lastY = y;
         downX = x; downY = y; swiping = false;
         if (vel != null) vel.recycle();
         vel = VelocityTracker.obtain();
@@ -359,21 +357,24 @@ public class DeskView extends ViewGroup {
                         cancelPending();
                     }
                 }
-                float dx = x - lastX, dy = y - lastY;
-                if (Math.abs(dx) > Skin.dp(getContext(), 8) || Math.abs(dy) > Skin.dp(getContext(), 8)) {
+                float dx = x - downX, dy = y - downY;
+                boolean moved = Math.abs(dx) > slop || Math.abs(dy) > slop;
+                if (moved) {
                     cancelPending();
                     // A finger that has travelled is not asking for a menu — on empty space that is
                     // a swipe, and on an item it is a move.
                     menuFor = null; menuEmpty = false;
                 }
                 if (resizing && editing != null) { resizeTo(x, y); return true; }
-                if (editing != null && !dragging && hits(editing, x, y)) {
+                // Sensor jitter after a hold must preserve the Remove menu. The DOWN
+                // owns the item: a real first MOVE may already be outside its bounds.
+                if (editing != null && !dragging && moved && hits(editing, downX, downY)) {
                     // MOVING IS ANSWERING. Once the item is under way the menu would only be in the
                     // way of where it is going.
                     menuFor = null; menuEmpty = false;
                     dragging = true;
-                    grabDx = (int) x - editing.col * cw;
-                    grabDy = (int) y - editing.row * ch;
+                    grabDx = (int) downX - editing.col * cw;
+                    grabDy = (int) downY - editing.row * ch;
                 }
                 if (dragging && editing != null) {
                     View v = viewOf(editing);
