@@ -48,6 +48,7 @@ TESTS = (
     'tests/test_livecd_build_artifact_excludes.py',
     'tests/test_stats_monero_zaps.py',
     'tests/client/test_stats_monero_full_app.py',
+    'tests/client/test_user_autocomplete_full_app.py',
     'tests/test_reminder_history_window.py',
     'tests/test_reminder_notifications.py',
     'tests/client/test_reminder_notifications_runtime.py',

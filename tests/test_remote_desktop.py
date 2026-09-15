@@ -16,7 +16,7 @@ SHELL = (ROOT / "static/js/client/osshell.js").read_text(encoding="utf-8")
 def test_remote_desktop_is_a_real_launcher_app():
     assert "label: 'Remote Desktop'" in OS
     assert "PC().startRemoteDesktop(peer)" in OS
-    assert "Viewer’s npub or address" in OS
+    assert "Viewer’s username, npub or address" in OS
     assert "name@host" in OS
 
 
