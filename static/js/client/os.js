@@ -8337,6 +8337,7 @@
     const panel = document.createElement('div');
     panel.id = 'os-noti';
     panel.className = 'os-noti';
+    panel.addEventListener('pointerdown', e => _notiPressedPointers.add(e.pointerId), true);
     let items = [];
     try{ items = (PC().notifItems && PC().notifItems(60)) || []; }catch(_){}
     let mail = 0;
@@ -8471,9 +8472,24 @@
    * DEBOUNCED because it is called once per event, and the opening flood is hundreds — one repaint
    * after the burst says exactly what a repaint per event would. */
   let _bellT = null;
+  const _notiPressedPointers = new Set();
+  let _notiRefreshPending = false;
+  function releaseNotiPointer(e){
+    if(e.type === 'blur') _notiPressedPointers.clear();
+    else _notiPressedPointers.delete(e.pointerId);
+    if(_notiPressedPointers.size || !_notiRefreshPending) return;
+    _notiRefreshPending = false;
+    // pointerup precedes click. Keep the pressed target attached through that click,
+    // then paint pending arrivals without manufacturing or retrying the user's action.
+    setTimeout(refreshNotiPanel, 0);
+  }
+  document.addEventListener('pointerup', releaseNotiPointer, true);
+  document.addEventListener('pointercancel', releaseNotiPointer, true);
+  window.addEventListener('blur', releaseNotiPointer);
   function refreshNotiPanel(){
     const old = document.getElementById('os-noti');
     if(!old) return;
+    if(_notiPressedPointers.size){ _notiRefreshPending = true; return; }
     // Refresh this renderer's existing panel; toggling can close a native popup instead.
     // The builder must not acknowledge notifications while comparing an unchanged view.
     const next = buildNotiPanel(popupKind() === 'noti');
