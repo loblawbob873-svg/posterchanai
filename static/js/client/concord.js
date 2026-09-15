@@ -2165,7 +2165,7 @@
     return out;
   }
   function cordMergeOpaque(a,b){
-    const out={...a};for(const [key,value]of Object.entries(b||{}))if(out[key]===undefined||cordCanonicalCompare(value,out[key])<0)out[key]=value;return out;
+    const out=Object.assign(Object.create(null),a);for(const [key,value]of Object.entries(b||{}))if(out[key]===undefined||cordCanonicalCompare(value,out[key])<0)out[key]=value;return out;
   }
   function cordMergeEntry(a,b){
     if(!a)return cordWireEntry(b);
@@ -2175,7 +2175,7 @@
       current:choose(a.current,b.current,false),seed:choose(a.seed||a.current,b.seed||b.current,true)});
   }
   function cordMergeLists(docs){
-    const entries=new Map(),tombs=new Map(),extras={};
+    const entries=new Map(),tombs=new Map(),extras=Object.create(null);
     for(const doc of docs){
       for(const [key,value]of Object.entries(doc||{}))if(!['entries','tombstones','frags'].includes(key)&&extras[key]===undefined)extras[key]=value;
       for(const e of doc.entries||[]){

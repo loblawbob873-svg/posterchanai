@@ -44,6 +44,11 @@ reset();relay=[make(0,{frags:2,shared:'zero wins',entries:[entry(1)],tombstones:
 await ctx.persistArmadaMembership(api,room(4));
 const zero=docOf(relay.find(e=>e.tags[0][1]==='0')),one=docOf(relay.find(e=>e.tags[0][1]==='1'));
 assert.equal(zero.shared,'zero wins');assert.deepEqual(zero.onlyOne,{opaque:'keep'});assert(!('shared'in one));assert(!('onlyOne'in one));
+// Opaque JSON names that coincide with Object.prototype remain ordinary data.
+reset();const special=JSON.parse('{"__proto__":{"secret":"keep"},"constructor":"also keep"}');
+relay=[make(0,{...special,frags:1,entries:[entry(1,{...special,current:{...material(1),...special}})],tombstones:[{community_id:b64(hex(3)),removed_at:900,...special}]})];
+await ctx.persistArmadaMembership(api,room(4));
+const specialDoc=docOf(published[0]);assert.deepEqual(specialDoc.__proto__,{secret:'keep'});assert.equal(specialDoc.constructor,'also keep');assert.deepEqual(specialDoc.entries[0].__proto__,{secret:'keep'});assert.equal(specialDoc.tombstones[0].constructor,'also keep');
 // Missing fragment zero does not prevent leaving an entry actually held in fragment one.
 reset();relay=[make(1,{frags:2,entries:[entry(2)],tombstones:[]})];
 await ctx.leaveArmadaMembership(api,room(2));assert.equal(published.length,1);assert.equal(published[0].tags[0][1],'1');doc=docOf(published[0]);assert.equal(doc.frags,2);assert.equal(doc.entries.length,0);assert.equal(doc.tombstones[0].community_id,b64(hex(2)));
