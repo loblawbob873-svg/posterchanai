@@ -524,13 +524,21 @@
     /* Paint from the cache BEFORE the network is asked. Returns whether anything was drawn, so a
      * failed load can say "showing your saved calendar" rather than "could not load". */
     async function loadCached(){
+      // IndexedDB can finish after an account switch or a newer network load. Its key identifies
+      // what was read; it does not make that old response safe to apply to the current screen.
+      const mine = owner(), gen = S.loadGen;
+      const stale = () => mine !== owner() || gen !== S.loadGen;
       // BEFORE the early return: the badge is about the QUEUE, not about the snapshot, and on a
       // return visit (when the live data is already in memory) the early return would skip it. Within
       // one session `add`/`flush` keep it current; this is what makes it right on the first paint
       // after a reload, which is exactly when there is something queued to tell someone about.
-      try{ S.queued = ((await CalQueue.read()) || []).length; }catch(_){}
+      try{ const queue = await CalQueue.read();
+           if(stale()) return false;
+           S.queued = (queue || []).length; }catch(_){}
+      if(stale()) return false;
       if(S.ready || S.cals.length) return false;          // the live data is already here
       const snap = await CalCache.read();
+      if(stale()) return false;
       if(!snap || !Array.isArray(snap.cals) || !snap.cals.length) return false;
       S.cals = snap.cals;
       S.items = snap.items || {};
@@ -1180,7 +1188,10 @@
       /* The CACHE first — instant on open and correct with no network at all — then the network.
        * loadCached no-ops once the live data is in memory, so a return trip still repaints from
        * state rather than re-reading IndexedDB. */
-      loadCached().catch(()=>{}).then(()=> load());
+      const gen = S.loadGen;
+      loadCached().catch(()=>{}).then(()=>{
+        if(mine === owner() && gen === S.loadGen) return load();
+      });
     }
 
     /* KEEP THE HOME-SCREEN WIDGET FED WITHOUT OPENING THIS SCREEN.
@@ -1201,14 +1212,18 @@
      * widget and the app disagree about what day something is on.) */
     async function widgetTick(maxAgeH){
       if(!PC.capPlugin || !PC.capPlugin('CalendarWidget', 'push')) return;   // not the packaged app
+      const mine = owner(), gen = S.loadGen;
+      const stale = () => mine !== owner() || gen !== S.loadGen;
       let snap = null;
       try{ snap = await CalCache.read(); }catch(_){}
+      if(stale()) return;
       if(snap && Array.isArray(snap.cals) && snap.cals.length && !S.cals.length){
         S.cals = snap.cals; S.items = snap.items || {}; S.rev++; S.cached = true;
       }
       // Draw from what is already here FIRST — a widget filled from a four-hour-old snapshot beats an
       // empty one while a request is in flight, and beats it entirely if the request fails.
       if(S.cals.length) await pushWidget();
+      if(stale()) return;
       const age = snap && snap.at ? (Date.now() - snap.at) / 3600000 : Infinity;
       if(age >= (maxAgeH == null ? 6 : maxAgeH)) await load();   // load() pushes again at its end
     }

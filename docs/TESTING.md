@@ -336,6 +336,14 @@ burst through all open relays using one local session key, without awaiting acco
 These checks count requests and explicitly release promises; they do not depend on wall-clock
 speed. They cover transport behavior, not actual Doom frame rate or end-to-end network latency.
 
+## Calendar cache lifecycle
+
+`tests/client/test_calendar_stale_cache.py` delays queue and snapshot reads across account changes
+and newer calendar loads. Late results must not replace current state, repaint private events,
+push a stale home-screen widget or start an abandoned refresh. Positive controls also verify that
+current cached appointments and queued-write counts still appear. The tests execute the shipped
+functions with explicitly resolved promises, without network requests or timing thresholds.
+
 ## Known standing state
 
 - `check_css_scale` passes on the current stylesheet. It remains an **advisory** design-scale lint;
