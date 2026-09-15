@@ -31,8 +31,9 @@ def test_desktop_calendar_history_expires_offline_and_opens_calendar():
           localStorage.setItem('pc_notif_seen','0');
           localStorage.setItem('__offlineMode','reject');
         })()""")
+        previous_document = await browser.js('__documentIdentity')
         await browser.call('Page.reload')
-        await browser.until("!!window.__PC?.me() && !!document.querySelector('#os-bell')")
+        await browser.until("window.__documentIdentity!=="+json.dumps(previous_document)+" && !!window.__PC?.me() && !!document.querySelector('#os-bell')")
         assert await browser.js("__instanceMode") == 'reject'
         unread = await browser.js('__PC.notifUnread()')
         await browser.js("document.querySelector('#os-bell').click()")
@@ -43,18 +44,35 @@ def test_desktop_calendar_history_expires_offline_and_opens_calendar():
         assert await browser.js('__PC.notifUnread()') == 0
         assert await browser.js("document.querySelector('#os-bell .os-dot')===null")
         # A second offline document must retain both expiry and the acknowledgement.
+        previous_document = await browser.js('__documentIdentity')
         await browser.call('Page.reload')
-        await browser.until("!!window.__PC?.me() && !!document.querySelector('#os-bell')")
+        await browser.until("window.__documentIdentity!=="+json.dumps(previous_document)+" && !!window.__PC?.me() && !!document.querySelector('#os-bell')")
+        assert await browser.js('window.__heldReminderOpens?.length>0'), 'offline relay was not held before notification hydration'
         assert await browser.js('__PC.notifUnread()') == 0, await browser.js("({seen:localStorage.getItem('pc_notif_seen'),rows:__PC.notifItems(60)})")
         await browser.js("document.querySelector('#os-bell').click()")
         await browser.until("document.querySelectorAll('#os-noti .reminder-notif').length===1")
         # Restore the fixture server for the uncached Calendar module before following its route.
-        await browser.js("__restoreInstance()")
+        await browser.js("__heldReminderOpens.splice(0).forEach(open=>open());__restoreInstance()")
         await browser.js("document.querySelector('#os-noti .reminder-notif').click()")
         await browser.until("__PC.isView('calendar')")
         assert await browser.js("document.querySelector('#os-noti')===null")
         await browser.until("document.body.textContent.includes('The calendar server is off on this node')")
-    asyncio.run(desktop.with_browser('online', '', check))
+    asyncio.run(desktop.with_browser('online', '', check, extra_init=r'''
+// Keep offline relay startup pending: the desktop and cached reminders are available before
+// watchNotifications runs. Persisted read markers must already work during that interval.
+const ReminderSocket=window.WebSocket;
+window.__heldReminderOpens=[];
+window.WebSocket=class extends ReminderSocket {
+  fire(type,data){
+    if(type==='open' && localStorage.getItem('__offlineMode')==='reject'){
+      this.readyState=0;
+      __heldReminderOpens.push(()=>{this.readyState=1;super.fire(type,data);});
+      return;
+    }
+    return super.fire(type,data);
+  }
+};
+'''))
 
 
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(), reason='Chrome required')

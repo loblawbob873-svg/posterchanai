@@ -1151,6 +1151,9 @@
   let signer = null;
   const subs = {};                 // view -> subId
   const seenNotif = { last: 0 };
+  // Cached notifications render before relay startup reaches watchNotifications(). Restore
+  // their read marker immediately so offline reloads cannot make acknowledged rows unread.
+  try{ seenNotif.last = +(localStorage.getItem('pc_notif_seen')||0); }catch(_){}
 
   // NIP-17 for signers whose SECRET KEY we never hold (nip07 extension / nip46 remote signer):
   // they do the two key-dependent steps via NIP-44 — sign the kind-13 seal + nip44-encrypt the
