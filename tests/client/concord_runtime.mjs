@@ -535,7 +535,7 @@ control('cc-settings-icon').value='🌌';
 control('cc-channel-visibility').value='private';
 await control('cc-settings-save').click();
 const configured=JSON.parse(data.get('pc.concord.invites'));
-if(configured[0].description!=='Editable room description' || configured[0].icon!=='🌌' || configured[0].channels[0].private!==true) throw new Error('private channel settings flow failed');
+if(configured[0].description!=='Editable room description' || configured[0].icon!=='🌌' || configured[0].channels[0].private===true) throw new Error('metadata settings must not pretend to privatize an unrotated channel');
 control('cc-channel-visibility').value='public';
 await control('cc-settings-save').click();
 const madePublic=JSON.parse(data.get('pc.concord.invites'));

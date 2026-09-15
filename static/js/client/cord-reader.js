@@ -26871,6 +26871,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       moderators: [...new Set(folded.roster.grants.map(g => g.member))]
         .filter(m => !folded.banned.has(m)
                   && hasPermission(folded.roster, m, Permissions.MANAGE_MESSAGES)),
+      metadataManagers: [community.owner,...new Set(folded.roster.grants.map(g=>g.member))].filter(pk=>!folded.banned.has(pk)&&isAuthorized(folded.roster,pk,community.owner,Permissions.MANAGE_METADATA)),
+      channelManagers: [community.owner,...new Set(folded.roster.grants.map(g=>g.member))].filter(pk=>!folded.banned.has(pk)&&isAuthorized(folded.roster,pk,community.owner,Permissions.MANAGE_CHANNELS)),
       members: [...new Set(folded.roster.grants.filter(g => g.roleIds.length && !folded.banned.has(g.member)).map(g => g.member))],
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
@@ -26894,10 +26896,17 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const group = writableControlGroup(groups), seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), banned };
   }
+  function controlWriteAuthority(community,folded,pubkey,permission,action) {
+    if(folded.banned.has(pubkey)||!isAuthorized(folded.roster,pubkey,community.owner,permission))throw new Error("only the community owner or authorized staff can "+action);
+    if(pubkey===community.owner)return [];
+    const eid=bytesToHex2(grantLocator(community.id,hex32(pubkey))),head=folded.heads.get(eid);
+    if(!head)throw new Error("the authorizing membership grant has not been synced");
+    return [["vac",eid,head.version.toString(),bytesToHex2(head.hash)]];
+  }
   async function createMetadataWrap(bundle, controlWraps, metadata, pubkey, signEvent) {
     if (!/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
     const { community, groups, folded } = control(bundle, controlWraps);
-    if (pubkey.toLowerCase() !== community.owner.toLowerCase()) throw new Error("only the community owner can edit its profile");
+    const authority=controlWriteAuthority(community,folded,pubkey.toLowerCase(),Permissions.MANAGE_METADATA,"edit its profile");
     const entityHex = bytesToHex2(community.id), head = folded.heads.get(entityHex);
     const version2 = head ? head.version + 1n : 1n, prevHash = head ? head.hash : void 0;
     const priorMetadata = folded.headEditions.get(entityHex);
@@ -26908,7 +26917,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const body = { ...priorBody, name, description, relays: priorBody.relays ?? community.relays };
     if (metadata && Object.prototype.hasOwnProperty.call(metadata, "message_expiration")) body.message_expiration = messageExpirationSeconds(metadata.message_expiration);
     if (metadata && metadata.icon) body.picture = String(metadata.icon).slice(0, 2048);
-    const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()]];
+    const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()], ...authority];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: Date.now(), tags });
     const group = writableControlGroup(groups), seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
@@ -26925,14 +26934,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
    * with the same helper it uses for the owner salt and the root, and the reader treats ANY entity
    * carrying a valid channel head as a channel — which is exactly why a community can hold many.
    *
-   * OWNER-ONLY, deliberately stricter than the reader. The reader accepts anybody holding
-   * MANAGE_CHANNELS; the owner always holds it through ADMIN_ALL, so refusing everyone else cannot
-   * produce an event another client would reject, while allowing more could. */
+   * Delegated MANAGE_CHANNELS writes cite the current Grant, exactly as the fold requires.
+   * Possessing a split control signing key alone never grants authority. */
   async function createChannelWrap(bundle, controlWraps, channel, pubkey, signEvent) {
     if (!/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
-    const { community, groups } = control(bundle, controlWraps);
-    if (pubkey.toLowerCase() !== community.owner.toLowerCase())
-      throw new Error("only the community owner can create channels");
+    const { community, groups, folded } = control(bundle, controlWraps);
+    const authority=controlWriteAuthority(community,folded,pubkey.toLowerCase(),Permissions.MANAGE_CHANNELS,"create channels");
     const name = String((channel && channel.name) || "").trim();
     if (!name) throw new Error("name the channel");
     if (utf8Len(name) > NAME_MAX_BYTES) throw new Error("that channel name is too long");
@@ -26945,7 +26952,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if (channel && channel.private) throw new Error(
       "private channels need a membership grant, which cannot be issued here yet");
     const body = { name, private: false };
-    const tags = [[TAG_SUBKIND, VSK_CHANNEL], [TAG_ENTITY, entityHex], [TAG_EVERSION, "1"]];
+    const tags = [[TAG_SUBKIND, VSK_CHANNEL], [TAG_ENTITY, entityHex], [TAG_EVERSION, "1"], ...authority];
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey,
                                ms: Date.now(), tags });
     const group = writableControlGroup(groups);

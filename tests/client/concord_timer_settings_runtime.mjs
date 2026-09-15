@@ -1,0 +1,27 @@
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+import {makeRealm,loadInto,into} from '../../botframework/cord_realm.mjs';
+const root=new URL('../../',import.meta.url),ctx=makeRealm(),copy=into(ctx);
+for(const f of ['static/vendor/nostr/nostr.bundle.js','static/js/client/cord-protocol.js','static/js/client/cord-reader.js'])loadInto(ctx,new URL(f,root));
+const NT=ctx.NostrTools,R=ctx.PosterCordReader,sk=NT.generateSecretKey(),owner=NT.getPublicKey(sk),sign=async tpl=>NT.finalizeEvent(copy(tpl),sk),opts=copy({owner,name:'Timers',relays:['wss://timer.fixture'],base:'https://timer.fixture'});opts.signEvent=sign;
+const made=await ctx.PosterCord.createCommunity(opts),bundle=copy({...ctx.PosterCord.openInvite(made.url,made.events).bundle,control_root:made.secrets.controlRoot}),initial=copy(made.events.filter(e=>e.kind===1059));
+const second=await R.createChannelWrap(bundle,initial,copy({name:'second'}),owner,sign),controls=copy([...initial,second.wrap]),info=R.inspectControl(bundle,controls);
+const room=copy({communityId:made.communityId,naddr:'timer-room',name:'Timers',description:'',icon:'',cord:{bundle},channels:info.channels});
+let rooms=copy([room]),viewer=owner,published=[],cache=[],rejectMetadata=false,rejectNotice=false,holdSign=null;
+ctx.roomControls=new Map([[room.communityId,controls]]);ctx.saved=()=>rooms;ctx.save=value=>rooms=value;ctx.roomIdentity=r=>r?.communityId;
+ctx.envelopeCacheKey=(a,b)=>a+':'+b;ctx.cacheEnvelopes=async(key,wraps)=>cache.push(...wraps);ctx.channelStoreId=(r,n)=>n;ctx.absorbChatWraps=async()=>{};
+const source=fs.readFileSync(new URL('static/js/client/concord.js',root),'utf8');
+vm.runInContext(source.slice(source.indexOf('  function cordControlStamp('),source.indexOf('  function cordPlaneSubscribe('))+source.slice(source.indexOf('  function communityPermission('),source.indexOf('  function canAddChannel(')),ctx);
+ctx.roomRelays=b=>b.relays;
+const api={viewer:()=>({pubkey:viewer}),signTemplate:async tpl=>{if(holdSign)await holdSign();return sign(tpl);},enc:s=>String(s),relayPublishRoom:async(_relays,event)=>{published.push(event);const isControl=event.pubkey===bundle.control_pk;return{ok:!(isControl?rejectMetadata:rejectNotice)};}};
+const options=ctx.timerSettingsHtml(api,room);assert(options.includes('86400'));assert(options.includes('30 days'));assert(!options.includes(' disabled'));
+let result=await ctx.saveCommunitySettings(api,room,copy({name:'Timers',description:'edited',message_expiration:86400}));
+assert.equal(result.timerChanged,true);assert.equal(published.length,3,'metadata then one notice for each held channel');assert.equal(published[0].pubkey,bundle.control_pk);assert.equal(rooms[0].message_expiration,86400);
+const newControls=ctx.roomControls.get(room.communityId);
+for(const ch of R.inspectControl(bundle,newControls).channels){const wraps=published.filter(e=>e.pubkey===ch.streamPubkeys[0]),view=await R.inspectChat(bundle,newControls,ch.id,wraps);assert.equal(view.messages.length,1);assert.equal(view.messages[0].kind,1740);assert(view.messages[0].tags.some(t=>t[0]==='timer'&&t[1]==='86400'));assert(!wraps[0].tags.some(t=>t[0]==='expiration'));}
+assert.equal(cache.length,2);
+published=[];await ctx.saveCommunitySettings(api,rooms[0],copy({description:'ordinary profile edit'}));assert.equal(published.length,1,'unchanged timer does not spam notices');assert.equal(R.inspectControl(bundle,ctx.roomControls.get(room.communityId)).message_expiration,86400,'untouched setting preserves timer');
+published=[];rejectNotice=true;result=await ctx.saveCommunitySettings(api,rooms[0],copy({message_expiration:0}));assert.equal(result.noticesFailed,2);assert.equal(rooms[0].message_expiration,0,'failed informational notice cannot roll back accepted metadata');rejectNotice=false;
+published=[];rejectMetadata=true;await assert.rejects(ctx.saveCommunitySettings(api,rooms[0],copy({message_expiration:604800})),/rejected/);assert.equal(published.length,1,'rejected metadata emits no notices');rejectMetadata=false;
+published=[];holdSign=async()=>{viewer='aa'.repeat(32);holdSign=null;};await assert.rejects(ctx.saveCommunitySettings(api,rooms[0],copy({message_expiration:604800})),/membership changed/);assert.equal(published.length,0,'account switch during signing must publish nothing');
+assert(ctx.timerSettingsHtml(api,rooms[0]).includes(' disabled'),'non-manager timer control is disabled');
+console.log('CORD timer settings: actual metadata and per-channel notices, exemptions, no-op edits, partial delivery and account safety passed');

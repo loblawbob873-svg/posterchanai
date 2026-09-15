@@ -264,7 +264,7 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     assert "rooms.splice(index,1)" not in handler
     assert "localStorage.setItem('pc.concord.active',String(state.community))" in handler
     assert "localStorage.removeItem('pc.concord.active')" in handler
-    assert "roomInvite.title='Invite people'" in CONCORD
+    assert 'id="cc-copy-link" title="Copy room invite link"' in CONCORD
 
 
 def test_send_is_optimistic_and_does_not_wait_for_relays_to_paint():
@@ -470,8 +470,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'activeMessages(room).map' not in call_handler
     assert 'startGroupCall,' in APP and 'uploadBlob,' in APP and 'openEmojiPopover,' in APP
     assert 'cc-members-dialog' in CONCORD and 'cc-member-list' in CONCORD_CSS
-    assert 'cc-description-value' in CONCORD and 'room.description=description' in CONCORD
-    assert 'cc-channel-visibility' in CONCORD and "channel.private=$('#cc-channel-visibility').value==='private'" in CONCORD
+    assert 'cc-description-value' in CONCORD and 'await saveCommunitySettings(p,room,values)' in CONCORD
+    assert 'id="cc-channel-visibility" disabled' in CONCORD, "a local UI toggle must not claim to rotate channel keys"
     assert '.cc-visibility.public' in CONCORD_CSS and '.cc-visibility.private' in CONCORD_CSS
     assert 'p.linkify' in CONCORD and 'p.linkCardHtml' in CONCORD
     assert 'id="cc-copy-link"' in CONCORD and 'p.copyValue(room.url)' in CONCORD
@@ -666,7 +666,7 @@ def test_concord_webxdc_mentions_live_sync_and_scroll_are_integrated():
     assert 'reactionIds:' in CORD_READER and 'extraTags' in CORD_READER
     assert 'mentionToken' in CONCORD and "e.key==='Tab'" in CONCORD
     assert 'mentionBox' not in CONCORD
-    assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);},4000)' in CONCORD
+    assert 'refreshActiveChannel(p)' in CONCORD and 'setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);' in CONCORD and 'sweepExpiredChat' in CONCORD
     assert 'scrollStates' in CONCORD and 'st.pinned' in CONCORD and 'preserveChatScroll' in CONCORD
 
 

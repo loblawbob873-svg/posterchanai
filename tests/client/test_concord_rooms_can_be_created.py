@@ -132,13 +132,13 @@ def test_the_writer_is_the_shape_the_other_control_writers_are():
     assert "createChannelWrap: () => createChannelWrap" in READER, "it is not exported"
 
 
-def test_only_the_owner_is_offered_the_control():
+def test_only_authorized_members_are_offered_the_control():
     """A button that always fails is worse than no button. A local sandbox has no control plane and
     a NIP-29 group is not a CORD community, so neither gets one either."""
     fn = CONCORD.split("function canAddChannel(p,room){", 1)[1].split("\n  }", 1)[0]
     assert "room.local" in fn and "nip29" in fn
     assert "createChannelWrap" in fn, "the control is offered where the writer does not exist"
-    assert "viewer.pubkey.toLowerCase()===owner.toLowerCase()" in fn.replace(" ", "")
+    assert "communityPermission(p,room,'channelManagers')" in fn
 
 
 def test_the_control_exists_and_is_gated_in_the_markup():

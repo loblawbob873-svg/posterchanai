@@ -318,7 +318,8 @@
       inside=!!(active&&active!==document.body&&active!==document.documentElement&&active.isConnected!==false&&
         (active===input||(concordHost&&concordHost.contains&&concordHost.contains(active))||
           (feed&&feed.contains&&feed.contains(active))));
-    if(inside){
+    const settingsOpen=document.querySelector?.('#cc-settings-dialog:not(.hidden)');
+    if(inside||settingsOpen){
       backgroundRenderPending=true;
       /* The native mobile handoff can briefly detach or replace the classic #feed host while the
        * real textarea remains connected in Concord's managed window. Tying protection to #feed made
@@ -1068,15 +1069,68 @@
   function channelRowsHtml(p,room,channels){
     return (channels||[]).map(c=>`<div class="cc-channel-row${channelStarred(room,c.name)?' starred':''}"><button class="cc-channel${(state.channel||'general')===c.name?' active':''}${testMessages(channelStoreId(room,c.name)).some(m=>(Number(m.at)||0)>seenAt(room,c.name))?' unread':''}" data-cc-channel="${p.enc(c.name)}"><span class="cc-channel-kind" aria-hidden="true">#</span><span class="cc-channel-name">${p.enc(c.name)}</span>${c.private?'<svg class="ic cc-channel-lock" role="img" aria-label="Private channel"><use href="#i-lock"></use></svg>':''}</button><button class="cc-channel-star" data-cc-star="${p.enc(c.name)}" aria-pressed="${channelStarred(room,c.name)}" title="${channelStarred(room,c.name)?'Remove from starred channels':'Star channel'}" aria-label="${channelStarred(room,c.name)?'Unstar':'Star'} #${p.enc(c.name)}">${channelStarred(room,c.name)?'★':'☆'}</button></div>`).join('');
   }
-  /* WHO SEES THE + . Only the community owner can write a channel control event (see
-   * `createChannelWrap`), and a local sandbox room has no control plane at all — offering the
-   * button to anybody else would be a control that always fails. */
+  /* Offer channel creation only to the owner or folded MANAGE_CHANNELS staff.
+   * Local sandboxes and NIP-29 groups do not have this CORD control plane. */
+  function communityPermission(p,room,key){
+    if(room?.local)return true;
+    const reader=window.PosterCordReader,viewer=p.viewer?.().pubkey,bundle=room?.cord?.bundle;
+    if(!viewer||!bundle||room.protocol==='nip29')return false;
+    try{const info=reader?.inspectControl?.(bundle,roomControls.get(room.communityId||room.naddr)||[]);return (info?.[key]||[bundle.owner]).includes(viewer);}catch(_){return false;}
+  }
+  function communityTimer(room){
+    try{const wraps=roomControls.get(room.communityId||room.naddr);if(wraps)return window.PosterCordReader.inspectControl(room.cord.bundle,wraps).message_expiration||0;}catch(_){}
+    return Number.isSafeInteger(room?.message_expiration)&&room.message_expiration>0?room.message_expiration:0;
+  }
+  function timerSettingsHtml(p,room){
+    const timer=communityTimer(room),options=[[0,'Off'],[86400,'1 day'],[604800,'1 week'],[2592000,'30 days'],[7776000,'90 days']];
+    if(timer&&!options.some(([value])=>value===timer))options.push([timer,timer+' seconds (current)']);
+    return '<label class="cc-label" for="cc-message-expiration">Disappearing messages</label><select class="input" id="cc-message-expiration"'+(communityPermission(p,room,'metadataManagers')?'':' disabled')+'>'+options.map(([value,label])=>'<option value="'+value+'"'+(value===timer?' selected':'')+'>'+p.enc(label)+'</option>').join('')+'</select><p class="cc-member-help">Applies to new messages in every channel. Existing messages keep their original timer.</p>';
+  }
+  async function saveCommunitySettings(p,room,values){
+    const owner=p.viewer?.().pubkey,identity=roomIdentity(room),loadKey=room.communityId||room.naddr;
+    const stillHere=()=>p.viewer?.().pubkey===owner&&saved().some(r=>roomIdentity(r)===identity);
+    let timerChanged=false,noticesFailed=0,timer=communityTimer(room);
+    if(!room.local){
+      const reader=window.PosterCordReader,bundle=room.cord?.bundle,relays=roomRelays(bundle);
+      if(!reader?.createMetadataWrap||!bundle)throw new Error('community profile is not ready');
+      let wraps=roomControls.get(loadKey);
+      if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room)});}
+      const scope=cordPlaneContext(p,bundle,wraps||[],room),before=reader.inspectControl(bundle,wraps||[]);
+      if(!scope.current())throw new Error('Concord membership changed while opening settings');
+      const made=await reader.createMetadataWrap(bundle,wraps||[],values,owner,p.signTemplate);
+      if(!scope.current())throw new Error('Concord membership changed while signing');
+      const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));
+      if(!accepted?.ok)throw new Error('community relays rejected the profile update');
+      if(!scope.current())throw new Error('Concord membership changed during profile update');
+      wraps=[...(wraps||[]),made.wrap];roomControls.set(loadKey,wraps);
+      const after=reader.inspectControl(bundle,wraps);timer=after.message_expiration||0;timerChanged=timer!==(before.message_expiration||0);
+      // The metadata is authoritative and must be accepted before any informational notice.
+      if(timerChanged){
+        const noticeScope=cordPlaneContext(p,bundle,wraps,room);
+        for(const channel of after.channels||[]){
+          if(!noticeScope.current())throw new Error('Concord membership changed after the timer update');
+          try{
+            const notice=await reader.createChatWrap(bundle,wraps,channel.id,'',owner,p.signTemplate,[['timer',String(timer)]],1740);
+            if(!noticeScope.current())throw new Error('Concord membership changed before the timer notice');
+            const result=await p.relayPublishRoom(relays,notice.wrap,cordPlaneAuth(p,noticeScope,notice.wrap.pubkey,relays));
+            if(!result?.ok)throw new Error('notice rejected');
+            await cacheEnvelopes(envelopeCacheKey(loadKey,channel.id),[notice.wrap]);
+            if(noticeScope.current())await absorbChatWraps(p,reader,bundle,wraps,room,channel,[notice.wrap],channelStoreId(room,channel.name));
+          }catch(error){if(!noticeScope.current())throw error;noticesFailed++;}
+        }
+      }
+    }else if(Object.prototype.hasOwnProperty.call(values,'message_expiration'))timer=Number(values.message_expiration)||0;
+    if(!stillHere())throw new Error('community changed before saving settings');
+    const rooms=saved(),index=rooms.findIndex(r=>roomIdentity(r)===identity);
+    rooms[index]={...rooms[index],description:values.description??rooms[index].description,icon:values.icon??rooms[index].icon,message_expiration:timer};save(rooms);
+    return {timerChanged,noticesFailed};
+  }
   function canAddChannel(p,room){
     try{
       if(!room||room.local||!room.cord||!room.cord.bundle)return false;
       if(room.protocol==='nip29')return false;            // NIP-29 groups are not CORD channels
       const viewer=p.viewer?p.viewer():{},owner=String(room.cord.bundle.owner||'');
-      return !!(viewer.pubkey&&owner&&viewer.pubkey.toLowerCase()===owner.toLowerCase()
+      return !!(viewer.pubkey&&owner&&communityPermission(p,room,'channelManagers')
                 &&window.PosterCordReader&&window.PosterCordReader.createChannelWrap);
     }catch(_){ return false; }
   }
@@ -2458,7 +2512,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);if(!currentOwner())return;
-      const applyControl=wraps=>{if(!currentOwner())return 0;const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
+      const applyControl=wraps=>{if(!currentOwner())return 0;const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
@@ -3309,7 +3363,7 @@
     if(current){
       const conversation=p.$('.cc-conversation');
       if(conversation&&conversation.insertAdjacentHTML)conversation.insertAdjacentHTML('afterend',`<aside class="cc-members-pane${membersHidden?' hidden':''}" aria-label="Community members"><header title="People known from verified membership records and loaded messages"><b>Known members</b><span>${memberPks.length}</span></header><div class="cc-members-scroll">${memberRows||'<div class="cc-empty-side">No members have appeared yet.</div>'}</div></aside>`);
-      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p><div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog"><div class="cc-join-card"><h2>Community settings</h2><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png"><label class="cc-label" for="cc-channel-visibility">#${p.enc(state.channel||'general')} visibility</label><select class="input cc-visibility-select" id="cc-channel-visibility"><option value="public"${channelPrivate?'':' selected'}>Public — all community members</option><option value="private"${channelPrivate?' selected':''}>Private — invited members only</option></select><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save">Save changes</button></div></div></div>`);
+      feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p><div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog"><div class="cc-join-card"><h2>Community settings</h2><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png">${timerSettingsHtml(p,current)}<label class="cc-label" for="cc-channel-visibility">#${p.enc(state.channel||'general')} visibility</label><select class="input cc-visibility-select" id="cc-channel-visibility" disabled><option value="public"${channelPrivate?'':' selected'}>Public — all community members</option><option value="private"${channelPrivate?' selected':''}>Private — invited members only</option></select><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save">Save changes</button></div></div></div>`);
       const settingsActions=p.$('#cc-settings-dialog .cc-join-actions');
       if(settingsActions&&settingsActions.insertAdjacentHTML)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost danger" id="cc-leave-community">Leave community</button>');
     }
@@ -3559,7 +3613,7 @@
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
     const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); const announcement=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]); const accepted=await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev); if(!accepted)throw new Error('Armada discovery relays rejected the listing'); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
-    const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>$('#cc-settings-dialog').classList.add('hidden');
+    const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>{$('#cc-settings-dialog').classList.add('hidden');if(backgroundRenderPending)backgroundRender();};
     const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)localStorage.setItem('pc.concord.active',String(state.community));else localStorage.removeItem('pc.concord.active');render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
     /* THE CONVERSATION HEADER IS NOT A SURFACE ON A PHONE. `.cc-conversation` is display:none until
      * a channel is opened, so the only Leave control lived behind a tap somebody has no reason to
@@ -3570,7 +3624,15 @@
     const leaveByHeader=()=>{const action=$('#cc-leave-community');if(action)action.click();};
     const leaveShortcut=$('#cc-leave-shortcut');if(leaveShortcut)leaveShortcut.onclick=leaveByHeader;
     const leaveRoom=$('#cc-leave-room');if(leaveRoom)leaveRoom.onclick=leaveByHeader;
-    const settingsSave=$('#cc-settings-save'); if(settingsSave)settingsSave.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; const description=String($('#cc-description-value').value||'').trim().slice(0,1000),icon=normalizeIcon($('#cc-settings-icon').value); settingsSave.disabled=true; try{ if(!room.local){const viewer=p.viewer?p.viewer():{},reader=window.PosterCordReader,bundle=room.cord&&room.cord.bundle,loadKey=room.communityId||room.naddr,relays=roomRelays(bundle);if(!reader||!reader.createMetadataWrap||!bundle)throw new Error('community profile is not ready');let wraps=roomControls.get(loadKey);if(!wraps){const seed=reader.inspectControl(bundle,[]);wraps=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,[],room)});}const scope=cordPlaneContext(p,bundle,wraps||[],room),made=await reader.createMetadataWrap(bundle,wraps||[],{name:room.name,description,icon},viewer.pubkey,p.signTemplate);if(!scope.current())throw new Error('Concord membership changed while signing');const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays));if(!accepted||!accepted.ok)throw new Error('community relays rejected the profile update');if(!scope.current())throw new Error('Concord membership changed during profile update');roomControls.set(loadKey,[...(wraps||[]),made.wrap]);} room.description=description; room.icon=icon; if(!Array.isArray(room.channels))room.channels=[]; let channel=room.channels.find(c=>c.name===(state.channel||'general')); if(!channel){ channel={name:state.channel||'general'}; room.channels.push(channel); } channel.private=$('#cc-channel-visibility').value==='private'; save(a); render(); p.toast('community profile updated'); }catch(e){settingsSave.disabled=false;p.toast('community profile was not updated: '+(e&&e.message||e));} };
+    const timerSelect=$('#cc-message-expiration');if(timerSelect)timerSelect.onchange=()=>{timerSelect.dataset.edited='1';};
+    const settingsSave=$('#cc-settings-save');if(settingsSave)settingsSave.onclick=async()=>{
+      const room=saved()[state.community];if(!room)return;
+      const values={name:room.name,description:String($('#cc-description-value').value||'').trim(),icon:normalizeIcon($('#cc-settings-icon').value)};
+      if(timerSelect?.dataset.edited==='1')values.message_expiration=Number(timerSelect.value);
+      settingsSave.disabled=true;
+      try{const result=await saveCommunitySettings(p,room,values);render();p.toast(result.noticesFailed?'Settings saved; '+result.noticesFailed+' channel notices could not be delivered':'community profile updated');}
+      catch(error){settingsSave.disabled=false;p.toast('community settings could not be saved: '+(error?.message||error));}
+    };
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community],viewerPk=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,viewerPk).filter(pk=>pk!==viewerPk); if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
@@ -3840,7 +3902,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
