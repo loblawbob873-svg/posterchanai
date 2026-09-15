@@ -1,5 +1,6 @@
 """A newly added simulation scenario must fail pytest even without a named wrapper test."""
 import importlib
+import html
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,14 +9,24 @@ import pytest
 
 
 def collect(module, wrapper):
-    if wrapper == "test_sync_store_scale":
-        with patch.object(module.TestSyncStoreScale, "_rows", None):
-            module.TestSyncStoreScale.setUpClass()
-            return module.TestSyncStoreScale._rows
+    classes = {"test_sync_store_scale": "TestSyncStoreScale", "test_sync_tick": "TestSyncTick"}
+    if wrapper in classes:
+        cls = getattr(module, classes[wrapper])
+        with patch.object(cls, "_rows", None):
+            cls.setUpClass()
+            return cls._rows
+    if wrapper == "test_dm_draft_survives":
+        with patch.object(module, "_sources", return_value=""):
+            return module.results.__wrapped__()
     return module.results.__wrapped__()
 
 
-@pytest.mark.parametrize("wrapper", ["test_sync_store_scale", "test_two_browser_sync"])
+def output(wrapper, rows):
+    text = json.dumps(rows)
+    return '<pre id="out">' + html.escape(text) + '</pre>' if wrapper == "test_dm_draft_survives" else text
+
+
+@pytest.mark.parametrize("wrapper", ["test_sync_store_scale", "test_two_browser_sync", "test_sync_tick", "test_dm_draft_survives"])
 @pytest.mark.parametrize("problem", ["extra_failed_row", "missing_ok", "duplicate_name", "empty", "process_failure"])
 def test_simulation_wrappers_reject_incomplete_or_failed_results(wrapper, problem):
     module = importlib.import_module("tests.client." + wrapper)
@@ -32,16 +43,16 @@ def test_simulation_wrappers_reject_incomplete_or_failed_results(wrapper, proble
         rows = []
     else:
         returncode = 1
-    result = SimpleNamespace(stdout=json.dumps(rows), stderr="simulation diagnostics", returncode=returncode)
+    result = SimpleNamespace(stdout=output(wrapper, rows), stderr="simulation diagnostics", returncode=returncode)
     with patch.object(module.subprocess, "run", return_value=result):
         with pytest.raises(AssertionError):
             collect(module, wrapper)
 
 
-@pytest.mark.parametrize("wrapper", ["test_sync_store_scale", "test_two_browser_sync"])
+@pytest.mark.parametrize("wrapper", ["test_sync_store_scale", "test_two_browser_sync", "test_sync_tick", "test_dm_draft_survives"])
 def test_expected_negative_control_remains_a_success(wrapper):
     module = importlib.import_module("tests.client." + wrapper)
     row = {"name": "expected refusal control", "ok": True, "detail": {"accepted": False}}
-    result = SimpleNamespace(stdout=json.dumps([row]), stderr="", returncode=0)
+    result = SimpleNamespace(stdout=output(wrapper, [row]), stderr="", returncode=0)
     with patch.object(module.subprocess, "run", return_value=result):
         assert collect(module, wrapper)[row["name"]] == row

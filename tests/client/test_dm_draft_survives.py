@@ -31,6 +31,7 @@ Four scenarios, one per way the pane gets rebuilt or the draft gets lost:
                            there looking unsent.
 """
 import json
+from tests.client.simulation_results import require_successful_scenarios
 import os
 import re
 import shutil
@@ -295,7 +296,7 @@ def results():
     m = re.search(r'<pre id="out">(.*?)</pre>', dom, re.S)
     assert m and m.group(1).strip(), f"the page produced no results:\n{dom[-2000:]}\n{r.stderr[-1500:]}"
     rows = json.loads(m.group(1).replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"'))
-    return {row["name"]: row for row in rows}
+    return require_successful_scenarios(rows, r)
 
 
 def _check(results, name):
