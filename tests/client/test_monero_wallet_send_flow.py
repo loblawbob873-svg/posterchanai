@@ -42,6 +42,7 @@ MAINNET = "4" + "A" * 94
 #: bound its handler to.
 BOOT = r"""
 globalThis.window = globalThis;
+const disposeScenarioTimers = require(%(timer_scope)s)();
 
 const el = () => ({
   value:'', textContent:'', innerHTML:'', disabled:false, checked:false, isConnected:true,
@@ -99,7 +100,7 @@ globalThis.fetch = async (url, opts) => {
                       { status:200, headers:{'Content-Type':'application/json'} });
 };
 
-const done = (v) => { process.stdout.write(JSON.stringify(v)); };
+const done = (v) => { process.stdout.write(JSON.stringify(v)); disposeScenarioTimers(); };
 globalThis.done = done;
 
 require(%(wallet)s);
@@ -111,7 +112,7 @@ globalThis.openSend = async (address) => {
   }});
   return { ok, sheet: modals[modals.length - 1] };
 };
-""" % {"wallet": json.dumps(str(WALLET)), "stagenet": json.dumps(STAGENET)}
+""" % {"wallet": json.dumps(str(WALLET)), "stagenet": json.dumps(STAGENET), "timer_scope": json.dumps(str(ROOT / "tests/client/node_timer_scope.cjs"))}
 
 
 def node(script: str):
