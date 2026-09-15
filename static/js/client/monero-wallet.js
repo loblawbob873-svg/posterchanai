@@ -5,6 +5,22 @@
 (function(root){
   'use strict';
   let PC=null, state=null, checkedAt=0, booted=false, _probeSeq=0, _signerLogged=false;
+  let _walletOwner, _renderSeq=0;
+  function walletOwner(){
+    // Older embedders do not expose viewer; keep their single-session behavior.
+    if(!PC || typeof PC.viewer!=='function') return '__single_session__';
+    try{ return String((PC.viewer()||{}).pubkey||''); }catch(_){ return ''; }
+  }
+  function syncWalletOwner(){
+    const owner=walletOwner();
+    if(owner!==_walletOwner){
+      _walletOwner=owner;
+      state=null; checkedAt=0; _probeSeq++; _renderSeq++;
+      _meState=null; _meAt=0; _meSeq++;
+      _stopWatch();
+    }
+    return owner;
+  }
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const amount=v=>{ const n=Number(v); return Number.isFinite(n)&&n>=0?n:0; };
   /* RPC amounts arrive as decimal STRINGS. Never pass atomic units through Number: wallet balances
@@ -213,6 +229,8 @@
     }finally{clearTimeout(timer);}
   }
   async function probe(force){
+    const owner=syncWalletOwner();
+    if(!owner) return null;
     /* THE CACHE IS ONLY A CACHE ONCE THERE IS SOMETHING IN IT.
      *
      * `checkedAt` is stamped BEFORE the request, so a second call arriving while the first is still
@@ -229,6 +247,7 @@
      * "available" a second later, and the screen with it. Stamped and checked, an out-of-order
      * answer is discarded rather than believed. */
     const seq = ++_probeSeq;
+    const current=()=>syncWalletOwner()===owner && seq===_probeSeq;
     checkedAt=Date.now();
     try{
       const [meta,bal,addr,histResult]=await Promise.all([
@@ -237,6 +256,7 @@
         // History is optional display data. A malformed/temporarily unavailable history response
         // must not hide an otherwise healthy wallet, balance and receive address.
         request('/api/wallet/xmr/history?limit=50').catch(error=>({__error:error}))]);
+      if(!current()) return walletOwner()===owner ? state : null;
       const hist=histResult&&typeof histResult==='object'&&!histResult.__error?histResult:{};
       /* `pool` is INCOMING UNCONFIRMED — broadcast, not yet mined. It used not to be requested at
          all, so the one window in which somebody checks ("they said they sent it") showed nothing.
@@ -261,6 +281,7 @@
         address:addr.address||(((addr.addresses||[])[0]||{}).address)||'',transfers};
       if(seq === _probeSeq) state=_next;
     }catch(e){
+      if(!current()) return walletOwner()===owner ? state : null;
       const detail=(e&&e.message)||String(e||'local wallet unavailable');
       /* One line, not one per warmed probe. Two warms plus a render made the same extension
          failure appear three times, which reads as three faults. */
@@ -816,6 +837,8 @@
 
   async function render(force){
     if(!PC||PC.VIEW!=='wallet')return;
+    const owner=syncWalletOwner(), seq=++_renderSeq;
+    const current=()=>syncWalletOwner()===owner && seq===_renderSeq && PC.VIEW==='wallet';
     /* CLAIM THE FEED BEFORE THE FIRST AWAIT, AND CLAIM IT WITH WHAT WE ALREADY KNOW.
      *
      * `#feed` is shared by every screen and `renderModuleView` only draws a spinner when the module
@@ -841,7 +864,7 @@
        The screen then sat on its spinner for ever. Reported as "Monero wallet is not even loading
        now": the same root cause as the tip that did nothing, through a different door. */
     let s=await _bounded(probe(!!force));
-    if(PC.VIEW!=='wallet')return;
+    if(!current())return;
     if(s === TIMED_OUT){
       /* A WALLET THAT IS CATCHING UP IS SLOW, AND SLOW IS NOT DEAD.
          Measured on this node: `sync_state` reported `scanning: true` while the probe was timing
@@ -858,7 +881,8 @@
              local read: if it cannot answer in a second the wallet is not merely scanning. */
           new Promise(r => setTimeout(()=>r(null), 1000))
         ]);
-        if(st && st.scanning && PC.VIEW==='wallet'){
+        if(!current())return;
+        if(st && st.scanning){
           const fb = document.getElementById('feed');
           if(fb){
             fb.innerHTML = '<div class="mw-wrap"><header class="mw-head">'
@@ -869,6 +893,7 @@
           return;
         }
       }catch(_){ }
+      if(!current())return;
       /* NO ANSWER IS A STATE, NOT A REASON TO KEEP SPINNING. Say so, and leave a way to ask again. */
       const f3 = document.getElementById('feed');
       if(f3 && !state) f3.innerHTML = '<div class="mw-wrap"><header class="mw-head">'
@@ -887,6 +912,7 @@
     if(s && !s.available){
       try{
         const me = await meProbe(!!force);
+        if(!current())return;
         if(me && me.enabled){
           if(PC.VIEW!=='wallet')return;
           const f2 = document.getElementById('feed');
@@ -895,6 +921,7 @@
         }
       }catch(_){ }
     }
+    if(!current())return;
     paint(s);
     _watch(s);
   }
@@ -994,17 +1021,25 @@
    * pooled wallet. It is CUSTODIAL and the UI says so where it matters. It is tried AFTER the
    * operator's wallet and BEFORE the external flow, and it declines quietly whenever it cannot
    * help, so the non-custodial path is always still there. */
-  let _meState = null, _meAt = 0;
+  let _meState = null, _meAt = 0, _meSeq = 0;
   async function meProbe(force){
+    const owner=syncWalletOwner();
+    if(!owner) return null;
     if(!force && _meState && Date.now() - _meAt < 30000) return _meState;
+    const seq=++_meSeq;
+    const current=()=>syncWalletOwner()===owner && seq===_meSeq;
+    const latest=()=>walletOwner()===owner ? _meState : null;
     try{
       const st = await request('/api/wallet/xmr/me/status');
+      if(!current()) return latest();
       if(!st || !st.enabled){ _meState = {enabled:false}; _meAt = Date.now(); return _meState; }
       const b = await request('/api/wallet/xmr/me/balance');
+      if(!current()) return latest();
       /* History is DISPLAY DATA and must never decide whether the wallet works: a user who cannot
          see their past payments must still see their balance, their address and the ability to
          send. Same reasoning as the node wallet's history request, and the same catch. */
       const h = await request('/api/wallet/xmr/me/history?limit=50').catch(error=>({__error:error}));
+      if(!current()) return latest();
       _meState = {enabled:true, network:st.network, address:b.address, balance:b.balance,
                   transfers:flattenTransfers(h),
                   //: Same field, same rule as the node wallet: node-resolved, or no links.
@@ -1017,6 +1052,7 @@
                      chose — is indistinguishable from the wallet being broken. */
                   fee_percent:Number(st.fee_percent || 0) || 0};
     }catch(e){
+      if(!current()) return latest();
       /* A FAILURE IS NOT A DURABLE ANSWER — the same latch that made the node wallet stop working
          for the life of a page. Only a positive result is cached. */
       _meState = null; _meAt = 0;
@@ -1027,7 +1063,9 @@
   }
 
   async function meTip(opts){
+    const owner=syncWalletOwner();
     let s = await _bounded(meProbe(false)); if(s === TIMED_OUT) s = null;
+    if(syncWalletOwner()!==owner) return false;
     if(!s || !s.enabled) return false;
     if(!validAddress(opts && opts.address, s.network)) return false;
     // Nothing spendable: hand it to the external flow rather than open a sheet that would be refused.

@@ -51,6 +51,7 @@ TESTS = (
     'tests/test_monero_user_history.py',
     'tests/client/test_monero_user_history_render.py',
     'tests/client/test_monero_history_full_app.py',
+    'tests/client/test_monero_user_probe_races.py',
     'tests/client/test_monero_user_send_runtime.py::test_pending_checkbox_cannot_resubmit_payment',
     'tests/client/test_monero_user_send_runtime.py::test_uncertain_response_is_terminal_even_after_checkbox_toggle',
     'tests/client/test_monero_user_send_runtime.py::test_valid_receipt_success_and_exact_decimal_payload',
