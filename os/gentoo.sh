@@ -3357,6 +3357,9 @@ liveCD() {
 	local EXCLUDES=(
 		proc sys dev run tmp mnt media lost+found
 		var/tmp var/cache/distfiles var/cache/binpkgs var/lib/portage/distfiles
+		# Previous release images and installer-test disks are build artifacts, not OS payloads.
+		# Keep the host's copies; including them nests old images and private VM state in the ISO.
+		var/iso var/cache/binhost
 		# Runtime payloads are not part of an operating-system image. Keep the engines and their
 		# configuration, but never pack container layers, volumes, NVRAM or multi-gigabyte VM disks.
 		var/lib/docker var/lib/containers var/lib/containerd var/lib/libvirt
