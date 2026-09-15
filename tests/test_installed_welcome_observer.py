@@ -219,3 +219,16 @@ def test_key_prompt_is_visible_after_osc_marker_but_not_in_echoed_command():
     assert proc.stdout.startswith(osc + '\n')
     assert marker.search(proc.stdout), repr(proc.stdout)
     assert 'vm-disposable-password' not in proc.stdout + proc.stderr
+
+
+def test_collector_record_starts_a_line_after_shell_command_markers(tmp_path):
+    import re
+    log_file(tmp_path, VERDICT)
+    command_marker = '\x1b]3008;start=fixture;type=command\x1b\\'
+    script = 'import sys;sys.stdout.write(' + repr(command_marker) + ');' + MOD.recovery_collector(tmp_path)
+    proc = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=10)
+    assert proc.returncode == 0, proc.stderr
+    record = re.search(r'(?m)^PC_WELCOME_DATA=([A-Za-z0-9+/=]+)\r?$', proc.stdout)
+    assert record, 'collector output was hidden behind the shell OSC command marker'
+    snapshot = json.loads(base64.b64decode(record.group(1)))
+    assert snapshot['posterchan']['size'] == len(VERDICT.encode())

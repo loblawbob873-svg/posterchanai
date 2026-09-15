@@ -159,7 +159,7 @@ for home in sorted(root.iterdir()):
             if len(fresh) > 4194304:
                 raise RuntimeError('new shell log exceeds capture limit: ' + home.name)
             result[home.name] = {'fresh': fresh.decode('utf-8', errors='replace')}
-print('PC_WELCOME_DATA=' + base64.b64encode(json.dumps(result).encode()).decode(), flush=True)
+print('\\nPC_WELCOME_DATA=' + base64.b64encode(json.dumps(result).encode()).decode(), flush=True)
 """.replace('ROOT', repr(str(root))).replace('BASELINE', repr(baseline))
 
 
