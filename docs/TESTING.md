@@ -327,6 +327,15 @@ slowdowns can be traced to individual tests.
 
 ---
 
+## Webxdc realtime regression coverage
+
+`tests/test_webxdc_realtime_backpressure.py` runs the complete shipped module with a deferred signer.
+A movement burst must keep one request in flight, send the newest pending position, recover after
+signer rejection and stop queued movement when the game closes. Native realtime must publish a
+burst through all open relays using one local session key, without awaiting account approval.
+These checks count requests and explicitly release promises; they do not depend on wall-clock
+speed. They cover transport behavior, not actual Doom frame rate or end-to-end network latency.
+
 ## Known standing state
 
 - `check_css_scale` passes on the current stylesheet. It remains an **advisory** design-scale lint;
