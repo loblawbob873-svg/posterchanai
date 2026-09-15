@@ -87,12 +87,18 @@ public class SmsShareDeviceTest {
     @Test public void cancelledReplacementKeepsOriginalPhotoAndEmptyCaption() throws Exception {
         MmsDraft.remove(ctx, who); MmsDraft.setText(ctx, who, "");
         MmsDraft.save(ctx, who, new byte[]{1, 2, 3}, "image/jpeg", "original.jpg");
-        Intent open = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who);
+        // ActivityScenario tracks the original Intent.filterEquals signature across recreation.
+        // Start with the same media action/type as the later warm share (without a stream, so
+        // the durable original remains untouched). Otherwise onNewIntent changes that signature
+        // and the tracker ignores the replacement Activity's lifecycle events forever.
+        Intent open = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who)
+                .setAction(Intent.ACTION_SEND).setType("image/jpeg");
         try (ActivityScenario<ThreadActivity> scenario = ActivityScenario.launch(open)) {
             Intent replacement = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who)
                     .putExtra(Intent.EXTRA_TEXT, "caption for a different photo")
                     .setData(Uri.parse("smsto:" + who + "?body=caption%20from%20a%20photo%20link"));
             SmsShare.forward(picture("cancelled.jpg", ""), replacement);
+            assertTrue("recreation must retain the scenario's Intent identity", open.filterEquals(replacement));
             scenario.onActivity(activity -> {
                 activity.onNewIntent(replacement);
                 assertEquals("", ((EditText)activity.findViewById(place.poster.app.R.id.pc_th_input)).getText().toString());
