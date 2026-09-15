@@ -73,6 +73,7 @@ TESTS = (
     'tests/test_livecd_kernel_selection_runtime.py',
     'tests/test_livecd_build_artifact_excludes.py',
     'tests/test_installed_welcome_observer.py',
+    'tests/test_livecd_welcome_gate.py',
     'tests/test_stats_monero_zaps.py',
     'tests/test_media_cached_admission.py',
     'tests/test_media_proxy_diagnostics.py',

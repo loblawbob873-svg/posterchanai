@@ -31,7 +31,7 @@ def console(line):
     """Real console noise with the verdict somewhere in it, which is how it actually arrives."""
     return ("[    3.221] systemd[1]: Reached target Multi-User System.\n"
             "posterchan login: live (automatic login)\n"
-            + line + "\n"
+            + line + "\n" + MOD.SHELL_READY + "\n"
             "[    9.004] wireplumber: bluez not available\n")
 
 
@@ -42,6 +42,20 @@ class TestTheGatePasses(unittest.TestCase):
 
 
 class TestTheGateFails(unittest.TestCase):
+    def test_wizard_state_without_rendering_readiness_fails(self):
+        line = '[firstrun] showing step=network blocked=0 state={}'
+        for suffix in ('', 'health marker retired (no ready signal within the gate\'s worst case)'):
+            output = line + '\n' + suffix
+            self.assertFalse(MOD.startup_reported(output))
+            self.assertEqual(MOD.judge(output, 'iso'), 1)
+
+    def test_live_observer_waits_for_both_signals_in_either_order(self):
+        line = '[firstrun] showing step=network blocked=0 state={}'
+        self.assertFalse(MOD.startup_reported(MOD.SHELL_READY))
+        self.assertFalse(MOD.startup_reported(line))
+        self.assertTrue(MOD.startup_reported(line + '\n' + MOD.SHELL_READY))
+        self.assertTrue(MOD.startup_reported(MOD.SHELL_READY + '\n' + line))
+
     def test_a_machine_that_booted_past_the_wizard(self):
         """The failure this exists for: it boots, it is graphical, and it is unusable."""
         line = '[firstrun] skipped step=none blocked=0 state={}'

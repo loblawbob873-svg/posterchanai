@@ -62,6 +62,13 @@ def ovmf():
 
 # The line osfirstrunui.js prints, wherever it lands in the guest's console noise.
 VERDICT = re.compile(r"\[firstrun\]\s+(showing|skipped)\s+step=(\S+)\s+blocked=(\d)")
+SHELL_READY = 'health marker retired (the shell was declared ready)'
+
+
+def startup_reported(console):
+    # The wizard logs its state before the compositor's rendering probe finishes. A visible
+    # DOM is not evidence that its pixels reached the screen; wait for BOTH independent checks.
+    return bool(VERDICT.search(console) and SHELL_READY in console)
 
 
 def run_guest(args, boot_iso: str | None, disk: str | None, seconds: int,
@@ -111,7 +118,7 @@ def run_guest(args, boot_iso: str | None, disk: str | None, seconds: int,
                     seen = serial.read_text(errors="replace")
                 except Exception:
                     seen = ""
-                if VERDICT.search(seen):
+                if startup_reported(seen):
                     break
             return seen
         finally:
@@ -304,6 +311,9 @@ def judge(console: str, what: str, expect: str = "network") -> int:
     if blocked != "0":
         print(f"FAIL  {what}: the wizard opened on {expect!r} already blocked — the first screen of "
               f"a new machine is a dead end")
+        return 1
+    if SHELL_READY not in console:
+        print(f"FAIL  {what}: welcome state was reported, but the shell rendering gate never passed")
         return 1
     print(f"OK    {what}: comes up at the welcome screen (step={expect})")
     return 0

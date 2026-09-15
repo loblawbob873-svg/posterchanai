@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('installed_welcome', ROOT/'scripts/check_livecd_welcome.py')
 MOD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MOD)
-VERDICT = '[firstrun] showing step=network blocked=0 state={}\n'
+VERDICT = '[firstrun] showing step=network blocked=0 state={}\n' + MOD.SHELL_READY + '\n'
 
 
 def collect(homes, baseline=None, *, succeeds=True):
@@ -50,6 +50,16 @@ def test_identical_new_verdict_is_observed_but_not_the_old_one(tmp_path):
     fresh = collect(tmp_path, baseline)['posterchan']['fresh']
     assert fresh == 'new session\n' + VERDICT
     assert MOD.judge(fresh, 'installed disk') == 0
+
+
+def test_old_rendering_readiness_cannot_validate_new_wizard_only_boot(tmp_path):
+    path = log_file(tmp_path, VERDICT)
+    baseline = collect(tmp_path)
+    with path.open('a') as stream:
+        stream.write('[firstrun] showing step=network blocked=0 state={}\n')
+    fresh = collect(tmp_path, baseline)['posterchan']['fresh']
+    assert MOD.SHELL_READY not in fresh
+    assert MOD.judge(fresh, 'installed disk') == 1
 
 
 def test_new_wrong_verdict_is_a_failure_even_if_old_one_passed(tmp_path):
