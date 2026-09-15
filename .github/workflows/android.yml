@@ -10,21 +10,17 @@ on:
     branches: [ main, master ]
     paths:
       - 'static/js/client/**'
-      # EVERY STYLESHEET, not just client.css. `desktop/build-www.sh` derives the bundle's
-      # stylesheets from `templates/client.html`, so concord.css (and monero-wallet.css, and the
-      # next one) are COPIED IN — but a change to one of them did not trigger this build, which is
-      # the "works on web, broken in the app" shape that build script's own comment is about.
       - 'static/css/**'
-      # The translation catalogues are COPIED INTO the bundle, so a new language (or new strings in
-      # an existing one) reaches the app only through a rebuild — on the web the server just serves
-      # the new file, which is why this was easy to miss.
       - 'static/i18n/**'
       - 'templates/client.html'
       - 'scripts/client_shell.py'
       - 'mobile/**'
       - 'zapstore.yaml'
       - 'scripts/zsp-signing-lineage.patch'
+      - 'scripts/android_*.sh'
+      - 'scripts/android_publish_gate.py'
       - '.github/workflows/android.yml'
+      - '.github/workflows/android-emulator.yml'
   workflow_dispatch:
 
 # ONE BUILD PER BRANCH AT A TIME, AND THE ONE THAT IS RUNNING FINISHES.
@@ -48,6 +44,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
@@ -268,6 +265,14 @@ jobs:
             echo "<!-- built-from: $GITHUB_SHA -->"
             echo PCEOF
           } >> "$GITHUB_ENV"
+
+      # Keep the previous download intact until this exact source commit passes device checks.
+      # Manual APK dispatch also requires a matching emulator run; missing evidence fails clearly.
+      - name: Require successful Android emulator checks for this commit
+        timeout-minutes: 67
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/android_publish_gate.py --repository "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
 
       - name: Retire the previous rolling release (so the new one is dated today)
         env:

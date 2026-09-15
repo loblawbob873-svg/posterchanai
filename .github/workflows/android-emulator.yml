@@ -30,19 +30,32 @@ on:
   push:
     branches: [ main, master ]
     paths:
-      - 'mobile/**'
-      - 'scripts/android_*.sh'
-      - 'scripts/client_shell.py'
-      - 'templates/client.html'
       - 'static/js/client/**'
+      - 'static/css/**'
+      - 'static/i18n/**'
+      - 'templates/client.html'
+      - 'scripts/client_shell.py'
+      - 'mobile/**'
+      - 'zapstore.yaml'
+      - 'scripts/zsp-signing-lineage.patch'
+      - 'scripts/android_*.sh'
+      - 'scripts/android_publish_gate.py'
+      - '.github/workflows/android.yml'
       - '.github/workflows/android-emulator.yml'
   pull_request:
     branches: [ main, master ]
     paths:
-      - 'mobile/**'
-      - 'scripts/android_*.sh'
-      - 'scripts/client_shell.py'
+      - 'static/js/client/**'
+      - 'static/css/**'
+      - 'static/i18n/**'
       - 'templates/client.html'
+      - 'scripts/client_shell.py'
+      - 'mobile/**'
+      - 'zapstore.yaml'
+      - 'scripts/zsp-signing-lineage.patch'
+      - 'scripts/android_*.sh'
+      - 'scripts/android_publish_gate.py'
+      - '.github/workflows/android.yml'
       - '.github/workflows/android-emulator.yml'
   workflow_dispatch:
     inputs:
