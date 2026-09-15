@@ -38,6 +38,8 @@ TESTS = (
     'tests/client/test_contacts_name_refresh.py',
     'tests/client/test_contacts_phonebook_guard.py',
     'tests/client/test_contacts_work_offline.py',
+    'tests/test_mail_global_search.py',
+    'tests/client/test_mail_global_search_full_app.py',
     'tests/test_desktop_clipboard_async.py',
     'tests/test_desktop_clipboard_electron.py',
     'tests/test_android_icon_sprite.py',
