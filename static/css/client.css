@@ -10579,3 +10579,5 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 .pcrd-share{display:flex;flex-direction:column;gap:18px}.pcrd-share[hidden]{display:none!important}
 .feed-remote .pcrd{height:auto;min-height:100%;overflow:auto}
 @media(max-width:600px){.feed-remote .pcrd{padding:12px;gap:12px}.pcrd-hero{padding:12px;gap:10px}.pcrd-hero b{font-size:18px}}
+
+.sms-attachment-draft .sms-draft-preview{width:56px;height:56px;object-fit:contain;border-radius:6px;flex:none}.sms-attachment-draft>span{flex:1}

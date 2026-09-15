@@ -266,8 +266,18 @@
      only ever grows would keep the bytes of every picture anybody ever changed their mind about. */
   function setDraft(k, patch){
     const id = String(k||''); if(!id) return;
-    const d = Object.assign({text:'', file:null}, S.draft[id], patch);
+    const previous = S.draft[id];
+    const d = Object.assign({text:'', file:null}, previous, patch);
+    if(previous && previous.file !== d.file){
+      if(previous.previewUrl) URL.revokeObjectURL(previous.previewUrl);
+      delete d.previewUrl;
+    }
     if(!d.text && !d.file) delete S.draft[id]; else S.draft[id] = d;
+  }
+  function draftPreview(draft){
+    if(!draft.file || !/^image\//i.test(draft.file.type||'')) return '';
+    if(!draft.previewUrl) try{ draft.previewUrl=URL.createObjectURL(draft.file); }catch(_){ }
+    return draft.previewUrl || '';
   }
   function clearAttachment(k){ setDraft(k === undefined ? S.open : k, {file:null}); }
   function isMmsFile(file){ return !!file&&(/^(?:image|video)\//i.test(file.type||'')||/\.(?:jpe?g|png|gif|webp|heic|heif|avif|mp4|m4v|mov|webm|3gp)$/i.test(file.name||'')); }
@@ -1087,6 +1097,7 @@
         // Account changes retire decrypted history, draft text/files, previews and any pending
         // notification recipient. An old decrypt may finish later but cannot commit this epoch.
         S.msgs.clear(); S.threads = []; S.open = ''; S.q = '';
+        for(const draft of Object.values(S.draft)) if(draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
         S.draft = Object.create(null); S.scroll = Object.create(null); S.sending = new Set();
         S.ready = false; S.loading = false; S.localRead = false; S.lastRead = null;
         S.mmsRefused = false; S.mmsCapped = false; S.mmsAudited = false;
@@ -3933,7 +3944,7 @@
             + `</div>`;
           }).join('');
         })()}</div>
-        ${draft.file?`<div class="sms-attachment-draft"><span>${ICO(String(draft.file.type||'').startsWith('video/')?'film':'image','b-ic')}<b>${enc(draft.file.name||'Attachment')}</b><small>${enc(fmtBytes(draft.file.size))} · ready to send</small></span><button id="sms-attach-clear" aria-label="Remove attachment">×</button></div>`:''}
+        ${draft.file?`<div class="sms-attachment-draft">${draftPreview(draft)?`<img class="sms-draft-preview" src="${enc(draft.previewUrl)}" alt="Attachment preview">`:""}<span>${ICO(String(draft.file.type||'').startsWith('video/')?'film':'image','b-ic')}<b>${enc(draft.file.name||'Attachment')}</b><small>${enc(fmtBytes(draft.file.size))} · ready to send</small></span><button id="sms-attach-clear" aria-label="Remove attachment">×</button></div>`:''}
         <div class="sms-compose">
           <button class="btn small" id="sms-attach" title="Add an attachment">${ICO('paperclip','b-ic')}</button>
           <input id="sms-file" type="file" hidden>
@@ -3972,9 +3983,37 @@
     const gifBtn = PC.$('#sms-gif');
     if(gifBtn) gifBtn.onclick = () => { if(PC.gifPicker) PC.gifPicker(input); };
     const pick = PC.$('#sms-file'), camera = PC.$('#sms-camera'), attachBtn = PC.$('#sms-attach');
+    const attachmentOwner = ME() && ME().pubkey, attachmentEpoch = _archiveEpoch;
+    const ownsAttachment = () => attachmentOwner === (ME() && ME().pubkey) && attachmentEpoch === _archiveEpoch;
     const acceptFile = file => {
+      if(!ownsAttachment()) return false;
       if(file){ setDraft(t.key, {file}); paint(); }
       return !!file;
+    };
+    input.onpaste = async e => {
+      const clipboard = e.clipboardData;
+      if(!clipboard) return;
+      // A screenshot may appear in both items and files. Choose one representation,
+      // never fetch HTML image URLs or turn a pasted image into an automatic send.
+      const images = Array.from(clipboard.items || []).filter(i => i.kind === 'file' && /^image\//i.test(i.type));
+      const files = images.length ? images.map(i => i.getAsFile())
+                    : Array.from(clipboard.files || []).filter(f => /^image\//i.test(f.type));
+      if(!files.length) return; // ordinary text keeps the browser's native paste behavior
+      e.preventDefault();
+      if(!ownsAttachment()) return;
+      if(S.sending && S.sending.has(String(t.address || ''))){
+        PC.toast('Wait for the current message before pasting another image.'); return;
+      }
+      if(files.length !== 1){ PC.toast('Paste one image at a time.'); return; }
+      const file=files[0];
+      if(!file || !file.size){ PC.toast('Could not read the pasted image. Try copying it again.'); return; }
+      const previous=draftFor(t.key).file;
+      if(previous && previous !== file){
+        if(!await PC.uiConfirm('Replace the current attachment with the pasted image?')) return;
+        if(!ownsAttachment() || S.open !== t.key || draftFor(t.key).file !== previous) return;
+        if(S.sending && S.sending.has(String(t.address || ''))) return;
+      }
+      acceptFile(file);
     };
     const fromBlossom = () => PC.blossomPicker(null, async ({url,type,ext,name}) => {
       try{
