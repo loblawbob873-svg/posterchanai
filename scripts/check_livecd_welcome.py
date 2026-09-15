@@ -2,12 +2,18 @@
 """Does the ISO -- and the disk it installs -- come up at the WELCOME SCREEN?
 
     venv-unified/bin/python scripts/check_livecd_welcome.py /path/to/posterchan-live-YYYYMMDD.iso
-    venv-unified/bin/python scripts/check_livecd_welcome.py --disk /path/to/installed.qcow2
+    venv-unified/bin/python scripts/check_livecd_welcome.py --disk /path/to/installed.qcow2 \
+        --recovery-iso /path/to/live.iso --disk-key-file /path/to/vm-only-key
 
 THE GATE NOTHING ELSE COVERS. `check_livecd_vm.py` proves a graphical frame appears and stays --
 three consecutive non-black framebuffer samples. That passes just as happily on a desktop with no
 wizard, on a stale session, or on an error dialog, so "it boots" has never been evidence that it
 boots to the first-run wizard, which is the entire experience of a new machine.
+
+Installed disks do not have the live account's serial reporter. Their check boots a temporary
+qcow2 overlay, then opens that overlay read-only in the recovery ISO and reads only newly appended
+shell.log bytes. A prefix hash proves an old cached verdict cannot satisfy the new boot. Offline
+and online runs get separate overlays; the installed disk and production ISO remain unchanged.
 
 HOW IT ASKS, and why not by looking. Recognising the screen from a framebuffer is a test of QEMU's
 font rendering, and it cannot tell a wizard from a screenshot of one. The guest already carries
@@ -30,6 +36,9 @@ Exit 0 the welcome screen * 1 it did not * 2 could not run.
 from __future__ import annotations
 
 import argparse
+import base64
+import json
+import shlex
 import os
 from pathlib import Path
 import re
@@ -111,8 +120,146 @@ def run_guest(args, boot_iso: str | None, disk: str | None, seconds: int,
                 proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait(timeout=15)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+
+def recovery_collector(root, baseline=None):
+    """Read append-only shell logs; never accept a verdict already on the installed disk."""
+    return """
+from pathlib import Path
+import base64, hashlib, json
+root = Path(ROOT)
+baseline = BASELINE
+result = {}
+for home in sorted(root.iterdir()):
+    path = home / '.config/posterchan-desktop/shell.log'
+    if not path.is_file():
+        continue
+    size = path.stat().st_size
+    old = (baseline or {}).get(home.name, {'size': 0, 'sha256': hashlib.sha256(b'').hexdigest()})
+    count = old['size'] if baseline is not None else size
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        remaining = count
+        while remaining:
+            block = stream.read(min(remaining, 1048576))
+            if not block:
+                raise RuntimeError('shell log truncated: ' + home.name)
+            digest.update(block)
+            remaining -= len(block)
+        if baseline is None:
+            result[home.name] = {'size': count, 'sha256': digest.hexdigest()}
+        else:
+            if digest.hexdigest() != old['sha256']:
+                raise RuntimeError('shell log prefix changed: ' + home.name)
+            fresh = stream.read(4194305)
+            if len(fresh) > 4194304:
+                raise RuntimeError('new shell log exceeds capture limit: ' + home.name)
+            result[home.name] = {'fresh': fresh.decode('utf-8', errors='replace')}
+print('PC_WELCOME_DATA=' + base64.b64encode(json.dumps(result).encode()).decode(), flush=True)
+""".replace('ROOT', repr(str(root))).replace('BASELINE', repr(baseline))
+
+
+def recover_logs(args, disk, baseline=None):
+    """Observe an installed disk using the live ISO, without host mounts or guest writes."""
+    # This existing serial helper speaks to the live account, not the installed user.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from check_livecd_install_vm import Serial, qemu_args, ovmf as install_ovmf
+    code, data = install_ovmf()
+    if not code:
+        raise RuntimeError('no OVMF firmware for recovery observation')
+    key = Path(args.disk_key_file).read_text().rstrip('\n')
+    if not key or '\n' in key or '\r' in key:
+        raise RuntimeError('disk key file must contain one nonempty passphrase line')
+    with tempfile.TemporaryDirectory(prefix='pc-welcome-recovery-') as td:
+        tmp = Path(td)
+        nvram = tmp / 'vars.fd'
+        shutil.copyfile(data, nvram)
+        sock = tmp / 'console.sock'
+        cmd = qemu_args(str(disk), args.recovery_iso, sock, code, nvram, args.memory, args.cpus)
+        drive = f'file={disk},if=virtio,format=qcow2'
+        cmd[cmd.index(drive)] = drive + ',readonly=on'
+        cmd += ['-nic', 'none']
+        with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as transcript, tempfile.TemporaryFile() as errors:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errors)
+            con = None
+            try:
+                deadline = time.monotonic() + args.seconds
+                while not sock.exists() and proc.poll() is None and time.monotonic() < deadline:
+                    time.sleep(.1)
+                while con is None and proc.poll() is None and time.monotonic() < deadline:
+                    try:
+                        con = Serial(sock, transcript)
+                    except OSError:
+                        time.sleep(.1)
+                if con is None:
+                    raise RuntimeError('recovery QEMU did not open its serial socket')
+                if con.expect(r'live@[-a-z0-9]+', args.seconds) is None:
+                    raise RuntimeError('recovery ISO did not reach its live serial shell')
+                # read -s prevents the disposable key from entering the evidence transcript.
+                con.send("read -r -s -p 'PC_WELCOME_KEY_READY' pc_welcome_key; echo; "
+                         "printf '%s' \"$pc_welcome_key\" | sudo cryptsetup open --readonly "
+                         "/dev/vda2 pc_welcome_probe --key-file=- && "
+                         "sudo mkdir -p /mnt/pc-welcome && "
+                         "sudo mount -o ro,rescue=nologreplay,subvol=@home "
+                         "/dev/mapper/pc_welcome_probe /mnt/pc-welcome && echo PC_WELCOME_MOUNT_OK; unset pc_welcome_key")
+                if con.expect(r'(?m)^PC_WELCOME_KEY_READY', 30) is None:
+                    raise RuntimeError('recovery shell did not ask for the disk key')
+                start = len(con.buf)
+                con.send(key)
+                if con.expect(r'(?m)^PC_WELCOME_MOUNT_OK\r?$', 60, start) is None:
+                    raise RuntimeError('could not unlock/mount installed Btrfs read-only')
+                source = recovery_collector('/mnt/pc-welcome', baseline)
+                encoded = base64.b64encode(source.encode()).decode()
+                start = len(con.buf)
+                con.send('sudo python3 -c ' + shlex.quote(
+                    'import base64;exec(base64.b64decode(' + repr(encoded) + '))'))
+                if con.expect(r'(?m)^PC_WELCOME_DATA=[A-Za-z0-9+/=]+\r?$', 60, start) is None:
+                    raise RuntimeError('recovery log collector did not return a valid snapshot')
+                payload = re.findall(r'(?m)^PC_WELCOME_DATA=([A-Za-z0-9+/=]+)\r?$', con.buf[start:])[-1]
+                return json.loads(base64.b64decode(payload))
+            except (OSError, RuntimeError, ValueError) as exc:
+                errors.flush(); errors.seek(0)
+                detail = errors.read().decode(errors='replace')
+                if con is not None:
+                    detail += '\n' + con.buf[-2500:]
+                raise RuntimeError(f'{exc}\n{detail[-3000:].replace(key, "<redacted>")}') from exc
+            finally:
+                if getattr(args, 'evidence_dir', None):
+                    evidence = Path(args.evidence_dir)
+                    evidence.mkdir(parents=True, exist_ok=True)
+                    label = 'baseline' if baseline is None else Path(disk).parent.name
+                    transcript.flush(); transcript.seek(0)
+                    (evidence / (label + '-recovery.log')).write_text(transcript.read().replace(key, '<redacted>'))
+                if con is not None:
+                    con.sock.close()
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=15)
+
+
+def run_installed_guest(args, baseline, networked=False):
+    # Each scenario starts from the same untouched installed image. Recovery opens even this
+    # temporary overlay read-only, so mounting for observation cannot replay its Btrfs log.
+    with tempfile.TemporaryDirectory(prefix='pc-welcome-disk-') as td:
+        overlay = Path(td) / 'observation.qcow2'
+        subprocess.run(['qemu-img', 'create', '-q', '-f', 'qcow2', '-F', 'qcow2',
+                        '-b', str(Path(args.disk).resolve()), str(overlay)], check=True)
+        run_guest(args, None, str(overlay), args.seconds, networked=networked)
+        snapshot = recover_logs(args, overlay, baseline)
+        fresh = '\n'.join(row['fresh'] for row in snapshot.values())
+        if getattr(args, 'evidence_dir', None):
+            evidence = Path(args.evidence_dir)
+            evidence.mkdir(parents=True, exist_ok=True)
+            (evidence / ('installed-online.log' if networked else 'installed-offline.log')).write_text(fresh)
+        return fresh
 
 
 def judge(console: str, what: str, expect: str = "network") -> int:
@@ -156,6 +303,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("iso", nargs="?", help="the LiveCD to boot")
     ap.add_argument("--disk", help="an installed virtual disk to boot instead (no ISO attached)")
+    ap.add_argument("--recovery-iso", help="live ISO used to read installed logs without changing the disk")
+    ap.add_argument("--disk-key-file", help="file containing the disposable installed VM passphrase")
+    ap.add_argument("--evidence-dir", help="retain redacted recovery transcripts and fresh installed logs")
     ap.add_argument("--memory", type=int, default=4096)
     ap.add_argument("--cpus", type=int, default=2)
     ap.add_argument("--offline-only", action="store_true",
@@ -172,6 +322,23 @@ def main():
         print(f"SKIP  {target} does not exist")
         return 2
 
+    baseline = None
+    if args.disk:
+        if not args.recovery_iso or not args.disk_key_file:
+            print('SKIP  --disk requires --recovery-iso and --disk-key-file; installed sessions have no live serial reporter')
+            return 2
+        if not Path(args.recovery_iso).is_file() or not Path(args.disk_key_file).is_file():
+            print('SKIP  recovery ISO or disk key file is missing')
+            return 2
+        if not shutil.which('qemu-img') or not shutil.which('qemu-system-x86_64'):
+            print('SKIP  installed observation requires qemu-img and qemu-system-x86_64')
+            return 2
+        try:
+            baseline = recover_logs(args, Path(args.disk).resolve())
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+            print(f'SKIP  could not observe the installed disk: {exc}')
+            return 2
+
     what = "installed disk" if args.disk else Path(args.iso).name
 
     # TWO GUESTS, BECAUSE THERE ARE TWO QUESTIONS AND ONE BOOT CANNOT ANSWER BOTH.
@@ -181,14 +348,22 @@ def main():
     #             answered and skipped) and then ask the FIRST thing it does not know, which is
     #             which instance to talk to. That half is what caught a build shipping the
     #             developer's instance as a silent default.
-    rc = judge(run_guest(args, None if args.disk else args.iso, args.disk, args.seconds),
+    def observe(networked=False):
+        try:
+            if args.disk:
+                return run_installed_guest(args, baseline, networked)
+            return run_guest(args, args.iso, None, args.seconds, networked)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+            print(f'SKIP  could not read this boot: {exc}')
+            return None
+
+    rc = judge(observe(),
                what + " (no network)", "network")
     if rc != 0:
         return rc
     if args.offline_only:
         return 0
-    return judge(run_guest(args, None if args.disk else args.iso, args.disk, args.seconds,
-                           networked=True),
+    return judge(observe(networked=True),
                  what + " (online)", "instance")
 
 
