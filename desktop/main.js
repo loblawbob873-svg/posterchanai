@@ -1348,14 +1348,10 @@ function wirePermissions() {
   // supply one). On macOS 15+ the native picker takes over and this handler is never called.
   ses.setDisplayMediaRequestHandler(async (req, cb) => {
     if (!isOurs((req && req.frame && req.frame.url) || (req && req.securityOrigin) || '')) return cb({});
-    /* Wayland's portal source often has no display_id (its id is a synthetic, ever-increasing
-     * `screen:N:0:s`). Remember the display where the share gesture began BEFORE the portal moves
-     * the cursor. Recomputing "nearest cursor" for every remote packet made the mapping switch
-     * monitors as the remote pointer itself moved. */
-    try{
-      const d=screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-      remoteControlDisplayId=d ? String(d.id) : '';
-    }catch(_){ remoteControlDisplayId=''; }
+    // The cursor's monitor is unrelated to the output subsequently chosen in the portal.
+    // Leave unresolved portal sources unmapped until the captured geometry/host choice is known.
+    remoteCaptureGeneration++;
+    remoteControlDisplayId='';
     remoteControlDisplayExplicit=false;
     let source = null;
     try { source = await pickScreenSource(); } catch (e) { screenLog('request failed: ' + ((e && (e.stack || e.message)) || e)); }
@@ -1378,6 +1374,7 @@ let pendingSources = [];
 let pickerOpen = false;
 let remoteControlDisplayId = '';
 let remoteControlDisplayExplicit = false;
+let remoteCaptureGeneration = 0;
 function screenLog(message) {
   const line = new Date().toISOString() + ' ' + String(message) + '\n';
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'screen-share.log'), line); } catch (_) {}
@@ -2923,8 +2920,7 @@ function remoteAbsolutePoint(displays, displayId, cursor, nx, ny){
   nx=Number(nx);ny=Number(ny);
   if(!Number.isFinite(nx)||!Number.isFinite(ny)||nx<0||nx>1||ny<0||ny>1)return null;
   displays=Array.isArray(displays)?displays:[];
-  const display=displays.find(d=>String(d&&d.id)===String(displayId))
-    || screen.getDisplayNearestPoint(cursor);
+  const display=displays.find(d=>String(d&&d.id)===String(displayId));
   if(!display||!display.bounds)return null;
   const b=display.bounds;
   return {x:b.x+Math.round(nx*Math.max(0,b.width-1)),
@@ -2933,6 +2929,8 @@ function remoteAbsolutePoint(displays, displayId, cursor, nx, ny){
 ipcMain.handle('pc:remote:input', (e, input) => {
   fsGuard(e);
   if(!SHELL_MODE) return false;
+  // Losing the shared output also disables keys/wheel: they must not reach another monitor.
+  if(!screen.getAllDisplays().some(d=>String(d.id)===remoteControlDisplayId))return false;
   if(input && (input.type === 'absolute' || input.type === 'button') &&
       (input.type === 'absolute' || input.x != null || input.y != null)) {
     const nx = Number(input.x), ny = Number(input.y);
@@ -2943,25 +2941,60 @@ ipcMain.handle('pc:remote:input', (e, input) => {
   }
   return remotecontrol.input(input);
 });
-ipcMain.handle('pc:remote:configure', (e, raw) => {
-  fsGuard(e);
-  if(!SHELL_MODE)return false;
+function remoteCaptureCandidates(displays,width,height){
+  // A nearest resolution is a guess (capture can be scaled). Only an exact, unique match is useful.
+  return displays.filter(d=>{
+    if(!d||!d.bounds)return false;
+    const b=d.bounds,s=Number(d.scaleFactor)||1;
+    return (b.width===width&&b.height===height)||
+      (Math.round(b.width*s)===width&&Math.round(b.height*s)===height);
+  });
+}
+async function configureRemoteCapture(raw,chooseDisplay){
+  const generation=remoteCaptureGeneration;
   const width=Math.round(Number(raw&&raw.width)),height=Math.round(Number(raw&&raw.height));
   if(!Number.isFinite(width)||!Number.isFinite(height)||width<64||height<64||width>32768||height>32768)
-    return false;
-  /* A portal-selected source without display_id can still be identified by its captured pixel
-   * dimensions. Accept a UNIQUE best match only; equal-resolution monitors deliberately retain
-   * the display frozen when sharing began instead of jumping nondeterministically. */
-  if(!remoteControlDisplayExplicit){
-    const ranked=screen.getAllDisplays().filter(d=>d&&d.bounds).map(d=>{
-      const b=d.bounds,s=Math.max(.1,Number(d.scaleFactor)||1);
-      const score=Math.min(Math.abs(b.width-width)+Math.abs(b.height-height),
-                           Math.abs(Math.round(b.width*s)-width)+Math.abs(Math.round(b.height*s)-height));
-      return {d,score};
-    }).sort((a,b)=>a.score-b.score);
-    if(ranked.length&&(!ranked[1]||ranked[0].score<ranked[1].score))remoteControlDisplayId=String(ranked[0].d.id);
+    return {ok:false,reason:'invalid-geometry'};
+  const displays=screen.getAllDisplays().filter(d=>d&&d.bounds);
+  let selected=displays.find(d=>String(d.id)===remoteControlDisplayId);
+  if(remoteControlDisplayExplicit&&!selected)return {ok:false,reason:'display-unavailable'};
+  if(!selected){
+    const candidates=remoteCaptureCandidates(displays,width,height);
+    if(displays.length===1)selected=displays[0];
+    else if(candidates.length===1)selected=candidates[0];
+    else if(displays.length){
+      // Equal-size monitors cannot be distinguished using a portal's synthetic source ID.
+      // Ask the host, never infer the shared output from where their mouse happened to be.
+      const index=await chooseDisplay(displays);
+      if(!Number.isInteger(index)||index<0||index>=displays.length)
+        return {ok:false,reason:'cancelled'};
+      selected=displays[index];
+    }
   }
+  if(generation!==remoteCaptureGeneration)return {ok:false,reason:'capture-changed'};
+  if(!selected||!screen.getAllDisplays().some(d=>String(d.id)===String(selected.id)))
+    return {ok:false,reason:'display-unavailable'};
+  remoteControlDisplayId=String(selected.id);
+  remoteControlDisplayExplicit=true;
   return {ok:true,displayId:remoteControlDisplayId,width,height};
+}
+ipcMain.handle('pc:remote:configure', async (e, raw) => {
+  fsGuard(e);
+  if(!SHELL_MODE)return false;
+  return configureRemoteCapture(raw,async displays=>{
+    const labels=displays.map((d,i)=>{
+      const b=d.bounds;
+      return `${d.label||'Monitor '+(i+1)} — ${b.width} × ${b.height} at (${b.x}, ${b.y})`;
+    });
+    const options={type:'question',title:'Remote Desktop',
+      message:'Which monitor did you just share?',
+      detail:'Choose the same monitor you selected for screen sharing. Remote clicks will stay on that monitor.',
+      buttons:labels.concat('Cancel'),cancelId:labels.length,defaultId:labels.length,noLink:true};
+    const owner=BrowserWindow.fromWebContents(e.sender);
+    const result=await (owner&&!owner.isDestroyed()
+      ? dialog.showMessageBox(owner,options):dialog.showMessageBox(options));
+    return result.response;
+  });
 });
 ipcMain.handle('pc:remote:release', (e) => { fsGuard(e); return SHELL_MODE ? remotecontrol.release() : false; });
 /* Decorating the FIRST native window is also when the palette is (re)applied: it is the earliest
