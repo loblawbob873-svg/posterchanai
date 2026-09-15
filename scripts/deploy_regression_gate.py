@@ -30,6 +30,7 @@ TESTS = (
     'tests/test_android_mms_result_mapping.py',
     'tests/test_android_mms_retry_runtime.py',
     'tests/test_android_sms_share_runtime.py',
+    'tests/test_android_sms_share_caption.py',
     'tests/test_android_composer_belongs_to_the_conversation.py',
     'tests/test_android_instrumented_evidence.py',
     'tests/test_android_publish_gate.py',
