@@ -19,8 +19,11 @@ def test_linux_system_audio_is_the_playback_monitor(tmp_path):
     candidates = [Path(os.environ.get('PC_ELECTRON_BINARY', '/nonexistent-electron')),
                   ROOT / 'desktop/node_modules/electron/dist/electron']
     electron = next((p for p in candidates if p.is_file()), None)
-    if electron is None or not all(shutil.which(p) for p in ('wayfire', 'Xwayland', 'pulseaudio', 'pactl', 'paplay')):
-        _missing_runtime('Electron, isolated Wayfire/Xwayland and PulseAudio tools required')
+    xvfb = shutil.which('Xvfb')
+    if electron is None or not all(shutil.which(p) for p in ('pulseaudio', 'pactl', 'paplay')):
+        _missing_runtime('Electron and isolated PulseAudio tools required')
+    if not xvfb and not all(shutil.which(p) for p in ('wayfire', 'Xwayland')):
+        _missing_runtime('Xvfb or Wayfire plus Xwayland required for isolated display')
     source = (ROOT / 'desktop/main.js').read_text()
     handler = source[source.index('function wirePermissions()'):source.index('// ---- screen-source picker')]
     runtime = tmp_path / 'runtime'
@@ -74,17 +77,20 @@ app.whenReady().then(async()=>{
     processes = []
     with (tmp_path / 'native.log').open('w') as log:
         try:
-            compositor = _native_popen(['wayfire', '-c', str(config)], env=env, stdout=log, stderr=log)
-            processes.append(compositor)
-            deadline = time.monotonic() + 30
-            while not any(not p.name.endswith('.lock') for p in runtime.glob('wayland-*')):
-                assert compositor.poll() is None, (tmp_path / 'native.log').read_text()
-                assert time.monotonic() < deadline, 'isolated compositor timed out'
-                time.sleep(.05)
-            env['WAYLAND_DISPLAY'] = next(p.name for p in runtime.glob('wayland-*') if not p.name.endswith('.lock'))
+            if not xvfb:
+                compositor = _native_popen(['wayfire', '-c', str(config)], env=env, stdout=log, stderr=log)
+                processes.append(compositor)
+                deadline = time.monotonic() + 30
+                while not any(not p.name.endswith('.lock') for p in runtime.glob('wayland-*')):
+                    assert compositor.poll() is None, (tmp_path / 'native.log').read_text()
+                    assert time.monotonic() < deadline, 'isolated compositor timed out'
+                    time.sleep(.05)
+                env['WAYLAND_DISPLAY'] = next(p.name for p in runtime.glob('wayland-*') if not p.name.endswith('.lock'))
             readfd, writefd = os.pipe()
             try:
-                xserver = _native_popen(['Xwayland', '-displayfd', str(writefd), '-nolisten', 'tcp', '-ac', '-noreset', '-shm'], env=env, pass_fds=(writefd,), stdout=log, stderr=log)
+                command = ([xvfb, '-displayfd', str(writefd), '-screen', '0', '1280x800x24', '-nolisten', 'tcp', '-ac', '-noreset'] if xvfb else
+                           ['Xwayland', '-displayfd', str(writefd), '-nolisten', 'tcp', '-ac', '-noreset', '-shm'])
+                xserver = _native_popen(command, env=env, pass_fds=(writefd,), stdout=log, stderr=log)
                 processes.append(xserver)
                 os.close(writefd)
                 writefd = None

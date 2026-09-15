@@ -22,7 +22,7 @@ PC_ELECTRON_BINARY=/path/to/electron python -m pytest -q tests/test_desktop_linu
 ```
 
 The test runs the shipped permission/display handler in real Electron, with an
-isolated Wayfire/Xwayland display and private PulseAudio daemon. It plays 750 Hz
+isolated Xvfb display (or Wayfire/Xwayland fallback) and private PulseAudio daemon. It plays 750 Hz
 only to an output sink, sets a separate silent source as the default microphone,
 and verifies the captured frequency, track count, and stopped track. It never
 captures the machine's normal audio server. Missing native prerequisites skip
