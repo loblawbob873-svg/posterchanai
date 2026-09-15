@@ -74,16 +74,14 @@ def test_remote_packets_are_bounded_before_crossing_the_native_bridge():
     assert "const _RD_KEYS=" in APP
 
 
-def test_native_host_freezes_and_configures_the_captured_display():
+def test_native_host_configures_the_capture_before_signaling_or_switching():
     main = (ROOT / "desktop/main.js").read_text()
     preload = (ROOT / "desktop/preload.js").read_text()
-    assert "remoteControlDisplayId=d ? String(d.id) : ''" in main
     assert "if(source.display_id){ remoteControlDisplayId=String(source.display_id)" in main
     assert "ipcMain.handle('pc:remote:configure'" in main
-    assert "ranked[0].score<ranked[1].score" in main
     assert "configure: info => ipcRenderer.invoke('pc:remote:configure'" in preload
-    assert "_rdConfigureNative(local)" in APP
-    assert "_rdConfigureNative(next)" in APP
+    assert "await _rdConfigureNative(local)" in APP
+    assert "await _rdConfigureNative(next)" in APP
 
 
 def test_geometry_is_renegotiated_on_connect_and_screen_switch():

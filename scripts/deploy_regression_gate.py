@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 # Inputs exercised by this gate. The overlay updater may legitimately change its
 # package pin after testing; it does not change any of these client/test inputs.
-INPUTS = ('app', 'static', 'desktop', 'mobile', 'templates', 'scripts', 'tests',
+INPUTS = ('os/gentoo.sh', 'app', 'static', 'desktop', 'mobile', 'templates', 'scripts', 'tests',
           'os/overlay/gui-libs/posterchan-wayfire-shell',
           'os/overlay/app-misc/posterchanos-shell',
           '.github/workflows/desktop.yml', '.github/workflows/android.yml',
@@ -40,6 +40,12 @@ TESTS = (
     'tests/test_android_composer_belongs_to_the_conversation.py',
     'tests/test_android_instrumented_evidence.py',
     'tests/test_android_publish_gate.py',
+    'tests/test_remote_control_native.py',
+    'tests/test_remote_desktop_configuration_runtime.py',
+    'tests/test_remote_desktop_alignment_runtime.py',
+    'tests/test_remote_desktop_start_races.py',
+    'tests/test_livecd_kernel_selection_runtime.py',
+    'tests/test_livecd_build_artifact_excludes.py',
     'tests/test_reminder_history_window.py',
     'tests/test_reminder_notifications.py',
     'tests/client/test_reminder_notifications_runtime.py',

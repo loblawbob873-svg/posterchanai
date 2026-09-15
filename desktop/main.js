@@ -2980,7 +2980,7 @@ async function configureRemoteCapture(raw,chooseDisplay){
 }
 ipcMain.handle('pc:remote:configure', async (e, raw) => {
   fsGuard(e);
-  if(!SHELL_MODE)return false;
+  if(!SHELL_MODE)return {ok:true,control:false};
   return configureRemoteCapture(raw,async displays=>{
     const labels=displays.map((d,i)=>{
       const b=d.bounds;

@@ -38777,17 +38777,26 @@
   }
   function _rdSend(obj){try{if(_call&&_call.control&&_call.control.readyState==='open')_call.control.send(JSON.stringify(obj));}catch(_){}}
   function _rdReleaseNative(){try{if(window.pcRemoteControl&&pcRemoteControl.release)pcRemoteControl.release();}catch(_){}}
-  function _rdConfigureNative(stream){
+  async function _rdConfigureNative(stream){
+    const session=_call;
+    if(!session||!session.remoteDesktop)return false;
+    session.nativeReady=false;
     try{
       const track=stream&&stream.getVideoTracks&&stream.getVideoTracks()[0];
       const s=track&&track.getSettings?track.getSettings():{};
-      if(s.width&&s.height){
-        if(_call&&_call.remoteDesktop)_call.localGeometry={width:s.width,height:s.height};
-        if(window.pcRemoteControl&&pcRemoteControl.configure)
-          Promise.resolve(pcRemoteControl.configure({width:s.width,height:s.height})).catch(()=>{});
-        _rdSend({t:'geometry',width:s.width,height:s.height});
+      if(!s.width||!s.height)return false;
+      let controlReady=false;
+      if(window.pcRemoteControl&&pcRemoteControl.configure){
+        const result=await pcRemoteControl.configure({width:s.width,height:s.height});
+        if(!result||!result.ok)return false;
+        controlReady=result.control!==false;
       }
-    }catch(_){}
+      if(_call!==session||track.readyState==='ended')return false;
+      session.nativeReady=controlReady;
+      _call.localGeometry={width:s.width,height:s.height};
+      _rdSend({t:'geometry',width:s.width,height:s.height});
+      return true;
+    }catch(_){return false;}
   }
   function _rdWatchScreen(local){
     const screen=local&&local.getVideoTracks&&local.getVideoTracks()[0];
@@ -38805,18 +38814,33 @@
     }catch(_){}
   }
   async function _rdSwitchScreen(){
-    if(!_call||!_call.remoteDesktop||!_call.caller||!_call.pc)return;
+    if(!_call||!_call.remoteDesktop||!_call.caller||!_call.pc||_call.nativeSwitching)return;
     const activeCall=_call,old=activeCall.local;let next;
-    try{next=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:false});}
-    catch(e){if(e&&e.name!=='NotAllowedError')toast(_mediaErrMsg(e));return;}
-    if(!_call||_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
-    const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
-    if(!track||!sender){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
-    try{track.contentHint='detail';await sender.replaceTrack(track);await _rdTuneSender(sender);}catch(_){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
-    // Swap the identity before stopping the previous track: its ended listener must not interpret
-    // this intentional replacement as Stop sharing and tear down the call.
-    activeCall.local=next;_rdWatchScreen(next);_rdConfigureNative(next);
-    if(old)old.getTracks().forEach(t=>t.stop());_callUI();
+    _rdGrant(false);activeCall.nativeReady=false;activeCall.nativeSwitching=true;
+    try{
+      try{next=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:false});}
+      catch(e){if(_call===activeCall)toast(e&&e.name==='NotAllowedError'?'Screen switch cancelled. Sharing the previous screen without control.':_mediaErrMsg(e));return;}
+      if(_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
+      const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
+      if(!track||!sender){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
+      if(!await _rdConfigureNative(next)){
+        next.getTracks().forEach(t=>t.stop());
+        if(_call===activeCall)toast('Screen control was not configured. Sharing the previous screen without control.');
+        return;
+      }
+      if(_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
+      const controlReady=activeCall.nativeReady;
+      // Keep control revoked until both the mapping and the outgoing video have changed.
+      activeCall.nativeReady=false;
+      try{track.contentHint='detail';await sender.replaceTrack(track);await _rdTuneSender(sender);}
+      catch(_){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
+      if(_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
+      if(track.readyState==='ended'){_hangup(false);return;}
+      // Swap the identity before stopping the previous track: its ended listener must not
+      // interpret this intentional replacement as Stop sharing and tear down the call.
+      activeCall.local=next;activeCall.nativeReady=controlReady;_rdWatchScreen(next);
+      if(old)old.getTracks().forEach(t=>t.stop());_callUI();
+    }finally{activeCall.nativeSwitching=false;}
   }
   function _rdWireControl(ch){
     if(!_call||!_call.remoteDesktop||!ch)return;_call.control=ch;
@@ -38852,7 +38876,7 @@
         Promise.resolve(pcRemoteControl.input(m.e||{})).catch(()=>{});
     };
   }
-  function _rdGrant(on){if(!_call||!_call.remoteDesktop||!_call.caller)return;_call.controlRequested=false;_call.controlGranted=!!on;if(!on)_rdReleaseNative();_rdSend({t:'grant',on:!!on});_callUI();}
+  function _rdGrant(on){if(!_call||!_call.remoteDesktop||!_call.caller)return;if(on&&(_call.nativeReady===false||_call.nativeSwitching)){toast('Remote control is unavailable for this screen. Use Switch screen to choose another.');return;}_call.controlRequested=false;_call.controlGranted=!!on;if(!on)_rdReleaseNative();_rdSend({t:'grant',on:!!on});_callUI();}
   function _rdVideoPoint(video,e,geometry){
     const r=video.getBoundingClientRect();
     const vw=video.videoWidth||(geometry&&geometry.width)||r.width;
@@ -38995,6 +39019,7 @@
     const signalRelays=[...new Set(((opts&&opts.signalRelays)||[]).map(normalizeRelay).filter(Boolean))];
     _call = { id:_rid(), peer:peerHex, pc:null, local:null, remote:null, video, remoteDesktop,
               signalRelays, signalClose:null, state:'calling', caller:true, pendingIce:[] };
+    const activeCall=_call;
     if(signalRelays.length && Relay.subscribeFrom){
       _call.signalClose=Relay.subscribeFrom(signalRelays,
         [{ '#p':[ME.pubkey], kinds:[CALL_KIND], since:Math.floor(Date.now()/1000)-5 }],
@@ -39002,15 +39027,23 @@
     }
     _callUI();
     let local;
-    try{ local = await _getMedia(video, remoteDesktop, false); }catch(e){ toast(remoteDesktop && e&&e.name==='NotAllowedError'?'screen sharing cancelled':_mediaErrMsg(e)); _callTeardown(); return; }
-    if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }   // hung up while prompting
+    try{ local = await _getMedia(video, remoteDesktop, false); }catch(e){ if(_call===activeCall){toast(remoteDesktop && e&&e.name==='NotAllowedError'?'screen sharing cancelled':_mediaErrMsg(e));_callTeardown();}return; }
+    if(_call!==activeCall){ local.getTracks().forEach(t=>t.stop()); return; }   // hung up while prompting
     _call.local = local;
     /* The browser's native "Stop sharing" button ends the capture track without touching our call
      * state.  Treat that as an intentional hangup: otherwise the viewer is left on a frozen last
      * frame and the host still sees a misleading "connected" overlay. */
-    if(remoteDesktop){_rdWatchScreen(local);_rdConfigureNative(local);}
+    if(remoteDesktop){
+      _rdWatchScreen(local);
+      if(!await _rdConfigureNative(local)){
+        local.getTracks().forEach(t=>t.stop());
+        if(_call===activeCall){toast('Screen sharing cancelled: the shared monitor was not selected.');_callTeardown();}
+        return;
+      }
+      if(_call!==activeCall)return;
+    }
     const ice = await _fetchIceServers();
-    if(!_call){ local.getTracks().forEach(t=>t.stop()); return; }
+    if(_call!==activeCall){ local.getTracks().forEach(t=>t.stop()); return; }
     const pc = _newPc(ice.iceServers); _call.pc = pc;
     if(remoteDesktop) _rdWireControl(pc.createDataChannel('posterchan-control',{ordered:true}));
     local.getTracks().forEach(t=>{const sender=pc.addTrack(t,local);if(remoteDesktop&&t.kind==='video')_rdTuneSender(sender);});
@@ -39022,11 +39055,11 @@
       if(!_call || _call.pc!==pc){ return; }
       await pc.setLocalDescription(offer);
       if(!_call || _call.pc!==pc){ return; }
-    }catch(_){ toast('couldn’t start the call'); _hangup(false); return; }
+    }catch(_){ if(_call===activeCall){toast('couldn’t start the call');_hangup(false);}return; }
     _callUI();
     await _callSend(peerHex, {v:1, callId:_call.id, t:'invite', video, remoteDesktop,
                               sdp: pc.localDescription.sdp});
-    if(_call) _call.timeout = setTimeout(()=>{ if(_call && _call.state==='calling'){ toast('no answer'); _hangup(false); } }, 45000);
+    if(_call===activeCall) _call.timeout = setTimeout(()=>{ if(_call && _call.state==='calling'){ toast('no answer'); _hangup(false); } }, 45000);
   }
   const _remoteDesktopResolved=new Map();
   async function _remoteDesktopAddress(peer){
