@@ -9365,6 +9365,7 @@ var PosterCordReader = (() => {
     createPlaneAuth: () => createPlaneAuth,
     createWebxdcWrap: () => createWebxdcWrap,
     createMetadataWrap: () => createMetadataWrap,
+    createInviteRegistryWrap: () => createInviteRegistryWrap,
     createChannelWrap: () => createChannelWrap,
     createPrivateChannelPlan: () => createPrivateChannelPlan,
     privateChannelInvite: () => privateChannelInvite,
@@ -26891,6 +26892,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
                   && hasPermission(folded.roster, m, Permissions.MANAGE_MESSAGES)),
       metadataManagers: [community.owner,...new Set(folded.roster.grants.map(g=>g.member))].filter(pk=>!folded.banned.has(pk)&&isAuthorized(folded.roster,pk,community.owner,Permissions.MANAGE_METADATA)),
       channelManagers: [community.owner,...new Set(folded.roster.grants.map(g=>g.member))].filter(pk=>!folded.banned.has(pk)&&isAuthorized(folded.roster,pk,community.owner,Permissions.MANAGE_CHANNELS)),
+      inviteCreators: [community.owner,...new Set(folded.roster.grants.map(g=>g.member))].filter(pk=>!folded.banned.has(pk)&&isAuthorized(folded.roster,pk,community.owner,Permissions.CREATE_INVITE)),
+      liveInviteLinks: [...folded.liveInviteLinks],
+      registriesByCreator: Object.fromEntries(folded.registriesByCreator),
       members: [...new Set(folded.roster.grants.filter(g => g.roleIds.length && !folded.banned.has(g.member)).map(g => g.member))],
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
@@ -27184,6 +27188,19 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const eid=bytesToHex2(grantLocator(community.id,hex32(pubkey))),head=folded.heads.get(eid);
     if(!head)throw new Error("the authorizing membership grant has not been synced");
     return [["vac",eid,head.version.toString(),bytesToHex2(head.hash)]];
+  }
+  async function createInviteRegistryWrap(bundle, controlWraps, linkPubkeys, pubkey, signEvent) {
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) throw new Error("invalid creator pubkey");
+    if (!Array.isArray(linkPubkeys) || linkPubkeys.length > 4096 || linkPubkeys.some(pk=>typeof pk!=="string"||!/^[0-9a-f]{64}$/.test(pk))) throw new Error("invalid invite link signer list");
+    const { community, groups, folded } = control(bundle, controlWraps);
+    const authority=controlWriteAuthority(community,folded,pubkey,Permissions.CREATE_INVITE,"create invite links");
+    const entityHex=bytesToHex2(inviteLinksLocator(community.id,hex32(pubkey))), head=folded.heads.get(entityHex);
+    const links=[...new Set(linkPubkeys)].sort();
+    const tags=[[TAG_SUBKIND,VSK_INVITE_REGISTRY],[TAG_ENTITY,entityHex],[TAG_EVERSION,(head?head.version+1n:1n).toString()],...authority];
+    if(head)tags.push([TAG_EPREV,bytesToHex2(head.hash)]);
+    const rumor=buildRumor({kind:KIND_CONTROL,content:JSON.stringify(links),pubkey,ms:Date.now(),tags});
+    const group=writableControlGroup(groups),seal=await sealRumor(rumor,KIND_SEAL_PLAINTEXT,group,{signEvent});
+    return {rumorId:rumor.id,wrap:wrapSeal(seal,group),links};
   }
   async function createMetadataWrap(bundle, controlWraps, metadata, pubkey, signEvent) {
     requireActiveMembership(bundle);
