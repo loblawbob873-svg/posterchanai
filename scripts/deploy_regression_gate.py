@@ -9,6 +9,8 @@ import argparse
 import hashlib
 import json
 import os
+import runpy
+import signal
 import subprocess
 import sys
 import tempfile
@@ -21,6 +23,7 @@ INPUTS = ('static', 'desktop', 'templates', 'scripts', 'tests',
           '.github/workflows/desktop.yml', 'sync.sh')
 TESTS = (
     'tests/test_deploy_regression_gate.py',
+    'tests/test_deploy_process_cleanup.py',
     'tests/test_desktop_tag_readback.py',
     'tests/test_native_window_reload_ci.py',
     'tests/client/test_preview_native_controls.py',
@@ -66,6 +69,23 @@ def verify_receipt(path, root=ROOT):
     return 0
 
 
+
+def _run_required_tests(command, root, env, log, timeout=180):
+    # Share the suite runner's owned process-group cleanup and file capture. Pipes
+    # can stay open in orphaned browsers after pytest exits or is interrupted.
+    captured = runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_captured']
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(_signum, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, interrupted)
+    try:
+        return captured(command, root, dict(env, PC_GATE_MANAGED_PROCESSES='1'), timeout, log)
+    except KeyboardInterrupt:
+        return 130, '[regressions] required tests interrupted\n'
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def run_gate(root=ROOT, receipt=None):
     try:
         before = source_fingerprint(root)
@@ -82,16 +102,13 @@ def run_gate(root=ROOT, receipt=None):
         command = [sys.executable, '-m', 'pytest', '--noconftest', '-o', 'addopts=',
                    '-q', '-ra', '--junitxml=' + str(report), *TESTS]
         try:
-            result = subprocess.run(command, cwd=root, env=env, timeout=180,
-                                    capture_output=True, text=True)
+            code, output = _run_required_tests(command, root, env, Path(directory) / 'pytest.log')
         except (OSError, subprocess.TimeoutExpired) as error:
             print('[regressions] ABORT: required tests could not finish: ' + str(error))
             return 1
-        print(result.stdout, end='')
-        if result.stderr:
-            print(result.stderr, file=sys.stderr, end='')
-        if result.returncode:
-            print('[regressions] ABORT: pytest exited ' + str(result.returncode))
+        print(output, end='')
+        if code:
+            print('[regressions] ABORT: pytest exited ' + str(code))
             return 1
         try:
             cases = list(ET.parse(report).getroot().iter('testcase'))

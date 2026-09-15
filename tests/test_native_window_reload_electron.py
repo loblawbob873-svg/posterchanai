@@ -1,7 +1,36 @@
 import json
+import os
+import signal
 import subprocess
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+
+def _gate_managed():
+    # Only a pytest process leading the gate's private group may opt in.
+    return os.environ.get('PC_GATE_MANAGED_PROCESSES') == '1' and os.getpgrp() == os.getpid()
+
+
+def _native_popen(*args, **kwargs):
+    return subprocess.Popen(*args, **kwargs, start_new_session=not _gate_managed())
+
+
+def _stop_native(proc):
+    # The gate owns the inherited group; never signal that group from a fixture.
+    def stop(sig):
+        try:
+            if _gate_managed():
+                proc.send_signal(sig)
+            else:
+                os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            pass
+    stop(signal.SIGTERM)
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        stop(signal.SIGKILL)
+        proc.wait()
+
 
 def _missing_runtime(reason):
     import os
@@ -14,7 +43,7 @@ def test_real_electron_sync_reply_survives_native_child_reload(tmp_path):
     """A real sendSync reply is sent at assignment, unlike an ordinary JS fixture property."""
     import os
     import pytest
-    import shutil,time,signal,select
+    import shutil,time,select
     candidates = [Path(os.environ.get('PC_ELECTRON_BINARY','/nonexistent-electron')),
                   ROOT/'desktop/node_modules/electron/dist/electron',
                   ROOT.parent.parent/'desktop/node_modules/electron/dist/electron']
@@ -132,7 +161,7 @@ app.whenReady().then(async()=>{
         xserver=None
         try:
             if not xvfb:
-                compositor=subprocess.Popen(['wayfire','-c',str(config)],env=env,stdout=log,stderr=log,start_new_session=True)
+                compositor=_native_popen(['wayfire','-c',str(config)],env=env,stdout=log,stderr=log)
                 # A REAL COMPOSITOR STARTING ON A BUSY MACHINE. Ten seconds is plenty when this
                 # file runs alone (it comes up in ~2s) and not enough inside the full suite, which
                 # runs ~100 browser checks beside it — measured: these tests failed the gate on
@@ -149,7 +178,7 @@ app.whenReady().then(async()=>{
             readfd,writefd=os.pipe()
             command=([xvfb,'-displayfd',str(writefd),'-screen','0','1280x800x24','-nolisten','tcp','-ac','-noreset'] if xvfb else
                      ['Xwayland','-displayfd',str(writefd),'-nolisten','tcp','-ac','-noreset','-shm'])
-            xserver=subprocess.Popen(command,env=env,pass_fds=(writefd,),stdout=log,stderr=log,start_new_session=True)
+            xserver=_native_popen(command,env=env,pass_fds=(writefd,),stdout=log,stderr=log)
             os.close(writefd)
             try:
                 assert select.select([readfd],[],[],10)[0], 'isolated X display did not start'
@@ -158,7 +187,7 @@ app.whenReady().then(async()=>{
             finally:os.close(readfd)
             env['DISPLAY']=':'+display
             env['GDK_BACKEND']='x11'
-            native=subprocess.Popen([str(electron),'--no-sandbox','--disable-gpu','--ozone-platform=x11',str(entry)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
+            native=_native_popen([str(electron),'--no-sandbox','--disable-gpu','--ozone-platform=x11',str(entry)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
             try:stdout,stderr=native.communicate(timeout=25)
             except subprocess.TimeoutExpired as error:
                 raise AssertionError((error.stdout or b'').decode(errors='replace')+'\n'+(error.stderr or b'').decode(errors='replace')) from error
@@ -169,7 +198,4 @@ app.whenReady().then(async()=>{
         finally:
             for proc in (native,xserver,compositor):
                 if proc is not None:
-                    try:os.killpg(proc.pid,signal.SIGTERM)
-                    except ProcessLookupError:pass
-                    try:proc.wait(timeout=3)
-                    except subprocess.TimeoutExpired:os.killpg(proc.pid,signal.SIGKILL);proc.wait()
+                    _stop_native(proc)
