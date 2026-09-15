@@ -58,8 +58,9 @@ function boot(opts){
 
   const ctx = {
     console, JSON, Promise, Date, Math, Object, Array, String, Number, Error, Boolean, Map, Set,
-    RegExp, TextEncoder, TextDecoder, Buffer,
-    setTimeout, clearTimeout, clearInterval,
+    RegExp, TextEncoder, TextDecoder, Buffer, AbortController,
+    setTimeout: o.clock ? o.clock.setTimeout : setTimeout,
+    clearTimeout: o.clock ? o.clock.clearTimeout : clearTimeout, clearInterval,
     // Intervals are captured, never run: the whole point is that the JS heartbeat does NOT fire in
     // a hidden WebView. Letting it run here would test the very thing Android takes away.
     setInterval: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
@@ -73,7 +74,9 @@ function boot(opts){
     // `undefined` and the rejection surfaces as unrelated noise in this file's output.
     indexedDB: { open(){
       const rq = {};
-      setTimeout(() => { rq.error = new Error('no indexeddb here'); if(rq.onerror) rq.onerror(); }, 0);
+      (o.clock ? o.clock.setTimeout : setTimeout)(() => {
+        rq.error = new Error('no indexeddb here'); if(rq.onerror) rq.onerror();
+      }, 0);
       return rq;
     } },
     navigator: { onLine: true, userAgent: 'node' },
@@ -86,6 +89,10 @@ function boot(opts){
     btoa: s => Buffer.from(String(s), 'binary').toString('base64'),
   };
   ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx;
+  if(o.clock){
+    const origin = Date.now();
+    ctx.Date = class extends Date { static now(){ return origin + o.clock.now(); } };
+  }
   // Captured, so a test can raise a REAL `online` the way a reconnecting radio does, instead of
   // reaching into sync.js for a hook that would only exist for the test.
   const listeners = {};
@@ -203,30 +210,44 @@ function assert(cond, msg){ if(!cond) throw new Error(msg); }
      *
      * The assertion is that the sweep ENDS. Not that it succeeds — a dead network cannot be made to
      * work — but that it fails, so the folder is usable again without killing the process. */
-    const { ctx, seen } = boot({ hidden: false });
-    ctx.fetch = () => new Promise(() => {});          // never resolves, never rejects
-    ctx.PCSync.startAll();
-    await sleep(50);
-    const f = ctx.PCSync.folders()[0];
-    const started = Date.now();
-    /* SIXTY SECONDS, against a forty-five second ceiling. The first version of this raced at eight
-     * and reported HUNG against a working timeout — proving only that the test was impatient. The
-     * point is that the ceiling EXPIRES, so the wait has to outlast it; a slow check is the honest
-     * price of testing a timeout rather than asserting one exists. */
-    const rep = await Promise.race([
-      ctx.PCSync.sweep(f, { manual: true }).catch(e => ({ error: (e && e.message) || String(e) })),
-      sleep(60000).then(() => 'HUNG'),
-    ]);
-    assert(rep !== 'HUNG',
-      'the sweep never returned — the folder is stranded until the app is force-closed, which is '
-      + 'exactly what was reported');
-    // …and the folder must be usable again, not stuck reporting "already syncing".
-    const second = await Promise.race([
-      ctx.PCSync.sweep(f, { manual: true }).catch(() => 'failed-again'),
-      sleep(60000).then(() => 'HUNG'),
-    ]);
-    assert(second !== 'HUNG', 'a second sweep hung too, so `running` was never cleared');
-    void seen; void started;
+    for(const cachedToken of [true, false]){
+      const clockSource = fs.readFileSync(path.join(__dirname, 'virtual_timeout_clock.js'), 'utf8');
+      const clock = new Function('setImmediate', clockSource
+        + '\nreturn {setTimeout,clearTimeout,advance,now:()=>clockNow};')(setImmediate);
+      const {ctx} = boot({hidden:false, clock});
+      if(cachedToken) ctx.localStorage.setItem('pc_sync_token_' + PUBKEY, 'fixture-token');
+      let requests = 0, aborted = 0;
+      ctx.fetch = (_url, options={}) => new Promise((_resolve, reject) => {
+        requests++;
+        const onAbort = () => { aborted++; const error = new Error('request aborted');
+          error.name = 'AbortError'; reject(error); };
+        if(options.signal){
+          if(options.signal.aborted) onAbort();
+          else options.signal.addEventListener('abort', onAbort, {once:true});
+        }
+        // A real fetch remains pending until the network answers OR AbortController cancels it.
+      });
+      const f = ctx.PCSync.folders()[0];
+      // Production budgets: 20 seconds for /client/config, four minutes for the initial
+      // full record read, and (without a cached token) another 20 seconds to mint one.
+      // Include one second for asynchronous local reads. The old 60-second wall-clock race
+      // rejected valid full reads. These limits remain independent of the implementation so
+      // deleting a timeout cannot make the test advance forever.
+      const ceiling = 20000 + 4 * 60 * 1000 + (cachedToken ? 0 : 20000) + 1000;
+      for(let attempt = 0; attempt < 2; attempt++){
+        let settled = false, error;
+        const before = requests;
+        const pending = ctx.PCSync.sweep(f, {manual:true}).then(
+          () => { settled = true; }, e => { settled = true; error = e; });
+        await clock.advance(ceiling);
+        assert(settled, 'the sweep never returned — the folder remains stranded');
+        await pending;
+        assert(error && /server|time|respond/i.test(error.message), 'a dead request did not report its timeout');
+        assert(requests > before, 'retry reused a finished job instead of attempting delivery again');
+        assert(!ctx.PCSync.busyNow(), 'a failed sweep retained its running reservation');
+      }
+      assert(aborted >= 2, 'the platform never observed cancellation of the timed-out requests');
+    }
   });
 
   await check('the tick does not bypass the battery and network policy', async () => {

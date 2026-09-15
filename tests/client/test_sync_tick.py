@@ -80,6 +80,9 @@ class TestSyncTick(unittest.TestCase):
         another whole alarm period, with the screen off, which is the bug this whole file is about."""
         self.check("an unforced nudge arriving right after a tick cannot cancel it")
 
+    def test_a_hung_request_releases_the_folder_for_retry(self):
+        self.check("a request that never answers does not strand the folder for ever")
+
     def test_the_tick_does_not_bypass_the_policy(self):
         """It skips the "is anybody looking" test and NOTHING else. On battery or on cellular,
         `shouldSync` still declines — which is what the "only when plugged in" and "Wi-Fi only"
