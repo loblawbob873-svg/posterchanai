@@ -111,6 +111,11 @@ class posterchan_shell_t : public wf::plugin_interface_t
      * requestPointerLock in fullscreen Firefox): `client-constraint` goes false -> true on the
      * click and back to false on Escape, so the guard engages on exactly the grab it is about.
      *
+     * Without a native constraint we confine accelerated cursor displacement only. Raw
+     * (unaccelerated) relative motion stays unchanged for XWayland raw-input consumers.
+     * An unconstrained client using accelerated relative motion still sees clipped deltas;
+     * this is not a guarantee for every game's input mode.
+     *
      * (2) It confines, it never captures: a pointer that is not already on that output is left
      * alone rather than yanked onto it.
      *
@@ -208,8 +213,12 @@ class posterchan_shell_t : public wf::plugin_interface_t
         double cx = std::clamp(x, double(box.x), double(box.x + box.width - 1));
         double cy = std::clamp(y, double(box.y), double(box.y + box.height - 1));
         if ((cx == x) && (cy == y)) return;
-        ev->event->delta_x = ev->event->unaccel_dx = cx - at.x;
-        ev->event->delta_y = ev->event->unaccel_dy = cy - at.y;
+        // Only cursor displacement is confined. Wayfire forwards these same events to
+        // relative-pointer clients; XWayland uses the unaccelerated fields for raw input.
+        // Rewriting them makes mouse-look stop at screen edges, and also corrupts the
+        // untouched axis when acceleration differs. A native lock still bypasses both.
+        ev->event->delta_x = cx - at.x;
+        ev->event->delta_y = cy - at.y;
     };
 
     /* Read-only: the setting is written through wayfire/set-config-options, so there is one writer

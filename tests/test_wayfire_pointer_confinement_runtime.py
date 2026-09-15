@@ -41,6 +41,7 @@ PROBE = r'''
 #include <wayfire/plugin.hpp>
 #include <wayfire/core.hpp>
 #include <wayfire/seat.hpp>
+#include <wayfire/nonstd/wlroots-full.hpp>
 #include <wayfire/output.hpp>
 #include <wayfire/output-layout.hpp>
 #include <wayfire/toplevel-view.hpp>
@@ -54,6 +55,8 @@ class probe_t : public wf::plugin_interface_t {
  wf::shared_data::ref_ptr_t<wf::ipc::method_repository_t> methods;
  public:
  void init() override {
+  // Headless has no physical devices; expose a pointer for the real protocol client.
+  wlr_seat_set_capabilities(wf::get_core().get_current_seat(), WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
   /* Put the cursor somewhere known, emit one motion event exactly as wf::cursor_t does, and report
    * the delta AFTER every handler on core has had it. */
   methods->register_method("test/motion", [] (wf::json_t data) {
@@ -61,6 +64,8 @@ class probe_t : public wf::plugin_interface_t {
    wlr_pointer_motion_event ev{};
    ev.delta_x = ev.unaccel_dx = data["dx"].as_double();
    ev.delta_y = ev.unaccel_dy = data["dy"].as_double();
+   if(data.has_member("ux")) ev.unaccel_dx = data["ux"].as_double();
+   if(data.has_member("uy")) ev.unaccel_dy = data["uy"].as_double();
    wf::input_event_signal<wlr_pointer_motion_event> sig;
    sig.event = &ev; sig.device = NULL;
    wf::get_core().emit(&sig);
@@ -85,6 +90,7 @@ class probe_t : public wf::plugin_interface_t {
      view->set_toplevel_parent(p);
    }
    view->toplevel()->pending().fullscreen = data["fullscreen"].as_bool();
+   if(data.has_member("resize")) view->toplevel()->pending().geometry = target->get_relative_geometry();
    wf::get_core().tx_manager->schedule_object(view->toplevel());
    wf::get_core().seat->focus_output(target);
    wf::get_core().default_wm->focus_request(view);
@@ -146,7 +152,7 @@ def compositor(tmp_path):
     probe = tmp_path / 'probe.cpp'
     probe.write_text(PROBE)
     _build(tmp_path, PLUGIN, 'posterchan-shell', extra=('-I', str(tmp_path)))
-    _build(tmp_path, probe, 'test-probe')
+    _build(tmp_path, probe, 'test-probe', extra=('-I', str(tmp_path)))
     # The option only exists if the shipped metadata declares it; a plugin whose XML is not read
     # cannot be configured at all, and the compositor answers "Option not found!".
     meta = tmp_path / 'metadata'
@@ -470,3 +476,69 @@ def test_remote_cursor_warps_to_exact_layout_coordinates(compositor):
             assert (result['x'],result['y']) == (point['x'],point['y'])
     for invalid in [{'x':'100','y':200}, {'x':100001,'y':0}, {'x':0}]:
         assert rpc(sock,'posterchan-shell/set-cursor',invalid).get('result') != 'ok'
+
+
+@pytest.mark.parametrize("native_lock", [False, True])
+def test_relative_client_receives_unclipped_raw_motion_at_output_edges(compositor, tmp_path, native_lock):
+    """Receive the protocol event in a separate client; inspecting the probe alone misses forwarding."""
+    sock, _, outputs = compositor
+    protocols = subprocess.check_output(['pkg-config', '--variable=pkgdatadir', 'wayland-protocols'], text=True).strip()
+    generated = []
+    for name, xml in [('xdg-shell', 'stable/xdg-shell/xdg-shell.xml'),
+                      ('relative-pointer', 'unstable/relative-pointer/relative-pointer-unstable-v1.xml'),
+                      ('pointer-constraints', 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml')]:
+        definition = str(Path(protocols) / xml)
+        subprocess.run(['wayland-scanner', 'client-header', definition,
+                        str(tmp_path / (name + '-client-protocol.h'))], check=True)
+        code = tmp_path / (name + '-protocol.c')
+        subprocess.run(['wayland-scanner', 'private-code', definition, str(code)], check=True)
+        generated.append(str(code))
+    binary = tmp_path / 'relative-client'
+    flags = subprocess.check_output(['pkg-config', '--cflags', '--libs', 'wayland-client'], text=True).split()
+    subprocess.run(['cc', '-I', str(tmp_path), str(ROOT / 'tests/fixtures/wayfire-relative-pointer-client.c'),
+                    *generated, '-o', str(binary), *flags], check=True, capture_output=True, timeout=30)
+    runtime = sock.parent
+    display = next(p.name for p in runtime.glob('wayland-*') if not p.name.endswith('.lock'))
+    env = {**os.environ, 'XDG_RUNTIME_DIR':str(runtime), 'WAYLAND_DISPLAY':display}
+    if native_lock: env['TEST_NATIVE_LOCK'] = '1'
+    else: env.pop('TEST_NATIVE_LOCK', None)
+    log = tmp_path / 'relative-events'
+    with log.open('w') as stream:
+        client = subprocess.Popen([str(binary)], env=env, stdout=stream, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                rows = rpc(sock, 'window-rules/list-views')
+                rows = rows if isinstance(rows, list) else rows.get('views', [])
+                game = next((v for v in rows if v.get('title') == 'relative-test' and v.get('mapped')), None)
+                if game: break
+                assert client.poll() is None, client.stderr.read().decode()
+                assert time.monotonic() < deadline, 'relative client did not map'
+                time.sleep(.05)
+            first = outputs[0]
+            rpc(sock, 'test/stage', {'id':game['id'], 'output':first['name'], 'fullscreen':True, 'resize':True})
+            time.sleep(.3)
+            box = first['geometry']
+            rpc(sock, 'posterchan-shell/set-cursor', {'x':box['x']+box['width']/2, 'y':box['y']+box['height']/2})
+            assert rpc(sock, 'posterchan-shell/pointer-confinement')['client-constraint'] is native_lock
+            expected = []
+            for direction in (-1, 1):
+                for _ in range(3):
+                    x = box['x'] + (1 if direction < 0 else box['width'] - 2)
+                    rpc(sock, 'test/motion', {'x':x, 'y':box['y']+box['height']/2,
+                        'dx':direction*100, 'dy':10, 'ux':direction*47, 'uy':3})
+                    expected.append([direction*47, 3])
+            deadline = time.monotonic() + 3
+            while len(log.read_text().splitlines()) < len(expected) and time.monotonic() < deadline:
+                time.sleep(.02)
+            actual = [[float(v) for v in line.split()] for line in log.read_text().splitlines()]
+            assert client.poll() is None, client.stderr.read().decode()
+            assert len(actual) == len(expected), json.dumps((actual, rpc(sock, 'window-rules/list-views'), rpc(sock, 'posterchan-shell/pointer-confinement')))
+            assert [row[2:] for row in actual] == expected, 'fullscreen confinement corrupted client raw motion'
+            if native_lock:
+                assert [row[:2] for row in actual] == [[direction*100, 10] for direction in (-1,1) for _ in range(3)]
+        finally:
+            client.terminate()
+            try: client.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                client.kill(); client.wait(timeout=3)

@@ -23,7 +23,7 @@ RDEPEND="
 	app-misc/posterchan-desktop
 	dev-vcs/ngit
 	>=gui-wm/wayfire-0.10.1-r2
-	>=gui-libs/posterchan-wayfire-shell-1.0.1-r3
+	>=gui-libs/posterchan-wayfire-shell-1.0.1-r4
 	gui-libs/wayfire-plugins-extra
 	gamescope? ( gui-wm/gamescope )
 	gui-apps/swayidle
