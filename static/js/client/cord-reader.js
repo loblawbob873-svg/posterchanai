@@ -9362,6 +9362,9 @@ var PosterCordReader = (() => {
     validateInviteBundle: () => validateInviteBundle,
     openInviteBundle: () => openInviteBundle,
     createChatWrap: () => createChatWrap,
+    voiceMaterial: () => voiceMaterial,
+    createVoicePresence: () => createVoicePresence,
+    inspectVoicePresence: () => inspectVoicePresence,
     createPlaneAuth: () => createPlaneAuth,
     createWebxdcWrap: () => createWebxdcWrap,
     createMetadataWrap: () => createMetadataWrap,
@@ -27365,6 +27368,38 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
        * cannot count them itself, because the votes are sealed inside the channel's wraps. */
       pollVotes: [...timeline.pollVotes].map(([target, list]) => [target, list.map((v) => ({ pubkey: v.pubkey, optionIds: v.optionIds, ms: v.ms, expires: v.expires }))])
     };
+  }
+  function voiceMaterial(bundle, controlWraps, channelId) {
+    const { channels } = control(bundle, controlWraps);
+    const channel = channels.find(ch => ch.idHex === channelId);
+    if (!channel) throw new Error("This membership cannot call the channel");
+    return { room: channel.voice.room.pk, signingKey: new Uint8Array(channel.voice.room.sk),
+      mediaRoot: new Uint8Array(channel.voice.mediaKey), epoch: String(channel.current.epoch),
+      channelId, stream: channel.current.group.pk };
+  }
+  async function createVoicePresence(bundle, controlWraps, channelId, verb, pubkey, signEvent, identity, broker) {
+    if (verb !== "joined" && verb !== "left") throw new Error("Invalid call presence");
+    const { channels } = control(bundle, controlWraps);
+    const channel = channels.find(ch => ch.idHex === channelId);
+    if (!channel) throw new Error("This membership cannot call the channel");
+    const tags = channelBindingTags(channel.idHex, channel.current.epoch);
+    if (verb === "joined") {
+      const url = new URL(broker);
+      if (!identity || identity.length > 512 || url.protocol !== "https:" || url.username || url.password || url.origin !== broker)
+        throw new Error("Invalid call identity or broker");
+      tags.push(["identity", identity], ["broker", broker]);
+    }
+    const rumor = buildRumor({ kind: 23313, content: verb, pubkey, ms: Date.now(), tags });
+    const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
+    return wrapSeal(seal, channel.current.group, { ephemeral: true });
+  }
+  async function inspectVoicePresence(bundle, controlWraps, channelId, wraps) {
+    const { channels } = control(bundle, controlWraps);
+    const channel = channels.find(ch => ch.idHex === channelId);
+    if (!channel) throw new Error("This membership cannot read call presence");
+    const opened = await openChatBatch((wraps || []).filter(w => w.kind === 21059).slice(-1024), channel);
+    return opened.filter(e => e.kind === 23313 && String(e.epoch) === String(channel.current.epoch))
+      .map(e => ({ id: e.rumorId, pubkey: e.author, content: e.content, tags: e.tags, at: e.ms }));
   }
   async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE) {
     if(!bundle.dissolved||kind!==KIND_DELETE)requireActiveMembership(bundle,channelId);

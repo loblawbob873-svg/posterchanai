@@ -27,7 +27,7 @@
     const records=new Map(),keys=new Set(),tracks=new Map();
     const panel=document.createElement('section');panel.className='pc-cord-call';panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Concord call');
     panel.style.cssText='position:fixed;z-index:12000;right:12px;bottom:12px;width:min(400px,calc(100vw - 24px));max-height:80vh;overflow:auto;padding:16px;border:1px solid var(--border,#555);border-radius:12px;background:var(--panel,#171723);color:var(--text,#eee);box-shadow:0 8px 32px #0008';
-    panel.innerHTML='<header style="display:flex;justify-content:space-between"><strong></strong><button type="button" data-call="close" aria-label="Leave call">✕</button></header><p role="status"></p><label>Call server<input class="input" data-call="broker" inputmode="url" autocomplete="off"></label><div style="display:flex;gap:8px;margin:12px 0"><button class="btn" data-call="join">Join voice</button><button class="btn" data-call="mute" disabled>Mute</button><button class="btn" data-call="video" disabled>Camera on</button></div><div data-call="people"></div><div data-call="media" style="display:grid;gap:8px"></div>';
+    panel.innerHTML='<header style="display:flex;justify-content:space-between"><strong></strong><button type="button" data-call="close" aria-label="Leave call">✕</button></header><p role="status"></p><label>Call server<input class="input" data-call="broker" inputmode="url" autocomplete="off"></label><div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0"><button class="btn" data-call="join">Join voice</button><button class="btn" data-call="mute" disabled>Mute</button><button class="btn" data-call="video" disabled>Camera on</button><button class="btn" data-call="screen" disabled>Share screen</button></div><div data-call="people"></div><div data-call="media" style="display:grid;gap:8px"></div>';
     panel.querySelector('strong').textContent=context.name||'Concord call';
     const status=message=>{panel.querySelector('[role=status]').textContent=message;};
     const button=name=>panel.querySelector('[data-call="'+name+'"]');
@@ -65,7 +65,7 @@
         try{if(context.material().room===last.voiceRoom)void Promise.resolve(context.presence('left',last.identity,last.broker)).catch(()=>{});}catch(_){}
       }
       for(const track of tracks.keys())try{track.detach().forEach(e=>e.remove());}catch(_){}tracks.clear();
-      button('media').replaceChildren();button('mute').disabled=true;button('video').disabled=true;
+      button('media').replaceChildren();button('mute').disabled=true;button('video').disabled=true;button('screen').disabled=true;button('screen').textContent='Share screen';
       try{if(previous)await previous.disconnect();}
       finally{previousWorker?.terminate();}
     }
@@ -114,6 +114,7 @@
         const thisRoom=room;attemptRoom=thisRoom;
         room.on(L.RoomEvent.ParticipantConnected,p=>{void keyProvider.install(p.identity).catch(e=>status(e.message));people();});
         room.on(L.RoomEvent.ParticipantDisconnected,people);
+        room.on(L.RoomEvent.LocalTrackUnpublished,()=>{if(valid()&&room===thisRoom)button('screen').textContent=thisRoom.localParticipant.isScreenShareEnabled?'Stop sharing':'Share screen';});
         room.on(L.RoomEvent.Disconnected,()=>{if(room===thisRoom){void disconnect(false);if(!closed)status('Call disconnected');}});
         room.on(L.RoomEvent.TrackSubscribed,async(track,_publication,p)=>{
           try{await keyProvider.install(p.identity);if(!valid()||room!==thisRoom)return;
@@ -131,7 +132,7 @@
         if(video){await room.localParticipant.setCameraEnabled(true);checkAttempt();}
         await announce('joined');checkAttempt();
         heart=setInterval(()=>{void announce('joined').catch(()=>status('Call presence could not be refreshed'));},30000);
-        button('mute').disabled=false;button('video').disabled=false;
+        button('mute').disabled=false;button('video').disabled=false;button('screen').disabled=false;
         status('Connected · end-to-end encrypted');people();
       }catch(e){
         if(attemptRoom&&room!==attemptRoom)try{await attemptRoom.disconnect();}catch(_){}
@@ -166,6 +167,21 @@
     button('join').onclick=()=>{context.remember?.(V.origin(button('broker').value));void connect(button('broker').value);};
     button('mute').onclick=async()=>{const target=room;if(!target)return;try{await target.localParticipant.setMicrophoneEnabled(muted);if(!valid()||room!==target){await target.disconnect();return;}muted=!muted;button('mute').textContent=muted?'Unmute':'Mute';}catch(e){status(e.message);}};
     button('video').onclick=async()=>{const target=room;if(!target)return;try{await target.localParticipant.setCameraEnabled(!video);if(!valid()||room!==target){await target.disconnect();return;}video=!video;button('video').textContent=video?'Camera off':'Camera on';}catch(e){status(e.message);}};
+    button('screen').onclick=async()=>{
+      const target=room;if(!target||!joined||!valid())return;
+      const control=button('screen');control.disabled=true;
+      try{
+        // Capture always starts from this user gesture, after sender-key installation
+        // and E2EE setup. Rekeys/migration must never reopen the screen picker.
+        await target.localParticipant.setScreenShareEnabled(!target.localParticipant.isScreenShareEnabled,{audio:true});
+        if(!valid()||room!==target){
+          try{await target.localParticipant.setScreenShareEnabled(false);}finally{await target.disconnect();}
+          return;
+        }
+        control.textContent=target.localParticipant.isScreenShareEnabled?'Stop sharing':'Share screen';
+      }catch(e){if(valid()&&room===target)status(e.name==='NotAllowedError'||e.name==='AbortError'?'Screen sharing canceled':('Screen sharing could not start: '+(e.message||e)));}
+      finally{if(valid()&&room===target)control.disabled=false;}
+    };
     active={close};return active;
   }
   root.PCCordCall=Object.freeze({open,close:()=>{openVersion++;return active?.close();}});

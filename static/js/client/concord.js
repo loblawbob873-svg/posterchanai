@@ -8,6 +8,8 @@
     l.href='/static/css/concord.css?v=19'; (document.head||document.documentElement).appendChild(l);
   }
   const PC=()=>window.__PC;
+  const concordScriptUrl=document.currentScript&&document.currentScript.src;
+  const callModules=new Map();
   /* Automatic reads must contain only known Concord endpoints. relay.ditto.pub currently refuses
    * WebSocket handshakes, and copying the user's general pool into external discovery also created
    * redundant Damus sockets. Explicit invite/bootstrap and room bundle relays remain authoritative
@@ -4056,7 +4058,7 @@
     };
     bindRefoundingControl(p,$);
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
-    const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community],viewerPk=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,viewerPk).filter(pk=>pk!==viewerPk); if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
+    const call=$('#cc-call'); if(call)call.onclick=async()=>{try{const room=saved()[state.community];if(room&&room.protocol==='nip29'){const me=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,me).filter(pk=>pk!==me);if(!peers.length){p.toast('No other community members are available to call yet');return;}p.startGroupCall(peers,false);return;}await startCordCall(p,room,state.channel||'general');}catch(e){p.toast(e.message||'The call could not start');}};
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
     /* PREVIEW, THEN ANSWER. The button said "Preview invite" and joined outright; now it fetches
      * the community, shows what it is, and waits. `acceptInvite` below is the join half, unchanged
@@ -4265,6 +4267,54 @@
     if(!initial.membershipCurrent())throw new Error('Concord membership changed');
     const view=reader.inspectControl(bundle,controls||[]),wireChannel=view.channels.find(c=>c.id===channel.id);
     return{p,room,reader,bundle,channel,loadKey,relays,controls:controls||[],streamPubkeys:wireChannel&&wireChannel.streamPubkeys||[],plane:cordPlaneContext(p,bundle,controls||[],room)};
+  }
+  async function callModule(file, name) {
+    if(window[name])return window[name];
+    if(!callModules.has(file))callModules.set(file,new Promise((resolve,reject)=>{
+      const script=document.createElement('script');
+      script.src=concordScriptUrl?new URL(file,concordScriptUrl).href:'/static/js/client/'+file;
+      script.onload=()=>resolve(window[name]);script.onerror=()=>{callModules.delete(file);reject(new Error('Concord call components could not load'));};
+      document.head.appendChild(script);
+    }));
+    return callModules.get(file);
+  }
+  async function startCordCall(p, initial, channelName) {
+    const owner=String(p.viewer&&p.viewer().pubkey||''),identity=roomIdentity(initial);
+    if(!owner||!initial||initial.local||initial.protocol==='nip29')throw new Error('This community does not support Concord calls');
+    const current=()=>String(p.viewer&&p.viewer().pubkey||'')===owner&&saved().some(r=>roomIdentity(r)===identity);
+    let channelId=null;
+    const parts=()=>{
+      if(!current())throw new Error('The call membership changed');
+      const room=saved().find(r=>roomIdentity(r)===identity),bundle=room.cord&&room.cord.bundle,
+        reader=window.PosterCordReader,controls=roomControls.get(room.communityId||room.naddr)||[];
+      if(!reader||!reader.voiceMaterial||!bundle)throw new Error('Wait for the community keys to load');
+      const channel=reader.inspectControl(bundle,controls).channels.find(c=>channelId?c.id===channelId:c.name===channelName);
+      if(!channel)throw new Error('The channel is no longer available');
+      channelId=channel.id;
+      return {room,bundle,reader,controls,channel,relays:roomRelays(bundle)};
+    };
+    await callModule('cord-voice.js','PCCordVoice');const calls=await callModule('cord-call.js','PCCordCall');
+    if(!current())return;
+    let subscription=null;
+    return calls.open({name:channelName,current,
+      preferred:localStorage.getItem('pc.concord.call-broker')||'https://armada.buzz',
+      remember:value=>{if(value)localStorage.setItem('pc.concord.call-broker',value);},
+      label:pk=>{const profile=p.profOf&&p.profOf(pk)||{};return profile.display_name||profile.name||pk.slice(0,12);},
+      material:()=>{const x=parts();return x.reader.voiceMaterial(x.bundle,x.controls,x.channel.id);},
+      subscribe:onEvent=>{const x=parts(),material=x.reader.voiceMaterial(x.bundle,x.controls,x.channel.id);
+        subscription=cordPlaneSubscribe(p,window.Relay,x.relays,[{kinds:[21059],authors:[material.stream],since:Math.floor(Date.now()/1000)-90}],
+          {onEvent,live:true,timeout:0},cordPlaneContext(p,x.bundle,x.controls,x.room));return subscription;},
+      decode:wrap=>{const x=parts();return x.reader.inspectVoicePresence(x.bundle,x.controls,x.channel.id,[wrap]);},
+      presence:async(verb,peer,broker)=>{
+        const x=parts(),plane=cordPlaneContext(p,x.bundle,x.controls,x.room);
+        const sign=async template=>{if(!current())throw new Error('The call account changed');const signed=await p.signTemplate(template);if(!current())throw new Error('The call account changed');return signed;};
+        const wrap=await x.reader.createVoicePresence(x.bundle,x.controls,x.channel.id,verb,owner,sign,peer,broker);
+        if(!plane.current())throw new Error('The call keys changed while signing');
+        if(subscription&&subscription.publish&&subscription.publish(wrap))return;
+        const result=await p.relayPublishRoom(x.relays,wrap,cordPlaneAuth(p,plane,wrap.pubkey,x.relays));
+        if(!result||!result.ok)throw new Error('Call presence could not reach the community relays');
+      }
+    });
   }
   async function webxdcQuery(ctx,uuid){const p=PC();if(ctx.protocol==='nip29')return nip29RelayQuery(p,ctx.relay,[{kinds:[9450],'#h':[ctx.groupId],'#i':[uuid],limit:500}],10000);const x=await webxdcCordParts(ctx),key=envelopeCacheKey(x.loadKey,x.channel.id),cached=await cachedEnvelopes(key),wraps=await queryEnvelopeHistory(x.p,x.relays,x.streamPubkeys,cached,{plane:cordPlaneContext(x.p,x.bundle,x.controls,x.room)}),fresh=wraps.filter(ev=>!cached.some(old=>old.id===ev.id));await cacheEnvelopes(key,fresh);const rows=await x.reader.inspectWebxdc(x.bundle,x.controls,x.channel.id,wraps,uuid,false);if(!x.plane.current())return [];try{window.PCWebxdc&&PCWebxdc.rtDiagnostic('static-replay',uuid+' '+rows.length+'/'+wraps.length);}catch(_){}return rows;}
   async function webxdcPublish(ctx,uuid,content,meta,realtime,liveSub){const p=PC(),tags=[['i',uuid],['alt',realtime?'Webxdc realtime':'Webxdc update']];if(realtime)tags.push(['rt','1']);for(const n of ['info','document','summary'])if(meta&&meta[n])tags.push([n,String(meta[n]).slice(0,200)]);if(ctx.protocol==='nip29')return p.publishNip29Authed(ctx.relay,{kind:realtime?24450:9450,created_at:Math.floor(Date.now()/1000),content,tags:[['h',ctx.groupId],...tags]});const x=await webxdcCordParts(ctx),viewer=x.p.viewer(),made=await x.reader.createWebxdcWrap(x.bundle,x.controls,x.channel.id,content,viewer.pubkey,x.p.signTemplate,tags,realtime);if(!x.plane.current())throw new Error('Concord membership changed while signing');

@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[2]
 def bundled_assets():
     yield from desktop.bundle.__wrapped__()
 
-@pytest.mark.parametrize('scenario',['occupied','rotation','departure','camera_close','terminal','unverified','replacement'])
+@pytest.mark.parametrize('scenario',['occupied','rotation','departure','camera_close','terminal','unverified','replacement','screen_close','screen_rekey','screen_cancel','screen_native_stop'])
 def test_call_lifecycle_races(scenario):
     async def check(b):
         await desktop.login(b)
@@ -21,8 +21,8 @@ def test_call_lifecycle_races(scenario):
           window.__epoch=0;window.__holdToken=false;window.__holdLeft=false;
           window.Worker=class{terminate(){__logs.push('terminate')}};
           class Provider{onSetEncryptionKey(){}}
-          class Room{constructor(){window.__room=this;this.handlers=new Map();this.remoteParticipants=new Map();this.localParticipant={identity:'fixture',setMicrophoneEnabled:async()=>__logs.push('mic'),setCameraEnabled:async()=>{if(window.__holdCamera)await new Promise(r=>window.__releaseCamera=r);__logs.push('camera');}};}on(name,handler){this.handlers.set(name,handler);return this;}async setE2EEEnabled(){}async connect(){__logs.push('connect');}async disconnect(){__logs.push('disconnect');if(window.__holdDisconnect){__holdDisconnect=false;await new Promise(r=>window.__releaseDisconnect=r);}}}
-          window.LivekitClient={BaseKeyProvider:Provider,Room,RoomEvent:{ParticipantConnected:'participant',ParticipantDisconnected:'gone',TrackSubscribed:'track',TrackUnsubscribed:'untrack',EncryptionError:'error',Disconnected:'disconnected'},isE2EESupported:()=>true};
+          class Room{constructor(){window.__room=this;this.handlers=new Map();this.remoteParticipants=new Map();this.localParticipant={identity:'fixture',setMicrophoneEnabled:async()=>__logs.push('mic'),setCameraEnabled:async()=>{if(window.__holdCamera)await new Promise(r=>window.__releaseCamera=r);__logs.push('camera');},setScreenShareEnabled:async enabled=>{if(enabled&&window.__denyScreen)throw new DOMException('denied','NotAllowedError');if(enabled&&window.__holdScreen)await new Promise(r=>window.__releaseScreen=r);this.localParticipant.isScreenShareEnabled=enabled;__logs.push('screen:'+enabled);}};}on(name,handler){this.handlers.set(name,handler);return this;}async setE2EEEnabled(){}async connect(){__logs.push('connect');}async disconnect(){__logs.push('disconnect');if(window.__holdDisconnect){__holdDisconnect=false;await new Promise(r=>window.__releaseDisconnect=r);}}}
+          window.LivekitClient={BaseKeyProvider:Provider,Room,RoomEvent:{ParticipantConnected:'participant',ParticipantDisconnected:'gone',TrackSubscribed:'track',TrackUnsubscribed:'untrack',EncryptionError:'error',Disconnected:'disconnected',LocalTrackUnpublished:'local-unpublished'},isE2EESupported:()=>true};
           window.PCCordVoice={...PCCordVoice,brokers:async(_room,values)=>[...new Set(values)].sort(),
             senderKey:async(root)=>{__logs.push('key:'+root[0]);return new Uint8Array(32).fill(root[0]);},
             token:async(material,broker)=>{__logs.push('token:'+material.room[0]+':'+broker);if(__holdToken){__holdToken=false;await new Promise(r=>window.__releaseToken=r);}return {identity:'fixture',token:'fixture',url:'wss://fixture.invalid',broker};}};
@@ -63,6 +63,31 @@ def test_call_lifecycle_races(scenario):
             await b.js('PCCordCall.close()')
             await b.js('__releaseCamera()')
             await b.until("__logs.filter(x=>x==='disconnect').length===2")
+        elif scenario=='screen_close':
+            await b.js("__holdScreen=true;document.querySelector('[data-call=screen]').click()")
+            await b.until('!!window.__releaseScreen')
+            await b.js('PCCordCall.close()')
+            await b.js('__releaseScreen()')
+            await b.until("__logs.includes('screen:false')")
+            assert not await b.js('__room.localParticipant.isScreenShareEnabled')
+            assert await b.js("__logs.filter(x=>x==='disconnect').length")>=2
+        elif scenario=='screen_rekey':
+            await b.js("document.querySelector('[data-call=screen]').click()")
+            await b.until("__logs.includes('screen:true')")
+            await b.js('__epoch=1;__ticks.get(2000)()')
+            await b.until("__logs.filter(x=>x==='connect').length===2")
+            assert await b.js("__logs.filter(x=>x==='screen:true').length")==1, 'rekey must not reopen capture picker'
+            assert not await b.js('!!__room.localParticipant.isScreenShareEnabled')
+        elif scenario=='screen_cancel':
+            await b.js("__denyScreen=true;document.querySelector('[data-call=screen]').click()")
+            await b.until("document.querySelector('.pc-cord-call [role=status]').textContent.includes('Screen sharing canceled')")
+            assert not await b.js("__logs.includes('disconnect')")
+            assert not await b.js("document.querySelector('[data-call=screen]').disabled")
+        elif scenario=='screen_native_stop':
+            await b.js("document.querySelector('[data-call=screen]').click()")
+            await b.until("__logs.includes('screen:true')")
+            await b.js("__room.localParticipant.isScreenShareEnabled=false;__room.handlers.get('local-unpublished')()")
+            assert await b.js("document.querySelector('[data-call=screen]').textContent")=='Share screen'
         elif scenario=='terminal':
             await b.js("__room.handlers.get('disconnected')()")
             await b.until("__logs.includes('terminate')")
