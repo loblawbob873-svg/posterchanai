@@ -27028,8 +27028,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       const original=verifyPinProof(proof,channelId);if(!original||seen.has(original.id)||folded.banned.has(original.pubkey))continue;seen.add(original.id);
       if(opened.some(e=>e.kind===5&&e.author===original.pubkey&&e.tags.some(t=>t[0]==='e'&&t[1]===original.id)))continue;
       let edit=proof.edit&&verifyPinProof(proof.edit,channelId,[3302]);
-      if(edit&&(edit.pubkey!==original.pubkey||!edit.tags.some(t=>t[0]==='e'&&t[1]===original.id)))edit=null;
-      for(const local of opened.filter(e=>e.kind===3302&&e.author===original.pubkey&&e.tags.some(t=>t[0]==='e'&&t[1]===original.id))){if(!edit||local.ms>edit.ms)edit={content:local.content,ms:local.ms};}
+      if(edit&&(edit.pubkey!==original.pubkey||eTargetOf(edit)!==original.id))edit=null;
+      for(const local of opened.filter(e=>e.kind===3302&&e.author===original.pubkey&&eTargetOf(e)===original.id)){if(!edit||local.ms>edit.ms)edit={content:local.content,ms:local.ms};}
       entries.push({id:original.id,pubkey:original.pubkey,content:edit?edit.content:original.content,edited:!!edit,proof});
     }
     return {available:true,entries,version:head.version.toString(),bytes:utf8Len(head.content)};
@@ -27042,7 +27042,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   async function createPinListWrap(bundle,wraps,channelId,entries,pubkey,signEvent) {
     requireActiveMembership(bundle,channelId);
     const {community,groups,folded,channels}=control(bundle,wraps),channel=channels.find(c=>c.idHex===channelId),state=inspectPinList(bundle,wraps,channelId);
-    if(!state.available||!channel||folded.channels.get(channelId)?.deleted)throw new Error('pin list history is unavailable; refusing to overwrite it');
+    if(!state.available||!channel?.current||folded.channels.get(channelId)?.deleted)throw new Error('pin list history is unavailable; refusing to overwrite it');
     if(pubkey!==community.owner&&!rolesOf(folded.roster,pubkey).some(r=>permsContain(r.permissions,Permissions.PIN_MESSAGES)&&(r.scope.kind==='server'||r.scope.channelId===channelId)))throw new Error('pin permission is required for this channel');
     const authority=controlWriteAuthority(community,folded,pubkey,Permissions.PIN_MESSAGES,'pin messages');
     if(!Array.isArray(entries)||entries.length>25||entries.some(p=>!verifyPinProof(p,channelId)))throw new Error('invalid pin entries');
