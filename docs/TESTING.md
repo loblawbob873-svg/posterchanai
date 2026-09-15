@@ -29,7 +29,10 @@ required. The gate also checks reminder history retention in the API and client 
 startup, account isolation, stale deliveries and changes to the configured history window.
 Real Chrome checks open the desktop notification centre, preserve unread acknowledgement across
 offline reloads, follow Calendar links, update open shell/native panels after delayed history
-responses, and preserve focus and scroll. Coordinate clicks distinguish an author from their post.
+responses, and preserve focus and scroll. Coordinate clicks distinguish an author from their post, including an update arriving between
+mouse-down and mouse-up. Releasing outside the row must update the panel without opening anything.
+Browser startup checks cover delayed DevTools discovery with a bounded retry; UI actions and
+assertions are never retried to hide a failure.
 The API checks load the shipped router and models with isolated database metadata and deny
 production connections, so the same coverage runs in the minimal desktop build environment.
 The gate is a fast minimum; continue running the broader suites appropriate to a change.

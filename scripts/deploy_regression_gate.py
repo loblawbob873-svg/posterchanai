@@ -51,6 +51,7 @@ TESTS = (
     'tests/client/test_calendar_default_and_move_full_app.py',
     'tests/client/test_files_follow_theme.py',
     'tests/client/test_browser_startup_diagnostics.py',
+    'tests/client/test_browser_devtools_readiness.py',
     'tests/client/test_desktop_offline_full_app.py::test_failed_browser_check_still_closes_chrome_before_removing_profile',
     'tests/client/test_desktop_offline_full_app.py::test_start_keyboard_result_survives_refresh_and_has_visible_focus',
     'tests/client/test_saved_theme_reaches_open_files.py',
