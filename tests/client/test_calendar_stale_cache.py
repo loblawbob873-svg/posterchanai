@@ -89,3 +89,14 @@ pushed.resolve();await pending;
 assert.equal(loads,0,'a stale native widget completion started another network load');
 """)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_return_visit_refreshes_pending_badge_without_replacing_loaded_calendar():
+    result = _run(r"""
+S.ready=true;S.cals=[{id:'current'}];
+const pending=loadCached();queue.resolve([{uid:'one'},{uid:'two'}]);await pending;
+assert.equal(S.queued,2,'return visit kept an outdated offline queue count');
+assert.deepEqual(S.cals,[{id:'current'}]);assert.deepEqual(reads,[['queue','alice']]);
+assert.equal(pictures.length,0,'loaded calendar was replaced by a cache repaint');
+""")
+    assert result.returncode == 0, result.stdout + result.stderr

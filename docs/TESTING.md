@@ -344,6 +344,12 @@ push a stale home-screen widget or start an abandoned refresh. Positive controls
 current cached appointments and queued-write counts still appear. The tests execute the shipped
 functions with explicitly resolved promises, without network requests or timing thresholds.
 
+`tests/client/test_calendar_queue_ownership.py` also pauses offline writes at queue-read,
+authentication, request and persistence boundaries. An account switch must preserve the original
+owner's pending appointments and leave the new account's queue and badge alone. Flushes stop before
+sending another account's data; interrupted writes remain retryable. Runtime controls verify edit
+replacement, permanent refusal reporting, temporary failure retention and structured HTTP errors.
+
 ## Known standing state
 
 - `check_css_scale` passes on the current stylesheet. It remains an **advisory** design-scale lint;

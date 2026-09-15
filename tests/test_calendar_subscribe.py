@@ -128,15 +128,6 @@ def test_the_router_marks_it_so_the_client_can_offer_a_choice():
     assert "d.certificate" in js and "Subscribe anyway" in js
 
 
-def test_a_structured_detail_survives_the_client_error_wrapper():
-    """`new Error(anObject)` stringifies to "[object Object]" and drops the flag entirely — the
-    certificate branch above would be a branch that could never run."""
-    js = (ROOT / "static" / "js" / "client" / "calendar.js").read_text(encoding="utf-8")
-    i = js.index("async function api(path, opts)")
-    body = js[i:i + 1400]
-    assert "e.detail = d;" in body, "the client throws away a structured error detail"
-
-
 def test_the_opt_in_is_stored_per_feed_and_not_globally():
     src = (ROOT / "app" / "services" / "caldav_subscribe.py").read_text(encoding="utf-8")
     assert "insecure=bool(sub.get(\"insecure\"))" in src, (
@@ -317,13 +308,3 @@ def test_a_write_the_server_later_refuses_is_not_dropped_in_silence():
     body = js[i:i + 2000]
     assert "refused.push(op)" in body, "a refused write vanishes"
     assert "refused by the server" in body, "nothing tells the person it was dropped"
-
-
-def test_the_pending_badge_is_right_on_a_return_visit():
-    """It is about the QUEUE, not the snapshot — so reading it after the "live data is already here"
-    early return means it is only ever right on the first entry of a session."""
-    js = (ROOT / "static" / "js" / "client" / "calendar.js").read_text(encoding="utf-8")
-    i = js.index("async function loadCached(){")
-    body = js[i:i + 900]
-    assert body.index("CalQueue.read()") < body.index("if(S.ready || S.cals.length) return false;"), (
-        "the queue depth is read after the early return")

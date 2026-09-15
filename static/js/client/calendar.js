@@ -47,8 +47,11 @@
       ? (document.scrollingElement || document.documentElement) : $('#feed');
 
     // ---- server ------------------------------------------------------------------------------
-    async function api(path, opts){
+    async function api(path, opts, expectedOwner){
+      const current = () => expectedOwner === undefined || expectedOwner === owner();
+      if(!current()) throw new Error('calendar account changed before delivery');
       try{ await ensureAiSession(); }catch(_){}
+      if(!current()) throw new Error('calendar account changed before delivery');
       const r = await authFetch(path, opts);
       let body = null;
       try{ body = await r.json(); }catch(_){}
@@ -72,8 +75,8 @@
     const subOf = (c) => (c && c.subscribe && c.subscribe.url) ? c.subscribe : null;
     const jpost = (p, o) => api(p, { method:'POST', headers:{'Content-Type':'application/json'},
                                      body: JSON.stringify(o||{}) });
-    const jput = (p, o) => api(p, { method:'PUT', headers:{'Content-Type':'application/json'},
-                                    body: JSON.stringify(o||{}) });
+    const jput = (p, o, expectedOwner) => api(p, { method:'PUT', headers:{'Content-Type':'application/json'},
+                                    body: JSON.stringify(o||{}) }, expectedOwner);
 
     // ---- dates -------------------------------------------------------------------------------
     const pad = n => String(n).padStart(2, '0');
@@ -439,7 +442,7 @@
           tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
         });
       },
-      _key(which){ const me = owner(); return me ? which + ':' + me : ''; },
+      _key(which, me = owner()){ return me ? which + ':' + me : ''; },
       async save(cals, items){
         const key = this._key('snapshot'); if(!key) return;
         try{ await this._tx('readwrite', st => st.put({ cals, items, at: Date.now() }, key)); }
@@ -453,9 +456,9 @@
       async clear(){ const key=this._key('snapshot'); if(!key)return;
         try{ await this._tx('readwrite', st => st.delete(key)); }catch(_){} },
       // The pending WRITES, kept beside the snapshot in the same store — one database, one upgrade.
-      async saveQ(q){ const key=this._key('queue'); if(!key)return;
+      async saveQ(q, mine = owner()){ const key=this._key('queue', mine); if(!key)return;
         try{ await this._tx('readwrite', st => st.put(q, key)); }catch(_){} },
-      async readQ(){ const key=this._key('queue'); if(!key)return [];
+      async readQ(mine = owner()){ const key=this._key('queue', mine); if(!key)return [];
         try{ return await this._tx('readonly', st => st.get(key)); }catch(_){ return []; } },
     };
 
@@ -476,38 +479,49 @@
      * nothing else can tell the client it is stale, while the calendar's server answer is the truth
      * and the next load overwrites everything anyway. */
     const CalQueue = {
-      async read(){ const s = await CalCache.readQ(); return Array.isArray(s) ? s : []; },
+      async read(mine = owner()){ const s = await CalCache.readQ(mine); return Array.isArray(s) ? s : []; },
       async add(op){
-        const q = await this.read();
+        // The operation belongs to whoever created it, even if IndexedDB finishes after switching
+        // accounts. Pin its durable key before awaiting; update only that account's visible badge.
+        const mine = owner(); if(!mine) return;
+        const q = await this.read(mine);
         // One entry per (op, cal, uid): editing the same event five times offline should send once.
         const key = (x) => x.op + '|' + x.cal + '|' + x.uid;
         const out = q.filter(x => key(x) !== key(op));
         out.push(op);
-        await CalCache.saveQ(out.slice(-500));
-        S.queued = out.length;
+        await CalCache.saveQ(out.slice(-500), mine);
+        if(mine === owner()) S.queued = out.length;
       },
       async flush(){
-        const q = await this.read();
+        const mine = owner(); if(!mine) return 0;
+        const q = await this.read(mine);
+        if(mine !== owner()) return 0;
         if(!q.length) return 0;
         const left = [], refused = [];
         let sent = 0;
         for(const op of q){
+          if(mine !== owner()) return sent;
           try{
             if(op.op === 'del'){
               await api(`/api/calendar/items?cal=${encodeURIComponent(op.cal)}&uid=${encodeURIComponent(op.uid)}`,
-                        { method:'DELETE' });
+                        { method:'DELETE' }, mine);
             }else{
-              await jput('/api/calendar/items', { cal: op.cal, uid: op.uid, ics: op.ics });
+              await jput('/api/calendar/items', { cal: op.cal, uid: op.uid, ics: op.ics }, mine);
             }
             sent++;
           }catch(err){
+            if(mine !== owner()) return sent;
             // A 4xx is the server REFUSING it — replaying that for ever is a queue that never drains
             // and an error that is never seen. Only a transport failure is worth keeping.
             if(err && err.status && err.status < 500){ refused.push(op); continue; }
             left.push(op);
           }
         }
-        await CalCache.saveQ(left);
+        // Keep the original queue on interruption. Retrying an already-sent operation is
+        // idempotent; dropping a not-yet-sent appointment or draining the next account is not.
+        if(mine !== owner()) return sent;
+        await CalCache.saveQ(left, mine);
+        if(mine !== owner()) return sent;
         S.queued = left.length;
         /* A REFUSED write has to be said out loud. The person was told "saved on this device — it
          * will sync when you are back online", and dropping it quietly makes that a lie they find
