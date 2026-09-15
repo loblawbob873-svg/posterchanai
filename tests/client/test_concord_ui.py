@@ -192,7 +192,7 @@ def test_concord_has_honest_creation_and_public_discovery_empty_states():
     assert 'Create a public community' in CONCORD
     assert 'window.PosterCord.createCommunity' in CONCORD
     assert 'p.relayPublishRoom(relays,ev,' in CONCORD
-    assert "await p.publish(1,`${name}" in CONCORD
+    assert "const announcement=await creator.sign({kind:1," in CONCORD
     assert 'id="cc-publish-listing"' in CONCORD and 'DISCOVER_RELAYS' in CONCORD
     assert 'p.relayPublishTo(CORD_RELAYS,ev)' in CONCORD
     assert 'No public communities found' in CONCORD
