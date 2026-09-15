@@ -144,7 +144,7 @@ def test_the_bridge_opens_a_real_community_and_speaks_in_it():
       opts.signEvent=signEvent;
       const made=await cord.PosterCord.createCommunity(opts);
       const bundle={community_id:made.communityId,owner:pk,owner_salt:made.secrets.ownerSalt,
-        community_root:made.secrets.root,root_epoch:0,channels:[],
+        community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],
         relays:['wss://relay.example'],name:'bot room',creator_npub:pk};
       const wraps=made.events.filter(e=>e.kind===1059);
       const nsec=NT.nip19.nsecEncode(sk);

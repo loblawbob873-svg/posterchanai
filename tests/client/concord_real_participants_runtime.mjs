@@ -4,7 +4,7 @@ const load=(path,name)=>vm.runInThisContext(fs.readFileSync(new URL(path,import.
 load('../../static/vendor/nostr/nostr.bundle.js','NostrTools');load('../../static/js/client/cord-protocol.js','PosterCord');load('../../static/js/client/cord-reader.js','PosterCordReader');
 const secret=Uint8Array.from({length:32},(_,i)=>i+1),owner=NostrTools.getPublicKey(secret),signEvent=async e=>NostrTools.finalizeEvent(e,secret);
 const made=await PosterCord.createCommunity({name:'Synthetic membership fixture',owner,relays:['wss://relay.example'],base:'https://example.test',signEvent});
-const bundle={community_id:made.communityId,owner,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,root_epoch:0,channels:[],relays:['wss://relay.example'],name:'Fixture'};
+const bundle={community_id:made.communityId,owner,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays:['wss://relay.example'],name:'Fixture'};
 const controls=made.events.slice(0,2);const control=PosterCordReader.inspectControl(bundle,controls),groups=[...control.controlPubkeys,...control.channels.flatMap(c=>c.streamPubkeys)];
 assert.equal(groups.length,2,'real seed exposes a control group and a public chat group');
 const code=fs.readFileSync(process.env.PC_CONCORD_SOURCE||new URL('../../static/js/client/concord.js',import.meta.url),'utf8');

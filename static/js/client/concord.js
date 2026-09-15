@@ -1633,12 +1633,10 @@
     const filter=[{kinds:[33301],authors:[parsed.linkSigner],'#d':[''],limit:100}];
     const relays=[...new Set([...(parsed&&parsed.bootstrapRelays||[]),...CORD_RELAYS])];
     const [pool,external]=await Promise.all([p.relayQuery?p.relayQuery(filter,8000):[],p.relayQueryFrom(relays,filter,{timeout:10000,max:200,signal,purpose:'concord explicit invite',allowBlocked:true,failureCooldown:1800000})]);
-    /* A link signer may issue many bundles with the same replaceable d-tag. The invite fragment opens
-       exactly one of them, which is not necessarily the newest. Try every relay result instead of
-       handing openInvite the set (whose legacy implementation picked index zero). */
-    const candidates=[...(pool||[]),...(external||[])].filter((ev,i,a)=>ev&&a.findIndex(x=>x&&x.id===ev.id)===i).sort((a,b)=>Number(b.created_at)-Number(a.created_at));
-    let opened,lastError; for(const ev of candidates){ try{ opened=decoded(url,[ev]); break; }catch(e){ lastError=e; } }
-    if(!opened)throw lastError||new Error('invite bundle was not found on its bootstrap relays');
+    // Resolve the signed addressable coordinate once. A revoked/newer bundle must never
+    // fall back to an older live copy; unsigned relay garbage cannot replace a signed one.
+    const candidates=[...(pool||[]),...(external||[])].filter((ev,i,a)=>ev&&a.findIndex(x=>x&&x.id===ev.id)===i);
+    const opened=decoded(url,candidates,{forJoin:false});
     const bundle=opened.bundle;
     /* `community_id` is the durable key used by Armada's 13302 membership vault.  Keeping it only
      * inside `cord.bundle` made persistArmadaMembership() return false, so an apparently successful
@@ -3053,7 +3051,7 @@
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
     const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
     const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:location.origin,signEvent:p.signTemplate});
-    const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
+    const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
     const plane=cordPlaneContext(p,bundle,made.events.filter(ev=>ev.kind===1059));
     for(const ev of made.events){
       if(deliveryOwner(p)!==viewer.pubkey)throw new Error('creating account changed');
@@ -3528,7 +3526,7 @@
      * the community, shows what it is, and waits. `acceptInvite` below is the join half, unchanged
      * except that it is reached by a deliberate press. */
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw); pendingInvite={url:raw,room}; render(); }catch(e){ go.disabled=false; p.toast('could not read that invite: '+(e&&e.message||e)); } };
-    const acceptInvite=async(raw,room)=>{ const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
+    const acceptInvite=async(raw,room)=>{ if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
       /* Joining is already the user's request to enter this room.  Waiting for a later channel click
        * left the placeholder #general on screen with no id, icon or history, so a successful Armada
        * invite looked like an empty broken community until somebody switched away and back. */

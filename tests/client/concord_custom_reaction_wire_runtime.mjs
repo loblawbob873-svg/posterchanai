@@ -18,7 +18,7 @@ const made=await PosterCord.createCommunity({
 });
 const bundle={
   community_id:made.communityId, owner, owner_salt:made.secrets.ownerSalt,
-  community_root:made.secrets.root, root_epoch:0, channels:[],
+  community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot, root_epoch:0, channels:[],
   relays:['wss://relay.example'], name:'Encrypted reaction fixture',
 };
 const controls=made.events.slice(0,2);

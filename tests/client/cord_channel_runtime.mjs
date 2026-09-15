@@ -69,7 +69,7 @@ export async function community() {
   opts.signEvent = signEvent;
   const made = await cord.PosterCord.createCommunity(opts);
   const bundle = toCord({ community_id: made.communityId, owner: pk,
-    owner_salt: made.secrets.ownerSalt, community_root: made.secrets.root, root_epoch: 0,
+    owner_salt: made.secrets.ownerSalt, community_root: made.secrets.root, control_pk: made.secrets.controlPk, control_root: made.secrets.controlRoot, root_epoch: 0,
     channels: [], relays: ['wss://relay.example'], name: 'probe', creator_npub: pk });
   let wraps = made.events.filter((e) => e.kind === 1059);
 

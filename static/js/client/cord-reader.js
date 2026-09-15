@@ -9348,6 +9348,9 @@ var PosterCordReader = (() => {
   var pc_cord_reader_exports = {};
   __export(pc_cord_reader_exports, {
     createBanWrap: () => createBanWrap,
+    createCommunity: () => createCommunity,
+    validateInviteBundle: () => validateInviteBundle,
+    openInviteBundle: () => openInviteBundle,
     createChatWrap: () => createChatWrap,
     createPlaneAuth: () => createPlaneAuth,
     createWebxdcWrap: () => createWebxdcWrap,
@@ -25123,6 +25126,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
     return encrypt(plaintext, convKey);
   }
+  function decryptChecked(payload, convKey) {
+    const plaintext=decrypt(payload,convKey);
+    if(utf8Len(plaintext)>NIP44_MAX_PLAINTEXT)throw new StreamError("oversize","plaintext exceeds the NIP-44 65,535-byte cap");
+    return plaintext;
+  }
   function buildRumor(opts) {
     const tags = [...opts.tags ?? []];
     let createdAt;
@@ -25192,7 +25200,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
     let seal;
     try {
-      seal = JSON.parse(decrypt(wrap2.content, stream.convKey));
+      seal = JSON.parse(decryptChecked(wrap2.content, stream.convKey));
     } catch (e) {
       throw new StreamError("decrypt", `wrap decrypt: ${e instanceof Error ? e.message : e}`);
     }
@@ -25204,7 +25212,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
     let rumor;
     try {
-      const json2 = seal.kind === KIND_SEAL_ENCRYPTED ? decrypt(seal.content, stream.convKey) : seal.content;
+      const json2 = seal.kind === KIND_SEAL_ENCRYPTED ? decryptChecked(seal.content, stream.convKey) : seal.content;
       rumor = JSON.parse(json2);
     } catch (e) {
       throw new StreamError(
@@ -26635,6 +26643,52 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   // pc-cord-reader.ts
+  function validateInviteBundle(input, {forJoin=false,now=Date.now()}={}) {
+    if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('invalid Concord invite bundle');
+    // Bound attacker-controlled arrays before copying or deriving any per-channel material.
+    if(!Array.isArray(input.channels)||input.channels.length>256)throw new Error('invite has too many or invalid channels');
+    const hex=(value,label)=>{if(typeof value!=='string'||!/^[0-9a-f]{64}$/.test(value))throw new Error('invalid invite '+label);return value;};
+    const epoch=(value,label)=>{if(!Number.isSafeInteger(value)||value<0)throw new Error('invalid invite '+label);return value;};
+    for(const field of ['community_id','owner','owner_salt','community_root'])hex(input[field],field);
+    epoch(input.root_epoch,'root epoch');
+    if(!verifyCommunityId(input.community_id,input.owner,input.owner_salt))throw new Error('invite owner commitment does not match');
+    if(input.control_pk!==undefined)hex(input.control_pk,'control signer');
+    if(input.control_root!==undefined){hex(input.control_root,'control root');if(!input.control_pk)throw new Error('control root requires its signer pubkey');
+      if(groupKeyCached('concord/control-signer',hex32(input.control_root),hex32(input.community_id),BigInt(input.root_epoch)).pk!==input.control_pk)throw new Error('invite control signer key mismatch');}
+    if(input.expires_at!==undefined&&(!Number.isSafeInteger(input.expires_at)||input.expires_at<0))throw new Error('invalid invite expiry');
+    if(forJoin&&input.expires_at!==undefined&&now>=input.expires_at)throw new Error('this invite has expired');
+    const channels=input.channels.map(ch=>{if(!ch||typeof ch!=='object')throw new Error('invalid invite channel');hex(ch.id,'channel id');hex(ch.key,'channel key');epoch(ch.epoch,'channel epoch');return {...ch};});
+    const relays=capRelays(Array.isArray(input.relays)?input.relays:[]);
+    return {...input,channels,relays};
+  }
+  async function createCommunity(opts,legacyCreate) {
+    if(typeof opts.name!=='string'||!opts.name.trim()||utf8Len(opts.name)>NAME_MAX_BYTES)throw new Error('community name must be 1–64 UTF-8 bytes');
+    if(opts.description!==undefined&&(typeof opts.description!=='string'||utf8Len(opts.description)>DESCRIPTION_MAX_BYTES))throw new Error('community description is too long');
+    const made=await legacyCreate(opts),controlRoot=randomBytes(32),id=hex32(made.communityId),root=hex32(made.secrets.root);
+    const read=controlGroupKey(root,id,0n),signer=groupKeyCached('concord/control-signer',controlRoot,id,0n),stream={pk:signer.pk,sk:signer.sk,convKey:read.convKey};
+    const token=hexToBytes2(made.secrets.token),bundleKey=hkdf32(token,buildInfo('concord/invite-key',ZERO32));
+    const events=made.events.map(event=>{
+      if(event.kind===1059){const opened=openWrap(event,read);if(opened.sealKind!==20014)throw new Error('invalid genesis seal');return wrapSeal(opened.seal,stream);}
+      if(event.kind===33301){const bundle=validateInviteBundle({...JSON.parse(decryptChecked(event.content,bundleKey)),control_pk:signer.pk});
+        return finalizeEvent2({kind:33301,created_at:event.created_at,tags:event.tags,content:encryptChecked(bundleKey,JSON.stringify(bundle))},hex32(made.secrets.linkSignerSk));}
+      return event;
+    });
+    return {...made,events,secrets:{...made.secrets,controlRoot:bytesToHex2(controlRoot),controlPk:signer.pk}};
+  }
+  function openInviteBundle(url,events,details,options={}) {
+    const candidates=(events||[]).filter(event=>event?.kind===33301&&event.pubkey===details.linkSigner&&
+      event.tags?.filter(tag=>tag[0]==='d').length===1&&event.tags.find(tag=>tag[0]==='d')[1]===''&&verifyEvent2(JSON.parse(JSON.stringify(event))));
+    candidates.sort((a,b)=>b.created_at-a.created_at||(a.id<b.id?-1:a.id>b.id?1:0));
+    const event=candidates[0];if(!event)throw new Error('invite bundle was not found on its relays');
+    const markers=event.tags.filter(tag=>tag[0]==='vsk');if(markers.length!==1)throw new Error('invalid invite marker');
+    if(markers[0][1]==='9')throw new Error('this invite link has been revoked');
+    if(markers[0][1]!=='6')throw new Error('unknown invite bundle marker');
+    const fragment=String(url).split('#')[1]||'',raw=atob(fragment.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(fragment.length/4)*4,'='));
+    if(raw.length<18||raw.charCodeAt(0)!==4)throw new Error('invalid invite fragment');
+    const token=Uint8Array.from(raw.slice(-16),c=>c.charCodeAt(0)),bundleKey=hkdf32(token,buildInfo('concord/invite-key',ZERO32));
+    const bundle=validateInviteBundle(JSON.parse(decryptChecked(event.content,bundleKey)),options);
+    return {parsed:details,bundle};
+  }
   function runtime(bundle) {
     const community = rehydrateCommunity({ community_id: bundle.community_id, seed: bundle, current: bundle, added_at: 0 });
     if (!community) throw new Error("invalid Concord join material");
@@ -26805,7 +26859,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const version2 = head ? head.version + 1n : 1n, prevHash = head ? head.hash : void 0;
     const priorMetadata = folded.headEditions.get(entityHex);
     const priorBody = priorMetadata ? JSON.parse(priorMetadata.content) : {};
-    const body = { ...priorBody, name: String(metadata && metadata.name || community.name).slice(0, 64), description: String(metadata && metadata.description || "").slice(0, 1000), relays: priorBody.relays ?? community.relays };
+    const name=String(metadata?.name ?? priorBody.name ?? community.name),description=String(metadata?.description ?? priorBody.description ?? "");
+    if(!name.trim()||utf8Len(name)>NAME_MAX_BYTES)throw new Error("community name must be 1–64 UTF-8 bytes");
+    if(utf8Len(description)>DESCRIPTION_MAX_BYTES)throw new Error("community description is too long");
+    const body = { ...priorBody, name, description, relays: priorBody.relays ?? community.relays };
     if (metadata && metadata.icon) body.picture = String(metadata.icon).slice(0, 2048);
     const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()]];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);

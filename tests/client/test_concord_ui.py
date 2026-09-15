@@ -485,8 +485,8 @@ def test_concord_standard_controls_are_wired_not_decorative():
     assert 'refreshing room channels and history' not in CONCORD
     assert 'kinds:[33301]' in CONCORD
     assert "'#d':[''],limit:100" in CONCORD and 'max:200' in CONCORD
-    assert 'for(const ev of candidates)' in CONCORD
-    assert "opened=decoded(url,[ev])" in CONCORD
+    # The independently signed invite test covers newest-coordinate revocation and no rollback.
+    assert 'opened=decoded(url,candidates,{forJoin:false})' in CONCORD
     assert 'kinds:[13302]' in CONCORD and 'kinds:[33302]' in CONCORD and 'syncArmadaMemberships(p,viewer)' in CONCORD
     assert 'window.PosterCordReader' in CONCORD and 'hydrateRoomStreams(p,joined)' in CONCORD
     assert 'kinds:[1059]' in CONCORD and 'reader.inspectChat' in CONCORD

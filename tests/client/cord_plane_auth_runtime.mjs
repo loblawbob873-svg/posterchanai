@@ -4,7 +4,7 @@ Object.defineProperty(globalThis,'navigator',{value:{onLine:true}});
 for(const [path,name] of [['../../static/vendor/nostr/nostr.bundle.js','NostrTools'],['../../static/js/client/cord-protocol.js','PosterCord'],['../../static/js/client/cord-reader.js','PosterCordReader']])vm.runInThisContext(fs.readFileSync(new URL(path,import.meta.url),'utf8')+`\nglobalThis.${name}=${name};`);
 const secret=Uint8Array.from({length:32},(_,i)=>i+1),user=NostrTools.getPublicKey(secret),signEvent=async e=>NostrTools.finalizeEvent(e,secret),url='wss://plane.fixture';
 const made=await PosterCord.createCommunity({name:'Plane AUTH fixture',owner:user,relays:[url],base:'https://fixture.test',signEvent});
-const bundle={community_id:made.communityId,owner:user,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,root_epoch:0,channels:[],relays:[url]},controls=made.events.slice(0,2),info=PosterCordReader.inspectControl(bundle,controls),channel=info.channels[0];
+const bundle={community_id:made.communityId,owner:user,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays:[url]},controls=made.events.slice(0,2),info=PosterCordReader.inspectControl(bundle,controls),channel=info.channels[0];
 const note=await PosterCordReader.createChatWrap(bundle,controls,channel.id,'synthetic private fixture',user,signEvent);
 let owner=user,rooms=[{communityId:made.communityId,cord:{bundle},channels:[channel]}];
 class Socket{

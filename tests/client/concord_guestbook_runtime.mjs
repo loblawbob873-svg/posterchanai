@@ -7,7 +7,7 @@ vm.runInThisContext(source+'\nglobalThis.reader=PosterCordReader;');
 assert.equal(fixture.groupKeyCached('concord/guestbook',Uint8Array.from({length:32},(_,i)=>i),Uint8Array.from({length:32},(_,i)=>255-i),0n).pk,'ad09de582026fa7a052db18bb5827fa24c15e929d59aadcc91efb8508f5368ad','official Vector cross-implementation guestbook key');
 const keys=[3,4,5].map(n=>new Uint8Array(32).fill(n)),[owner,member,other]=keys.map(k=>NostrTools.getPublicKey(k)),signEvent=async e=>NostrTools.finalizeEvent(e,keys[0]);
 const made=await PosterCord.createCommunity({name:'Guestbook',owner,relays:['wss://example.test'],base:'https://example.test',signEvent});
-const base={community_id:made.communityId,owner,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,root_epoch:0,channels:[],relays:['wss://example.test'],name:'Guestbook'},now=1700001000000,t=now-10000;
+const base={community_id:made.communityId,owner,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays:['wss://example.test'],name:'Guestbook'},now=1700001000000,t=now-10000;
 async function wrap(bundle,{kind=3306,content='join',key=keys[1],ms=t,tags=[],sealKind=20013}={}){const group=fixture.guestbookGroups(bundle)[0],rumor=fixture.buildRumor({kind,content,pubkey:NostrTools.getPublicKey(key),ms,tags}),seal=await fixture.sealRumor(rumor,sealKind,group,{signEvent:async e=>NostrTools.finalizeEvent(e,key)});return fixture.wrapSeal(seal,group);}
 const project=(bundle,wraps,observed=[])=>reader.inspectGuestbook(bundle,[],wraps,observed,now).members;
 const join=await wrap(base),leave=await wrap(base,{content:'leave',ms:t+1});
@@ -24,7 +24,7 @@ assert(project(base,[join,await wrap(base,{kind:3309,content:'',key:keys[2],ms:t
 assert(project(base,[join,await wrap(base,{kind:3309,content:'',key:keys[0],ms:t+1,tags:[['p',member],['p',other]]})]).includes(member),'duplicate kick target rejected');
 const snapArgs={kind:3312,content:JSON.stringify([member]),key:keys[0],tags:[['snap','a'.repeat(64),'1','1']]};
 assert.deepEqual(project(base,[await wrap(base,snapArgs)]),[owner],'epoch zero owner snapshot rejected');
-const epoch1={...base,root_epoch:1,refounder:other};
+const epoch1={...base,root_epoch:1,refounder:other,control_pk:fixture.groupKeyCached("concord/control-signer",fixture.hex32(base.control_root),fixture.hex32(base.community_id),1n).pk};
 assert(project(epoch1,[await wrap(epoch1,snapArgs)]).includes(member),'community-bound owner fallback for nonzero epoch');
 assert.deepEqual(project(epoch1,[await wrap(epoch1,{...snapArgs,key:keys[2]})]),[owner],'raw invite refounder cannot authorize roster');
 assert.deepEqual(project(epoch1,[await wrap(epoch1,{...snapArgs,tags:[...snapArgs.tags,...snapArgs.tags]})]),[owner],'duplicate snapshot tag rejected');

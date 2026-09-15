@@ -6,7 +6,7 @@ load('../../static/vendor/nostr/nostr.bundle.js','NostrTools');load('../../stati
 const secret=Uint8Array.from({length:32},(_,i)=>i+1),owner=NostrTools.getPublicKey(secret),signEvent=async e=>NostrTools.finalizeEvent(e,secret);
 const otherSecret=Uint8Array.from({length:32},(_,i)=>i+2),other=NostrTools.getPublicKey(otherSecret),otherSign=async e=>NostrTools.finalizeEvent(e,otherSecret);
 const made=await PosterCord.createCommunity({name:'Incremental fixture',owner,relays:['wss://relay.example'],base:'https://example.test',signEvent});
-const bundle={community_id:made.communityId,owner,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,root_epoch:0,channels:[],relays:['wss://relay.example']},controls=made.events.slice(0,2),channel=PosterCordReader.inspectControl(bundle,controls).channels[0],room={communityId:made.communityId};
+const bundle={community_id:made.communityId,owner,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays:['wss://relay.example']},controls=made.events.slice(0,2),channel=PosterCordReader.inspectControl(bundle,controls).channels[0],room={communityId:made.communityId};
 const create=(text,tags=[],kind=9,pk=owner,sign=signEvent)=>PosterCordReader.createChatWrap(bundle,controls,channel.id,text,pk,sign,tags,kind);
 const message=await create('same body'),sameBody=await create('same body',[],9,other,otherSign),reaction=await create('+',[['e',message.rumorId]],7),secondReaction=await create('❤️',[['e',message.rumorId]],7,other,otherSign);
 let rows=[],envelopes=[];
