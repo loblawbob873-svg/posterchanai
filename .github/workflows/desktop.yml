@@ -239,7 +239,7 @@ jobs:
           timeout --kill-after=5s 120s node desktop/node_modules/electron/install.js
           test -x desktop/node_modules/electron/dist/electron
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv default-jdk-headless squashfs-tools
+          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 python3-venv default-jdk-headless squashfs-tools pulseaudio pulseaudio-utils
           python3 -m venv "$RUNNER_TEMP/native-ipc-venv"
           "$RUNNER_TEMP/native-ipc-venv/bin/pip" install -r scripts/deploy-regression-requirements.txt
           test -x /opt/google/chrome/chrome
