@@ -783,8 +783,12 @@ updateOS() {
 	/usr/bin/emerge --sync || return $?
 	prepareUpdateDependencies || return $?
 	/usr/bin/emerge -uDN @world || return $?
+	# Rebuild consumers of preserved library ABIs before removing unused packages.
+	/usr/bin/emerge @preserved-rebuild || return $?
 	/usr/bin/emerge -c || return $?
-	bootloader
+	# Distribution-kernel package hooks maintain boot artifacts during the merge.
+	# bootloader() provisions installs: it deletes entries and rotates the disk key.
+	# A routine upgrade must retain the existing boot configuration and LUKS keys.
 }
 
 configurePortage() {

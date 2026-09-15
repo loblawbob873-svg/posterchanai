@@ -1,4 +1,4 @@
-"""A failed OS update must not proceed to cleanup or rewrite the bootloader."""
+"""Run routine updates in Bash: stop on failure and never reprovision the boot chain."""
 import os
 from pathlib import Path
 import subprocess
@@ -8,13 +8,17 @@ import pytest
 SOURCE = Path(__file__).resolve().parents[1] / 'os/gentoo.sh'
 
 
+STEPS = ['emerge --sync', 'policy', 'emerge -uDN @world',
+         'emerge @preserved-rebuild', 'emerge -c']
+
+
 @pytest.mark.parametrize('failure,expected', [
-    ('--sync', ['emerge --sync']),
-    ('policy', ['emerge --sync', 'policy']),
-    ('-uDN', ['emerge --sync', 'policy', 'emerge -uDN @world']),
-    ('-c', ['emerge --sync', 'policy', 'emerge -uDN @world', 'emerge -c']),
-    ('bootloader', ['emerge --sync', 'policy', 'emerge -uDN @world', 'emerge -c', 'bootloader']),
-    ('', ['emerge --sync', 'policy', 'emerge -uDN @world', 'emerge -c', 'bootloader']),
+    ('--sync', STEPS[:1]),
+    ('policy', STEPS[:2]),
+    ('-uDN', STEPS[:3]),
+    ('@preserved-rebuild', STEPS[:4]),
+    ('-c', STEPS),
+    ('', STEPS),
 ])
 def test_update_stops_at_the_first_failed_step(failure, expected):
     source = SOURCE.read_text()
@@ -32,8 +36,12 @@ prepareUpdateDependencies() {
   if [ "$FAIL_STEP" = policy ]; then return 23; fi
 }
 bootloader() {
-  echo bootloader
-  if [ "$FAIL_STEP" = bootloader ]; then return 23; fi
+  echo "ERROR: installer bootloader called" >&2
+  return 99
+}
+decryptBoot() {
+  echo "ERROR: disk key rotation called" >&2
+  return 99
 }
 '''
     result = subprocess.run(['bash', '-c', stubs + function + '\nupdateOS\n'],
@@ -41,3 +49,4 @@ bootloader() {
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == (23 if failure else 0), result.stdout + result.stderr
     assert result.stdout.splitlines() == expected
+    assert result.stderr == ""
