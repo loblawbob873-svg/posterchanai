@@ -41,12 +41,11 @@ def test_mobile_tap_opens_profile_but_long_press_keeps_context_actions():
 
 
 def test_delayed_ban_updates_the_original_room_not_whichever_room_is_active_later():
-    handler = JS.split('const banMember=async target=>', 1)[1].split('const closeMemberMenu', 1)[0]
-    assert 'roomId=roomIdentity(room)' in handler
-    assert 'const latest=saved()' in handler
-    assert 'latest.findIndex(item=>roomIdentity(item)===roomId)' in handler
-    assert 'latest[roomIndex].banned=made.banned' in handler
-    assert 'rooms[state.community]=room' not in handler
+    import subprocess
+    result = subprocess.run(['node', 'tests/client/concord_rekey_runtime.mjs'], cwd=ROOT,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'refounding stays bound to original account and room' in result.stdout
 
 
 def test_member_menu_can_open_a_direct_message():

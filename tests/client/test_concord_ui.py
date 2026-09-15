@@ -390,8 +390,9 @@ def test_owner_can_publish_an_interoperable_cord_ban():
     assert 'canBan=isOwner&&target!==viewer.pubkey' in CONCORD
     assert 'const banMember=async target=>' in CONCORD
     assert 'reader.createBanWrap' in CONCORD
-    assert 'community relays rejected the ban' in CONCORD
-    assert 'latest[roomIndex].banned=made.banned' in CONCORD
+    run = subprocess.run(['node', str(ROOT/'tests/client/concord_rekey_runtime.mjs')], cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert 'actual adapter acquisition, durable resume and publication passed' in run.stdout
 
 
 def test_concord_create_and_send_flow_executes_without_runtime_errors():

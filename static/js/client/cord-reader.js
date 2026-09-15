@@ -9347,6 +9347,8 @@ var PosterCordReader = (() => {
   // pc-cord-reader.ts
   var pc_cord_reader_exports = {};
   __export(pc_cord_reader_exports, {
+    prepareRefounding: () => prepareRefounding,
+    resumeRefounding: () => resumeRefounding,
     inspectDissolution: () => inspectDissolution,
     createDissolutionWrap: () => createDissolutionWrap,
     encryptRekeyBytes: () => encryptRekeyBytes,
@@ -26712,7 +26714,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(forJoin&&input.expires_at!==undefined&&now>=input.expires_at)throw new Error('this invite has expired');
     const channels=input.channels.map(ch=>{if(!ch||typeof ch!=='object')throw new Error('invalid invite channel');hex(ch.id,'channel id');hex(ch.key,'channel key');return {...ch,epoch:epoch(ch.epoch,'channel epoch')};});
     const relays=capRelays(Array.isArray(input.relays)?input.relays:[]);
-    return {...input,root_epoch:epoch(input.root_epoch,"root epoch"),channels,relays};
+    const result={...input,root_epoch:epoch(input.root_epoch,"root epoch"),channels,relays};
+    if(forJoin)delete result.root_refounder; // Only our authenticated rekey/vault may name the epoch minter.
+    return result;
   }
   async function createCommunity(opts,legacyCreate) {
     if(typeof opts.name!=='string'||!opts.name.trim()||utf8Len(opts.name)>NAME_MAX_BYTES)throw new Error('community name must be 1–64 UTF-8 bytes');
@@ -26750,7 +26754,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   function control(bundle, wraps) {
     const community = runtime(bundle);
     const groups = controlGroups(community);
-    const folded = foldControlState(openControlWraps(wraps || [], groups), community.id, community.owner);
+    const editions=openControlWraps(wraps || [],groups),snapshotIds=community.rootEpoch>0n?
+      new Set(editions.filter(e=>e.opened.streamPk===groups[0].pk).map(e=>bytesToHex2(e.rumorId))):undefined;
+    const folded = foldControlState(editions, community.id, community.owner, undefined, snapshotIds);
     return { community, groups, folded, channels: channelsView(community, folded) };
   }
   // CORD-02 guestbook: derived transport identities stay internal, never member profiles.
@@ -26834,7 +26840,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     // Match Vector's owner fallback when no verified epoch-minter record is available.
     // The owner is community-bound; an invite's raw refounder field is not authority.
     // Epoch zero never authorizes snapshots, including old held-root envelopes.
-    const snapshotAuthority=community.rootEpoch>0n?community.owner:null;
+    const snapshotAuthority=community.rootEpoch>0n?(HEX64.test(bundle.root_refounder||'')?bundle.root_refounder:community.owner):null;
     const members=foldGuestbookMembers(usable,{owner:community.owner,banned:folded.banned,bannedAt:folded.bannedAt,grantees:folded.roster.grants.filter(g=>g.roleIds.length).map(g=>g.member),observed,now,snapshotAuthority});
     return {members:members.filter(pk=>pk===community.owner||!transport.has(pk)),guestbookEvents:events.length,snapshotEvents:events.filter(e=>e.type==='snapshot').length,snapshotAuthorityAvailable:!!snapshotAuthority,rootEpoch:Number(community.rootEpoch),complete:false};
   }
@@ -26924,7 +26930,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const base=scope==='0'.repeat(64);
     if(!base&&bytes.length!==72)throw new Error('channel rekey has base material');
     const result={key:bytesToHex2(bytes.subarray(40,72))};
-    if(bytes.length>=104)result.control_pk=bytesToHex2(bytes.subarray(72,104));
+    if(bytes.length>=104){result.control_pk=bytesToHex2(bytes.subarray(72,104));schnorr.utils.lift_x(BigInt('0x'+result.control_pk));}
     if(bytes.length===136){result.control_root=bytesToHex2(bytes.subarray(104));
       if(groupKeyCached('concord/control-signer',hex32(result.control_root),hex32(communityId),rekeyEpoch(epoch)).pk!==result.control_pk)throw new Error('rekey control signer mismatch');}
     return result;
@@ -26950,6 +26956,63 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
     return [...new Map(out.map(g=>[g.pk,g])).values()];
   }
+  async function prepareRefounding(bundle,controlWraps,options,pubkey,signEvent,encryptBytes) {
+    requireActiveMembership(bundle);
+    if(options.historyComplete!==true)throw new Error('complete control history is required before refounding');
+    const {community,groups,folded}=control(bundle,controlWraps),editions=openControlWraps(controlWraps,groups);
+    if(folded.incomplete.length||!folded.metadata||!folded.headEditions.size)throw new Error('control state cannot be reliably compacted');
+    for(const edition of editions)if(![VSK_METADATA,VSK_ROLE,VSK_CHANNEL,VSK_GRANT,VSK_BANLIST,VSK_INVITE_REGISTRY].includes(edition.vsk))throw new Error('unsupported control state prevents safe compaction');
+    for(const head of folded.headEditions.values()){
+      const index=groups.findIndex(g=>g.pk===head.opened.streamPk);
+      if(index>=0&&community.heldRoots[index].epoch>0n)continue;
+      let at=head;
+      while(at.version>1n){const previous=editions.find(e=>bytesToHex2(e.entityId)===bytesToHex2(at.entityId)&&e.version===at.version-1n&&at.prevHash&&equalBytes(e.selfHash,at.prevHash));if(!previous)throw new Error('control edition history has a gap');at=previous;}
+    }
+    if(options.controlUpdates){const requested=openControlWraps(options.controlUpdates,groups);if(requested.length!==options.controlUpdates.length||requested.some(e=>!equalBytes(folded.headEditions.get(bytesToHex2(e.entityId))?.selfHash||new Uint8Array(),e.selfHash)))throw new Error('requested control update could not be reliably folded');}
+    const recipients=options.recipients,byChannel=options.channelRecipients||{},removed=options.removed||[];
+    if(!Array.isArray(recipients)||!recipients.length)throw new Error('reviewed community recipients are required');
+    const memberSet=new Set(recipients.map(r=>r.pubkey));
+    for(const channel of bundle.channels||[]){
+      if(!Array.isArray(byChannel[channel.id])||!byChannel[channel.id].length)throw new Error('reviewed recipients required for every private channel');
+      if(byChannel[channel.id].some(r=>!memberSet.has(r.pubkey)))throw new Error('channel recipient is not a retained community member');
+    }
+    for(const pk of removed)if(memberSet.has(pk))throw new Error('removed member is still a rekey recipient');
+    const root=await createRekeyWraps(bundle,controlWraps,{scope:'0'.repeat(64),recipients,removed},pubkey,signEvent,encryptBytes),
+      update={scope:'0'.repeat(64),epoch:root.epoch,prevepoch:String(bundle.root_epoch),prevcommit:epochKeyCommitment(bundle.root_epoch,bundle.community_root),key:root.key,control_pk:root.control_pk,control_root:root.control_root};
+    let next=applyRekeyUpdates(bundle,[{...update,author:pubkey}]);
+    const newGroup=controlGroups(runtime(next))[0],compacted=[];
+    // Rewrap the exact original plaintext seal. Its real-author signature and
+    // edition hash survive; the refounder never impersonates another author.
+    for(const head of folded.headEditions.values())compacted.push(wrapSeal(head.opened.seal,newGroup));
+    const channels=[];
+    for(const channel of bundle.channels||[]){
+      // Intentionally use OLD bundle: base forks must share channel-rekey addresses.
+      const made=await createRekeyWraps(bundle,controlWraps,{scope:channel.id,recipients:byChannel[channel.id],removed},pubkey,signEvent,encryptBytes);
+      channels.push(...made.wraps);next=applyRekeyUpdates(next,[{scope:channel.id,epoch:made.epoch,prevepoch:String(channel.epoch),prevcommit:epochKeyCommitment(channel.epoch,channel.key),key:made.key}]);
+    }
+    const snapshot=[];const members=[...memberSet].sort(),n=Math.ceil(members.length/400),snap=bytesToHex2(randomBytes3(32)),ms=Date.now(),guest=guestbookGroups(next)[0];
+    for(let i=0;i<n;i++){
+      const rumor=buildRumor({kind:3312,pubkey,content:JSON.stringify(members.slice(i*400,(i+1)*400)),ms,tags:[['snap',snap,String(i+1),String(n)]]}),seal=await sealRumor(rumor,20013,guest,{signEvent});snapshot.push(wrapSeal(seal,guest));
+    }
+    return {version:1,community_id:bundle.community_id,actor:pubkey,prior:JSON.parse(JSON.stringify(bundle)),next,
+      phases:[{name:'root',events:root.wraps},{name:'control',events:compacted},{name:'channels',events:channels},{name:'guestbook',events:snapshot,optional:true}],phase:0,event:0};
+  }
+  async function resumeRefounding(plan,{publish,persist,current}) {
+    if(!plan||plan.version!==1||plan.community_id!==plan.prior.community_id||plan.next.community_id!==plan.community_id||plan.phases?.map(p=>p.name).join(',')!=='root,control,channels,guestbook')throw new Error('invalid refounding checkpoint');
+    const check=()=>{if(!current())throw new Error('refounding account or membership changed');};check();
+    // Persist all signed events and fresh keys before the first network write.
+    await persist(plan);check();
+    while(plan.phase<plan.phases.length){const phase=plan.phases[plan.phase];
+      while(plan.event<phase.events.length){check();let accepted;
+        try{accepted=await publish(phase.events[plan.event],phase.name);}catch(e){if(!phase.optional)throw e;}
+        check();if(!accepted?.ok&&!phase.optional)throw new Error('refounding '+phase.name+' publication was not confirmed');
+        plan.event++;await persist(plan);check();
+      }
+      plan.phase++;plan.event=0;await persist(plan);check();
+    }
+    return plan.next;
+  }
+
   function dissolutionGroup(bundle) {
     const community=runtime(bundle);return groupKeyCached('concord/dissolved',community.id,ZERO32);
   }
@@ -27037,14 +27100,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       const add=r=>{if(!archive.some(k=>String(k.epoch)===String(r.epoch)&&k.key===r.key))archive.push(r);};
       if(epoch===oldEpoch&&update.key>=current.key){if(update.key!==current.key)add({epoch:update.epoch,key:update.key,...(update.control_pk?{control_pk:update.control_pk}:{}),...(update.control_root?{control_root:update.control_root}:{})});continue;}
       add(record);
-      if(base){next.root_epoch=update.epoch;next.community_root=update.key;delete next.control_pk;delete next.control_root;if(update.control_pk)next.control_pk=update.control_pk;if(update.control_root)next.control_root=update.control_root;}
+      if(base){next.root_epoch=update.epoch;next.community_root=update.key;if(update.author)next.root_refounder=update.author;else delete next.root_refounder;delete next.control_pk;delete next.control_root;if(update.control_pk)next.control_pk=update.control_pk;if(update.control_root)next.control_root=update.control_root;}
       else{current.epoch=update.epoch;current.key=update.key;}
     }
     return next;
   }
 
   function requireActiveMembership(bundle,channelId) {
-    if(bundle.dissolved||bundle.removed||(bundle.removed_channels||[]).includes(channelId))throw new Error("Concord membership is read-only");
+    if(bundle.dissolved||bundle.removed||bundle.refounding_pending||(bundle.removed_channels||[]).includes(channelId))throw new Error("Concord membership is read-only");
   }
   async function createRekeyWraps(bundle,controlWraps,options,pubkey,signEvent,encryptBytes) {
     requireActiveMembership(bundle,options.scope);
@@ -27053,11 +27116,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(!held.length)throw new Error('no key held for rekey scope');
     const previous=rekeyEpoch(held[0].epoch),epoch=previous+1n,recipients=options.recipients;
     if(!Array.isArray(recipients)||!recipients.length||recipients.length>120000||new Set(recipients.map(r=>r.pubkey)).size!==recipients.length)throw new Error('invalid rekey recipients');
+    if(recipients.some(r=>folded.banned.has(r.pubkey)))throw new Error('banned members cannot receive rotated keys');
     const tags=[['scope',scope],['newepoch',epoch.toString()],['prevepoch',previous.toString()],['prevcommit',epochKeyCommitment(previous,held[0].key)]];
     if(pubkey!==community.owner){const grant=folded.heads.get(bytesToHex2(grantLocator(community.id,hex32(pubkey))));if(grant)tags.push(['vac',bytesToHex2(grantLocator(community.id,hex32(pubkey))),grant.version.toString(),bytesToHex2(grant.hash)]);}
     if(!rekeyAuthority(community,folded,{author:pubkey,tags},scope))throw new Error('rekey is not authorized');
     const actor=highestPosition(folded.roster,pubkey);
-    const recipientSet=new Set(recipients.map(r=>r.pubkey)),excluded=new Set([...(options.removed||[]),...folded.roster.grants.filter(g=>g.roleIds.length&&!recipientSet.has(g.member)).map(g=>g.member)]);
+    const recipientSet=new Set(recipients.map(r=>r.pubkey)),excluded=new Set([...(options.removed||[]),...(base?folded.roster.grants.filter(g=>g.roleIds.length&&!recipientSet.has(g.member)).map(g=>g.member):[])]);
     if(base&&!recipientSet.has(community.owner))throw new Error('base rekey must retain the owner');
     for(const target of excluded){const rank=highestPosition(folded.roster,target);if(target===community.owner||pubkey!==community.owner&&(actor===undefined||rank!==undefined&&actor>=rank))throw new Error('cannot rekey against equal or higher rank');}
     if(typeof encryptBytes!=='function')throw new Error('signer does not support binary rekey encryption');
@@ -27230,12 +27294,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       }
     };
   }
-  async function inspectChat(bundle, controlWraps, channelId, chatWraps) {
+  async function inspectChat(bundle, controlWraps, channelId, chatWraps, sealedHistory = []) {
     const { community, folded, channels } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not readable with this membership");
-    const events = await openChatBatch(chatWraps || [], channel),
-          timeline = foldTimeline(events, chatModeration(community, folded));
+    const opened = await openChatBatch(chatWraps || [], channel),known=new Set(sealedHistory),
+          events=bundle.dissolved?opened.filter(e=>e.kind===KIND_DELETE||known.has(e.wrapId)&&!folded.banned.has(e.author)):opened,
+          timeline = foldTimeline(events, bundle.dissolved?undefined:chatModeration(community, folded));
     return {
       metadataManagers: [...new Set([community.owner,...folded.roster.grants.map(g=>g.member)])].filter(author=>chatModeration(community,folded).canManageMetadata(author)),
       expirations: (chatWraps || []).filter(w => chatExpirations.has(w.id)).map(w => [w.id, chatExpirations.get(w.id)]),
@@ -27260,7 +27325,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     };
   }
   async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE) {
-    requireActiveMembership(bundle,channelId);
+    if(!bundle.dissolved||kind!==KIND_DELETE)requireActiveMembership(bundle,channelId);
     const { channels, folded } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not writable with this membership");

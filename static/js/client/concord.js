@@ -2621,7 +2621,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);if(!currentOwner())return;
-      const applyControl=wraps=>{if(!currentOwner())return 0;const info=reader.inspectControl(bundle,wraps||[]);roomControls.set(loadKey,wraps||[]);room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
+      const applyControl=wraps=>{if(!currentOwner())return 0;const admitted=bundle.dissolved?(wraps||[]).filter(e=>(room.cord.sealed_controls||[]).includes(e.id)):(wraps||[]);const info=reader.inspectControl(bundle,admitted);roomControls.set(loadKey,admitted);room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
@@ -2985,7 +2985,9 @@
     return opened;
   }
   async function readChat(p,reader,bundle,controlWraps,room,channel,wraps){
-    try{ return await acknowledgeDeliveryEcho(p,room,channel,wraps,await reader.inspectChat(bundle,controlWraps,channel.id,wraps)); }
+    const live=saved().find(r=>roomIdentity(r)===roomIdentity(room));
+    if(live?.cord?.bundle?.dissolved){room=live;bundle=live.cord.bundle;const ids=new Set(live.cord.sealed_controls||[]);controlWraps=controlWraps.filter(e=>ids.has(e.id));}
+    try{ return await acknowledgeDeliveryEcho(p,room,channel,wraps,await reader.inspectChat(bundle,controlWraps,channel.id,wraps,bundle.dissolved?(room.cord.sealed_history?.[channel.id]||[]):[])); }
     catch(e){
       if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
       const fixed=reconcileChannels(reader,bundle,controlWraps,room,channel.name);
@@ -2993,7 +2995,7 @@
       /* Nothing is persisted here: the repair is an id lookup for THIS read, and the saved
        * channel list belongs to applyControl, which sees the whole control stream. */
       if(fixed.name!==channel.name){ state.channel=fixed.name; if(p&&p.toast)p.toast('#'+channel.name+' is no longer in this community — showing #'+fixed.name); }
-      return await acknowledgeDeliveryEcho(p,room,fixed,wraps,await reader.inspectChat(bundle,controlWraps,fixed.id,wraps));
+      return await acknowledgeDeliveryEcho(p,room,fixed,wraps,await reader.inspectChat(bundle,controlWraps,fixed.id,wraps,bundle.dissolved?(room.cord.sealed_history?.[fixed.id]||[]):[]));
     }
   }
   /* MERGE WHAT CAME BACK AND PAINT IT. One implementation, because there are now two ways for a
@@ -3232,7 +3234,102 @@
   }
   // CORD06 subscriptions are owned by an account AND an exact membership snapshot.
   // Decryption and persistence may outlive navigation; neither may cross that boundary.
+  function reviewRefoundingRecipients(p,room,removed=[]){
+    return new Promise(resolve=>{
+      const overlay=document.createElement('div'),card=document.createElement('div');overlay.className='cc-join';card.className='cc-join-card';card.setAttribute('role','dialog');card.setAttribute('aria-modal','true');card.setAttribute('aria-label','Review community access');overlay.append(card);
+      const title=document.createElement('h2');title.textContent='Review community access';card.append(title);
+      const explanation=document.createElement('p');explanation.textContent='Everyone left out will lose future access. The known member list may be incomplete. Add any missing members, and check each private channel separately. Enter public npub addresses, separated by spaces or new lines.';card.append(explanation);
+      const owner=room.cord.bundle.owner,known=roomParticipants(room,owner).filter(pk=>!removed.includes(pk)),scopes=[{id:'0'.repeat(64),label:'Keep community access',members:[...new Set([owner,...known])]},...(room.cord.bundle.channels||[]).map(ch=>({id:ch.id,label:'Keep access to #'+(ch.name||ch.id.slice(0,8)),members:[owner]}))],fields=new Map();
+      for(const scope of scopes){const label=document.createElement('label'),input=document.createElement('textarea');label.className='cc-label';label.textContent=scope.label;input.className='input';input.rows=3;input.setAttribute('aria-label',scope.label);input.value=scope.members.map(pk=>window.NostrTools.nip19.npubEncode(pk)).join('\n');label.append(input);card.append(label);fields.set(scope.id,input);}
+      const acknowledgment=document.createElement('label'),checked=document.createElement('input');checked.type='checkbox';acknowledgment.append(checked,document.createTextNode(' I checked that every retained member is included.'));card.append(acknowledgment);
+      const error=document.createElement('p');error.setAttribute('role','alert');card.append(error);
+      const actions=document.createElement('div');actions.className='cc-join-actions';const cancel=document.createElement('button'),confirm=document.createElement('button');cancel.className='btn btn-ghost';cancel.textContent='Cancel';confirm.className='btn btn-primary';confirm.textContent='Rotate keys';confirm.disabled=true;checked.onchange=()=>{confirm.disabled=!checked.checked;};actions.append(cancel,confirm);card.append(actions);
+      const previous=document.activeElement,finish=value=>{overlay.remove();previous?.focus?.();resolve(value);};cancel.onclick=()=>finish(null);overlay.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();finish(null);}else if(e.key==='Tab'){const items=[...card.querySelectorAll('textarea,input,button')].filter(n=>!n.disabled),first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}};
+      confirm.onclick=()=>{try{
+        const parse=input=>[...new Set(input.value.trim().split(/[\s,]+/).filter(Boolean).map(value=>{if(/^[0-9a-f]{64}$/i.test(value))return value.toLowerCase();const decoded=window.NostrTools.nip19.decode(value);if(decoded.type!=='npub')throw new Error('Use public npub addresses only.');return decoded.data;}))].map(pubkey=>({pubkey}));
+        const recipients=parse(fields.get('0'.repeat(64))),channelRecipients={};if(!recipients.some(r=>r.pubkey===owner))throw new Error('The owner must keep access.');
+        for(const scope of scopes.slice(1))channelRecipients[scope.id]=parse(fields.get(scope.id));
+        if(recipients.some(r=>removed.includes(r.pubkey)))throw new Error('The removed member cannot keep access.');
+        finish({recipients,channelRecipients,removed});
+      }catch(e){error.textContent=e.message||'Check the member addresses.';}};
+      document.body.append(overlay);fields.values().next().value?.focus();
+    });
+  }
+  function bindRefoundingControl(p,$){
+    const saveButton=$('#cc-settings-save'),room=saved()[state.community],owner=deliveryOwner(p);
+    if(!saveButton||!room?.cord?.bundle||room.cord.bundle.owner!==owner||room.cord.bundle.dissolved||$('#cc-refound'))return;
+    const button=document.createElement('button');button.id='cc-refound';button.className='btn btn-ghost';button.textContent=room.cord.refounding?'Resume key rotation':'Rotate community keys';saveButton.parentNode.insertBefore(button,saveButton);
+    button.onclick=async()=>{button.disabled=true;try{
+      const options=room.cord.refounding?{}:await reviewRefoundingRecipients(p,room);if(!options)return;
+      if(deliveryOwner(p)!==owner)throw new Error('The signing account changed during access review.');
+      await refoundRoom(p,room,options);p.toast('Community keys rotated.');
+    }catch(e){p.toast('Key rotation needs attention: '+(e.message||e));}finally{button.disabled=false;}};
+  }
+
+  async function acquireRefoundingControls(p,room,current){
+    const reader=window.PosterCordReader,bundle=room.cord.bundle,relays=roomRelays(bundle),loadKey=room.communityId||room.naddr,
+      cached=await cachedEnvelopes(envelopeCacheKey(loadKey,'control')),authors=reader.inspectControl(bundle,[]).controlPubkeys,all=new Map(cached.map(e=>[e.id,e]));
+    for(const author of authors)for(const relay of relays){
+      let until;const seen=new Set();
+      for(let page=0;page<100;page++){
+        if(!current())throw new Error('refounding account or membership changed');
+        const report={},auth=reader.createPlaneAuth(bundle,cached,author,[relay]),filter={kinds:[1059],authors:[author],limit:1000,...(until===undefined?{}:{until})};
+        const events=await p.relayQueryFrom([relay],[filter],{timeout:10000,max:1,exact:true,authScope:auth?{...auth,current}:null,report,minInterval:0,allowBlocked:false,purpose:'concord refounding history'});
+        if(!current())throw new Error('refounding account or membership changed');
+        if(!(report.ok||[]).map(normalizeRelay).includes(normalizeRelay(relay))||(report.failed||[]).length||(report.unheld||[]).length)throw new Error('every control relay must complete before refounding');
+        let added=0;for(const ev of events||[])if(ev&&ev.pubkey===author&&ev.kind===1059){all.set(ev.id,ev);if(!seen.has(ev.id)){seen.add(ev.id);added++;}}
+        if((events||[]).length<1000)break;
+        const oldest=Math.min(...events.map(e=>Number(e.created_at)));
+        // Inclusive pagination never skips same-second editions. A saturated
+        // timestamp or a nonadvancing relay aborts instead of losing a head.
+        if(!added||!Number.isFinite(oldest)||oldest<0||page===99)throw new Error('control history is too large or incomplete to refound safely');
+        until=oldest;
+      }
+    }
+    return [...all.values()];
+  }
+  async function refoundRoom(p,room,options){
+    const reader=window.PosterCordReader,owner=deliveryOwner(p),identity=roomIdentity(room),initial=saved().find(r=>roomIdentity(r)===identity);
+    if(!initial||!owner||!reader?.prepareRefounding||!p.cordRekeyEncrypt)throw new Error('refounding is unavailable for this signer');
+    let plan=initial.cord.refounding,prior=plan?plan.prior:initial.cord.bundle;
+    const current=()=>deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity&&r.cord?.bundle&&!r.cord.bundle.dissolved&&
+      JSON.stringify({...r.cord.bundle,refounding_pending:undefined})===JSON.stringify({...prior,refounding_pending:undefined}));
+    if(plan&&plan.actor!==owner)throw new Error('only the originating account can resume this refounding');
+    if(!plan){
+      let controls=await acquireRefoundingControls(p,initial,current);if(!current())throw new Error('refounding membership changed');
+      if(options?.controlUpdates){if(!Array.isArray(options.controlUpdates)||options.controlUpdates.length>1000)throw new Error('invalid refounding control updates');controls=[...controls,...options.controlUpdates];}
+      if(options?.banTarget){const ban=await reader.createBanWrap(prior,controls,options.banTarget,owner,p.signTemplate);controls=[...controls,ban.wrap];}
+      plan=await reader.prepareRefounding(prior,controls,{...options,historyComplete:true},owner,p.signTemplate,p.cordRekeyEncrypt);
+      if(!current())throw new Error('refounding membership changed while signing');
+    }
+    const relays=roomRelays(prior),loadKey=initial.communityId||initial.naddr;
+    const persist=async checkpoint=>{
+      if(!current())throw new Error('refounding account or membership changed');
+      const rooms=saved(),at=rooms.findIndex(r=>roomIdentity(r)===identity);rooms[at].cord={...rooms[at].cord,bundle:{...prior,refounding_pending:true},refounding:JSON.parse(JSON.stringify(checkpoint))};save(rooms);
+      startRekeyLive(p,rooms[at],roomControls.get(loadKey)||[]);
+    };
+    const next=await reader.resumeRefounding(plan,{current,persist,publish:async(event,phase)=>{
+      const material=['root','channels'].includes(phase)?prior:plan.next,controls=phase==='control'?plan.phases[1].events:[],auth=reader.createPlaneAuth(material,controls,event.pubkey,relays);
+      if(!current())throw new Error('refounding account or membership changed');
+      return p.relayPublishRoom(relays,event,auth?{...auth,current}:null);
+    }});
+    if(!current())throw new Error('refounding account or membership changed');
+    const rooms=saved(),at=rooms.findIndex(r=>roomIdentity(r)===identity),updated={...rooms[at],banned:reader.inspectControl(next,plan.phases[1].events).banned,cord:{...rooms[at].cord,bundle:next}};delete updated.cord.refounding;rooms[at]=updated;save(rooms);
+    roomControls.set(loadKey,[...(roomControls.get(loadKey)||[]),...plan.phases[1].events]);
+    await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),plan.phases[1].events);
+    if(deliveryOwner(p)!==owner)return;
+    await persistArmadaMembership(p,updated);if(deliveryOwner(p)!==owner)return;
+    if(window.PCConcord?.refreshOwnedInviteLinks)try{await window.PCConcord.refreshOwnedInviteLinks(p,updated);}catch(e){console.warn('Rotated community invite refresh is pending',e);}
+    if(deliveryOwner(p)!==owner)return;
+    startRekeyLive(p,updated,roomControls.get(loadKey));backgroundRender();return next;
+  }
+
   const rekeySubscriptions=new Map();
+  async function freezeSealedHistory(room){
+    const loadKey=room.communityId||room.naddr,history={},channels=[...(room.channels||[]),...(room.cord.bundle.channels||[])];
+    for(const id of new Set(channels.map(c=>c.id).filter(Boolean)))history[id]=(await cachedEnvelopes(envelopeCacheKey(loadKey,id))).map(e=>e.id);
+    return {sealed_history:history,sealed_controls:(roomControls.get(loadKey)||[]).map(e=>e.id)};
+  }
   function stopRekeyLive(){for(const entry of rekeySubscriptions.values())entry.close();rekeySubscriptions.clear();}
   function startRekeyLive(p,room,controls){
     const reader=window.PosterCordReader,R=window.Relay,bundle=room&&room.cord&&room.cord.bundle,owner=deliveryOwner(p);
@@ -3253,20 +3350,24 @@
       if(result.blocked&&result.blocked.length&&!warned){warned=true;if(p.toast)p.toast('A community key update could not be opened. Your signer may not support binary rekeys.');}
       let next=reader.applyRekeyUpdates(bundle,result.updates);
       const tombstone=reader.inspectDissolution&&reader.inspectDissolution(bundle,[...wraps.values()]);
-      if(tombstone)next={...bundle,dissolved:tombstone};
+      let frozen=null;
+      if(tombstone){frozen=await freezeSealedHistory(room);if(!current())return;next={...bundle,dissolved:tombstone};}
+      else if(bundle.refounding_pending)return;
       // Missing chunks never enter this list; keep archived keys for reading history.
       for(const removal of result.removed){if(result.updates.some(u=>u.scope===removal.scope&&u.epoch===removal.epoch))continue;
         if(removal.scope==='0'.repeat(64))next.removed=true;
         else{next.removed_channels=[...new Set([...(next.removed_channels||[]),removal.scope])];}}
       if(JSON.stringify(next)===snapshot)return;
       const rooms=saved(),at=rooms.findIndex(r=>roomIdentity(r)===identity);if(at<0||!current())return;
-      const updated={...rooms[at],cord:{...rooms[at].cord,bundle:next}};rooms[at]=updated;save(rooms);
+      const updated={...rooms[at],cord:{...rooms[at].cord,bundle:next,...(frozen||{})}};rooms[at]=updated;save(rooms);
       if(roomIdentity(saved()[state.community])===identity)stopChatLive();
       close();if(rekeySubscriptions.get(key)===entry)rekeySubscriptions.delete(key);
       if(deliveryOwner(p)!==owner)return;
       // Membership publication owns its own account checks; local adoption is durable
       // even if a relay is temporarily unavailable.
       await persistArmadaMembership(p,updated);
+      if(deliveryOwner(p)!==owner)return;
+      if(!next.dissolved&&!next.removed&&window.PCConcord?.refreshOwnedInviteLinks)try{await window.PCConcord.refreshOwnedInviteLinks(p,updated);}catch(e){console.warn('Rotated community invite refresh is pending',e);}
       if(deliveryOwner(p)!==owner)return;
       startRekeyLive(p,updated,controls);backgroundRender();
     };
@@ -3734,7 +3835,15 @@
     }
     const members=$('#cc-members'); if(members)members.onclick=()=>{if(!window.matchMedia||window.matchMedia('(max-width:820px)').matches){$('#cc-members-dialog').classList.remove('hidden');return;}const pane=$('.cc-members-pane');if(!pane)return;const hide=localStorage.getItem('pc.concord.members.hidden')!=='1';pane.classList.toggle('hidden',hide);localStorage.setItem('pc.concord.members.hidden',hide?'1':'0');};
     const membersClose=$('#cc-members-close'); if(membersClose)membersClose.onclick=()=>$('#cc-members-dialog').classList.add('hidden');
-    const banMember=async target=>{ const initial=saved(),room=initial[state.community],roomId=roomIdentity(room),viewer=p.viewer?p.viewer():{},bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader,loadKey=room&&(room.communityId||room.naddr),wraps=roomControls.get(loadKey); if(!bundle||!reader||!reader.createBanWrap||!wraps)return p.toast('community moderation is not ready');const scope=cordPlaneContext(p,bundle,wraps,room); if(p.uiConfirm&&!await p.uiConfirm('Ban this member from the community?',{ok:'Ban',danger:true}))return; try{if(!scope.current())throw new Error('Concord membership changed during confirmation');const made=await reader.createBanWrap(bundle,wraps,target,viewer.pubkey,p.signTemplate),relays=roomRelays(bundle);if(!scope.current())throw new Error('Concord membership changed while signing');const accepted=await p.relayPublishRoom(relays,made.wrap,cordPlaneAuth(p,scope,made.wrap.pubkey,relays)); if(!accepted||!accepted.ok)throw new Error('community relays rejected the ban');if(!scope.current())throw new Error('Concord membership changed during moderation');/* A signer may keep this promise open while the owner changes rooms. Update the moderated room by durable identity instead of overwriting the newly active numeric index. */const latest=saved(),roomIndex=latest.findIndex(item=>roomIdentity(item)===roomId);if(roomIndex<0)throw new Error('community was removed while moderation was pending');latest[roomIndex].banned=made.banned;save(latest);render();p.toast('member banned'); }catch(e){p.toast('member was not banned: '+(e&&e.message||e));} };
+    const banMember=async target=>{
+      const actor=deliveryOwner(p),room=saved()[state.community];if(!room?.cord?.bundle)return p.toast('Community moderation is not ready.');
+      if(room.cord.refounding)return p.toast('Resume the pending key rotation in community settings first.');
+      try{
+        const reviewed=await reviewRefoundingRecipients(p,room,[target]);if(!reviewed)return;
+        if(deliveryOwner(p)!==actor)throw new Error('The signing account changed during access review.');
+        await refoundRoom(p,room,{...reviewed,banTarget:target});render();p.toast('Member banned and community keys rotated.');
+      }catch(e){p.toast('Community moderation needs attention: '+(e.message||e));}
+    };
     const closeMemberMenu=()=>{const old=document.querySelector('.cc-member-menu');if(old)old.remove();};
     const openMemberMenu=(event,target)=>{closeMemberMenu();const canBan=isOwner&&target!==viewer.pubkey,canMessage=target!==viewer.pubkey,menu=document.createElement('div');menu.className='cc-member-menu';menu.setAttribute('role','menu');menu.innerHTML=`<button data-cc-member-profile="${p.enc(target)}" role="menuitem">View profile</button>${canMessage?`<button data-cc-member-message="${p.enc(target)}" role="menuitem">Message</button>`:''}${canBan?`<button class="danger" data-cc-member-ban="${p.enc(target)}" role="menuitem">Ban from community</button>`:''}`;document.body.appendChild(menu);const anchor=event.currentTarget||(event.target&&event.target.closest&&event.target.closest('[data-cc-member]')),rect=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null,rows=1+(canMessage?1:0)+(canBan?1:0),x=Math.min(rect?rect.right+6:(event.clientX||12),window.innerWidth-190),y=Math.min(rect?rect.top:(event.clientY||12),window.innerHeight-(rows*42+8));menu.style.left=Math.max(8,x)+'px';menu.style.top=Math.max(8,y)+'px';menu.querySelector('[data-cc-member-profile]').onclick=()=>{closeMemberMenu();if(p.openProfile)p.openProfile(target);};const message=menu.querySelector('[data-cc-member-message]');if(message)message.onclick=()=>{closeMemberMenu();if(p.messageUser)p.messageUser(target);};const ban=menu.querySelector('[data-cc-member-ban]');if(ban)ban.onclick=()=>{closeMemberMenu();void banMember(target);};setTimeout(()=>document.addEventListener('pointerdown',e=>{if(!menu.contains(e.target))closeMemberMenu();},{once:true}),0);};
     $$('[data-cc-member]').forEach(row=>{const target=row.dataset.ccMember;let held=null,longPressed=false;row.onclick=e=>{e.preventDefault();/* Android/iOS synthesize click after a completed long press. Consume that click or the menu is immediately replaced by Profile. Resolve the viewport now, not when this row was rendered: rotation and desktop window resizing can cross the responsive boundary without causing a Concord repaint. */const action=memberTapAction(memberViewportIsNarrow(),longPressed);longPressed=false;if(action==='consume')return;if(action==='profile'){if(p.openProfile)p.openProfile(target);return;}openMemberMenu(e,target);};row.oncontextmenu=e=>{e.preventDefault();longPressed=false;openMemberMenu(e,target);};row.onpointerdown=e=>{if(e.pointerType==='mouse')return;longPressed=false;held=setTimeout(()=>{held=null;longPressed=true;openMemberMenu(e,target);},550);};row.onpointerup=row.onpointercancel=row.onpointermove=()=>{if(held){clearTimeout(held);held=null;}};});
@@ -3809,6 +3918,7 @@
       try{const result=await saveCommunitySettings(p,room,values);render();p.toast(result.noticesFailed?'Settings saved; '+result.noticesFailed+' channel notices could not be delivered':'community profile updated');}
       catch(error){settingsSave.disabled=false;p.toast('community settings could not be saved: '+(error?.message||error));}
     };
+    bindRefoundingControl(p,$);
     const notify=$('#cc-notify'); if(notify)notify.onclick=async()=>{ const result=p.askOsNotify?await p.askOsNotify():'unsupported'; p.toast(result==='granted'?'community notifications enabled':result==='denied'?'notifications were denied':'notifications are unavailable here'); };
     const call=$('#cc-call'); if(call)call.onclick=()=>{ const room=saved()[state.community],viewerPk=p.viewer&&p.viewer().pubkey,peers=roomParticipants(room,viewerPk).filter(pk=>pk!==viewerPk); if(!peers.length){ p.toast('No other community members are available to call yet'); return; } p.startGroupCall(peers,false); };
     const cancel=$('#cc-join-cancel'); if(cancel) cancel.onclick=()=>$('#cc-join').classList.add('hidden');
@@ -4086,7 +4196,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,render,backgroundRender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,render,backgroundRender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */

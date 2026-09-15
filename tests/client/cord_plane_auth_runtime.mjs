@@ -104,18 +104,12 @@ const cap=PosterCordReader.createPlaneAuth(bundle,controls,note.wrap.pubkey,[url
 assert.throws(()=>PosterCordReader.createPlaneAuth(bundle,controls,user,[url]),/not held/);
 assert.throws(()=>cap.sign({kind:1,content:'no',created_at:Math.floor(Date.now()/1000),tags:[]}));
 assert.throws(()=>cap.sign({kind:22242,content:'',created_at:Math.floor(Date.now()/1000),tags:[['relay','wss://other.fixture'],['challenge','x']]}));
-// Drive the actual moderation handler across confirmation and aggregate ACK account races.
-ctx.state={community:0};ctx.render=()=>{};ctx.URL=URL;
-vm.runInContext(src.slice(src.indexOf('  function normalizeRelay('),src.indexOf('\n',src.indexOf('  function normalizeRelay(')))+src.slice(src.indexOf('  function roomRelays('),src.indexOf('  function cordControlStamp(')),ctx);let writes=0,signatures=0,publishes=0,releaseModeration;
-ctx.save=()=>{writes++};
-const moderationLine=src.slice(src.indexOf('    const banMember=async'),src.indexOf('\n',src.indexOf('    const banMember=async')));
-vm.runInContext(moderationLine+';globalThis.moderate=banMember;',ctx);
-for(const phase of ['confirmation','aggregate-ack']){
- owner=user;rooms=[{communityId:made.communityId,cord:{bundle},channels:[channel]}];ctx.roomControls.set(made.communityId,controls);writes=signatures=publishes=0;releaseModeration=null;
- ctx.p={viewer:()=>({pubkey:owner}),toast(){},uiConfirm:()=>phase==='confirmation'?new Promise(r=>releaseModeration=r):true,
-  signTemplate:async e=>{signatures++;return signEvent(e)},relayPublishRoom:async()=>{publishes++;await new Promise(r=>releaseModeration=r);return{ok:true,accepted:1}}};
- const moderation=ctx.moderate('b'.repeat(64));for(let i=0;i<30&&!releaseModeration;i++)await tick();assert(releaseModeration,phase);
- owner='e'.repeat(64);releaseModeration(true);await moderation;assert.equal(writes,0,'late moderation cannot mutate new account store');
- if(phase==='confirmation'){assert.equal(signatures,0);assert.equal(publishes,0);}else assert.equal(publishes,1);
-}
+// Access-review cancellation stays account-owned before the new refounding
+// coordinator is invoked. Its actual checkpoint/ACK races live in rekey_runtime.
+ctx.state={community:0};ctx.render=()=>{};ctx.deliveryOwner=p=>p.viewer().pubkey;
+const moderation=src.slice(src.indexOf('    const banMember=async'),src.indexOf('    const closeMemberMenu=',src.indexOf('    const banMember=async')));
+vm.runInContext(moderation+';globalThis.moderate=banMember;',ctx);
+owner=user;rooms=[{communityId:made.communityId,cord:{bundle},channels:[channel]}];let releaseReview,refoundCalls=0;
+ctx.p={viewer:()=>({pubkey:owner}),toast(){}};ctx.reviewRefoundingRecipients=()=>new Promise(r=>releaseReview=r);ctx.refoundRoom=async()=>{refoundCalls++;};
+const pendingModeration=ctx.moderate('b'.repeat(64));await tick();assert(releaseReview);owner='e'.repeat(64);releaseReview({recipients:[{pubkey:user}]});await pendingModeration;assert.equal(refoundCalls,0,'old review never starts rotation as a new account');
 console.log('real signed control/chat history/live/reconnect/publish plane AUTH and owner/rekey guards PASS');process.exit(0);

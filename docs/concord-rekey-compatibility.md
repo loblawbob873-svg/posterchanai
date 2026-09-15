@@ -29,12 +29,21 @@ it does **not** invent an extra base64/hex plaintext convention for remote signe
 Upstream must specify a lossless NIP46 representation before remote signer support
 can be claimed. See <https://github.com/nostr-protocol/nips/blob/master/44.md>.
 
-The low-level writer prepares rekey events but is not a complete refounding
-coordinator. Reliable control-history acquisition, verified compacted-head
-publication after root acceptance, resumable multi-channel rotation, and
-post-refounding guestbook seeding require a separate implementation. Existing
-ban controls must not be described as providing cryptographic exclusion merely
-because they publish a banlist.
+The refounding coordinator now acquires every held control plane from every selected
+relay before writing, refuses incomplete or unsupported control state, compacts
+verified heads without changing their authors' signed seals, and persists a
+resumable plan before publication. It confirms all root chunks before compacted
+control and private-channel rotations, retries the exact signed events after an
+interruption, and treats the final guestbook snapshot as best effort. Channel
+rotations use the prior base root. Fresh joiners bootstrap compacted current-epoch
+heads without requiring discarded predecessor history.
+
+Owner settings expose key rotation and resumption. Ban uses the same coordinator,
+including the signed ban in the new control state. Both require explicit review of
+retained community and private-channel recipients: the observed member list is
+not a complete inventory of private-key holders. Missing lists abort before any
+publication. The receiver records an authenticated epoch minter for guestbook
+snapshots; external invitations cannot nominate that internal provenance field.
 
 Epoch arithmetic uses unsigned 64-bit integers and decimal strings in adopted
 local material. JSON numeric wire snapshots above JavaScript's safe integer range
@@ -48,8 +57,14 @@ zero placeholders and rewrapped tombstones from the same owner's other community
 are rejected. Receipt persists a terminal marker, stops live chat/rekey and
 metadata refresh, retains historical keys, and blocks future writes/rekeys.
 
-Full post-seal historical synchronization is still separate: accepting only
-already-known history while continuing to honor authors' self-deletes requires
-cache-aware admission. An attacker-controlled event timestamp is not an adequate
-substitute. This implementation must not be presented as complete CORD02
-post-seal message synchronization.
+At dissolution, the adapter records previously cached encrypted wrap identities
+locally. Subsequent reads admit that frozen history and verified self-deletes;
+new messages, edits and reactions are rejected even if backdated. Moderation
+cannot delete another author's history after sealing. Own-message deletion remains
+writable, and live chat/rekey/control refresh stops. Manually reopening history
+can retrieve and apply later self-deletes.
+
+Unseen old messages cannot be distinguished cryptographically from newly authored,
+backdated messages with this wire format. The sealed view therefore admits only
+history already cached before sealing, retaining the keys and ciphertext. It does
+not pretend an author-controlled timestamp establishes historical authenticity.
