@@ -83,7 +83,7 @@ def test_a_backgrounded_screen_keeps_what_was_typed():
 
 
 def test_the_hand_over_runs(tmp_path):
-    """Compile the SHIPPED readIntent/handOverComposer and drive four real sequences through them."""
+    """Compile the SHIPPED readIntent/handOverComposer and drive conversation and share handoffs through them."""
     if shutil.which("javac") is None or shutil.which("java") is None:
         pytest.skip("no JDK")
 
@@ -110,6 +110,15 @@ public class ComposerHandOver {
   Object attachment, capturedAttachment, attachmentDraft;
   void updateCount(){ }
   void paintAttachmentDraft(){ }
+  // Attachment IO is outside this composer harness. Observe the handoff rather
+  // than dropping the call: importing before address/prefill resolves is unsafe.
+  int importCalls;
+  String importedAddress, importedBody;
+  void importSharedAttachment(Intent intent){
+    importCalls++;
+    importedAddress = address;
+    importedBody = input.getText();
+  }
 
 %s
 
@@ -163,6 +172,18 @@ public class ComposerHandOver {
     u.readIntent(Intent.forThread("+15550111", 11));
     check(u.input.getText().equals("mid-word"), "the same conversation reset its own box");
 
+    /* 6. A SHARED PHOTO'S CAPTION AND RECIPIENT MUST BE READY BEFORE ATTACHMENT IO.
+          The picker/grant/staging implementation has its own runtime/device tests. */
+    Intent share = Intent.forThread("+15550444", 44);
+    share.body = "photo caption";
+    u.readIntent(share);
+    check(u.importedAddress.equals("+15550444"), "attachment import ran for the previous recipient");
+    check(u.importedBody.equals("photo caption"), "attachment import ran before shared caption prefill");
+    check(prefs.get("+15550111").equals("mid-word"), "sharing lost the old recipient's draft");
+    int beforeNull = u.importCalls;
+    u.readIntent(null);
+    check(u.importCalls == beforeNull, "a missing intent triggered attachment import");
+
     System.out.println("composer hand-over cases passed");
   }
 }
@@ -176,7 +197,7 @@ class Intent {
   long getLongExtra(String k, long d){ return thread > 0 ? thread : d; }
   String getStringExtra(String k){ return address; }
   String getData(){ return data; }
-  CharSequence getCharSequenceExtra(String k){ return null; }
+  CharSequence getCharSequenceExtra(String k){ return body; }
   long[] getLongArrayExtra(String k){ return null; }
 }
 class SendTo {
