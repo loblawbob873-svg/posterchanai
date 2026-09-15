@@ -26655,7 +26655,7 @@
     // …and the desktop's tray bell is the fourth. It has nothing to subscribe to, and the taskbar only
     // repaints on a window focus, the 30s clock tick and an arrival TOAST — follows and everything that
     // lands before _notifReady toast nothing, so the bell could be minutes behind the badge beside it.
-    try{ if(window.PCOS && PCOS.isOn() && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
+    try{ if(window.PCOS && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
     // Keep the rail's notification LIST live too, not just its badge: if one lands while you're
     // looking at it, re-render now instead of leaving it stale until the 150s refresh. In-memory read (no
     // relay query); gated so it doesn't churn during the initial load burst or when the rail is hidden (mobile).
@@ -26803,7 +26803,7 @@
     $$('#notif-badge,#notif-badge-m,#rb-notif-badge').forEach(b=>b.classList.add('hidden'));
     // The desktop's tray bell reads the same unread count, so it clears here too — opening the
     // Notifications app in a window has to empty the bell, not only the badge inside that window.
-    try{ if(window.PCOS && PCOS.isOn() && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
+    try{ if(window.PCOS && PCOS.notifChanged) PCOS.notifChanged(); }catch(_){}
   }
   // The updater row, shared by the Notifications VIEW and the right-column rail — the same prompt in both
   // places, so a desktop reader who lives on the timeline is not told to go and find it. Distinct ids
