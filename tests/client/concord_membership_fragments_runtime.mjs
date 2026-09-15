@@ -58,6 +58,16 @@ await ctx.persistArmadaMemberships(api,copy(Array.from({length:90},(_,i)=>room(i
 assert(published.length>2,'large list must fragment');const docs=published.map(docOf),count=docs[0].frags;
 assert.equal(docs.reduce((n,d)=>n+d.entries.length,0),90);assert(docs.every(d=>d.frags===count));assert(published.every(e=>Buffer.byteLength(JSON.stringify(e))<=65536));assert.equal(published[0].tags[0][1],String(count-1),'append fragments publish before old coordinates');
 assert.equal(docs.flatMap(d=>d.entries).filter(e=>e.current.opaque==='Ω'.repeat(600)).length,90,'unknown bytes cannot be shed to fit');
+// A partial list may repair an oversized coordinate without seeing/repacking its peers.
+reset();relay=[make(1,{frags:2,entries:[entry(1,{current:material(1,{opaque:'x'.repeat(46000)})}),entry(2,{current:material(2,{opaque:'y'.repeat(14000)})})],tombstones:[]})];
+const oversizedBytes=Buffer.byteLength(JSON.stringify(relay[0]));assert(oversizedBytes>65536);
+await ctx.leaveArmadaMembership(api,room(2));
+assert.equal(published.length,1);assert.equal(published[0].tags[0][1],'1');
+const shrunkBytes=Buffer.byteLength(JSON.stringify(published[0]));assert(shrunkBytes>65536);assert(shrunkBytes<oversizedBytes);
+assert.equal(docOf(published[0]).frags,2);assert.equal(docOf(published[0]).entries[0].current.opaque,'x'.repeat(46000));
+// Less plaintext is insufficient when NIP-44 padding leaves the encoded size unchanged.
+reset();relay=[make(1,{frags:2,entries:[entry(1,{current:material(1,{opaque:'x'.repeat(46000)})}),entry(2)],tombstones:[]})];
+await assert.rejects(ctx.leaveArmadaMembership(api,room(2)),/size limit|all membership fragments/);assert.equal(published.length,0);
 // A stale relay cannot make two queued local updates replace each other.
 reset();stale=true;await Promise.all([ctx.persistArmadaMembership(api,room(6)),ctx.persistArmadaMembership(api,room(7))]);assert.equal(docOf(published.at(-1)).entries.length,2);
 // An incomplete list cannot repack; the attempted write must publish nothing.

@@ -2548,8 +2548,15 @@
       const seal=async(index,doc,frags)=>{live();const content=await p.nip44enc(owner,cordCanonical({...doc,frags}));live();const ev=await p.signTemplate({kind:33302,pubkey:owner,created_at:stamp(index),tags:[['d',String(index)]],content});live();return ev;};
       // Size the actual encrypted+signed wire event. Keep old fragment items in place and
       // append overflow, so publishing new fragments first cannot strand keys on interruption.
-      const max=65536;
+      const max=65536,wireSize=ev=>new TextEncoder().encode(JSON.stringify(ev)).length,shrinking=new Map();
       for(const [index,doc]of [...docs]){
+        // A stranded oversized fragment must still permit a scoped leave/repair.
+        // Compare fully encrypted and signed bytes, including NIP-44 padding.
+        const previous=state.fragments.get(index)?.event;
+        if(previous&&wireSize(previous)>max){
+          const candidate=await seal(index,doc,count);
+          if(wireSize(candidate)<wireSize(previous)){shrinking.set(index,candidate);continue;}
+        }
         let pending=[...(doc.entries||[]).map(value=>({type:'entries',value})),...(doc.tombstones||[]).map(value=>({type:'tombstones',value}))];
         const extras={...doc};delete extras.entries;delete extras.tombstones;delete extras.frags;
         const chunks=[];let chunk={...extras,entries:[],tombstones:[]};
@@ -2569,8 +2576,9 @@
       }
       let events=[];
       for(const [index,doc]of docs){
-        const ev=await seal(index,doc,count),size=new TextEncoder().encode(JSON.stringify(ev)).length;
-        if(size>max)throw new Error('one membership or extension exceeds the event size limit; its keys were preserved');
+        const ev=(count===state.count&&shrinking.get(index))||await seal(index,doc,count),size=wireSize(ev);
+        const previous=state.fragments.get(index)?.event,strictShrink=previous&&size<wireSize(previous);
+        if(size>max&&!strictShrink)throw new Error('one membership or extension exceeds the event size limit; its keys were preserved');
         events.push({index,ev,size});
       }
       // Re-read before publishing to catch another local/background sync observing a newer
