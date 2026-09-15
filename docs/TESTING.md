@@ -25,6 +25,11 @@ are cleared so the tests exercise the checkout being deployed. Install its Pytho
 from `scripts/deploy-regression-requirements.txt`; Node, a JDK, Chrome, Electron, and Xvfb are also
 required. The gate also checks reminder history retention in the API and client cache, including offline
 startup, account isolation, stale deliveries and changes to the configured history window.
+Real Chrome checks open the desktop notification centre, preserve unread acknowledgement across
+offline reloads, follow Calendar links, update open shell/native panels after delayed history
+responses, and preserve focus and scroll. Coordinate clicks distinguish an author from their post.
+The API checks load the shipped router and models with isolated database metadata and deny
+production connections, so the same coverage runs in the minimal desktop build environment.
 The gate is a fast minimum; continue running the broader suites appropriate to a change.
 
 The gate fingerprints the tested backend, client, desktop, Android app, templates, scripts, tests and release workflows
