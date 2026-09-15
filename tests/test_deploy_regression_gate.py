@@ -61,7 +61,8 @@ def test_sync_cannot_push_or_restart_after_a_failed_gate(tmp_path):
 
 def test_gate_clears_filters_and_alternate_source_overrides(tmp_path):
     overrides = ('PYTEST_ADDOPTS', 'PYTEST_PLUGINS', 'PC_SYNC_TEST_SOURCE',
-                 'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE')
+                 'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE',
+                 'PC_MMS_SOURCE_ROOT')
     (tmp_path / 'pytest.py').write_text(
         'import os,sys\nfrom pathlib import Path\n'
         + f'assert not any(name in os.environ for name in {overrides!r})\n'

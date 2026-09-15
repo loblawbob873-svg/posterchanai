@@ -22,10 +22,10 @@ and test filesystem/network adapters.
 Failures, collection errors, skipped tests, missing reports, and empty runs all block release.
 `SKIP_LINT` does not bypass this gate. Developer pytest filters and alternate-source overrides
 are cleared so the tests exercise the checkout being deployed. Install its Python dependencies
-from `scripts/deploy-regression-requirements.txt`; Node, Chrome, Electron, and Xvfb are also
+from `scripts/deploy-regression-requirements.txt`; Node, a JDK, Chrome, Electron, and Xvfb are also
 required. The gate is a fast minimum; continue running the broader suites appropriate to a change.
 
-The gate fingerprints the tested client, desktop, templates, scripts, tests and release workflow
+The gate fingerprints the tested client, desktop, Android app, templates, scripts, tests and release workflows
 before and after running. `sync.sh` checks that receipt again immediately before committing.
 Edits or a concurrent commit invalidate it; new source files must be staged so `git commit -a`
 cannot silently omit them. The overlay package pin can still update after tests because it does
@@ -419,3 +419,18 @@ venv-unified/bin/python -m pytest -q tests/test_android_instrumented_evidence.py
 These execute the shipped shell script with temporary fake adb/Gradle boundaries and real XML
 files, including stale previous results, missing reports despite Gradle success, invalid
 reports, skipped cases, genuine failures, and successful controls.
+
+### SMS attachments and APK publication
+
+The required deployment gate also executes native Java MMS callback, retry, and share-intent
+checks. Ambiguous attachment I/O callbacks must remain unconfirmed; confirmed success clears
+older failure state, and known transport failures remain failures. Android device tests exercise
+saved attachment status and details, gallery routing, recipient selection, real activity recreation,
+and replacement of a shared draft. These tests never submit a carrier message.
+
+Before changing the rolling APK release or Zapstore listing, the APK workflow requires a successful
+emulator run for the exact source commit and current run attempt. Its emulator job and device
+verification steps must have actually succeeded. A failed, cancelled, skipped, or missing run blocks
+publication and preserves the existing release. A manual APK build needs matching emulator evidence;
+run the emulator workflow for that commit first if none exists. Emulator tests cannot prove delivery
+through a real SIM and carrier.

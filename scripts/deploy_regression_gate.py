@@ -19,12 +19,19 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 # Inputs exercised by this gate. The overlay updater may legitimately change its
 # package pin after testing; it does not change any of these client/test inputs.
-INPUTS = ('static', 'desktop', 'templates', 'scripts', 'tests',
-          '.github/workflows/desktop.yml', 'sync.sh')
+INPUTS = ('static', 'desktop', 'mobile', 'templates', 'scripts', 'tests',
+          '.github/workflows/desktop.yml', '.github/workflows/android.yml',
+          '.github/workflows/android-emulator.yml', 'sync.sh')
 TESTS = (
     'tests/test_deploy_regression_gate.py',
     'tests/test_deploy_process_cleanup.py',
     'tests/test_sync_publish_failures.py',
+    'tests/test_android_mms_receiver_lifecycle.py',
+    'tests/test_android_mms_result_mapping.py',
+    'tests/test_android_mms_retry_runtime.py',
+    'tests/test_android_sms_share_runtime.py',
+    'tests/test_android_instrumented_evidence.py',
+    'tests/test_android_publish_gate.py',
     'tests/client/test_files_follow_theme.py',
     'tests/client/test_browser_startup_diagnostics.py',
     'tests/client/test_saved_theme_reaches_open_files.py',
@@ -101,7 +108,8 @@ def run_gate(root=ROOT, receipt=None):
         env = dict(os.environ, PYTEST_DISABLE_PLUGIN_AUTOLOAD='1', PC_REQUIRE_NATIVE_IPC_TEST='1')
         # Developer filters and mutation-test overrides must not change what a release tests.
         for name in ('PYTEST_ADDOPTS', 'PYTEST_PLUGINS', 'PC_SYNC_TEST_SOURCE',
-                     'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE'):
+                     'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE',
+                     'PC_MMS_SOURCE_ROOT'):
             env.pop(name, None)
         command = [sys.executable, '-m', 'pytest', '--noconftest', '-o', 'addopts=',
                    '-q', '-ra', '--junitxml=' + str(report), *TESTS]
