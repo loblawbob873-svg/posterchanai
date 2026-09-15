@@ -726,10 +726,25 @@
    * remain visibly doubled forever.  Normalize at both storage boundaries: writes prevent the race,
    * reads repair caches produced by an older build.  Later relay data wins while retaining useful
    * optimistic fields it does not carry (for example the already-painted reply summary). */
+  function messageExpired(m,now=Math.floor(Date.now()/1000)){
+    if(!m||m.kind===5||m.kind===1740||m.kind>=20000&&m.kind<30000)return false;
+    const at=(m.tags||[]).find(t=>t[0]==='expiration')?.[1];
+    return typeof at==='string'&&/^(0|[1-9][0-9]*)$/.test(at)&&Number.isSafeInteger(Number(at))&&Number(at)<=now;
+  }
+  function expireMessageEffects(m,now=Math.floor(Date.now()/1000)){
+    const expired=at=>at!==null&&at!==undefined&&Number.isSafeInteger(Number(at))&&Number(at)<=now;
+    if(expired(m.reply?.expires))m={...m,reply:{...m.reply,text:'Expired message'}};
+    if(expired(m.editedExpires)&&typeof m.originalText==='string'){m={...m,text:m.originalText,tags:(m.tags||[]).filter(t=>t[0]!=='edited')};delete m.editedExpires;delete m.originalText;}
+    for(const [emoji,entries] of Object.entries(m.reactionIds||{}))for(const [pk,id] of Object.entries(entries))if(expired(m.reactionExpirations?.[id])){m={...m,reactionIds:{...m.reactionIds,[emoji]:{...m.reactionIds[emoji]}},reactions:{...m.reactions,[emoji]:(m.reactions?.[emoji]||[]).filter(x=>x!==pk)}};delete m.reactionIds[emoji][pk];if(!m.reactions[emoji].length){delete m.reactions[emoji];delete m.reactionIds[emoji];}}
+    if(m.votes){const votes=m.votes.filter(v=>!expired(v.expires));if(votes.length!==m.votes.length)m={...m,votes};}
+    if(m.zaps){const zaps=m.zaps.filter(v=>!expired(v.expires));if(zaps.length!==m.zaps.length)m={...m,zaps};}
+    return m;
+  }
   function uniqueMessages(v){
     const byId=new Map();
-    for(const m of Array.isArray(v)?v:[]){
-      if(!m||typeof m!=='object')continue;
+    for(let m of Array.isArray(v)?v:[]){
+      if(!m||typeof m!=='object'||messageExpired(m))continue;
+      m=expireMessageEffects(m);
       const id=messageId(m),old=byId.get(id);
       byId.set(id,old?{...old,...m}:m);
     }
@@ -972,6 +987,8 @@
       `${poll.ended?' · ended':''}</div></div>`;
   }
   function messageContentHtml(p,m,room,channelName){
+    if(m.kind===1740){const seconds=Number((m.tags||[]).find(t=>t[0]==='timer')?.[1]||0),duration=seconds%86400===0?seconds/86400+' days':seconds%3600===0?seconds/3600+' hours':seconds+' seconds';return '<span class="cc-timer-notice">'+p.enc(seconds?'Set disappearing messages to '+duration:'Turned off disappearing messages')+'</span>';}
+
     const files=encryptedAttachments(m),publicFiles=publicAttachments(m);
     /* Chat content is relay input. Keep the complete rumor in memory/cache, but never hand a
      * multi-megabyte corrupt field to linkify, preview detection and innerHTML on the launch path. */
@@ -2353,7 +2370,10 @@
     const cache=window.PCConcordCache,key=deliveryStream(d);
     if(!cache||!cache.putDelivery||!cache.getDeliveries||!cache.completeDelivery)throw new Error('encrypted delivery storage is unavailable');
     if(receipt)return cache.completeDelivery(key,d.made.wrap.id,envelopeCacheKey(d.loadKey,d.channelId));
+    if(messageExpired(d.made))throw new Error('this message expired before it could be sent');
     await cache.putDelivery(key,d.made.wrap);
+    const at=(d.made.tags||[]).find(t=>t[0]==='expiration')?.[1];
+    if(cache.expireEvents&&typeof at==='string'&&/^(0|[1-9][0-9]*)$/.test(at)&&Number.isSafeInteger(Number(at)))await cache.expireEvents(key,[[d.made.wrap.id,Number(at)]]);
     if(!(await cache.getDeliveries(key)).some(ev=>ev.id===d.made.wrap.id))throw new Error('encrypted delivery could not be saved');
   }
   function paintDelivery(d,status){
@@ -2396,11 +2416,12 @@
       if(!cache.getDeliveries)return;const pending=await cache.getDeliveries(key);let changed=false;
       for(const wrap of pending){
         const opened=await reader.inspectChat(room.cord.bundle,controls,channel.id,[wrap]);
+        if(cache.expireEvents&&opened.expirations?.length)await cache.expireEvents(key,opened.expirations);
         if(!deliveryAllowed(p,scope))return;
         for(const m of opened.messages||[]){
           if(m.pubkey!==owner||![9,1111].includes(m.kind))continue;
           const id=deliveryId(owner,m.id);if(deliveries.has(id))continue;
-          const d={...scope,made:{wrap,rumorId:m.id,ms:m.at},status:'unknown'};deliveries.set(id,d);
+          const d={...scope,made:{wrap,rumorId:m.id,ms:m.at,tags:m.tags||[],kind:m.kind},status:'unknown'};deliveries.set(id,d);
           const rows=testMessages(scope.storeId);markRemoteStore(scope.storeId);
           const existing=rows.find(x=>x.id===m.id);
           if(existing&&existing.remote&&!existing.pending&&!existing.failed&&!existing.delivery){await persistDelivery(d,true);d.status='sent';continue;}
@@ -2792,6 +2813,8 @@
    * announced on screen — silently moving somebody to a different channel is worse than the error,
    * because the messages they were looking at simply stop. */
   async function acknowledgeDeliveryEcho(p,room,channel,wraps,opened){
+    if(window.PCConcordCache?.expireEvents && opened.expirations?.length)
+      try{await window.PCConcordCache.expireEvents(envelopeCacheKey(room.communityId||room.naddr,channel.id),opened.expirations);}catch(e){console.warn('Concord expiry sweep failed',e);}
     const ids=new Set((wraps||[]).map(w=>w.id)),rumors=new Set((opened.messages||[]).map(m=>m.id));
     for(const d of deliveries.values())if(d.owner===deliveryOwner(p)&&d.roomId===roomIdentity(room)&&d.channelId===channel.id&&ids.has(d.made.wrap.id)&&rumors.has(d.made.rumorId)){
       await persistDelivery(d,true);paintDelivery(d,'sent');
@@ -2926,12 +2949,14 @@
      * rule (permission + outranks, owner always). Honouring it is what makes a room moderatable;
      * the author rule below stays exactly as it was, so nothing a person could delete before
      * stops being deletable. */
+    prior=uniqueMessages(prior).filter(m=>m.kind!==1740||!Array.isArray(opened.metadataManagers)||opened.metadataManagers.includes(m.pubkey));
     const moderated=new Set(opened.deletedMessageIds||[]);
     const tombstones=mergeCordTimeline.deleted,deletes=new Map((opened.deletions||[]).map(([id,authors])=>[id,new Set(authors)])),old=new Map(prior.map(m=>[messageId(m),m]));
-    const incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{},before=old.get(m.id),edited=tags=>Number(((tags||[]).find(t=>t[0]==='edited')||[])[1]||0),keepEdit=before&&edited(before.tags)>edited(m.tags);return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:keepEdit?before.text:m.text,at:m.at,kind:m.kind,tags:keepEdit?before.tags:m.tags||[],remote:true};});
+    const incoming=(opened.messages||[]).map(m=>{const pr=p.profOf?p.profOf(m.pubkey):{},before=old.get(m.id),edited=tags=>Number(((tags||[]).find(t=>t[0]==='edited')||[])[1]||0),keepEdit=before&&edited(before.tags)>edited(m.tags);return {id:m.id,pubkey:m.pubkey,by:pr.display_name||pr.name||m.pubkey.slice(0,12)+'…',text:keepEdit?before.text:m.text,at:m.at,kind:m.kind,tags:keepEdit?before.tags:m.tags||[],editedExpires:keepEdit?before.editedExpires:m.editedExpires,originalText:keepEdit?before.originalText:m.originalText,remote:true};});
     const merged=mergeRelayMessages(prior.map(m=>({...m})),incoming),byId=new Map(merged.map(m=>[messageId(m),m]));
     for(const [id,m] of byId){
       const key=scope+'\n'+id;
+      if(messageExpired(m)){byId.delete(id);continue;}
       /* A moderated id is remembered under the ACTOR that removed it, not the author — the author
          never signed anything. Recorded in the same tombstone map so an incremental read that no
          longer carries the deletion (a bounded history page) cannot resurrect it. */
@@ -2940,11 +2965,11 @@
         tombstones.set(key,tombstones.get(key)==='@mod'?'@mod':m.pubkey);byId.delete(id);}
     }
     while(tombstones.size>5000)tombstones.delete(tombstones.keys().next().value);
-    const reactionTimes=new Map(opened.reactionTimes||[]),reactionIds=new Map(opened.reactionIds||[]),urls=new Map(opened.reactionUrls||[]);
+    const reactionExpirations=new Map(opened.reactionExpirations||[]),reactionTimes=new Map(opened.reactionTimes||[]),reactionIds=new Map(opened.reactionIds||[]),urls=new Map(opened.reactionUrls||[]);
     for(const [target,groups] of opened.reactions||[]){const m=byId.get(target);if(!m)continue;
-      m.reactions={...(m.reactions||{})};m.reactionIds={...(m.reactionIds||{})};m.reactionTimes={...(m.reactionTimes||{})};m.reactionUrls={...(m.reactionUrls||{})};
+      m.reactions={...(m.reactions||{})};m.reactionExpirations={...(m.reactionExpirations||{})};m.reactionIds={...(m.reactionIds||{})};m.reactionTimes={...(m.reactionTimes||{})};m.reactionUrls={...(m.reactionUrls||{})};
       for(const [emoji,people] of groups){m.reactions[emoji]=[...new Set([...(m.reactions[emoji]||[]),...people])];}
-      for(const [emoji,entries] of reactionIds.get(target)||[]){const ids={...(m.reactionIds[emoji]||{})};for(const [pubkey,id] of entries){const previous=ids[pubkey],at=reactionTimes.get(id)||0;if(!previous||at>=(m.reactionTimes[previous]||0)){ids[pubkey]=id;m.reactionTimes[id]=at;}}m.reactionIds[emoji]=ids;}
+      for(const [emoji,entries] of reactionIds.get(target)||[]){const ids={...(m.reactionIds[emoji]||{})};for(const [pubkey,id] of entries){const previous=ids[pubkey],at=reactionTimes.get(id)||0;if(!previous||at>=(m.reactionTimes[previous]||0)){ids[pubkey]=id;m.reactionTimes[id]=at;if(reactionExpirations.has(id))m.reactionExpirations[id]=reactionExpirations.get(id);}}m.reactionIds[emoji]=ids;}
       for(const [emoji,url] of urls.get(target)||[])m.reactionUrls[emoji]=url;
     }
     // Absence from a bounded history page is not a removal. A signed delete must match the
@@ -2963,7 +2988,7 @@
     for(const {target,z} of [...claims.values()].sort((a,b)=>Number(a.z.ms||0)-Number(b.z.ms||0)||String(a.z.id).localeCompare(String(b.z.id)))){
       const proof=z.paymentId||z.id;if(paid.has(proof))continue;paid.add(proof);byId.get(target).zaps.push(z);
     }
-    for(const m of byId.values()){if(m.kind!==1111)continue;const parent=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text};}
+    for(const m of byId.values()){if(m.kind!==1111)continue;const parent=byId.get(((m.tags||[]).find(t=>t[0]==='e')||[])[1]);if(parent)m.reply={id:parent.id,by:parent.by,text:parent.text,expires:(parent.tags||[]).find(t=>t[0]==='expiration')?.[1]};}
     return [...byId.values()].sort((a,b)=>Number(a.at)-Number(b.at));
   }
   async function absorbChatWraps(p,reader,bundle,controlWraps,room,channel,wraps,storeId){
@@ -3073,7 +3098,7 @@
     }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
   }
   function stopLiveSync(){ if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
-  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);},4000); }
+  function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);let changed=false;for(const [id,rows] of remoteMessages){const clean=uniqueMessages(rows);if(clean.length!==rows.length||clean.some((m,i)=>m!==rows[i])){remoteMessages.set(id,clean);changed=true;}}if(changed&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());if(window.PosterCordReader?.sweepExpiredChat)window.PosterCordReader.sweepExpiredChat();for(const [id,d] of deliveries)if(messageExpired(d.made))deliveries.delete(id);if(window.PCConcordCache?.sweepExpired)window.PCConcordCache.sweepExpired().catch(()=>{});},4000); }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
     const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
@@ -3593,7 +3618,7 @@
     const bh=$('#cc-back-channels'); if(bh)bh.onclick=()=>{ if(state.community==null){ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=false; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; }else if(mobileChatOpen){mobileDrawerOpen=!mobileDrawerOpen;}else mobileChatOpen=true; render(); };
     const drawerBackdrop=$('#cc-drawer-backdrop');if(drawerBackdrop)drawerBackdrop.onclick=()=>{mobileDrawerOpen=false;render();};
     const send=$('#cc-send'); if(send&&input){
-      send.onclick=async()=>{ const text=String(input.value||'').trim(),key=input.dataset&&input.dataset.ccDraftKey||composerKey(saved()[state.community],state.channel); if(!text||sendingDrafts.has(key))return; const a=saved(), room=a[state.community],sendChannel=state.channel,storeId=channelStoreId(room,sendChannel); if(!room||(!room.local&&!room.cord&&room.protocol!=='nip29')){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,replyTags=[],viewer=p.viewer?p.viewer():{},m=testMessages(storeId),lowerText=text.toLowerCase(),mentionTags=[],taggedPeople=new Set();for(const [handle,pk] of mentionRecipients){if(lowerText.includes('@'+handle))taggedPeople.add(pk);}for(const pk of typedMentionRecipients(text,roomParticipants(room,viewer.pubkey),p.profOf))taggedPeople.add(pk);for(const pk of taggedPeople){mentionTags.push(['P',pk],['p',pk]);} if(target){const inherited=(target.tags||[]).filter(t=>['K','E'].includes(t[0]));if(inherited.length)replyTags.push(...inherited);else replyTags.push(['K',String(target.kind||9)],['E',messageId(target),'',target.pubkey||'']);replyTags.push(['k',String(target.kind||9)],['e',messageId(target),'',target.pubkey||'']);for(const pk of threadParticipants(m,target,viewer.pubkey)){replyTags.push(['P',pk],['p',pk]);}} const submittedDraft=beginComposerSend(key);sendingDrafts.add(key);const extraTags=[...attachmentTags,...mentionTags,...replyTags],wireKind=target?1111:9,at=Date.now(),tempId='pending-'+(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),optimistic={id:tempId,by:me,pubkey:viewer.pubkey||'',text,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text}:null,reactions:{},pending:!room.local,remote:false,delivery:room.local?'':'signing'}; if(!room.local)markRemoteStore(storeId);m.push(optimistic); saveTestMessages(storeId,m); render(); scrollChatBottom(); const finish=()=>{sendingDrafts.delete(key);if(deliveryOwner(p)!==viewer.pubkey)return;for(const [url] of used)pendingAttachments.delete(url);render();scrollChatBottom();}; if(room.local){finish();return;} try{ const made=await publishCordMessage(p,room,sendChannel,text,extraTags,wireKind,d=>{const rows=testMessages(storeId),row=rows.find(x=>x.id===tempId);if(row){row.id=d.made.rumorId;row.delivery='sending';saveTestMessages(storeId,rows);if(deliveryOwner(p)===viewer.pubkey)backgroundRender();}}),latest=testMessages(storeId),sent=latest.find(x=>x.id===tempId||x.id===made.rumorId); if(sent&&deliveryOwner(p)===viewer.pubkey){sent.id=made.rumorId;sent.at=made.ms;sent.pending=false;sent.remote=true;sent.delivery='sent';saveTestMessages(storeId,latest);} finish(); }catch(e){ sendingDrafts.delete(key);if((!e.delivery||e.noPublish)&&deliveryOwner(p)===viewer.pubkey)restoreFailedComposer(key,submittedDraft);const latest=testMessages(storeId),failed=latest.find(x=>x.id===tempId||e.delivery&&x.id===e.delivery.made.rumorId);if(failed&&failed.pubkey===viewer.pubkey){failed.pending=false;failed.failed=true;failed.delivery=e.delivery?e.delivery.status:'failed';saveTestMessages(storeId,latest);if(deliveryOwner(p)===viewer.pubkey)preserveChatScroll(()=>render());} if(deliveryOwner(p)===viewer.pubkey)p.toast((e.delivery?'Delivery needs attention: ':'message was not sent: ')+(e&&e.message||e)); } };
+      send.onclick=async()=>{ const text=String(input.value||'').trim(),key=input.dataset&&input.dataset.ccDraftKey||composerKey(saved()[state.community],state.channel); if(!text||sendingDrafts.has(key))return; const a=saved(), room=a[state.community],sendChannel=state.channel,storeId=channelStoreId(room,sendChannel); if(!room||(!room.local&&!room.cord&&room.protocol!=='nip29')){ p.toast('relay messaging becomes available after the invite is decrypted'); return; } const used=[...pendingAttachments].filter(([url])=>text.includes(url)),attachmentTags=used.map(([,tag])=>tag),target=replyTarget,replyTags=[],viewer=p.viewer?p.viewer():{},m=testMessages(storeId),lowerText=text.toLowerCase(),mentionTags=[],taggedPeople=new Set();for(const [handle,pk] of mentionRecipients){if(lowerText.includes('@'+handle))taggedPeople.add(pk);}for(const pk of typedMentionRecipients(text,roomParticipants(room,viewer.pubkey),p.profOf))taggedPeople.add(pk);for(const pk of taggedPeople){mentionTags.push(['P',pk],['p',pk]);} if(target){const inherited=(target.tags||[]).filter(t=>['K','E'].includes(t[0]));if(inherited.length)replyTags.push(...inherited);else replyTags.push(['K',String(target.kind||9)],['E',messageId(target),'',target.pubkey||'']);replyTags.push(['k',String(target.kind||9)],['e',messageId(target),'',target.pubkey||'']);for(const pk of threadParticipants(m,target,viewer.pubkey)){replyTags.push(['P',pk],['p',pk]);}} const submittedDraft=beginComposerSend(key);sendingDrafts.add(key);const extraTags=[...attachmentTags,...mentionTags,...replyTags],wireKind=target?1111:9,at=Date.now(),tempId='pending-'+(crypto.randomUUID?crypto.randomUUID():`${at}-${Math.random().toString(36).slice(2)}`),optimistic={id:tempId,by:me,pubkey:viewer.pubkey||'',text,at,kind:wireKind,tags:extraTags,reply:target?{id:messageId(target),by:target.by,text:target.text,expires:(target.tags||[]).find(t=>t[0]==='expiration')?.[1]}:null,reactions:{},pending:!room.local,remote:false,delivery:room.local?'':'signing'}; if(!room.local)markRemoteStore(storeId);m.push(optimistic); saveTestMessages(storeId,m); render(); scrollChatBottom(); const finish=()=>{sendingDrafts.delete(key);if(deliveryOwner(p)!==viewer.pubkey)return;for(const [url] of used)pendingAttachments.delete(url);render();scrollChatBottom();}; if(room.local){finish();return;} try{ const made=await publishCordMessage(p,room,sendChannel,text,extraTags,wireKind,d=>{const rows=testMessages(storeId),row=rows.find(x=>x.id===tempId);if(row){row.id=d.made.rumorId;row.tags=d.made.tags||row.tags;row.delivery='sending';saveTestMessages(storeId,rows);if(deliveryOwner(p)===viewer.pubkey)backgroundRender();}}),latest=testMessages(storeId),sent=latest.find(x=>x.id===tempId||x.id===made.rumorId); if(sent&&deliveryOwner(p)===viewer.pubkey){sent.id=made.rumorId;sent.at=made.ms;sent.tags=made.tags||sent.tags;sent.pending=false;sent.remote=true;sent.delivery='sent';saveTestMessages(storeId,latest);} finish(); }catch(e){ sendingDrafts.delete(key);if((!e.delivery||e.noPublish)&&deliveryOwner(p)===viewer.pubkey)restoreFailedComposer(key,submittedDraft);const latest=testMessages(storeId),failed=latest.find(x=>x.id===tempId||e.delivery&&x.id===e.delivery.made.rumorId);if(failed&&failed.pubkey===viewer.pubkey){failed.pending=false;failed.failed=true;failed.delivery=e.delivery?e.delivery.status:'failed';saveTestMessages(storeId,latest);if(deliveryOwner(p)===viewer.pubkey)preserveChatScroll(()=>render());} if(deliveryOwner(p)===viewer.pubkey)p.toast((e.delivery?'Delivery needs attention: ':'message was not sent: ')+(e&&e.message||e)); } };
       input.onkeydown=e=>{ const enter=e.key==='Enter'||e.code==='Enter'; if(mentionChoices.length){ if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();mentionIndex=(mentionIndex+(e.key==='ArrowDown'?1:-1)+mentionChoices.length)%mentionChoices.length;syncMentionState();drawMentions();return;} if(e.key==='Tab'||(enter&&!e.ctrlKey&&!e.metaKey)){e.preventDefault();acceptMention();return;} if(e.key==='Escape'){e.preventDefault();closeMentions();return;} } if(enter&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); return send.onclick(); } };
     }
     const replyCancel=$('#cc-reply-cancel'); if(replyCancel)replyCancel.onclick=()=>{ replyTarget=null; render(); };

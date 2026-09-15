@@ -6,7 +6,7 @@
  */
 (function(root){
   'use strict';
-  const DB='posterchan-concord-v1', STORE='envelopes', ICONS='icons', DELIVERIES='deliveries', VERSION=4, MAX_PENDING=64, MAX_PENDING_BYTES=4*1024*1024,
+  const DB='posterchan-concord-v1', STORE='envelopes', ICONS='icons', DELIVERIES='deliveries', VERSION=5, MAX_PENDING=64, MAX_PENDING_BYTES=4*1024*1024,
     MAX_PER_STREAM=5000, MAX_EVENT_BYTES=65536, MAX_TOTAL_BYTES=32*1024*1024,
     MAX_ICON_BYTES=5*1024*1024, MAX_ICON_TOTAL_BYTES=20*1024*1024, MAX_ICONS=64;
   let dbPromise=null;
@@ -14,7 +14,7 @@
   function done(tx){return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(tx.error||new Error('IndexedDB transaction failed'));});}
   function open(){
     if(dbPromise)return dbPromise;
-    dbPromise=new Promise((resolve,reject)=>{const q=indexedDB.open(DB,VERSION);q.onupgradeneeded=()=>{const db=q.result,s=db.objectStoreNames.contains(STORE)?q.transaction.objectStore(STORE):db.createObjectStore(STORE,{keyPath:'key'});if(!s.indexNames.contains('stream'))s.createIndex('stream','stream',{unique:false});if(!s.indexNames.contains('streamCreated'))s.createIndex('streamCreated',['stream','created'],{unique:false});if(!db.objectStoreNames.contains(ICONS))db.createObjectStore(ICONS,{keyPath:'key'});if(!db.objectStoreNames.contains(DELIVERIES))db.createObjectStore(DELIVERIES,{keyPath:'key'});};q.onsuccess=()=>{q.result.onversionchange=()=>{q.result.close();dbPromise=null;};resolve(q.result);};q.onerror=()=>reject(q.error||new Error('Concord cache unavailable'));/* A VERSIONED DATABASE THAT ANOTHER TAB HOLDS OPEN AT AN OLDER VERSION BLOCKS FOR EVER, and
+    dbPromise=new Promise((resolve,reject)=>{const q=indexedDB.open(DB,VERSION);q.onupgradeneeded=()=>{const db=q.result,s=db.objectStoreNames.contains(STORE)?q.transaction.objectStore(STORE):db.createObjectStore(STORE,{keyPath:'key'});if(!s.indexNames.contains('stream'))s.createIndex('stream','stream',{unique:false});if(!s.indexNames.contains('streamCreated'))s.createIndex('streamCreated',['stream','created'],{unique:false});if(!db.objectStoreNames.contains(ICONS))db.createObjectStore(ICONS,{keyPath:'key'});const pending=db.objectStoreNames.contains(DELIVERIES)?q.transaction.objectStore(DELIVERIES):db.createObjectStore(DELIVERIES,{keyPath:'key'});if(!s.indexNames.contains('expires'))s.createIndex('expires','expires',{unique:false});if(!pending.indexNames.contains('expires'))pending.createIndex('expires','expires',{unique:false});};q.onsuccess=()=>{q.result.onversionchange=()=>{q.result.close();dbPromise=null;};resolve(q.result);};q.onerror=()=>reject(q.error||new Error('Concord cache unavailable'));/* A VERSIONED DATABASE THAT ANOTHER TAB HOLDS OPEN AT AN OLDER VERSION BLOCKS FOR EVER, and
    with no handler this promise simply never settles: every icon read and every envelope read
    awaits it until the page is closed, with nothing thrown and nothing logged. A second window
    — or the desktop shell and a browser tab on the same profile — is enough. Rejecting turns
@@ -41,7 +41,7 @@
   // Pending sends are not history: normal history eviction must never discard retry ciphertext.
   // Admission and completion use one readwrite transaction so two windows cannot bypass quota,
   // or commit an ACK while leaving a pending record that resurrects after reload.
-  async function getDeliveries(stream){const db=await open(),tx=db.transaction(DELIVERIES,'readonly'),completion=done(tx),[rows]=await Promise.all([request(tx.objectStore(DELIVERIES).getAll()),completion]);return rows.filter(r=>r.stream===String(stream)).map(r=>r.event);}
+  async function getDeliveries(stream){await sweepExpired();const db=await open(),tx=db.transaction(DELIVERIES,'readonly'),completion=done(tx),[rows]=await Promise.all([request(tx.objectStore(DELIVERIES).getAll()),completion]);return rows.filter(r=>r.stream===String(stream)).map(r=>r.event);}
   async function putDelivery(stream,ev){
     stream=String(stream||'');const safe=envelope(ev);if(!safe||!stream||stream.length>2048)throw new Error('invalid encrypted pending delivery');
     const db=await open(),tx=db.transaction(DELIVERIES,'readwrite'),completion=done(tx),s=tx.objectStore(DELIVERIES),key=stream+'\u0000'+safe.event.id;
@@ -55,7 +55,7 @@
   async function completeDelivery(stream,id,historyStream){
     const db=await open(),tx=db.transaction([DELIVERIES,STORE],'readwrite'),completion=done(tx),pending=tx.objectStore(DELIVERIES),key=String(stream)+'\u0000'+String(id),q=pending.get(key);
     q.onsuccess=()=>{const row=q.result;if(!row)return;const event=row.event,history=String(historyStream);
-      tx.objectStore(STORE).put({key:history+'\u0000'+event.id,stream:history,id:event.id,created:eventTime(event),event,size:row.size});pending.delete(key);};
+      if(!Number.isSafeInteger(row.expires)||row.expires>Math.floor(Date.now()/1000))tx.objectStore(STORE).put({key:history+'\u0000'+event.id,stream:history,id:event.id,created:eventTime(event),event,size:row.size,...(Number.isSafeInteger(row.expires)?{expires:row.expires}:{})});pending.delete(key);};
     await completion;await put(String(historyStream),[]);return true;
   }
   async function all(stream){
@@ -67,7 +67,7 @@
     const clean=[],seen=new Set();
     const incoming=Array.isArray(events)?events.slice(-MAX_PER_STREAM):[];
     for(const ev of incoming){const safe=envelope(ev),id=safe&&eventId(safe.event);if(!id||seen.has(id))continue;seen.add(id);clean.push({key:stream+'\u0000'+id,stream,id,created:eventTime(safe.event),event:safe.event,size:safe.size});}
-    if(clean.length){const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of clean)s.put(row);await completion;}
+    if(clean.length){const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of clean){const q=s.get(row.key);q.onsuccess=()=>{const expires=q.result?.expires;if(Number.isSafeInteger(expires)&&expires<=Math.floor(Date.now()/1000)){s.delete(row.key);return;}s.put(Number.isSafeInteger(expires)?{...row,expires}:row);};}await completion;}
     const rows=await all(stream),extra=Math.max(0,rows.length-Math.max(1,Number(limit)||MAX_PER_STREAM));
     if(extra){const db=await open(),tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const row of rows.slice(0,extra))s.delete(row.key);await completion;}
     /* A malicious room can advertise many stream ids, so a per-stream limit is not a quota limit.
@@ -75,8 +75,21 @@
     {const db=await open(),read=db.transaction(STORE,'readonly'),readDone=done(read),[allRows]=await Promise.all([request(read.objectStore(STORE).getAll()),readDone]);let bytes=allRows.reduce((n,r)=>n+(Number(r.size)||new TextEncoder().encode(JSON.stringify(r.event||{})).byteLength),0);allRows.sort((a,b)=>a.created-b.created||a.key.localeCompare(b.key));const victims=[];for(const row of allRows){if(bytes<=MAX_TOTAL_BYTES)break;victims.push(row.key);bytes-=Number(row.size)||new TextEncoder().encode(JSON.stringify(row.event||{})).byteLength;}if(victims.length){const tx=db.transaction(STORE,'readwrite'),completion=done(tx),s=tx.objectStore(STORE);for(const key of victims)s.delete(key);await completion;}}
     return clean.length;
   }
-  async function get(stream){return (await all(stream)).map(row=>row.event);}
+  // Only authenticated inner-rumor deadlines supplied by the reader are authority here.
+  // An outer expiration tag is relay hygiene and can be altered by a stream-key holder.
+  async function expireEvents(stream,expirations){
+    const db=await open(),tx=db.transaction([STORE,DELIVERIES],'readwrite'),completion=done(tx),now=Math.floor(Date.now()/1000);
+    for(const name of [STORE,DELIVERIES]){const store=tx.objectStore(name);for(const [id,at] of expirations||[]){if(!Number.isSafeInteger(at)||at<0)continue;const key=String(stream)+'\u0000'+String(id),q=store.get(key);q.onsuccess=()=>{const row=q.result;if(!row)return;if(at<=now)store.delete(key);else store.put({...row,expires:at});};}}
+    await completion;
+  }
+  // The sparse deadline index avoids reading every encrypted payload on each live tick.
+  async function sweepExpired(){
+    const db=await open(),tx=db.transaction([STORE,DELIVERIES],'readwrite'),completion=done(tx),now=Math.floor(Date.now()/1000);
+    for(const name of [STORE,DELIVERIES]){const q=tx.objectStore(name).index('expires').openCursor(IDBKeyRange.upperBound(now));q.onsuccess=()=>{const c=q.result;if(!c)return;if(Number.isSafeInteger(c.value.expires)&&c.value.expires<=now)c.delete();c.continue();};}await completion;
+  }
+  async function get(stream){await sweepExpired();return (await all(stream)).map(row=>row.event);}
   async function page(stream,{before='',limit=200}={}){
+    await sweepExpired();
     stream=String(stream||'');const cap=Math.min(500,Math.max(1,Number(limit)||200)),db=await open(),tx=db.transaction(STORE,'readonly'),completion=done(tx),rows=[];
     /* A cursor is the memory boundary. `getAll()` followed by slice still allocates and sorts every
      * one of a room's 5,000 envelopes, which was enough to kill Android's WebView while opening a
@@ -98,5 +111,5 @@
     const pendingKeys=pendingRows.filter(row=>{try{return JSON.parse(row.stream)[0]===prefix;}catch(_){return false;}}).map(row=>row.key);
     if(pendingKeys.length){const clear=db.transaction(DELIVERIES,'readwrite'),cleared=done(clear);for(const key of pendingKeys)clear.objectStore(DELIVERIES).delete(key);await cleared;}
     return true;}
-  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries,putDelivery,completeDelivery,MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,put,get,page,drop,putIcon,getIcon,allIcons,dropIcon,dropRoom,_reset(){dbPromise=null;}};
+  root.PCConcordCache={DB,STORE,ICONS,DELIVERIES,MAX_PENDING,MAX_PENDING_BYTES,getDeliveries,putDelivery,completeDelivery,MAX_PER_STREAM,MAX_EVENT_BYTES,MAX_TOTAL_BYTES,MAX_ICON_BYTES,expireEvents,sweepExpired,put,get,page,drop,putIcon,getIcon,allIcons,dropIcon,dropRoom,_reset(){dbPromise=null;}};
 })(typeof window==='undefined'?globalThis:window);

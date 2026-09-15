@@ -9357,6 +9357,7 @@ var PosterCordReader = (() => {
     createMetadataWrap: () => createMetadataWrap,
     createChannelWrap: () => createChannelWrap,
     inspectChat: () => inspectChat,
+    sweepExpiredChat: () => sweepExpiredChat,
     inspectWebxdc: () => inspectWebxdc,
     inspectWebxdcSignals: () => inspectWebxdcSignals,
     inspectGuestbook: () => inspectGuestbook,
@@ -25169,7 +25170,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       {
         kind: opts?.ephemeral ? KIND_WRAP_EPHEMERAL : KIND_WRAP,
         content: encryptChecked(stream.convKey, JSON.stringify(seal)),
-        tags: [["p", ephemeralPk]],
+        tags: [["p", ephemeralPk], ...(opts?.expiration ? [["expiration", opts.expiration]] : [])],
         created_at: Math.floor(Date.now() / 1e3)
       },
       stream.sk
@@ -26427,7 +26428,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if (!stream) return null;
     const memoKey = `${wireMemoKey(wrap2)}|${channel.idHex}|${bytesToHex2(stream.group.convKey)}`;
     const cached2 = decodeMemo.get(memoKey);
-    if (cached2 !== void 0) return cached2;
+    if (cached2 !== void 0 && !chatRumorExpired(cached2)) return cached2;
     let opened = null;
     try {
       const ev = openWrap(wrap2, stream.group);
@@ -26437,9 +26438,42 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     } catch {
       opened = null;
     }
+    rememberChatExpiration(wrap2, opened);
+    if (chatRumorExpired(opened)) opened = null;
     if (decodeMemo.size >= 10000) decodeMemo.delete(decodeMemo.keys().next().value);
     decodeMemo.set(memoKey, opened);
     return opened;
+  }
+  // CORD-08: metadata determines the NEXT send; only the signed rumor determines expiry.
+  var chatExpirations = new Map();
+  function sweepExpiredChat() {
+    for (const [key, ev] of decodeMemo) if (chatRumorExpired(ev)) decodeMemo.delete(key);
+  }
+  function rememberChatExpiration(wrap, opened) {
+    const at = chatExpirationTag(opened);
+    if (at === null) return;
+    chatExpirations.set(wrap.id, Number(at));
+    while (chatExpirations.size > 8192) chatExpirations.delete(chatExpirations.keys().next().value);
+  }
+  function messageExpirationSeconds(value) {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+  }
+  function chatExpirationTag(ev) {
+    if (!ev || ev.kind === 5 || ev.kind === 1740 || ev.kind >= 20000 && ev.kind < 30000) return null;
+    const tag = (ev.tags || []).find(t => t[0] === "expiration");
+    if (!tag || typeof tag[1] !== "string" || !/^(0|[1-9][0-9]*)$/.test(tag[1])) return null;
+    return Number.isSafeInteger(Number(tag[1])) ? tag[1] : null;
+  }
+  function chatRumorExpired(ev, now = Math.floor(Date.now() / 1000)) {
+    const at = chatExpirationTag(ev);
+    return at !== null && Number(at) <= now;
+  }
+  function chatSendTags(tags, kind, ms, folded, ephemeral = false) {
+    const clean = tags.filter(t => t[0] !== "expiration"), timer = messageExpirationSeconds(folded.metadata?.message_expiration);
+    const at = Math.floor(ms / 1000) + timer;
+    if (!ephemeral && kind !== 5 && kind !== 1740 && !(kind >= 20000 && kind < 30000) && timer && Number.isSafeInteger(at))
+      clean.push(["expiration", String(at)]);
+    return clean;
   }
   var DECODE_SLICE_MS = 5;
   async function openChatBatch(wraps, channel, opts) {
@@ -26448,7 +26482,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     for (let i3 = 0; i3 < wraps.length; i3++) {
       if (opts?.signal?.aborted) break;
       const opened = openOne(wraps[i3], channel);
-      if (opened) out.push(opened);
+      if (opened && !chatRumorExpired(opened)) out.push(opened);
       if (i3 + 1 < wraps.length && performance.now() - sliceStart >= DECODE_SLICE_MS) {
         await new Promise((resolve) => setTimeout(resolve, 0));
         sliceStart = performance.now();
@@ -26473,7 +26507,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const rsvps = /* @__PURE__ */ new Map();
     const zapCandidates = [];
     for (const ev of opened) {
-      if (moderation?.banned.has(ev.author)) continue;
+      if (chatRumorExpired(ev) || moderation?.banned.has(ev.author)) continue;
+      if (ev.kind === 1740) {
+        const timer = ev.tags.find(t => t[0] === "timer")?.[1];
+        if (moderation?.canManageMetadata?.(ev.author) && typeof timer === "string" && /^(0|[1-9][0-9]*)$/.test(timer) && Number.isSafeInteger(Number(timer)))
+          byId.set(ev.rumorId, ev);
+        continue;
+      }
       if (ev.kind === KIND_DELETE) {
         for (const t of ev.tags) {
           if (t[0] !== "e" || !t[1]) continue;
@@ -26490,7 +26530,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         if (!target) continue;
         let list = edits.get(target);
         if (!list) edits.set(target, list = []);
-        list.push({ author: ev.author, content: ev.content, ms: ev.ms });
+        list.push({ author: ev.author, content: ev.content, ms: ev.ms, expires: chatExpirationTag(ev) });
         continue;
       }
       if (ev.kind === KIND_REACTION) {
@@ -26528,6 +26568,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
             pubkey: ev.author,
             sats: Math.floor(msats / 1e3),
             comment: ev.content,
+            expires: chatExpirationTag(ev),
             rail: "lightning"
           }
         });
@@ -26548,6 +26589,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
             pubkey: ev.author,
             sats,
             comment: ev.content,
+            expires: chatExpirationTag(ev),
             rail: "onchain"
           }
         });
@@ -26560,7 +26602,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         if (optionIds.length === 0) continue;
         let list = pollVotes.get(target);
         if (!list) pollVotes.set(target, list = []);
-        list.push({ pubkey: ev.author, optionIds, ms: ev.ms });
+        list.push({ pubkey: ev.author, optionIds, ms: ev.ms, expires: chatExpirationTag(ev) });
         continue;
       }
       if (ev.kind === KIND_CALENDAR_RSVP) {
@@ -26592,7 +26634,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       if (best) {
         const tags = msg.tags.filter(([name]) => name !== "edited");
         tags.push(["edited", String(Math.floor(best.ms / 1e3))]);
-        byId.set(id, { ...msg, content: best.content, tags });
+        byId.set(id, { ...msg, content: best.content, originalContent: msg.content, editedExpires: best.expires, tags });
       }
     }
     const deletedMessageIds = [];
@@ -26811,6 +26853,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   function inspectControl(bundle, wraps) {
     const { community, groups, folded, channels } = control(bundle, wraps);
     return {
+      message_expiration: messageExpirationSeconds(folded.metadata?.message_expiration),
       name: folded.metadata?.name || community.name,
       description: folded.metadata?.description || "",
       icon: folded.metadata?.picture || folded.metadata?.icon || "",
@@ -26863,6 +26906,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(!name.trim()||utf8Len(name)>NAME_MAX_BYTES)throw new Error("community name must be 1–64 UTF-8 bytes");
     if(utf8Len(description)>DESCRIPTION_MAX_BYTES)throw new Error("community description is too long");
     const body = { ...priorBody, name, description, relays: priorBody.relays ?? community.relays };
+    if (metadata && Object.prototype.hasOwnProperty.call(metadata, "message_expiration")) body.message_expiration = messageExpirationSeconds(metadata.message_expiration);
     if (metadata && metadata.icon) body.picture = String(metadata.icon).slice(0, 2048);
     const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()]];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
@@ -26927,6 +26971,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const ownerHex = String(community.owner || "").toLowerCase();
     return {
       banned: folded.banned,
+      canManageMetadata(author) {
+        return !folded.banned.has(author) && isAuthorized(folded.roster, author, ownerHex, Permissions.MANAGE_METADATA);
+      },
       canDelete(deleterHex, authorHex) {
         const d = String(deleterHex || "").toLowerCase(), a = String(authorHex || "").toLowerCase();
         if (!d || d === a) return true;                 // self-delete, the pre-existing rule
@@ -26944,10 +26991,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const events = await openChatBatch(chatWraps || [], channel),
           timeline = foldTimeline(events, chatModeration(community, folded));
     return {
+      metadataManagers: [...new Set([community.owner,...folded.roster.grants.map(g=>g.member)])].filter(author=>chatModeration(community,folded).canManageMetadata(author)),
+      expirations: (chatWraps || []).filter(w => chatExpirations.has(w.id)).map(w => [w.id, chatExpirations.get(w.id)]),
       deletions: timeline.deletions,
+      reactionExpirations: events.filter(ev=>ev.kind===KIND_REACTION && chatExpirationTag(ev)!==null).map(ev=>[ev.rumorId,Number(chatExpirationTag(ev))]),
       reactionTimes: events.filter(ev=>ev.kind===KIND_REACTION).map(ev=>[ev.rumorId,ev.ms]),
       deletedMessageIds: timeline.deletedMessageIds,
-      messages: timeline.messages.map((m) => ({ id: m.rumorId, pubkey: m.author, text: m.content, at: m.ms, kind: m.kind, tags: m.tags })),
+      messages: timeline.messages.map((m) => ({ id: m.rumorId, pubkey: m.author, text: m.content, at: m.ms, kind: m.kind, tags: m.tags, ...(m.editedExpires!==undefined?{editedExpires:m.editedExpires,originalText:m.originalContent}:{}) })),
       reactions: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.keys()]])]),
       reactionIds: [...timeline.reactions].map(([target, byEmoji]) => [target, [...byEmoji].map(([emoji3, entry]) => [emoji3, [...entry.reactors.entries()]])]),
       /* Preserve NIP-30 reaction assets. foldTimeline already validates/extracts the emoji tag, but
@@ -26960,29 +27010,29 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
        * into pollVotes and the public reader then dropped it on the floor, so a poll posted from
        * Armada arrived in Concord as a question nobody could see the answers to — and Concord
        * cannot count them itself, because the votes are sealed inside the channel's wraps. */
-      pollVotes: [...timeline.pollVotes].map(([target, list]) => [target, list.map((v) => ({ pubkey: v.pubkey, optionIds: v.optionIds, ms: v.ms }))])
+      pollVotes: [...timeline.pollVotes].map(([target, list]) => [target, list.map((v) => ({ pubkey: v.pubkey, optionIds: v.optionIds, ms: v.ms, expires: v.expires }))])
     };
   }
   async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE) {
-    const { channels } = control(bundle, controlWraps);
+    const { channels, folded } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not writable with this membership");
     const ms = Date.now();
-    const rumor = buildRumor({ kind, content, pubkey, ms, tags: [...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags] });
+    const rumor = buildRumor({ kind, content, pubkey, ms, tags: chatSendTags([...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags], kind, ms, folded) });
     const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
-    return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group), ms };
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group, { expiration: chatExpirationTag(rumor) }), ms, tags: rumor.tags };
   }
   /* Webxdc uses the same authenticated encrypted channel stream as chat, but is not timeline
    * traffic. Keep this primitive explicit so callers cannot accidentally make kind-3310 visible as
    * a message, and so realtime can select Armada's ephemeral 21059 outer wrap. */
   async function createWebxdcWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], ephemeral = false) {
-    const { channels } = control(bundle, controlWraps);
+    const { channels, folded } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not writable with this membership");
     const ms = Date.now();
-    const rumor = buildRumor({ kind: 3310, content, pubkey, ms, tags: [...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags] });
+    const rumor = buildRumor({ kind: 3310, content, pubkey, ms, tags: chatSendTags([...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags], 3310, ms, folded, ephemeral) });
     const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
-    return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group, { ephemeral }), ms };
+    return { rumorId: rumor.id, wrap: wrapSeal(seal, channel.current.group, { ephemeral, expiration: ephemeral ? null : chatExpirationTag(rumor) }), ms, tags: rumor.tags };
   }
   async function inspectWebxdc(bundle, controlWraps, channelId, wraps, uuid, realtime = false) {
     const { channels } = control(bundle, controlWraps);
