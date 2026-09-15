@@ -62,8 +62,12 @@ class Serial:
 
     def __init__(self, path, log):
         self.sock = socket.socket(socket.AF_UNIX)
-        self.sock.settimeout(1.0)
-        self.sock.connect(str(path))
+        try:
+            self.sock.settimeout(1.0)
+            self.sock.connect(str(path))
+        except OSError:
+            self.sock.close()
+            raise
         self.buf = ""
         self.log = log
 

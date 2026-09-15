@@ -163,6 +163,12 @@ print('PC_WELCOME_DATA=' + base64.b64encode(json.dumps(result).encode()).decode(
 """.replace('ROOT', repr(str(root))).replace('BASELINE', repr(baseline))
 
 
+def disk_key_prompt():
+    # The live shell emits OSC command markers without a newline. Put the probe marker on its
+    # own line so an anchored observer sees actual output, never the echoed command text.
+    return "printf '\\nPC_WELCOME_KEY_READY\\n'; read -r -s pc_welcome_key; echo; "
+
+
 def recover_logs(args, disk, baseline=None):
     """Observe an installed disk using the live ISO, without host mounts or guest writes."""
     # This existing serial helper speaks to the live account, not the installed user.
@@ -200,7 +206,7 @@ def recover_logs(args, disk, baseline=None):
                 if con.expect(r'live@[-a-z0-9]+', args.seconds) is None:
                     raise RuntimeError('recovery ISO did not reach its live serial shell')
                 # read -s prevents the disposable key from entering the evidence transcript.
-                con.send("read -r -s -p 'PC_WELCOME_KEY_READY' pc_welcome_key; echo; "
+                con.send(disk_key_prompt() +
                          "printf '%s' \"$pc_welcome_key\" | sudo cryptsetup open --readonly "
                          "/dev/vda2 pc_welcome_probe --key-file=- && "
                          "sudo mkdir -p /mnt/pc-welcome && "
@@ -228,21 +234,25 @@ def recover_logs(args, disk, baseline=None):
                     detail += '\n' + con.buf[-2500:]
                 raise RuntimeError(f'{exc}\n{detail[-3000:].replace(key, "<redacted>")}') from exc
             finally:
-                if getattr(args, 'evidence_dir', None):
-                    evidence = Path(args.evidence_dir)
-                    evidence.mkdir(parents=True, exist_ok=True)
-                    label = 'baseline' if baseline is None else Path(disk).parent.name
-                    transcript.flush(); transcript.seek(0)
-                    (evidence / (label + '-recovery.log')).write_text(transcript.read().replace(key, '<redacted>'))
-                if con is not None:
-                    con.sock.close()
-                if proc.poll() is None:
-                    proc.terminate()
+                try:
+                    if getattr(args, 'evidence_dir', None):
+                        evidence = Path(args.evidence_dir)
+                        evidence.mkdir(parents=True, exist_ok=True)
+                        label = 'baseline' if baseline is None else Path(disk).parent.name
+                        transcript.flush(); transcript.seek(0)
+                        (evidence / (label + '-recovery.log')).write_text(transcript.read().replace(key, '<redacted>'))
+                finally:
                     try:
-                        proc.wait(timeout=15)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=15)
+                        if con is not None:
+                            con.sock.close()
+                    finally:
+                        if proc.poll() is None:
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=15)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.wait(timeout=15)
 
 
 def run_installed_guest(args, baseline, networked=False):

@@ -140,3 +140,82 @@ def test_recovery_attaches_installed_disk_and_iso_read_only(tmp_path, monkeypatc
     assert f'file={args.recovery_iso},media=cdrom,readonly=on' in drives
     assert cmd[-2:] == ['-nic', 'none']
     assert not any('vm-disposable-password' in arg for arg in cmd)
+
+
+def test_evidence_write_failure_still_closes_console_and_stops_qemu(tmp_path, monkeypatch):
+    from scripts import check_livecd_install_vm as installer
+    code, variables, key = [tmp_path/name for name in ('code.fd', 'vars.fd', 'key')]
+    for path in (code, variables):
+        path.write_bytes(b'firmware fixture')
+    key.write_text('vm-disposable-password\n')
+    args = SimpleNamespace(disk_key_file=str(key), recovery_iso=str(tmp_path/'live.iso'),
+                           memory=4096, cpus=2, seconds=1, evidence_dir=str(tmp_path/'evidence'))
+    monkeypatch.setitem(sys.modules, 'check_livecd_install_vm', installer)
+    monkeypatch.setattr(installer, 'ovmf', lambda: (code, variables))
+    events = []
+    class Process:
+        stopped = False
+        def __init__(self, cmd, **kwargs):
+            serial = next(x for x in cmd if x.startswith('socket,id=pcserial,'))
+            path = serial.split('path=', 1)[1].split(',', 1)[0]
+            Path(path).touch()
+        def poll(self):
+            return 0 if self.stopped else None
+        def terminate(self):
+            events.append('terminate')
+            self.stopped = True
+        def wait(self, timeout):
+            events.append('wait')
+    class Socket:
+        def close(self):
+            events.append('close-console')
+    class Console:
+        def __init__(self, *args):
+            self.sock, self.buf = Socket(), ''
+        def expect(self, *args):
+            return None  # The recovery guest failed to reach its shell.
+    monkeypatch.setattr(MOD.subprocess, 'Popen', Process)
+    monkeypatch.setattr(installer, 'Serial', Console)
+    original_write = Path.write_text
+    def fail_evidence(path, *args, **kwargs):
+        if path.name.endswith('-recovery.log'):
+            raise OSError('evidence volume full')
+        return original_write(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'write_text', fail_evidence)
+    with pytest.raises(OSError, match='evidence volume full'):
+        MOD.recover_logs(args, tmp_path/'existing.qcow2')
+    assert events == ['close-console', 'terminate', 'wait']
+
+
+def test_failed_recovery_serial_connection_closes_its_socket(tmp_path, monkeypatch):
+    import io
+    from scripts import check_livecd_install_vm as installer
+    sockets = []
+    real_socket = installer.socket.socket
+    def tracked_socket(*args, **kwargs):
+        sock = real_socket(*args, **kwargs)
+        sockets.append(sock)
+        return sock
+    monkeypatch.setattr(installer.socket, 'socket', tracked_socket)
+    # Retain the exception/traceback so garbage collection cannot conceal a leaked descriptor.
+    with pytest.raises(OSError) as failure:
+        installer.Serial(tmp_path/'absent.sock', io.StringIO())
+    assert failure.value is not None
+    assert len(sockets) == 1
+    assert sockets[0].fileno() == -1
+
+
+def test_key_prompt_is_visible_after_osc_marker_but_not_in_echoed_command():
+    import re
+    import shlex
+    marker = re.compile(r'(?m)^PC_WELCOME_KEY_READY\r?$')
+    command = MOD.disk_key_prompt()
+    # The command echo contains literal backslash-n sequences, not a standalone marker.
+    assert not marker.search('live@posterchan:~$ ' + command + '\r\n')
+    osc = '\x1b]3008;start=fixture\x1b\\'
+    proc = subprocess.run(['bash', '-c', 'printf %s ' + shlex.quote(osc) + '; ' + command],
+                          input='vm-disposable-password\n', capture_output=True, text=True, timeout=5)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith(osc + '\n')
+    assert marker.search(proc.stdout), repr(proc.stdout)
+    assert 'vm-disposable-password' not in proc.stdout + proc.stderr
