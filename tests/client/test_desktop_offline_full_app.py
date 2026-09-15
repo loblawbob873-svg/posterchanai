@@ -86,6 +86,43 @@ async def wait_browser_port(proc, port_file, log, timeout=30):
     raise AssertionError(f'Chrome startup failed (exit={proc.poll()}, timeout={timeout}s): {detail}')
 
 
+async def wait_browser_target(proc, port, log, timeout=15, request_timeout=2):
+    """A written port file precedes HTTP readiness on loaded CI runners.
+
+    Retry discovery only, before any application navigation or assertions. Bound the entire
+    request as well as each socket phase so a server trickling bytes cannot extend startup forever.
+    """
+    loop=asyncio.get_running_loop()
+    deadline=loop.time()+timeout
+    last='no target discovery attempted'
+    attempts=0
+    async with httpx.AsyncClient(trust_env=False) as client:
+        while proc.poll() is None:
+            remaining=deadline-loop.time()
+            if remaining<=0:break
+            attempts+=1
+            try:
+                budget=min(request_timeout, remaining)
+                response=await asyncio.wait_for(
+                    client.get(f'http://127.0.0.1:{port}/json', timeout=budget), budget)
+                response.raise_for_status()
+                pages=response.json()
+                if isinstance(pages,list):
+                    target=next((p.get('webSocketDebuggerUrl') for p in pages
+                                 if isinstance(p,dict) and p.get('type')=='page'
+                                 and isinstance(p.get('webSocketDebuggerUrl'),str)
+                                 and p['webSocketDebuggerUrl'].startswith('ws://')),None)
+                    if target:return target
+                last='HTTP target list has no usable page'
+            except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+                last=f'{type(exc).__name__}: {exc}'
+            await asyncio.sleep(min(.1,max(0,deadline-loop.time())))
+    log.flush();log.seek(0)
+    detail=log.read().decode(errors='replace')[-4000:]
+    raise AssertionError(f'Chrome DevTools discovery failed (exit={proc.poll()}, '
+                         f'timeout={timeout}s, attempts={attempts}, last={last}): {detail}')
+
+
 async def with_browser(mode,route,check,extra_init=""):
     server=ThreadingHTTPServer(('127.0.0.1',0),BundleHandler)
     threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -93,8 +130,8 @@ async def with_browser(mode,route,check,extra_init=""):
         proc=subprocess.Popen(['/opt/google/chrome/chrome','--headless=new','--no-sandbox','--disable-gpu','--window-size=1440,1000','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],stdout=chrome_log,stderr=chrome_log)
         try:
             port=await wait_browser_port(proc,Path(profile,'DevToolsActivePort'),chrome_log)
-            async with httpx.AsyncClient() as h:pages=(await h.get(f'http://127.0.0.1:{port}/json')).json()
-            async with websockets.connect(next(p for p in pages if p.get('type')=='page')['webSocketDebuggerUrl'],max_size=20_000_000) as ws:
+            target=await wait_browser_target(proc,port,chrome_log)
+            async with websockets.connect(target,max_size=20_000_000) as ws:
                 b=Browser(ws)
                 try:
                     await b.call('Page.enable');await b.call('Network.enable')
