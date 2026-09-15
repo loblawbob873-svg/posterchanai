@@ -202,6 +202,7 @@ class _User:
 
 
 def _install_route_stubs(monkeypatch, docs):
+    monkeypatch.setattr(mail_router, "get_user_mail_accounts", lambda uid, db: [type("A", (), {"email": "me@example.com"})()])
     monkeypatch.setattr(mail_router, "_seckey", lambda db, user: bytes.fromhex("11" * 32))
     monkeypatch.setattr(mail_router, "_resolve_account",
                         lambda db, user, hint: type("A", (), {"email": "me@example.com"})())

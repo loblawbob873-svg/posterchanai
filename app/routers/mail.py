@@ -518,12 +518,23 @@ async def mail_search(q: str, account: str = "", folder: str = "",
     # documents — 3 of 2,717 archived messages and 1 of 807 in INBOX.Sent — and a single account
     # over the cap lost 449 of its 5,469. A search that only looks at the newest page is not a
     # search, and it fails SILENTLY: a truncated read is indistinguishable from "no matches".
-    if account == "__all":
+    accounts = get_user_mail_accounts(current_user.id, db)
+    allowed = {a.email for a in accounts}
+    if not (q or "").strip() or not allowed:
+        return {"messages": []}
+    if account in ("", "__all"):
         msgs = await mail_store.list_all_messages(sk, None, None)
     else:
         acc = _resolve_account(db, current_user, account)
-        msgs = await mail_store.list_all_messages(sk, acc.email if acc else None, folder or None)
-    return {"messages": [_summary(m) for m in mail_store.search(msgs, q)]}
+        if not acc:
+            raise HTTPException(status_code=404, detail="Account not found")
+        msgs = await mail_store.list_all_messages(sk, acc.email, folder or None)
+    # Removed account archives may still be retained in storage; only configured accounts
+    # have a reader/sender available. Preserve each hit's mailbox and folder identity.
+    hits = mail_store.search([m for m in msgs if m.get("account") in allowed], q)
+    hits.sort(key=lambda m: (-int(m.get("ts") or 0), str(m.get("account") or ""),
+                             str(m.get("folder") or ""), str(m.get("uid") or "")))
+    return {"messages": [_summary(m) for m in hits]}
 
 
 @router.post("/mark-read")

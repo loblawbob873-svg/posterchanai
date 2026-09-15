@@ -28621,7 +28621,7 @@
                   ['Esc or q', 'back to the list'], ['gg / G', 'first / last'],
                   ['c', 'compose'], ['r / a / f', 'reply / reply all / forward'],
                   ['u', 'mark unread'], ['e', 'archive'], ['#', 'delete'],
-                  ['/', 'search this mailbox'], ['?', 'this list']];
+                  ['/', 'search all email accounts'], ['?', 'this list']];
     modal('<h3>⌨️ Email shortcuts</h3><div class="ks-grid">'
       + rows.map(([k, d]) => `<kbd>${enc(k)}</kbd><span>${enc(d)}</span>`).join('') + '</div>');
   }
@@ -28736,7 +28736,7 @@
                selection to act on (.mail-bulk:not(:has(.btn)) in client.css). NO BACKTICKS IN
                HERE: this comment lives inside a template literal, and one would close it and take
                the whole module out at parse time. -->
-          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><input class="input mail-search" id="mail-search" placeholder="🔍 Search mail…" value="${enc(this.q)}"><button class="mini mail-folders-open" id="mail-folders-open" title="Browse folders" aria-label="Browse folders">📂</button><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
+          <div class="mail-list-top"><label class="mail-selall" title="Select all / none"><input type="checkbox" id="mail-selall"> Select</label><input class="input mail-search" id="mail-search" placeholder="🔍 Search all accounts…" aria-label="Search all email accounts" value="${enc(this.q)}"><button class="mini mail-folders-open" id="mail-folders-open" title="Browse folders" aria-label="Browse folders">📂</button><button class="mini mail-refresh" id="mail-refresh" title="Refresh">🔄</button></div>
           <div class="mail-bulk"><span class="mail-bulk-act" id="mail-bulk-act"></span></div>
           <div class="mail-items" id="mail-items"><div class="spinner"></div></div>
         </div>
@@ -28756,7 +28756,7 @@
           if(l < strip.scrollLeft) strip.scrollLeft = Math.max(0, l-8);
           else if(r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth + 8;
         } }
-      { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ this.q=s.value.trim(); this.loadList(); },300); }; } }
+      { const s=$('#mail-search',root); if(s){ let t; s.oninput=()=>{ clearTimeout(t); t=setTimeout(()=>{ if(this.root!==root||!s.isConnected)return; this.q=s.value.trim(); this.loadList(); },300); }; } }
       $('#mail-refresh',root).onclick=()=>this.sync(true);
       { const fb=$('#mail-folders-open',root); if(fb) fb.onclick=()=>this.browseFolders(); }
       /* Decide from the SELECTION, never from the box's own checked state.
@@ -28938,20 +28938,23 @@
     /* Append the next page. Kept separate from loadList so paging never re-reads (or re-decrypts)
      * what is already on screen — the point of a cursor. */
     async loadMore(){
-      if(!this._next || this._paging) return;
+      if(this.q || !this._next || this._paging) return;
+      const seq=this._listSeq, root=this.root, account=this.acct, folder=this.folder, cursor=this._next;
+      const current=()=>seq===this._listSeq&&root===this.root&&account===this.acct&&folder===this.folder&&!this.q;
       this._paging = true;
       const btn=$('#mail-more-btn', this.root);
       if(btn){ btn.disabled=true; btn.textContent='Loading…'; }
       try{
-        const r = await this.api('/messages?account='+encodeURIComponent(this.acct)
-                                 +'&folder='+encodeURIComponent(this.folder)
-                                 +'&until='+encodeURIComponent(this._next));
+        const r = await this.api('/messages?account='+encodeURIComponent(account)
+                                 +'&folder='+encodeURIComponent(folder)
+                                 +'&until='+encodeURIComponent(cursor));
+        if(!current())return;
         const seen=new Set(this.msgs.map(m=>this._key(m)));
-        for(const m of (r.messages||[])) if(!seen.has(this._key(m))) this.msgs.push(m);
+        for(const m of (r.messages||[])) if(!seen.has(this._key(m))){this.msgs.push(m);seen.add(this._key(m));}
         this._next = r.next_until || 0;
         this.drawList();
-      }catch(_){ if(btn){ btn.disabled=false; btn.textContent='Load older'; } }
-      this._paging = false;
+      }catch(_){ if(current()&&btn){ btn.disabled=false; btn.textContent='Load older'; } }
+      finally{this._paging = false;}
     },
     async loadList(){
       const box=$('#mail-items', this.root); if(!box) return;
@@ -28962,14 +28965,17 @@
       if(!this.msgs.length) box.innerHTML='<div class="spinner"></div>';
       try{
         const r = query
-          ? await this.api('/search?account='+encodeURIComponent(account)+'&q='+encodeURIComponent(query))
+          ? await this.api('/search?q='+encodeURIComponent(query))
           : await this.api('/messages?account='+encodeURIComponent(account)+'&folder='+encodeURIComponent(folder));
         if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder || query!==this.q) return;
         this.msgs=r.messages||[];
-        this._next=r.next_until||0;
+        this._next=query?0:(r.next_until||0);
+        this._listError='';
+        if(query)this.convSent=[];
       }catch(_){
         if(seq!==this._listSeq || root!==this.root || account!==this.acct || folder!==this.folder || query!==this.q) return;
         this.msgs=[]; this._next=0;
+        this._listError=query?'Could not search email. Try again.':'Could not load email. Try again.';
       }
       this.drawList();
       this.loadConvSent(seq);
@@ -29043,7 +29049,7 @@
     _convKey(m){
       const raw = String((m && m.subject) || '');
       const norm = raw.replace(/^(?:\s*(?:re|fwd|fw)\s*:\s*)+/i, '').trim().toLowerCase();
-      return norm ? 'subj:' + norm : 'uid:' + this._key(m);
+      return norm ? JSON.stringify([m.account||this.acct,'subj',norm]) : 'uid:' + this._key(m);
     },
     /* One entry per conversation, newest first, each carrying the messages it stands for.
      * `this.msgs` is already newest-first, so first-seen order IS newest-first. */
@@ -29076,10 +29082,10 @@
     drawList(){
       const box=$('#mail-items', this.root); if(!box) return;
       this.sel=this.sel||new Set();
-      if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this.q?'No matches.':'No messages.')+'</div>'; this.updateBulk(); return; }
+      if(!this.msgs.length){ box.innerHTML='<div class="empty">'+(this._listError||(this.q?'No matches across your accounts.':'No messages.'))+'</div>'; this.updateBulk(); return; }
       // Unified mode uses the logical name and has no per-account folderLabels map. Treat it as
       // Sent too, or its rows show the sender (yourself) instead of the useful "To:" recipient.
-      const isSent=this.folder==='Sent'||this.folderLabels[this.folder]==='📤 Sent', unified=this.acct==='__all';
+      const isSent=!this.q&&(this.folder==='Sent'||this.folderLabels[this.folder]==='📤 Sent'), unified=this.acct==='__all'||!!this.q;
       /* ONE ROW PER CONVERSATION. The reader has grouped a thread for a while and the list did
          not, so a back-and-forth filled the screen with near-identical rows — "the point of threads
          is to consolidate". The row shows the NEWEST message and a count; the checkbox selects the
@@ -29087,7 +29093,7 @@
       const convs = this._conversations();
       box.innerHTML=convs.map(c=>{ const m=c.head, keys=c.all.map(x=>this._key(x)), key=keys[0];
         const cur = (this.msgs.indexOf(c.all[0]) === this.cursor) ? ' cursor' : '';
-        const openInThis = c.all.concat(c.mine || []).some(x => String(x.uid) === String(this.openUid));
+        const openInThis = c.all.concat(c.mine || []).some(x => String(x.uid) === String(this.openUid) && (x.account||this.acct)===(this.openAccount||this.acct) && (x.folder||this.folder)===(this.openFolder||this.folder));
         const n = c.count || c.all.length;
         /* A row whose newest message is YOURS says so, the way every mail client does — otherwise
            the reply you just sent looks like another message from them. */
@@ -29098,7 +29104,7 @@
         return `<div class="mail-item${c.unread?' unread':''}${cur}${openInThis?' active':''}" data-uid="${enc(String(openM.uid))}" data-folder="${enc(openM.folder||this.folder)}" data-account="${enc(openM.account||'')}" data-key="${enc(key)}" data-keys="${enc(keys.join(','))}">
         <input type="checkbox" class="mi-chk"${keys.every(k=>this.sel.has(k))?' checked':''}>
         <div class="mi-content">
-          <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc((m.account||'').split('@')[0])}</span> `:''}${mineHead?'<span class="mi-you">You:</span> ':''}${enc(((isSent||mineHead)?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}${n>1?`<span class="mi-count" title="${n} messages in this conversation">${n}</span>`:''}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
+          <div class="mi-row"><span class="mi-from">${unified?`<span class="mi-acct">${enc(m.account||'')}</span> `:''}${mineHead?'<span class="mi-you">You:</span> ':''}${enc(((isSent||mineHead)?('To: '+(m.to||'')):(m.from||'')).slice(0,42))}${n>1?`<span class="mi-count" title="${n} messages in this conversation">${n}</span>`:''}</span><span class="mi-date">${enc(_mailDate(m.ts))}</span></div>
           <div class="mi-subj">${c.all.concat(c.mine||[]).some(x=>x.attachments)?'📎 ':''}${enc(m.subject||'(no subject)')}</div>
           <div class="mi-prev muted small">${enc(m.preview||'')}</div>
         </div></div>`; }).join('');
@@ -29115,7 +29121,7 @@
           for(const k of keys){ if(cb.checked) this.sel.add(k); else this.sel.delete(k); }
           this.updateBulk(); };
         const c=el.querySelector('.mi-content');
-        if(c) c.onclick=()=>{ this.cursor=this.msgs.findIndex(m=>String(m.uid)===String(el.dataset.uid));
+        if(c) c.onclick=()=>{ this.cursor=this.msgs.findIndex(m=>this._key(m)===el.dataset.key);
                               this.open(el.dataset.uid, el.dataset.folder, el.dataset.account); };
       });
       this.updateBulk();
@@ -29152,8 +29158,11 @@
        * message that was clicked. Reported as "webui not showing sent items in the thread" — the
        * threading was right, the request asking for it was not. */
       folder=folder||this.folder; const acct=account||this.acct||'__all';
+      const openSeq=this._openSeq=(this._openSeq||0)+1, root=this.root;
+      const current=()=>openSeq===this._openSeq&&root===this.root&&this.openUid===uid&&this.openAccount===acct&&this.openFolder===folder;
       this.openUid=uid; this.openFolder=folder; this.openAccount=acct; this.drawList();
       let msg; try{ const r=await this.api('/message?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid)); msg=r.message; }catch(_){}
+      if(!current())return;
       if(folder==='Drafts'){   // a draft opens back into the composer (prefilled) rather than a read pane
         if(msg) this.compose({mode:'draft', draft:msg, acct});
         else toast('draft unavailable');
@@ -29185,7 +29194,7 @@
       _local.sort((a, b) => (a.ts || 0) - (b.ts || 0));
       this._renderThread(pane, _local, folder, acct, uid, _local.length > 1 ? 'loading' : 'loading');
       this.api('/thread?account='+encodeURIComponent(acct)+'&folder='+encodeURIComponent(folder)+'&uid='+encodeURIComponent(uid))
-        .then(t=>{ if(!(this.openUid===uid && pane.isConnected)) return;
+        .then(t=>{ if(!(current() && pane.isConnected)) return;
           const got = (t && t.messages) || [];
           /* Re-render either way: with the conversation when there is one, and WITHOUT the
              "Loading…" line when there is not — a spinner that never resolves is the same lie as
@@ -29200,7 +29209,7 @@
            wrong — the message still opened, so nothing looked broken; the conversation just never
            arrived. The read itself must not fail, so it stays caught, but not in silence. */
         .catch(e=>{ try{ console.warn('[mail] conversation could not be loaded:', (e&&e.message)||e); }catch(_){ }
-          try{ if(this.openUid===uid && pane.isConnected){
+          try{ if(current() && pane.isConnected){
             const st=pane.querySelector('.mail-convo-state');
             if(st) st.textContent='The rest of this conversation could not be loaded';
           } }catch(_){ } });
