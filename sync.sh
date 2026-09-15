@@ -118,14 +118,28 @@ if ! venv-unified/bin/python scripts/deploy_regression_gate.py --verify "$_regre
     echo "[sync] ABORT: source changed after testing; nothing was pushed"
     exit 1
 fi
-git commit -a -m fix || true
+# A clean tracked tree needs no commit. A failed hook, index lock or signing operation is
+# different: publishing the previous HEAD would leave the tested changes undeployed.
+if ! _tracked_changes=$(git status --porcelain --untracked-files=no); then
+    echo "[sync] ABORT: could not inspect tracked changes; nothing was pushed"
+    exit 1
+fi
+if [ -n "$_tracked_changes" ]; then
+    if ! git commit -a -m fix; then
+        echo "[sync] ABORT: could not commit tested changes; nothing was pushed"
+        exit 1
+    fi
+fi
 # Deploy to PRODUCTION. `origin` is now the NOSTR repo on the built-in GRASP host
 # (nostr://<npub>/relay.poster.place/posterchanai -> https://poster.place/git/<npub>/posterchanai.git);
 # Gitea is gone. ngit publishes the signed 30618 that authorizes the push to the repo's relays, one of
 # which (wss://poster.place/git) IS the hosting node's relay — the one pre-receive reads.
 # Needs git-remote-nostr on PATH; it is installed in /usr/local/bin on every node so this works from
 # a non-interactive ssh and from sudo, not just from an interactive login shell.
-git push origin master
+if ! git push origin master; then
+    echo "[sync] ABORT: production push failed; mirrors and nodes were not updated"
+    exit 1
+fi
 
 # Also push to the public `github` mirror (master → main). This is what TRIGGERS the release builds —
 # there is nothing to add here for them, and adding it would be wrong: both artifacts are generated
