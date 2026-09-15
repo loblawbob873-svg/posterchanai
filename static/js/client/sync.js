@@ -1785,7 +1785,7 @@
   /* Folders that asked to sweep while another folder held the page — drained on settle. */
   const _syncQueue = new Map();       // id -> {f, o}
   function _drainSyncQueue(){
-    if(running.size > 0 || !_syncQueue.size) return;
+    if(running.size > 0 || _ownerOperation || !_syncQueue.size) return;
     const next = [..._syncQueue.values()][0];
     _syncQueue.delete(next.f.id);
     /* Through swept(), so a throw lands on the card instead of nowhere. */
@@ -1795,6 +1795,223 @@
   // actually happening rather than the one after it.
   const stopping = new Set();
   const status = new Map();           // id -> {when, text, report}
+
+  // Native popups are views, not additional sync engines. A bridge is only I/O;
+  // borrowing it cannot share this module's running map or confirmation dialogs.
+  let _ownerOperation = null;
+  const _syncOwnerRpc = (() => {
+    if(!window.pcShell || typeof BroadcastChannel !== 'function') return null;
+    const secondary = window.pcShell.backgroundOwner === false;
+    const channel = new BroadcastChannel('pc-folder-sync-owner-v1');
+    if(channel.unref) channel.unref();
+    const pending = new Map(), active = new Map(), completed = new Set(), observers = new Map();
+    const account = () => { const me = PC.me && PC.me(); return me && me.pubkey || ''; };
+    const uuid = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random());
+    const send = message => { try{ channel.postMessage(message); return true; }catch(_){ return false; } };
+    const surfaceId = uuid();
+    let observedAccount = '';
+    const subscribe = () => {
+      if(!secondary) return;
+      const who = account();
+      if(observedAccount && observedAccount !== who) status.clear();
+      observedAccount = who;
+      if(who) send({type:'observe', id:surfaceId, account:who});
+    };
+    Promise.resolve().then(subscribe);
+    const envelope = (job, type, extra) => Object.assign({type, id:job.id, account:job.account, folderId:job.folderId}, extra || {});
+    const alive = job => !job.cancelled && account() === job.account;
+    function cancel(job){
+      job.cancelled = true;
+      // A vanished requester must never stop an unrelated job on the primary.
+      if(_ownerOperation === job.id) stopping.add(job.folderId);
+      for(const done of job.confirms.values()) done(false);
+      job.confirms.clear();
+    }
+    function settle(job, error, result){
+      clearTimeout(job.timer);
+      pending.delete(job.id);
+      if(error){
+        try{ setStatus(job.folderId, error); }catch(_){}
+        job.reject(new Error(error));
+      } else job.resolve(result);
+    }
+    function arm(job, delay){
+      clearTimeout(job.timer);
+      job.timer = setTimeout(() => {
+        send(envelope(job, 'cancel'));
+        settle(job, 'The main desktop is not responding. Reopen Folder Sync after it is ready.');
+      }, delay);
+    }
+    function options(raw){
+      const out = {};
+      for(const key of ['manual','dryRun','deep','forceTrash','forceResurrect','resendAll','noVerify'])
+        if(raw && raw[key] === true) out[key] = true;
+      if(raw && Array.isArray(raw.resend)) out.resend = raw.resend.filter(x => typeof x === 'string').slice(0, 50000);
+      return out;
+    }
+    function request(action, f, opts){
+      const who = account();
+      if(!who) return Promise.reject(new Error('Sign in before syncing a folder.'));
+      if(!f || !f.id) return Promise.reject(new Error('This folder is not set up on this device.'));
+      if(pending.size >= 64) return Promise.reject(new Error('Too many folder requests are pending.'));
+      return new Promise((resolve, reject) => {
+        const job = {id:uuid(), account:who, folderId:f.id, resolve, reject};
+        pending.set(job.id, job);
+        arm(job, 5000);
+        if(!send(envelope(job, 'request', {action, opts:options(opts)})))
+          settle(job, 'Could not contact the main desktop.');
+      });
+    }
+    function confirm(job, args){
+      if(!alive(job)) return Promise.resolve(false);
+      return new Promise(resolve => {
+        const confirmId = uuid();
+        const timer = setTimeout(() => finish(false), 120000);
+        function finish(answer){ clearTimeout(timer); job.confirms.delete(confirmId); resolve(alive(job) && answer === true); }
+        job.confirms.set(confirmId, finish);
+        if(!send(envelope(job, 'confirm', {confirmId, args}))) finish(false);
+      });
+    }
+    async function execute(message){
+      const job = {id:message.id, account:message.account, folderId:message.folderId,
+                   lastSeen:Date.now(), confirms:new Map(), cancelled:false};
+      active.set(job.id, job);
+      send(envelope(job, 'accepted'));
+      try{
+        if(!job.account || account() !== job.account) throw new Error('The main desktop is signed into a different account.');
+        let f = folders().find(row => row.id === job.folderId);
+        if(!f) throw new Error('This folder is not set up for this account on the main desktop.');
+        if(message.action === 'stop'){
+          stopping.add(f.id); _syncQueue.delete(f.id);
+          for(const other of active.values()) if(other !== job && other.account === job.account && other.folderId === f.id) cancel(other);
+          setStatus(f.id, 'stopping…', null, true);
+          send(envelope(job, 'result', {result:{stopped:true}}));
+          return;
+        }
+        if(!['sweep','verify','cleanup'].includes(message.action)) throw new Error('Unknown folder operation.');
+        // Wait for the existing engine, keeping the requester alive with heartbeats.
+        // Never retry in the popup or turn a queued request into a second writer.
+        while(running.size || _syncQueue.size || _ownerOperation){
+          if(!alive(job)) throw new Error('Folder request cancelled or account changed.');
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if(!alive(job)) throw new Error('Folder request cancelled or account changed.');
+        f = folders().find(row => row.id === job.folderId);
+        if(!f) throw new Error('This folder was removed before the request started.');
+        _ownerOperation = job.id;
+        const opts = Object.assign(options(message.opts), {
+          _ownerToken:job.id, shouldStop:() => !alive(job),
+          confirm:(...args) => confirm(job, args),
+          toast:text => send(envelope(job, 'toast', {text:String(text)})),
+        });
+        const result = message.action === 'verify' ? await verifyFolder(f, opts)
+          : message.action === 'cleanup' ? await conflictCleanup(f, opts) : await sweep(f, opts);
+        if(!alive(job)) throw new Error('Folder request cancelled or account changed.');
+        const finalStatus = status.get(job.folderId);
+        if(finalStatus && finalStatus.busy) setStatus(job.folderId, finalStatus.text, finalStatus.report);
+        if(!send(envelope(job, 'result', {result}))) send(envelope(job, 'error', {error:'Could not send the folder result.'}));
+      }catch(error){
+        const message = String(error && error.message || error);
+        if(_ownerOperation === job.id && account() === job.account) setStatus(job.folderId, message);
+        send(envelope(job, 'error', {error:message}));
+      }
+      finally{
+        for(const done of job.confirms.values()) done(false);
+        job.confirms.clear(); active.delete(job.id);
+        completed.add(job.id);
+        while(completed.size > 256) completed.delete(completed.values().next().value);
+        if(_ownerOperation === job.id){ _ownerOperation = null; _drainSyncQueue(); }
+      }
+    }
+    channel.onmessage = event => {
+      const message = event.data;
+      if(!message || typeof message.id !== 'string' || typeof message.account !== 'string') return;
+      if(secondary){
+        if(message.id === surfaceId && message.account === account()){
+          if(message.type === 'snapshot') for(const row of message.rows || [])
+            setStatus(row.id, row.text, row.report, row.busy);
+          else if(message.type === 'status') setStatus(message.folderId, message.text, message.report, message.liveOnly);
+          return;
+        }
+        const job = pending.get(message.id);
+        if(!job || message.account !== job.account || message.folderId !== job.folderId) return;
+        if(account() !== job.account){ send(envelope(job, 'cancel')); settle(job, 'Account changed during folder operation.'); return; }
+        arm(job, 30000);
+        if(message.type === 'result') settle(job, null, message.result);
+        else if(message.type === 'error') settle(job, message.error || 'Folder operation failed.');
+        else if(message.type === 'status') setStatus(job.folderId, message.text, message.report, message.liveOnly);
+        else if(message.type === 'toast'){ try{ PC.toast(message.text); }catch(_){} }
+        else if(message.type === 'confirm'){
+          Promise.resolve().then(() => PC.uiConfirm(...message.args)).then(answer => {
+            send(envelope(job, 'confirm-result', {confirmId:message.confirmId,
+              answer:pending.has(job.id) && account() === job.account && answer === true}));
+          }, () => send(envelope(job, 'confirm-result', {confirmId:message.confirmId, answer:false})));
+        }
+        return;
+      }
+      if(message.type === 'unobserve'){ observers.delete(message.id); return; }
+      if(message.type === 'observe'){
+        if(!message.account || message.account !== account()) return;
+        const old = observers.get(message.id);
+        if(!old && observers.size >= 64) return;
+        observers.set(message.id, {account:message.account, lastSeen:Date.now()});
+        if(!old || old.account !== message.account){
+          const rows = folders().filter(f => status.has(f.id)).map(f => Object.assign({id:f.id}, status.get(f.id)));
+          send({type:'snapshot', id:message.id, account:message.account, rows});
+        }
+        return;
+      }
+      const job = active.get(message.id);
+      if(job){
+        if(message.account !== job.account || message.folderId !== job.folderId) return;
+        if(message.type === 'ping') job.lastSeen = Date.now();
+        else if(message.type === 'cancel') cancel(job);
+        else if(message.type === 'confirm-result'){
+          const done = job.confirms.get(message.confirmId); if(done) done(message.answer === true);
+        } else if(message.type === 'request') send(envelope(job, 'accepted'));
+        return;
+      }
+      if(message.type !== 'request') return;
+      if(completed.has(message.id)){ send(Object.assign({}, message, {type:'error', error:'This folder request already completed.'})); return; }
+      if(active.size >= 64){ send(Object.assign({}, message, {type:'error', error:'The desktop has too many pending folder requests.'})); return; }
+      execute(message);
+    };
+    const heartbeat = setInterval(() => {
+      subscribe();
+      for(const [id, observer] of observers) if(observer.account !== account() || Date.now() - observer.lastSeen > 30000) observers.delete(id);
+      for(const job of pending.values()){
+        if(account() !== job.account){ send(envelope(job, 'cancel')); settle(job, 'Account changed during folder operation.'); }
+        else send(envelope(job, 'ping'));
+      }
+      for(const job of active.values()){
+        if(!alive(job) || Date.now() - job.lastSeen > 30000) cancel(job);
+        else send(envelope(job, 'accepted'));
+      }
+    }, 5000);
+    if(heartbeat && heartbeat.unref) heartbeat.unref();
+    if(window.addEventListener) window.addEventListener('pagehide', () => {
+      for(const job of pending.values()){ send(envelope(job, 'cancel')); settle(job, 'Folder window closed.'); }
+      for(const job of active.values()) cancel(job);
+      send({type:'unobserve', id:surfaceId, account:account()});
+      clearInterval(heartbeat); channel.close();
+    });
+    return {request, status(id, text, report, liveOnly){
+      if(secondary) return;
+      for(const [observerId, observer] of observers) if(observer.account === account())
+        send({type:'status', id:observerId, account:observer.account, folderId:id, text, report, liveOnly:!!liveOnly});
+      for(const job of active.values()) if(job.folderId === id && alive(job))
+        send(envelope(job, 'status', {text, report, liveOnly:!!liveOnly}));
+    }};
+  })();
+
+  function stopSync(id){
+    if(window.pcShell && window.pcShell.backgroundOwner === false){
+      if(!_syncOwnerRpc) return Promise.reject(new Error('Reopen Folder Sync from the main desktop to stop it.'));
+      return _syncOwnerRpc.request('stop', {id});
+    }
+    stopping.add(id); _syncQueue.delete(id);
+    return Promise.resolve({stopped:true});
+  }
 
   function deviceName(){
     let n = '';
@@ -1827,6 +2044,11 @@
 
   async function sweep(f, opts){
     const o = opts || {};
+    if(window.pcShell && window.pcShell.backgroundOwner === false){
+      if(!o.manual && !o.dryRun) return {skipped:true, why:'the main desktop owns background sync'};
+      if(!_syncOwnerRpc) throw new Error('The main desktop is unavailable. Reopen Folder Sync from the desktop.');
+      return _syncOwnerRpc.request('sweep', f, o);
+    }
     /* A SWEEP ALREADY RUNNING MAKES THE BUTTON DO NOTHING, AND THAT HAS TO BE SAID OUT LOUD.
      *
      * `running` is cleared in a `finally`, so it clears when the sweep's promise SETTLES — and a
@@ -1879,7 +2101,8 @@
      * is started the moment the active one settles — never dropped: `_syncQueue` is drained from
      * the running sweep's finally. Previews are exempt (they move nothing), and so is a folder
      * already mid-sweep (that is the `running` guard above). */
-    if(!o.dryRun && running.size > 0){
+    if((!o.dryRun && running.size > 0) || (_ownerOperation && o._ownerToken !== _ownerOperation)){
+      if(o.dryRun) return {skipped:true, why:'another folder operation is running'};
       _syncQueue.set(f.id, { f, o });
       const busyWith = [...running.keys()][0];
       const who = (folders().find(x => x.id === busyWith) || {}).key || 'another folder';
@@ -1993,7 +2216,7 @@
         const rep = _forTheCard(await EXEC.sweep(fs, docs, {
           id: f.id, key: keyOf(f), device: deviceId(), now: Date.now(),
           excludes: f.excludes || [], maxBytes: await maxBytes(),
-          shouldStop: () => stopping.has(f.id),
+          shouldStop: () => stopping.has(f.id) || (o.shouldStop && o.shouldStop()),
           manual: !!o.manual,
           /* THE CARD NARRATES THE SWEEP. The executor has ticked {phase, path, i, n} all along and
            * nothing listened — so a first sweep hashing 17,000 files sat behind a bare "syncing…"
@@ -2052,7 +2275,7 @@
            * the heartbeat — has nobody in front of it, so a dialog there is a modal no one answers
            * blocking a background job. It refuses instead and says so on the card. `o.manual` is
            * the button, and a fatal verdict is never offered at all. */
-          confirm: (o.manual && !o.dryRun) ? (v => PC.uiConfirm(_ask(keyOf(f), v))) : null,
+          confirm: (o.manual && !o.dryRun) ? (v => (o.confirm || PC.uiConfirm)(_ask(keyOf(f), v))) : null,
           // The first sweep of a Pictures folder is minutes of silence, and silence is
           // indistinguishable from a hang, a failed login or a 404 on the manifest — which is
           // exactly how this looked the first time it was tried for real.
@@ -2586,10 +2809,23 @@
    * copy (into `.pc-trash`, like every other deletion here) and forgets this device's agreement for
    * that path, which is exactly the state in which the next sweep fetches a fresh copy.
    */
-  async function verifyFolder(f){
+  async function verifyFolder(f, context){
+    if(window.pcShell && window.pcShell.backgroundOwner === false){
+      if(!_syncOwnerRpc) throw new Error('The main desktop is unavailable. Reopen Folder Sync from the desktop.');
+      return _syncOwnerRpc.request('verify', f);
+    }
+    const ctx = context || {};
+    const checkActive = () => { if(ctx.shouldStop && ctx.shouldStop()) throw new Error('Folder operation cancelled.'); };
+    const confirm = async (...args) => {
+      checkActive();
+      const answer = await (ctx.confirm || PC.uiConfirm)(...args);
+      checkActive();
+      return answer;
+    };
+    const toast = ctx.toast || (text => PC.toast(text));
     const fs = FS();
-    if(!fs){ PC.toast('this device has no filesystem access'); return; }
-    if(running.size > 0 || _syncQueue.size > 0){
+    if(!fs){ toast('this device has no filesystem access'); return; }
+    if(running.size > 0 || _syncQueue.size > 0 || (_ownerOperation && ctx._ownerToken !== _ownerOperation)){
       setStatus(f.id, 'a sync is running — Verify opens again when it finishes', null, true);
       return;
     }
@@ -2614,6 +2850,7 @@
     }finally{
       if(_held && _w.wakeEnd){ try{ await _w.wakeEnd(); }catch(_){} }
     }
+    checkActive();
     const bits = [];
     if(v.checked) bits.push(v.checked + ' verified');
     if(v.corrupt.length) bits.push(v.corrupt.length + ' damaged here');
@@ -2644,7 +2881,7 @@
     const here = new Set(v.missingHere || []);
     const gone = (v.missingBytes || []).filter(p => !here.has(p));
     if(gone.length){
-      const ok = await PC.uiConfirm('“' + keyOf(f) + '” — the store no longer has the bytes for '
+      const ok = await confirm('“' + keyOf(f) + '” — the store no longer has the bytes for '
         + gone.length + ' file' + (gone.length === 1 ? '' : 's') + ' this device still holds.\n\n'
         + 'Send them again? Nothing is deleted and nothing is overwritten — the copies here are the '
         + 'good ones, and your other devices cannot fetch them until they are back in the store.');
@@ -2655,7 +2892,7 @@
          * settles. That repair reported "queued to send again" and sent nothing. */
         setStatus(f.id, 'sending ' + gone.length + ' file' + (gone.length === 1 ? '' : 's')
                   + ' again…', null, true);
-        swept(f, { manual: true, resend: gone });
+        await swept(f, Object.assign({}, ctx, { manual: true, resend: gone }));
         return;
       }
     }
@@ -2684,7 +2921,7 @@
                   + 'this folder keeps, so the store is more likely unreachable than empty',
                   null, true);
       } else {
-      const ok = await PC.uiConfirm('“' + keyOf(f) + '” — ' + phantom.length + ' file'
+      const ok = await confirm('“' + keyOf(f) + '” — ' + phantom.length + ' file'
         + (phantom.length === 1 ? '' : 's') + ' cannot be fetched: the store does not have the bytes '
         + 'and this device does not have the file.\n\nRemove them from the folder?\n\nThis '
         + 'publishes a deletion. If another device still has one of these files, it will move its '
@@ -2692,9 +2929,10 @@
         + 'first if you want them kept (Verify → send them again).');
       if(ok){
         try{
-          const r = await edit.removeMany(keyOf(f), phantom);
-          PC.toast('removed ' + r.removed + ' unfetchable entr' + (r.removed === 1 ? 'y' : 'ies'));
-        }catch(e){ PC.toast('could not remove those: ' + ((e && e.message) || e)); }
+          checkActive();
+          const r = await _mutate(keyOf(f), api => { checkActive(); for(const path of phantom) api.drop(path); });
+          toast('removed ' + r.removed + ' unfetchable entr' + (r.removed === 1 ? 'y' : 'ies'));
+        }catch(e){ toast('could not remove those: ' + ((e && e.message) || e)); }
       }
       }
     }
@@ -2713,7 +2951,7 @@
      * So it is asked, once, with the count and the consequence — and the SAFE answer is the
      * default: cancelling here does nothing at all, and the second question (fetch fresh copies)
      * still cannot run without its own yes. */
-    const mine = await PC.uiConfirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
+    const mine = await confirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
       + (bad.length === 1 ? '' : 's') + ' on this device no longer match what your devices agreed '
       + 'the folder holds.\n\nDid YOU change ' + (bad.length === 1 ? 'it' : 'them') + ' on this '
       + 'device?\n\nYes — send ' + (bad.length === 1 ? 'it' : 'them') + ' to your other devices as '
@@ -2727,10 +2965,10 @@
        * them in the pass it was told to send them in. */
       setStatus(f.id, 'sending ' + bad.length + ' edited file' + (bad.length === 1 ? '' : 's')
                 + ' to your other devices…', null, true);
-      swept(f, { manual: true, resend: bad });
+      await swept(f, Object.assign({}, ctx, { manual: true, resend: bad }));
       return;
     }
-    const ok = await PC.uiConfirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
+    const ok = await confirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
       + (bad.length === 1 ? '' : 's') + ' on this device do not match what your devices agreed.\n\n'
       + 'Fetch fresh copies? The copies here move to .pc-trash first — nothing is erased, and '
       + 'nothing damaged is sent to your other devices.');
@@ -2755,6 +2993,7 @@
       return;
     }
     for(const p of bad){
+      checkActive();
       const e = merged[p] || {};
       const ids = (e.chunks && e.chunks.length) ? e.chunks : (e.sha ? [e.sha] : []);
       let there = !!ids.length;
@@ -2764,16 +3003,19 @@
         if(!ok){ there = false; break; }
       }
       if(!there){ stranded.push(p); continue; }
+      checkActive();
       try{ await fs.trash(f.id, p, Date.now()); delete idx[p]; done++; }
       catch(e2){ console.warn('folder sync: could not set aside ' + p, e2); }
     }
     if(stranded.length){
-      PC.toast(stranded.length + ' damaged file' + (stranded.length === 1 ? '' : 's')
+      toast(stranded.length + ' damaged file' + (stranded.length === 1 ? '' : 's')
                + ' left alone — the store no longer has a copy to replace them with');
     }
+    checkActive();
     await docs.saveIndex(keyOf(f), idx);
     setStatus(f.id, done + ' set aside — syncing fresh copies', null, true);
-    swept(f, { manual: true });
+    checkActive();
+    await swept(f, Object.assign({}, ctx, { manual: true }));
   }
 
   /* A SWEEP THAT THREW MUST SAY SO ON THE CARD.
@@ -2796,6 +3038,7 @@
   }
 
   function setStatus(id, text, report, liveOnly){
+    if(_syncOwnerRpc) _syncOwnerRpc.status(id, text, report, liveOnly);
     const prev = status.get(id) || {};
     status.set(id, { when: Date.now(), text, report: report || (liveOnly ? prev.report : null),
                      busy: !!liveOnly });
@@ -3016,9 +3259,13 @@
     return store.hashBytes(await fs.read(id, rel));
   }
   async function conflictCleanup(f, opts){
+    if(window.pcShell && window.pcShell.backgroundOwner === false){
+      if(!_syncOwnerRpc) throw new Error('The main desktop is unavailable. Reopen Folder Sync from the desktop.');
+      return _syncOwnerRpc.request('cleanup', f, opts);
+    }
     const fs = FS();
     if(!fs) throw new Error('this device has no filesystem access');
-    if(!(opts && opts.dryRun) && (running.size > 0 || _syncQueue.size > 0))
+    if(!(opts && opts.dryRun) && (running.size > 0 || _syncQueue.size > 0 || (_ownerOperation && (!opts || opts._ownerToken !== _ownerOperation))))
       throw new Error('a sync is running — tidy up when it finishes');
     const key = keyOf(f);
     const man = (await stateS.load(key)).state;
@@ -3056,6 +3303,7 @@
     let moved = 0, absent = 0;
     const failed = [], tombstone = [];
     for(const item of list){
+      if(opts && opts.shouldStop && opts.shouldStop()) throw new Error('Folder operation cancelled.');
       try{ await fs.trash(f.id, item.path, Date.now()); moved++; }
       catch(e){
         const msg = String((e && e.message) || e);
@@ -3075,7 +3323,11 @@
     // Through _mutate, which is the one place that knows what a manifest edit looks like — a fresh
     // read, tombstones (never removed keys), and the `removed` count the collapse guard reads. It
     // also re-reads, so a copy another device deleted while this ran is not re-tombstoned.
-    if(tombstone.length) await _mutate(key, api => { for(const path of tombstone) api.drop(path); });
+    if(opts && opts.shouldStop && opts.shouldStop()) throw new Error('Folder operation cancelled.');
+    if(tombstone.length) await _mutate(key, api => {
+      if(opts && opts.shouldStop && opts.shouldStop()) throw new Error('Folder operation cancelled.');
+      for(const path of tombstone) api.drop(path);
+    });
     return { list, moved, absent, failed, tombstoned: tombstone.length };
   }
 
@@ -3460,7 +3712,7 @@
        * and Start picks it up exactly where it was. */
       const _doPause = () => {
         put(f => { f.prefs = Object.assign({}, f.prefs, { paused: true }); });
-        stopping.add(id);                       // and stop the sweep that is running RIGHT NOW
+        stopSync(id).catch(err => setStatus(id, err.message));
         setStatus(id, running.has(id) ? 'stopping…' : 'paused — press Start when you want it to run again');
         paint();
       };
@@ -3490,7 +3742,7 @@
        * So they are one action that looks FIRST and then asks, which is what a person could have
        * answered all along. `verifyFolder` reads without writing, reports, and puts the choice
        * where the evidence is. */
-      const _doCheck = () => verifyFolder(get());
+      const _doCheck = () => verifyFolder(get()).catch(err => setStatus(id, err.message || 'could not check this folder'));
       /* The way out of a folder whose record says files are deleted that this device is holding —
        * without retiring the pair, which throws away every record for every file and makes every
        * other device re-read the folder from nothing. Says one thing instead of forgetting
@@ -4025,6 +4277,7 @@
     nudge(why);
   }
   function startAll(){
+    if(window.pcShell && window.pcShell.backgroundOwner === false) return;
     const fs = FS();
     /* NO ADAPTER YET IS NOT "NO ADAPTER". This returned and left `_started` false, which is correct —
      * but nothing ever called it again, so if the platform adapter installed a moment later (the
@@ -4168,7 +4421,7 @@
   // `docs` is the per-device document layer: Files borrows it to read a folder it does not hold,
   // and the tests drive it directly at the sizes where NIP-44's ceiling used to lose whole folders.
   window.PCSync = { paint, folders, sweep, startAll, store, docs, status, edit, verifyFolder, restoreTrash, reconcileTrash,
-                    accountFolders, acct: () => _acct, deviceId,
+                    accountFolders, acct: () => _acct, deviceId, stop:stopSync, conflictCleanup,
                     /* Anything destructive asks this first: reclaim, verify-repair, tidy. A sweep
                      * mid-flight makes "unreferenced" and "redundant" unstable answers. */
                     busyNow: () => running.size > 0 || _syncQueue.size > 0 };

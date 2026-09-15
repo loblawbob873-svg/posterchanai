@@ -222,7 +222,7 @@ class RepairTests(unittest.TestCase):
 
     def setUp(self):
         self.src = open(SYNC, encoding="utf-8").read()
-        at = self.src.index("async function verifyFolder(f){")
+        at = self.src.index("async function verifyFolder(")
         self.body = self.src[at:self.src.index("\n  function ", at)]
 
     def test_it_asks_the_store_before_it_trashes(self):
@@ -277,14 +277,14 @@ class VerifyRepairsTests(unittest.TestCase):
 
     def setUp(self):
         self.src = open(SYNC, encoding="utf-8").read()
-        at = self.src.index("async function verifyFolder(f){")
+        at = self.src.index("async function verifyFolder(")
         self.body = self.src[at:self.src.index("\n  function ", at)]
 
     def test_bytes_the_store_lost_are_sent_again_not_fetched(self):
         send = self.body.index("const gone = (v.missingBytes || [])")
         fetch = self.body.index("const bad = v.corrupt.map(")
         self.assertLess(send, fetch, "the re-upload repair runs after the re-download one")
-        self.assertIn("swept(f, { manual: true, resend: gone });", self.body[send:fetch],
+        self.assertIn("swept(f, Object.assign({}, ctx, { manual: true, resend: gone }));", self.body[send:fetch],
                       "the repair edits the journal instead of asking for a send — which settles "
                       "as 'same content both sides' and uploads nothing")
 
@@ -295,7 +295,7 @@ class VerifyRepairsTests(unittest.TestCase):
 
     def test_it_asks_first_and_says_nothing_is_deleted(self):
         seg = self.body[self.body.index("const gone = (v.missingBytes || [])"):]
-        self.assertIn("uiConfirm", seg)
+        self.assertIn("await confirm(", seg)
         self.assertIn("Nothing is deleted", seg)
 
     def test_the_three_controls_do_not_all_say_check(self):

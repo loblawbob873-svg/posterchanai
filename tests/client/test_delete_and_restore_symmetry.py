@@ -1087,7 +1087,7 @@ class CheckDoesNotWedgeThePage(unittest.TestCase):
                       "answer arrives")
 
     def test_a_check_holds_the_processor_and_always_gives_it_back(self):
-        i = self.sync.index("async function verifyFolder(f)")
+        i = self.sync.index("async function verifyFolder(")
         seg = self.sync[i:i + 3000]
         self.assertIn("wakeBegin", seg, "a check can run for minutes with no wake lock at all")
         self.assertIn("finally", seg)
