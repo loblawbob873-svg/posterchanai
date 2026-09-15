@@ -3025,7 +3025,7 @@
     const disposeUserPicker=PC().attachUserAutocomplete?.(input);
     const reset=()=>{button.disabled=false;selfButton.disabled=false;button.textContent='Choose screen and share';};
     const go=async explicitPeer=>{const peer=String(explicitPeer||input.value||'').trim();if(!peer){status.textContent='Enter a viewer address or choose your other signed-in device.';input.focus();return;}
-      const proceed=await PC().uiConfirm('Select the monitor you want to share in the next window, then click it.\n\nNothing is shared until you choose a monitor.',{ok:'Open monitor picker',cancel:'Cancel'});if(!proceed)return;
+      const proceed=await PC().uiConfirm('Select the monitor you want to share in the next window, then click it.\n\nNothing is shared until you choose a monitor. Enable shared audio in the picker when offered.',{ok:'Open monitor picker',cancel:'Cancel'});if(!proceed)return;
       button.disabled=true;selfButton.disabled=true;button.textContent='Opening screen picker…';status.textContent='Resolving viewer and opening the screen picker…';
       try{const ok=await PC().startRemoteDesktop(peer);if(ok){button.textContent='Sharing request sent';status.textContent='Sharing request sent. Waiting for the other device…';setTimeout(()=>{if(button.isConnected)reset();},3000);}else{reset();status.textContent='Screen sharing was cancelled or could not start.';}}
       catch(e){reset();status.textContent=String((e&&e.message)||e);

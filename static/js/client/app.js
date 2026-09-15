@@ -38938,7 +38938,7 @@
     const activeCall=_call,old=activeCall.local;let next;
     _rdGrant(false);activeCall.nativeReady=false;activeCall.nativeSwitching=true;
     try{
-      try{next=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:false});}
+      try{next=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:true,systemAudio:'include'});}
       catch(e){if(_call===activeCall)toast(e&&e.name==='NotAllowedError'?'Screen switch cancelled. Sharing the previous screen without control.':_mediaErrMsg(e));return;}
       if(_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
       const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
@@ -38956,8 +38956,23 @@
       catch(_){next.getTracks().forEach(t=>t.stop());toast('could not switch screens');return;}
       if(_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
       if(track.readyState==='ended'){_hangup(false);return;}
-      // Swap the identity before stopping the previous track: its ended listener must not
-      // interpret this intentional replacement as Stop sharing and tear down the call.
+      // Replace or remove the previous screen's sound too; otherwise a screen switch can
+      // keep sending audio from the source the host just stopped sharing.
+      try{
+        const audio=next.getTracks().find(t=>t.kind==='audio')||null;
+        const audioSender=activeCall.rdAudioSender||activeCall.pc.getSenders().find(s=>s.track?.kind==='audio');
+        if(audioSender){await audioSender.replaceTrack(audio);activeCall.rdAudioSender=audioSender;}
+        else if(audio){activeCall.rdAudioSender=activeCall.pc.addTrack(audio,activeCall.rdMediaStream||old);if(!await _renegotiate(activeCall))throw new Error('audio negotiation failed');}
+      }catch(_){
+        next.getTracks().forEach(t=>t.stop());
+        if(_call===activeCall){toast('Screen audio could not switch. Sharing stopped.');_hangup(false);}
+        return;
+      }
+      if(_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
+      if(track.readyState==='ended'){next.getTracks().forEach(t=>t.stop());_hangup(false);return;}
+      // Keep the original WebRTC stream ID when adding sound; a new stream would replace
+      // the viewer’s video stream with an audio-only ontrack event.
+      // Swap local identity before stopping tracks so Stop sharing does not fire on replacement.
       activeCall.local=next;activeCall.nativeReady=controlReady;_rdWatchScreen(next);
       if(old)old.getTracks().forEach(t=>t.stop());_callUI();
     }finally{activeCall.nativeSwitching=false;}
@@ -39088,24 +39103,26 @@
     return 'Could not start the camera/mic'+(n?' ('+n+')':'')+'.';
   }
   function _getMedia(video, remoteHost, remoteGuest){
-    /* Remote Desktop is screen-only. The HOST chooses a screen through the browser/Electron picker;
+    /* The HOST chooses a screen and optional system/tab sound through the browser/Electron picker;
      * the viewer sends no camera or microphone back. Keeping it on the call transport gives it the
      * same encrypted Nostr signaling and TURN fallback without pretending a camera call is a
      * desktop-sharing session. */
-    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:false});
+    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:true,systemAudio:'include'});
     if(remoteGuest) return Promise.resolve(new MediaStream());
     return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
   }
   function _hasLiveVideo(stream){ return !!(stream && stream.getVideoTracks().some(t=>t.readyState==='live')); }
   // Renegotiate the existing PeerConnection (used to add/drop video mid-call). Manual offer/answer over the
   // same Nostr channel with a polite-peer (higher pubkey) rollback so a simultaneous both-add doesn't wedge.
-  async function _renegotiate(){
-    if(!_call || !_call.pc) return;
-    try{ _call.makingOffer=true;
-      const o=await _call.pc.createOffer(); if(!_call||_call.pc.signalingState==='closed') return;
-      await _call.pc.setLocalDescription(o);
-      await _callSend(_call.peer,{v:1,callId:_call.id,t:'reoffer',sdp:_call.pc.localDescription.sdp});
-    }catch(_){}finally{ if(_call) _call.makingOffer=false; }
+  async function _renegotiate(session=_call){
+    if(!session||_call!==session||!session.pc)return false;
+    const pc=session.pc,current=()=>_call===session&&session.pc===pc&&pc.signalingState!=='closed';
+    try{session.makingOffer=true;
+      const o=await pc.createOffer();if(!current())return false;
+      await pc.setLocalDescription(o);if(!current())return false;
+      await _callSend(session.peer,{v:1,callId:session.id,t:'reoffer',sdp:pc.localDescription.sdp});
+      return current();
+    }catch(_){return false;}finally{session.makingOffer=false;}
   }
   // Turn the camera on (add a video track + renegotiate) or off (stop + drop it) mid-call — lets an
   // audio-only call become video with one tap, in either direction.
@@ -39150,6 +39167,7 @@
     try{ local = await _getMedia(video, remoteDesktop, false); }catch(e){ if(_call===activeCall){toast(remoteDesktop && e&&e.name==='NotAllowedError'?'screen sharing cancelled':_mediaErrMsg(e));_callTeardown();}return; }
     if(_call!==activeCall){ local.getTracks().forEach(t=>t.stop()); return; }   // hung up while prompting
     _call.local = local;
+    if(remoteDesktop)_call.rdMediaStream=local;
     /* The browser's native "Stop sharing" button ends the capture track without touching our call
      * state.  Treat that as an intentional hangup: otherwise the viewer is left on a frozen last
      * frame and the host still sees a misleading "connected" overlay. */
@@ -39556,6 +39574,22 @@
     try{ const p = profOf(hex)||{}; return p.name || p.display_name || 'Call'; }catch(_){ return 'Call'; }
   }
 
+  function _rdPlayRemote(video, enableSound=false){
+    const session=_call;
+    if(!session||!video)return;
+    if(enableSound){video.muted=false;session.playbackBlocked=false;}
+    const current=()=>_call===session&&video.isConnected&&video.srcObject===session.remote;
+    try{
+      Promise.resolve(video.play()).then(()=>{if(current())_callUI();}).catch(()=>{
+        if(!current())return;
+        // Phone autoplay may reject audible video. Keep the picture moving, and offer a
+        // user-gesture sound button instead of swallowing the failure and freezing the picture.
+        session.playbackBlocked=true;video.muted=true;
+        try{Promise.resolve(video.play()).catch(()=>{});}catch(_){}
+        _callUI();
+      });
+    }catch(_){if(current()){session.playbackBlocked=true;_callUI();}}
+  }
   function _callUI(){
     let el=document.getElementById('call-overlay');
     if(_call&&!_call.controlGranted){const v=document.getElementById('call-remote');if(v&&v.rdUnlock)v.rdUnlock();}
@@ -39579,7 +39613,7 @@
     const av=document.getElementById('call-av'); if(av) av.src=(p.picture||LOGO);
     const nm=document.getElementById('call-name'); if(nm) nm.textContent=(p.name||p.display_name||'anon');
     const stx=document.getElementById('call-status'); if(stx) stx.textContent=_call.remoteDesktop
-      ? (_call.state==='ringing' ? 'wants to share a desktop' : 'remote desktop · '+_callStatus()+(!_call.caller&&_call.controlGranted?' · Click screen to capture mouse · Esc to release':''))
+      ? (_call.state==='ringing' ? 'wants to share a desktop' : 'remote desktop · '+_callStatus()+(!_call.caller&&_call.controlGranted?' · Tap or drag to control · Esc releases mouse':'')+(_call.caller?(_call.local?.getTracks().some(t=>t.kind==='audio'&&t.readyState==='live')?' · Sharing sound':' · No shared sound from this source'):''))
       : _callStatus();
     const hasLocalVid=_hasLiveVideo(_call.local), hasRemoteVid=_hasLiveVideo(_call.remote);
     const showVid=hasLocalVid||hasRemoteVid;
@@ -39587,7 +39621,7 @@
     // bare reassignment would drop `call-mini` and pop the overlay back to fullscreen on its own.
     const _mini=el.classList.contains('call-mini');
     el.className='call-overlay'+(_call.remoteDesktop?' rd':'')+(_call.remoteDesktop&&_call.controlGranted?' control-on':'')+(showVid?' vid':' aud')+(_call.state==='ringing'?' ring':'')+(_call.state==='connected'?' on':'')+(_mini?' call-mini':'');
-    const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; rv.play&&rv.play().catch(()=>{}); } if(_call.remoteDesktop&&!_call.caller)_rdBindViewer(rv); }
+    const rv=document.getElementById('call-remote'); if(rv){ rv.style.display=hasRemoteVid?'':'none'; if(_call.remote && rv.srcObject!==_call.remote){ rv.srcObject=_call.remote; if(_call.remoteDesktop&&!_call.caller)_rdPlayRemote(rv);else rv.play&&rv.play().catch(()=>{}); } if(_call.remoteDesktop&&!_call.caller)_rdBindViewer(rv); }
     const lv=document.getElementById('call-local'); if(lv){ lv.style.display=(hasLocalVid&&!_call.camOff)?'':'none'; if(_call.local && lv.srcObject!==_call.local){ lv.srcObject=_call.local; lv.play&&lv.play().catch(()=>{}); }
       // Wire + restore AFTER display is set: offsetWidth is 0 while hidden, so placing it any earlier
       // has nothing to clamp against and would silently leave it in the default corner.
@@ -39601,6 +39635,7 @@
       ? act('call-accept',_call.remoteDesktop?'🖥':'📞',_call.remoteDesktop?'View':'Answer','accept')+act('call-decline','✕','Decline','decline')
       : act('call-min','▁','Minimize')
         +(_call.remoteDesktop&&!_call.caller?act('call-full','⛶','Fullscreen'):'')
+        +(_call.remoteDesktop&&!_call.caller&&_call.remote?.getAudioTracks().length?act('call-sound','🔊',_call.playbackBlocked||rv?.muted?'Enable sound':'Mute sound'):'')
         +(_call.remoteDesktop&&_call.caller&&_call.state==='connected'?act('call-screen','🖥','Switch screen'):'')
         +(_call.remoteDesktop&&!_call.caller&&_call.state==='connected'&&_call.control
           ? act('call-control',_call.controlGranted?'🖱️':'☝️',_call.controlGranted?'Stop control':'Request control',_call.controlGranted?'hang':''):'')
@@ -39621,6 +39656,7 @@
         if(document.fullscreenElement) await document.exitFullscreen();
         else await el.requestFullscreen();
       }catch(_){ toast('fullscreen is unavailable in this window'); } };
+      if(b('call-sound'))b('call-sound').onclick=()=>{if(!rv)return;if(rv.muted||_call?.playbackBlocked)_rdPlayRemote(rv,true);else{rv.muted=true;_callUI();}};
       if(b('call-screen'))b('call-screen').onclick=_rdSwitchScreen;
       if(b('call-control')) b('call-control').onclick=()=>{if(!_call)return;if(_call.controlGranted){_call.controlGranted=false;_rdSend({t:'release'});_callUI();}else _rdSend({t:'request'});};
       if(b('call-control-allow')) b('call-control-allow').onclick=()=>_rdGrant(true);
