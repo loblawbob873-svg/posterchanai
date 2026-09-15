@@ -37,6 +37,7 @@ final class MmsFailures {
     static String reason(int code, int http) {
         String why;
         switch (code) {
+            case -1: why = "the message provider recorded that this message was not sent"; break;
             case 2: why = "invalid carrier APN"; break;
             case 3: why = "could not connect to the MMS network"; break;
             case 4: why = "carrier server rejected it"; break;

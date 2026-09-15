@@ -36,6 +36,10 @@ public class MmsSendResultDeviceTest {
         checkResult(Activity.RESULT_OK, Telephony.Mms.MESSAGE_BOX_SENT);
     }
 
+    @Test public void transportSuccessCannotEraseProviderFailure() throws Exception {
+        checkResult(Activity.RESULT_OK, Telephony.Mms.MESSAGE_BOX_FAILED, Telephony.Mms.MESSAGE_BOX_FAILED);
+    }
+
     @Test public void carrierErrorSurvivesGoAsync() throws Exception {
         checkResult(8, Telephony.Mms.MESSAGE_BOX_FAILED); // mobile data unavailable
     }
@@ -83,6 +87,10 @@ public class MmsSendResultDeviceTest {
     }
 
     private void checkResult(int carrierResult, int expectedBox) throws Exception {
+        checkResult(carrierResult, expectedBox, Telephony.Mms.MESSAGE_BOX_OUTBOX);
+    }
+
+    private void checkResult(int carrierResult, int expectedBox, int initialBox) throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         String previous = Telephony.Sms.getDefaultSmsPackage(context);
         Uri row = null;
@@ -92,14 +100,14 @@ public class MmsSendResultDeviceTest {
             assertEquals("Device must grant the SMS role to exercise the real provider",
                     context.getPackageName(), Telephony.Sms.getDefaultSmsPackage(context));
             ContentValues values = new ContentValues();
-            values.put(Telephony.Mms.MESSAGE_BOX, Telephony.Mms.MESSAGE_BOX_OUTBOX);
+            values.put(Telephony.Mms.MESSAGE_BOX, initialBox);
             values.put(Telephony.Mms.DATE, System.currentTimeMillis() / 1000);
             values.put(Telephony.Mms.READ, 1);
             values.put(Telephony.Mms.SEEN, 1);
             row = context.getContentResolver().insert(Telephony.Mms.CONTENT_URI, values);
             assertNotNull("Synthetic MMS provider row", row);
             id = Long.parseLong(row.getLastPathSegment());
-            assertEquals(Telephony.Mms.MESSAGE_BOX_OUTBOX, box(context, row));
+            assertEquals(initialBox, box(context, row));
 
             CountDownLatch finished = new CountDownLatch(1);
             Intent result = new Intent(context, MmsSendReceiver.class)
@@ -114,9 +122,11 @@ public class MmsSendResultDeviceTest {
             }, new Handler(Looper.getMainLooper()), carrierResult, null, null);
             assertTrue("Async MMS receiver must finish its broadcast", finished.await(8, TimeUnit.SECONDS));
             assertEquals("Carrier result must survive goAsync()", expectedBox, box(context, row));
-            if (carrierResult == Activity.RESULT_OK) {
+            if (expectedBox == Telephony.Mms.MESSAGE_BOX_SENT) {
                 assertEquals("Successful result must not create an unknown-delivery error", "",
                         MmsFailures.get(context, id));
+            } else if (carrierResult == Activity.RESULT_OK) {
+                assertEquals("the message provider recorded that this message was not sent", MmsFailures.get(context, id));
             } else if (carrierResult == 8) {
                 assertEquals("mobile data is unavailable", MmsFailures.get(context, id));
             } else {

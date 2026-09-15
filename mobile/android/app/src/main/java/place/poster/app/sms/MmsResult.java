@@ -9,16 +9,13 @@ final class MmsResult {
         /* The provider is durable and may be advanced by the system MMS service before our
          * PendingIntent runs. Never turn its Sent row back into an OEM code-0 warning. */
         if (providerBox == 2) return SENT;   // Telephony.Mms.MESSAGE_BOX_SENT
-        if (result == -1) return SENT;       // Activity.RESULT_OK can arrive after an earlier failure.
-        // IO_ERROR has been observed after a picture reached its recipient. Without a carrier
-        // confirmation we cannot distinguish that from a failure before transmission. Preserve
-        // uncertainty, including old rows this app marked failed, and never invite a blind retry.
-        if (result == 5) return UNKNOWN;
+        // Android can report transport RESULT_OK after SendConf parsing marked this row failed.
+        // Never overwrite a provider rejection with transport success or an ambiguous callback.
         if (providerBox == 5) return FAILED; // Telephony.Mms.MESSAGE_BOX_FAILED
-        /* A 2xx response proves the MMSC accepted the submission even if an OEM lost the Android
-         * result code. This is send acceptance, not an optional recipient delivery receipt. */
-        if (result == 0 && http >= 200 && http < 300) return SENT;
-        if (result == 0) return UNKNOWN;
+        if (result == -1) return SENT;       // Activity.RESULT_OK, with no contrary provider result.
+        // IO_ERROR has also been observed after delivery. Without positive acceptance evidence,
+        // neither it nor code zero (even with HTTP 2xx) proves success or failure of submission.
+        if (result == 0 || result == 5) return UNKNOWN;
         return FAILED;
     }
 }

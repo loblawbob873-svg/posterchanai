@@ -149,7 +149,7 @@ def test_real_mms_receiver_finishes_and_releases_on_exception(receiver_classes,m
     assert result.stdout.strip()=='4,0,,0,0,0,0,false,0,0,true'
 
 
-def test_late_success_recovers_failed_row_and_clears_durable_error(receiver_classes):
+def test_transport_success_cannot_erase_provider_protocol_failure(receiver_classes):
     result=subprocess.run(['java','-cp',str(receiver_classes),'place.poster.app.sms.ReceiverProbe','-1','previous-failure'],capture_output=True,text=True,timeout=5)
     assert result.returncode==0,result.stderr
-    assert result.stdout.strip()=='2,1,sent,1,0,0,1,true,-1,1,false'
+    assert result.stdout.strip()=='5,1,failed,0,1,-1,1,false,-1,1,false'

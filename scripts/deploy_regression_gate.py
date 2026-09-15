@@ -37,6 +37,7 @@ TESTS = (
     'tests/client/test_files_follow_theme.py',
     'tests/client/test_browser_startup_diagnostics.py',
     'tests/client/test_saved_theme_reaches_open_files.py',
+    'tests/client/test_dm_delivery.py',
     'tests/test_desktop_tag_readback.py',
     'tests/test_native_window_reload_ci.py',
     'tests/client/test_preview_native_controls.py',

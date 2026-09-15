@@ -423,8 +423,8 @@ reports, skipped cases, genuine failures, and successful controls.
 ### SMS attachments and APK publication
 
 The required deployment gate also executes native Java MMS callback, retry, and share-intent
-checks. Ambiguous attachment I/O callbacks must remain unconfirmed; confirmed success clears
-older failure state, and known transport failures remain failures. Android device tests exercise
+checks. Ambiguous attachment I/O callbacks must remain unconfirmed; provider-confirmed success clears
+older failure details, and a failed provider row cannot be overwritten by transport success. Android device tests exercise
 saved attachment status and details, gallery routing, recipient selection, real activity recreation,
 and replacement of a shared draft. These tests never submit a carrier message.
 
@@ -434,3 +434,10 @@ verification steps must have actually succeeded. A failed, cancelled, skipped, o
 publication and preserves the existing release. A manual APK build needs matching emulator evidence;
 run the emulator workflow for that commit first if none exists. Emulator tests cannot prove delivery
 through a real SIM and carrier.
+
+MMS transport success is not the same as protocol acceptance. Android's
+[request processing](https://android.googlesource.com/platform/packages/services/Mms/+/refs/tags/android-mainline-11.0.0_r13/src/com/android/mms/service/MmsRequest.java)
+can retain the transport result while
+[SendConf processing](https://android.googlesource.com/platform/packages/services/Mms/+/refs/tags/android-mainline-11.0.0_r13/src/com/android/mms/service/SendRequest.java)
+marks the provider row failed. Regression cases preserve that failure and reject bare HTTP 2xx
+as proof of acceptance when the callback itself is unconfirmed.

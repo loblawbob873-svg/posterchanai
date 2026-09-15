@@ -8,7 +8,7 @@ RECEIVER = (SRC.parent / "MmsSendReceiver.java").read_text()
 FAILURES = (SRC.parent / "MmsFailures.java").read_text()
 
 
-def test_sent_failed_unknown_video_and_retry_mapping_executes():
+def test_provider_status_and_transport_results_do_not_invent_acceptance():
     harness = """package place.poster.app.sms;
 public class Probe { public static void main(String[] x) {
  int[] got={MmsResult.classify(-1,0,4),MmsResult.classify(0,0,2),
@@ -27,8 +27,8 @@ public class Probe { public static void main(String[] x) {
         run = subprocess.run(["java", "-cp", td, "place.poster.app.sms.Probe"],
                              capture_output=True, text=True, timeout=20)
     assert run.returncode == 0, run.stderr
-    # ordinary sent; provider-confirmed sent; video/MMSC 2xx; true unknown; data failure; failed row
-    assert run.stdout == "1,1,1,0,2,2,"
+    # ordinary sent; provider-confirmed sent; HTTP success without MMS acceptance; unknown; data failure; failed row
+    assert run.stdout == "1,1,0,0,2,2,"
 
 
 def test_receiver_uses_provider_and_http_before_showing_unknown():
