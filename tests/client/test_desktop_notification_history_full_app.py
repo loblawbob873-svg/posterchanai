@@ -47,7 +47,9 @@ def test_desktop_calendar_history_expires_offline_and_opens_calendar():
         previous_document = await browser.js('__documentIdentity')
         await browser.call('Page.reload')
         await browser.until("window.__documentIdentity!=="+json.dumps(previous_document)+" && !!window.__PC?.me() && !!document.querySelector('#os-bell')")
-        assert await browser.js('window.__heldReminderOpens?.length>0'), 'offline relay was not held before notification hydration'
+        # The shell may paint before the fixture's asynchronous open callback is attempted.
+        # Wait for that prerequisite; its held event still cannot initialize notification watching.
+        await browser.until('window.__heldReminderOpens?.length>0')
         assert await browser.js('__PC.notifUnread()') == 0, await browser.js("({seen:localStorage.getItem('pc_notif_seen'),rows:__PC.notifItems(60)})")
         await browser.js("document.querySelector('#os-bell').click()")
         await browser.until("document.querySelectorAll('#os-noti .reminder-notif').length===1")
