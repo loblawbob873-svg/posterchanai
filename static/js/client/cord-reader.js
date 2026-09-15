@@ -9386,6 +9386,7 @@ var PosterCordReader = (() => {
     inspectWebxdc: () => inspectWebxdc,
     inspectWebxdcSignals: () => inspectWebxdcSignals,
     inspectGuestbook: () => inspectGuestbook,
+    withChannelHistory: () => withChannelHistory,
     inspectControl: () => inspectControl
   });
   init_define_import_meta_env();
@@ -25885,6 +25886,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         metadata = {
           ...parsed,
           relays: capRelays(Array.isArray(parsed.relays) ? parsed.relays : []),
+          relaysPresent: Array.isArray(parsed.relays),
           icon: isImagePointer(parsed.icon) ? parsed.icon : void 0,
           banner: isImagePointer(parsed.banner) ? parsed.banner : void 0
         };
@@ -25892,25 +25894,28 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
     const channels = /* @__PURE__ */ new Map();
     for (const [eid, candidates] of candidatesOf(VSK_CHANNEL)) {
-      const head = pickHead(candidates, heads, headEditions, (p) => {
-        if (!isAuthorized(roster, p.author, ownerHex, Permissions.MANAGE_CHANNELS)) return false;
-        if (!citationOk(p)) return false;
-        try {
-          const meta4 = JSON.parse(p.content);
-          return typeof meta4.name === "string" && meta4.name.length > 0 && utf8Len(meta4.name) <= NAME_MAX_BYTES;
-        } catch {
-          return false;
-        }
-      });
-      if (!head) continue;
-      const meta3 = normalizeChannelMetadata(JSON.parse(head.content));
-      channels.set(eid, {
-        channelIdHex: eid,
-        name: meta3.name,
-        isPrivate: meta3.private === true,
-        deleted: meta3.deleted === true,
-        metadata: meta3
-      });
+      const parsed=new Map(),byHash=new Map();for(const p of candidates){const key=bytesToHex2(p.selfHash);byHash.set(key,[...(byHash.get(key)||[]),p]);}
+      const authorized=p=>{
+        if(parsed.has(p))return parsed.get(p);
+        let value=null;
+        try{const meta=JSON.parse(p.content);if(isAuthorized(roster,p.author,ownerHex,Permissions.MANAGE_CHANNELS)&&citationOk(p)&&typeof meta.name==="string"&&meta.name.length>0&&utf8Len(meta.name)<=NAME_MAX_BYTES)value=normalizeChannelMetadata(meta);}catch(_){}
+        parsed.set(p,value);return value;
+      };
+      const ancestors=p=>{const chain=[],seen=new Set();let at=p;while(at&&!seen.has(at)){seen.add(at);chain.push(at);const prior=at.prevHash&&(byHash.get(bytesToHex2(at.prevHash))||[]).find(item=>item.version===at.version-1n&&authorized(item));at=prior||null;}return chain;};
+      const terminalBefore=new Map();
+      const deletedAncestor=p=>{
+        if(terminalBefore.has(p))return terminalBefore.get(p);
+        const pending=[];let at=p;
+        while(at&&!terminalBefore.has(at)){pending.push(at);at=at.prevHash&&(byHash.get(bytesToHex2(at.prevHash))||[]).find(item=>item.version===at.version-1n&&authorized(item));}
+        let terminal=!!at&&(terminalBefore.get(at)||authorized(at)?.deleted===true);
+        for(const item of pending.reverse()){terminalBefore.set(item,terminal);terminal=terminal||authorized(item)?.deleted===true;}
+        return terminalBefore.get(p);
+      };
+      const head=pickHead(candidates,heads,headEditions,p=>!!authorized(p)&&!deletedAncestor(p));
+      if(!head)continue;
+      const meta3=authorized(head),history=ancestors(head).map(authorized).filter(Boolean);
+      channels.set(eid,{channelIdHex:eid,name:meta3.name,isPrivate:meta3.private===true,deleted:meta3.deleted===true,metadata:meta3,
+        wasPublic:history.some(meta=>meta.private!==true),wasPrivate:history.some(meta=>meta.private===true)});
     }
     const banned = /* @__PURE__ */ new Set();
     const bannedAt = /* @__PURE__ */ new Map();
@@ -26011,14 +26016,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       mediaKey: voiceMediaKey(secret, id, epoch)
     });
     for (const def of folded?.channels.values() ?? []) {
-      if (def.deleted) continue;
       seen.add(def.channelIdHex);
+      if (def.deleted) continue;
       const id = hex32(def.channelIdHex);
       if (!def.isPrivate) {
         const streams = community.heldRoots.map((r) => ({
           epoch: r.epoch,
           group: channelGroupKey(r.key, id, r.epoch)
         }));
+        const held=privateKeysById.get(def.channelIdHex);
+        if(held)for(const key of [{key:held.key,epoch:held.epoch},...(held.heldKeys||[])])streams.push({epoch:key.epoch,group:channelGroupKey(key.key,id,key.epoch)});
         out.push({
           id,
           idHex: def.channelIdHex,
@@ -26031,17 +26038,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         continue;
       }
       const held = privateKeysById.get(def.channelIdHex);
-      if (!held) continue;
-      const stream = { epoch: held.epoch, group: channelGroupKey(held.key, id, held.epoch) };
-      out.push({
-        id,
-        idHex: def.channelIdHex,
-        name: def.name,
-        isPrivate: true,
-        voice: voiceKeys(held.key, id, held.epoch),
-        streams: [stream, ...(held.heldKeys || []).map(k => ({epoch:k.epoch,group:channelGroupKey(k.key,held.id,k.epoch)}))],
-        current: stream
-      });
+      const stream=held?{epoch:held.epoch,group:channelGroupKey(held.key,id,held.epoch)}:null;
+      const streams=held?[stream,...(held.heldKeys||[]).map(k=>({epoch:k.epoch,group:channelGroupKey(k.key,id,k.epoch)}))]:[];
+      if(def.wasPublic||community.publicHistory?.has(def.channelIdHex))for(const root of community.heldRoots)streams.push({epoch:root.epoch,group:channelGroupKey(root.key,id,root.epoch)});
+      if(!streams.length)continue;
+      out.push({id,idHex:def.channelIdHex,name:def.name,isPrivate:true,readOnly:!held,
+        voice:held?voiceKeys(held.key,id,held.epoch):null,streams,current:stream});
     }
     for (const held of community.privateChannels) {
       const idHex = bytesToHex2(held.id);
@@ -26789,6 +26791,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const channels=input.channels.map(ch=>{if(!ch||typeof ch!=='object')throw new Error('invalid invite channel');hex(ch.id,'channel id');hex(ch.key,'channel key');return {...ch,epoch:epoch(ch.epoch,'channel epoch')};});
     const relays=capRelays(Array.isArray(input.relays)?input.relays:[]);
     const result={...input,root_epoch:epoch(input.root_epoch,"root epoch"),channels,relays};
+    if(forJoin){delete result.public_channel_history;for(const ch of result.channels)delete ch.public_history;}
     if(forJoin)delete result.root_refounder; // Only our authenticated rekey/vault may name the epoch minter.
     return result;
   }
@@ -26823,6 +26826,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   function runtime(bundle) {
     const community = rehydrateCommunity({ community_id: bundle.community_id, seed: bundle, current: bundle, added_at: 0 });
     if (!community) throw new Error("invalid Concord join material");
+    community.publicHistory=new Set((Array.isArray(bundle.public_channel_history)?bundle.public_channel_history:[]).filter(id=>typeof id==='string'&&/^[0-9a-f]{64}$/.test(id)).slice(0,10000));
     return community;
   }
   function control(bundle, wraps) {
@@ -26831,7 +26835,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const editions=openControlWraps(wraps || [],groups),snapshotIds=community.rootEpoch>0n?
       new Set(editions.filter(e=>e.opened.streamPk===groups[0].pk).map(e=>bytesToHex2(e.rumorId))):undefined;
     const folded = foldControlState(editions, community.id, community.owner, undefined, snapshotIds);
+    if(folded.metadata?.relaysPresent)community.relays=folded.metadata.relays;
     return { community, groups, folded, channels: channelsView(community, folded) };
+  }
+  function withChannelHistory(bundle,wraps){
+    const {folded}=control(bundle,wraps),history=new Set(Array.isArray(bundle.public_channel_history)?bundle.public_channel_history:[]);
+    for(const channel of folded.channels.values())if(channel.isPrivate&&channel.wasPublic)history.add(channel.channelIdHex);
+    return history.size?{...bundle,public_channel_history:[...history].sort()}:bundle;
   }
   // CORD-02 guestbook: derived transport identities stay internal, never member profiles.
   function guestbookGroups(bundle){
@@ -26950,6 +26960,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       description: folded.metadata?.description || "",
       icon: folded.metadata?.picture || folded.metadata?.icon || "",
       relays: community.relays,
+      relaysAuthoritative: !!folded.metadata?.relaysPresent,
       controlPubkeys: groups.map((g) => g.pk),
       guestbookPubkeys: guestbookGroups(bundle).map(g=>g.pk),
       banned: [...folded.banned],
@@ -26966,10 +26977,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       metadataManagers: [community.owner,...new Set(folded.roster.grants.map(g=>g.member))].filter(pk=>!folded.banned.has(pk)&&isAuthorized(folded.roster,pk,community.owner,Permissions.MANAGE_METADATA)),
       channelManagers: [community.owner,...new Set(folded.roster.grants.map(g=>g.member))].filter(pk=>!folded.banned.has(pk)&&isAuthorized(folded.roster,pk,community.owner,Permissions.MANAGE_CHANNELS)),
       inviteCreators: [community.owner,...new Set(folded.roster.grants.map(g=>g.member))].filter(pk=>!folded.banned.has(pk)&&isAuthorized(folded.roster,pk,community.owner,Permissions.CREATE_INVITE)),
+      deletedChannels: [...folded.channels.values()].filter(ch=>ch.deleted).map(ch=>ch.channelIdHex),
       liveInviteLinks: [...folded.liveInviteLinks],
       registriesByCreator: Object.fromEntries(folded.registriesByCreator),
       members: [...new Set(folded.roster.grants.filter(g => g.roleIds.length && !folded.banned.has(g.member)).map(g => g.member))],
-      channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
+      channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, readOnly: !!ch.readOnly, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
   }
   // CORD-06. Binary key material must never pass through TextDecoder: NIP-44's
@@ -27177,7 +27189,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     for(const pk of removed)if(memberSet.has(pk))throw new Error('removed member is still a rekey recipient');
     const root=await createRekeyWraps(bundle,controlWraps,{scope:'0'.repeat(64),recipients,removed},pubkey,signEvent,encryptBytes),
       update={scope:'0'.repeat(64),epoch:root.epoch,prevepoch:String(bundle.root_epoch),prevcommit:epochKeyCommitment(bundle.root_epoch,bundle.community_root),key:root.key,control_pk:root.control_pk,control_root:root.control_root};
-    let next=applyRekeyUpdates(bundle,[{...update,author:pubkey}]);
+    let next=applyRekeyUpdates(withChannelHistory(bundle,controlWraps),[{...update,author:pubkey}]);
     const newGroup=controlGroups(runtime(next))[0],compacted=[];
     // Rewrap the exact original plaintext seal. Its real-author signature and
     // edition hash survive; the refounder never impersonates another author.
@@ -27580,7 +27592,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(!bundle.dissolved||kind!==KIND_DELETE)requireActiveMembership(bundle,channelId);
     const { channels, folded } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
-    if (!channel) throw new Error("channel is not writable with this membership");
+    if (!channel?.current) throw new Error("channel is not writable with this membership");
     const ms = Date.now();
     const rumor = buildRumor({ kind, content, pubkey, ms, tags: chatSendTags([...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags], kind, ms, folded) });
     const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });
@@ -27593,7 +27605,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     requireActiveMembership(bundle,channelId);
     const { channels, folded } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
-    if (!channel) throw new Error("channel is not writable with this membership");
+    if (!channel?.current) throw new Error("channel is not writable with this membership");
     const ms = Date.now();
     const rumor = buildRumor({ kind: 3310, content, pubkey, ms, tags: chatSendTags([...channelBindingTags(channel.idHex, channel.current.epoch), ...extraTags], 3310, ms, folded, ephemeral) });
     const seal = await sealRumor(rumor, 20013, channel.current.group, { signEvent });

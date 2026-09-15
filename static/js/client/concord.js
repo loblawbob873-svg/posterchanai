@@ -34,13 +34,12 @@
   const FIRST_PAINT_MESSAGES=24;
   const DISCOVER_RELAYS=['wss://relay.dreamith.to'];
   const LEGACY_RECOVERY_RELAYS=['wss://relay.ditto.pub','wss://relay.damus.io'];
-  /* A community's invite is authoritative about where its encrypted stream lives. Appending the
-   * global compatibility set to every read/write caused a room open to spray sockets at unrelated
-   * relays and could report a successful send on a default relay Armada never reads. Defaults are
-   * bootstrap fallback only for old bundles which carry no usable relay. */
+  /* Invite relays bootstrap the first read; authenticated metadata owns subsequent transport. */
   function roomRelays(bundle){
-    const own=[...new Set((bundle&&bundle.relays||[]).map(normalizeRelay).filter(Boolean))];
-    return (own.length?own:CORD_RELAYS).slice(0,8);
+    let listed=bundle?.relays||[],authoritative=false;
+    try{const room=typeof saved==='function'?saved().find(r=>r.cord?.bundle?.community_id===bundle?.community_id):null;const wraps=roomControls.get(bundle?.community_id)||roomControls.get(room?.communityId||room?.naddr);if(wraps?.length){const info=window.PosterCordReader.inspectControl(bundle,wraps);if(info.relaysAuthoritative){listed=info.relays;authoritative=true;}}}catch(_){}
+    const own=[...new Set(listed.map(normalizeRelay).filter(Boolean))];
+    return (authoritative||own.length?own:CORD_RELAYS).slice(0,8);
   }
   function cordControlStamp(wraps){return [...new Set((wraps||[]).map(ev=>ev&&ev.id).filter(Boolean))].sort();}
   function cordPlaneContext(p,bundle,controls=[],room=null){
@@ -783,7 +782,7 @@
   function channelStoreId(room,name){ const channel=name||'general',c=room&&Array.isArray(room.channels)&&room.channels.find(x=>x.name===channel),identity=String(room&&(room.naddr||room.communityId||room.url)||''); return identity+(channel!=='general'?'.'+(c&&c.id||channel):''); }
   function channelsOf(room){
     const channels=room&&Array.isArray(room.channels)?room.channels.filter(c=>c&&c.name):[];
-    return channels.length?channels:[{name:'general',private:false}];
+    return channels.length||room?.deletedChannels?.length?channels:[{name:'general',private:false}];
   }
   function activeMessages(room){ return testMessages(channelStoreId(room,state.channel)); }
   /* A CORD stream may retain 5,000 decrypted messages in renderer memory. Building every row,
@@ -1118,7 +1117,7 @@
     if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!relays.every(url=>report.ok?.includes(url)))throw new Error('Current invitation registry sync is incomplete');
     if(!context.isCurrent())throw new Error('Concord membership changed');
     const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
-    roomControls.set(loadKey,wraps);const plane=cordPlaneContext(p,bundle,wraps,room),guarded={...context,isCurrent:()=>context.isCurrent()&&plane.current()};
+    roomControls.set(loadKey,wraps);if(info.relaysAuthoritative)relays.splice(0,relays.length,...[...new Set([...info.relays,...CORD_RELAYS])].slice(0,8));const plane=cordPlaneContext(p,bundle,wraps,room),guarded={...context,isCurrent:()=>context.isCurrent()&&plane.current()};
     const list=await api.readList(guarded);if(!list.complete)throw new Error('Invite List sync is incomplete');
     const live=new Set(info.registriesByCreator?.[context.pubkey]||[]);let refreshed=0;
     for(const entry of list.list.entries.filter(e=>e.community_id===bundle.community_id)){
@@ -1127,7 +1126,7 @@
       if(!status.complete)throw new Error('Invitation relay sync is incomplete');
       if(status.retired){await api.forget(entry,guarded);continue;}
       if(!live.has(api.details(entry).pubkey))continue;
-      const event=await api.refreshEvent(entry,{...bundle,channels:[]},status.events,guarded);
+      const event=await api.refreshEvent(entry,{...bundle,channels:[],relays:info.relays},status.events,guarded);
       if(!guarded.isCurrent())throw new Error('Concord invitation permission changed');
       await context.publish(event,api.details(entry).relays);refreshed++;
     }
@@ -1142,6 +1141,7 @@
     const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
     if(!info.inviteCreators.includes(scope.context.pubkey))throw new Error('Your account cannot manage invite links');
     roomControls.set(key,wraps);
+    if(info.relaysAuthoritative)scope.relays.splice(0,scope.relays.length,...[...new Set([...info.relays,...CORD_RELAYS])].slice(0,8));
     return {wraps,info,key,plane:cordPlaneContext(p,bundle,wraps,room)};
   }
   const ownedInviteWrites=new Map();
@@ -1168,8 +1168,8 @@
       if(adopt){
         if(entry.community_id!==room.cord.bundle.community_id||context.pubkey!==room.cord.bundle.owner)throw new Error('Only the original creator can recover this link');
         const status=await api.linkState(entry,guarded);if(!status.complete||status.retired)throw new Error('Existing link is retired or has not finished syncing');
-        made={entry,event:await api.refreshEvent(entry,{...room.cord.bundle,channels:[]},status.events,guarded)};
-      }else made=await api.create({...room.cord.bundle,channels:[]},guarded,{base:location.origin});
+        made={entry,event:await api.refreshEvent(entry,{...room.cord.bundle,channels:[],relays:registry.info.relays},status.events,guarded)};
+      }else made=await api.create({...room.cord.bundle,channels:[],relays:registry.info.relays},guarded,{base:location.origin});
       // Preserve the signing key before publishing a usable link, so failed registry delivery is recoverable.
       await api.remember(made.entry,guarded);links.add(api.details(made.entry).pubkey);
     }
@@ -1775,6 +1775,7 @@
         if(p.viewer()?.pubkey!==account)return;
         button.disabled=true;
         try{
+          bundle.relays=roomRelays(source);
           await p.sendCordDirectInvite(bundle,input.value);
           if(p.viewer()?.pubkey!==account||!root.isConnected)return;
           p.closeModal();p.toast('Concord invitation sent');
@@ -2661,7 +2662,8 @@
       const now=Date.now(),changed=[];
       for(const room of wanted){
         const bundle=room.cord&&room.cord.bundle||{},cid=cordListB64(bundle.community_id||room.communityId);
-        const current={...bundle,name:room.name};
+        const held=window.PosterCordReader?.withChannelHistory?window.PosterCordReader.withChannelHistory(bundle,roomControls.get(room.communityId||room.naddr)||[]):bundle;
+        const current={...held,name:room.name};
         const prior=list.entries.find(e=>e.community_id===cid),removed=cordU64(list.tombstones.find(t=>t.community_id===cid)?.removed_at||0);
         const entry=cordMergeEntry(prior,{community_id:cid,current,added_at:cordIntegerMax(now,removed+1n),invite_ref:room.url});
         list.entries=list.entries.filter(e=>e.community_id!==cid);list.entries.push(entry);changed.push(cid);
@@ -2791,7 +2793,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);if(!currentOwner())return;
-      const applyControl=wraps=>{if(!currentOwner())return 0;const admitted=bundle.dissolved?(wraps||[]).filter(e=>(room.cord.sealed_controls||[]).includes(e.id)):(wraps||[]);const info=reader.inspectControl(bundle,admitted);roomControls.set(loadKey,admitted);room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[]){markRemoteStore(channelStoreId(room,channel.name));if(reader.inspectPinList?.(bundle,admitted,channel.id)?.entries?.length)void window.PCConcord?.reconcilePins?.(p,room,channel.id)?.catch(e=>console.warn("Pin deletion reconciliation is pending",e));}persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
+      const applyControl=wraps=>{if(!currentOwner())return 0;const admitted=bundle.dissolved?(wraps||[]).filter(e=>(room.cord.sealed_controls||[]).includes(e.id)):(wraps||[]);const info=reader.inspectControl(bundle,admitted);roomControls.set(loadKey,admitted);if(info.relaysAuthoritative)relays.splice(0,relays.length,...roomRelays(bundle));room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,readOnly:!!c.readOnly,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(info.deletedChannels?.length)room.deletedChannels=[...new Set([...(room.deletedChannels||[]),...info.deletedChannels])];if(channels.length)room.channels=channels.filter(c=>!room.deletedChannels?.includes(c.id));else if(room.deletedChannels?.length)room.channels=(room.channels||[]).filter(c=>!room.deletedChannels.includes(c.id));for(const channel of room.channels||[]){markRemoteStore(channelStoreId(room,channel.name));if(reader.inspectPinList?.(bundle,admitted,channel.id)?.entries?.length)void window.PCConcord?.reconcilePins?.(p,room,channel.id)?.catch(e=>console.warn("Pin deletion reconciliation is pending",e));}persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
@@ -3587,7 +3589,7 @@
       const result=await reader.inspectRekeys(bundle,roomControls.get(room.communityId||room.naddr)||controls||[],[...wraps.values()],owner,p.cordRekeyDecrypt);
       if(!current())return;
       if(result.blocked&&result.blocked.length&&!warned){warned=true;if(p.toast)p.toast('A community key update could not be opened. Your signer may not support binary rekeys.');}
-      let next=reader.applyRekeyUpdates(bundle,result.updates);
+      let next=reader.applyRekeyUpdates(reader.withChannelHistory?reader.withChannelHistory(bundle,roomControls.get(room.communityId||room.naddr)||controls||[]):bundle,result.updates);
       const tombstone=reader.inspectDissolution&&reader.inspectDissolution(bundle,[...wraps.values()]);
       let frozen=null;
       if(tombstone){frozen=await freezeSealedHistory(room);if(!current())return;next={...bundle,dissolved:tombstone};}
@@ -3647,8 +3649,12 @@
       assign('moderators',Array.isArray(info.moderators)?info.moderators:room.moderators||[]);
       if(await applyRoomIconMetadata(room,info,loadKey,seed))changed=true;
       if(!context.membershipCurrent())return;
-      const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
-      if(channels.length)assign('channels',channels);
+      const remembered=reader.withChannelHistory?reader.withChannelHistory(bundle,wraps):bundle;
+      const currentBundle=info.relaysAuthoritative?{...remembered,relays:info.relays}:remembered;
+      if(JSON.stringify(bundle)!==JSON.stringify(currentBundle)){room.cord={...room.cord,bundle:currentBundle};changed=true;}
+      const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,readOnly:!!c.readOnly,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);
+      if(info.deletedChannels?.length)assign('deletedChannels',[...new Set([...(room.deletedChannels||[]),...info.deletedChannels])]);
+      if(channels.length)assign('channels',channels.filter(c=>!room.deletedChannels?.includes(c.id)));else if(room.deletedChannels?.length)assign('channels',(room.channels||[]).filter(c=>!room.deletedChannels.includes(c.id)));
       if(changed){const latest=saved(),at=latest.findIndex(item=>sameRoom(item,room));if(at>=0){latest[at]=mergeRoom(latest[at],room);save(latest);preserveChatScroll(()=>backgroundRender());}}
       const active=saved()[state.community],activeChannel=active&&(active.channels||[]).find(c=>c.name===(state.channel||'general'));
       if(roomIdentity(active)===roomIdentity(room)&&activeChannel)startChatLive(p,active,activeChannel);
@@ -3685,7 +3691,7 @@
     const announced=await p.relayPublishRoom(DISCOVER_RELAYS,announcement);
     if(!context.isCurrent())throw new Error('creating account changed');
     if(!announced?.ok)throw new Error('Community was created but its discovery announcement was not accepted');
-    return {name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
+    return {communityId:made.communityId,name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
   }
   async function activateJoinedRoom(p,index,inDrawer=false,expectedIdentity=''){
     let rooms=saved();
@@ -3850,6 +3856,7 @@
     activeMentionState=draft?{choices:[...(draft.mentionChoices||[])],index:Number(draft.mentionIndex)||0,
       recipients:new Map(draft.mentionRecipients||[])}:{choices:[],index:0,recipients:new Map()};
     const channelPrivate=!!(currentChannel&&currentChannel.private);
+    const channelReadOnly=!!currentChannel?.readOnly||!!(current?.deletedChannels?.length&&!currentChannel);
     const messages=current&&(current.local||current.cord||current.protocol==='nip29')?paintedMessages(current):[];
     const ownerPk=String((current&&current.cord&&current.cord.bundle&&(current.cord.bundle.owner||current.cord.bundle.creator_npub))||''),
       isOwner=!!ownerPk&&ownerPk===viewer.pubkey,banned=new Set(current&&current.banned||[]),
@@ -3874,7 +3881,7 @@
       </aside>
       <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations">Invites</button><button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
         <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
-        <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="Message #${p.enc(state.channel||'general')}" ${state.community==null?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null?'disabled':''}>Send</button></div>
+        <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="${channelReadOnly?'History only: current channel access is unavailable':'Message #'+p.enc(state.channel||'general')}" ${state.community==null||channelReadOnly?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null||channelReadOnly?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?'':'<div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div>'}${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
     retainCommunityRail(oldCommunityRail,feed.querySelector&&feed.querySelector('.cc-communities'));
     paintUnreadBadge();

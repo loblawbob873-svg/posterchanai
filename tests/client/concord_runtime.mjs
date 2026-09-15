@@ -804,17 +804,17 @@ if(!feed.innerHTML.includes('cc-app show-chat drawer-open'))
 control('cc-drawer-backdrop').click();
 if(feed.innerHTML.includes('drawer-open'))
   throw new Error('mobile channel drawer backdrop did not close it');
-data.set('pc.concord.seen.'+rooms[0].naddr+':general','1');
+data.set('pc.concord.seen.'+(rooms[0].communityId||rooms[0].naddr)+':general','1');
 messageData.set('pc.concord.test.'+rooms[0].naddr,JSON.stringify([{by:'Other User',pubkey:'b'.repeat(64),text:'hey @tester',at:2}]));
 PCConcord.render();
 if(calls.mentions.length!==1 || !calls.mentions[0].title.includes('#general') ||
-   !calls.mentions[0].opts.route.startsWith('concord:'+encodeURIComponent(rooms[0].naddr)+':general:'))
-  throw new Error('mention notification lost its exact room/channel/message route');
+   !calls.mentions[0].opts.route.startsWith('concord:'+encodeURIComponent(rooms[0].communityId||rooms[0].naddr)+':general:'))
+  throw new Error('mention notification lost its exact room/channel/message route: '+JSON.stringify({mentions:calls.mentions,room:rooms[0]}));
 PCConcord.render();
 if(calls.mentions.length!==1) throw new Error('mention notification was not deduplicated');
 // Mention cursors are per channel. A newer #general timestamp must not suppress #support, and OS
 // notification replacement tags must not make mentions from the two channels overwrite each other.
-data.set('pc.concord.seen.'+rooms[0].naddr+':support','1');
+data.set('pc.concord.seen.'+(rooms[0].communityId||rooms[0].naddr)+':support','1');
 PCConcord.notifyMentions(window.__PC,rooms[0],[{by:'Support User',pubkey:'c'.repeat(64),text:'hey @tester',at:2}],window.__PC.viewer(),'tester','support');
 if(calls.mentions.length!==2 || !calls.mentions[1].title.includes('#support') ||
    calls.mentions[0].opts.tag===calls.mentions[1].opts.tag)
@@ -890,5 +890,25 @@ const classesBefore=classList.added.length;
 PCConcord.render();
 if(feed.innerHTML!=='<div id="code-editor">working tree</div>') throw new Error('late Concord render replaced Code');
 if(classList.added.length!==classesBefore) throw new Error('late Concord render changed Code shell classes');
+// Same-pass relay migration and a live-subscription change use the shipped controller.
+activeView='concord';
+let migrationGeneration=1;const migrationQueries=[],migrationSubscriptions=[];
+const migrationInspect=window.PosterCordReader.inspectControl;
+window.PosterCordReader.inspectControl=(bundle,wraps)=>({...migrationInspect(bundle,wraps),...(bundle?.migrationFixture&&wraps.length?{relays:['wss://migrated-'+migrationGeneration+'.example'],relaysAuthoritative:true}:{})});
+const migrationEvents=filters=>relayFixtures(filters).map(event=>filters.some(f=>f.authors?.includes('8'.repeat(64)))?{...event,id:'migration-control-'+migrationGeneration}:event);
+window.__PC.relayQuery=async filters=>migrationEvents(filters);
+window.__PC.relayQueryFrom=async(relays,filters,options={})=>{migrationQueries.push({relays:[...relays],filters});if(options.report)options.report.ok=relays;return migrationEvents(filters);};
+window.Relay={subscribe:()=>1,close:()=>{},subscribeFrom:relays=>{migrationSubscriptions.push([...relays]);return ()=>{};}};
+const migrationRoom={communityId:'fa'.repeat(32),name:'Migration',naddr:'migration-room',channels:[{id:'joined-general',name:'general'}],cord:{bundle:{...JOIN_BUNDLE,community_id:'fa'.repeat(32),relays:['wss://old-migration.example'],migrationFixture:true}}};
+data.set('pc.concord.invites',JSON.stringify([migrationRoom]));PCConcord.__testState({community:0,channel:'general'});
+await PCConcord.hydrateRoomStreams(window.__PC,0);
+const migrationChatReads=migrationQueries.filter(row=>row.filters.some(f=>f.authors?.includes('6'.repeat(64))));
+if(!migrationChatReads.length||migrationChatReads.some(row=>row.relays.includes('wss://old-migration.example')))throw new Error('same hydration pass used stale invite relays after authenticated metadata');
+let migrationSaved=JSON.parse(data.get('pc.concord.invites'))[0];PCConcord.startChatLive(window.__PC,migrationSaved,migrationSaved.channels[0]);
+if(!migrationSubscriptions.some(urls=>urls.includes('wss://migrated-1.example')))throw new Error('live subscription did not adopt metadata relays');
+migrationGeneration=2;await PCConcord.hydrateRoomStreams(window.__PC,0);migrationSaved=JSON.parse(data.get('pc.concord.invites'))[0];PCConcord.startChatLive(window.__PC,migrationSaved,migrationSaved.channels[0]);
+if(!migrationSubscriptions.some(urls=>urls.includes('wss://migrated-2.example')))throw new Error('live subscription remained on retired relay after new metadata');
+PCConcord.stopChatLive();
+console.log('same-pass and live metadata relay migration passed');
 console.log('concord runtime flow ok');
 process.exit(0);

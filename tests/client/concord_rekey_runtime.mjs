@@ -242,3 +242,16 @@ ctx.roomControls.set(cid,withPins);let deliverNewHead=true;const fetchRace={...p
 console.log('CORD04 pin reconciliation drains queued re-arms and merges live heads received during fetch');
 const multiTargetEdit=await reader.createChatWrap(bundle,pinControls,channel,'other message revision',owner,async e=>NT.finalizeEvent(e,sk),[['e','ff'.repeat(32)],['e',oldMessage.rumorId]],3302),multiTargetProof=reader.makePinProof(bundle,pinControls,channel,multiTargetEdit.wrap),multiTargetPins=await controlEdition('11',pinEid,{entries:[{...pinProof,edit:multiTargetProof}]});assert.equal(reader.inspectPinList(bundle,[...pinControls,multiTargetPins],channel).entries[0].content,'history survives rotation');assert.equal(reader.inspectPinList(bundle,withPins,channel,[multiTargetEdit.wrap]).entries[0].content,'history survives rotation','pin edit targeting matches keyed timeline first-e semantics');
 console.log('CORD04 pin proof and local edits use timeline-compatible first target');
+// A recipient records authenticated conversion history before adopting another
+// member's3303, so a compacted-only cache after restart retains old public chat.
+ctx.stop();activeOwner=member;callbacks=[];ctx.window.PCConcord={};
+const conversionPublicBody={name:'converted',private:false},conversionPublic=await controlEdition('2',channel,conversionPublicBody),conversionPrivate=await controlEdition('2',channel,{name:'converted',private:true},2,editionHash(channel,1,null,conversionPublicBody)),conversionControls=[...refoundControls,conversionPublic,conversionPrivate];
+const conversionBundle={...bundle,channels:[{...bundle.channels[0],epoch:1}]},oldPublic=await reader.createChatWrap(bundle,[...refoundControls,conversionPublic],channel,'public before recipient conversion',owner,async e=>NT.finalizeEvent(e,sk));
+stored=[{id:'room',communityId:cid,cord:{bundle:structuredClone(conversionBundle)}}];ctx.roomControls.set(cid,conversionControls);
+ctx.begin({viewer:()=>({pubkey:activeOwner}),cordRekeyDecrypt:decryptBytes},stored[0],conversionControls);assert(callbacks.length);callbacks[0](good);
+for(let i=0;i<30&&!stored[0].cord.bundle.public_channel_history;i++)await new Promise(r=>setImmediate(r));ctx.stop();
+assert(stored[0].cord.bundle.public_channel_history.includes(channel));assert.equal(stored[0].cord.bundle.community_root,'91'.repeat(32));
+const received=JSON.parse(JSON.stringify(stored[0].cord.bundle)),receivedReadSk=derive(bytes(received.community_root),'concord/control',cid,1),receivedReadKey=NT.nip44.getConversationKey(receivedReadSk,NT.getPublicKey(receivedReadSk)),receivedWriteSk=derive(bytes(controlRoot),'concord/control-signer',cid,1);
+const preservedSeal=NT.nip44.decrypt(conversionPrivate.content,oldReadConv),compactedPrivate=NT.finalizeEvent({kind:1059,created_at:Math.floor(Date.now()/1000),tags:[],content:NT.nip44.encrypt(preservedSeal,receivedReadKey)},receivedWriteSk);
+assert.deepEqual((await reader.inspectChat(received,[compactedPrivate],channel,[oldPublic.wrap])).messages.map(m=>m.text),['public before recipient conversion']);
+console.log('recipient rekey preserves authenticated conversion provenance after compacted-only reload');

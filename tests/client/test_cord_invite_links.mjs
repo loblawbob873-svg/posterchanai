@@ -110,6 +110,7 @@ ctx.inviteParts=url=>({naddr:url.split('/invite/')[1].split('#')[0]});ctx.DISCOV
 const mintHost={...concurrentHost,relayUrls:()=>['wss://mint.fixture'],publish:async()=>({ev:{kind:1}}),relayPublishTo:async(_relays,e)=>{calls.push(e);return true;}};
 calls=[];const newRoom=await ctx.mintPublicRoom(mintHost,'Ordinary creation','');assert.deepEqual(calls.map(e=>e.kind),[33302,13303,1059,1059,1059,33301,1]);
 assert.equal(R.inspectControl(newRoom.cord.bundle,newRoom.cord.events).liveInviteLinks[0],P.inviteDetails(newRoom.url).linkSigner);
+const ownerSnapshot=JSON.parse(NT.nip44.decrypt(calls[0].content,key)).entries.find(e=>e.community_id===Buffer.from(newRoom.communityId,'hex').toString('base64url')).current;assert.equal(ownerSnapshot.control_root,Buffer.from(newRoom.cord.bundle.control_root,'hex').toString('base64url'));
 assert(JSON.parse(NT.nip44.decrypt(calls[1].content,key)).entries.some(e=>e.url===newRoom.url));
 calls=[];await assert.rejects(()=>ctx.mintPublicRoom({...mintHost,relayPublishRoom:async(_relays,e)=>{calls.push(e);return {ok:false};}},'Rejected backup',''),/No relay accepted/);assert.deepEqual(calls.map(e=>e.kind),[33302,13303]);
 console.log('ordinary community creation tracks original link passed');

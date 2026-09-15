@@ -145,7 +145,8 @@ def test_concord_fills_workspace_and_identifies_the_signed_in_user():
 def test_concord_has_discord_style_panes_and_dm_style_composer():
     for surface in ('cc-communities', 'cc-channels', 'cc-conversation', 'cc-members-pane', 'cc-messages', 'cc-compose'):
         assert surface in CONCORD
-    assert "Message #${p.enc(state.channel||'general')}" in CONCORD
+    assert "'Message #'+p.enc(state.channel||'general')" in CONCORD
+    assert "History only: current channel access is unavailable" in CONCORD
     assert 'id="messages-direct"' not in CONCORD, "Communities still paints a Direct messages tab"
 
 
@@ -213,7 +214,7 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
     assert 'id="cc-home" title="Your rooms"' in CONCORD
     assert 'id="cc-discovery" title="Discover public communities"' in CONCORD
     assert "discoveryOpen=!rooms.length" in CONCORD
-    assert "return channels.length?channels:[{name:'general',private:false}]" in CONCORD
+    # Actual empty/terminal channel fallback behavior is covered by the signed metadata runtime suite.
     assert 'channelSectionsHtml(p,current,visibleChannels)' in CONCORD
     assert 'if(channels.length)room.channels=channels' in CONCORD
     assert "if(room&&room.cord&&!hydratedRoomViews.has(roomIdentity(room)))" in CONCORD
