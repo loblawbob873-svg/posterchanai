@@ -1,15 +1,16 @@
 """Exercise the shipped viewer handlers, including capture and resize, in a browser."""
 from pathlib import Path
 
+import asyncio
 import json
 import shutil
 import subprocess
-import time
-import urllib.request
+import tempfile
 from contextlib import contextmanager
 
 import pytest
 from websockets.sync.client import connect
+from tests.client.test_desktop_offline_full_app import wait_browser_port, wait_browser_target
 
 
 @contextmanager
@@ -18,19 +19,14 @@ def browser_page(tmp_path):
     if not chrome:
         pytest.skip('Chrome unavailable')
     profile = tmp_path / 'profile'
+    chrome_log = tempfile.TemporaryFile()
     proc = subprocess.Popen([chrome,'--headless=new','--no-sandbox','--disable-gpu',
         '--remote-debugging-port=0','--user-data-dir='+str(profile),'about:blank'],
-        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        stdout=chrome_log,stderr=chrome_log)
     try:
-        for _ in range(100):
-            port_file=profile/'DevToolsActivePort'
-            if port_file.exists():
-                break
-            assert proc.poll() is None, 'Chrome exited before opening its private test socket'
-            time.sleep(.1)
-        port=int(port_file.read_text().splitlines()[0])
-        tabs=json.load(urllib.request.urlopen(f'http://127.0.0.1:{port}/json/list'))
-        with connect(next(t['webSocketDebuggerUrl'] for t in tabs if t['type']=='page')) as ws:
+        port = asyncio.run(wait_browser_port(proc, profile/'DevToolsActivePort', chrome_log))
+        target = asyncio.run(wait_browser_target(proc, port, chrome_log))
+        with connect(target) as ws:
             class Page:
                 seq=0
                 def call(self,method,params):
@@ -56,6 +52,7 @@ def browser_page(tmp_path):
         proc.terminate()
         try:proc.wait(timeout=5)
         except subprocess.TimeoutExpired:proc.kill();proc.wait()
+        chrome_log.close()
 
 
 ROOT = Path(__file__).resolve().parents[1]
