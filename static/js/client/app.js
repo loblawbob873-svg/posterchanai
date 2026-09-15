@@ -38950,7 +38950,7 @@
     const activeCall=_call,old=activeCall.local;let next;
     _rdGrant(false);activeCall.nativeReady=false;activeCall.nativeSwitching=true;
     try{
-      try{next=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:true,systemAudio:'include'});}
+      try{next=await navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},systemAudio:'include'});}
       catch(e){if(_call===activeCall)toast(e&&e.name==='NotAllowedError'?'Screen switch cancelled. Sharing the previous screen without control.':_mediaErrMsg(e));return;}
       if(_call!==activeCall){next.getTracks().forEach(t=>t.stop());return;}
       const track=next.getVideoTracks()[0],sender=activeCall.pc.getSenders().find(s=>s.track&&s.track.kind==='video');
@@ -39118,8 +39118,9 @@
     /* The HOST chooses a screen and optional system/tab sound through the browser/Electron picker;
      * the viewer sends no camera or microphone back. Keeping it on the call transport gives it the
      * same encrypted Nostr signaling and TURN fallback without pretending a camera call is a
-     * desktop-sharing session. */
-    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:true,systemAudio:'include'});
+     * desktop-sharing session. System sound must bypass speech processing: echo cancellation and
+     * noise suppression can erase music/game audio from the playback monitor. */
+    if(remoteHost) return navigator.mediaDevices.getDisplayMedia({video:{cursor:'always',frameRate:{ideal:20,max:30}},audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},systemAudio:'include'});
     if(remoteGuest) return Promise.resolve(new MediaStream());
     return navigator.mediaDevices.getUserMedia({ audio:true, video: video ? {width:{ideal:640},height:{ideal:480},frameRate:{ideal:24}} : false });
   }

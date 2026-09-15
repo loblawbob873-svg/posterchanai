@@ -16,7 +16,7 @@ def test_capture_requests_system_sound_and_never_viewer_microphone(tmp_path):
 let display=[],microphones=0;const MediaStream=class{};
 const navigator={mediaDevices:{getDisplayMedia:async o=>{display.push(o);return 'screen'},getUserMedia:()=>{microphones++;throw Error('mic')}}};
 '''+code+'''
-(async()=>{assert.equal(await _getMedia(true,true,false),'screen');assert.equal(display[0].audio,true);assert.equal(display[0].systemAudio,'include');
+(async()=>{assert.equal(await _getMedia(true,true,false),'screen');assert.deepEqual(display[0].audio,{echoCancellation:false,noiseSuppression:false,autoGainControl:false});assert.equal(display[0].systemAudio,'include');
 assert(await _getMedia(true,false,true) instanceof MediaStream);assert.equal(microphones,0);console.log('COMPLETE')})().catch(e=>{console.error(e);process.exitCode=1});''')
     r=subprocess.run(['node',str(driver)],capture_output=True,text=True,timeout=10)
     assert r.returncode==0,r.stderr
@@ -36,7 +36,7 @@ let replaced=[],added=[],negotiations=0,hungup=0,resolveAudio;
 const videoSender={track:oldVideo,replaceTrack:async()=>{}};
 const audioSender={track:oldAudio,replaceTrack:async t=>{replaced.push(t);if(mode==='failure')throw Error('audio');if(mode==='stale'||mode==='ended')await new Promise(r=>resolveAudio=r)}};
 let _call={remoteDesktop:true,caller:true,local:old,pc:{getSenders:()=>mode==='add'?[videoSender]:[videoSender,audioSender],addTrack:(t,s)=>{assert.equal(s,old);added.push(t);return {track:t}}}};
-const session=_call,navigator={mediaDevices:{getDisplayMedia:async opts=>{assert.equal(opts.audio,true);return next}}};
+const session=_call,navigator={mediaDevices:{getDisplayMedia:async opts=>{assert.deepEqual(opts.audio,{echoCancellation:false,noiseSuppression:false,autoGainControl:false});return next}}};
 const _rdGrant=()=>{},toast=()=>{},_mediaErrMsg=()=>'',_rdConfigureNative=async()=>true,_rdTuneSender=async()=>{},_rdWatchScreen=()=>{},_callUI=()=>{},_hangup=()=>{hungup++;old.getTracks().forEach(t=>t.stop());_call=null};
 const _renegotiate=async active=>{assert.equal(active,session);negotiations++;return true};
 '''+code+'''

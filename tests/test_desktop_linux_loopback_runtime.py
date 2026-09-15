@@ -2,6 +2,7 @@
 import json
 import math
 import os
+import re
 from pathlib import Path
 import select
 import shutil
@@ -26,6 +27,11 @@ def test_linux_system_audio_is_the_playback_monitor(tmp_path):
         _missing_runtime('Xvfb or Wayfire plus Xwayland required for isolated display')
     source = (ROOT / 'desktop/main.js').read_text()
     handler = source[source.index('function wirePermissions()'):source.index('// ---- screen-source picker')]
+    app_source = (ROOT / 'static/js/client/app.js').read_text()
+    capture_options = re.findall(r"getDisplayMedia\((\{video:\{cursor:'always'.*?systemAudio:'include'\})\)", app_source)
+    assert len(capture_options) == 2 and capture_options[0] == capture_options[1]
+    ready = tmp_path / 'analyser-ready'
+    producer_ready = tmp_path / 'producer-ready'
     runtime = tmp_path / 'runtime'
     runtime.mkdir(mode=0o700)
     config = tmp_path / 'wayfire.ini'
@@ -55,23 +61,30 @@ const timer=setTimeout(()=>{console.error('capture timed out');app.exit(1)},2000
 app.whenReady().then(async()=>{
  wirePermissions();win=new BrowserWindow({show:true,webPreferences:{contextIsolation:true,nodeIntegration:false}});
  await win.loadFile(PAGE);
- const result=await win.webContents.executeJavaScript(`(async()=>{
+ await win.webContents.executeJavaScript(`(async()=>{
   navigator.mediaDevices.getUserMedia=()=>Promise.reject(Error('microphone fallback forbidden'));
-  const stream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:true,systemAudio:'include'});
+  const stream=await navigator.mediaDevices.getDisplayMedia(CAPTURE_OPTIONS);
   const tracks=stream.getAudioTracks();if(tracks.length!==1)throw Error('expected one system audio track, got '+tracks.length);
   const context=new AudioContext({sampleRate:48000});await context.resume();
   const input=context.createMediaStreamSource(stream),analyser=context.createAnalyser();analyser.fftSize=4096;input.connect(analyser);
+  window.captureFixture={stream,tracks,context,analyser};
+ })()`,true);
+ require('node:fs').writeFileSync(READY,'ready');
+ while(!require('node:fs').existsSync(PRODUCER_READY))await new Promise(r=>setTimeout(r,20));
+ const result=await win.webContents.executeJavaScript(`(async()=>{
+  const {stream,tracks,context,analyser}=window.captureFixture;
   const bins=new Float32Array(analyser.frequencyBinCount);let peak=-Infinity,frequency=0;
   for(let i=0;i<30;i++){await new Promise(r=>setTimeout(r,100));analyser.getFloatFrequencyData(bins);
    for(let b=1;b<bins.length;b++)if(bins[b]>peak){peak=bins[b];frequency=b*context.sampleRate/analyser.fftSize;}}
-  stream.getTracks().forEach(t=>t.stop());await context.close();return {peak,frequency,audio:tracks.length,ended:tracks[0].readyState};
+  stream.getTracks().forEach(t=>t.stop());await context.close();return {peak,frequency,audio:tracks.length,ended:tracks[0].readyState,settings:tracks[0].getSettings()};
  })()`,true);
- assert.equal(result.audio,1);assert.equal(result.ended,'ended');assert(result.peak>-80,JSON.stringify(result));
+ assert.equal(result.audio,1);assert.equal(result.ended,'ended');assert(result.peak>-45,JSON.stringify(result));
+ for(const key of ['echoCancellation','noiseSuppression','autoGainControl'])assert.equal(result.settings[key],false,JSON.stringify(result));
  assert(Math.abs(result.frequency-750)<20,JSON.stringify(result));console.log('SYSTEM_OUTPUT_TONE_PASS '+JSON.stringify(result)+' Electron '+process.versions.electron);
  clearTimeout(timer);app.exit(0);
 }).catch(e=>{console.error(e);app.exit(1)});
 '''
-    script = script.replace('PROFILE', json.dumps(str(tmp_path / 'profile'))).replace('HANDLER', handler).replace('PAGE', json.dumps(str(page)))
+    script = script.replace('PROFILE', json.dumps(str(tmp_path / 'profile'))).replace('HANDLER', handler).replace('PAGE', json.dumps(str(page))).replace('CAPTURE_OPTIONS', capture_options[0]).replace('PRODUCER_READY', json.dumps(str(producer_ready))).replace('READY', json.dumps(str(ready)))
     entry = tmp_path / 'main.cjs'
     entry.write_text(script)
     processes = []
@@ -114,13 +127,35 @@ app.whenReady().then(async()=>{
                 time.sleep(.05)
             for args in [('set-default-sink', 'fixture_output'), ('set-default-source', 'fixture_microphone'), ('set-sink-volume', 'fixture_output', '100%')]:
                 subprocess.run(['pactl', *args], env=env, check=True, capture_output=True, timeout=5)
-            player = _native_popen(['paplay', '--device=fixture_output', str(tone)], env=env, stdout=log, stderr=log)
-            processes.append(player)
             native = _native_popen([str(electron), '--no-sandbox', '--disable-gpu', '--ozone-platform=x11', str(entry)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             processes.append(native)
+            # Start the finite output fixture only after Chromium's monitor/analyser is ready.
+            # Starting paplay before Electron races process startup and hides producer failures.
+            deadline = time.monotonic() + 20
+            while not ready.exists():
+                if native.poll() is not None:
+                    stdout, stderr = native.communicate()
+                    raise AssertionError(stdout + '\n' + stderr + '\n' + (tmp_path / 'native.log').read_text())
+                assert time.monotonic() < deadline, 'native capture did not become ready'
+                time.sleep(.02)
+            player = _native_popen(['paplay', '--device=fixture_output', str(tone)], env=env, stdout=log, stderr=log)
+            processes.append(player)
+            deadline = time.monotonic() + 5
+            while True:
+                inputs = subprocess.run(['pactl', '-f', 'json', 'list', 'sink-inputs'], env=env, check=True, capture_output=True, text=True, timeout=5)
+                sinks = subprocess.run(['pactl', '-f', 'json', 'list', 'sinks'], env=env, check=True, capture_output=True, text=True, timeout=5)
+                output_ids = {row['index'] for row in json.loads(sinks.stdout) if row['name'] == 'fixture_output'}
+                if player.poll() is None and any(row['sink'] in output_ids and not row.get('corked', False)
+                        and str(row.get('properties', {}).get('application.process.id', '')) == str(player.pid)
+                        for row in json.loads(inputs.stdout)):
+                    break
+                assert player.poll() is None and time.monotonic() < deadline, 'tone producer did not reach isolated output: ' + (tmp_path / 'native.log').read_text()
+                time.sleep(.02)
+            producer_ready.write_text('isolated output playing')
+            routes = subprocess.run(['pactl', 'list', 'short', 'source-outputs'], env=env, capture_output=True, text=True, timeout=5)
             stdout, stderr = native.communicate(timeout=25)
             (tmp_path / 'electron.log').write_text(stdout + '\n' + stderr)
-            assert native.returncode == 0, stdout + '\n' + stderr
+            assert native.returncode == 0, stdout + '\n' + stderr + '\nplayer_exit=' + str(player.poll()) + '\nmonitor_routes=' + routes.stdout + '\n' + (tmp_path / 'native.log').read_text()
             assert 'SYSTEM_OUTPUT_TONE_PASS' in stdout
         finally:
             for process in reversed(processes):
