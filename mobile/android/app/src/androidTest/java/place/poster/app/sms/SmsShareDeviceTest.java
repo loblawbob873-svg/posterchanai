@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.*;
 import static androidx.test.espresso.matcher.ViewMatchers.*;
+import static androidx.test.espresso.matcher.RootMatchers.isDialog;
 
 import android.app.Instrumentation;
 import android.content.Context;
@@ -70,9 +71,11 @@ public class SmsShareDeviceTest {
         Instrumentation.ActivityMonitor monitor = inst.addMonitor(ThreadActivity.class.getName(), null, false);
         ThreadActivity thread = null;
         try (ActivityScenario<SendToActivity> route = ActivityScenario.launch(share.setClass(ctx, SendToActivity.class))) {
-            onView(isAssignableFrom(EditText.class)).perform(replaceText(who), closeSoftKeyboard());
+            // The recipient field lives in an AlertDialog above the transparent routing Activity.
+            // The default Activity root never gains focus while that dialog is open.
+            onView(isAssignableFrom(EditText.class)).inRoot(isDialog()).perform(replaceText(who), closeSoftKeyboard());
             assertNull("recipient selection must not import/send yet", MmsDraft.load(ctx, who));
-            onView(withId(android.R.id.button1)).perform(click());
+            onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click());
             thread = (ThreadActivity) inst.waitForMonitorWithTimeout(monitor, 5000);
             assertNotNull("recipient selection must open the conversation", thread);
             awaitDraft("shared-route.jpg");
@@ -103,7 +106,7 @@ public class SmsShareDeviceTest {
                 activity.onNewIntent(replacement);
                 assertEquals("", ((EditText)activity.findViewById(place.poster.app.R.id.pc_th_input)).getText().toString());
             });
-            onView(withId(android.R.id.button2)).perform(click());
+            onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click());
             scenario.recreate();
             assertEquals("original.jpg", MmsDraft.load(ctx, who).name);
             scenario.onActivity(activity -> assertEquals("", ((EditText)activity.findViewById(place.poster.app.R.id.pc_th_input)).getText().toString()));
@@ -127,10 +130,10 @@ public class SmsShareDeviceTest {
             Intent newer = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who);
             SmsShare.forward(picture("shared-newest.jpg", ""), newer);
             scenario.onActivity(activity -> activity.onNewIntent(newer));
-            onView(withId(android.R.id.button1)).perform(click());
+            onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click());
             awaitDraft("shared-newest.jpg");
             // The older dialog must not replace a newer share for the same recipient.
-            onView(withId(android.R.id.button1)).perform(click());
+            onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click());
             Thread.sleep(100);
             awaitDraft("shared-newest.jpg");
         } finally { MmsDraft.remove(ctx, who); MmsDraft.setText(ctx, who, ""); }
