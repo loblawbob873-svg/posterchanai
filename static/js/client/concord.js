@@ -1793,8 +1793,8 @@
   async function membershipEvents(p,pubkey,{external=true,legacyRecovery=false,signal=null}={}){
     /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
        relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
-       13302 vault look absent and a fresh browser showed no communities. 13302 is CORD-02's released
-       replaceable vault; the addressable migration is queried separately as a compatibility source. */
+       13302 vault look absent and a fresh browser showed no communities. 13302 is a legacy
+       replaceable vault; current 33302 fragments are queried separately. */
     const query=async filter=>{
       let cached=[];try{cached=window.Store&&window.Store.query?window.Store.query([filter])||[]:[];}catch(_){}
       const pool=p.relayQuery?await Promise.resolve(p.relayQuery([filter],8000)).catch(()=>[]):[];
@@ -1884,7 +1884,9 @@
       const old=coordinates.get(Number(d)),wins=!old||Number(row.event.created_at)>Number(old.event.created_at)||(Number(row.event.created_at)===Number(old.event.created_at)&&String(row.event.id)<String(old.event.id));
       if(wins)coordinates.set(Number(d),row);
     }
-    const docs=[...ordinary,...[...coordinates.values()].map(x=>x.doc)],entries=[],tombstones=[];
+    let fragmentCount=0,fragmentTime=-1;
+    for(const row of coordinates.values())if(row.event.created_at>fragmentTime||row.event.created_at===fragmentTime&&row.doc.frags>fragmentCount){fragmentTime=row.event.created_at;fragmentCount=row.doc.frags;}
+    const docs=[...ordinary,...[...coordinates].filter(([index])=>index<fragmentCount).sort((a,b)=>a[0]-b[0]).map(([,x])=>x.doc)],entries=[],tombstones=[];
     for(const doc of docs){
       /* THE VAULT KEY IS NOT ALWAYS A COMMUNITY ID, AND IT MUST NEVER BE WRITTEN INTO THE BUNDLE.
        *
@@ -1900,7 +1902,14 @@
       for(const e of Array.isArray(doc.entries)?doc.entries:[]){const cid=cordListHex(e.community_id),source=e.current||e.seed;if(!source)continue;const real=/^[0-9a-f]{64}$/i.test(String(cid||''))?cid:null,seedSrc=e.seed||source;const current=cordListMaterial(source,real||(source||{}).community_id),seed=cordListMaterial(seedSrc,real||(seedSrc||{}).community_id);entries.push({...e,community_id:cid,current,seed});}
       for(const t of Array.isArray(doc.tombstones)?doc.tombstones:[])tombstones.push({...t,community_id:cordListHex(t.community_id)});
     }
-    return {entries,tombstones};
+    const merged=new Map();
+    for(const entry of entries){
+      const old=merged.get(entry.community_id);
+      if(!old){merged.set(entry.community_id,entry);continue;}
+      try{const wire=cordMergeEntry(old,entry),id=entry.community_id;merged.set(id,{...wire,community_id:id,current:cordListMaterial(wire.current,id),seed:cordListMaterial(wire.seed||wire.current,id)});}
+      catch(_){if(Number(entry.added_at||0)>Number(old.added_at||0))merged.set(entry.community_id,entry);}
+    }
+    return {entries:[...merged.values()],tombstones};
   }
   async function syncArmadaMemberships(p,viewer,localOnly=false){
     if((state.community!=null&&!localOnly)||membershipBusy||!viewer.pubkey||!p.nip44dec)return; membershipBusy=true;
@@ -1956,19 +1965,11 @@
        * and is therefore not in `dead`; re-seeding from the stale tombstone beside it would refuse
        * the join the person had just made. */
       for(const id of dead){
-        /* A TOMBSTONE ALONE IS NOT ENOUGH TO BLACKLIST A COMMUNITY FOR EVER.
-         *
-         * `dead` counts a tombstone with NO membership entry as winning -- `added_at` defaults to 0
-         * and every timestamp beats it -- which is right for hiding the room on this pass and very
-         * wrong as a permanent local record: `wasLocallyLeft` then refuses that community on every
-         * future pass, including after a fresh join. Reported the same day this shipped as "my
-         * concord community for posterchan is no longer appearing in Concord".
-         *
-         * So the ledger is only taught by a tombstone that beat a REAL entry -- the shape a genuine
-         * leave has, since leaving something you joined leaves both behind. That is exactly the
-         * case this was written for ("it brought me back to Soapbox which I left many times") and
-         * it no longer costs a community that has a tombstone and nothing to compare it against. */
-        if(!entries.has(id)) continue;
+        /* CORD-02 removes a retired entry from the fragment. Its explicit invite reference
+         * still identifies the discovery announcement to suppress; a later entry outranking
+         * the permanent tombstone clears this ledger below. Legacy unidentifiable tombstones
+         * retain the cautious behavior until an entry supplies their invite identity. */
+        if(!entries.has(id)&&!tombRefs.get(id)?.invite_ref&&!tombRefs.get(id)?.naddr) continue;
         const ref=tombRefs.get(id)||{},entry=entries.get(id)||{},
           url=inviteRefUrl(ref.invite_ref||entry.invite_ref||''),
           naddr=String(ref.naddr||'')||(url?String((inviteParts(url)||{}).naddr||''):'');
@@ -2111,6 +2112,155 @@
    * asks only that `community_id` be non-empty. `invite_ref` still carries the FULL url including its
    * `#fragment`, which is the decryption key -- without it another device can list the room and never
    * open it. */
+  // CORD-02 §8: canonical, self-encrypted addressable membership fragments.
+  const membershipWrites=new Map(),membershipPublished=new Map();
+  function cordCanonical(value){
+    if(Array.isArray(value))return '['+value.map(cordCanonical).join(',')+']';
+    if(value&&typeof value==='object')return '{'+Object.keys(value).filter(k=>value[k]!==undefined).sort().map(k=>JSON.stringify(k)+':'+cordCanonical(value[k])).join(',')+'}';
+    return JSON.stringify(value);
+  }
+  function cordListB64(value){
+    const hex=cordListHex(value);
+    if(!/^[0-9a-f]{64}$/i.test(hex))throw new Error('membership contains an invalid 32-byte key');
+    return btoa(hex.match(/../g).map(b=>String.fromCharCode(parseInt(b,16))).join('')).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+  function cordWireMaterial(source){
+    const result={...source};
+    for(const key of ['community_id','icon','expires_at','creator_npub','label','invite_ref'])delete result[key];
+    for(const key of ['owner','owner_salt','community_root','control_pk','control_root'])if(result[key]!==undefined)result[key]=cordListB64(result[key]);
+    result.channels=(result.channels||[]).map(ch=>{const row={...ch};for(const key of ['id','key'])if(row[key]!==undefined)row[key]=cordListB64(row[key]);return row;});
+    return result;
+  }
+  function cordWireEntry(entry){
+    const current=cordWireMaterial(entry.current||entry.seed),seed=cordWireMaterial(entry.seed||entry.current),out={...entry,community_id:cordListB64(entry.community_id),current};
+    seed.name=current.name;seed.relays=current.relays;
+    const names=new Map(current.channels.map(ch=>[ch.id,ch.name]));
+    seed.channels=seed.channels.map(ch=>({...ch,...(names.has(ch.id)?{name:names.get(ch.id)}:{})}));
+    if(cordCanonical(seed)===cordCanonical(current))delete out.seed;else out.seed=seed;
+    return out;
+  }
+  function cordMergeOpaque(a,b){
+    const out={...a};for(const [key,value]of Object.entries(b||{}))if(out[key]===undefined||cordCanonical(value)<cordCanonical(out[key]))out[key]=value;return out;
+  }
+  function cordMergeEntry(a,b){
+    if(!a)return cordWireEntry(b);
+    a=cordWireEntry(a);b=cordWireEntry(b);
+    const choose=(x,y,low)=>{const xe=Number(x.root_epoch)||0,ye=Number(y.root_epoch)||0;const winner=xe!==ye?((low?xe<ye:xe>ye)?x:y):(cordCanonical(x)<=cordCanonical(y)?x:y),other=winner===x?y:x;return {...other,...winner};};
+    return cordWireEntry({...cordMergeOpaque(a,b),community_id:a.community_id,added_at:Math.max(Number(a.added_at)||0,Number(b.added_at)||0),
+      current:choose(a.current,b.current,false),seed:choose(a.seed||a.current,b.seed||b.current,true)});
+  }
+  function cordMergeLists(docs){
+    const entries=new Map(),tombs=new Map(),extras={};
+    for(const doc of docs){
+      for(const [key,value]of Object.entries(doc||{}))if(!['entries','tombstones','frags'].includes(key)&&extras[key]===undefined)extras[key]=value;
+      for(const e of doc.entries||[]){
+        if(!e||!(e.current||e.seed))continue;
+        // Migrate the old invite-address vault key to the actual community commitment.
+        const cid=cordListB64(/^[0-9a-f]{64}$/i.test(cordListHex(e.community_id))?e.community_id:(e.current||e.seed).community_id);
+        entries.set(cid,cordMergeEntry(entries.get(cid),{...e,community_id:cid}));
+      }
+      for(const t of doc.tombstones||[]){const cid=cordListB64(t.community_id),old=tombs.get(cid);tombs.set(cid,{...cordMergeOpaque(old,t),community_id:cid,removed_at:Math.max(Number(old?.removed_at)||0,Number(t.removed_at)||0)});}
+    }
+    for(const [cid,e]of entries)if(Number(e.added_at||0)<=Number(tombs.get(cid)?.removed_at||0))entries.delete(cid);
+    return {...extras,entries:[...entries.values()].sort((a,b)=>(a.community_id<b.community_id?-1:a.community_id>b.community_id?1:0)),tombstones:[...tombs.values()].sort((a,b)=>(a.community_id<b.community_id?-1:a.community_id>b.community_id?1:0))};
+  }
+  async function cordMembershipState(p,owner){
+    const candidates=[...await membershipEvents(p,owner),...(membershipPublished.get(owner)||[])],coordinates=new Map(),legacy=[];
+    for(const event of candidates){
+      const d=(event.tags||[]).find(t=>t[0]==='d')?.[1];
+      if(event.kind===33302&&/^(0|[1-9]\d*)$/.test(String(d))){const index=Number(d),old=coordinates.get(index);if(!Number.isSafeInteger(index))continue;if(!old||event.created_at>old.created_at||event.created_at===old.created_at&&event.id<old.id)coordinates.set(index,event);}
+      else if(event.kind===13302||event.kind===33302)legacy.push(event);
+    }
+    const fragments=new Map();let count=coordinates.size?1:0,countAt=-1;
+    for(const [index,event]of coordinates){
+      const doc=JSON.parse(await p.nip44dec(owner,event.content));
+      if(!Number.isSafeInteger(doc.frags)||doc.frags<1)throw new Error('invalid membership fragment count');
+      if(event.created_at>countAt||event.created_at===countAt&&doc.frags>count){count=doc.frags;countAt=event.created_at;}
+      fragments.set(index,{event,doc});
+    }
+    // Read migration material too: an old client may still have a membership only there.
+    const legacyDocs=[];for(const event of legacy)legacyDocs.push(JSON.parse(await p.nip44dec(owner,event.content)));
+    const complete=fragments.size===0||[...fragments.keys()].filter(index=>index<count).length===count;
+    const ordered=[...fragments].sort((a,b)=>a[0]-b[0]);
+    const merged=cordMergeLists([...ordered.filter(([i])=>i<count).map(([,row])=>row.doc),...legacyDocs]);
+    return {fragments,count:count||1,complete,merged};
+  }
+  async function cordWriteMembership(p,change){
+    const owner=p.viewer?.().pubkey;if(!owner||!p.nip44enc||!p.nip44dec||!p.signTemplate||!p.relayPublishTo)throw new Error('membership signing is unavailable');
+    const prior=membershipWrites.get(owner)||Promise.resolve();
+    const job=prior.catch(()=>{}).then(async()=>{
+      const live=()=>{if(p.viewer?.().pubkey!==owner)throw new Error('account changed during membership update');};live();
+      const state=await cordMembershipState(p,owner);live();
+      const before=state.merged,desired=change(before),changed=new Set(desired.changed),all=cordMergeLists([desired.list]);
+      const indexOf=cid=>{for(const [index,row]of state.fragments)if([...(row.doc.entries||[]),...(row.doc.tombstones||[])].some(e=>cordListB64(e.community_id)===cid))return index;return 0;};
+      const touched=new Set([...changed].map(indexOf)),docs=new Map();
+      if(!state.fragments.size)touched.add(0);
+      for(const index of touched){
+        if(!state.complete&&!state.fragments.has(index))throw new Error('load this membership fragment before updating it');
+        const original=state.fragments.get(index)?.doc||{entries:[],tombstones:[]};
+        const own=cordMergeLists([original]);
+        for(const cid of changed){
+          if(indexOf(cid)!==index)continue;
+          own.entries=own.entries.filter(e=>e.community_id!==cid);own.tombstones=own.tombstones.filter(e=>e.community_id!==cid);
+          own.entries.push(...all.entries.filter(e=>e.community_id===cid));own.tombstones.push(...all.tombstones.filter(e=>e.community_id===cid));
+        }
+        docs.set(index,state.fragments.size?own:all);
+      }
+      // Migration adds legacy-only memberships only with a complete list. Unknown fragment
+      // fields move intact to zero; partial targeted writes preserve their own source fields.
+      if(state.complete){
+        const known=new Set([...state.fragments.values()].flatMap(row=>[...(row.doc.entries||[]),...(row.doc.tombstones||[])].map(e=>cordListB64(e.community_id))));
+        const extraEntries=all.entries.filter(e=>!known.has(e.community_id)&&!changed.has(e.community_id)),extraTombs=all.tombstones.filter(e=>!known.has(e.community_id)&&!changed.has(e.community_id));
+        if(extraEntries.length||extraTombs.length){const zero=docs.get(0)||cordMergeLists([state.fragments.get(0)?.doc||{entries:[],tombstones:[]}]);zero.entries.push(...extraEntries);zero.tombstones.push(...extraTombs);docs.set(0,zero);}
+      }
+      if(state.complete){
+        const extras={...before};delete extras.entries;delete extras.tombstones;delete extras.frags;
+        const move=[...state.fragments].filter(([index,row])=>index!==0&&Object.keys(row.doc).some(key=>!['entries','tombstones','frags'].includes(key)));
+        if(move.length){
+          const zero=docs.get(0)||cordMergeLists([state.fragments.get(0)?.doc||{entries:[],tombstones:[]}]);docs.set(0,{...extras,...zero,...extras});
+          for(const [index,row]of move){const doc=docs.get(index)||cordMergeLists([row.doc]);docs.set(index,{entries:doc.entries,tombstones:doc.tombstones});}
+        }
+      }
+      let count=state.count;
+      const stamp=index=>Math.max(Math.floor(Date.now()/1000),Number(state.fragments.get(index)?.event.created_at||0)+1);
+      const seal=async(index,doc,frags)=>{live();const content=await p.nip44enc(owner,cordCanonical({...doc,frags}));live();const ev=await p.signTemplate({kind:33302,pubkey:owner,created_at:stamp(index),tags:[['d',String(index)]],content});live();return ev;};
+      // Size the actual encrypted+signed wire event. Keep old fragment items in place and
+      // append overflow, so publishing new fragments first cannot strand keys on interruption.
+      const max=65536;
+      for(const [index,doc]of [...docs]){
+        let pending=[...(doc.entries||[]).map(value=>({type:'entries',value})),...(doc.tombstones||[]).map(value=>({type:'tombstones',value}))];
+        const extras={...doc};delete extras.entries;delete extras.tombstones;delete extras.frags;
+        const chunks=[];let chunk={...extras,entries:[],tombstones:[]};
+        for(const item of pending){
+          chunk[item.type].push(item.value);
+          // A conservative plaintext screen avoids repeatedly asking hardware signers to sign.
+          if(new TextEncoder().encode(cordCanonical(chunk)).length>39000&&chunk.entries.length+chunk.tombstones.length>1){chunk[item.type].pop();chunks.push(chunk);chunk={entries:[],tombstones:[],[item.type]:[item.value]};}
+        }chunks.push(chunk);
+        for(let n=0;n<chunks.length;n++){
+          if(n&&!state.complete)throw new Error('load all membership fragments before splitting this list');
+          const dest=n?count++:index;docs.set(dest,chunks[n]);
+        }
+      }
+      if(count!==state.count){
+        if(!state.complete)throw new Error('load all membership fragments before repacking');
+        for(const [index,row]of state.fragments)if(index<state.count&&!docs.has(index))docs.set(index,cordMergeLists([row.doc]));
+      }
+      let events=[];
+      for(const [index,doc]of docs){
+        const ev=await seal(index,doc,count),size=new TextEncoder().encode(JSON.stringify(ev)).length;
+        if(size>max)throw new Error('one membership or extension exceeds the event size limit; its keys were preserved');
+        events.push({index,ev,size});
+      }
+      // Re-read before publishing to catch another local/background sync observing a newer
+      // coordinate while the signer was open. Never overwrite that freshly observed copy.
+      const latest=await cordMembershipState(p,owner);live();
+      for(const {index}of events){const seen=latest.fragments.get(index)?.event,was=state.fragments.get(index)?.event;if(seen&&(!was||seen.created_at>was.created_at||seen.created_at===was.created_at&&seen.id<was.id))throw new Error('membership changed while signing; retry this update');}
+      events.sort((a,b)=>(a.index>=state.count?0:1)-(b.index>=state.count?0:1)||(a.index>=state.count?b.index-a.index:a.index-b.index));
+      for(const {ev}of events){live();const accepted=await p.relayPublishTo([...new Set([...(p.relayUrls?.()||[]),...CORD_RELAYS])],ev);live();if(!(accepted===true||typeof accepted==='number'&&accepted>0||accepted?.ok===true||Number(accepted?.accepted)>0))throw new Error('membership relays rejected the update');
+        const held=membershipPublished.get(owner)||[];membershipPublished.set(owner,[...held.filter(e=>(e.tags||[]).find(t=>t[0]==='d')?.[1]!==ev.tags[0][1]),ev]);}
+      return true;
+    });membershipWrites.set(owner,job);return job;
+  }
   async function persistArmadaMembership(p,room){ return persistArmadaMemberships(p,[room]); }
   /* EVERY ROOM IN ONE WRITE, BECAUSE 13302 IS REPLACEABLE AND EACH WRITE IS A READ-MODIFY-WRITE.
    *
@@ -2132,25 +2282,17 @@
     const wanted=(Array.isArray(rooms)?rooms:[rooms])
       .filter(room=>room&&roomIdentity(room)&&room.url);
     if(!wanted.length)return false;
-    let list={entries:[],tombstones:[]};
-    try{
-      const prior=(await membershipEvents(p,viewer.pubkey))[0];
-      if(prior&&p.nip44dec)list=JSON.parse(await p.nip44dec(viewer.pubkey,prior.content));
-    }catch(_){}
-    if(!Array.isArray(list.entries))list.entries=[];
-    if(!Array.isArray(list.tombstones))list.tombstones=[];
-    const now=Date.now();
-    for(const room of wanted){
-      const cid=roomIdentity(room);
-      const current={...(room.cord&&room.cord.bundle||{}),name:room.name,invite_ref:room.url};
-      const entry={community_id:cid,seed:current,added_at:now,current,invite_ref:room.url};
-      const i=list.entries.findIndex(e=>e&&e.community_id===cid);
-      if(i<0)list.entries.push(entry); else list.entries[i]={...list.entries[i],...entry};
-      list.tombstones=list.tombstones.filter(t=>t&&t.community_id!==cid);
-    }
-    const content=await p.nip44enc(viewer.pubkey,JSON.stringify(list));
-    const made=await p.publish(13302,content,[]);
-    if(made&&made.ev&&p.relayPublishTo)await p.relayPublishTo(CORD_RELAYS,made.ev);
+    await cordWriteMembership(p,list=>{
+      const now=Date.now(),changed=[];
+      for(const room of wanted){
+        const bundle=room.cord&&room.cord.bundle||{},cid=cordListB64(bundle.community_id||room.communityId);
+        const current={...bundle,name:room.name};
+        const prior=list.entries.find(e=>e.community_id===cid),removed=Number(list.tombstones.find(t=>t.community_id===cid)?.removed_at)||0;
+        const entry=cordMergeEntry(prior,{community_id:cid,current,added_at:Math.max(now,removed+1),invite_ref:room.url});
+        list.entries=list.entries.filter(e=>e.community_id!==cid);list.entries.push(entry);changed.push(cid);
+      }
+      return {list,changed};
+    });
     for(const room of wanted)forgetLeftCommunity(viewer.pubkey,room);
     return true;
   }
@@ -2163,28 +2305,15 @@
     const cid=roomIdentity(room);
     if(!room||!cid)return true;
     if(!viewer.pubkey||!p.nip44enc||!p.nip44dec)throw new Error('sign in before leaving this community');
-    const candidates=await membershipEvents(p,viewer.pubkey),entries=new Map(),tombs=new Map();
-    for(const event of candidates){
-      try{const list=JSON.parse(await p.nip44dec(viewer.pubkey,event.content));
-        for(const e of Array.isArray(list.entries)?list.entries:[]){if(!e||!e.community_id)continue;const old=entries.get(e.community_id);if(!old||Number(e.added_at||0)>=Number(old.added_at||0))entries.set(e.community_id,e);}
-        for(const t of Array.isArray(list.tombstones)?list.tombstones:[]){if(t&&t.community_id&&Number(t.removed_at||0)>=Number((tombs.get(t.community_id)||{}).removed_at||0))tombs.set(t.community_id,t);}
-      }catch(_){}
-    }
-    /* THE TOMBSTONE CARRIES THE INVITE, NOT ONLY THE COMMUNITY ID.
-     *
-     * Every path that can put a left community back — a discovered public card, and above all the
-     * owner's own kind-1 invite announcement, which discovery replays on every reconnect — knows a
-     * naddr and a URL and no community id whatsoever. A tombstone keyed only on `community_id` is
-     * therefore unmatchable by the thing it has to beat, which is how "I left Soapbox many times"
-     * happened. The ENTRY goes too: leaving it behind (correct only because `removed_at` outranks
-     * its `added_at`) is one arithmetic accident away from a resurrection, and a client that folds
-     * entries without folding tombstones sees a membership. */
     const removedAt=Date.now(),leftRef=String(room.url||''),leftNaddr=String(room.naddr||'');
-    entries.delete(cid);
-    tombs.set(cid,{community_id:cid,removed_at:removedAt,
-      ...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});
-    const content=await p.nip44enc(viewer.pubkey,JSON.stringify({entries:[...entries.values()],tombstones:[...tombs.values()]})),made=await p.publish(13302,content,[]);
-    if(made&&made.ev&&p.relayPublishTo){const accepted=await p.relayPublishTo(CORD_RELAYS,made.ev);if(!accepted)throw new Error('membership relays rejected the leave update');}
+    await cordWriteMembership(p,list=>{
+      const wireId=cordListB64(room.cord?.bundle?.community_id||room.communityId||cid);
+      const entries=new Map(list.entries.map(e=>[e.community_id,e])),tombs=new Map(list.tombstones.map(t=>[t.community_id,t]));
+      const latest=Math.max(removedAt,Number(entries.get(wireId)?.added_at||0),Number(tombs.get(wireId)?.removed_at||0));
+      entries.delete(wireId);
+      tombs.set(wireId,{...tombs.get(wireId),community_id:wireId,removed_at:latest,...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});
+      return {list:{...list,entries:[...entries.values()],tombstones:[...tombs.values()]},changed:[wireId]};
+    });
     rememberLeftCommunity(viewer.pubkey,room,removedAt);
     return true;
   }

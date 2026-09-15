@@ -224,8 +224,9 @@ def test_mobile_reopens_the_last_server_then_drills_into_a_channel_like_discord(
 
 def test_created_and_joined_communities_survive_browser_storage_loss():
     assert 'async function persistArmadaMembership(p,room)' in CONCORD
-    assert 'await p.nip44enc(viewer.pubkey,JSON.stringify(list))' in CONCORD
-    assert 'await p.publish(13302,content,[])' in CONCORD
+    # Actual encryption, signing, fragments and cross-device recovery are exercised by
+    # test_concord_membership_fragments.py and test_concord_leave_durability.py.
+    assert 'await cordWriteMembership(p,list=>' in CONCORD
     assert 'await persistArmadaMembership(p,room)' in CONCORD
     assert 'recoverOwnedInvite(p,item)' in CONCORD
     assert "item.source.pubkey!==viewer.pubkey" in CONCORD
@@ -245,7 +246,7 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     # `cid` is roomIdentity(room): community id, else naddr, else url. A room joined by a plain
     # invite link has no community_id at all, and keying its tombstone on one wrote no tombstone —
     # leaving succeeded silently and the vault could put the room straight back.
-    assert "tombs.set(cid,{community_id:cid,removed_at:removedAt," in CONCORD
+    assert "tombs.set(wireId,{...tombs.get(wireId),community_id:wireId,removed_at:latest," in CONCORD
     assert "const cid=roomIdentity(room);" in CONCORD
     assert "...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});" in CONCORD
     assert "rememberLeftCommunity(viewer.pubkey,room,removedAt)" in CONCORD
@@ -256,7 +257,7 @@ def test_leaving_a_community_publishes_a_membership_tombstone_before_removal():
     # the community id. Removing on one alone leaves the other kind of leave un-applied.
     assert ("kept=rooms.filter(room=>!dead.has(room.communityId)&&!dead.has(roomIdentity(room))"
             "&&!wasLocallyLeft(viewer.pubkey,room))") in CONCORD
-    assert "await p.publish(13302,content,[])" in CONCORD
+    assert "await cordWriteMembership(p,list=>" in CONCORD
     handler = CONCORD.split("const leave=$('#cc-leave-community')", 1)[1].split("const leaveByHeader", 1)[0]
     assert handler.index('await leaveArmadaMembership(p,room)') < handler.index('const latest=saved()')
     assert 'removeCommunityByIdentity(latest,leavingId)' in handler

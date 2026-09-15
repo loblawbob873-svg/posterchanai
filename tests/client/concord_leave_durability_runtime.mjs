@@ -77,7 +77,7 @@ function boot() {
   return { PC: window.PCConcord, localStorage, store };
 }
 
-const bundle = { owner: OWNER, community_root: hex('3'), channels: [{ id: 'gen', name: 'general' }], relays: ['wss://relay.example'] };
+const bundle = { community_id: COMMUNITY, owner: OWNER, owner_salt: hex('2'),root_epoch:0, community_root: hex('3'), channels: [{ id: hex('4'),key:hex('5'),epoch:0, name: 'general' }], relays: ['wss://relay.example'] };
 
 function api() {
   return {
@@ -88,9 +88,7 @@ function api() {
       if (typeof ct !== 'string' || ct[0] !== 'E') throw new Error('not for us');
       return ct.slice(1);
     },
-    publish: async (kind, content, tags) => ({
-      ev: { id: 'ev' + (++seq), kind, pubkey: OWNER, created_at: 1000 + seq, tags: tags || [], content },
-    }),
+    signTemplate: async template => ({...template,id:'ev'+(++seq),sig:'f'.repeat(128)}),
     relayPublishTo: async (_relays, ev) => { relay.push(ev); return true; },
     relayQuery: async filters => query(filters),
     relayQueryFrom: async (_relays, filters) => query(filters),
