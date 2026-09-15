@@ -40,6 +40,16 @@
 
     const inView = () => window.__PC.VIEW === 'contacts';
     const V = () => window.PCVcard;
+    const contactOwner = () => ((PC.me ? PC.me() : PC.ME) || {}).pubkey || '';
+    let stateOwner = null, loadEpoch = 0, namesCheckedAt = null;
+    function ensureOwner(){
+      const next = contactOwner();
+      if(stateOwner === next) return;
+      stateOwner = next; ++loadEpoch; namesCheckedAt = null; _nameLoad = null;
+      Object.assign(S, {ready:false, enabled:null, books:[], book:'', cards:{}, q:'', scroll:0,
+        loading:false, error:'', stale:'', loadedOk:false, partial:false, fromCache:false,
+        rev:(S.rev || 0) + 1});
+    }
 
     // ---- server ------------------------------------------------------------------------------
     async function api(path, opts){
@@ -111,7 +121,7 @@
      *
      * Written after a WHOLE load only, for the same reason: caching a partial one would persist the
      * short list this feature has twice nearly lost an address book to. */
-    const CKEY = () => 'pc_contacts_cache:' + (((PC.me && PC.me()) || {}).pubkey || '');
+    const CKEY = () => 'pc_contacts_cache:' + contactOwner();
     function _saveCache(){
       try{ localStorage.setItem(CKEY(), JSON.stringify({ books: S.books, cards: S.cards, at: Date.now() })); }
       catch(_){ /* quota, private mode — the network path is unaffected */ }
@@ -129,12 +139,17 @@
     }
 
     async function load(){
+      ensureOwner();
+      const account = contactOwner(), epoch = ++loadEpoch;
+      const current = () => epoch === loadEpoch && account === contactOwner();
+      namesCheckedAt = Date.now();
       S.loading = true; S.error = ''; S.stale = '';
       // Paint what this device already has BEFORE the first await, so an unreachable server costs a
       // refresh rather than the screen.
       if(!S.ready && _loadCache()) paint(); else paint();
       try{
         const r = await api('/api/contacts/books');
+        if(!current()) return;
         S.books = r.books || [];
         if(!S.book || !S.books.some(b => b.id === S.book)) S.book = (S.books[0] || {}).id || '';
         S.enabled = true;
@@ -153,6 +168,7 @@
         for(const b of S.books){
           try{ got[b.id] = (await api('/api/contacts/cards?book=' + encodeURIComponent(b.id))).cards || []; }
           catch(_){ whole = false; got[b.id] = S.cards[b.id] || []; }
+          if(!current()) return;
         }
         S.cards = got;
         S.rev = (S.rev || 0) + 1;
@@ -162,6 +178,7 @@
                                 // …and only here. Never cleared: a LATER failure leaves the last
                                 // good books/cards in place, which is real state worth pushing.
       }catch(e){
+        if(!current()) return;
         const msg = (e && e.message) || '';
         // 404 is the server being off, which is a state to explain rather than an error to report.
         if(/off on this node/i.test(msg)) S.enabled = false;
@@ -170,8 +187,12 @@
         else if(S.books.length) S.stale = msg || 'showing this device\u2019s copy — the server could not be reached';
         else S.error = msg || 'could not load your contacts';
       }finally{
-        S.loading = false; S.ready = true; paint();
+        if(current()){
+          S.loading = false; S.ready = true; paint();
+          try{ if(window.PCSms) PCSms.refreshNames(); }catch(_){}
+        }
       }
+      if(!current()) return;
       // Keep the phone's own Contacts app in step, both ways. A no-op on every platform but Android
       // and for everybody who has not turned it on, and a no-op again when nothing has changed since
       // the last sweep — so it can sit on the end of every load without being thought about.
@@ -1295,30 +1316,35 @@
 
     let _nameLoad = null;
     function _loadNames(){
-      if(_nameLoad) return;
-      _nameLoad = load().then(()=>{
-        try{ if(window.PCSms && PCSms.refreshNames) PCSms.refreshNames(); }catch(_){ }
-      }).catch(()=>{}).finally(()=>{ _nameLoad=null; });
+      if(_nameLoad || S.loading) return;
+      const pending = load().catch(()=>{}).finally(()=>{
+        if(_nameLoad === pending) _nameLoad = null;
+      });
+      _nameLoad = pending;
     }
 
     window.PCContacts = {
       /** The name for a phone number, or '' — never the number back, so the caller decides. */
       nameFor(number){
         try{
+          ensureOwner();
           if(!S.ready && !Object.keys(S.cards || {}).length){
-            if(!_loadCache()) _loadNames();
+            _loadCache();
           }
+          // Cached names paint immediately, then refresh independently of opening Contacts.
+          if(namesCheckedAt === null || Date.now() - namesCheckedAt >= 30000) _loadNames();
           const k = _numKey(number);
           return (k && _buildTelIndex().get(k)) || '';
         }catch(_){ return ''; }
       },
       render(){
+        ensureOwner();
         paint();
         /* A FAILED LOAD IS NOT A VERDICT. `ready` was set on the way out of load() whatever
          * happened, so one blip — the app opening before wifi associates, a 502 while the node
          * restarts — pinned this screen to "could not load your contacts" for the life of the page,
          * and the only way back was a full reload. Coming back to the screen retries. */
-        if(!S.loading && (!S.ready || S.error)) load().then(consumePhoneLanding);
+        if(!S.loading && (!S.ready || S.error || namesCheckedAt === null || Date.now() - namesCheckedAt >= 30000)) load().then(consumePhoneLanding);
         else consumePhoneLanding();
       },
       openPhone,

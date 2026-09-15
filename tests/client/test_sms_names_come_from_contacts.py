@@ -69,7 +69,7 @@ class ContactsCanAnswer(unittest.TestCase):
         """The caller decides what to show when there is no match; a lookup that echoes its input
         cannot be distinguished from a hit."""
         i = self.src.index("nameFor(number)")
-        self.assertIn("return ''", self.src[i:i + 400])
+        self.assertIn("return ''", self.src[i:self.src.index('render(){', i)])
 
     def test_it_works_from_the_cache(self):
         """Somebody who has not opened Contacts this session still has an address book."""
