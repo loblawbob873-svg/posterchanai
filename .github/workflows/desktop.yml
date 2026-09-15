@@ -485,26 +485,31 @@ jobs:
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
               -f ref="refs/tags/desktop-latest" -f sha="$GITHUB_SHA" >/dev/null
           fi
-          actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/desktop-latest" --jq .object.sha)"
-          # A NEWER RUN WINNING THIS RACE IS THE CORRECT OUTCOME, NOT A FAILURE.
-          #
-          # Two pushes close together give two overlapping runs. Both PATCH the tag; the later
-          # commit lands last, which is exactly what should happen — and then the EARLIER run read
-          # the tag back, found the newer sha, and failed the whole desktop build. It happened twice
-          # in one day, each time blocking a desktop release for a reason that was not a problem:
-          #   "desktop-latest names 9c5dfe7d…, not e84161d8…"
-          # What this step is actually for is making sure the tag is not left behind on something
-          # OLDER than us. So ask that question instead: if the tag names a commit that has ours as
-          # an ancestor, a newer build superseded us and there is nothing wrong.
-          if [ "$actual" != "$GITHUB_SHA" ]; then
-            git fetch --quiet origin "$actual" 2>/dev/null || git fetch --quiet --unshallow 2>/dev/null || true
-            if git merge-base --is-ancestor "$GITHUB_SHA" "$actual" 2>/dev/null; then
-              echo "::notice::desktop-latest advanced to $actual, which is newer than $GITHUB_SHA — superseded, not broken"
+          # A successful PATCH can briefly be followed by a stale GET. Retry only the
+          # verification read: repeating the PATCH could move a newer build's tag back.
+          for attempt in 1 2 3 4 5; do
+            if actual="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/desktop-latest" --jq .object.sha)"; then
+              if [ "$actual" = "$GITHUB_SHA" ]; then break; fi
+              # A newer concurrent build is valid only when Git proves our commit is
+              # its ancestor. Unrelated or older targets must still fail after the wait.
+              if [[ "$actual" =~ ^[0-9a-f]{40}$ ]]; then
+                git fetch --quiet origin "$actual" 2>/dev/null || git fetch --quiet --unshallow 2>/dev/null || true
+                if git merge-base --is-ancestor "$GITHUB_SHA" "$actual" 2>/dev/null; then
+                  echo "::notice::desktop-latest advanced to $actual, which is newer than $GITHUB_SHA — superseded, not broken"
+                  break
+                fi
+              fi
+              reason="desktop-latest names $actual, which is NOT a descendant of $GITHUB_SHA"
             else
-              echo "::error::desktop-latest names $actual, which is NOT a descendant of $GITHUB_SHA"
+              reason="could not read desktop-latest after publishing $GITHUB_SHA"
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::$reason after 5 verification attempts"
               exit 1
             fi
-          fi
+            echo "::warning::$reason; retrying verification in $((attempt*2))s"
+            sleep "$((attempt*2))"
+          done
 
       - name: Publish rolling release
         uses: softprops/action-gh-release@v2
