@@ -96,19 +96,29 @@ async def with_browser(mode,route,check,extra_init=""):
             async with httpx.AsyncClient() as h:pages=(await h.get(f'http://127.0.0.1:{port}/json')).json()
             async with websockets.connect(next(p for p in pages if p.get('type')=='page')['webSocketDebuggerUrl'],max_size=20_000_000) as ws:
                 b=Browser(ws)
-                await b.call('Page.enable');await b.call('Network.enable')
-                await b.call('Network.setBlockedURLs',{'urls':['https://*','wss://*']})
-                await b.call('Page.addScriptToEvaluateOnNewDocument',{'source':NETWORK_FIXTURE.replace('nostr_only:false,relay_url:', 'nostr_only:(window.__freshPolicy??false),relay_url:')+OFFLINE.replace('MODE',mode)+extra_init})
-                await b.call('Page.navigate',{'url':f'http://127.0.0.1:{server.server_port}/index.html'+route})
-                await b.until('!!window.__PC && !!window.PCOS')
-                await check(b)
+                try:
+                    await b.call('Page.enable');await b.call('Network.enable')
+                    await b.call('Network.setBlockedURLs',{'urls':['https://*','wss://*']})
+                    await b.call('Page.addScriptToEvaluateOnNewDocument',{'source':NETWORK_FIXTURE.replace('nostr_only:false,relay_url:', 'nostr_only:(window.__freshPolicy??false),relay_url:')+OFFLINE.replace('MODE',mode)+extra_init})
+                    await b.call('Page.navigate',{'url':f'http://127.0.0.1:{server.server_port}/index.html'+route})
+                    await b.until('!!window.__PC && !!window.PCOS')
+                    await check(b)
+                finally:
+                    # Chrome must flush and stop its profile writers before TemporaryDirectory
+                    # removes the profile. SIGTERM of the parent alone races its descendants.
+                    try:
+                        await asyncio.wait_for(b.call('Browser.close'), timeout=3)
+                    except (TimeoutError, websockets.exceptions.ConnectionClosed):
+                        pass  # Closing the protocol socket is also a normal shutdown result.
         finally:
             try:
                 if proc.poll() is None:
-                    proc.terminate()
-                    try:proc.wait(timeout=10)
+                    try:proc.wait(timeout=3)
                     except subprocess.TimeoutExpired:
-                        proc.kill();proc.wait(timeout=5)
+                        proc.terminate()
+                        try:proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            proc.kill();proc.wait(timeout=5)
             finally:
                 server.shutdown();server.server_close()
 
@@ -296,3 +306,34 @@ def test_offline_start_discovers_delayed_native_apps_and_preserves_search():
 @pytest.mark.parametrize('keyboard',['repaint','ring'])
 def test_start_keyboard_result_survives_refresh_and_has_visible_focus(keyboard):
     asyncio.run(delayed_native_apps(keyboard))
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
+@pytest.mark.parametrize('failure_phase',['setup','check'])
+def test_failed_browser_check_still_closes_chrome_before_removing_profile(monkeypatch,failure_phase):
+    commands=[]
+    processes=[]
+    original_call=Browser.call
+    original_popen=subprocess.Popen
+    async def observed_call(self, method, *args, **kwargs):
+        commands.append(method)
+        if failure_phase=='setup' and method=='Page.enable':
+            raise AssertionError('deliberate app assertion failure')
+        return await original_call(self, method, *args, **kwargs)
+    def observed_popen(args, *rest, **kwargs):
+        process=original_popen(args, *rest, **kwargs)
+        if isinstance(args,list) and args[0]=='/opt/google/chrome/chrome':
+            profile=next(arg.split('=',1)[1] for arg in args if arg.startswith('--user-data-dir='))
+            processes.append((process,Path(profile)))
+        return process
+    monkeypatch.setattr(Browser,'call',observed_call)
+    monkeypatch.setattr(subprocess,'Popen',observed_popen)
+    async def failed_check(_browser):
+        raise AssertionError('deliberate app assertion failure')
+    with pytest.raises(AssertionError,match='deliberate app assertion failure'):
+        asyncio.run(with_browser('online','',failed_check))
+    assert commands.count('Browser.close')==1, 'failed checks must still request graceful browser shutdown'
+    assert len(processes)==1
+    process,profile=processes[0]
+    assert process.poll() is not None
+    assert not profile.exists(), 'completed check left its private browser profile behind'
