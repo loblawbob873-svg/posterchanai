@@ -3494,7 +3494,12 @@
     if(!feed) return;
     const enc = PC.enc;
     if(S.open){ cancelSearch(); _searchDraft = null; _searchComposing = false; return paintThread(feed, enc); }
-    if(_searchComposing && document.activeElement === feed.querySelector('#sms-q')) return;
+    if(_searchComposing){
+      if(document.activeElement === feed.querySelector('#sms-q')) return;
+      // A route can remove the composing field without delivering compositionend.
+      _searchComposing = false;
+      if(_searchDraft !== null){ S.q = _searchDraft; _searchDraft = null; }
+    }
     const oldSearch = feed.querySelector('#sms-q');
     const focusedSearch = oldSearch && document.activeElement === oldSearch &&
       oldSearch.dataset.owner === String(ME().pubkey || '');
