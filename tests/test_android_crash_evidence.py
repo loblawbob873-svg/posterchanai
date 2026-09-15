@@ -51,3 +51,13 @@ def test_the_gate_runs_when_its_own_runner_scripts_change():
     """
     assert "scripts/android_*.sh" in WORKFLOW
     assert WORKFLOW.count("scripts/android_*.sh") >= 2, "push AND pull_request"
+
+
+def test_instrumentation_report_is_available_before_the_lifecycle_boot():
+    import yaml
+    steps = yaml.safe_load(WORKFLOW)['jobs']['emulator']['steps']
+    names = [step.get('name') for step in steps]
+    report = names.index('Upload instrumented test report')
+    assert names.index('Run instrumented checks on a fresh emulator') < report < names.index('Run the device checks')
+    assert steps[report]['if'] == 'always()', 'failed instrumentation still needs its report'
+    assert steps[report]['with']['path'] == '/tmp/pc-androidtest'

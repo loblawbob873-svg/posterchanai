@@ -188,6 +188,15 @@ jobs:
           script: |
             bash scripts/android_emulator_preflight.sh && timeout --kill-after=30s 25m bash scripts/android_instrumented.sh; b=$?; echo "$b" > /tmp/pc-instrumented-status; exit "$b"
 
+      # Publish failures before the separate lifecycle boot, so diagnosis can start immediately.
+      - name: Upload instrumented test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: androidTest-report
+          path: /tmp/pc-androidtest
+          if-no-files-found: ignore
+
       - name: Preserve first boot and stop the instrumentation build daemon
         if: always() && steps.debug-build.outcome == 'success'
         run: |
@@ -254,16 +263,6 @@ jobs:
       # Android rather than by the WebView, so none of the browser-driven checks in this repo can see
       # them and nobody on the build side has a device to look at. "Make it look good" is a real
       # requirement and this is the only way to judge it from the actual pixels.
-      # THE INSTRUMENTED TEST REPORT. Per-test failures are legible nowhere else — a red
-      # `connectedDebugAndroidTest` says only "there were failing tests".
-      - name: Upload instrumented test report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: androidTest-report
-          path: /tmp/pc-androidtest
-          if-no-files-found: ignore
-
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
