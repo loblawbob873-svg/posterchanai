@@ -11,11 +11,11 @@ const create=(text,tags=[],kind=9,pk=owner,sign=signEvent)=>PosterCordReader.cre
 const message=await create('same body'),sameBody=await create('same body',[],9,other,otherSign),reaction=await create('+',[['e',message.rumorId]],7),secondReaction=await create('❤️',[['e',message.rumorId]],7,other,otherSign);
 let rows=[],envelopes=[];
 const code=fs.readFileSync(process.env.PC_CONCORD_SOURCE||new URL('../../static/js/client/concord.js',import.meta.url),'utf8'),start=code.indexOf('  function mergeCordTimeline('),end=code.indexOf('  async function refreshActiveChannel(',start);
-const context={console,Map,Set,Promise,deliveryOwner:()=>owner,roomIdentity:r=>r.communityId,saved:()=>[room],envelopeCacheKey:()=> 'fixture',cachedEnvelopes:async()=>envelopes,
+const context={console,Map,Set,Promise,window:{},deliveryOwner:()=>owner,roomIdentity:r=>r.communityId,saved:()=>[room],envelopeCacheKey:()=> 'fixture',cachedEnvelopes:async()=>envelopes,
  readChat:(_p,reader,b,c,_r,ch,w)=>reader.inspectChat(b,c,ch.id,w),testMessages:()=>structuredClone(rows),messageId:m=>m.id,
  mergeRelayMessages:(prior,incoming)=>[...new Map([...prior,...incoming].map(m=>[m.id,m])).values()],
  saveTestMessages:(_id,next)=>{rows=structuredClone(next);},notifyMentions:()=>{},paintUnreadBadge:()=>{},document:{body:{classList:{contains:()=>false}}}};
-vm.createContext(context);vm.runInContext(code.slice(code.indexOf('  function uniqueMessages('),code.indexOf('  const remoteMessages='))+code.slice(code.indexOf('  function pendingEchoMatch('),code.indexOf('  function channelStoreId('))+code.slice(start,end),context);
+vm.createContext(context);vm.runInContext(code.slice(code.indexOf('  function messageExpired('),code.indexOf('  const remoteMessages='))+code.slice(code.indexOf('  function pendingEchoMatch('),code.indexOf('  function channelStoreId('))+code.slice(start,end),context);
 const p={viewer:()=>({pubkey:owner})};
 const absorb=async wraps=>{envelopes=[...new Map([...envelopes,...wraps].map(w=>[w.id,w])).values()];await context.absorbChatWraps(p,PosterCordReader,bundle,controls,room,channel,wraps,'fixture');};
 await absorb([message.wrap,sameBody.wrap,reaction.wrap]);assert.equal(rows.length,2,'same text with distinct authenticated IDs remains two messages');

@@ -296,3 +296,6 @@ html.pc-oswin body.concord-view .sidebar{display:none!important}
 .cc-invite-card .cc-invite-note{margin:0 0 14px!important;color:#9fa6b4!important;font-size:12px!important;line-height:1.5!important}
 .cc-invite-card .cc-join-actions{justify-content:center!important}
 .cc-join-actions.hidden{display:none!important}
+/* Management actions must remain reachable in a narrow community dialog. */
+#cc-settings-dialog .cc-join-actions{flex-wrap:wrap!important}
+#cc-settings-dialog .cc-join-card{max-height:100%!important;overflow:auto!important;box-sizing:border-box!important;min-width:0!important}

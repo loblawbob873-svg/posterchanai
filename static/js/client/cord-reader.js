@@ -9356,6 +9356,8 @@ var PosterCordReader = (() => {
     createWebxdcWrap: () => createWebxdcWrap,
     createMetadataWrap: () => createMetadataWrap,
     createChannelWrap: () => createChannelWrap,
+    createPrivateChannelPlan: () => createPrivateChannelPlan,
+    privateChannelInvite: () => privateChannelInvite,
     inspectChat: () => inspectChat,
     sweepExpiredChat: () => sweepExpiredChat,
     inspectWebxdc: () => inspectWebxdc,
@@ -26958,6 +26960,50 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const group = writableControlGroup(groups);
     const seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channelId: entityHex, name: body.name };
+  }
+  // First private access uses CORD-05 delivery, not a rekey blob (the new member
+  // has no old key with which to authenticate a rotation commitment).
+  function privateChannelInvite(bundle,controlWraps,channelId,recipient) {
+    const {community,folded}=control(bundle,controlWraps),channel=channelsView(community,folded).find(c=>c.idHex===channelId);
+    if(!channel?.isPrivate||!folded.channels.get(channelId)?.isPrivate||folded.channels.get(channelId)?.deleted||folded.banned.has(recipient))throw new Error("private channel access is unavailable");
+    const allowed=recipient===community.owner||rolesOf(folded.roster,recipient).some(r=>r.scope.kind==="channel"&&r.scope.channelId===channelId);
+    if(!allowed)throw new Error("the recipient has no verified channel role grant");
+    const held=(bundle.channels||[]).find(c=>c.id===channelId);
+    if(!held?.key)throw new Error("the current private channel key is unavailable");
+    // An explicit allowlist prevents archived/staff/future vault extensions from
+    // becoming accidental disclosures in an ordinary member invitation.
+    const invite={community_id:bundle.community_id,owner:bundle.owner,owner_salt:bundle.owner_salt,community_root:bundle.community_root,root_epoch:bundle.root_epoch,relays:[...bundle.relays],channels:[{id:channelId,key:held.key,epoch:held.epoch}]};
+    if(bundle.control_pk)invite.control_pk=bundle.control_pk;
+    if(bundle.name)invite.name=bundle.name;
+    return validateInviteBundle(invite,{forJoin:true});
+  }
+  async function createPrivateChannelPlan(bundle,controlWraps,channel,pubkey,signEvent) {
+    const {community,folded,groups}=control(bundle,controlWraps);
+    if(pubkey!==community.owner)throw new Error("only the community owner can create private access grants here");
+    const name=String(channel?.name||"").trim();
+    if(!name||utf8Len(name)>NAME_MAX_BYTES)throw new Error("channel name must be between 1 and 64 UTF-8 bytes");
+    const recipients=[...new Set(channel?.recipients||[])];
+    if(recipients.length>256||recipients.some(pk=>!/^[0-9a-f]{64}$/.test(pk)||folded.banned.has(pk)))throw new Error("invalid or banned private channel recipient");
+    if(folded.roster.roles.length>=MAX_ROLES_PER_COMMUNITY)throw new Error("the community has reached its role limit");
+    const id=bytesToHex2(randomBytes(32)),roleId=bytesToHex2(randomBytes(32)),key=bytesToHex2(randomBytes(32)),wraps=[],group=writableControlGroup(groups);
+    async function edition(vsk,eid,body){
+      const head=folded.heads.get(eid),tags=[[TAG_SUBKIND,vsk],[TAG_ENTITY,eid],[TAG_EVERSION,head?(head.version+1n).toString():"1"]];
+      if(head)tags.push([TAG_EPREV,bytesToHex2(head.hash)]);
+      const rumor=buildRumor({kind:KIND_CONTROL,content:JSON.stringify(body),pubkey,ms:Date.now(),tags});
+      wraps.push(wrapSeal(await sealRumor(rumor,KIND_SEAL_PLAINTEXT,group,{signEvent}),group));
+    }
+    await edition(VSK_ROLE,roleId,{role_id:roleId,name,permissions:"0",position:100,scope:{kind:"channel",channel_id:id},color:0});
+    for(const member of recipients.filter(pk=>pk!==pubkey)){
+      const eid=bytesToHex2(grantLocator(community.id,hex32(member))),prior=folded.headEditions.get(eid),body=prior?JSON.parse(prior.content):{member,role_ids:[]};
+      const roleIds=[...new Set([...(body.role_ids||[]),roleId])];
+      if(roleIds.length>MAX_ROLES_PER_MEMBER)throw new Error("a recipient has reached the role limit");
+      await edition(VSK_GRANT,eid,{...body,member,role_ids:roleIds});
+    }
+    await edition(VSK_CHANNEL,id,{name,private:true});
+    const nextBundle={...bundle,channels:[...(bundle.channels||[]),{id,key,epoch:0}]},nextControls=[...controlWraps,...wraps];
+    // Validate the complete proof before the adapter publishes or delivers keys.
+    for(const recipient of [pubkey,...recipients])privateChannelInvite(nextBundle,nextControls,id,recipient);
+    return {wraps,bundle:nextBundle,channelId:id,name,recipients};
   }
   /* MODERATION, WHICH THE FOLD HAS ALWAYS SUPPORTED AND NOTHING EVER SUPPLIED.
    *

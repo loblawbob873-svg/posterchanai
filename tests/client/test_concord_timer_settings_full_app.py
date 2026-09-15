@@ -20,7 +20,7 @@ def test_timer_settings_publish_and_preserve_signed_state(width):
         await b.js(r'''(async()=>{
           const made=await PosterCord.createCommunity({owner:__PC.me().pubkey,name:'Timer browser',relays:['wss://timer.invalid'],base:'https://timer.invalid',signEvent:__PC.signTemplate});
           const bundle={...PosterCord.openInvite(made.url,made.events).bundle,control_root:made.secrets.controlRoot};
-          window.__timerToasts=[];__PC.toast=msg=>__timerToasts.push(msg);window.__timerControls=made.events.filter(e=>e.kind===1059);window.__timerBundle=bundle;window.__timerPublished=[];
+          __PC.sendCordDirectInvite=async()=>{throw Error('unexpected key delivery in timer test');};window.__timerToasts=[];__PC.toast=msg=>__timerToasts.push(msg);window.__timerControls=made.events.filter(e=>e.kind===1059);window.__timerBundle=bundle;window.__timerPublished=[];
           const initialTimer=await PosterCordReader.createMetadataWrap(bundle,__timerControls,{message_expiration:60},__PC.me().pubkey,__PC.signTemplate);__timerControls.push(initialTimer.wrap);
           const info=PosterCordReader.inspectControl(bundle,__timerControls);
           const room={name:'Timer browser',communityId:made.communityId,naddr:'timer-browser',url:made.url,channels:info.channels,cord:{bundle,hydrated:true}};
@@ -32,6 +32,11 @@ def test_timer_settings_publish_and_preserve_signed_state(width):
         await click(b,'#cc-edit-icon')
         await b.until("!document.querySelector('#cc-settings-dialog').classList.contains('hidden')")
         assert not await b.js("document.querySelector('#cc-message-expiration').disabled")
+        await click(b,'#cc-private-channel')
+        await b.until("document.querySelector('.uiconfirm-msg')?.textContent==='Name the private channel'")
+        await click(b,'.uiconfirm [data-uc="0"]')
+        await b.until("!document.querySelector('.uiconfirm')")
+        assert await b.js('__timerPublished.length')==0
         await b.js("(()=>{const s=document.querySelector('#cc-message-expiration');s.value='86400';s.dispatchEvent(new Event('change',{bubbles:true}));document.activeElement.blur();PCConcord.backgroundRender();})()")
         await click(b,'#cc-settings-save')
         await b.until('__timerToasts.length>0')

@@ -1125,6 +1125,42 @@
     rooms[index]={...rooms[index],description:values.description??rooms[index].description,icon:values.icon??rooms[index].icon,message_expiration:timer};save(rooms);
     return {timerChanged,noticesFailed};
   }
+  async function createPrivateRoomChannel(p,room,name,recipients){
+    const reader=window.PosterCordReader,identity=roomIdentity(room),loadKey=room.communityId||room.naddr,owner=p.viewer?.().pubkey;
+    if(!reader?.createPrivateChannelPlan||!p.sendCordDirectInvite)throw new Error('Private channel invitations are not ready');
+    let controls=roomControls.get(loadKey)||[];const bundle=room.cord.bundle,scope=cordPlaneContext(p,bundle,controls,room);
+    const plan=await reader.createPrivateChannelPlan(bundle,controls,{name,recipients},owner,p.signTemplate);
+    if(!scope.current())throw new Error('Concord membership changed while signing private access');
+    // Preserve the only copy of the new independent key before publishing any
+    // channel definition. A failed control publish may leave a recoverable key,
+    // never an acknowledged private channel whose creator lost its secret.
+    const rooms=saved(),index=rooms.findIndex(r=>roomIdentity(r)===identity);
+    rooms[index]={...rooms[index],cord:{...rooms[index].cord,bundle:plan.bundle}};save(rooms);
+    if(!await persistArmadaMembership(p,rooms[index]))throw new Error('Private key saved locally; encrypted membership backup is unavailable');
+    let currentRoom=saved().find(r=>roomIdentity(r)===identity),active=cordPlaneContext(p,plan.bundle,controls,currentRoom);
+    if(!active.current()||p.viewer?.().pubkey!==owner)throw new Error('Concord membership changed before creating private access');
+    const relays=roomRelays(plan.bundle);
+    for(const wrap of plan.wraps){
+      if(!active.current())throw new Error('Concord membership changed during private channel creation');
+      const result=await p.relayPublishRoom(relays,wrap,cordPlaneAuth(p,active,wrap.pubkey,relays));
+      if(!result?.ok)throw new Error('Private key saved, but community relays did not accept all access records');
+      if(!active.current())throw new Error('Concord membership changed after publishing private access');
+      controls=[...controls,wrap];roomControls.set(loadKey,controls);
+      await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),[wrap]);
+      active=cordPlaneContext(p,plan.bundle,controls,currentRoom);
+    }
+    let failures=0;
+    for(const recipient of plan.recipients.filter(pk=>pk!==owner)){
+      if(!active.current())throw new Error('Concord membership changed before private key delivery');
+      // Recheck current proof immediately before each independent gift wrap.
+      const invite=reader.privateChannelInvite(plan.bundle,roomControls.get(loadKey)||[],plan.channelId,recipient);
+      try{await p.sendCordDirectInvite(invite,recipient,{isCurrent:active.current});}catch(error){if(!active.current())throw error;failures++;}
+    }
+    if(!active.current())throw new Error('Concord membership changed after private key delivery');
+    const latest=saved(),at=latest.findIndex(r=>roomIdentity(r)===identity);
+    latest[at]={...latest[at],channels:reader.inspectControl(plan.bundle,controls).channels};save(latest);
+    return {...plan,failures};
+  }
   function canAddChannel(p,room){
     try{
       if(!room||room.local||!room.cord||!room.cord.bundle)return false;
@@ -3440,6 +3476,7 @@
       feed.insertAdjacentHTML('beforeend',`<div class="cc-join hidden" id="cc-members-dialog"><div class="cc-join-card"><h2>Known members <span class="muted">${memberPks.length}</span></h2><p class="cc-member-help">People known from verified membership records and loaded messages. This is not a complete roster. Tap a member to view their profile. Right-click or hold for more options.</p><div class="cc-member-list">${memberRows}</div><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-members-close">Close</button><button class="btn btn-neon" id="cc-members-invite">Invite people</button></div></div></div><div class="cc-join hidden" id="cc-settings-dialog"><div class="cc-join-card"><h2>Community settings</h2><label class="cc-label" for="cc-description-value">Description</label><textarea class="input cc-settings-description" id="cc-description-value" maxlength="1000" rows="3" placeholder="What is this community about?">${p.enc(current.description||'')}</textarea><label class="cc-label" for="cc-settings-icon">Icon</label><input class="input" id="cc-settings-icon" maxlength="2048" value="${p.enc(current.icon||'')}" placeholder="🌌 or https://…/icon.png">${timerSettingsHtml(p,current)}<label class="cc-label" for="cc-channel-visibility">#${p.enc(state.channel||'general')} visibility</label><select class="input cc-visibility-select" id="cc-channel-visibility" disabled><option value="public"${channelPrivate?'':' selected'}>Public — all community members</option><option value="private"${channelPrivate?' selected':''}>Private — invited members only</option></select><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-settings-cancel">Cancel</button><button class="btn btn-neon" id="cc-settings-save">Save changes</button></div></div></div>`);
       const settingsActions=p.$('#cc-settings-dialog .cc-join-actions');
       if(settingsActions&&settingsActions.insertAdjacentHTML)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost danger" id="cc-leave-community">Leave community</button>');
+      if(settingsActions&&current.cord?.bundle?.owner===p.viewer?.().pubkey&&p.sendCordDirectInvite)settingsActions.insertAdjacentHTML('afterbegin','<button class="btn btn-ghost" id="cc-private-channel">New private channel</button>');
     }
     if(p.hydrateLinkCards)p.hydrateLinkCards(feed);
     wireRoomMedia(p);
@@ -3683,6 +3720,17 @@
           save(latest); }
         render(); p.toast('#'+made.name+' created');
       }catch(e){ addChannel.disabled=false; p.toast('channel was not created: '+((e&&e.message)||e)); }
+    };
+    const privateChannel=$('#cc-private-channel');if(privateChannel)privateChannel.onclick=async()=>{
+      const room=saved()[state.community];if(!room)return;
+      const name=await p.uiPrompt('Name the private channel',{value:'',ok:'Continue'});if(!name?.trim())return;
+      const answer=await p.uiPrompt('Who can access this channel? Paste hex public keys separated by commas. Leave empty for only you.',{value:'',ok:'Create private channel'});if(answer==null)return;
+      privateChannel.disabled=true;
+      try{
+        const recipients=String(answer).split(/[\s,]+/).filter(Boolean).map(value=>p.refToPk?.(value)||value);
+        const made=await createPrivateRoomChannel(p,room,name,recipients);render();
+        p.toast(made.failures?'Private channel created; '+made.failures+' invitations need to be sent again':'Private channel created');
+      }catch(error){privateChannel.disabled=false;p.toast('Private channel setup stopped: '+(error?.message||error));}
     };
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
     const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
@@ -3984,7 +4032,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,render,backgroundRender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,render,backgroundRender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
