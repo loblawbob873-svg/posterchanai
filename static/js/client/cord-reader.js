@@ -9360,6 +9360,8 @@ var PosterCordReader = (() => {
     createBanWrap: () => createBanWrap,
     createCommunity: () => createCommunity,
     validateInviteBundle: () => validateInviteBundle,
+    parseJoinMaterial: () => parseJoinMaterial,
+    stringifyJoinMaterial: () => stringifyJoinMaterial,
     openInviteBundle: () => openInviteBundle,
     createChatWrap: () => createChatWrap,
     voiceMaterial: () => voiceMaterial,
@@ -24957,11 +24959,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       if (!verifyCommunityId(jm.community_id, jm.owner, jm.owner_salt)) return void 0;
       const id = hex32(jm.community_id);
       const root = hex32(jm.community_root);
-      const rootEpoch = BigInt(jm.root_epoch);
+      const rootEpoch = cordU64(jm.root_epoch);
       const heldRoots = [{ epoch: rootEpoch, key: root, controlPk: jm.control_pk, controlRoot: jm.control_root }];
       for (const hr of jm.held_roots ?? []) {
         try {
-          const epoch = BigInt(hr.epoch);
+          const epoch = cordU64(hr.epoch);
           if (epoch === rootEpoch && hr.key === jm.community_root) continue;
           heldRoots.push({ epoch, key: hex32(hr.key), controlPk: hr.control_pk, controlRoot: hr.control_root });
         } catch {
@@ -24969,7 +24971,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       }
       if (entry.seed && entry.seed.community_root && entry.seed.root_epoch !== jm.root_epoch) {
         try {
-          const seedEpoch = BigInt(entry.seed.root_epoch);
+          const seedEpoch = cordU64(entry.seed.root_epoch);
           if (!heldRoots.some((r) => r.epoch === seedEpoch)) {
             heldRoots.push({ epoch: seedEpoch, key: hex32(entry.seed.community_root), controlPk: entry.seed.control_pk, controlRoot: entry.seed.control_root });
           }
@@ -24983,7 +24985,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
           privateChannels.push({
             id: hex32(ch.id),
             key: hex32(ch.key),
-            epoch: BigInt(ch.epoch),
+            epoch: cordU64(ch.epoch),
             heldKeys: (ch.held_keys || []).map(k => ({epoch: rekeyEpoch(k.epoch), key: hex32(k.key)})),
             name: typeof ch.name === "string" ? ch.name : ""
           });
@@ -26702,6 +26704,48 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   // pc-cord-reader.ts
+  function cordJsonParse(text){
+    return JSON.parse(text,(_key,value,context)=>{
+      if(typeof value==='number'&&(!Number.isFinite(value)||Number.isInteger(value)&&!Number.isSafeInteger(value))){
+        if(!context?.source||!JSON.rawJSON)throw new Error('lossless membership numbers require a newer browser');
+        return JSON.rawJSON(context.source);
+      }
+      return value;
+    });
+  }
+  function cordU64(value){
+    const raw=JSON.isRawJSON?.(value)?value.rawJSON:value;
+    if(typeof raw==='number'&&!Number.isSafeInteger(raw))throw new Error('unsafe membership integer');
+    let text=String(raw??0);
+    if(JSON.isRawJSON?.(value)){
+      const match=/^(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(text);
+      if(!match)throw new Error('invalid membership u64');
+      let digits=match[1]+(match[2]||''),shift=Number(match[3]||0)-(match[2]||'').length;
+      if(!Number.isSafeInteger(shift)||shift>20||shift < -digits.length)throw new Error('invalid membership u64');
+      if(shift<0){if(!/^0*$/.test(digits.slice(shift)))throw new Error('invalid membership u64');digits=digits.slice(0,shift);}
+      else digits+='0'.repeat(shift);
+      text=digits.replace(/^0+(?=.)/,'')||'0';
+    }
+    if(!/^(0|[1-9]\d*)$/.test(text)||BigInt(text)>18446744073709551615n)throw new Error('invalid membership u64');
+    return BigInt(text);
+  }
+  function cordInteger(value){const n=cordU64(value);return n<=BigInt(Number.MAX_SAFE_INTEGER)?Number(n):String(n);}
+  function cordIntegerMax(...values){return cordInteger(values.reduce((a,b)=>cordU64(a)>cordU64(b)?a:b,0));}
+  function cordWireInteger(value){
+    const n=cordU64(value);if(n<=BigInt(Number.MAX_SAFE_INTEGER))return Number(n);
+    if(!JSON.rawJSON)throw new Error('lossless membership numbers require a newer browser');
+    return JSON.rawJSON(String(n));
+  }
+  function parseJoinMaterial(text){
+    const value=cordJsonParse(text);
+    if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('invalid Concord join material');
+    if(value.root_epoch!==undefined)value.root_epoch=cordInteger(value.root_epoch);
+    if(Array.isArray(value.channels))value.channels=value.channels.map(ch=>({...ch,epoch:cordInteger(ch.epoch)}));
+    return value;
+  }
+  function stringifyJoinMaterial(value){
+    return JSON.stringify({...value,root_epoch:cordWireInteger(value.root_epoch),channels:(value.channels||[]).map(ch=>({...ch,epoch:cordWireInteger(ch.epoch)}))});
+  }
   function validateInviteBundle(input, {forJoin=false,now=Date.now()}={}) {
     if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('invalid Concord invite bundle');
     // Bound attacker-controlled arrays before copying or deriving any per-channel material.
@@ -26730,8 +26774,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const token=hexToBytes2(made.secrets.token),bundleKey=hkdf32(token,buildInfo('concord/invite-key',ZERO32));
     const events=made.events.map(event=>{
       if(event.kind===1059){const opened=openWrap(event,read);if(opened.sealKind!==20014)throw new Error('invalid genesis seal');return wrapSeal(opened.seal,stream);}
-      if(event.kind===33301){const bundle=validateInviteBundle({...JSON.parse(decryptChecked(event.content,bundleKey)),control_pk:signer.pk});
-        return finalizeEvent2({kind:33301,created_at:event.created_at,tags:event.tags,content:encryptChecked(bundleKey,JSON.stringify(bundle))},hex32(made.secrets.linkSignerSk));}
+      if(event.kind===33301){const bundle=validateInviteBundle({...parseJoinMaterial(decryptChecked(event.content,bundleKey)),control_pk:signer.pk});
+        return finalizeEvent2({kind:33301,created_at:event.created_at,tags:event.tags,content:encryptChecked(bundleKey,stringifyJoinMaterial(bundle))},hex32(made.secrets.linkSignerSk));}
       return event;
     });
     return {...made,events,secrets:{...made.secrets,controlRoot:bytesToHex2(controlRoot),controlPk:signer.pk}};
@@ -26747,7 +26791,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const fragment=String(url).split('#')[1]||'',raw=atob(fragment.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(fragment.length/4)*4,'='));
     if(raw.length<18||raw.charCodeAt(0)!==4)throw new Error('invalid invite fragment');
     const token=Uint8Array.from(raw.slice(-16),c=>c.charCodeAt(0)),bundleKey=hkdf32(token,buildInfo('concord/invite-key',ZERO32));
-    const bundle=validateInviteBundle(JSON.parse(decryptChecked(event.content,bundleKey)),options);
+    const bundle=validateInviteBundle(parseJoinMaterial(decryptChecked(event.content,bundleKey)),options);
     return {parsed:details,bundle};
   }
   function runtime(bundle) {
@@ -26920,6 +26964,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
 
   function rekeyEpoch(value) {
+    if(JSON.isRawJSON?.(value))value=cordInteger(value);
     if (!/^(0|[1-9][0-9]*)$/.test(String(value))) throw new Error('invalid rekey epoch');
     const epoch=BigInt(value); if(epoch>0xffffffffffffffffn)throw new Error('rekey epoch overflow');
     return epoch;
@@ -27019,7 +27064,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     for(let i=0;i<n;i++){
       const rumor=buildRumor({kind:3312,pubkey,content:JSON.stringify(members.slice(i*400,(i+1)*400)),ms,tags:[['snap',snap,String(i+1),String(n)]]}),seal=await sealRumor(rumor,20013,guest,{signEvent});snapshot.push(wrapSeal(seal,guest));
     }
-    return {version:1,community_id:bundle.community_id,actor:pubkey,prior:JSON.parse(JSON.stringify(bundle)),next,beforeEvents,beforeRelays,beforeEvent:0,
+    return {version:1,community_id:bundle.community_id,actor:pubkey,prior:parseJoinMaterial(stringifyJoinMaterial(bundle)),next,beforeEvents,beforeRelays,beforeEvent:0,
       phases:[{name:'root',events:root.wraps},{name:'control',events:compacted},{name:'channels',events:channels},{name:'guestbook',events:snapshot,optional:true}],phase:0,event:0};
   }
   async function resumeRefounding(plan,{publish,persist,current}) {
@@ -27121,7 +27166,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return {updates,removed,gaps,blocked};
   }
   function applyRekeyUpdates(bundle,updates) {
-    const next=JSON.parse(JSON.stringify(bundle));if(next.dissolved)return next;
+    const next=parseJoinMaterial(stringifyJoinMaterial(bundle));if(next.dissolved)return next;
     for(const update of [...updates].sort((a,b)=>rekeyEpoch(a.epoch)<rekeyEpoch(b.epoch)?-1:rekeyEpoch(a.epoch)>rekeyEpoch(b.epoch)?1:a.key.localeCompare(b.key))){
       const base=update.scope==='0'.repeat(64),current=base?{epoch:next.root_epoch,key:next.community_root}:next.channels?.find(c=>c.id===update.scope);
       if(!current)continue;

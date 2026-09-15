@@ -57,7 +57,7 @@
         rumor.id !== await rumorId(rumor))
       throw new Error('The invitation has an invalid signed rumor');
     current(context);
-    const bundle = validate(JSON.parse(rumor.content), { forJoin: !!options.forJoin, now: options.now });
+    const bundle = validate(globalThis.PosterCordReader.parseJoinMaterial(rumor.content), { forJoin: !!options.forJoin, now: options.now });
     return { id: outer.id, rumorId: rumor.id, inviter: seal.pubkey, createdAt: rumor.created_at, bundle };
   }
   async function create(input, recipient, context, options = {}) {
@@ -68,7 +68,7 @@
       throw new Error('Remove private membership and staff material before creating an invitation');
     const bundle = validate(input, { forJoin: true, now: options.now });
     const now = Math.floor((options.now ?? Date.now()) / 1000);
-    const rumor = { pubkey: context.pubkey, created_at: now, kind: 3313, tags: [], content: JSON.stringify(bundle) };
+    const rumor = { pubkey: context.pubkey, created_at: now, kind: 3313, tags: [], content: globalThis.PosterCordReader.stringifyJoinMaterial(bundle) };
     rumor.id = await rumorId(rumor);
     const content = await context.encrypt(recipient, JSON.stringify(rumor));
     current(context);

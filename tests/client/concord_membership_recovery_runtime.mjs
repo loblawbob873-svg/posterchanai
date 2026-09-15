@@ -11,7 +11,7 @@ ctx.externalAllowed=()=>false;ctx.externalDone=()=>{};ctx.CORD_RELAYS=copy([]);c
 const api={relayQuery:async filters=>{const f=filters[0];calls.push(f);return copy(events.filter(e=>f.kinds.includes(e.kind)&&(!f['#d']||f['#d'].includes(e.tags[0][1]))).slice(0,f.limit));},
  nip44dec:async(_who,payload)=>NT.nip44.v2.decrypt(payload,key),verifyRelayEvents:async list=>list.filter(e=>NT.verifyEvent(copy(e)))};
 const source=fs.readFileSync(new URL('static/js/client/concord.js',root),'utf8');
-vm.runInContext(source.slice(source.indexOf('  const membershipFragmentReads='),source.indexOf('  function cordListHex(')),ctx);
+vm.runInContext(source.slice(source.indexOf('  const membershipFragmentReads='),source.indexOf('  function cordListHex('))+source.slice(source.indexOf('  function cordJsonParse('),source.indexOf('  function cordListMaterial(')),ctx);
 let rows=await ctx.membershipEvents(api,owner);assert.equal(rows.length,80);assert.equal(calls.length,4,'startup spends one bounded missing-coordinate query');
 rows=await ctx.membershipEvents(api,owner);assert.equal(rows.length,96);
 rows=await ctx.membershipEvents(api,owner);assert.equal(rows.length,100,'recovery must continue beyond the relay first page');

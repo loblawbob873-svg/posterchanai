@@ -301,7 +301,8 @@ def test_desktop_recovery_merges_armada_list_shards_and_backs_off_empty_queries(
     assert "kinds:[13302,33302]" not in CONCORD
     assert "for(const event of candidates)" in CONCORD
     assert "const entries=new Map(),tombs=new Map()" in CONCORD
-    assert "Math.max(Number(tombs.get(t.community_id))" in CONCORD
+    # Exact tombstone ordering is exercised by the encrypted membership runtime,
+    # including adjacent u64 values that Number/Math.max would collapse.
     assert "membershipRetryTimer=setTimeout" in CONCORD
     assert "recovered?60000:120000" in CONCORD
     assert "window.PosterCordReader.inspectControl(bundle,[])" in CONCORD

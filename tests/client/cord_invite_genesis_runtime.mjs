@@ -44,6 +44,18 @@ await assert.rejects(P.createCommunity({...options,name:'€'.repeat(22)}),/UTF-
 await assert.rejects(R.createMetadataWrap(creator,controls,copy({name:'€'.repeat(22)}),owner,sign),/UTF-8/);
 const edit=await R.createMetadataWrap(creator,controls,copy({name:'€'.repeat(21),description:'€'.repeat(3000)}),owner,sign);
 assert.equal(R.inspectControl(bundle,copy([...controls,edit.wrap])).name,'€'.repeat(21));
+const exactEpoch='18446744073709551615',exactChannel='18446744073709551614';
+const externalLarge=JSON.stringify({...bundle,root_epoch:JSON.rawJSON(exactEpoch),channels:[{...channel,epoch:JSON.rawJSON(exactChannel)}],opaque:{number:JSON.rawJSON(exactEpoch),text:exactEpoch}});
+const bigLink=linkEvent(NT.nip44.v2.encrypt(externalLarge,bundleKey));
+const bigInvite=P.openInvite(made.url,copy([bigLink])).bundle;
+assert.equal(bigInvite.root_epoch,exactEpoch);assert.equal(bigInvite.channels[0].epoch,exactChannel);
+const largeWire=R.stringifyJoinMaterial(bigInvite);
+assert(largeWire.includes('"root_epoch":'+exactEpoch));assert(largeWire.includes('"epoch":'+exactChannel));
+assert(largeWire.includes('"number":'+exactEpoch));assert(largeWire.includes('"text":"'+exactEpoch+'"'));
+assert.equal(R.parseJoinMaterial(largeWire).root_epoch,exactEpoch);
+assert.equal(R.parseJoinMaterial('{"root_epoch":1.8446744073709551615e19,"channels":[]}').root_epoch,exactEpoch);
+assert.throws(()=>R.parseJoinMaterial('{"root_epoch":1.84467440737095516151e19,"channels":[]}'),/u64/);
+assert.throws(()=>R.parseJoinMaterial('{"root_epoch":1e1000,"channels":[]}'),/u64/);
 const oversize=linkEvent(ctx.testLenientEncrypt(JSON.stringify({...bundle,opaque:'x'.repeat(66000)}),bundleKey));
 assert.throws(()=>P.openInvite(made.url,copy([oversize])),/65,535-byte cap/,'lenient crypto libraries cannot admit oversized wire plaintext');
 console.log('CORD genesis/invites: independent split signer, private staff keys, preview expiry, signed revocation, bounds and UTF-8 passed');

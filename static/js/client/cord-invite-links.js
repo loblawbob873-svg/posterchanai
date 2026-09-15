@@ -80,7 +80,7 @@
     active(context);details(entry);const bundle=publicBundle({...input,...(entry.expires_at!==undefined?{expires_at:entry.expires_at}:{})});if(bundle.community_id!==entry.community_id)throw new Error('Invitation belongs to a different community');
     if(observed.some(event=>event.tags?.some(t=>t[0]==='vsk'&&t[1]==='9')))throw new Error('A retired link cannot be refreshed');
     const key=await bundleKey(entry.token);active(context);
-    return NT().finalizeEvent({kind:33301,created_at:Math.max(Math.floor(Date.now()/1000),...observed.map(event=>event.created_at+1)),tags:[['d',''],['vsk','6']],content:NT().nip44.encrypt(JSON.stringify(bundle),key)},fromHex(entry.signer_sk));
+    return NT().finalizeEvent({kind:33301,created_at:Math.max(Math.floor(Date.now()/1000),...observed.map(event=>event.created_at+1)),tags:[['d',''],['vsk','6']],content:NT().nip44.encrypt(globalThis.PosterCordReader.stringifyJoinMaterial(bundle),key)},fromHex(entry.signer_sk));
   }
   function revokeEvent(entry,observed,context){active(context);details(entry);return NT().finalizeEvent({kind:33301,created_at:Math.max(Math.floor(Date.now()/1000),...observed.map(event=>event.created_at+1)),tags:[['d',''],['vsk','9']],content:''},fromHex(entry.signer_sk));}
   globalThis.PCCordInviteLinks=Object.freeze({details,mergeLists,readList,remember,forget,create,linkState,refreshEvent,revokeEvent});

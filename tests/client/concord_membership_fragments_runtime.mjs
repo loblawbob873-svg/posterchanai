@@ -23,7 +23,7 @@ const entry=(n,extra={})=>({community_id:b64(hex(n)),current:material(n),added_a
 const room=(n,extra={})=>copy({communityId:hex(n),url:'https://example.test/invite/'+n+'#token',name:'room '+n,cord:{bundle:{community_id:hex(n),...material(n,extra)}}});
 const maxEpoch='18446744073709551615',priorEpoch='18446744073709551614';
 const bigMerge=ctx.cordMergeEntry(copy(entry(1,{current:material(1,{root_epoch:priorEpoch})})),copy(entry(1,{current:material(2,{root_epoch:maxEpoch})})));
-assert.equal(bigMerge.current.root_epoch,maxEpoch,'adjacent u64 epochs must not collapse through Number');
+assert.equal(ctx.cordInteger(bigMerge.current.root_epoch),maxEpoch,'adjacent u64 epochs must not collapse through Number');
 const byteTie=ctx.cordMergeEntry(copy(entry(1,{current:material(1,{name:'\uE000'})})),copy(entry(1,{current:material(1,{name:'\u{10000}'})})));
 assert.equal(byteTie.current.name,'\uE000','canonical-byte tie is UTF-8, not JavaScript UTF-16 ordering');
 // Independent encrypted fragmented input, including opaque fields at every level.
@@ -37,6 +37,26 @@ let doc=docOf(published[0]);assert.deepEqual(doc.futureTop,{secret:'Opaque'});
 let old=doc.entries.find(e=>e.community_id===b64(hex(1)));assert.deepEqual(old.unknownEntry,['x']);assert.deepEqual(old.current.future,retained.future);assert.equal(old.seed.name,old.current.name);assert.equal(old.seed.channels[0].name,old.current.channels[0].name);assert.equal(old.current.channels[0].future.bytes,'AbCdEF');assert(!('community_id'in old.current));
 const fresh=doc.entries.find(e=>e.community_id===b64(hex(4)));assert(!('seed'in fresh));assert.equal(fresh.current.owner,b64(owner));
 assert.equal(docOf(relay.find(e=>e.tags[0][1]==='1')).tombstones[0].opaqueTomb,'keep');
+// Independently encrypted numeric wire tokens stay exact across read/merge/write.
+reset();
+const rawDoc=JSON.stringify({frags:1,entries:[entry(1,{added_at:'RAW_PRIOR',current:material(1,{root_epoch:'RAW_MAX',channels:[{id:b64(hex(70)),key:b64(hex(71)),epoch:'RAW_PRIOR'}],opaque:{numeric:'RAW_MAX',text:maxEpoch,root_epoch:maxEpoch}})})],tombstones:[{community_id:b64(hex(1)),removed_at:'RAW_OLDER'}]}).replaceAll('"RAW_MAX"',maxEpoch).replaceAll('"RAW_PRIOR"',priorEpoch).replaceAll('"RAW_OLDER"','18446744073709551613');
+relay=[sign({kind:33302,created_at:100,tags:[['d','0']],content:NT.nip44.v2.encrypt(rawDoc,key)})];
+await ctx.persistArmadaMembership(api,room(4));
+const exactWire=NT.nip44.v2.decrypt(published[0].content,key);
+assert(exactWire.includes('"root_epoch":'+maxEpoch));assert(exactWire.includes('"epoch":'+priorEpoch));
+assert(exactWire.includes('"added_at":'+priorEpoch));assert(exactWire.includes('"numeric":'+maxEpoch));
+assert(exactWire.includes('"text":"'+maxEpoch+'"'),'opaque digit strings retain string type');
+assert(exactWire.includes('"root_epoch":"'+maxEpoch+'"'),'unknown nested names must not trigger numeric conversion');
+assert(ctx.cordMergeLists([ctx.cordJsonParse(exactWire)]).entries.some(e=>e.community_id===b64(hex(1))),'adjacent timestamps must not round a live entry into its tombstone');
+await ctx.leaveArmadaMembership(api,room(1));
+const leftWire=NT.nip44.v2.decrypt(published.at(-1).content,key);assert(leftWire.includes('"removed_at":'+priorEpoch));
+assert(!ctx.cordMergeLists([ctx.cordJsonParse(leftWire)]).entries.some(e=>e.community_id===b64(hex(1))));
+assert.throws(()=>ctx.cordU64(Number(maxEpoch)),/unsafe/);assert.throws(()=>ctx.cordU64('18446744073709551616'),/invalid/);
+// Storage preserves raw numbers; JSON itself validates tokens rather than interpolating strings.
+const parsed=ctx.cordJsonParse('{"opaque":18446744073709551615,"text":"18446744073709551615"}');
+assert.equal(ctx.cordCanonical(parsed),'{"opaque":18446744073709551615,"text":"18446744073709551615"}');
+assert.throws(()=>ctx.cordJsonParse('{"opaque":18446744073709551615x}'));
+reset();relay=[make(0,{frags:1,entries:[entry(1)],tombstones:[]})];await ctx.persistArmadaMembership(api,room(4));
 // Consecutive same-second writes must increase each coordinate's timestamp.
 const firstAt=published[0].created_at;await ctx.persistArmadaMembership(api,room(5));assert(published.at(-1).created_at>firstAt);
 // List-level unknowns union by lowest fragment index and move intact to fragment zero.

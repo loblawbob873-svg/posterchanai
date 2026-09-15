@@ -256,7 +256,7 @@
   let liveWarned='';   // the last live-sync failure reported — see refreshActiveChannel
   let resumeRequested=false;
   let actionDismissOff=null;
-  function saved(){ try{ const v=JSON.parse(localStorage.getItem('pc.concord.invites')||'[]'); if(!Array.isArray(v))return []; const clean=uniqueRooms(v);if(clean.length!==v.length){preserveRoomSelection(v,clean);writeRooms(clean);}return clean; }catch(_){ return []; } }
+  function saved(){ try{ const v=cordJsonParse(localStorage.getItem('pc.concord.invites')||'[]'); if(!Array.isArray(v))return []; const clean=uniqueRooms(v);if(clean.length!==v.length){preserveRoomSelection(v,clean);writeRooms(clean);}return clean; }catch(_){ return []; } }
   function writeRooms(v){try{localStorage.setItem('pc.concord.invites',JSON.stringify(v.slice(0,50),(key,value)=>key==='icon'&&/^blob:/i.test(String(value||''))?'':value));}catch(_){}}
   function save(v){const clean=uniqueRooms(v);preserveRoomSelection(v,clean);v.splice(0,v.length,...clean);writeRooms(v);}
   function preserveRoomSelection(before,after){
@@ -2124,7 +2124,7 @@
     const retain=events=>{for(const event of events){const d=event.kind===33302&&(event.tags||[]).find(t=>t[0]==='d')?.[1];if(!/^(0|[1-9]\d*)$/.test(String(d)))continue;const index=Number(d);if(!Number.isSafeInteger(index))continue;const old=recovered.heads.get(index);if(!old||event.created_at>old.created_at||event.created_at===old.created_at&&event.id<old.id)recovered.heads.set(index,event);}};
     retain(all);
     let count=0,countAt=-1;
-    if(p.nip44dec)for(const event of recovered.heads.values())try{const doc=JSON.parse(await p.nip44dec(pubkey,event.content));if(Number.isSafeInteger(doc.frags)&&doc.frags>0&&(event.created_at>countAt||event.created_at===countAt&&doc.frags>count)){count=doc.frags;countAt=event.created_at;}}catch(_){}
+    if(p.nip44dec)for(const event of recovered.heads.values())try{const doc=cordJsonParse(await p.nip44dec(pubkey,event.content));if(Number.isSafeInteger(doc.frags)&&doc.frags>0&&(event.created_at>countAt||event.created_at===countAt&&doc.frags>count)){count=doc.frags;countAt=event.created_at;}}catch(_){}
     // A relay's initial page is not the whole list. Recover exact missing coordinates in
     // small batches and retain ciphertext heads across passes. A hole must not prevent
     // fetching later fragments. Foreground writes may read several batches; ordinary
@@ -2144,6 +2144,40 @@
     const s=String(value||''); if(s.length!==43)return s;
     try{const raw=atob(s.replace(/-/g,'+').replace(/_/g,'/')+'=');return [...raw].map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');}catch(_){return s;}
   }
+  // Preserve integer tokens before JavaScript rounds them. Raw JSON values keep
+  // opaque extension numbers numeric too; only named membership fields normalize.
+  function cordJsonParse(text){
+    return JSON.parse(text,(_key,value,context)=>{
+      if(typeof value==='number'&&(!Number.isFinite(value)||Number.isInteger(value)&&!Number.isSafeInteger(value))){
+        if(!context?.source||!JSON.rawJSON)throw new Error('lossless membership numbers require a newer browser');
+        return JSON.rawJSON(context.source);
+      }
+      return value;
+    });
+  }
+  function cordU64(value){
+    const raw=JSON.isRawJSON?.(value)?value.rawJSON:value;
+    if(typeof raw==='number'&&!Number.isSafeInteger(raw))throw new Error('unsafe membership integer');
+    let text=String(raw??0);
+    if(JSON.isRawJSON?.(value)){
+      const match=/^(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(text);
+      if(!match)throw new Error('invalid membership u64');
+      let digits=match[1]+(match[2]||''),shift=Number(match[3]||0)-(match[2]||'').length;
+      if(!Number.isSafeInteger(shift)||shift>20||shift < -digits.length)throw new Error('invalid membership u64');
+      if(shift<0){if(!/^0*$/.test(digits.slice(shift)))throw new Error('invalid membership u64');digits=digits.slice(0,shift);}
+      else digits+='0'.repeat(shift);
+      text=digits.replace(/^0+(?=.)/,'')||'0';
+    }
+    if(!/^(0|[1-9]\d*)$/.test(text)||BigInt(text)>18446744073709551615n)throw new Error('invalid membership u64');
+    return BigInt(text);
+  }
+  function cordInteger(value){const n=cordU64(value);return n<=BigInt(Number.MAX_SAFE_INTEGER)?Number(n):String(n);}
+  function cordIntegerMax(...values){return cordInteger(values.reduce((a,b)=>cordU64(a)>cordU64(b)?a:b,0));}
+  function cordWireInteger(value){
+    const n=cordU64(value);if(n<=BigInt(Number.MAX_SAFE_INTEGER))return Number(n);
+    if(!JSON.rawJSON)throw new Error('lossless membership numbers require a newer browser');
+    return JSON.rawJSON(String(n));
+  }
   function cordListMaterial(material,communityId){
     const m=material&&typeof material==='object'?material:{};
     /* Fragment encoding applies to every 32-byte value at every depth. `held_roots` and a private
@@ -2151,9 +2185,9 @@
        across root/channel rotations. Leaving those values as base64url lets the room appear while
        silently making its older control plane and messages unreadable. */
     const held=(m.held_roots||[]).map(root=>({...root,key:cordListHex(root&&root.key)}));
-    const channels=(m.channels||[]).map(c=>({...c,id:cordListHex(c.id),key:c.key?cordListHex(c.key):c.key,
+    const channels=(m.channels||[]).map(c=>({...c,epoch:cordInteger(c.epoch||0),id:cordListHex(c.id),key:c.key?cordListHex(c.key):c.key,
       priors:(c.priors||[]).map(prior=>({...prior,key:cordListHex(prior&&prior.key)}))}));
-    return {...m,community_id:cordListHex(communityId),owner:cordListHex(m.owner),owner_salt:cordListHex(m.owner_salt),community_root:cordListHex(m.community_root),control_pk:m.control_pk?cordListHex(m.control_pk):m.control_pk,control_root:m.control_root?cordListHex(m.control_root):m.control_root,held_roots:held,channels};
+    return {...m,root_epoch:cordInteger(m.root_epoch||0),community_id:cordListHex(communityId),owner:cordListHex(m.owner),owner_salt:cordListHex(m.owner_salt),community_root:cordListHex(m.community_root),control_pk:m.control_pk?cordListHex(m.control_pk):m.control_pk,control_root:m.control_root?cordListHex(m.control_root):m.control_root,held_roots:held,channels};
   }
   /* Armada's membership `current` value is a control snapshot, while the invite-derived bundle
    * contains channel secrets and older roots needed to decrypt history.  Refreshing membership must
@@ -2216,15 +2250,15 @@
        *
        * So the key is used as material only when it IS one. Otherwise the bundle keeps its own id,
        * which is the value the reader has always needed. */
-      for(const e of Array.isArray(doc.entries)?doc.entries:[]){const cid=cordListHex(e.community_id),source=e.current||e.seed;if(!source)continue;const real=/^[0-9a-f]{64}$/i.test(String(cid||''))?cid:null,seedSrc=e.seed||source;const current=cordListMaterial(source,real||(source||{}).community_id),seed=cordListMaterial(seedSrc,real||(seedSrc||{}).community_id);entries.push({...e,community_id:cid,current,seed});}
-      for(const t of Array.isArray(doc.tombstones)?doc.tombstones:[])tombstones.push({...t,community_id:cordListHex(t.community_id)});
+      for(const e of Array.isArray(doc.entries)?doc.entries:[]){const cid=cordListHex(e.community_id),source=e.current||e.seed;if(!source)continue;const real=/^[0-9a-f]{64}$/i.test(String(cid||''))?cid:null,seedSrc=e.seed||source;const current=cordListMaterial(source,real||(source||{}).community_id),seed=cordListMaterial(seedSrc,real||(seedSrc||{}).community_id);entries.push({...e,added_at:cordInteger(e.added_at||0),community_id:cid,current,seed});}
+      for(const t of Array.isArray(doc.tombstones)?doc.tombstones:[])tombstones.push({...t,removed_at:cordInteger(t.removed_at||0),community_id:cordListHex(t.community_id)});
     }
     const merged=new Map();
     for(const entry of entries){
       const old=merged.get(entry.community_id);
       if(!old){merged.set(entry.community_id,entry);continue;}
       try{const wire=cordMergeEntry(old,entry),id=entry.community_id;merged.set(id,{...wire,community_id:id,current:cordListMaterial(wire.current,id),seed:cordListMaterial(wire.seed||wire.current,id)});}
-      catch(_){if(Number(entry.added_at||0)>Number(old.added_at||0))merged.set(entry.community_id,entry);}
+      catch(_){if(cordU64(entry.added_at||0)>cordU64(old.added_at||0))merged.set(entry.community_id,entry);}
     }
     return {entries:[...merged.values()],tombstones};
   }
@@ -2243,12 +2277,12 @@
       for(const event of candidates){
         try{
           let doc=membershipDocs.get(event.id);
-          if(!doc){doc=JSON.parse(await p.nip44dec(viewer.pubkey,event.content));membershipDocs.set(event.id,doc);while(membershipDocs.size>256)membershipDocs.delete(membershipDocs.keys().next().value);}
+          if(!doc){doc=cordJsonParse(await p.nip44dec(viewer.pubkey,event.content));membershipDocs.set(event.id,doc);while(membershipDocs.size>256)membershipDocs.delete(membershipDocs.keys().next().value);}
           decrypted.push({event,doc}); recovered=true;
         }catch(_){}
       }
       const list=decodeMembershipLists(decrypted),tombRefs=new Map();
-      for(const t of list.tombstones){if(!t||!t.community_id)continue;tombs.set(t.community_id,Math.max(Number(tombs.get(t.community_id))||0,Number(t.removed_at)||0));
+      for(const t of list.tombstones){if(!t||!t.community_id)continue;tombs.set(t.community_id,cordIntegerMax(tombs.get(t.community_id)||0,t.removed_at||0));
         /* A tombstone written by this build names the invite it retired. Older ones (and Armada's)
          * name only the community id, which no announcement carries — the entry beside it is then
          * the only place the invite_ref survives, so both are merged below. */
@@ -2260,14 +2294,14 @@
            the CORD reader already accepts that material. Rejecting it here hid every such joined
            Vector room before validation or hydration had a chance to run. */
         const compatible=e.current?e:{...e,current:e.seed};
-        const old=entries.get(e.community_id);if(!old||Number(e.added_at||0)>Number(old.added_at||0))entries.set(e.community_id,compatible);
+        const old=entries.get(e.community_id);if(!old||cordU64(e.added_at||0)>cordU64(old.added_at||0))entries.set(e.community_id,compatible);
       }
-      const live=[...entries.values()].filter(e=>Number(e.added_at||0)>Number(tombs.get(e.community_id)||0)&&
+      const live=[...entries.values()].filter(e=>cordU64(e.added_at||0)>cordU64(tombs.get(e.community_id)||0)&&
         !wasLocallyLeft(viewer.pubkey,{communityId:e.community_id,url:inviteRefUrl(e.invite_ref)}));
       let rooms=saved(),changed=false;
       /* A tombstone must also REMOVE a room already rebuilt by cached membership or an old public
        * invite. The previous fold only declined to add it, leaving the stale local row untouched. */
-      const dead=new Set([...tombs].filter(([id,at])=>Number(at)>=Number((entries.get(id)||{}).added_at||0)).map(([id])=>id));
+      const dead=new Set([...tombs].filter(([id,at])=>cordU64(at)>=cordU64((entries.get(id)||{}).added_at||0)).map(([id])=>id));
       /* THE TOMBSTONE TEACHES THIS DEVICE, EVERY PASS. Reported as "on laptop, I loaded
        * Communities and it brought me back to Soapbox which I left many times": the vault said the
        * community was left and the laptop believed it — right up until discovery replayed the
@@ -2432,6 +2466,7 @@
   // CORD-02 §8: canonical, self-encrypted addressable membership fragments.
   const membershipWrites=new Map(),membershipPublished=new Map();
   function cordCanonical(value){
+    if(JSON.isRawJSON?.(value))return value.rawJSON;
     if(Array.isArray(value))return '['+value.map(cordCanonical).join(',')+']';
     if(value&&typeof value==='object')return '{'+Object.keys(value).filter(k=>value[k]!==undefined).sort().map(k=>JSON.stringify(k)+':'+cordCanonical(value[k])).join(',')+'}';
     return JSON.stringify(value);
@@ -2450,11 +2485,12 @@
     const result={...source};
     for(const key of ['community_id','icon','expires_at','creator_npub','label','invite_ref'])delete result[key];
     for(const key of ['owner','owner_salt','community_root','control_pk','control_root'])if(result[key]!==undefined)result[key]=cordListB64(result[key]);
-    result.channels=(result.channels||[]).map(ch=>{const row={...ch};for(const key of ['id','key'])if(row[key]!==undefined)row[key]=cordListB64(row[key]);return row;});
+    result.root_epoch=cordWireInteger(result.root_epoch||0);
+    result.channels=(result.channels||[]).map(ch=>{const row={...ch,epoch:cordWireInteger(ch.epoch||0)};for(const key of ['id','key'])if(row[key]!==undefined)row[key]=cordListB64(row[key]);return row;});
     return result;
   }
   function cordWireEntry(entry){
-    const current=cordWireMaterial(entry.current||entry.seed),seed=cordWireMaterial(entry.seed||entry.current),out={...entry,community_id:cordListB64(entry.community_id),current};
+    const current=cordWireMaterial(entry.current||entry.seed),seed=cordWireMaterial(entry.seed||entry.current),out={...entry,community_id:cordListB64(entry.community_id),current,added_at:cordInteger(entry.added_at||0)};
     seed.name=current.name;seed.relays=current.relays;
     const names=new Map(current.channels.map(ch=>[ch.id,ch.name]));
     seed.channels=seed.channels.map(ch=>({...ch,...(names.has(ch.id)?{name:names.get(ch.id)}:{})}));
@@ -2467,8 +2503,8 @@
   function cordMergeEntry(a,b){
     if(!a)return cordWireEntry(b);
     a=cordWireEntry(a);b=cordWireEntry(b);
-    const choose=(x,y,low)=>{const xe=BigInt(x.root_epoch||0),ye=BigInt(y.root_epoch||0);const winner=xe!==ye?((low?xe<ye:xe>ye)?x:y):(cordCanonicalCompare(x,y)<=0?x:y),other=winner===x?y:x;return {...other,...winner};};
-    return cordWireEntry({...cordMergeOpaque(a,b),community_id:a.community_id,added_at:Math.max(Number(a.added_at)||0,Number(b.added_at)||0),
+    const choose=(x,y,low)=>{const xe=cordU64(x.root_epoch||0),ye=cordU64(y.root_epoch||0);const winner=xe!==ye?((low?xe<ye:xe>ye)?x:y):(cordCanonicalCompare(x,y)<=0?x:y),other=winner===x?y:x;return {...other,...winner};};
+    return cordWireEntry({...cordMergeOpaque(a,b),community_id:a.community_id,added_at:cordIntegerMax(a.added_at||0,b.added_at||0),
       current:choose(a.current,b.current,false),seed:choose(a.seed||a.current,b.seed||b.current,true)});
   }
   function cordMergeLists(docs){
@@ -2481,9 +2517,9 @@
         const cid=cordListB64(/^[0-9a-f]{64}$/i.test(cordListHex(e.community_id))?e.community_id:(e.current||e.seed).community_id);
         entries.set(cid,cordMergeEntry(entries.get(cid),{...e,community_id:cid}));
       }
-      for(const t of doc.tombstones||[]){const cid=cordListB64(t.community_id),old=tombs.get(cid);tombs.set(cid,{...cordMergeOpaque(old,t),community_id:cid,removed_at:Math.max(Number(old?.removed_at)||0,Number(t.removed_at)||0)});}
+      for(const t of doc.tombstones||[]){const cid=cordListB64(t.community_id),old=tombs.get(cid);tombs.set(cid,{...cordMergeOpaque(old,t),community_id:cid,removed_at:cordIntegerMax(old?.removed_at||0,t.removed_at||0)});}
     }
-    for(const [cid,e]of entries)if(Number(e.added_at||0)<=Number(tombs.get(cid)?.removed_at||0))entries.delete(cid);
+    for(const [cid,e]of entries)if(cordU64(e.added_at||0)<=cordU64(tombs.get(cid)?.removed_at||0))entries.delete(cid);
     return {...extras,entries:[...entries.values()].sort((a,b)=>(a.community_id<b.community_id?-1:a.community_id>b.community_id?1:0)),tombstones:[...tombs.values()].sort((a,b)=>(a.community_id<b.community_id?-1:a.community_id>b.community_id?1:0))};
   }
   async function cordMembershipState(p,owner){
@@ -2495,13 +2531,13 @@
     }
     const fragments=new Map();let count=coordinates.size?1:0,countAt=-1;
     for(const [index,event]of coordinates){
-      const doc=JSON.parse(await p.nip44dec(owner,event.content));
+      const doc=cordJsonParse(await p.nip44dec(owner,event.content));
       if(!Number.isSafeInteger(doc.frags)||doc.frags<1)throw new Error('invalid membership fragment count');
       if(event.created_at>countAt||event.created_at===countAt&&doc.frags>count){count=doc.frags;countAt=event.created_at;}
       fragments.set(index,{event,doc});
     }
     // Read migration material too: an old client may still have a membership only there.
-    const legacyDocs=[];for(const event of legacy)legacyDocs.push(JSON.parse(await p.nip44dec(owner,event.content)));
+    const legacyDocs=[];for(const event of legacy)legacyDocs.push(cordJsonParse(await p.nip44dec(owner,event.content)));
     const complete=fragments.size===0||[...fragments.keys()].filter(index=>index<count).length===count;
     const ordered=[...fragments].sort((a,b)=>a[0]-b[0]);
     const merged=cordMergeLists([...ordered.filter(([i])=>i<count).map(([,row])=>row.doc),...legacyDocs]);
@@ -2545,7 +2581,7 @@
       }
       let count=state.count;
       const stamp=index=>Math.max(Math.floor(Date.now()/1000),Number(state.fragments.get(index)?.event.created_at||0)+1);
-      const seal=async(index,doc,frags)=>{live();const content=await p.nip44enc(owner,cordCanonical({...doc,frags}));live();const ev=await p.signTemplate({kind:33302,pubkey:owner,created_at:stamp(index),tags:[['d',String(index)]],content});live();return ev;};
+      const seal=async(index,doc,frags)=>{live();const content=await p.nip44enc(owner,cordCanonical({...doc,entries:(doc.entries||[]).map(e=>({...e,added_at:cordWireInteger(e.added_at||0)})),tombstones:(doc.tombstones||[]).map(t=>({...t,removed_at:cordWireInteger(t.removed_at||0)})),frags}));live();const ev=await p.signTemplate({kind:33302,pubkey:owner,created_at:stamp(index),tags:[['d',String(index)]],content});live();return ev;};
       // Size the actual encrypted+signed wire event. Keep old fragment items in place and
       // append overflow, so publishing new fragments first cannot strand keys on interruption.
       const max=65536,wireSize=ev=>new TextEncoder().encode(JSON.stringify(ev)).length,shrinking=new Map();
@@ -2617,8 +2653,8 @@
       for(const room of wanted){
         const bundle=room.cord&&room.cord.bundle||{},cid=cordListB64(bundle.community_id||room.communityId);
         const current={...bundle,name:room.name};
-        const prior=list.entries.find(e=>e.community_id===cid),removed=Number(list.tombstones.find(t=>t.community_id===cid)?.removed_at)||0;
-        const entry=cordMergeEntry(prior,{community_id:cid,current,added_at:Math.max(now,removed+1),invite_ref:room.url});
+        const prior=list.entries.find(e=>e.community_id===cid),removed=cordU64(list.tombstones.find(t=>t.community_id===cid)?.removed_at||0);
+        const entry=cordMergeEntry(prior,{community_id:cid,current,added_at:cordIntegerMax(now,removed+1n),invite_ref:room.url});
         list.entries=list.entries.filter(e=>e.community_id!==cid);list.entries.push(entry);changed.push(cid);
       }
       return {list,changed};
@@ -2639,7 +2675,7 @@
     await cordWriteMembership(p,list=>{
       const wireId=cordListB64(room.cord?.bundle?.community_id||room.communityId||cid);
       const entries=new Map(list.entries.map(e=>[e.community_id,e])),tombs=new Map(list.tombstones.map(t=>[t.community_id,t]));
-      const latest=Math.max(removedAt,Number(entries.get(wireId)?.added_at||0),Number(tombs.get(wireId)?.removed_at||0));
+      const latest=cordIntegerMax(removedAt,entries.get(wireId)?.added_at||0,tombs.get(wireId)?.removed_at||0);
       entries.delete(wireId);
       tombs.set(wireId,{...tombs.get(wireId),community_id:wireId,removed_at:latest,...(leftRef?{invite_ref:leftRef}:{}),...(leftNaddr?{naddr:leftNaddr}:{})});
       return {list:{...list,entries:[...entries.values()],tombstones:[...tombs.values()]},changed:[wireId]};
