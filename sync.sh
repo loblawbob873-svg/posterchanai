@@ -345,13 +345,24 @@ _wait_gpu_free() {
         echo \"[\$label] GPU free, restarting\"
     fi
 }
-cd ~/posterchanai
+cd ~/posterchanai || exit 1
 # Pulls from the nostr repo (origin) over https://poster.place/git — no Gitea. The mirror step that
 # used to follow this is gone: the push in the parent script already published these commits to the
 # nostr repo, so there is nothing left to mirror.
 _NAS_PREV=\$(git rev-parse HEAD 2>/dev/null || echo HEAD)
-git fetch origin
-git reset --hard origin/master
+# The local app may still be coming back after its restart, so its Git HTTP endpoint can
+# briefly refuse connections. Never reset against stale origin/master after a failed fetch.
+_NAS_FETCH_ATTEMPT=1
+until git fetch origin; do
+    if [ \"\$_NAS_FETCH_ATTEMPT\" -ge 5 ]; then
+        echo \"[nas] ABORT: fetch failed after 5 attempts; checkout and services unchanged\" >&2
+        exit 1
+    fi
+    echo \"[nas] fetch attempt \$_NAS_FETCH_ATTEMPT failed; retrying in 3 seconds\" >&2
+    sleep 3
+    _NAS_FETCH_ATTEMPT=\$((\$_NAS_FETCH_ATTEMPT + 1))
+done
+git reset --hard origin/master || exit 1
 # Same targeted restart as server1: only the units this deploy touched. Computed on nas from its OWN
 # pre-pull HEAD, because a node can be behind by more than one commit. Falls back to restarting the
 # app if anything about that fails — never silently restart nothing.
