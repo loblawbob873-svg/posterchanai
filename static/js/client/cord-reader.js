@@ -26648,7 +26648,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     // Bound attacker-controlled arrays before copying or deriving any per-channel material.
     if(!Array.isArray(input.channels)||input.channels.length>256)throw new Error('invite has too many or invalid channels');
     const hex=(value,label)=>{if(typeof value!=='string'||!/^[0-9a-f]{64}$/.test(value))throw new Error('invalid invite '+label);return value;};
-    const epoch=(value,label)=>{if(!Number.isSafeInteger(value)||value<0)throw new Error('invalid invite '+label);return value;};
+    const epoch=(value,label)=>{if(typeof value==='string'&&value.length<=20&&/^(0|[1-9][0-9]*)$/.test(value)&&BigInt(value)<=18446744073709551615n)return BigInt(value)<=BigInt(Number.MAX_SAFE_INTEGER)?Number(value):value;if(!Number.isSafeInteger(value)||value<0)throw new Error('invalid invite '+label);return value;};
     for(const field of ['community_id','owner','owner_salt','community_root'])hex(input[field],field);
     epoch(input.root_epoch,'root epoch');
     if(!verifyCommunityId(input.community_id,input.owner,input.owner_salt))throw new Error('invite owner commitment does not match');
@@ -26657,9 +26657,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       if(groupKeyCached('concord/control-signer',hex32(input.control_root),hex32(input.community_id),BigInt(input.root_epoch)).pk!==input.control_pk)throw new Error('invite control signer key mismatch');}
     if(input.expires_at!==undefined&&(!Number.isSafeInteger(input.expires_at)||input.expires_at<0))throw new Error('invalid invite expiry');
     if(forJoin&&input.expires_at!==undefined&&now>=input.expires_at)throw new Error('this invite has expired');
-    const channels=input.channels.map(ch=>{if(!ch||typeof ch!=='object')throw new Error('invalid invite channel');hex(ch.id,'channel id');hex(ch.key,'channel key');epoch(ch.epoch,'channel epoch');return {...ch};});
+    const channels=input.channels.map(ch=>{if(!ch||typeof ch!=='object')throw new Error('invalid invite channel');hex(ch.id,'channel id');hex(ch.key,'channel key');return {...ch,epoch:epoch(ch.epoch,'channel epoch')};});
     const relays=capRelays(Array.isArray(input.relays)?input.relays:[]);
-    return {...input,channels,relays};
+    return {...input,root_epoch:epoch(input.root_epoch,"root epoch"),channels,relays};
   }
   async function createCommunity(opts,legacyCreate) {
     if(typeof opts.name!=='string'||!opts.name.trim()||utf8Len(opts.name)>NAME_MAX_BYTES)throw new Error('community name must be 1–64 UTF-8 bytes');

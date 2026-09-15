@@ -21,6 +21,11 @@ const reset=()=>{relay=[];published=[];stale=false;signHook=null;viewer=owner;vm
 const material=(n,extra={})=>({owner:b64(owner),owner_salt:b64(hex(2)),community_root:b64(hex(1000+n)),root_epoch:0,channels:[],name:'room '+n,relays:['wss://test.example'],...extra});
 const entry=(n,extra={})=>({community_id:b64(hex(n)),current:material(n),added_at:1000,...extra});
 const room=(n,extra={})=>copy({communityId:hex(n),url:'https://example.test/invite/'+n+'#token',name:'room '+n,cord:{bundle:{community_id:hex(n),...material(n,extra)}}});
+const maxEpoch='18446744073709551615',priorEpoch='18446744073709551614';
+const bigMerge=ctx.cordMergeEntry(copy(entry(1,{current:material(1,{root_epoch:priorEpoch})})),copy(entry(1,{current:material(2,{root_epoch:maxEpoch})})));
+assert.equal(bigMerge.current.root_epoch,maxEpoch,'adjacent u64 epochs must not collapse through Number');
+const byteTie=ctx.cordMergeEntry(copy(entry(1,{current:material(1,{name:'\uE000'})})),copy(entry(1,{current:material(1,{name:'\u{10000}'})})));
+assert.equal(byteTie.current.name,'\uE000','canonical-byte tie is UTF-8, not JavaScript UTF-16 ordering');
 // Independent encrypted fragmented input, including opaque fields at every level.
 reset();
 const retained={name:'old',root_epoch:0,...material(1),channels:[{id:b64(hex(70)),key:b64(hex(71)),epoch:0,name:'old name',future:{bytes:'AbCdEF'}}],future:{token:'DoNotCaseFold'}};

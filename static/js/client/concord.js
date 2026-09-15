@@ -1788,7 +1788,8 @@
     const latest=saved(),at=latest.findIndex(item=>sameRoom(item,room));if(at<0)return;
     latest[at]={...latest[at],nip29Hydrated:true};save(latest);if(sameRoom(latest[state.community],room))backgroundRender();
   }
-  async function membershipEvents(p,pubkey,{external=true,legacyRecovery=false,signal=null}={}){
+  const membershipFragmentReads=new Map();
+  async function membershipEvents(p,pubkey,{external=true,legacyRecovery=false,signal=null,fullFragments=false}={}){
     /* Match Armada's wire query exactly. A mixed [13302,33302] request looks harmless, but several
        relays close the WHOLE subscription when one kind is unsupported/blocked. That made a valid
        13302 vault look absent and a fresh browser showed no communities. 13302 is a legacy
@@ -1801,7 +1802,7 @@
          Firefox with failed Damus/Ditto/Vector sockets. External recovery is a fallback only. The
          two historically blocked relays are reserved for an explicit recovery action. */
       const local=[...(cached||[]),...(pool||[])].filter(e=>e&&e.id);
-      const tag=pubkey+':'+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':legacy':'');
+      const tag=pubkey+':'+String(filter.kinds&&filter.kinds[0])+(filter['#d']?':d:'+filter['#d'].join(','):'');
       const sweep=external&&externalAllowed(pubkey,tag);
       let remote=[];
       if(sweep&&p.relayQueryFrom){
@@ -1819,7 +1820,28 @@
       query({kinds:[33302],authors:[pubkey],'#d':[''],limit:20}),
       query({kinds:[33302],authors:[pubkey],limit:64}),
     ]);
-    return [...new Map([...released,...legacy,...migrated].map(e=>[e.id,e])).values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)));
+    let recovered=membershipFragmentReads.get(pubkey);
+    if(!recovered){recovered={heads:new Map(),cursor:0};membershipFragmentReads.set(pubkey,recovered);}
+    let all=[...released,...legacy,...migrated,...recovered.heads.values()].filter(event=>event.pubkey===pubkey);
+    if(p.verifyRelayEvents)all=await p.verifyRelayEvents(all);
+    const retain=events=>{for(const event of events){const d=event.kind===33302&&(event.tags||[]).find(t=>t[0]==='d')?.[1];if(!/^(0|[1-9]\d*)$/.test(String(d)))continue;const index=Number(d);if(!Number.isSafeInteger(index))continue;const old=recovered.heads.get(index);if(!old||event.created_at>old.created_at||event.created_at===old.created_at&&event.id<old.id)recovered.heads.set(index,event);}};
+    retain(all);
+    let count=0,countAt=-1;
+    if(p.nip44dec)for(const event of recovered.heads.values())try{const doc=JSON.parse(await p.nip44dec(pubkey,event.content));if(Number.isSafeInteger(doc.frags)&&doc.frags>0&&(event.created_at>countAt||event.created_at===countAt&&doc.frags>count)){count=doc.frags;countAt=event.created_at;}}catch(_){}
+    // A relay's initial page is not the whole list. Recover exact missing coordinates in
+    // small batches and retain ciphertext heads across passes. A hole must not prevent
+    // fetching later fragments. Foreground writes may read several batches; ordinary
+    // startup does one, so an offline relay cannot block the UI on a huge declared count.
+    const deadline=Date.now()+30000,budget=fullFragments?16:1;let walked=0;
+    for(let pass=0;count&&pass<budget&&walked<count&&Date.now()<deadline&&!signal?.aborted;pass++){
+      const missing=[];
+      while(missing.length<16&&walked<count){const index=recovered.cursor%count;recovered.cursor=(index+1)%count;walked++;if(!recovered.heads.has(index))missing.push(String(index));}
+      if(!missing.length)break;
+      let found=await query({kinds:[33302],authors:[pubkey],'#d':missing,limit:missing.length});
+      if(p.verifyRelayEvents)found=await p.verifyRelayEvents(found);
+      found=found.filter(event=>event.pubkey===pubkey);retain(found);all.push(...found);
+    }
+    return [...new Map([...all,...recovered.heads.values()].map(e=>[e.id,e])).values()].sort((a,b)=>Number(b.created_at)-Number(a.created_at)||String(a.id).localeCompare(String(b.id)));
   }
   function cordListHex(value){
     const s=String(value||''); if(s.length!==43)return s;
@@ -2117,6 +2139,11 @@
     if(value&&typeof value==='object')return '{'+Object.keys(value).filter(k=>value[k]!==undefined).sort().map(k=>JSON.stringify(k)+':'+cordCanonical(value[k])).join(',')+'}';
     return JSON.stringify(value);
   }
+  function cordCanonicalCompare(a,b){
+    const encoder=new TextEncoder(),x=encoder.encode(cordCanonical(a)),y=encoder.encode(cordCanonical(b));
+    for(let i=0;i<Math.min(x.length,y.length);i++)if(x[i]!==y[i])return x[i]-y[i];
+    return x.length-y.length;
+  }
   function cordListB64(value){
     const hex=cordListHex(value);
     if(!/^[0-9a-f]{64}$/i.test(hex))throw new Error('membership contains an invalid 32-byte key');
@@ -2138,12 +2165,12 @@
     return out;
   }
   function cordMergeOpaque(a,b){
-    const out={...a};for(const [key,value]of Object.entries(b||{}))if(out[key]===undefined||cordCanonical(value)<cordCanonical(out[key]))out[key]=value;return out;
+    const out={...a};for(const [key,value]of Object.entries(b||{}))if(out[key]===undefined||cordCanonicalCompare(value,out[key])<0)out[key]=value;return out;
   }
   function cordMergeEntry(a,b){
     if(!a)return cordWireEntry(b);
     a=cordWireEntry(a);b=cordWireEntry(b);
-    const choose=(x,y,low)=>{const xe=Number(x.root_epoch)||0,ye=Number(y.root_epoch)||0;const winner=xe!==ye?((low?xe<ye:xe>ye)?x:y):(cordCanonical(x)<=cordCanonical(y)?x:y),other=winner===x?y:x;return {...other,...winner};};
+    const choose=(x,y,low)=>{const xe=BigInt(x.root_epoch||0),ye=BigInt(y.root_epoch||0);const winner=xe!==ye?((low?xe<ye:xe>ye)?x:y):(cordCanonicalCompare(x,y)<=0?x:y),other=winner===x?y:x;return {...other,...winner};};
     return cordWireEntry({...cordMergeOpaque(a,b),community_id:a.community_id,added_at:Math.max(Number(a.added_at)||0,Number(b.added_at)||0),
       current:choose(a.current,b.current,false),seed:choose(a.seed||a.current,b.seed||b.current,true)});
   }
@@ -2163,7 +2190,7 @@
     return {...extras,entries:[...entries.values()].sort((a,b)=>(a.community_id<b.community_id?-1:a.community_id>b.community_id?1:0)),tombstones:[...tombs.values()].sort((a,b)=>(a.community_id<b.community_id?-1:a.community_id>b.community_id?1:0))};
   }
   async function cordMembershipState(p,owner){
-    const candidates=[...await membershipEvents(p,owner),...(membershipPublished.get(owner)||[])],coordinates=new Map(),legacy=[];
+    const candidates=[...await membershipEvents(p,owner,{fullFragments:true}),...(membershipPublished.get(owner)||[])],coordinates=new Map(),legacy=[];
     for(const event of candidates){
       const d=(event.tags||[]).find(t=>t[0]==='d')?.[1];
       if(event.kind===33302&&/^(0|[1-9]\d*)$/.test(String(d))){const index=Number(d),old=coordinates.get(index);if(!Number.isSafeInteger(index))continue;if(!old||event.created_at>old.created_at||event.created_at===old.created_at&&event.id<old.id)coordinates.set(index,event);}

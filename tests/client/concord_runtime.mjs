@@ -386,8 +386,8 @@ if(missingLeave.index!==-1 || missingLeave.rooms.length!==3)
 // The server tombstone removes a cached rail row, and the device leave ledger keeps a later relay
 // that only knows the old join from adding it back. An explicit rejoin clears that local intent.
 const soapboxId='1'.repeat(64),soapboxUrl=JOIN_URL,soapboxRoom={communityId:soapboxId,naddr:'naddr1pppp',url:soapboxUrl,name:'Soapbox',channels:[{name:'general'}],cord:{bundle:JOIN_BUNDLE,armadaList:true}};
-const oldJoin={id:'old-join',kind:13302,created_at:100,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:100,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[]}),tags:[]};
-const newerLeave={id:'newer-leave',kind:13302,created_at:200,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:100,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[{community_id:soapboxId,removed_at:200}]}),tags:[]};
+const oldJoin={id:'old-join',pubkey:window.__PC.viewer().pubkey,kind:13302,created_at:100,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:100,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[]}),tags:[]};
+const newerLeave={id:'newer-leave',pubkey:window.__PC.viewer().pubkey,kind:13302,created_at:200,content:JSON.stringify({entries:[{community_id:soapboxId,added_at:100,current:JOIN_BUNDLE,seed:JOIN_BUNDLE,invite_ref:soapboxUrl}],tombstones:[{community_id:soapboxId,removed_at:200}]}),tags:[]};
 let membershipBatch=[oldJoin,newerLeave];
 const membershipPC={...window.__PC,nip44dec:async(_pk,value)=>value,
   relayQuery:async filters=>(filters[0]?.kinds||[]).includes(13302)?membershipBatch:[]};

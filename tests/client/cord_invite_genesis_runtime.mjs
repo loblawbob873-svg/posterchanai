@@ -32,6 +32,11 @@ assert.throws(()=>P.openInvite(made.url,copy([expired]),{forJoin:true}),/expired
 assert.throws(()=>R.validateInviteBundle(copy({...bundle,owner:'aa'.repeat(32)})),/commitment/);
 assert.throws(()=>R.validateInviteBundle(copy({...bundle,control_root:'bb'.repeat(32)})),/mismatch/);
 assert.throws(()=>R.validateInviteBundle(copy({...bundle,channels:Array(257).fill({})})),/too many/);
+const legacy={...bundle};delete legacy.control_pk;
+assert.equal(R.validateInviteBundle(copy({...legacy,root_epoch:'7'})).root_epoch,7);
+assert.equal(R.validateInviteBundle(copy({...legacy,root_epoch:'18446744073709551615'})).root_epoch,'18446744073709551615');
+assert.throws(()=>R.validateInviteBundle(copy({...legacy,root_epoch:'18446744073709551616'})),/epoch/);
+assert.throws(()=>R.validateInviteBundle(copy({...legacy,root_epoch:9007199254740992})),/epoch/);
 const channel={id:'aa'.repeat(32),key:'bb'.repeat(32),epoch:0,name:'private',future:{opaque:'Keep'}};
 const bounded=R.validateInviteBundle(copy({...bundle,channels:Array(256).fill(channel),relays:Array.from({length:50},(_,i)=>'wss://relay'+i+'.example'),future:{opaque:'EXACT'}}));
 assert.equal(bounded.channels.length,256);assert.equal(bounded.relays.length,5);assert.equal(JSON.stringify(bounded.future),' {"opaque":"EXACT"}'.trim());assert.equal(bounded.channels[0].future.opaque,'Keep');

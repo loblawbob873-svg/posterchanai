@@ -33,7 +33,7 @@ const merged=window.PCConcord.mergeArmadaBundle(complete,snapshot);
 if(merged.community_root!=='new-root'||merged.owner!=='new-owner'||merged.channels[0].key!=='general-key'||
    merged.held_roots[0].key!=='old-key'||merged.relays.length!==2)
   throw new Error('membership refresh discarded invite-only history material');
-const poolEvent={id:'pool-membership',kind:13302,created_at:20,tags:[],content:'pool'},legacyEvent={id:'legacy-membership',kind:33302,created_at:10,tags:[['d','0']],content:'legacy'};
+const poolEvent={id:'pool-membership',pubkey:hex('9'),kind:13302,created_at:20,tags:[],content:'pool'},legacyEvent={id:'legacy-membership',pubkey:hex('9'),kind:33302,created_at:10,tags:[['d','0']],content:'legacy'};
 const queries=[];
 /* A POOL HIT IS NOT A COMPLETE ANSWER, and treating it as one is what made a joined community
    disappear. Armada leaves list SHARDS across relays and the vault is replaceable, so the copy on
