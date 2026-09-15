@@ -10067,6 +10067,9 @@ button.pcc-dl:focus-visible{outline:2px solid var(--neon);outline-offset:-2px}
 .pv-win{height:100%}
 .osw-slot.pv-win{opacity:1;overflow:hidden;padding:0}
 .pv-sheet{position:fixed;inset:0;z-index:1200}
+/* Fixed previews bypass the native window body padding. Reserve its title bar so image/PDF
+   actions remain visible and clickable, while closing the preview keeps Files underneath. */
+html.pc-oswin .pv-sheet{top:38px}
 .pv-bar{display:flex;align-items:center;gap:10px;padding:8px 10px;flex:0 0 auto;
   border-bottom:1px solid var(--line);background:var(--panel)}
 .pv-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
