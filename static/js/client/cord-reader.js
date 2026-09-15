@@ -26956,8 +26956,26 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
     return [...new Map(out.map(g=>[g.pk,g])).values()];
   }
+  function refoundingBeforeEvents(events) {
+    if(events===undefined)return [];
+    if(!Array.isArray(events)||events.length>8)throw new Error('invalid refounding prerequisite events');
+    const copied=JSON.parse(JSON.stringify(events));
+    for(const event of copied)if(event?.kind!==33301||event.content!==''||
+      event.tags?.filter(t=>t[0]==='d').length!==1||!event.tags.some(t=>t[0]==='d'&&t[1]==='')||
+      event.tags.filter(t=>t[0]==='vsk').length!==1||!event.tags.some(t=>t[0]==='vsk'&&t[1]==='9')||
+      !verifyEvent2(event))throw new Error('invalid signed invitation retirement prerequisite');
+    return copied;
+  }
+  function refoundingBeforeRelays(relays,events) {
+    if(!events.length)return [];
+    if(!Array.isArray(relays)||!relays.length||relays.length>8||relays.some(value=>{
+      try{const u=new URL(value);return typeof value!=='string'||!['wss:','ws:'].includes(u.protocol)||!!u.username||!!u.password||!!u.hash;}catch{return true;}
+    }))throw new Error('invalid refounding prerequisite relays');
+    return [...new Set(relays)];
+  }
   async function prepareRefounding(bundle,controlWraps,options,pubkey,signEvent,encryptBytes) {
     requireActiveMembership(bundle);
+    const beforeEvents=refoundingBeforeEvents(options.beforeEvents),beforeRelays=refoundingBeforeRelays(options.beforeRelays,beforeEvents);
     if(options.historyComplete!==true)throw new Error('complete control history is required before refounding');
     const {community,groups,folded}=control(bundle,controlWraps),editions=openControlWraps(controlWraps,groups);
     if(folded.incomplete.length||!folded.metadata||!folded.headEditions.size)throw new Error('control state cannot be reliably compacted');
@@ -26994,14 +27012,21 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     for(let i=0;i<n;i++){
       const rumor=buildRumor({kind:3312,pubkey,content:JSON.stringify(members.slice(i*400,(i+1)*400)),ms,tags:[['snap',snap,String(i+1),String(n)]]}),seal=await sealRumor(rumor,20013,guest,{signEvent});snapshot.push(wrapSeal(seal,guest));
     }
-    return {version:1,community_id:bundle.community_id,actor:pubkey,prior:JSON.parse(JSON.stringify(bundle)),next,
+    return {version:1,community_id:bundle.community_id,actor:pubkey,prior:JSON.parse(JSON.stringify(bundle)),next,beforeEvents,beforeRelays,beforeEvent:0,
       phases:[{name:'root',events:root.wraps},{name:'control',events:compacted},{name:'channels',events:channels},{name:'guestbook',events:snapshot,optional:true}],phase:0,event:0};
   }
   async function resumeRefounding(plan,{publish,persist,current}) {
     if(!plan||plan.version!==1||plan.community_id!==plan.prior.community_id||plan.next.community_id!==plan.community_id||plan.phases?.map(p=>p.name).join(',')!=='root,control,channels,guestbook')throw new Error('invalid refounding checkpoint');
+    const before=refoundingBeforeEvents(plan.beforeEvents);refoundingBeforeRelays(plan.beforeRelays,before);
+    const cursor=plan.beforeEvent??0;if(!Number.isSafeInteger(cursor)||cursor<0||cursor>before.length)throw new Error('invalid prerequisite checkpoint');
     const check=()=>{if(!current())throw new Error('refounding account or membership changed');};check();
     // Persist all signed events and fresh keys before the first network write.
     await persist(plan);check();
+    for(let index=cursor;index<before.length;index++){
+      check();const accepted=await publish(before[index],'before');check();
+      if(!accepted?.ok)throw new Error('refounding prerequisite publication was not confirmed');
+      plan.beforeEvent=index+1;await persist(plan);check();
+    }
     while(plan.phase<plan.phases.length){const phase=plan.phases[plan.phase];
       while(plan.event<phase.events.length){check();let accepted;
         try{accepted=await publish(phase.events[plan.event],phase.name);}catch(e){if(!phase.optional)throw e;}

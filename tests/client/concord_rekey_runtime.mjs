@@ -128,3 +128,18 @@ activeOwner=owner;stored=[{id:'room',communityId:cid,cord:{bundle:structuredClon
 const pendingRefound=ctx.refoundRoom({...transport,viewer:()=>({pubkey:activeOwner}),relayPublishRoom:async()=>{await new Promise(r=>releasePublication=r);return {ok:true};}},stored[0],options);
 for(let i=0;i<30&&!releasePublication;i++)await new Promise(r=>setImmediate(r));assert(releasePublication);activeOwner=other;stored=[{id:'room',newAccountSentinel:true}];releasePublication();await assert.rejects(()=>pendingRefound,/account or membership changed/);assert.deepEqual(stored,[{id:'room',newAccountSentinel:true}]);
 console.log('CORD06 refounding stays bound to original account and room');
+// A terminal link retirement is a durable prerequisite, never an ephemeral callback.
+const retirement=NT.finalizeEvent({kind:33301,created_at:Math.floor(Date.now()/1000),tags:[['d',''],['vsk','9']],content:''},otherSk),beforeRelays=['wss://bootstrap.example','wss://relay.example'];
+const retirementOptions={...options,beforeEvents:[retirement],beforeRelays};
+for(const invalid of [{...retirementOptions,beforeEvents:[{...retirement,content:'tampered'}]},{...retirementOptions,beforeRelays:['https://wrong.example']}])await assert.rejects(()=>reader.prepareRefounding(bundle,refoundControls,invalid,owner,async e=>NT.finalizeEvent(e,sk),encryptBytes),/prerequisite/);
+const retirementPlan=await reader.prepareRefounding(bundle,refoundControls,retirementOptions,owner,async e=>NT.finalizeEvent(e,sk),encryptBytes);let checkpoint,attempts=[];
+await assert.rejects(()=>reader.resumeRefounding(retirementPlan,{current:()=>true,persist:async value=>{checkpoint=structuredClone(value);},publish:async(e,phase)=>{assert.equal(checkpoint.beforeEvents[0].id,retirement.id);attempts.push([e.id,phase]);return {ok:false};}}),/prerequisite publication/);
+assert.deepEqual(attempts,[[retirement.id,'before']]);assert.equal(checkpoint.phase,0);assert.equal(checkpoint.beforeEvent,0);
+const restored=JSON.parse(JSON.stringify(checkpoint));attempts=[];
+await reader.resumeRefounding(restored,{current:()=>true,persist:async()=>{},publish:async(e,phase)=>{attempts.push([e.id,phase]);return {ok:true};}});assert.deepEqual(attempts[0],[retirement.id,'before']);assert.equal(attempts[1][1],'root');assert.equal(restored.beforeEvent,1);
+// Actual adapter persists before publication and routes to each original bootstrap relay.
+activeOwner=owner;stored=[{id:'room',communityId:cid,cord:{bundle:structuredClone(bundle)}}];let beforeCalls=[],denySecond=true;
+const retirementTransport={...transport,relayPublishRoom:async(urls,e,auth)=>{if(e.kind===33301){assert.equal(stored[0].cord.refounding.beforeEvents[0].id,retirement.id);assert.deepEqual([...stored[0].cord.refounding.beforeRelays],beforeRelays);assert(!auth?.pubkey,'public link tombstone must not use control-plane AUTH');beforeCalls.push([...urls]);return {ok:!(denySecond&&urls[0]===beforeRelays[1])};}assert(!denySecond,'root cannot publish before all retirement relays ACK');return {ok:true};}};
+await assert.rejects(()=>ctx.refoundRoom(retirementTransport,stored[0],retirementOptions),/prerequisite publication/);assert.equal(stored[0].cord.refounding.phase,0);assert.equal(stored[0].cord.refounding.beforeEvent,0);
+denySecond=false;await ctx.refoundRoom(retirementTransport,stored[0],{});assert.deepEqual(beforeCalls,beforeRelays.concat(beforeRelays).map(url=>[url]));assert(!stored[0].cord.refounding);assert.notEqual(stored[0].cord.bundle.community_root,bundle.community_root);
+console.log('CORD06 durable invitation prerequisites survive plain resume and require every bootstrap ACK');

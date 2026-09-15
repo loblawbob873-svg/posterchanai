@@ -68,3 +68,11 @@ Unseen old messages cannot be distinguished cryptographically from newly authore
 backdated messages with this wire format. The sealed view therefore admits only
 history already cached before sealing, retaining the keys and ciphertext. It does
 not pretend an author-controlled timestamp establishes historical authenticity.
+
+Final invitation retirement can attach signed, chainless kind-33301 tombstones and
+explicit bootstrap relays as durable refounding prerequisites. The complete plan
+is validated and saved first; every listed bootstrap relay must acknowledge each
+retirement before any root event is published. A normal resumed operation retains
+those exact signed events and destinations, including after partial relay success.
+Unavailable bootstrap relays leave a visible resumable operation; they cannot be
+silently skipped by an aggregate acknowledgement from a different relay.
