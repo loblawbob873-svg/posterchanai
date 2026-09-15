@@ -101,6 +101,8 @@ async def check_controls(tmp_path, kind, native, scale):
                 return {name:b.className,clear:!bounds||r.top>=bounds.bottom-.1,
                   clickable:b.contains(document.elementFromPoint(x,y)),x,y};})})()''')
             assert geometry and all(row['clear'] and row['clickable'] for row in geometry), geometry
+            if not native:
+                assert await browser.js('document.querySelector(".pv-sheet").getBoundingClientRect().top') == 0
 
             async def click(selector):
                 point = await browser.js(f'''(()=>{{const r=document.querySelector({json.dumps(selector)}).getBoundingClientRect();return {{x:r.x+r.width/2,y:r.y+r.height/2}}}})()''')
