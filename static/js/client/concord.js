@@ -3191,7 +3191,7 @@
     try{
       const rooms=saved(),room=rooms[state.community],channel=room&&(room.channels||[]).find(c=>c.name===(state.channel||'general')),
         bundle=room&&room.cord&&room.cord.bundle,reader=window.PosterCordReader;
-      if(!room||!channel||!bundle||!reader)return;
+      if(!room||!channel||!bundle||!reader||bundle.dissolved)return;
       const owner=deliveryOwner(p),identity=roomIdentity(room),
         stillOwned=()=>deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity);
       const loadKey=room.communityId||room.naddr,controlWraps=roomControls.get(loadKey);
@@ -3242,7 +3242,7 @@
     const prior=rekeySubscriptions.get(key);if(prior&&prior.snapshot===snapshot)return;
     if(prior)prior.close();
     const authors=reader.inspectRekeyStreams(bundle);if(!authors.length)return;
-    let closed=false,pooled=null,external=null,chain=Promise.resolve();const wraps=new Map(),relays=roomRelays(bundle);
+    let closed=false,warned=false,pooled=null,external=null,chain=Promise.resolve();const wraps=new Map(),relays=roomRelays(bundle);
     const current=()=>!closed&&deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity&&JSON.stringify(r.cord&&r.cord.bundle)===snapshot);
     const close=()=>{closed=true;try{R.close(pooled);}catch(_){}try{if(external)external();}catch(_){}};
     const entry={owner,snapshot,close};rekeySubscriptions.set(key,entry);
@@ -3250,7 +3250,10 @@
       if(!current())return;
       const result=await reader.inspectRekeys(bundle,roomControls.get(room.communityId||room.naddr)||controls||[],[...wraps.values()],owner,p.cordRekeyDecrypt);
       if(!current())return;
+      if(result.blocked&&result.blocked.length&&!warned){warned=true;if(p.toast)p.toast('A community key update could not be opened. Your signer may not support binary rekeys.');}
       let next=reader.applyRekeyUpdates(bundle,result.updates);
+      const tombstone=reader.inspectDissolution&&reader.inspectDissolution(bundle,[...wraps.values()]);
+      if(tombstone)next={...bundle,dissolved:tombstone};
       // Missing chunks never enter this list; keep archived keys for reading history.
       for(const removal of result.removed){if(result.updates.some(u=>u.scope===removal.scope&&u.epoch===removal.epoch))continue;
         if(removal.scope==='0'.repeat(64))next.removed=true;
@@ -3276,7 +3279,7 @@
 
   async function refreshRoomMetadata(p){
     if(metadataBusy||!document.body.classList.contains('concord-view')||!window.PosterCordReader)return;
-    const rooms=saved(),eligible=rooms.map((room,index)=>({room,index})).filter(x=>x.room&&!x.room.local&&x.room.cord&&x.room.cord.bundle);
+    const rooms=saved(),eligible=rooms.map((room,index)=>({room,index})).filter(x=>x.room&&!x.room.local&&x.room.cord&&x.room.cord.bundle&&!x.room.cord.bundle.dissolved);
     if(!eligible.length)return; metadataBusy=true;
     try{
       /* Rotate through every joined community. Metadata belongs to the community rail as much as

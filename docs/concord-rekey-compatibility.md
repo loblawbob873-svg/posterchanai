@@ -39,3 +39,17 @@ because they publish a banlist.
 Epoch arithmetic uses unsigned 64-bit integers and decimal strings in adopted
 local material. JSON numeric wire snapshots above JavaScript's safe integer range
 need a lossless JSON serializer/parser; ordinary JSON number coercion is not safe.
+
+## Dissolution
+
+The reader/writer validates the owner-signed chainless CORD02 tombstone at the
+public, epoch-independent address. The signed `eid` must equal this community;
+zero placeholders and rewrapped tombstones from the same owner's other community
+are rejected. Receipt persists a terminal marker, stops live chat/rekey and
+metadata refresh, retains historical keys, and blocks future writes/rekeys.
+
+Full post-seal historical synchronization is still separate: accepting only
+already-known history while continuing to honor authors' self-deletes requires
+cache-aware admission. An attacker-controlled event timestamp is not an adequate
+substitute. This implementation must not be presented as complete CORD02
+post-seal message synchronization.

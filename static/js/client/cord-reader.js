@@ -9347,6 +9347,8 @@ var PosterCordReader = (() => {
   // pc-cord-reader.ts
   var pc_cord_reader_exports = {};
   __export(pc_cord_reader_exports, {
+    inspectDissolution: () => inspectDissolution,
+    createDissolutionWrap: () => createDissolutionWrap,
     encryptRekeyBytes: () => encryptRekeyBytes,
     decryptRekeyBytes: () => decryptRekeyBytes,
     createRekeyWraps: () => createRekeyWraps,
@@ -26947,7 +26949,28 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
     return [...new Map(out.map(g=>[g.pk,g])).values()];
   }
-  function inspectRekeyStreams(bundle) {return rekeyGroups(bundle).map(g=>g.pk);}
+  function dissolutionGroup(bundle) {
+    const community=runtime(bundle);return groupKeyCached('concord/dissolved',community.id,ZERO32);
+  }
+  function inspectDissolution(bundle,wraps) {
+    const community=runtime(bundle),group=dissolutionGroup(bundle);
+    for(const wrap of (wraps||[]).slice(0,10000))try{
+      if(wrap.kind!==1059||wrap.pubkey!==group.pk)continue;
+      const event=openWrap(wrap,group);
+      if(event.kind!==3308||event.sealKind!==20014||event.author!==community.owner||event.content!==''||
+         uniqueTag(event.tags,'vsk')!=='10'||uniqueTag(event.tags,'eid')!==community.idHex||
+         event.tags.some(t=>['ev','ep','vac'].includes(t[0])))continue;
+      return {id:event.rumorId,author:event.author,community_id:community.idHex};
+    }catch(_){}
+    return null;
+  }
+  async function createDissolutionWrap(bundle,pubkey,signEvent) {
+    const community=runtime(bundle);if(pubkey!==community.owner)throw new Error('only the owner may dissolve a community');
+    const group=dissolutionGroup(bundle),rumor=buildRumor({kind:3308,pubkey,content:'',ms:Date.now(),tags:[['vsk','10'],['eid',community.idHex]]}),seal=await sealRumor(rumor,20014,group,{signEvent});
+    return {rumorId:rumor.id,wrap:wrapSeal(seal,group)};
+  }
+
+  function inspectRekeyStreams(bundle) {return [...rekeyGroups(bundle).map(g=>g.pk),dissolutionGroup(bundle).pk];}
   function rekeyAuthority(community,folded,opened,scope) {
     if(folded.banned.has(opened.author))return false;
     if(opened.author===community.owner)return true;
@@ -26963,7 +26986,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   }
   async function inspectRekeys(bundle,controlWraps,wraps,recipient,decryptBytes) {
     hex32(recipient);const {community,folded}=control(bundle,controlWraps),groups=new Map(rekeyGroups(bundle).map(g=>[g.pk,g])),sets=new Map(),gaps=[];
-    if(bundle.dissolved)return {updates:[],removed:[],gaps:[]};
+    if(bundle.dissolved)return {updates:[],removed:[],gaps:[],blocked:[]};
     for(const wrap of (wraps||[]).slice(0,10000))try{
       const group=groups.get(wrap.pubkey);if(!group||wrap.kind!==1059)continue;
       const opened=openWrap(wrap,group);if(opened.kind!==3303||opened.sealKind!==20013)continue;
@@ -26980,17 +27003,17 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       if(set.n!==n||set.chunks.has(i)&&set.chunks.get(i).content!==opened.content)set.invalid=true;
       set.chunks.set(i,{content:opened.content,rows});sets.set(key,set);
     }catch(_){}
-    const updates=[],removed=[];
+    const updates=[],removed=[],blocked=[];
     for(const set of sets.values()){
       if(set.invalid)continue;
       const locator=rekeyLocator(set.author,recipient,set.scope,set.epoch),rows=[...set.chunks.values()].flatMap(c=>c.rows),mine=rows.filter(r=>r.locator===locator);
       if(mine.length){
         // A corrupt addressed blob is NOT evidence of removal. Never try a text
         // decoder or a different account's keys as a fallback.
-        if(typeof decryptBytes!=='function')continue;
+        if(typeof decryptBytes!=='function'){blocked.push({scope:set.scope,epoch:set.epoch});continue;}
         const decoded=[];let invalid=false;
         for(const row of mine)try{decoded.push(decodeRekeyBlob(await decryptBytes(set.author,row.wrapped),set.scope,set.epoch,bundle.community_id));}catch(_){invalid=true;}
-        if(invalid||!decoded.length||decoded.some(x=>JSON.stringify(x)!==JSON.stringify(decoded[0])))continue;
+        if(invalid||!decoded.length||decoded.some(x=>JSON.stringify(x)!==JSON.stringify(decoded[0]))){blocked.push({scope:set.scope,epoch:set.epoch});continue;}
         updates.push({scope:set.scope,epoch:set.epoch,prevepoch:set.prevepoch,prevcommit:set.prevcommit,author:set.author,...decoded[0]});
       }else if(set.chunks.size===set.n){
         // Removal is an authority action against this recipient, not merely a
@@ -26999,7 +27022,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         if(recipient!==community.owner&&(set.author===community.owner||actor!==undefined&&(target===undefined||actor<target)))removed.push({scope:set.scope,epoch:set.epoch,author:set.author});
       }
     }
-    return {updates,removed,gaps};
+    return {updates,removed,gaps,blocked};
   }
   function applyRekeyUpdates(bundle,updates) {
     const next=JSON.parse(JSON.stringify(bundle));if(next.dissolved)return next;
