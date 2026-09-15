@@ -8750,6 +8750,9 @@ html.os-on #upload-badge.upbadge{z-index:333}
 .os-app{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;border:0;
   background:transparent;color:var(--text);cursor:pointer;text-align:start;font-size:17px;min-height:54px}
 .os-app:hover{background:rgba(255,255,255,.09)}
+/* Result buttons meet the scrollport edges. Keep the theme's keyboard ring inside the button
+   so overflow clipping cannot erase its top or sides. */
+.os-applist .os-app:focus-visible{box-shadow:inset var(--ring)}
 .os-app .ic{width:26px;height:26px;color:var(--neon);flex:0 0 auto}
 /* A program's REAL icon, at the same box as the sprite glyph beside it. `object-fit:contain` keeps
    a non-square icon from being stretched into a different logo. */

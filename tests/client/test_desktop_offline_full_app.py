@@ -223,11 +223,15 @@ def test_saved_login_popup_keeps_search_and_applies_fresh_instance_policy(cached
     asyncio.run(saved_popup(cached_policy))
 
 
-async def delayed_native_apps():
+async def delayed_native_apps(keyboard=None):
     async def check(b):
         await b.until("!!document.querySelector('#os-q')")
         assert await b.js('!PCOSShell.available() && __waitingHTTP.length>0')
-        await b.js("(()=>{const q=document.querySelector('#os-q');q.value='Firefox';q.focus();q.dispatchEvent(new Event('input',{bubbles:true}));q.setSelectionRange(1,4);window.__nativeSearch=q})()")
+        if keyboard:
+            await b.call('Input.insertText',{'text':'Firefox'})
+            await b.js("window.__nativeSearch=document.querySelector('#os-q');__nativeSearch.setSelectionRange(1,4)")
+        else:
+            await b.js("(()=>{const q=document.querySelector('#os-q');q.value='Firefox';q.focus();q.dispatchEvent(new Event('input',{bubbles:true}));q.setSelectionRange(1,4);window.__nativeSearch=q})()")
         assert await b.js('__appScans===0')
         await b.js('__releaseCompositor()')
         await b.until('PCOSShell.available()')
@@ -241,12 +245,41 @@ async def delayed_native_apps():
         assert await b.js("document.querySelector('#os-startmenu').textContent.includes('This computer')")
         assert await b.js("(()=>{const row=document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]');return row.getBoundingClientRect().height>0 && getComputedStyle(row).visibility==='visible' && row.innerText==='Firefox'})()")
         assert await b.js('__appScans===1')
-        await b.js("document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]').click()")
+        if keyboard:
+            async def press(key, code, virtual):
+                await b.call('Input.dispatchKeyEvent',{'type':'keyDown','key':key,'code':code,'windowsVirtualKeyCode':virtual,**({'text':'\r','unmodifiedText':'\r'} if key=='Enter' else {})})
+                await b.call('Input.dispatchKeyEvent',{'type':'keyUp','key':key,'code':code,'windowsVirtualKeyCode':virtual})
+            await press('Tab','Tab',9)
+            assert await b.js("document.activeElement.dataset.find==='1'")
+            if keyboard=='ring':
+                # The first result touches the scroller's top and left edges. An outward shadow
+                # is clipped there; an inset ring remains inside its own fully visible box.
+                for accent in ('31, 121, 221','221, 81, 111'):
+                    await b.js(f"document.documentElement.style.setProperty('--accent-rgb',{json.dumps(accent)})")
+                    ring=await b.js("""(()=>{const row=document.activeElement,list=document.querySelector('#os-applist');
+                      const r=row.getBoundingClientRect(),c=list.getBoundingClientRect(),s=getComputedStyle(row);
+                      return {focus:row.matches(':focus-visible'),shadow:s.boxShadow,
+                        edge:Math.abs(r.left-c.left)<.5&&Math.abs(r.top-c.top)<.5,
+                        inside:r.left>=c.left&&r.top>=c.top&&r.right<=c.right&&r.bottom<=c.bottom}})()""")
+                    assert ring['focus'] and ring['inside'] and ring['edge'],ring
+                    assert 'inset' in ring['shadow'],ring
+                    assert accent in ring['shadow'],ring
+            await press('Tab','Tab',9)
+            assert await b.js("document.activeElement.dataset.app==='app:firefox-fixture'")
+            if keyboard=='repaint':
+                await b.until("typeof window.__releaseLocalSearch==='function'")
+                await b.js("window.__selectedBefore=document.activeElement;__releaseLocalSearch([{path:'/home/fixture/Firefox-notes.txt',name:'Firefox notes'}])")
+                await b.until("!!document.querySelector('#os-applist [data-path]')")
+                assert await b.js("!__selectedBefore.isConnected && document.activeElement.dataset.app==='app:firefox-fixture' && document.activeElement.matches(':focus-visible')"),'late local results lost keyboard-selected Firefox'
+            await press('Enter','Enter',13)
+        else:
+            await b.js("document.querySelector('#os-startmenu [data-app=\"app:firefox-fixture\"]').click()")
         await b.until('__nativeActions.length===1')
         await asyncio.sleep(.1)
         assert await b.js('__nativeActions')==['app:app%3Afirefox-fixture']
     await with_browser('hang','?pcpopup=start',check,r'''
 window.__appScans=0;window.__nativeActions=[];
+window.pcHost={search:()=>new Promise(resolve=>window.__releaseLocalSearch=resolve)};
 const compositorReady=new Promise(resolve=>window.__releaseCompositor=()=>resolve([]));
 window.pcWM={windows:()=>compositorReady};
 window.pcApps={list:async()=>{__appScans++;return{apps:[{id:'firefox-fixture',name:'Firefox',comment:'Installed web browser'},{id:'btop-fixture',name:'btop',comment:'Installed system monitor'}]}}};
@@ -257,3 +290,9 @@ window.pcPopup.act=async action=>{__nativeActions.push(action);return true};
 @pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
 def test_offline_start_discovers_delayed_native_apps_and_preserves_search():
     asyncio.run(delayed_native_apps())
+
+
+@pytest.mark.skipif(not Path('/opt/google/chrome/chrome').exists(),reason='Chrome required')
+@pytest.mark.parametrize('keyboard',['repaint','ring'])
+def test_start_keyboard_result_survives_refresh_and_has_visible_focus(keyboard):
+    asyncio.run(delayed_native_apps(keyboard))

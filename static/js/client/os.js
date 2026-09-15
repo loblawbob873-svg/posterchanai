@@ -9061,6 +9061,15 @@
       }, false, true);
     };
     const paint = (q) => {
+      const results = $('#os-applist', menu);
+      const active = document.activeElement;
+      // Native-app scans and local-file searches finish after someone has tabbed into results.
+      // Preserve the selected action, not its position: incoming rows can change the ordering.
+      const actionKeys = ['app', 'view', 'sha', 'path', 'find'];
+      const selectedKey = active && results.contains(active) && active.classList.contains('os-app')
+        ? actionKeys.find(k => active.dataset[k] !== undefined) : null;
+      const selectedValue = selectedKey ? active.dataset[selectedKey] : null;
+      const resultScroll = results.scrollTop;
       _repaintStart = paint;                 // so a late local-file answer can redraw the list
       // Folded when idle; FLAT while searching, so typing "chess" finds Chess rather than requiring
       // you to know it lives in a folder.
@@ -9127,11 +9136,16 @@
       if(q) _askLocal(q);
 
       const nothing = !list.length && !natives && !drive && !local;
-      $('#os-applist', menu).innerHTML = nrow + (list.length
+      results.innerHTML = nrow + (list.length
         ? list.map(a => `<button class="os-app" data-view="${enc(a.view)}"${tint(a.view)}>
              ${iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`).join('')
         : (q || !nothing ? '' : '<div class="muted small" style="padding:10px">Nothing matches that.</div>'))
         + natives + drive + local;
+      if(selectedKey){
+        const replacement = $$('.os-app', results).find(b => b.dataset[selectedKey] === selectedValue);
+        if(replacement) replacement.focus({ preventScroll:true });
+        results.scrollTop = resultScroll;
+      }
 
       /* A DRIVE RESULT OPENS FILES ON THAT FILE, not on Files. `driveReveal` sets the folder and the
        * drive's own name filter, so the thing that was searched for is the thing on screen. */
