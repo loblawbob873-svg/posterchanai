@@ -259,6 +259,7 @@
        page did is an event; everything older is history. */
     since: Date.now(),
   };
+  let _archiveEpoch = 0;
   let blossomLaunch=false;
   function draftFor(k){ return S.draft[String(k||'')] || {text:'', file:null}; }
   /* An empty draft is DELETED rather than stored empty: these entries hold a File, and a map that
@@ -708,12 +709,15 @@
   }
 
   async function absorb(evs){
-    const list = (evs || []).slice().sort((a,b) => (b.created_at||0) - (a.created_at||0));
+    const owner = ME().pubkey || '', epoch = _archiveEpoch;
+    const currentAccount = () => owner === (ME().pubkey || '') && epoch === _archiveEpoch;
+    const list = (evs || []).filter(ev => !ev.pubkey || ev.pubkey === owner).slice().sort((a,b) => (b.created_at||0) - (a.created_at||0));
     /* Opened up front, in parallel, bounded — see openArchiveBatch. The loop below is unchanged:
      * it still walks newest-first and commits one document at a time, and anything this pass did
      * not pre-open (an outbox receipt, a row that became interesting while we were fetching) still
      * opens inline on its own turn. */
     const opened = await openArchiveBatch(needsOpening(list));
+    if(!currentAccount()) return;
     for(const ev of list){
       const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
       /* A background handset answers a desktop send by replacing its outbox request with a signed,
@@ -723,7 +727,8 @@
       if(d.startsWith(D_OUT) && ev.content){
         if((_cancelledOutboxAt.get(d) || 0) >= Number(ev.created_at || 0)) continue;
         try{
-          const ack = JSON.parse(await PC.nip44dec(ME().pubkey, ev.content));
+          const ack = JSON.parse(await PC.nip44dec(owner, ev.content));
+          if(!currentAccount()) return;
           /* Cancellation is not a failed message. Retire every local rendering of this command
            * before trying to interpret its old request payload; different devices may have keyed
            * the placeholder at slightly different receipt times, but the outbox id is shared. */
@@ -738,6 +743,7 @@
           /* Old web builds put the request behind a Blossom envelope. New requests stay inline so
            * Android's background service can perform them without a WebView or Blossom client. */
           const sent = ack && ack.request ? await openMessageBody(ack.request) : await openMessageBody(ack);
+          if(!currentAccount()) return;
           if(sent && sent.to && (sent.body || sent.attachment)){
             const at = Number(sent.at) || Number(ev.created_at || 0) * 1000 || Date.now();
             const sentParts=sent.attachment?[{id:0,ct:sent.attachment.mime||'application/octet-stream',name:sent.attachment.name||'',bytes:Number(sent.attachment.bytes)||-1,sha:String(sent.attachment.sha||''),thumb:'',nothumb:1}]:[];
@@ -746,6 +752,7 @@
              * subsequently mirrors the provider row. Use the same portable type/name/size key on
              * both sides; ordinary SMS remains byte-for-byte unchanged. */
             const md = await docIdFor(sent.to, at, sent.body || '', false, partsKeyOf(sentParts));
+            if(!currentAccount()) return;
             const have = S.msgs.get(md);
             /* A queued bubble is keyed at the ASK time; a provider row is keyed at the actual
              * radio time. A phone that wakes later therefore has a different correct document id.
@@ -817,9 +824,11 @@
         obj = pre ? pre.obj : await openArchiveDoc(ev);
       }
       catch(e){
+        if(!currentAccount()) return;
         if(permanentArchiveError(e)) _badArchive.add(badKey);
         continue;                                 // not ours, or not decryptable with this key
       }
+      if(!currentAccount()) return;
       if(!obj || typeof obj !== 'object') continue;
       /* Decryption and Blossom body loading yield. Live subscriptions may deliver two replaceable
        * versions of one message while the older one is still opening; the check above then sees
@@ -895,6 +904,10 @@
       if(m.date > t.date){ t.date = m.date; t.address = m.address; }
     }
     for(const t of by.values()) t.msgs.sort((a,b) => (a.date||0) - (b.date||0));
+    // Contacts/notifications may select a recipient whose archive has not reached this device.
+    // Keep that empty composer through subsequent catch-up rebuilds until its first row arrives.
+    const emptySelection = S.threads.find(t => t.key === S.open && !t.msgs.length);
+    if(emptySelection && !by.has(emptySelection.key)) by.set(emptySelection.key, emptySelection);
     S.threads = Array.from(by.values()).sort((a,b) => (b.date||0) - (a.date||0));
   }
 
@@ -927,7 +940,10 @@
   }
   let _loadingArchive = null;
   async function load(force){
+    const owner = ME().pubkey || '', epoch = _archiveEpoch;
+    const currentAccount = () => owner === (ME().pubkey || '') && epoch === _archiveEpoch;
     if(window.PCInstanceAccess) await window.PCInstanceAccess.require('texts');
+    if(!currentAccount()) return;
     if(S.ready && !force) return;
     /* render(), focus and a late module route can all ask for the first load together. Without one
      * shared promise they race the same S.ready=false transition, paint different partial maps and
@@ -950,6 +966,7 @@
     cached.sort((a,b) => (b.created_at||0) - (a.created_at||0));
     const first = cached.splice(0, 32);
     await absorbResilient(first);
+    if(!currentAccount()) return;
     S.ready = true;
     S.loading = false;
     /* The route has already handed Texts ownership but PC.VIEW/desktop ownership can lag one turn.
@@ -965,8 +982,9 @@
          * box. Twice a second shows the archive filling in just as well and leaves the screen
          * usable; the final paint below is unconditional, so nothing depends on the timing. */
         let painted = 0;
-        while(cached.length){
+        while(cached.length && currentAccount()){
           await absorbResilient(cached.splice(0, 128));
+          if(!currentAccount()) return;
           if(textsOnScreen() && (!cached.length || Date.now() - painted > 500)){
             painted = Date.now();
             paint();
@@ -978,7 +996,7 @@
         /* This task is deliberately detached from load(). A damaged history record is already
          * isolated by absorbResilient; never let an unexpected renderer/signer failure in the
          * detached tail become window.unhandledrejection and replace Texts with "action failed". */
-      }).finally(() => { _cacheDrain = null; });
+      }).finally(() => { if(currentAccount()) _cacheDrain = null; });
     }
     /* An empty browser cache is the ordinary WebUI startup after a cache eviction or a new
      * profile.  Do not let the route complete as an empty inbox while its only authoritative copy
@@ -987,24 +1005,29 @@
      * paint race, so an existing archive looked entirely empty until another lifecycle refresh.
      * refresh() already contains relay failures and folds results into (never over) local state. */
     await refresh();
+    if(!currentAccount()) return;
     if(S.msgs.size && S.emptyWhy === 'Loading messages…') S.emptyWhy = '';
     })();
     try{ return await _loadingArchive; }
-    finally{ S.loading=false; _loadingArchive=null; }
+    finally{ if(currentAccount()){ S.loading=false; _loadingArchive=null; } }
   }
 
   let _refreshing = false;
   async function refresh(){
+    const owner = ME().pubkey || '', epoch = _archiveEpoch;
+    const currentAccount = () => owner === (ME().pubkey || '') && epoch === _archiveEpoch;
     if(_refreshing) return;
     _refreshing = true;
     try{
       const live = archiveRows(await Relay().query(liveFilters()) || []);
+      if(!currentAccount()) return;
       // FOLDED IN, NEVER OVER. A relay that returns nothing — unreachable, throttled, merely slow —
       // must leave the archive alone. That asymmetry is the anti-wipe rule this codebase keeps
       // relearning, and here the local copy may be the only one outside the handset.
       if(live && live.length){ await absorbResilient(live); paint(); }
     }catch(_){ }
-    finally{ _refreshing = false; }
+    finally{ if(currentAccount()) _refreshing = false; }
+    if(!currentAccount()) return;
     /* AND THE UNLABELLED TAIL, BEHIND THE PAINTED SCREEN. Detached on purpose: it is a repair for
      * archives written by builds that did not always set `l=pcai-sms`, and it is the one read here
      * the relay cannot bound to Texts (see archiveFilters). Nobody should wait on a spinner for
@@ -1024,6 +1047,8 @@
    * the flag clear so the next refresh tries again. */
   let _legacySweeping = false, _legacySwept = false;
   async function legacySweep(){
+    const owner = ME().pubkey || '', epoch = _archiveEpoch;
+    const currentAccount = () => owner === (ME().pubkey || '') && epoch === _archiveEpoch;
     if(_legacySwept || _legacySweeping) return;
     _legacySweeping = true;
     try{
@@ -1033,11 +1058,13 @@
        * owns its own failures, so waiting on it cannot fail. */
       const drain = _cacheDrain;
       if(drain) await drain;
+      if(!currentAccount()) return;
       const rows = archiveRows(await Relay().query([BROAD_FILTER()]) || []);
+      if(!currentAccount()) return;
       _legacySwept = true;
       if(rows.length){ await absorbResilient(rows); paint(); }
     }catch(_){ }
-    finally{ _legacySweeping = false; }
+    finally{ if(currentAccount()) _legacySweeping = false; }
   }
 
   /* A trailing coalesce. Deliberately not requestAnimationFrame: a backgrounded WebView never
@@ -1055,6 +1082,24 @@
   function watch(){
     const owner = ME().pubkey || '';
     if(_subAccount !== owner){
+      ++_archiveEpoch;
+      if(_subAccount){
+        // Account changes retire decrypted history, draft text/files, previews and any pending
+        // notification recipient. An old decrypt may finish later but cannot commit this epoch.
+        S.msgs.clear(); S.threads = []; S.open = ''; S.q = '';
+        S.draft = Object.create(null); S.scroll = Object.create(null); S.sending = new Set();
+        S.ready = false; S.loading = false; S.localRead = false; S.lastRead = null;
+        S.mmsRefused = false; S.mmsCapped = false; S.mmsAudited = false;
+        S.error = ''; S.emptyWhy = ''; S.archive = {running:false,published:0,error:'',attempted:false,refused:0};
+        delete window.__PC_SMS_OPEN_ADDRESS;
+        _badArchive.clear(); _cancelledOutboxAt.clear(); _envInFlight.clear(); _openInFlight.clear();
+        for(const cache of [ATT, ATT_ENC]){
+          for(const value of cache.values()) if(value && value.url) try{ URL.revokeObjectURL(value.url); }catch(_){}
+          cache.clear();
+        }
+        _loadingArchive = null; _cacheDrain = null; _refreshing = false;
+        _legacySwept = false; _legacySweeping = false;
+      }
       if(_sub) try{ Relay().close(_sub); }catch(_){}
       S.since = Date.now();
       _sub = null; _subAccount = owner; _announced.clear();
@@ -4200,11 +4245,17 @@
   }
 
   async function renderOnce(){
+    const renderOwner = ME().pubkey || '';
     watch();
+    const renderEpoch = _archiveEpoch;
     /* Do not paint a convincing empty inbox while the encrypted cache is still being opened. The
      * route already installed a spinner; awaiting the first cache pass makes the first visit behave
      * exactly like the second one instead of requiring the person to close and reopen Texts. */
     if(!S.ready) await load();
+    if(renderOwner !== (ME().pubkey || '') || renderEpoch !== _archiveEpoch){
+      // Retire only the old account. A newer render may already own a pending recipient.
+      watch(); return;
+    }
     /* load() paints through the conservative background ownership gate. The desktop can still be
      * between claimFeed() and noteView() in this exact callback, so make the route-owned paint
      * explicit after the data transaction settles. This is what replaces app.js's spinner. */
@@ -4393,8 +4444,11 @@
   function openNotification(payload){
     const address = String(payload && payload.address || '').trim();
     if(!address) return;
-    S.open = key(address);
-    render();
+    watch(); // Retire a previous account before installing this account's recipient handoff.
+    // The cache load rebuilds the conversation index. Use the same deferred handoff as Contacts
+    // so an uncached recipient gets its placeholder after that rebuild, before painting the thread.
+    window.__PC_SMS_OPEN_ADDRESS = address;
+    return render();
   }
 
   window.PCSms = { openNotification, render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,

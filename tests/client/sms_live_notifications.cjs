@@ -36,7 +36,24 @@ const event=(id,patch={})=>({id,kind:30078,pubkey:ctx.__PC.ME.pubkey,created_at:
  assert.equal(state.queries,0,'startup notification subscription loaded archive history');
  assert.equal(state.phoneReads,0,'startup notification subscription read phone provider');
  const live=state.subs[0].onEvent;
- if(scenario==='multiwindow_reload'){
+ if(scenario==='new_account_recipient'){
+  await live(event('private-old',{date:Date.now()-60000}));
+  ctx.__PC.ME={pubkey:'account-b'};
+  await ctx.PCSms.openNotification({address:'+15550888'});
+  assert.equal(ctx.PCSms._state().msgs.size,0);
+  assert.equal(ctx.PCSms._state().open,ctx.PCSms._key('+15550888'),
+    'new-account notification target was discarded while retiring the prior account');
+ }else if(scenario==='uncached_recipient'){
+  const address='+15550999';assert.equal(ctx.PCSms._state().threads.length,0);
+  await ctx.PCSms.openNotification({address});
+  assert.equal(ctx.PCSms._state().open,ctx.PCSms._key(address));
+  assert.ok(ctx.PCSms._state().threads.some(t=>t.key===ctx.PCSms._key(address)),
+    'uncached notification recipient needs a conversation after the cold archive load');
+  assert.equal(ctx.__PC_SMS_OPEN_ADDRESS,undefined,'recipient handoff must be consumed once');
+  await ctx.PCSms._absorb([]); // A later background archive refresh can still be empty.
+  assert.ok(ctx.PCSms._state().threads.some(t=>t.key===ctx.PCSms._key(address)),
+    'background archive rebuild discarded the selected empty conversation');
+ }else if(scenario==='multiwindow_reload'){
   // Separate module globals share only real platform boundaries: origin storage and Web Locks.
   const other={...ctx,__PC:{...ctx.__PC},Relay:{...ctx.Relay},document:{...ctx.document}};
   other.window=other;other.globalThis=other;delete other.PCSms;
@@ -76,10 +93,24 @@ const event=(id,patch={})=>({id,kind:30078,pubkey:ctx.__PC.ME.pubkey,created_at:
  }else if(scenario==='distinct_messages'){
   await Promise.all([live(event('first')),live(event('second',{address:'+15550456'}))]);
   assert.equal(state.events.length,2);assert.equal(new Set(state.events.map(e=>e.opts.tag)).size,2);
+ }else if(scenario==='cached_account_switch'){
+  await live(event('private-old',{date:Date.now()-60000}));
+  assert.equal(ctx.PCSms._state().msgs.size,1);
+  ctx.PCSms._state().open=ctx.PCSms._key('+15550123');
+  ctx.__PC_SMS_OPEN_ADDRESS='+15550123';
+  ctx.__PC.ME={pubkey:'account-b'};
+  await state.timers.find(t=>t.ms===3000).fn();
+  assert.equal(ctx.PCSms._state().msgs.size,0,'account switch retained private message cache');
+  assert.equal(ctx.PCSms._state().threads.length,0,'account switch retained private thread index');
+  assert.equal(ctx.PCSms._state().open,'','account switch retained old conversation');
+  assert.equal(ctx.__PC_SMS_OPEN_ADDRESS,undefined,'account switch retained old pending notification target');
+  await state.subs[1].onEvent(event('new-owner'));assert.equal(state.events.length,1);
  }else if(scenario==='account_switch'){
   let release;hold=new Promise(r=>release=r);const pending=live(event('old-account'));
   ctx.__PC.ME={pubkey:'account-b'};release();await pending;hold=null;
-  assert.equal(state.events.length,0);await state.timers.find(t=>t.ms===3000).fn();
+  assert.equal(state.events.length,0);
+  assert.equal(ctx.PCSms._state().msgs.size,0,'old-account decryption inserted plaintext after account switch');
+  await state.timers.find(t=>t.ms===3000).fn();
   assert.equal(state.closes,1);assert.equal(state.subs.length,2);
   await live({...event('stale'),pubkey:'account-a'});assert.equal(state.events.length,0);
   await state.subs[1].onEvent(event('current'));assert.equal(state.events.length,1);
