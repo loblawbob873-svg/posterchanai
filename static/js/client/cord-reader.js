@@ -24938,12 +24938,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       const id = hex32(jm.community_id);
       const root = hex32(jm.community_root);
       const rootEpoch = BigInt(jm.root_epoch);
-      const heldRoots = [{ epoch: rootEpoch, key: root }];
+      const heldRoots = [{ epoch: rootEpoch, key: root, controlPk: jm.control_pk, controlRoot: jm.control_root }];
       for (const hr of jm.held_roots ?? []) {
         try {
           const epoch = BigInt(hr.epoch);
           if (epoch === rootEpoch) continue;
-          heldRoots.push({ epoch, key: hex32(hr.key) });
+          heldRoots.push({ epoch, key: hex32(hr.key), controlPk: hr.control_pk, controlRoot: hr.control_root });
         } catch {
         }
       }
@@ -24951,7 +24951,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         try {
           const seedEpoch = BigInt(entry.seed.root_epoch);
           if (!heldRoots.some((r) => r.epoch === seedEpoch)) {
-            heldRoots.push({ epoch: seedEpoch, key: hex32(entry.seed.community_root) });
+            heldRoots.push({ epoch: seedEpoch, key: hex32(entry.seed.community_root), controlPk: entry.seed.control_pk, controlRoot: entry.seed.control_root });
           }
         } catch {
         }
@@ -25186,6 +25186,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     }
     if (wrap2.pubkey !== stream.pk) {
       throw new StreamError("author-mismatch", "wrap author is not this stream's address");
+    }
+    if (!verifyEvent2(JSON.parse(JSON.stringify(wrap2)))) {
+      throw new StreamError("bad-wrap-signature", "wrap signature invalid");
     }
     let seal;
     try {
@@ -25548,27 +25551,47 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 
   // src/concord-v2/lib/control.ts
   function controlGroups(community) {
-    return community.heldRoots.map((r) => controlGroupKey(r.key, community.id, r.epoch));
+    return community.heldRoots.map((r) => {
+      const read = controlGroupKey(r.key, community.id, r.epoch);
+      // CORD-02: old epochs retain their address; split epochs never fall back to it.
+      if (r.controlPk === undefined) {
+        if (r.controlRoot !== undefined) throw new Error("control root requires its signer pubkey");
+        return read;
+      }
+      if (typeof r.controlPk !== "string" || !/^[0-9a-f]{64}$/.test(r.controlPk))
+        throw new Error("invalid control signer pubkey");
+      let signer;
+      if (r.controlRoot !== undefined) {
+        signer = groupKeyCached("concord/control-signer", hex32(r.controlRoot), community.id, r.epoch);
+        if (signer.pk !== r.controlPk) throw new Error("control signer key does not match its pubkey");
+      }
+      return { pk: r.controlPk, convKey: read.convKey, sk: signer?.sk };
+    });
+  }
+  function wireMemoKey(wrap) {
+    return bytesToHex2(sha2562(new TextEncoder().encode(JSON.stringify(wrap))));
   }
   var parsedEditionMemo = /* @__PURE__ */ new Map();
   function openControlWraps(wraps, groups) {
     const byPk = new Map(groups.map((g) => [g.pk, g]));
     const out = [];
     for (const wrap2 of wraps) {
-      const cached2 = parsedEditionMemo.get(wrap2.id);
+      const group = byPk.get(wrap2.pubkey);
+      if (!group) continue;
+      const memoKey = group.pk + ":" + bytesToHex2(group.convKey) + ":" + wireMemoKey(wrap2);
+      const cached2 = parsedEditionMemo.get(memoKey);
       if (cached2 !== void 0) {
         if (cached2) out.push(cached2);
         continue;
       }
-      const group = byPk.get(wrap2.pubkey);
-      if (!group) continue;
       let parsed = null;
       try {
         parsed = parseEdition(openWrap(wrap2, group));
       } catch {
         parsed = null;
       }
-      parsedEditionMemo.set(wrap2.id, parsed);
+      if (parsedEditionMemo.size >= 10000) parsedEditionMemo.delete(parsedEditionMemo.keys().next().value);
+      parsedEditionMemo.set(memoKey, parsed);
       if (parsed) out.push(parsed);
     }
     return out;
@@ -26392,15 +26415,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   var decodeMemo = /* @__PURE__ */ new Map();
   var skippedNoKey = /* @__PURE__ */ new Set();
   function openOne(wrap2, channel) {
-    const memoKey = `${wrap2.id}|${channel.idHex}`;
+    const stream = channel.streams.find((s) => s.group.pk === wrap2.pubkey);
+    if (!stream) return null;
+    const memoKey = `${wireMemoKey(wrap2)}|${channel.idHex}|${bytesToHex2(stream.group.convKey)}`;
     const cached2 = decodeMemo.get(memoKey);
     if (cached2 !== void 0) return cached2;
-    const stream = channel.streams.find((s) => s.group.pk === wrap2.pubkey);
-    if (!stream) {
-      decodeMemo.set(memoKey, null);
-      skippedNoKey.add(memoKey);
-      return null;
-    }
     let opened = null;
     try {
       const ev = openWrap(wrap2, stream.group);
@@ -26410,6 +26429,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     } catch {
       opened = null;
     }
+    if (decodeMemo.size >= 10000) decodeMemo.delete(decodeMemo.keys().next().value);
     decodeMemo.set(memoKey, opened);
     return opened;
   }
@@ -26720,6 +26740,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       ...(typeof guestbookGroups === "function" ? guestbookGroups(bundle) : [])];
     const group = held.find(g => g.pk === author);
     if (!group) throw new Error("Concord plane key is not held by this membership");
+    // A split-plane reader can fetch ciphertext but cannot authenticate as its staff signer.
+    if (!group.sk) return null;
     const allowed = new Set((relays || []).map(value => new URL(value).href));
     return Object.freeze({pubkey: group.pk, sign: template => {
       const tags = template && template.tags;
@@ -26756,6 +26778,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
   }
+  function writableControlGroup(groups) {
+    const group = groups[0]; // held roots are current-first, never publish into an archived epoch.
+    if (!group?.sk) throw new Error("the current control plane requires a staff signing key");
+    return group;
+  }
   async function createBanWrap(bundle, controlWraps, targetPubkey, pubkey, signEvent) {
     if (!/^[0-9a-f]{64}$/i.test(targetPubkey) || !/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
     const { community, groups, folded } = control(bundle, controlWraps);
@@ -26767,7 +26794,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const tags = [[TAG_SUBKIND, VSK_BANLIST], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()]];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(banned), pubkey, ms: Date.now(), tags });
-    const group = groups[groups.length - 1], seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
+    const group = writableControlGroup(groups), seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), banned };
   }
   async function createMetadataWrap(bundle, controlWraps, metadata, pubkey, signEvent) {
@@ -26776,12 +26803,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if (pubkey.toLowerCase() !== community.owner.toLowerCase()) throw new Error("only the community owner can edit its profile");
     const entityHex = bytesToHex2(community.id), head = folded.heads.get(entityHex);
     const version2 = head ? head.version + 1n : 1n, prevHash = head ? head.hash : void 0;
-    const body = { name: String(metadata && metadata.name || community.name).slice(0, 64), description: String(metadata && metadata.description || "").slice(0, 1000), relays: community.relays };
+    const priorMetadata = folded.headEditions.get(entityHex);
+    const priorBody = priorMetadata ? JSON.parse(priorMetadata.content) : {};
+    const body = { ...priorBody, name: String(metadata && metadata.name || community.name).slice(0, 64), description: String(metadata && metadata.description || "").slice(0, 1000), relays: priorBody.relays ?? community.relays };
     if (metadata && metadata.icon) body.picture = String(metadata.icon).slice(0, 2048);
     const tags = [[TAG_SUBKIND, VSK_METADATA], [TAG_ENTITY, entityHex], [TAG_EVERSION, version2.toString()]];
     if (prevHash) tags.push([TAG_EPREV, bytesToHex2(prevHash)]);
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey, ms: Date.now(), tags });
-    const group = groups[groups.length - 1], seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
+    const group = writableControlGroup(groups), seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), metadata: body };
   }
   /** Create a CHANNEL in a community that already exists.
@@ -26818,7 +26847,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const tags = [[TAG_SUBKIND, VSK_CHANNEL], [TAG_ENTITY, entityHex], [TAG_EVERSION, "1"]];
     const rumor = buildRumor({ kind: KIND_CONTROL, content: JSON.stringify(body), pubkey,
                                ms: Date.now(), tags });
-    const group = groups[groups.length - 1];
+    const group = writableControlGroup(groups);
     const seal = await sealRumor(rumor, KIND_SEAL_PLAINTEXT, group, { signEvent });
     return { rumorId: rumor.id, wrap: wrapSeal(seal, group), channelId: entityHex, name: body.name };
   }

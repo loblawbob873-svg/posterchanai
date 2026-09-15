@@ -58,7 +58,8 @@
     const reader=window.PosterCordReader;
     if(!plane||!reader||!reader.createPlaneAuth)return null;
     if(!plane.current())throw new Error('Concord membership changed during transport');
-    return {...reader.createPlaneAuth(plane.bundle,plane.controls,author,relays),current:plane.current};
+    const auth=reader.createPlaneAuth(plane.bundle,plane.controls,author,relays);
+    return auth ? {...auth,current:plane.current} : null;
   }
   function cordPlaneSubscribe(p,R,relays,filters,options,plane){
     const subscriptions=[],relayCap=Math.max(1,Math.min(4,Number(options.max)||4)),planeLimit=Math.floor(8/relayCap);

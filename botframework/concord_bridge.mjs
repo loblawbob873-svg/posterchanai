@@ -107,6 +107,7 @@ const ops = {
     for (const author of candidates) {
       try {
         const signer = R.createPlaneAuth(toCord(bundle), wraps, author, toCord(allowed));
+        if (!signer) continue; // Split-control readers do not hold its staff signing key.
         return signer.sign(toCord({ kind: 22242, created_at: Math.floor(Date.now() / 1000),
                                     content: '',
                                     tags: [['relay', relay], ['challenge', challenge]] }));
