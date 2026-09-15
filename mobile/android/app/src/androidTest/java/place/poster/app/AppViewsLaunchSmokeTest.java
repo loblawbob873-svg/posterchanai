@@ -45,6 +45,7 @@ public final class AppViewsLaunchSmokeTest {
             }
             assertTrue("bundled client never became ready: " + ready,
                     ready.contains("complete|true|true"));
+            AppIdentityTest.logEmojiState("first Activity ready");
 
             // NIP-42 challenges arrive during ordinary logged-out hydration. Exercise the exact
             // synchronous-refusal shape without depending on (or prompting) whichever account the

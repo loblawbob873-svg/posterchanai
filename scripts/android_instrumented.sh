@@ -76,6 +76,12 @@ rc=${PIPESTATUS[0]}
 mkdir -p /tmp/pc-androidtest
 cp -r app/build/reports/androidTests/connected/. /tmp/pc-androidtest/ 2>/dev/null || true
 cp -r app/build/outputs/androidTest-results/connected/. /tmp/pc-androidtest/ 2>/dev/null || true
+# Preserve the actual main AND test merge outputs before any failed-run verdict. A source manifest
+# removal cannot prove that the installed instrumentation variant omitted a library initializer.
+find app/build/intermediates/merged_manifest app/build/intermediates/merged_manifests \
+     app/build/intermediates/packaged_manifests -type f -name AndroidManifest.xml \
+     -exec cp --parents '{}' /tmp/pc-androidtest/ \; 2>/dev/null || true
+cp -r app/build/outputs/logs /tmp/pc-androidtest/manifest-merger-logs 2>/dev/null || true
 # AND THE LOGCAT THE TESTS THEMSELVES WROTE. A device test can MEASURE something there is no
 # assertion for — whether an OEM ships the system widget picker, how many widget providers the image
 # has — and the XML report carries only failures. Without this the only way to get a fact off the

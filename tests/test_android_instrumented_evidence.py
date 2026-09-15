@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PASS = '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase classname="Device" name="works"/></testsuite>'
 
 
-def run_gate(tmp_path, reports, *, gradle_status=0, device=True, source=True, stale=False, gradle_log=''):
+def run_gate(tmp_path, reports, *, gradle_status=0, device=True, source=True, stale=False, gradle_log='', manifests=None):
     android = tmp_path / 'mobile/android'
     android.mkdir(parents=True)
     if source:
@@ -42,6 +42,8 @@ Path(os.environ['GRADLE_RAN']).touch()
 root=Path('app/build/outputs/androidTest-results/connected')
 for name,text in json.loads(os.environ['REPORTS']).items():
     file=root/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_text(text)
+for name,text in json.loads(os.environ['MANIFESTS']).items():
+    file=Path('app/build/intermediates')/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_text(text)
 print(os.environ['GRADLE_LOG'])
 raise SystemExit(int(os.environ['GRADLE_STATUS']))
 ''')
@@ -52,9 +54,23 @@ raise SystemExit(int(os.environ['GRADLE_STATUS']))
     result = subprocess.run(['bash', str(script)], cwd=tmp_path, capture_output=True, text=True, timeout=15,
         env=os.environ | {'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
             'DEVICE': '1' if device else '0', 'REPORTS': json.dumps(reports),
+            'MANIFESTS': json.dumps(manifests or {}),
             'GRADLE_STATUS': str(gradle_status), 'GRADLE_LOG': gradle_log,
             'GRADLE_RAN': str(tmp_path / 'gradle-ran'), 'GITHUB_STEP_SUMMARY': str(tmp_path / 'summary')})
     return result
+
+
+def test_failed_run_retains_main_and_instrumentation_merged_manifests(tmp_path):
+    manifests = {
+        'merged_manifests/debug/processDebugManifest/AndroidManifest.xml': '<manifest package="place.poster.app"/>',
+        'packaged_manifests/debugAndroidTest/processDebugAndroidTestManifest/AndroidManifest.xml':
+            '<manifest package="place.poster.app.test"><application/></manifest>',
+    }
+    result = run_gate(tmp_path, {}, gradle_status=7, manifests=manifests)
+    assert result.returncode == 7, result.stdout + result.stderr
+    for name, content in manifests.items():
+        captured = tmp_path / 'pc-androidtest/app/build/intermediates' / name
+        assert captured.read_text() == content
 
 
 @pytest.mark.parametrize('reports', [
