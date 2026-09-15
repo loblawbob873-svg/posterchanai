@@ -27,6 +27,7 @@ INPUTS = ('os/gentoo.sh', 'app', 'static', 'desktop', 'mobile', 'templates', 'sc
 TESTS = (
     'tests/test_deploy_regression_gate.py',
     'tests/test_desktop_workflow_test_triggers.py',
+    'tests/test_desktop_overlay_metadata_followup.py',
     'tests/test_deploy_process_cleanup.py',
     'tests/client/test_node_timer_scope.py',
     'tests/test_sync_publish_failures.py',

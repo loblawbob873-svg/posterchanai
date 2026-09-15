@@ -624,9 +624,15 @@ if(!control('cc-members-dialog').classList.removed.includes('hidden')) throw new
 await control('cc-notify').onclick();
 if(calls.notified!==1) throw new Error('notification control failed');
 const groupCallsBefore=calls.group;
-control('cc-call').click();
-if(calls.group===groupCallsBefore&&!calls.toasts.some(x=>x.includes('No other community members')))
-  throw new Error('call control neither called hydrated members nor reported an empty room');
+// The call controller/crypto have dedicated real-browser and wire suites. This
+// fixture verifies that the room action reaches the Concord controller boundary.
+let openedConcordCall=null;
+window.PCCordVoice={};
+window.PCCordCall={open:async config=>{openedConcordCall=config;}};
+await control('cc-call').onclick();
+if(!openedConcordCall||!openedConcordCall.current()||typeof openedConcordCall.material!=='function'
+   ||typeof openedConcordCall.presence!=='function'||calls.group!==groupCallsBefore)
+  throw new Error('Concord call control did not open the current encrypted channel');
 control('cc-input').value='hello concord';
 let prevented=false;
 control('cc-input').onkeydown({key:'Enter',ctrlKey:false,metaKey:false,preventDefault(){prevented=true;}});

@@ -84,8 +84,25 @@ def _tag_for_commit(sha):
     """
     if not sha:
         return None
-    for version, commit in _releases():
+    releases = _releases()
+    for version, commit in releases:
         if commit and commit.startswith(sha[:12]) or sha.startswith((commit or "x")[:12]):
+            return version
+    # Publishing the verified package pin itself creates a later commit. That
+    # metadata-only commit needs no new desktop binary. Accept an ancestor build
+    # only when every intervening change belongs to the overlay; any app, test,
+    # workflow or other source change still requires its own release.
+    for version, commit in releases:
+        if not re.fullmatch(r'[0-9a-f]{40}', commit or ''):
+            continue
+        ancestor = subprocess.run(['git', 'merge-base', '--is-ancestor', commit, sha],
+                                  cwd=ROOT, capture_output=True, timeout=30)
+        if ancestor.returncode:
+            continue
+        changed = subprocess.run(['git', 'diff', '--name-only', '-z', commit, sha, '--'],
+                                 cwd=ROOT, capture_output=True, text=True, timeout=30)
+        if changed.returncode == 0 and all(path.startswith('os/overlay/')
+                                          for path in changed.stdout.split('\0') if path):
             return version
     return None
 
