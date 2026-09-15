@@ -34,7 +34,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SH = os.path.join(ROOT, "os", "gentoo.sh")
 KVER = "6.12.31-gentoo-dist"
-MID = "deadbeefmachineid0000000000000"
+MID = "0123456789abcdef0123456789abcdef"
 
 STUBS = {
     "bootctl": ('#!/bin/sh\n'
@@ -85,10 +85,13 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
         body = (_fn(src, "partitionDetection") + "\n\n" +
                 _fn(src, "_pc_record_plymouth_theme") + "\n\n" +
                 _fn(src, "_pc_select_plymouth_theme") + "\n\n" +
+                _fn(src, "alignKernelEntryToken") + "\n\n" +
                 _fn(src, "bootloader"))
         for a, b in (("/boot", "$R/boot"), ("/etc/disk", "$R/etc/disk"),
                      ("/etc/machine-id", "$R/etc/machine-id"), ("/etc/crypttab", "$R/etc/crypttab"),
                      ("/etc/dracut.conf", "$R/etc/dracut.conf"),
+                     ("/etc/kernel", "$R/etc/kernel"),
+                     ("/var/tmp", "$R/var/tmp"),
                      ("/usr/lib/modules", "$R/usr/lib/modules"), ("/swap/swap", "$R/swap/swap"),
                      ("/sbin/blkid", "blkid"), ("/usr/bin/findmnt", "findmnt"),
                      ("/tmp/disk", "$R/tmp/disk")):
@@ -126,6 +129,13 @@ class BootloaderWritesAnEntryThatNamesARealKernel(unittest.TestCase):
     def _entries(self, target):
         d = os.path.join(target, "boot", "loader", "entries")
         return [os.path.join(d, f) for f in os.listdir(d)] if os.path.isdir(d) else []
+
+    def test_package_kernel_entries_keep_the_installed_loader_default(self):
+        target, out = self._run()
+        with open(os.path.join(target, "etc/kernel/entry-token")) as f:
+            self.assertEqual(f.read(), MID + "\n", out)
+        with open(os.path.join(target, "boot/loader/loader.conf")) as f:
+            self.assertIn("default " + MID + "-*", f.read())
 
     def test_an_entry_is_written_at_all(self):
         """The whole bug: `>` cannot create a directory, and nothing made

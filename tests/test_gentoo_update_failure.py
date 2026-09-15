@@ -8,15 +8,16 @@ import pytest
 SOURCE = Path(__file__).resolve().parents[1] / 'os/gentoo.sh'
 
 
-STEPS = ['emerge --sync', 'policy', 'emerge -uDN @world',
+STEPS = ['emerge --sync', 'policy', 'boot token', 'emerge -uDN @world',
          'emerge @preserved-rebuild', 'emerge -c']
 
 
 @pytest.mark.parametrize('failure,expected', [
     ('--sync', STEPS[:1]),
     ('policy', STEPS[:2]),
-    ('-uDN', STEPS[:3]),
-    ('@preserved-rebuild', STEPS[:4]),
+    ('boot token', STEPS[:3]),
+    ('-uDN', STEPS[:4]),
+    ('@preserved-rebuild', STEPS[:5]),
     ('-c', STEPS),
     ('', STEPS),
 ])
@@ -34,6 +35,10 @@ def test_update_stops_at_the_first_failed_step(failure, expected):
 prepareUpdateDependencies() {
   echo policy
   if [ "$FAIL_STEP" = policy ]; then return 23; fi
+}
+alignKernelEntryToken() {
+  echo "boot token"
+  if [ "$FAIL_STEP" = "boot token" ]; then return 23; fi
 }
 bootloader() {
   echo "ERROR: installer bootloader called" >&2

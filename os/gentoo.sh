@@ -777,11 +777,43 @@ prepareUpdateDependencies() {
 	done
 }
 
+alignKernelEntryToken() {
+	# Older installs wrote machine-id entries while installkernel defaults to "gentoo".
+	# Keep future package-managed entries selectable by that existing loader default.
+	# Leave operator-selected defaults and tokens alone.
+	local machine_id loader_default token token_path=/etc/kernel/entry-token token_tmp
+	[ -f /boot/loader/loader.conf ] || return 0
+	machine_id=$(cat /etc/machine-id) || return $?
+	[[ "$machine_id" =~ ^[0-9a-f]{32}$ ]] || { echo "Invalid machine ID for boot entries" >&2; return 1; }
+	loader_default=$(awk '$1 == "default" { value = $2 } END { print value }' /boot/loader/loader.conf) || return $?
+	[ "$loader_default" = "$machine_id-*" ] || return 0
+	if [ -L "$token_path" ] || [ -d "$token_path" ]; then
+		echo "Cannot align non-regular kernel entry token: $token_path" >&2
+		return 1
+	fi
+	token=
+	if [ -f "$token_path" ]; then token=$(cat "$token_path") || return $?; fi
+	case "$token" in
+		"$machine_id") return 0 ;;
+		""|gentoo) ;;
+		*) return 0 ;;
+	esac
+	mkdir -p /etc/kernel || return $?
+	token_tmp=$(mktemp "${token_path}.XXXXXX") || return $?
+	if printf '%s\n' "$machine_id" >"$token_tmp" && chmod 0644 "$token_tmp" \
+		&& mv -f -- "$token_tmp" "$token_path"; then
+		return 0
+	fi
+	rm -f -- "$token_tmp"
+	return 1
+}
+
 updateOS() {
 	# A slot conflict is an unsuccessful update, not permission to clean up the
 	# installed tree or rewrite its bootloader. Preserve Portage's failure status.
 	/usr/bin/emerge --sync || return $?
 	prepareUpdateDependencies || return $?
+	alignKernelEntryToken || return $?
 	/usr/bin/emerge -uDN @world || return $?
 	# Rebuild consumers of preserved library ABIs before removing unused packages.
 	/usr/bin/emerge @preserved-rebuild || return $?
@@ -4739,6 +4771,7 @@ bootloader() {
 		echo -e "\033[1;33mOFFSET=$OFFSET\033[0m"
 		echo "default $MACHINE_ID-*" >/boot/loader/loader.conf
 		echo "timeout 1" >>/boot/loader/loader.conf
+		alignKernelEntryToken || return $?
 
 		echo
 		echo
