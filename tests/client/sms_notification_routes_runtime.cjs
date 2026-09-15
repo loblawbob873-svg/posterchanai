@@ -1,7 +1,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict'),path=require('path');
 const root=process.argv[2],app=fs.readFileSync(path.join(root,'static/js/client/app.js'),'utf8');
 const router=app.slice(app.indexOf('  function openOsNotificationRoute('),app.indexOf('  window.PCOpenNotificationRoute='));
-const landingStart=app.indexOf('  async function routeFromPath(){');
+const landingStart=app.indexOf('  function _captureSmsWindowLanding(){');
 const landing=app.slice(landingStart,app.indexOf('    const e = _entityFromPath();',landingStart))+'\n}';
 const oswin=fs.readFileSync(path.join(root,'static/js/client/oswin.js'),'utf8');
 const channels=[],pending=[];

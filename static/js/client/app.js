@@ -3597,6 +3597,17 @@
   let _extraPaintedFor = '';   // the desktop screen this feed already holds (see renderView)
   function _inWin(){ try{ return !!(window.PCOSWin && PCOSWin.isWindow()); }catch(_){ return false; } }
 
+  // Capture before startup navigation normalizes the URL. The native identity is already latched.
+  function _captureSmsWindowLanding(){
+    if(!_inWin() || PCOSWin.viewOf()!=='texts')return;
+    const uri=new URL(location.href),address=uri.searchParams.get('pcsms');
+    if(address!==null){
+      uri.searchParams.delete('pcsms');history.replaceState(history.state,'',uri.pathname+uri.search+uri.hash);
+      if(address.trim() && address.length<=80 && !/[\x00-\x1f\x7f]/.test(address))
+        window.__PC_SMS_OPEN_ADDRESS=address.trim();
+    }
+  }
+  _captureSmsWindowLanding();
   async function routeFromPath(){
     /* A WINDOW LANDS ON THE VIEW IT WAS OPENED FOR. Gated on `isWindow()`, which is false in a
      * browser tab, in the APK and in the desktop's own shell — so no existing boot path moves. That
@@ -3604,14 +3615,6 @@
      * `applyInstanceGating` can switchView during boot and the guard then skipped its own landing. */
     if(_inWin()){
       const v = PCOSWin.viewOf();
-      if(v==='texts'){
-        const uri=new URL(location.href),address=uri.searchParams.get('pcsms');
-        if(address!==null){
-          uri.searchParams.delete('pcsms');history.replaceState(history.state,'',uri.pathname+uri.search+uri.hash);
-          if(address.trim() && address.length<=80 && !/[\x00-\x1f\x7f]/.test(address))
-            window.__PC_SMS_OPEN_ADDRESS=address.trim();
-        }
-      }
       /* AN EXTRA IS NOT A VIEW. System Settings and the other screens the desktop BUILDS have no
        * nav entry and nothing routes their name — and `switchView` does not validate its argument,
        * so it would set VIEW and fall through to the timeline under the right window title. That
