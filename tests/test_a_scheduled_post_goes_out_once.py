@@ -16,6 +16,8 @@ The guarantees, each asserted below by driving the real poll pass against a real
                   is 0.
   yours only      cancel is scoped by `user_id`. Without that filter any signed-in account could
                   cancel anybody's schedule by guessing a row id.
+  deleted owner   deleting an account mid-publish removes its queued rows without aborting
+                  another user's due posts or recreating deleted rows after the send completes.
   not yet         a post scheduled for later is left alone.
   retried         a relay that says no keeps the post PENDING and counts an attempt; it is only
                   marked `failed` after _MAX_ATTEMPTS. Fast-failing on one rejection would kill a
@@ -35,7 +37,7 @@ import json
 import unittest
 from datetime import datetime, timedelta
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import ScheduledPost, User
@@ -51,6 +53,9 @@ class AScheduledPostGoesOutOnce(unittest.TestCase):
 
     def setUp(self):
         self.engine = create_engine("sqlite://")            # one in-memory database per test
+        # Match production's account-delete CASCADE instead of SQLite's default disabled FKs.
+        with self.engine.connect() as connection:
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
         User.__table__.create(self.engine)
         ScheduledPost.__table__.create(self.engine)
         self.Session = sessionmaker(bind=self.engine)
@@ -75,6 +80,7 @@ class AScheduledPostGoesOutOnce(unittest.TestCase):
     def tearDown(self):
         sched.SessionLocal, sched.store.publish_event, sched._ss._port = self._real
         self.db.close()
+        self.engine.dispose()
 
     def poll(self):
         asyncio.run(sched._publish_due_once())
@@ -148,6 +154,38 @@ class AScheduledPostGoesOutOnce(unittest.TestCase):
                          "claim is not atomic")
         self.assertEqual(self.status(second.id).status, "cancelled")
         self.assertEqual(self.status(first.id).status, "sent")
+
+    def test_account_deletion_mid_publish_skips_its_queue_and_keeps_other_users_moving(self):
+        """Deleting an account CASCADE-deletes rows already loaded by this poll. A per-row commit
+        expires those ORM instances, so touching their attributes afterwards can abort the whole
+        batch. Delete through another real session while the first publish is in flight.
+        """
+        now = datetime.utcnow()
+        first = self.schedule(now - timedelta(minutes=3), text="already in flight")
+        queued = self.schedule(now - timedelta(minutes=2), text="deleted account's queued post")
+        survivor = self.schedule(now - timedelta(minutes=1), user=self.other, text="other user's post")
+        first_id, queued_id, survivor_id, owner_id = first.id, queued.id, survivor.id, self.user.id
+
+        async def publish_event(port, event):
+            self.published.append(event)
+            if event["content"] == "already in flight":
+                with self.Session() as other_connection:
+                    other_connection.execute(delete(User).where(User.id == owner_id))
+                    other_connection.commit()
+                    # Prove this is database CASCADE, not a mock that merely hides the objects.
+                    self.assertIsNone(other_connection.get(ScheduledPost, queued_id))
+            return True, ""
+        sched.store.publish_event = publish_event
+
+        self.poll()
+        self.assertEqual([e["content"] for e in self.published],
+                         ["already in flight", "other user's post"],
+                         "deleted-account rows must not publish or abort the remaining due batch")
+        self.assertIsNone(self.status(first_id), "a completed send recreated a deleted account's row")
+        self.assertIsNone(self.status(queued_id))
+        self.assertEqual(self.status(survivor_id).status, "sent")
+        self.poll()
+        self.assertEqual(len(self.published), 2, "the surviving post was retried after success")
 
     def test_cancelling_loses_to_a_claim_that_already_happened(self):
         """Mid-flight the row is 'sending', and cancel must report that it did NOT take — otherwise
