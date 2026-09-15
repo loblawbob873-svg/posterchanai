@@ -90,6 +90,9 @@ window.removeEventListener=(name,fn)=>{if(windowListeners.get(name)===fn)windowL
 window.__PC = {
   $:dollar, $$:dollars, enc:s=>String(s), niceNip05:s=>s,
   isView:view=>view===activeView,
+  cordDirectContext:()=>({pubkey:'a'.repeat(64),isCurrent:()=>true,sign:async template=>template}),
+  // This DOM fixture mocks crypto; creator wire/ACK ordering has its own real-crypto suite.
+  cordInviteLinksModule:async()=>({remember:async()=>{},details:()=>({pubkey:'5'.repeat(64)})}),
   viewer:()=>({pubkey:'a'.repeat(64),npub:'npub1testidentity',profile:{name:'tester',display_name:'Test User'}}),
   toast:s=>calls.toasts.push(String(s)),
   openEmojiPopover:(_anchor,pick)=>pick('😀',()=>{}),
@@ -139,6 +142,7 @@ window.PosterCordReader={
     : {controlPubkeys:['8'.repeat(64)],channels:[]},
   inspectChat:async(_bundle,_controls,channel)=>({messages:[{id:'joined-message-'+channel,pubkey:'b'.repeat(64),text:'joined history '+channel,at:12,kind:9,tags:[]}],reactions:[],reactionIds:[]}),
   createMetadataWrap:async()=>({wrap:{kind:1059}}),
+  createInviteRegistryWrap:async()=>({wrap:{kind:1059}}),
   createChatWrap:async(_bundle,_wraps,_channel,text,_author,_sign,tags,kind)=>{calls.lastChat={text,tags,kind};return {rumorId:'f'.repeat(64),wrap:{kind:1059},ms:1234};},
 };
 globalThis.document = {

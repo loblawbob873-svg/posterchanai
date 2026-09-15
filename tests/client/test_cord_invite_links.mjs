@@ -101,3 +101,12 @@ calls=[];const twins=await Promise.all([ctx.changeOwnedInviteLink(concurrentHost
 const paired=R.inspectControl(bundle,copy([...controls,...calls.filter(e=>e.kind===1059)]));for(const twin of twins)assert(paired.liveInviteLinks.includes(A.details(twin).pubkey));assert.equal(paired.liveInviteLinks.length,2);
 await ctx.changeOwnedInviteLink(concurrentHost,room,twins[0]);
 console.log('concurrent creator mint serialization passed');
+// Ordinary new-community creation must register its original URL immediately.
+vm.runInContext(source.slice(source.indexOf('  async function mintPublicRoom('),source.indexOf('  async function activateJoinedRoom(')),ctx);
+ctx.inviteParts=url=>({naddr:url.split('/invite/')[1].split('#')[0]});ctx.DISCOVER_RELAYS=copy(['wss://discover.fixture']);
+const mintHost={...concurrentHost,relayUrls:()=>['wss://mint.fixture'],publish:async()=>({ev:{kind:1}}),relayPublishTo:async()=>1};
+calls=[];const newRoom=await ctx.mintPublicRoom(mintHost,'Ordinary creation','');assert.deepEqual(calls.map(e=>e.kind),[13303,1059,1059,1059,33301]);
+assert.equal(R.inspectControl(newRoom.cord.bundle,newRoom.cord.events).liveInviteLinks[0],P.inviteDetails(newRoom.url).linkSigner);
+assert(JSON.parse(NT.nip44.decrypt(calls[0].content,key)).entries.some(e=>e.url===newRoom.url));
+calls=[];await assert.rejects(()=>ctx.mintPublicRoom({...mintHost,relayPublishRoom:async(_relays,e)=>{calls.push(e);return {ok:false};}},'Rejected backup',''),/No relay accepted/);assert.deepEqual(calls.map(e=>e.kind),[13303]);
+console.log('ordinary community creation tracks original link passed');

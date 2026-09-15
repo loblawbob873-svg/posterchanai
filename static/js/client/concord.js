@@ -1086,9 +1086,9 @@
     if(timer&&!options.some(([value])=>value===timer))options.push([timer,timer+' seconds (current)']);
     return '<label class="cc-label" for="cc-message-expiration">Disappearing messages</label><select class="input" id="cc-message-expiration"'+(communityPermission(p,room,'metadataManagers')?'':' disabled')+'>'+options.map(([value,label])=>'<option value="'+value+'"'+(value===timer?' selected':'')+'>'+p.enc(label)+'</option>').join('')+'</select><p class="cc-member-help">Applies to new messages in every channel. Existing messages keep their original timer.</p>';
   }
-  async function ownedInviteContext(p,room){
+  async function ownedInviteContext(p,room,creationCurrent=null){
     const base=p.cordDirectContext(),identity=roomIdentity(room),root=room.cord?.bundle?.community_root;
-    const current=()=>base.isCurrent()&&saved().some(r=>roomIdentity(r)===identity&&r.cord?.bundle?.community_root===root);
+    const current=()=>base.isCurrent()&&(creationCurrent?creationCurrent():saved().some(r=>roomIdentity(r)===identity&&r.cord?.bundle?.community_root===root));
     const api=await p.cordInviteLinksModule();if(!current())throw new Error('Concord membership changed');
     const relays=[...new Set([...roomRelays(room.cord.bundle),...CORD_RELAYS])].slice(0,8);
     const context={...base,isCurrent:current,
@@ -3546,15 +3546,24 @@
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');
     const relays=[...new Set([...CORD_RELAYS,...(p.relayUrls?p.relayUrls():[])])].slice(0,8);
-    const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:location.origin,signEvent:p.signTemplate});
+    const creator=p.cordDirectContext();
+    const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:location.origin,signEvent:creator.sign});
+    if(!creator.isCurrent())throw new Error('creating account changed');
     const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
+    const controls=made.events.filter(ev=>ev.kind===1059),draft={communityId:made.communityId,cord:{bundle}};
+    const {api,context}=await ownedInviteContext(p,draft,creator.isCurrent);
+    const entry={token:made.secrets.token,signer_sk:made.secrets.linkSignerSk,community_id:made.communityId,url:made.url,created_at:Math.floor(Date.now()/1000)};
+    await api.remember(entry,context);
+    const registry=await window.PosterCordReader.createInviteRegistryWrap(bundle,controls,[api.details(entry).pubkey],viewer.pubkey,creator.sign);
+    if(!context.isCurrent())throw new Error('creating account changed');
+    made.events=[...controls,registry.wrap,...made.events.filter(ev=>ev.kind!==1059)];
     const plane=cordPlaneContext(p,bundle,made.events.filter(ev=>ev.kind===1059));
     for(const ev of made.events){
-      if(deliveryOwner(p)!==viewer.pubkey)throw new Error('creating account changed');
+      if(!context.isCurrent())throw new Error('creating account changed');
       const accepted=await p.relayPublishRoom(relays,ev,ev.kind===1059?cordPlaneAuth(p,plane,ev.pubkey,relays):null);
       if(!accepted||!accepted.ok)throw new Error('CORD relays rejected an event');
     }
-    if(deliveryOwner(p)!==viewer.pubkey)throw new Error('creating account changed');
+    if(!context.isCurrent())throw new Error('creating account changed');
     const announcement=await p.publish(1,`${name}\n\n${made.url}`,[['t','concord'],['t','community']]);
     await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev);
     return {name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
