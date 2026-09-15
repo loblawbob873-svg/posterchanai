@@ -658,17 +658,18 @@ public class ThreadActivity extends PcActivity {
         stagingAttachment = true;
         attachment = null;
         final String who = address;
+        final MmsDraft.Copy copy = MmsDraft.beginCopy(who);
         say("Preparing attachment…");
         new Thread(() -> {
             String error = "";
             try (InputStream in = getContentResolver().openInputStream(uri)) {
                 if (in == null) throw new java.io.IOException("could not open attachment");
-                MmsDraft.save(ThreadActivity.this, who, in, mime, name);
+                MmsDraft.save(ThreadActivity.this, who, in, mime, name, copy);
             } catch (Exception e) { error = "Could not prepare attachment: " + e.getMessage(); }
             final String failure = error;
             main.post(() -> {
                 stagingAttachment = false;
-                if (!who.equals(address)) return;
+                if (isDestroyed() || isFinishing() || !who.equals(address) || !MmsDraft.isCurrent(copy)) return;
                 restoreAttachmentDraft();
                 if (failure.isEmpty() && onReady != null) onReady.run();
                 say(failure.isEmpty() ? getString(R.string.sms_attachment_ready) : failure);

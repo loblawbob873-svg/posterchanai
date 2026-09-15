@@ -21,6 +21,24 @@ final class MmsDraft {
 
     private MmsDraft() { }
 
+    private static final java.util.concurrent.ConcurrentHashMap<String, Slot> copies =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final class Slot { long generation; }
+    static final class Copy {
+        final String key; final Slot slot; final long generation;
+        Copy(String key, Slot slot, long generation) {
+            this.key = key; this.slot = slot; this.generation = generation;
+        }
+    }
+    private static Slot slot(String key) { return copies.computeIfAbsent(key, ignored -> new Slot()); }
+    static Copy beginCopy(String address) {
+        String key = key(address); Slot slot = slot(key);
+        synchronized (slot) { return new Copy(key, slot, ++slot.generation); }
+    }
+    static boolean isCurrent(Copy copy) {
+        synchronized (copy.slot) { return copy.slot.generation == copy.generation; }
+    }
+
     static String key(String address) {
         try {
             byte[] sum = MessageDigest.getInstance("SHA-256").digest(
@@ -67,39 +85,60 @@ final class MmsDraft {
     }
 
     static Value save(Context ctx, String address, java.io.InputStream input, String mime, String name) throws Exception {
+        return save(ctx, address, input, mime, name, beginCopy(address));
+    }
+
+    static Value save(Context ctx, String address, java.io.InputStream input, String mime,
+                      String name, Copy copy) throws Exception {
         String key = key(address); File d = dir(ctx);
-        if (!d.exists() && !d.mkdirs()) throw new Exception("could not save picture draft");
-        File tmp = new File(d, key + ".tmp");
+        if (!key.equals(copy.key)) throw new IllegalArgumentException("draft copy recipient changed");
+        if (!d.isDirectory() && !d.mkdirs() && !d.isDirectory()) throw new Exception("could not save picture draft");
+        File tmp = File.createTempFile(key + "-", ".tmp", d);
         try (FileOutputStream out = new FileOutputStream(tmp)) {
             byte[] buffer = new byte[64 * 1024]; int n;
             while ((n = input.read(buffer)) != -1) out.write(buffer, 0, n);
             out.getFD().sync();
             if (tmp.length() == 0) throw new java.io.IOException("empty attachment");
         } catch (Exception e) { tmp.delete(); throw e; }
-        File dst = media(ctx, key);
-        if (!tmp.renameTo(dst)) { tmp.delete(); throw new Exception("could not save picture draft"); }
-        prefs(ctx).edit().putString(key + ".mime", mime).putString(key + ".name", name)
-                .putString(key + ".state", READY).remove(key + ".error").commit();
-        return load(ctx, address);
+        // Slow provider reads happen above, outside the recipient lock. Only the latest
+        // accepted copy may replace the durable bytes and metadata, including across Activities.
+        synchronized (copy.slot) {
+            if (!isCurrent(copy)) { tmp.delete(); throw new java.io.IOException("attachment copy superseded"); }
+            File dst = media(ctx, key);
+            if (!tmp.renameTo(dst)) { tmp.delete(); throw new Exception("could not save picture draft"); }
+            prefs(ctx).edit().putString(key + ".mime", mime).putString(key + ".name", name)
+                    .putString(key + ".state", READY).remove(key + ".error").commit();
+            return load(ctx, address);
+        }
     }
 
     static Value load(Context ctx, String address) {
         String key = key(address); File file = media(ctx, key);
-        if (!file.isFile() || file.length() == 0) return null;
-        android.content.SharedPreferences p = prefs(ctx);
-        return new Value(key, p.getString(key + ".mime", "image/jpeg"),
-                p.getString(key + ".name", "attachment"), p.getString(key + ".state", READY),
-                p.getString(key + ".error", ""), file);
+        synchronized (slot(key)) {
+            if (!file.isFile() || file.length() == 0) return null;
+            android.content.SharedPreferences p = prefs(ctx);
+            return new Value(key, p.getString(key + ".mime", "image/jpeg"),
+                    p.getString(key + ".name", "attachment"), p.getString(key + ".state", READY),
+                    p.getString(key + ".error", ""), file);
+        }
     }
 
     static void state(Context ctx, String key, String state, String error) {
-        prefs(ctx).edit().putString(key + ".state", state)
-                .putString(key + ".error", error == null ? "" : error).commit();
+        Slot slot = slot(key);
+        synchronized (slot) {
+            ++slot.generation;
+            prefs(ctx).edit().putString(key + ".state", state)
+                    .putString(key + ".error", error == null ? "" : error).commit();
+        }
     }
 
     static void remove(Context ctx, String address) {
-        String key = key(address); media(ctx, key).delete();
-        prefs(ctx).edit().remove(key + ".mime").remove(key + ".name")
-                .remove(key + ".state").remove(key + ".error").commit();
+        String key = key(address); Slot slot = slot(key);
+        synchronized (slot) {
+            ++slot.generation;
+            media(ctx, key).delete();
+            prefs(ctx).edit().remove(key + ".mime").remove(key + ".name")
+                    .remove(key + ".state").remove(key + ".error").commit();
+        }
     }
 }
