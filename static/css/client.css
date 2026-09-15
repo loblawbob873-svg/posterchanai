@@ -2849,7 +2849,7 @@ body.embed .feed{max-width:680px;margin:0 auto;padding:14px;height:auto !importa
 /* mention autocomplete */
 .mention-box{background:var(--panel2);border:1px solid var(--neon);border-radius:10px;margin-top:-2px;max-height:230px;overflow:auto;box-shadow:var(--glow);position:relative;z-index:5}
 .mention-opt{display:flex;gap:10px;align-items:center;padding:10px 12px;cursor:pointer;font-size:15px}
-.mention-opt:hover{background:rgba(var(--accent-rgb),.15)}
+.mention-opt[aria-selected="true"],.mention-opt:hover{background:rgba(var(--accent-rgb),.15)}
 .mention-opt img{width:28px;height:28px;border-radius:50%;border:1px solid var(--line);object-fit:cover}
 .prof .phead{flex-wrap:wrap}
 
@@ -10571,3 +10571,6 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
   background-image:radial-gradient(ellipse at 100% 0,rgba(var(--accent2-rgb),.05),transparent 55%)}
 :root:not([data-theme]) .fx-explorer .fx-tree-head.active{color:var(--neon)}
 :root:not([data-theme]) .fx-explorer .fx-home-tile{background:linear-gradient(135deg,rgba(var(--accent-rgb),.06),transparent),var(--panel)}
+
+.pc-user-options{max-width:100%;min-width:0}
+.pc-user-options .mention-opt>span{min-width:0;overflow-wrap:anywhere}

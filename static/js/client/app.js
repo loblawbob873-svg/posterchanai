@@ -10140,7 +10140,9 @@
       dialog.oncancel=event=>{event.preventDefault();finish('cancel');};dialog.onclose=()=>finish(dialog.returnValue);dialog.showModal();
     });
   }
+  let _mediaCenterUserPickers=[];
   function stopMediaCenter(clearArt=true){
+    if(clearArt){_mediaCenterUserPickers.splice(0).forEach(dispose=>dispose());}
     if(_mediaCenterSaveProgress){_mediaCenterSaveProgress();_mediaCenterSaveProgress=null;}
     if(_mediaCenterSubtitleUrl){URL.revokeObjectURL(_mediaCenterSubtitleUrl);_mediaCenterSubtitleUrl=null;}
     document.querySelectorAll('#mc-player track').forEach(track=>track.remove());
@@ -10412,8 +10414,9 @@
            * identical — which is how this went a day without being noticed. It reports what the
            * server stored, which is also the only honest confirmation: a name that resolved to
            * nobody cannot be counted. */
-          share.innerHTML='<summary>Share with Nostr users</summary><p class="muted">One per line: an npub, a public key, or a name this server granted (e.g. <b>someone@'+enc((typeof CFG!=='undefined'&&CFG&&CFG.nip05_domain)||'this server')+'</b>). They sign in here. Remove an entry to revoke access. Nothing is federated.</p><textarea aria-label="Nostr public keys" rows="3" style="width:100%"></textarea><button>Save sharing</button><span class="mc-share-done muted small" style="margin-inline-start:8px"></span>';
+          share.innerHTML='<summary>Share with Nostr users</summary><p class="muted">Type a username to find people. One per line: an npub, a public key, or a name this server granted (e.g. <b>someone@'+enc((typeof CFG!=='undefined'&&CFG&&CFG.nip05_domain)||'this server')+'</b>). They sign in here. Remove an entry to revoke access. Nothing is federated.</p><textarea aria-label="Nostr public keys" rows="3" style="width:100%"></textarea><button>Save sharing</button><span class="mc-share-done muted small" style="margin-inline-start:8px"></span>';
           share.querySelector('textarea').value=lib.shared_with.join('\n');
+          _mediaCenterUserPickers.push(attachUserAutocomplete(share.querySelector('textarea'),{multiline:true}));
           share.querySelector('button').onclick=()=>act(share.querySelector('button'),async()=>{
             const saved=await api('/'+lib.id+'/sharing','PUT',{shared_with:share.querySelector('textarea').value.split(/[\s,]+/).filter(Boolean)});
             const n=((saved&&saved.shared_with)||[]).length;
@@ -17759,6 +17762,44 @@
   function niceNip05(n){ if(!n) return null; n=String(n).trim(); if(!n) return null; return n.startsWith('_@')?('@'+n.slice(2)):n; }
 
   async function _ensureProfile(pk){ if(!pk || Store.haveProfile(pk)) return; try{ const e=await Relay.query([{ authors:[pk], kinds:[0], limit:1 }]); if(e[0]) Store.saveProfile(e[0]); }catch(_){} }
+  // Recipient fields reuse the same cached profiles and theme as mentions. Store the
+  // selected key in the field itself: duplicate display names cannot change its identity.
+  let _userAutocompleteId=0;
+  function attachUserAutocomplete(input,{multiline=false}={}){
+    const box=document.createElement('div');box.className='mention-box pc-user-options hidden';
+    box.id='pc-user-options-'+(++_userAutocompleteId);box.setAttribute('role','listbox');
+    input.insertAdjacentElement('afterend',box);
+    input.setAttribute('role','combobox');input.setAttribute('aria-autocomplete','list');
+    input.setAttribute('aria-controls',box.id);input.setAttribute('aria-expanded','false');
+    let matches=[],active=-1,dead=false,press=null;
+    const close=()=>{matches=[];active=-1;box.classList.add('hidden');box.replaceChildren();input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');};
+    const range=()=>{const value=input.value,pos=input.selectionStart??value.length;
+      return multiline?{start:pos>0?value.lastIndexOf('\n',pos-1)+1:0,end:value.indexOf('\n',pos)<0?value.length:value.indexOf('\n',pos)}:{start:0,end:value.length};};
+    const highlight=()=>{Array.from(box.children).forEach((el,i)=>{el.setAttribute('aria-selected',String(i===active));});
+      if(active>=0){input.setAttribute('aria-activedescendant',box.children[active].id);box.children[active].scrollIntoView({block:'nearest'});}else input.removeAttribute('aria-activedescendant');};
+    const pick=index=>{const profile=matches[index];if(!profile)return;
+      const {start,end}=range(),key=NT().nip19.npubEncode(profile.pubkey);
+      input.setRangeText(key,start,end,'end');close();input.focus();
+      input.dispatchEvent(new Event('input',{bubbles:true}));};
+    const search=()=>{if(dead)return;const {start,end}=range(),value=input.value.slice(start,end).trim(),q=value.replace(/^@/,'').toLowerCase();close();
+      if(q.length<2||refToPk(value))return;
+      matches=Store.profileList().filter(p=>/^[0-9a-f]{64}$/i.test(p.pubkey)&&[p.meta?.name,p.meta?.display_name,p.meta?.nip05].some(v=>String(v||'').toLowerCase().includes(q))).slice(0,6);
+      if(!matches.length)return;
+      box.innerHTML=matches.map((p,i)=>{const m=p.meta||{},key=NT().nip19.npubEncode(p.pubkey);return `<div class="mention-opt" role="option" aria-selected="false" id="${box.id}-${i}" data-index="${i}"><span><b>${enc(m.display_name||m.name||'anon')}</b> <span class="muted small">${enc(m.nip05||'')} · ${enc(key.slice(0,16)+'…'+key.slice(-8))}</span></span></div>`;}).join('');
+      box.classList.remove('hidden');input.setAttribute('aria-expanded','true');};
+    const keydown=e=>{if(e.isComposing||!matches.length)return;
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();e.stopImmediatePropagation();active=(active+(e.key==='ArrowDown'?1:active<0?0:-1)+matches.length)%matches.length;highlight();}
+      else if(e.key==='Enter'){if(active>=0){e.preventDefault();e.stopImmediatePropagation();pick(active);}else close();}
+      else if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();close();}
+      else if(e.key==='Tab')close();};
+    box.addEventListener('pointerdown',e=>{const row=e.target.closest('[data-index]');if(e.button!==0||!row)return;press={id:e.pointerId,index:+row.dataset.index,x:e.clientX,y:e.clientY,moved:false};e.preventDefault();});
+    box.addEventListener('pointermove',e=>{if(press&&(Math.abs(e.clientX-press.x)>8||Math.abs(e.clientY-press.y)>8))press.moved=true;});
+    box.addEventListener('pointerup',e=>{const row=e.target.closest('[data-index]'),p=press;press=null;if(p&&p.id===e.pointerId&&!p.moved&&row&&+row.dataset.index===p.index){e.preventDefault();pick(p.index);}});
+    box.addEventListener('pointercancel',()=>{press=null;});
+    box.addEventListener('pointerleave',()=>{press=null;});
+    input.addEventListener('input',search);input.addEventListener('click',search);input.addEventListener('keydown',keydown,true);input.addEventListener('blur',close);
+    return ()=>{dead=true;close();box.remove();input.removeEventListener('input',search);input.removeEventListener('click',search);input.removeEventListener('keydown',keydown,true);input.removeEventListener('blur',close);for(const name of ['role','aria-autocomplete','aria-controls','aria-expanded','aria-activedescendant'])input.removeAttribute(name);};
+  }
   // @-autocomplete: type "@name" (local profiles), a full NIP-05 "@name@domain.tld", or an
   // "@npub1…/@nprofile1…" — the latter two are resolved live (NIP-05 lookup / decode + profile
   // fetch) so you can mention people who aren't cached yet. Picking inserts a nostr:npub mention.
@@ -39722,6 +39763,7 @@
   }
 
   window.__PC = {
+    attachUserAutocomplete,
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
     // automatically after a relay change). Exposed for the sub-modules and for the console.
     carryPrivateToRelays, reconnectNetwork,

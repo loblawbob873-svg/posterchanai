@@ -3009,7 +3009,7 @@
   function paintRemoteDesktop(slot){
     try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true);}catch(_){}
     slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
-      <label class="pcrd-label">Viewer’s npub or address<input class="input" data-rd-peer placeholder="npub1… · 192.168.1.20 · name@host" autocomplete="off" spellcheck="false"></label>
+      <label class="pcrd-label">Viewer’s username, npub or address<input class="input" data-rd-peer placeholder="Search username · npub1… · 192.168.1.20 · name@host" autocomplete="off" spellcheck="false"></label>
       <div class="pcrd-label" data-rd-choose hidden><label>User at this address<select class="input" data-rd-choice></select></label><button class="btn" type="button" data-rd-continue>Share with this user</button></div>
       <button class="btn" type="button" data-rd-self>Share to my other signed-in device</button>
       <button class="btn btn-neon" data-rd-share><svg class="ic b-ic"><use href="#i-share"></use></svg>Choose screen and share</button>
@@ -3018,6 +3018,7 @@
       <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ npub, IP address, or name@host</span><span>✓ Authenticated, encrypted Nostr signaling</span></div></div><div class="pcrd-session" data-rd-session></div>`;
     try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost($('[data-rd-session]',slot));}catch(_){}
     const input=$('[data-rd-peer]',slot),button=$('[data-rd-share]',slot),selfButton=$('[data-rd-self]',slot),status=$('[data-rd-status]',slot),choose=$('[data-rd-choose]',slot),choice=$('[data-rd-choice]',slot),continueButton=$('[data-rd-continue]',slot);
+    const disposeUserPicker=PC().attachUserAutocomplete?.(input);
     const reset=()=>{button.disabled=false;selfButton.disabled=false;button.textContent='Choose screen and share';};
     const go=async explicitPeer=>{const peer=String(explicitPeer||input.value||'').trim();if(!peer){status.textContent='Enter a viewer address or choose your other signed-in device.';input.focus();return;}
       const proceed=await PC().uiConfirm('Select the monitor you want to share in the next window, then click it.\n\nNothing is shared until you choose a monitor.',{ok:'Open monitor picker',cancel:'Cancel'});if(!proceed)return;
@@ -3029,8 +3030,8 @@
     choice.onchange=()=>{input.value=choice.value;};
     continueButton.onclick=()=>{input.value=choice.value;choose.hidden=true;go();};
     selfButton.onclick=()=>{const viewer=PC().viewer&&PC().viewer(),pk=viewer&&viewer.pubkey;if(!pk){status.textContent='Sign in before sharing to another device.';return;}go(pk);};
-    button.onclick=()=>go();input.oninput=()=>{choose.hidden=true;status.textContent='';};input.onkeydown=e=>{if(e.key==='Enter')go();};
-    return ()=>{try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost(null);PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false);}catch(_){}};
+    button.onclick=()=>go();input.oninput=()=>{choose.hidden=true;status.textContent='';};input.onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing&&!e.defaultPrevented)go();};
+    return ()=>{disposeUserPicker?.();try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost(null);PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(false);}catch(_){}};
   }
   // app.js receives WebRTC signaling independently of whichever simulated app currently has focus.
   // A Remote Desktop session must never use that current app as its canvas: ensure the dedicated
