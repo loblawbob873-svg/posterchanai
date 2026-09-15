@@ -222,8 +222,12 @@ public final class LauncherTileLandsOnItsScreenDeviceTest {
         if (web == null) throw new AssertionError("MainActivity never created its WebView");
         String state = "";
         for (int i = 0; i < 150; i++) {
-            state = eval(web, "document.readyState+'|'+!!window.__PC+'|'+!!document.getElementById('feed')");
-            if (state.contains("complete|true|true")) return web;
+            // A real warm press starts after boot. #feed is part of the static shell, and
+            // __PC is exported before async config/storage restores the initial route.
+            // Starting the two-second per-tile budget earlier measures boot, not routing.
+            state = eval(web, "document.readyState+'|'+!!window.__PC_BOOTED"
+                    + "+'|'+!!window.PCPhone+'|'+!!document.getElementById('feed')");
+            if (state.contains("complete|true|true|true")) return web;
             SystemClock.sleep(100);
         }
         throw new AssertionError("bundled client never became ready: " + state);
