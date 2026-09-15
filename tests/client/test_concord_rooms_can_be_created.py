@@ -143,8 +143,8 @@ def test_only_the_owner_is_offered_the_control():
 
 def test_the_control_exists_and_is_gated_in_the_markup():
     assert 'id="cc-add-channel"' in CONCORD
-    assert "canAddChannel(p,room)?" in CONCORD, "the + is drawn for everybody"
-    assert ".cc-add-channel{" in CSS, "the control has no stylesheet"
+    assert "canAddChannel(p,current)?" in CONCORD, "the + is drawn for everybody"
+    assert 'class="cc-head-btn" id="cc-add-channel"' in CONCORD, "the control must use header button styling"
 
 
 def test_a_failed_write_never_edits_the_saved_room():

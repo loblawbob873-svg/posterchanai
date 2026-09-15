@@ -1064,7 +1064,7 @@
   }
   function channelSectionsHtml(p,room,channels){
     const starred=(channels||[]).filter(c=>channelStarred(room,c.name)),regular=(channels||[]).filter(c=>!channelStarred(room,c.name));
-    return `${starred.length?`<div class="cc-section cc-starred-section">STARRED</div>${channelRowsHtml(p,room,starred)}`:''}<div class="cc-section cc-section-head">TEXT CHANNELS${canAddChannel(p,room)?'<button class="cc-add-channel" id="cc-add-channel" title="Create a channel" aria-label="Create a channel">+</button>':''}</div>${channelRowsHtml(p,room,regular)}`;
+    return `${starred.length?`<div class="cc-section cc-starred-section">STARRED</div>${channelRowsHtml(p,room,starred)}`:''}<div class="cc-section cc-section-head">TEXT CHANNELS</div>${channelRowsHtml(p,room,regular)}`;
   }
   /* render() replaces the workspace often (history, focus and room navigation). Replacing the
    * entire community rail also replaces every decoded <img>, producing a visible initials/image
@@ -3115,7 +3115,7 @@
     feed.innerHTML=`<div class="cc-app${mobileChatOpen||state.community==null?' show-chat':''}${mobileDrawerOpen?' drawer-open':''}${state.community==null?' home-view':''}">
       <button class="cc-drawer-backdrop" id="cc-drawer-backdrop" aria-label="Close rooms and channels"></button>
       <aside class="cc-communities"><button class="cc-brand" id="cc-home" title="Your rooms" aria-label="Your rooms"><span aria-hidden="true">🕊</span></button><button class="cc-server cc-discovery-button" id="cc-discovery" title="Discover public communities" aria-label="Discover public communities">◎</button>${rooms.map((r,i)=>`<button class="cc-server${state.community===i?' active':''}${isUnread(r)?' unread':''}" data-cc-server="${i}" title="${p.enc(roomName(r,i))}">${roomIcon(p,r,i)}</button>`).join('')}<button class="cc-server cc-add" id="cc-add" title="Create or join a community" aria-label="Create or join a community">+</button></aside>
-      <aside class="cc-channels"><header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-room" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button>':''}<button class="cc-head-btn" id="cc-invite" title="Join with invite">+</button></header>
+      <aside class="cc-channels"><header><button class="cc-mobile-back" id="cc-back-communities" aria-label="Communities">‹</button><div><b>${state.community==null?'Concord':p.enc(roomName(current,state.community))}</b><small>${current&&current.local?'Local test community':'End-to-end encrypted'}</small></div>${current?'<button class="cc-head-btn" id="cc-edit-icon" title="Set community icon" aria-label="Set community icon"><svg class="ic"><use href="#i-image"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-room" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button>':''}${canAddChannel(p,current)?'<button class="cc-head-btn" id="cc-add-channel" title="New channel" aria-label="New channel">+</button>':''}</header>
         <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
@@ -3199,8 +3199,7 @@
     const openJoin=()=>{ $('#cc-join').classList.remove('hidden'); setTimeout(()=>$('#cc-invite-url').focus(),20); };
     const home=$('#cc-home'); if(home)home.onclick=()=>{ const rooms=saved(),wanted=Number(localStorage.getItem('pc.concord.active')||0); discoveryOpen=!rooms.length; state.community=rooms.length&&wanted>=0&&wanted<rooms.length?wanted:(rooms.length?0:null); state.channel=state.community==null?null:'general'; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
     const discovery=$('#cc-discovery'); if(discovery)discovery.onclick=()=>{ discoveryOpen=true; state.community=null; state.channel=null; mobileChatOpen=false; mobileDrawerOpen=false; render(); };
-    ['#cc-add','#cc-invite','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
-    const roomInvite=$('#cc-invite');if(roomInvite&&state.community!=null){roomInvite.title='Invite people';roomInvite.setAttribute&&roomInvite.setAttribute('aria-label','Invite people');roomInvite.onclick=()=>{const room=saved()[state.community];if(room&&room.url)p.copyValue(room.url);else $('#cc-join').classList.remove('hidden');};}
+    ['#cc-add','#cc-welcome-join'].forEach(s=>{ const b=$(s); if(b)b.onclick=openJoin; });
     /* CREATING A COMMUNITY WAS REACHABLE ONLY WHILE YOU HAD NONE.
      *
      * "Create community" lives on the `state.community==null` discover pane, and the moment you
