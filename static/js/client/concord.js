@@ -2791,7 +2791,7 @@
       const seed=reader.inspectControl(bundle,[]), relays=roomRelays(bundle);
       const controlKey=envelopeCacheKey(loadKey,'control');
       let controlWraps=await cachedEnvelopes(controlKey);if(!currentOwner())return;
-      const applyControl=wraps=>{if(!currentOwner())return 0;const admitted=bundle.dissolved?(wraps||[]).filter(e=>(room.cord.sealed_controls||[]).includes(e.id)):(wraps||[]);const info=reader.inspectControl(bundle,admitted);roomControls.set(loadKey,admitted);room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[])markRemoteStore(channelStoreId(room,channel.name));persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
+      const applyControl=wraps=>{if(!currentOwner())return 0;const admitted=bundle.dissolved?(wraps||[]).filter(e=>(room.cord.sealed_controls||[]).includes(e.id)):(wraps||[]);const info=reader.inspectControl(bundle,admitted);roomControls.set(loadKey,admitted);room.name=info.name||room.name;room.description=info.description||room.description;if(Number.isSafeInteger(info.message_expiration))room.message_expiration=info.message_expiration;room.banned=Array.isArray(info.banned)?info.banned:room.banned||[];room.moderators=Array.isArray(info.moderators)?info.moderators:room.moderators||[];/* An encrypted icon can require an IndexedDB read, a remote download, AES-GCM and hashing. It is decoration, so never hold the cached channel list or first history paint behind it. Plain/cleared icons still mutate synchronously before this promise yields. Persist and repaint the icon when its bounded job finishes. */void applyRoomIconMetadata(room,info,loadKey,seed).then(changed=>{if(!changed)return;if(!persistRoom())return;const active=saved()[state.community];if(roomIdentity(active)===identity)backgroundRender();});const channels=(info.channels||[]).map(c=>({id:c.id,name:c.name,private:!!c.private,streamPubkeys:c.streamPubkeys})).filter(c=>c.name);if(channels.length)room.channels=channels;for(const channel of room.channels||[]){markRemoteStore(channelStoreId(room,channel.name));if(reader.inspectPinList?.(bundle,admitted,channel.id)?.entries?.length)void window.PCConcord?.reconcilePins?.(p,room,channel.id)?.catch(e=>console.warn("Pin deletion reconciliation is pending",e));}persistRoom();void refreshGuestbookMembers(p,room,wraps||[]);return channels.length;};
       const applyChannel=async(channel,wraps)=>{
         /* THROUGH readChat, NEVER reader.inspectChat DIRECTLY. The readable channel set is built
          * from the control events and from nothing else, so a saved channel whose id the control
@@ -3157,7 +3157,7 @@
   async function readChat(p,reader,bundle,controlWraps,room,channel,wraps){
     const live=saved().find(r=>roomIdentity(r)===roomIdentity(room));
     if(live?.cord?.bundle?.dissolved){room=live;bundle=live.cord.bundle;const ids=new Set(live.cord.sealed_controls||[]);controlWraps=controlWraps.filter(e=>ids.has(e.id));}
-    try{ return await acknowledgeDeliveryEcho(p,room,channel,wraps,await reader.inspectChat(bundle,controlWraps,channel.id,wraps,bundle.dissolved?(room.cord.sealed_history?.[channel.id]||[]):[])); }
+    try{ void window.PCConcord?.reconcilePins?.(p,room,channel.id,wraps)?.catch(e=>console.warn("Pin deletion reconciliation is pending",e));return await acknowledgeDeliveryEcho(p,room,channel,wraps,await reader.inspectChat(bundle,controlWraps,channel.id,wraps,bundle.dissolved?(room.cord.sealed_history?.[channel.id]||[]):[])); }
     catch(e){
       if(!/not readable with this membership/i.test(String(e&&e.message||e))) throw e;
       const fixed=reconcileChannels(reader,bundle,controlWraps,room,channel.name);
@@ -3505,7 +3505,64 @@
     startRekeyLive(p,updated,roomControls.get(loadKey));backgroundRender();return next;
   }
 
+  const pinReconciliations=new Map();
+  async function reconcilePins(p,room,channelId,observed=[]){
+    const reader=window.PosterCordReader,owner=deliveryOwner(p),identity=roomIdentity(room),bundle=room?.cord?.bundle;
+    if(!owner||!bundle||bundle.dissolved||bundle.removed||bundle.refounding_pending||!reader?.inspectPinList||!p.signTemplate)return;
+    const loadKey=room.communityId||room.naddr,key=owner+'\n'+identity+'\n'+channelId;
+    let entry=pinReconciliations.get(key);
+    if(entry){entry.pending=true;for(const w of observed)entry.wraps.set(w.id,w);return entry.job;}
+    entry={pending:true,wraps:new Map(observed.map(w=>[w.id,w]))};pinReconciliations.set(key,entry);
+    entry.job=(async()=>{
+      // Coalesce witnesses/edits before re-reading the authoritative head. No
+      // timer survives an operation, and account/head checks gate every write.
+      await new Promise(resolve=>setTimeout(resolve,100+Math.floor(Math.random()*300)));
+      while(entry.pending){entry.pending=false;
+        const active=saved().find(r=>roomIdentity(r)===identity),snapshot=JSON.stringify(active?.cord?.bundle);
+        const current=()=>deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity&&JSON.stringify(r.cord?.bundle)===snapshot&&!r.cord.bundle.dissolved&&!r.cord.bundle.removed&&!r.cord.bundle.refounding_pending);
+        if(!current())return;
+        const local=roomControls.get(loadKey)||[];if(!reader.canPinMessages(active.cord.bundle,local,channelId,owner))return;
+        const visible=reader.inspectPinList(active.cord.bundle,local,channelId);
+        if(!visible.available||!visible.entries.length){if(entry.pending)continue;return;}
+        const cached=await cachedEnvelopes(envelopeCacheKey(loadKey,channelId));if(!current())return;
+        for(const w of cached)entry.wraps.set(w.id,w);
+        const witnesses=[...entry.wraps.values()],filtered=reader.inspectPinList(active.cord.bundle,local,channelId,witnesses);
+        if(filtered.entries.length===visible.entries.length){if(entry.pending)continue;return;}
+        const fetched=await acquireRefoundingControls(p,active,current);if(!current())return;
+        const controls=[...new Map([...fetched,...(roomControls.get(loadKey)||[])].map(e=>[e.id,e])).values()];
+        const before=reader.inspectPinList(active.cord.bundle,controls,channelId),after=reader.inspectPinList(active.cord.bundle,controls,channelId,witnesses);
+        if(!before.available||!after.available||before.entries.length===after.entries.length){if(entry.pending)continue;return;}
+        const stamp=JSON.stringify(cordControlStamp(roomControls.get(loadKey)||[])),owned=()=>current()&&JSON.stringify(cordControlStamp(roomControls.get(loadKey)||[]))===stamp;
+        const made=await reader.createPinListWrap(active.cord.bundle,controls,channelId,after.entries.map(e=>e.proof),owner,p.signTemplate);if(!owned()){if(current()&&entry.pending)continue;return;}
+        const relays=roomRelays(active.cord.bundle),auth=reader.createPlaneAuth(active.cord.bundle,controls,made.wrap.pubkey,relays);
+        const accepted=await p.relayPublishRoom(relays,made.wrap,{...auth,current:owned});if(!owned()){if(current()&&entry.pending)continue;return;}
+        if(!accepted?.ok)throw new Error('pin deletion publication was not confirmed');
+        roomControls.set(loadKey,[...controls,made.wrap]);await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),[made.wrap]);if(!current())return;
+        backgroundRender();
+      }
+    })();
+    try{return await entry.job;}finally{if(pinReconciliations.get(key)===entry)pinReconciliations.delete(key);}
+  }
   const rekeySubscriptions=new Map();
+  const staffAdoptions=new Map();
+  async function adoptStaffGrant(p,room,controls){
+    const reader=window.PosterCordReader,bundle=room?.cord?.bundle,owner=deliveryOwner(p),identity=roomIdentity(room);
+    if(!bundle?.control_pk||bundle.control_root||bundle.removed||bundle.dissolved||bundle.refounding_pending||!owner||!reader?.adoptStaffControlWrap)return;
+    const snapshot=JSON.stringify(bundle),loadKey=room.communityId||room.naddr,stamp=JSON.stringify(cordControlStamp(controls||[])),key=owner+'\n'+identity+'\n'+snapshot+'\n'+stamp;
+    if(staffAdoptions.has(key))return staffAdoptions.get(key);
+    const currentControls=()=>roomControls.get(loadKey)||controls||[];
+    const current=()=>deliveryOwner(p)===owner&&JSON.stringify(cordControlStamp(currentControls()))===stamp&&saved().some(r=>roomIdentity(r)===identity&&JSON.stringify(r.cord?.bundle)===snapshot);
+    const job=(async()=>{
+      const next=await reader.adoptStaffControlWrap(bundle,controls||[],owner,p.cordRekeyDecrypt,currentControls);
+      if(next===bundle||!current())return;
+      const rooms=saved(),at=rooms.findIndex(r=>roomIdentity(r)===identity),updated={...rooms[at],cord:{...rooms[at].cord,bundle:next}};
+      rooms[at]=updated;save(rooms);await persistArmadaMembership(p,updated);
+      if(deliveryOwner(p)!==owner)return;
+      startRekeyLive(p,updated,controls);backgroundRender();
+    })();staffAdoptions.set(key,job);
+    try{await job;}finally{if(staffAdoptions.get(key)===job)staffAdoptions.delete(key);}
+  }
+
   async function freezeSealedHistory(room){
     const loadKey=room.communityId||room.naddr,history={},channels=[...(room.channels||[]),...(room.cord.bundle.channels||[])];
     for(const id of new Set(channels.map(c=>c.id).filter(Boolean)))history[id]=(await cachedEnvelopes(envelopeCacheKey(loadKey,id))).map(e=>e.id);
@@ -3513,6 +3570,7 @@
   }
   function stopRekeyLive(){for(const entry of rekeySubscriptions.values())entry.close();rekeySubscriptions.clear();}
   function startRekeyLive(p,room,controls){
+    void adoptStaffGrant(p,room,controls).catch(e=>{console.warn('Staff key delivery could not be adopted',e);});
     const reader=window.PosterCordReader,R=window.Relay,bundle=room&&room.cord&&room.cord.bundle,owner=deliveryOwner(p);
     if(!reader||!reader.inspectRekeyStreams||!bundle||!owner||!R||!R.subscribeFrom||bundle.dissolved||bundle.removed)return;
     const identity=roomIdentity(room),snapshot=JSON.stringify(bundle),controlStamp=JSON.stringify(cordControlStamp(controls)),key=owner+'\n'+identity;

@@ -9347,6 +9347,13 @@ var PosterCordReader = (() => {
   // pc-cord-reader.ts
   var pc_cord_reader_exports = {};
   __export(pc_cord_reader_exports, {
+    canPinMessages: () => canPinMessages,
+    verifyPinProof: () => verifyPinProof,
+    makePinProof: () => makePinProof,
+    inspectPinList: () => inspectPinList,
+    createPinListWrap: () => createPinListWrap,
+    adoptStaffControlWrap: () => adoptStaffControlWrap,
+    createRoleGrantWrap: () => createRoleGrantWrap,
     prepareRefounding: () => prepareRefounding,
     resumeRefounding: () => resumeRefounding,
     inspectDissolution: () => inspectDissolution,
@@ -9730,6 +9737,7 @@ var PosterCordReader = (() => {
     assert32("memberXonly", memberXonly);
     return hkdf32(communityId, buildInfo(LABEL_GRANT, memberXonly));
   }
+  function pinsLocator(communityId,channelId) {return hkdf32(communityId,buildInfo('concord/pins',channelId));}
   function banlistLocator(communityId) {
     assert32("communityId", communityId);
     return hkdf32(communityId, buildInfo(LABEL_BANLIST, ZERO32));
@@ -25042,6 +25050,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   var VSK_GRANT = "3";
   var VSK_BANLIST = "4";
   var VSK_INVITE_REGISTRY = "8";
+  var VSK_PIN_LIST = "11";
 
   // src/concord-v2/lib/stream.ts
   init_define_import_meta_env();
@@ -25478,10 +25487,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     CREATE_INVITE: 1n << 6n,
     // 1<<7 RETIRED (was MANAGE_INVITES).
     VIEW_AUDIT_LOG: 1n << 8n,
-    MENTION_EVERYONE: 1n << 9n
-    // Reserved: MANAGE_EMOJI=1<<10, PIN_MESSAGES=1<<11, MANAGE_EVENTS=1<<12.
+    MENTION_EVERYONE: 1n << 9n,
+    PIN_MESSAGES: 1n << 11n
+    // Reserved: MANAGE_EMOJI=1<<10, MANAGE_EVENTS=1<<12.
   };
-  var ADMIN_ALL = Permissions.MANAGE_ROLES | Permissions.MANAGE_CHANNELS | Permissions.MANAGE_METADATA | Permissions.KICK | Permissions.BAN | Permissions.MANAGE_MESSAGES | Permissions.CREATE_INVITE | Permissions.VIEW_AUDIT_LOG | Permissions.MENTION_EVERYONE;
+  var ADMIN_ALL = Permissions.MANAGE_ROLES | Permissions.MANAGE_CHANNELS | Permissions.MANAGE_METADATA | Permissions.KICK | Permissions.BAN | Permissions.MANAGE_MESSAGES | Permissions.CREATE_INVITE | Permissions.VIEW_AUDIT_LOG | Permissions.MENTION_EVERYONE | Permissions.PIN_MESSAGES;
   var MANAGEMENT_MASK = ADMIN_ALL & ~Permissions.MENTION_EVERYONE;
   var NAME_MAX_BYTES2 = 64;
   var MAX_ROLES_PER_MEMBER = 64;
@@ -25960,13 +25970,20 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       registriesByCreator.set(head.author, list);
       for (const pk of list) liveInviteLinks.add(pk.toLowerCase());
     }
+    const pins=new Map();
+    for(const [channelId] of channels){
+      const eid=bytesToHex2(pinsLocator(communityId,hex32(channelId))),candidates=candidatesOf(VSK_PIN_LIST).get(eid)||[];
+      const head=pickHead(candidates,heads,headEditions,p=>citationOk(p)&&(p.author===ownerHex||rolesOf(roster,p.author).some(r=>permsContain(r.permissions,Permissions.PIN_MESSAGES)&&(r.scope.kind==='server'||r.scope.channelId===channelId))));
+      // Content refusal MUST NOT reject the signed version-chain head.
+      if(head)pins.set(channelId,head);
+    }
     const servedEids = /* @__PURE__ */ new Set();
     for (const m of byVsk.values()) for (const eid of m.keys()) servedEids.add(eid);
     const incomplete = [...gapHeld];
     for (const eid of priorHeads?.keys() ?? []) {
       if (!servedEids.has(eid) && !gapHeld.has(eid)) incomplete.push(eid);
     }
-    const result = { roster, ownerHex, metadata, channels, banned, bannedAt, liveInviteLinks, registriesByCreator, heads, headEditions, incomplete };
+    const result = { roster, ownerHex, metadata, channels, banned, bannedAt, liveInviteLinks, registriesByCreator, pins, heads, headEditions, incomplete };
     return result;
   }
 
@@ -26959,7 +26976,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   // string interface destroys non-UTF8 bytes. Signer adapters explicitly provide
   // encryptBytes/decryptBytes; unsupported remote signers fail without adopting.
   function encryptRekeyBytes(plaintext,conversationKey) {
-    if(!(plaintext instanceof Uint8Array)||![72,104,136].includes(plaintext.length))throw new Error('invalid binary rekey width');
+    if(!(plaintext instanceof Uint8Array)||![40,72,104,136].includes(plaintext.length))throw new Error('invalid binary rekey width');
     const nonce=randomBytes3(32),{chacha_key,chacha_nonce,hmac_key}=getMessageKeys(conversationKey,nonce),padded=concatBytes3(writeU16BE(plaintext.length),plaintext,new Uint8Array(calcPaddedLen(plaintext.length)-plaintext.length)),ciphertext=chacha20(chacha_key,chacha_nonce,padded);
     return base64.encode(concatBytes3(new Uint8Array([2]),nonce,ciphertext,hmacAad(hmac_key,ciphertext,nonce)));
   }
@@ -26968,10 +26985,112 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     const {nonce,ciphertext,mac}=decodePayload(payload),{chacha_key,chacha_nonce,hmac_key}=getMessageKeys(conversationKey,nonce);
     if(!equalBytes(hmacAad(hmac_key,ciphertext,nonce),mac))throw new Error('invalid MAC');
     const padded=chacha20(chacha_key,chacha_nonce,ciphertext),size=new DataView(padded.buffer,padded.byteOffset,padded.byteLength).getUint16(0);
-    if(![72,104,136].includes(size)||padded.length!==2+calcPaddedLen(size))throw new Error('invalid binary rekey padding');
+    if(![40,72,104,136].includes(size)||padded.length!==2+calcPaddedLen(size))throw new Error('invalid binary rekey padding');
     return padded.slice(2,2+size);
   }
 
+  function verifyPinProof(proof,channelId,kinds=[9,1111]) {
+    try{
+      const seal=JSON.parse(JSON.stringify(proof.seal));
+      if(seal.kind!==20013||!verifyEvent2(seal)||!/^([0-9a-f]{152})$/.test(proof.keys))return null;
+      const key=hexToBytes2(proof.keys),{nonce,ciphertext,mac}=decodePayload(seal.content);
+      if(!equalBytes(hmacAad(key.subarray(44),ciphertext,nonce),mac))return null;
+      const rumor=JSON.parse(unpad(chacha20(key.subarray(0,32),key.subarray(32,44),ciphertext)));
+      if(rumor.pubkey!==seal.pubkey||!kinds.includes(rumor.kind)||!Array.isArray(rumor.tags)||rumor.tags.filter(t=>t[0]==='channel').length!==1||!rumor.tags.some(t=>t[0]==='channel'&&t[1]===channelId)||typeof rumor.content!=='string')return null;
+      const id=getEventHash2(rumor);return {...rumor,id,ms:resolveMs(rumor.created_at,rumor.tags)};
+    }catch{return null;}
+  }
+  function makePinProof(bundle,controlWraps,channelId,wrap){
+    const channel=control(bundle,controlWraps).channels.find(c=>c.idHex===channelId),stream=channel?.streams.find(s=>s.group.pk===wrap.pubkey);
+    if(!stream)throw new Error('the message epoch is not held');
+    const opened=openWrap(wrap,stream.group);checkChannelBinding(opened,channelId,stream.epoch);
+    const seal=opened.seal,{nonce}=decodePayload(seal.content),keys=getMessageKeys(stream.group.convKey,nonce);
+    const proof={seal,keys:bytesToHex2(concatBytes3(keys.chacha_key,keys.chacha_nonce,keys.hmac_key)),wrap:wrap.id};
+    if(!verifyPinProof(proof,channelId,[9,1111,3302]))throw new Error('message cannot be proven for this pin list');
+    return proof;
+  }
+  function inspectPinList(bundle,controlWraps,channelId,chatWraps=[]) {
+    const {folded,channels}=control(bundle,controlWraps),head=folded.pins.get(channelId),channel=channels.find(c=>c.idHex===channelId);
+    const unavailable={available:false,entries:[],version:head?.version.toString()||null};
+    if(!head)return unavailable;
+    let body;try{
+      if(utf8Len(head.content)>32768)return {...unavailable,available:true,invalid:true};
+      body=JSON.parse(head.content);
+      if(typeof body.sealed==='string'){
+        const epoch=rekeyEpoch(body.epoch),stream=channel?.streams.find(s=>s.epoch===epoch);
+        if(!stream)return unavailable;
+        body=JSON.parse(decryptChecked(body.sealed,stream.group.convKey));
+      }
+      if(!Array.isArray(body.entries)||body.entries.length>25)return {...unavailable,available:true,invalid:true};
+    }catch{return unavailable;}
+    const opened=channel?(chatWraps||[]).map(w=>openOne(w,channel)).filter(Boolean):[],seen=new Set(),entries=[];
+    for(const proof of body.entries){
+      const original=verifyPinProof(proof,channelId);if(!original||seen.has(original.id)||folded.banned.has(original.pubkey))continue;seen.add(original.id);
+      if(opened.some(e=>e.kind===5&&e.author===original.pubkey&&e.tags.some(t=>t[0]==='e'&&t[1]===original.id)))continue;
+      let edit=proof.edit&&verifyPinProof(proof.edit,channelId,[3302]);
+      if(edit&&(edit.pubkey!==original.pubkey||!edit.tags.some(t=>t[0]==='e'&&t[1]===original.id)))edit=null;
+      for(const local of opened.filter(e=>e.kind===3302&&e.author===original.pubkey&&e.tags.some(t=>t[0]==='e'&&t[1]===original.id))){if(!edit||local.ms>edit.ms)edit={content:local.content,ms:local.ms};}
+      entries.push({id:original.id,pubkey:original.pubkey,content:edit?edit.content:original.content,edited:!!edit,proof});
+    }
+    return {available:true,entries,version:head.version.toString(),bytes:utf8Len(head.content)};
+  }
+  function canPinMessages(bundle,wraps,channelId,pubkey){
+    if(bundle.dissolved||bundle.removed||bundle.refounding_pending)return false;
+    const {community,folded}=control(bundle,wraps);
+    return !folded.banned.has(pubkey)&&(pubkey===community.owner||rolesOf(folded.roster,pubkey).some(r=>permsContain(r.permissions,Permissions.PIN_MESSAGES)&&(r.scope.kind==='server'||r.scope.channelId===channelId)));
+  }
+  async function createPinListWrap(bundle,wraps,channelId,entries,pubkey,signEvent) {
+    requireActiveMembership(bundle,channelId);
+    const {community,groups,folded,channels}=control(bundle,wraps),channel=channels.find(c=>c.idHex===channelId),state=inspectPinList(bundle,wraps,channelId);
+    if(!state.available||!channel||folded.channels.get(channelId)?.deleted)throw new Error('pin list history is unavailable; refusing to overwrite it');
+    if(pubkey!==community.owner&&!rolesOf(folded.roster,pubkey).some(r=>permsContain(r.permissions,Permissions.PIN_MESSAGES)&&(r.scope.kind==='server'||r.scope.channelId===channelId)))throw new Error('pin permission is required for this channel');
+    const authority=controlWriteAuthority(community,folded,pubkey,Permissions.PIN_MESSAGES,'pin messages');
+    if(!Array.isArray(entries)||entries.length>25||entries.some(p=>!verifyPinProof(p,channelId)))throw new Error('invalid pin entries');
+    const content=JSON.stringify(channel.isPrivate?{epoch:channel.current.epoch.toString(),sealed:encryptChecked(channel.current.group.convKey,JSON.stringify({entries}))}:{entries});
+    if(utf8Len(content)>32768)throw new Error('pin list exceeds encrypted byte budget');
+    const eid=bytesToHex2(pinsLocator(community.id,hex32(channelId))),head=folded.heads.get(eid),tags=[[TAG_SUBKIND,VSK_PIN_LIST],[TAG_ENTITY,eid],[TAG_EVERSION,(head.version+1n).toString()],...authority,[TAG_EPREV,bytesToHex2(head.hash)]];
+    const rumor=buildRumor({kind:KIND_CONTROL,content,pubkey,ms:Date.now(),tags}),group=writableControlGroup(groups);
+    return {wrap:wrapSeal(await sealRumor(rumor,KIND_SEAL_PLAINTEXT,group,{signEvent}),group),rumorId:rumor.id};
+  }
+  const STAFF_CONTROL_BITS=Permissions.MANAGE_ROLES|Permissions.MANAGE_CHANNELS|Permissions.MANAGE_METADATA|Permissions.BAN|Permissions.CREATE_INVITE|(1n<<11n);
+  async function adoptStaffControlWrap(bundle,wraps,member,decryptBytes,currentWraps=()=>wraps) {
+    requireActiveMembership(bundle);
+    const {community,folded}=control(bundle,wraps);
+    if(folded.banned.has(member)||!rolesOf(folded.roster,member).some(r=>(r.permissions&STAFF_CONTROL_BITS)!==0n))return bundle;
+    const head=folded.headEditions.get(bytesToHex2(grantLocator(community.id,hex32(member))));
+    if(!head)return bundle;
+    const body=JSON.parse(head.content);if(typeof body.control_wrap!=='string')return bundle;
+    if(typeof decryptBytes!=='function')throw new Error('This signer cannot decrypt binary staff key delivery');
+    const plain=await decryptBytes(head.author,body.control_wrap);
+    const latest=control(bundle,currentWraps()).folded;
+    if(latest.banned.has(member)||latest.headEditions.get(bytesToHex2(grantLocator(community.id,hex32(member))))?.opened.wrapId!==head.opened.wrapId||!rolesOf(latest.roster,member).some(r=>(r.permissions&STAFF_CONTROL_BITS)!==0n))return bundle;
+    if(!(plain instanceof Uint8Array)||plain.length!==40)throw new Error('invalid staff key delivery width');
+    const epoch=new DataView(plain.buffer,plain.byteOffset,8).getBigUint64(0),key=bytesToHex2(plain.subarray(8));
+    // A compacted Grant may contain an old wrap. Adopt only against the held
+    // current signer commitment; archived roots never authorize current writes.
+    if(epoch!==rekeyEpoch(bundle.root_epoch))return bundle;
+    if(!bundle.control_pk||groupKeyCached('concord/control-signer',hex32(key),community.id,epoch).pk!==bundle.control_pk)throw new Error('staff key does not match held control signer');
+    return bundle.control_root===key?bundle:{...bundle,control_root:key};
+  }
+  async function createRoleGrantWrap(bundle,wraps,member,roleIds,pubkey,signEvent,encryptBytes) {
+    requireActiveMembership(bundle);hex32(member);
+    const {community,folded,groups}=control(bundle,wraps),authority=controlWriteAuthority(community,folded,pubkey,Permissions.MANAGE_ROLES,'grant roles');
+    if(!Array.isArray(roleIds)||roleIds.length>MAX_ROLES_PER_MEMBER||new Set(roleIds).size!==roleIds.length||roleIds.some(id=>!roleById(folded.roster,id))||folded.banned.has(member))throw new Error('invalid role grant');
+    const roles=roleIds.map(id=>roleById(folded.roster,id)),priorRoles=rolesOf(folded.roster,member);
+    if(pubkey!==community.owner&&[...roles,...priorRoles].some(role=>!outranks(folded.roster,pubkey,community.owner,role.position)))throw new Error('grant signer must outrank every target role');
+    const body={member,role_ids:[...roleIds]};
+    if(roles.some(role=>(role.permissions&STAFF_CONTROL_BITS)!==0n)){
+      if(!bundle.control_root||typeof encryptBytes!=='function')throw new Error('staff promotion requires binary control key delivery');
+      if(groupKeyCached('concord/control-signer',hex32(bundle.control_root),community.id,rekeyEpoch(bundle.root_epoch)).pk!==bundle.control_pk)throw new Error('staff control signer mismatch');
+      body.control_wrap=await encryptBytes(member,concatBytes3(epochBytes(bundle.root_epoch),hex32(bundle.control_root)));
+    }
+    const eid=bytesToHex2(grantLocator(community.id,hex32(member))),head=folded.heads.get(eid),tags=[[TAG_SUBKIND,VSK_GRANT],[TAG_ENTITY,eid],[TAG_EVERSION,head?(head.version+1n).toString():'1'],...authority];
+    if(head)tags.push([TAG_EPREV,bytesToHex2(head.hash)]);
+    const rumor=buildRumor({kind:KIND_CONTROL,content:JSON.stringify(body),pubkey,ms:Date.now(),tags}),group=writableControlGroup(groups),wrap=wrapSeal(await sealRumor(rumor,KIND_SEAL_PLAINTEXT,group,{signEvent}),group);
+    const applied=control(bundle,[...wraps,wrap]).folded.headEditions.get(eid);
+    if(applied?.opened.wrapId!==wrap.id)throw new Error('grant failed current authority validation');
+    return {wrap,rumorId:rumor.id,member};
+  }
   function rekeyEpoch(value) {
     if(JSON.isRawJSON?.(value))value=cordInteger(value);
     if (!/^(0|[1-9][0-9]*)$/.test(String(value))) throw new Error('invalid rekey epoch');
@@ -27040,7 +27159,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if(options.historyComplete!==true)throw new Error('complete control history is required before refounding');
     const {community,groups,folded}=control(bundle,controlWraps),editions=openControlWraps(controlWraps,groups);
     if(folded.incomplete.length||!folded.metadata||!folded.headEditions.size)throw new Error('control state cannot be reliably compacted');
-    for(const edition of editions)if(![VSK_METADATA,VSK_ROLE,VSK_CHANNEL,VSK_GRANT,VSK_BANLIST,VSK_INVITE_REGISTRY].includes(edition.vsk))throw new Error('unsupported control state prevents safe compaction');
+    for(const edition of editions)if(![VSK_METADATA,VSK_ROLE,VSK_CHANNEL,VSK_GRANT,VSK_BANLIST,VSK_INVITE_REGISTRY,VSK_PIN_LIST].includes(edition.vsk))throw new Error('unsupported control state prevents safe compaction');
     for(const head of folded.headEditions.values()){
       const index=groups.findIndex(g=>g.pk===head.opened.streamPk);
       if(index>=0&&community.heldRoots[index].epoch>0n)continue;

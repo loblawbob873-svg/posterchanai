@@ -76,3 +76,31 @@ retirement before any root event is published. A normal resumed operation retain
 those exact signed events and destinations, including after partial relay success.
 Unavailable bootstrap relays leave a visible resumable operation; they cannot be
 silently skipped by an aggregate acknowledgement from a different relay.
+
+## CORD04 staff delivery and pin lists
+
+The local binary signer now also carries the 40-byte `control_wrap` plaintext.
+The Grant writer combines current-epoch staff key delivery with the signed role
+assignment, checks ranked authority, and never includes the secret in a public
+member bundle. Adoption reads only the recipient's verified Grant head, checks the
+current held epoch and derived `control_pk`, and persists through the account-owned
+membership writer. The remote binary-signer representation limitation above also
+applies to this field.
+
+The reader folds vsk11 Pin Lists with channel-scoped `PIN_MESSAGES` authority,
+retains their signed head when content exceeds either cap, and compacts their
+original seals across refounding. It verifies the disclosed 76-byte message-key
+expansion, signed seal, MAC, author and channel binding, and recomputes rumor IDs.
+Public and epoch-sealed lists are readable independently of current channel type;
+unheld sealed epochs are unavailable. Proven edits and locally held newer edits
+replace original text; observed author deletions hide entries.
+
+The exported writer preserves the version chain, uses the folded channel's public
+or private envelope, and refuses missing or unreadable history. It does not guess
+an empty predecessor for a channel whose Pin List was never initialized. There is
+currently no community Pin action in the UI; the separate Social action explicitly
+pins to the user's profile. These APIs implement wire support, not a new pinning UI
+or automatic background edit republishing. Authorized curators do queue deletion
+omissions: they re-read complete control history, preserve current-head/account
+ownership through signing and ACK, and re-arm when a later head re-seats an entry.
+Dissolution prevents further Control Plane writes.
