@@ -3566,8 +3566,11 @@
       if(!accepted||!accepted.ok)throw new Error('CORD relays rejected an event');
     }
     if(!context.isCurrent())throw new Error('creating account changed');
-    const announcement=await p.publish(1,`${name}\n\n${made.url}`,[['t','concord'],['t','community']]);
-    await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev);
+    const announcement=await creator.sign({kind:1,created_at:Math.floor(Date.now()/1000),content:`${name}\n\n${made.url}`,tags:[['t','concord'],['t','community']]});
+    if(!context.isCurrent())throw new Error('creating account changed');
+    const announced=await p.relayPublishRoom(DISCOVER_RELAYS,announcement);
+    if(!context.isCurrent())throw new Error('creating account changed');
+    if(!announced?.ok)throw new Error('Community was created but its discovery announcement was not accepted');
     return {name,icon,description:'',channels:[{name:'general',private:false,id:made.generalChannelId}],local:false,naddr:inviteParts(made.url).naddr,url:made.url,cord:{...made,bundle}};
   }
   async function activateJoinedRoom(p,index,inDrawer=false,expectedIdentity=''){
