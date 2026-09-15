@@ -28,6 +28,10 @@ Edits or a concurrent commit invalidate it; new source files must be staged so `
 cannot silently omit them. The overlay package pin can still update after tests because it does
 not change these tested inputs.
 
+The gate runs pytest in its own process group and cleans up that group on completion, timeout,
+Ctrl-C or termination. Its native display and Electron fixtures inherit that group, so aborting
+a check does not leave those test processes running. Cleanup targets that run's processes only.
+
 ---
 
 ## Why this exists

@@ -33,8 +33,10 @@ on:
       - '.github/workflows/desktop.yml'
       - 'tests/test_native_window_reload_electron.py'
       - 'scripts/deploy_regression_gate.py'
+      - 'scripts/checkall.py'
       - 'scripts/deploy-regression-requirements.txt'
       - 'tests/test_deploy_regression_gate.py'
+      - 'tests/test_deploy_process_cleanup.py'
       - 'tests/test_native_window_reload_ci.py'
       - 'tests/test_desktop_tag_readback.py'
   workflow_dispatch:
