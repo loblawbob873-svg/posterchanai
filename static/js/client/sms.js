@@ -1093,6 +1093,7 @@
     const owner = ME().pubkey || '';
     if(_subAccount !== owner){
       ++_archiveEpoch;
+      cancelSearch(); _searchDraft = null; _searchComposing = false;
       if(_subAccount){
         // Account changes retire decrypted history, draft text/files, previews and any pending
         // notification recipient. An old decrypt may finish later but cannot commit this epoch.
@@ -3470,6 +3471,15 @@
     return PC.VIEW === 'texts';
   }
 
+  // Keep the editable query separate from the applied filter: archive updates must not
+  // run a partially typed search or detach an active input-method composition.
+  const SEARCH_DELAY = 250;
+  let _searchTimer = null, _searchDraft = null, _searchComposing = false;
+  function cancelSearch(){
+    if(_searchTimer !== null) clearTimeout(_searchTimer);
+    _searchTimer = null;
+  }
+
   function paint(force){
     /* The explicit route render owns the feed even during PosterChanOS's one-turn feed handoff.
      * Background decrypt/subscription work must still prove ownership before painting, but applying
@@ -3483,7 +3493,12 @@
     const feed = PC.$('#feed');
     if(!feed) return;
     const enc = PC.enc;
-    if(S.open){ return paintThread(feed, enc); }
+    if(S.open){ cancelSearch(); _searchDraft = null; _searchComposing = false; return paintThread(feed, enc); }
+    if(_searchComposing && document.activeElement === feed.querySelector('#sms-q')) return;
+    const oldSearch = feed.querySelector('#sms-q');
+    const focusedSearch = oldSearch && document.activeElement === oldSearch &&
+      oldSearch.dataset.owner === String(ME().pubkey || '');
+    const searchSelection = focusedSearch ? [oldSearch.selectionStart, oldSearch.selectionEnd, oldSearch.selectionDirection] : null;
 
     const rows = S.threads.filter(t => {
       if(!S.q) return true;
@@ -3496,7 +3511,7 @@
     feed.innerHTML = `
       <div class="sms-wrap">
         <div class="sms-head">
-          <input class="input" id="sms-q" placeholder="Search messages" value="${enc(S.q)}">
+          <input class="input" id="sms-q" placeholder="Search messages" value="${enc(_searchDraft === null ? S.q : _searchDraft)}">
           <button class="btn btn-neon small" id="sms-new">${ICO('plus','b-ic')}New</button>
         </div>
         <div class="muted small" id="sms-note"></div>
@@ -3591,8 +3606,39 @@
         const P = PC.capPlugin ? PC.capPlugin('HomeScreen', 'openDefaultApps') : null;
         try{ if(P && P.openDefaultApps) P.openDefaultApps(); }catch(_){}
       }; }
-    const q = PC.$('#sms-q');
-    if(q) q.oninput = () => { S.q = q.value; paint(); q.focus(); };
+    let q = PC.$('#sms-q');
+    // Reuse the input so the next physical keystroke still belongs to this field.
+    if(q && oldSearch && oldSearch.dataset.owner === String(ME().pubkey || '')){
+      oldSearch.value = q.value;
+      q.replaceWith(oldSearch); q = oldSearch;
+    }
+    if(q){
+      q.dataset.owner = String(ME().pubkey || '');
+      if(searchSelection){
+        q.focus({preventScroll:true});
+        q.setSelectionRange(...searchSelection);
+      }
+      const ownsSearch = () => q.isConnected && q.dataset.owner === String(ME().pubkey || '');
+      const scheduleSearch = () => {
+        if(!ownsSearch()) return;
+        _searchDraft = q.value;
+        const query = q.value;
+        cancelSearch();
+        const owner = ME().pubkey || '', epoch = _archiveEpoch;
+        _searchTimer = setTimeout(() => {
+          _searchTimer = null;
+          if(owner !== (ME().pubkey || '') || epoch !== _archiveEpoch || S.open) return;
+          S.q = query; _searchDraft = null;
+          if(textsOnScreen()) paint();
+        }, SEARCH_DELAY);
+      };
+      q.oninput = e => { if(!ownsSearch()) return; _searchDraft = q.value; if(!e.isComposing) scheduleSearch(); };
+      if(!q._smsCompositionBound){
+        q._smsCompositionBound = true;
+        q.addEventListener('compositionstart', () => { if(!ownsSearch()) return; cancelSearch(); _searchComposing = true; });
+        q.addEventListener('compositionend', () => { if(!ownsSearch()) return; _searchComposing = false; scheduleSearch(); });
+      }
+    }
     const nw = PC.$('#sms-new');
     if(nw) nw.onclick = composeNew;
     const role = PC.$('#sms-role');
