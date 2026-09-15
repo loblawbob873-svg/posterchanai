@@ -69,7 +69,7 @@ GAME_PREFIXES = {
     "holdem":    "pcai:holdem:",
 }
 
-# Windows: (key, seconds back, bucket size). 60 points, 24 points, 30 points — small enough to draw
+# Windows: (key, seconds back, bucket size). 61 points, 25 points, 31 points — small enough to draw
 # as plain SVG polylines with no client-side downsampling.
 WINDOWS = (
     ("minute", 3600,    60),
@@ -176,16 +176,19 @@ _PERSON_PUBKEY = "CASE WHEN kind NOT IN (%s) THEN pubkey END" % ", ".join(str(k)
 
 
 def _series(db, now: int):
-    """One grouped scan per window → {window: {metric: [counts...]}} aligned to fixed buckets.
+    """Grouped kind/tip scans per window → {window: {metric: [counts...]}} aligned to fixed buckets.
     Counts only locally-published events (origin='direct', see _LOCAL)."""
     from sqlalchemy import text
     out = {}
     for key, span, step in WINDOWS:
-        n = span // step
-        start = ((now - span) // step) * step          # align to the bucket grid
-        buckets = [start + i * step for i in range(n)]
+        # Exact rolling bounds with partial first/last buckets. Include the current
+        # bucket without discarding valid activity at the oldest edge of the window.
+        start = now - span
+        first_bucket = (start // step) * step
+        n = (now // step) - (first_bucket // step) + 1
+        buckets = [first_bucket + i * step for i in range(n)]
         index = {b: i for i, b in enumerate(buckets)}
-        series = {m: [0] * n for m in KINDS}
+        series = {m: [0] * n for m in (*KINDS, "monero_zaps")}
         rows = db.execute(text("""
             SELECT (created_at / :step) * :step AS bucket, kind, count(*)
               FROM events
@@ -197,16 +200,33 @@ def _series(db, now: int):
             metric = _KIND_TO_METRIC.get(int(kind))
             if i is not None and metric:
                 series[metric][i] += int(count)
+        # Monero support is a public kind-1 tip note, not a Lightning receipt (9735).
+        # EXISTS counts each event once even if its publisher repeats the hashtag. Keep
+        # Notes intact: this is an additional activity breakdown, not another event.
+        # No wallet balances or private transfers are inspected or inferred.
+        tips = db.execute(text("""
+            SELECT (e.created_at / :step) * :step AS bucket, count(*)
+              FROM events e
+             WHERE e.created_at >= :start AND e.created_at < :now
+               AND e.kind = 1 AND e.origin = 'direct'
+               AND EXISTS (SELECT 1 FROM event_tags t WHERE t.event_id = e.id
+                           AND t.tag = 't' AND t.value = 'monerotip')
+             GROUP BY 1
+        """), {"step": step, "start": start, "now": now}).fetchall()
+        for bucket, count in tips:
+            i = index.get(int(bucket))
+            if i is not None:
+                series["monero_zaps"][i] = int(count)
         # Per-window totals so the range selector actually applies to the summary sections. Without
         # these, Network / Games / AI showed all-time figures that never moved when you switched
         # range, which reads as broken. Measured: 0.01s / 0.08s / 0.50s for the three windows.
         row = db.execute(text("SELECT count(*), count(DISTINCT " + _PERSON_PUBKEY + ") FROM events "
-                              "WHERE created_at >= :s AND created_at <= :n AND " + _LOCAL),
+                              "WHERE created_at >= :s AND created_at < :n AND " + _LOCAL),
                          {"s": start, "n": now}).first()
         win_events, win_people = int(row[0] or 0), int(row[1] or 0)
         # Per-GAME breakdown for this window, one grouped query (~0.01-0.04s) rather than six LIKE
         # counts, so the games bars follow the range selector like everything else does.
-        gparams = {"s": start}
+        gparams = {"s": start, "n": now}
         cases, wheres = [], []
         for i, (gname, pre) in enumerate(GAME_PREFIXES.items()):
             gparams["p%d" % i] = pre + "%"
@@ -216,13 +236,13 @@ def _series(db, now: int):
         grows = db.execute(text(
             "SELECT CASE %s END AS g, count(DISTINCT t.value) "
             "FROM event_tags t JOIN events e ON e.id = t.event_id "
-            "WHERE t.tag = 'd' AND (%s) AND e.created_at >= :s GROUP BY 1"
+            "WHERE t.tag = 'd' AND (%s) AND e.created_at >= :s AND e.created_at < :n GROUP BY 1"
             % (" ".join(cases), " OR ".join(wheres))), gparams).fetchall()
         by_game = {g: 0 for g in GAME_PREFIXES}
         for gname, cnt in grows:
             if gname in by_game:
                 by_game[gname] = int(cnt or 0)
-        out[key] = {"t0": start, "step": step, "n": n, "series": series,
+        out[key] = {"t0": first_bucket, "step": step, "n": n, "series": series,
                     "totals": {"events": win_events, "people": win_people,
                                "games": int(sum(by_game.values())), "by_game": by_game}}
     return out

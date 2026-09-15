@@ -30,14 +30,15 @@
       reactions: ['#f472b6','❤️','Reactions'],
       replies:   ['#a78bfa','💬','Replies'],
       reposts:   ['#34d399','🔁','Reposts'],
-      zaps:      ['#fbbf24','⚡','Zaps'],
+      zaps:      ['#fbbf24','⚡','Lightning zaps'],
+      monero_zaps: ['#f97316','ɱ','Monero zaps'],
       dms:       ['#60a5fa','✉️','DMs'],
       articles:  ['#f97316','📰','Articles'],
       files:     ['#2dd4bf','📎','Files'],
       profiles:  ['#c084fc','👤','Profile updates'],
       streams:   ['#ef4444','📺','Live streams'],
     };
-    const ORDER = ['notes','reactions','replies','reposts','zaps','dms','articles','files','profiles','streams'];
+    const ORDER = ['notes','reactions','replies','reposts','zaps','monero_zaps','dms','articles','files','profiles','streams'];
 
     const nf = n => (n==null?'—':Number(n).toLocaleString());
     const bytes = b => { if(!b) return '—'; const u=['B','KB','MB','GB','TB']; let i=0,v=Number(b);
@@ -116,7 +117,7 @@
       return `<div class="st-card" style="--acc:${colour}">
         <div class="st-cardhd"><span class="st-ic">${icon}</span><span class="st-lbl">${enc(label)}</span></div>
         <div class="st-num">${nf(total)}</div>
-        <div class="st-sub muted small">${nf(last)} in the last ${_range==='minute'?'minute':_range==='hour'?'hour':'day'}</div>
+        <div class="st-sub muted small">${nf(last)} this ${_range==='minute'?'minute':_range==='hour'?'hour':'day'}</div>
         <div class="st-spark">${areaChart(vals, colour, metric+'_'+_range, 46)}</div>
       </div>`;
     }
@@ -191,7 +192,8 @@
             + 'Excludes the throwaway keys NIP-17 signs every DM with, and zap-receipt services \u2014 counting those '
             + 'reported 19,347 \u201cpeople\u201d over 30 days on a node with 128 names, of which 16,590 were gift wraps.')}
           ${tile('notes '+rangeWord(), nf(sum(S.notes||[])))}
-          ${tile('zaps '+rangeWord(), nf(sum(S.zaps||[])))}
+          ${tile('Lightning zaps '+rangeWord(), nf(sum(S.zaps||[])))}
+          ${tile('Monero zaps '+rangeWord(), S.monero_zaps ? nf(sum(S.monero_zaps)) : '—', 'Public Monero tip notes published directly to this server; private payments are not counted')}
         </div>
         <div class="muted small st-hint">All time:</div>
         <div class="st-tiles">
