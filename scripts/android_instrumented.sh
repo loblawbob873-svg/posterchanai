@@ -32,8 +32,7 @@ skip() {
 }
 
 if ! find mobile/android/app/src/androidTest \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | grep -q .; then
-  echo "::warning title=No instrumented tests::mobile/android/app/src/androidTest has no sources — nothing was tested ON the device."
-  exit 0
+  skip "mobile/android/app/src/androidTest has no sources — nothing was tested on the device."
 fi
 
 cd mobile/android || exit 1
@@ -65,6 +64,12 @@ timeout --kill-after=2s 120s adb install -r -g "$APK" || { echo "instrumentation
 # None of those plugin modules has a single androidTest source (every one logs NO-SOURCE), so there
 # is nothing being skipped here — only a manifest merge for tests that do not exist.
 # Kept for the post-mortem below: the distinguishing sentence is gradle's, and it is only on stdout.
+# Only reports produced by THIS invocation can prove device execution. Gradle can succeed with
+# NO-SOURCE or leave old XML behind after an interrupted run.
+rm -rf app/build/outputs/androidTest-results/connected app/build/reports/androidTests/connected || {
+  echo "::error::Could not clear prior instrumentation reports; fresh execution cannot be verified"
+  exit 1
+}
 ./gradlew :app:connectedDebugAndroidTest --console=plain 2>&1 | tee /tmp/pc-instrumented.log
 rc=${PIPESTATUS[0]}
 # The HTML/XML report is the only place per-test failures are legible; publish it either way.
@@ -127,4 +132,59 @@ if [ $rc -ne 0 ]; then
   fi
   device_present || skip "the emulator disappeared partway through the run; the results are not a verdict on the code."
 fi
-exit $rc
+# Preserve Gradle failures and the infrastructure distinctions above. A successful build still
+# needs complete, nonempty device evidence; skipped cases are not verified behavior.
+[ "$rc" -eq 0 ] || exit "$rc"
+python3 - app/build/outputs/androidTest-results/connected <<'PYRESULT'
+import os
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+root = Path(sys.argv[1])
+files = sorted(root.rglob('*.xml')) if root.is_dir() else []
+problems, count = [], 0
+if not files:
+    problems.append('No fresh instrumentation XML results were produced')
+for file in files:
+    try:
+        tree = ET.parse(file).getroot()
+        if tree.tag not in ('testsuite', 'testsuites'):
+            raise ValueError('expected JUnit testsuite or testsuites root')
+        cases = list(tree.iter('testcase'))
+        if not cases:
+            raise ValueError('report contains no executed test cases')
+        count += len(cases)
+        for suite in tree.iter():
+            if suite.tag not in ('testsuite', 'testsuites'):
+                continue
+            actual = len(list(suite.iter('testcase')))
+            if 'tests' in suite.attrib and int(suite.attrib['tests']) != actual:
+                raise ValueError('declared test count does not match recorded cases')
+        for element in tree.iter():
+            for key in ('failures', 'errors', 'skipped', 'disabled'):
+                if key in element.attrib and int(element.attrib[key]) != 0:
+                    problems.append(f'{file.name}: {key}={element.attrib[key]}')
+        for case in cases:
+            name = case.get('classname', '') + '.' + case.get('name', '<unnamed>')
+            if not case.get('name'):
+                problems.append(f'{file.name}: unnamed test case')
+            for status in ('failure', 'error', 'skipped'):
+                if case.find(status) is not None:
+                    problems.append(f'{name}: {status}')
+            if case.get('status', '').lower() in ('notrun', 'skipped', 'disabled'):
+                problems.append(f'{name}: {case.get("status")}')
+    except (ET.ParseError, OSError, ValueError) as error:
+        problems.append(f'{file.name}: invalid instrumentation report: {error}')
+if problems:
+    message = 'Android instrumentation evidence failed: ' + '; '.join(problems)
+    print('::error title=Incomplete Android device coverage::' + message)
+else:
+    message = f'Android instrumentation verified: {count} tests, zero failures/errors/skips'
+    print(message)
+summary = os.environ.get('GITHUB_STEP_SUMMARY')
+if summary:
+    with open(summary, 'a') as output:
+        output.write('\n' + message + '\n')
+sys.exit(1 if problems else 0)
+PYRESULT

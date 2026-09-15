@@ -395,3 +395,27 @@ Bash execution tests cover the old-image Wayfire/glslang dependency settings, pr
 operator configuration, bounded ABI convergence, and failed sync/resolution/update/cleanup steps.
 A failed update cannot continue into package cleanup or bootloader changes. On a live desktop,
 verify with a pretend update first and defer package installation or restarts as appropriate.
+
+### Android instrumentation evidence
+
+`scripts/android_instrumented.sh` runs `:app:connectedDebugAndroidTest` on the disposable
+emulator. Gradle success alone does not pass this gate: it first removes previous connected
+reports, then requires fresh, parseable JUnit XML with actual named test cases, consistent
+counts, and zero failures, errors, or skips. A conditional assumption still appears with its
+test name as incomplete coverage; it cannot silently become a passing device check.
+
+Missing test sources or a lost/unavailable emulator return 2 (did not run). Gradle failures
+retain their exit status; absent, empty, malformed, failed, or skipped result evidence returns
+1. The final emulator workflow treats both 1 and 2 as unsuccessful. Reports and logcat remain
+available in the existing `androidTest-report` artifact, and the verified count or evidence
+failure is written to the job summary.
+
+Run the isolated gate regression tests without an emulator:
+
+```bash
+venv-unified/bin/python -m pytest -q tests/test_android_instrumented_evidence.py tests/test_android_instrumented_permissions.py
+```
+
+These execute the shipped shell script with temporary fake adb/Gradle boundaries and real XML
+files, including stale previous results, missing reports despite Gradle success, invalid
+reports, skipped cases, genuine failures, and successful controls.

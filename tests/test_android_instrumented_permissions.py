@@ -20,7 +20,7 @@ case "$1" in
  install) exit "$INSTALL_STATUS";;
 esac
 ''');adb.chmod(0o755)
-    gradle=android/'gradlew';gradle.write_text('#!/bin/sh\nprintf "gradle %s\\n" "$*" >> "$CALLS"\nexit 0\n');gradle.chmod(0o755)
+    gradle=android/'gradlew';gradle.write_text('#!/bin/sh\nprintf "gradle %s\\n" "$*" >> "$CALLS"\nmkdir -p app/build/outputs/androidTest-results/connected\nprintf \'<testsuite tests="1"><testcase name="fixture"/></testsuite>\' > app/build/outputs/androidTest-results/connected/TEST-fixture.xml\nexit 0\n');gradle.chmod(0o755)
     script=tmp_path/'runner.sh'
     # Retain every command/branch; only relocate its report artifacts away from other active gates.
     script.write_text((ROOT/'scripts/android_instrumented.sh').read_text().replace('/tmp/pc-',str(tmp_path/'pc-')))
