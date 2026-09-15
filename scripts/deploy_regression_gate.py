@@ -28,6 +28,7 @@ TESTS = (
     'tests/test_deploy_regression_gate.py',
     'tests/test_desktop_workflow_test_triggers.py',
     'tests/test_deploy_process_cleanup.py',
+    'tests/client/test_node_timer_scope.py',
     'tests/test_sync_publish_failures.py',
     'tests/test_sync_nas_fetch_retry.py',
     'tests/test_wayfire_pointer_confinement_runtime.py::test_the_option_is_declared_on_and_the_package_that_carries_it_is_required',
@@ -128,7 +129,10 @@ def verify_receipt(path, root=ROOT):
 
 
 
-def _run_required_tests(command, root, env, log, timeout=180):
+# The expanded suite previously exceeded 180s on GitHub before timer cleanup.
+# Keep a finite suite deadline with room for cold CI and additional coverage;
+# individual browser/network tests retain their own shorter deadlines.
+def _run_required_tests(command, root, env, log, timeout=360):
     # Share the suite runner's owned process-group cleanup and file capture. Pipes
     # can stay open in orphaned browsers after pytest exits or is interrupted.
     captured = runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_captured']
