@@ -205,7 +205,7 @@ class SendTo {
   static String numberFrom(String u){ return u == null ? "" : u.substring(4); }
   static String bodyFrom(String u){ return ComposerHandOver.LINK_BODY == null ? "" : ComposerHandOver.LINK_BODY; }
 }
-class SmsShare {static Object stream(Intent i){return null;} }
+class SmsShare { static boolean isConsumed(Intent i){return false;}static Object stream(Intent i){return null;} }
 class SmsStore {
   static long threadIdFor(Object c, String a){ return 1; }
   static long[] idsFor(Object c, String a, long t){ return new long[]{ t }; }

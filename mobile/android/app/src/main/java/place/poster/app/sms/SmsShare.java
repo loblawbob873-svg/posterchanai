@@ -7,9 +7,14 @@ import android.net.Uri;
 /** Single camera/gallery shares remain drafts until the user presses Send. */
 final class SmsShare {
     private SmsShare() { }
+    private static final String CONSUMED = "place.poster.app.sms.CONSUMED_MEDIA_SHARE";
+
+    static boolean isConsumed(Intent intent) {
+        return intent != null && intent.getBooleanExtra(CONSUMED, false);
+    }
 
     static Uri stream(Intent intent) {
-        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return null;
+        if (intent == null || isConsumed(intent) || !Intent.ACTION_SEND.equals(intent.getAction())) return null;
         String type = intent.getType();
         if (type == null || !(type.startsWith("image/") || type.startsWith("video/"))) return null;
         Uri uri;
@@ -33,6 +38,10 @@ final class SmsShare {
     }
 
     static void consumed(Intent intent) {
+        // Keep media identity across Activity recreation even after clearing the stream. Otherwise
+        // readIntent mistakes a rejected photo caption (including a URI body) for a new text draft.
+        intent.putExtra(CONSUMED, true);
+        intent.removeExtra(Intent.EXTRA_TEXT);
         intent.removeExtra(Intent.EXTRA_STREAM);
         intent.setClipData(null);
     }

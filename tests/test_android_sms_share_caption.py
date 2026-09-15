@@ -30,6 +30,9 @@ class Probe {
    if(failure.equals("cancel"))Dialog.cancel.run();
    else if(!p.busy)Dialog.accept.run();
    check(p.input.value.isEmpty(),failure+": failed share left a new caption on old attachment");
+   p.current.uriCaption="caption via message URI";
+   p.deliver(p.current);
+   check(p.input.value.isEmpty(),failure+": recreation replayed rejected caption");
   }
   Probe p=new Probe();MmsDraft.present=true;p.deliver(new Intent("accepted caption"));Dialog.accept.run();
   check(p.prepared==1 && p.input.value.isEmpty(),"caption appeared before file copy succeeded");
@@ -44,13 +47,13 @@ class Probe {
 class Box {String value="";String getText(){return value;}void setText(String s){value=s;}}
 class Uri {}
 class Intent {
- static final String EXTRA_TEXT="text";String caption;boolean consumed;
+ static final String EXTRA_TEXT="text";String caption;String uriCaption;boolean consumed;
  Intent(String s){caption=s;}long getLongExtra(String s,long d){return d;}
- String getStringExtra(String s){return "recipient";}String getData(){return null;}
+ String getStringExtra(String s){return "recipient";}String getData(){return uriCaption;}
  CharSequence getCharSequenceExtra(String s){return caption;}long[] getLongArrayExtra(String s){return null;}
 }
-class SmsShare {static Uri stream(Intent i){return i==null||i.consumed?null:new Uri();}static void consumed(Intent i){i.consumed=true;}}
-class SendTo {static boolean isMessageUri(String s){return false;}static String numberFrom(String s){return "";}static String bodyFrom(String s){return "";}}
+class SmsShare {static boolean isConsumed(Intent i){return i!=null&&i.consumed;}static Uri stream(Intent i){return i==null||i.consumed?null:new Uri();}static void consumed(Intent i){i.consumed=true;}}
+class SendTo {static boolean isMessageUri(String s){return false;}static String numberFrom(String s){return "";}static String bodyFrom(String s){return s==null?"":s;}}
 class SmsStore {static long threadIdFor(Object c,String a){return 1;}static long[] idsFor(Object c,String a,long t){return new long[]{t};}}
 class MmsDraft {static boolean present;static class Value{}static Value load(Object c,String a){return present?new Value():null;}static void setText(Object c,String a,String s){}}
 class R {static class string {static final int sms_attachment_bad=1;}}

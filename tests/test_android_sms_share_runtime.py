@@ -16,9 +16,10 @@ def test_camera_share_keeps_read_grant_and_consumes_each_intent_once(tmp_path):
           public int getItemCount(){return 1;} public Item getItemAt(int n){return new Item(uri);}
           public static class Item {Uri uri;Item(Uri u){uri=u;}public Uri getUri(){return uri;}}}''',
         'android/content/Intent.java': '''package android.content; import java.util.*;
-          public class Intent {public static final String ACTION_SEND="SEND",EXTRA_STREAM="stream";
+          public class Intent {public static final String ACTION_SEND="SEND",EXTRA_STREAM="stream",EXTRA_TEXT="text";
           public static final int FLAG_GRANT_READ_URI_PERMISSION=1,FLAG_GRANT_WRITE_URI_PERMISSION=2;
           String action,type;int flags;ClipData clip;Map<String,Object> extras=new HashMap<>();
+          public boolean getBooleanExtra(String k,boolean d){return extras.get(k) instanceof Boolean?(Boolean)extras.get(k):d;}
           public String getAction(){return action;}public Intent setAction(String a){action=a;return this;}
           public String getType(){return type;}public Intent setType(String t){type=t;return this;}
           public Intent putExtra(String k,Object v){extras.put(k,v);return this;}
@@ -39,7 +40,10 @@ def test_camera_share_keeps_read_grant_and_consumes_each_intent_once(tmp_path):
             check(SmsShare.stream(to)==uri,"stream survives activity handoff");
             check(to.getClipData().getItemAt(0).getUri()==uri,"grant URI in ClipData");
             check(to.getFlags()==1,"only read grant survives router finish");
+            to.putExtra(Intent.EXTRA_TEXT,"caption");
             SmsShare.consumed(to);check(SmsShare.stream(to)==null,"recreation must not stage twice");
+            check(SmsShare.isConsumed(to),"consumed media identity survives stream removal");
+            check(to.getParcelableExtra(Intent.EXTRA_TEXT)==null,"consumed caption removed");
             Intent warm=new Intent();SmsShare.forward(from,warm);
             check(SmsShare.stream(warm)==uri,"new share of same photo must still work");
             from.removeExtra(Intent.EXTRA_STREAM);from.setClipData(ClipData.newRawUri("photo",uri));

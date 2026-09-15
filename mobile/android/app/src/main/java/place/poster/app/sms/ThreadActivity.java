@@ -214,7 +214,7 @@ public class ThreadActivity extends PcActivity {
          * after it, the prefill from an `sms:?body=` link is swallowed by the previous
          * conversation's draft. */
         if (a != null && !a.isEmpty() && !a.equals(address)) handOverComposer(a);
-        if (SmsShare.stream(i) == null && input != null && !body.isEmpty() && input.getText().length() == 0) input.setText(body);
+        if (!SmsShare.isConsumed(i) && SmsShare.stream(i) == null && input != null && !body.isEmpty() && input.getText().length() == 0) input.setText(body);
         if (a != null && !a.isEmpty()) address = a;
         if (t > 0) threadId = t;
         else if (!address.isEmpty()) threadId = SmsStore.threadIdFor(this, address);

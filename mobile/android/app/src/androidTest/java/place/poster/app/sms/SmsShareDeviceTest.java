@@ -90,7 +90,8 @@ public class SmsShareDeviceTest {
         Intent open = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who);
         try (ActivityScenario<ThreadActivity> scenario = ActivityScenario.launch(open)) {
             Intent replacement = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who)
-                    .putExtra(Intent.EXTRA_TEXT, "caption for a different photo");
+                    .putExtra(Intent.EXTRA_TEXT, "caption for a different photo")
+                    .setData(Uri.parse("smsto:" + who + "?body=caption%20from%20a%20photo%20link"));
             SmsShare.forward(picture("cancelled.jpg", ""), replacement);
             scenario.onActivity(activity -> {
                 activity.onNewIntent(replacement);
