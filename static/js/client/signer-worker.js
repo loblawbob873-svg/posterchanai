@@ -111,8 +111,18 @@ self.onmessage = async (e) => {
         const ck = NT.nip44.getConversationKey(ephSk, args.recipient);
         const content = NT.nip44.encrypt(JSON.stringify(args.seal), ck);
         const created = Math.floor(Date.now()/1000) - Math.floor(Math.random() * 2 * 86400);
-        const wrap = NT.finalizeEvent({ kind: 1059, created_at: created,
-                                        tags: [['p', args.recipient]], content }, ephSk);
+        const tags = [['p', args.recipient]];
+        // CORD-05 direct invitations are indexed before signing the ephemeral wrap.
+        if (args.rumorKind !== undefined) {
+          if (args.rumorKind !== 3313) throw new Error('unsupported indexed giftwrap kind');
+          tags.push(['k', '3313']);
+        }
+        if (args.expiration !== undefined) {
+          if (args.rumorKind !== 3313 || !Number.isSafeInteger(args.expiration) || args.expiration < 0)
+            throw new Error('invalid invitation expiration');
+          tags.push(['expiration', String(args.expiration)]);
+        }
+        const wrap = NT.finalizeEvent({ kind: 1059, created_at: created, tags, content }, ephSk);
         return reply(id, true, { wrap });
       }
       default: return reply(id, false, null, 'unknown op ' + op);

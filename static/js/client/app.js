@@ -4826,6 +4826,7 @@
   function startApp(){
     GUEST = !signer;   // a real login always has a signer; the guest sentinel does not
     setTimeout(_syncAutofillBackground, 0);
+    if(!GUEST)setTimeout(()=>_startCordDirectInbox().catch(()=>{_cordDirectOwner='';}),0);
     // Establish the shared app credential before background restore starts asking the signer.
     // Do not await it: the shell paints immediately and protected views adopt this one request.
     if(!GUEST && ME?.pubkey && !_standalone()) ensureAiSession().catch(()=>{});
@@ -27719,9 +27720,71 @@
     }
   }
 
+  function cordDirectContext(){
+    const account=ME?.pubkey, identity=signer;
+    if(!account || !identity?.nip44dec || !identity?.nip44enc) throw new Error('Sign in to use Concord invitations');
+    return {pubkey:account,isCurrent:()=>ME?.pubkey===account && signer===identity,
+      verify:async events=>{const checked=await Relay.worker.call('verifyBatch',{events});const ids=new Set(checked.filter(r=>r.valid).map(r=>r.id));return events.filter(e=>ids.has(e.id));},
+      decrypt:(peer,text)=>identity.nip44dec(peer,text),encrypt:(peer,text)=>identity.nip44enc(peer,text),
+      sign:template=>identity.signEvent(template),
+      wrapSeal:(seal,recipient,metadata)=>Relay.worker.call('giftwrapSeal',{seal,recipient,...metadata}).then(r=>r.wrap)};
+  }
+  async function cordDirectModule(){
+    await _withModule('cord-reader.js','PosterCordReader');
+    const api=await _withModule('cord-direct-invites.js','PCCordDirectInvites');
+    if(!api) throw new Error('Concord invitations could not load');
+    return api;
+  }
+  async function sendCordDirectInvite(bundle,recipientRef,options){
+    const base=cordDirectContext(),context={...base,isCurrent:()=>base.isCurrent()&&(!options?.isCurrent||options.isCurrent())},recipient=refToPk(String(recipientRef||'').trim());
+    if(!context.isCurrent())throw new Error('Invitation permission changed');
+    if(!recipient)throw new Error('Select an account or paste its npub');
+    const api=await cordDirectModule();
+    if(!context.isCurrent())throw new Error('Invitation permission changed');
+    const delivery=await dmInboxRelays(recipient);
+    if(!context.isCurrent())throw new Error('The signed-in account changed');
+    if(!delivery.relays.length)throw new Error('No receiving relays found for this account');
+    const result=await api.create(bundle,recipient,context);
+    if(!context.isCurrent())throw new Error('The signed-in account changed');
+    const sent=await Relay.publishTo(delivery.relays,result.wrap,{includeManaged:true,detailed:true,max:8});
+    if(!context.isCurrent())throw new Error('The signed-in account changed');
+    if(!sent?.ok)throw new Error(sent?.uncertain?'Invitation delivery is not confirmed':'No relay accepted the invitation');
+    return result.wrap.id;
+  }
+  const _cordDirectBusy=new Set();
+  async function _ingestCordDirectWrap(wrap,live=false){
+    const context=cordDirectContext(),key=context.pubkey+':'+wrap?.id;
+    if(_cordDirectBusy.has(key)||_cordDirectBusy.size>=32)return false;
+    _cordDirectBusy.add(key);
+    try{
+      const api=await cordDirectModule(),added=await api.park(wrap,context);
+      if(added && context.isCurrent()){
+        window.dispatchEvent(new CustomEvent('pc-concord-direct-invites'));
+        if(live)toast('New Concord invitation — open Concord to review it');
+      }
+      return true;
+    }finally{_cordDirectBusy.delete(key);}
+  }
+  let _cordDirectClose=null, _cordDirectOwner='';
+  async function _startCordDirectInbox(){
+    const context=cordDirectContext();
+    if(_cordDirectOwner===context.pubkey)return;
+    if(_cordDirectClose)_cordDirectClose();
+    _cordDirectClose=null;_cordDirectOwner=context.pubkey;
+    const filters=[{kinds:[1059],'#p':[context.pubkey],'#k':['3313'],limit:32}];
+    let live=false;
+    const handlers={onEvent:event=>{if(context.isCurrent())_ingestCordDirectWrap(event,live).catch(()=>{});},onEose:()=>{live=true;}};
+    const pool=Relay.subscribe(filters,handlers);let external=null;
+    _cordDirectClose=()=>{Relay.close(pool);if(external)external();};
+    const delivery=await dmInboxRelays(context.pubkey);
+    if(!context.isCurrent())return;
+    if(delivery.relays.length && Relay.subscribeFrom)external=Relay.subscribeFrom(delivery.relays,filters,{...handlers,live:true,max:8});
+  }
+
   async function ingestWrap(ev, live){
     if(!signer || !signer.nip17unwrap) return false;
     if(!ev || !ev.id || _wrapTried.has(ev.id)) return false;
+    if(ev.tags?.some(t=>t[0]==='k'&&t[1]==='3313'))return _ingestCordDirectWrap(ev,live);
     _wrapTried.add(ev.id);
     _dmTotal++;
     /* THE CACHE FIRST, and that is the whole point of it: a hit costs no signer round trip at all,
@@ -27733,6 +27796,7 @@
       if(rumor && (rumor.kind === 14 || rumor.kind === 15)) DmCache.put(ev.id, rumor);
     }
     _dmDone++; _dmTick();
+    if(rumor?.kind===3313){try{return await _ingestCordDirectWrap(ev,live);}catch(_){_wrapTried.delete(ev.id);return false;}}
     if(!rumor || (rumor.kind!==14 && rumor.kind!==15) || rumor.content==null) return false;
     const mine = rumor.pubkey===ME.pubkey;
     const peer = mine ? (rumor.tags.find(t=>t[0]==='p')||[])[1] : rumor.pubkey;
@@ -39764,6 +39828,7 @@
 
   window.__PC = {
     attachUserAutocomplete,
+    cordDirectContext, cordDirectModule, sendCordDirectInvite,
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
     // automatically after a relay change). Exposed for the sub-modules and for the console.
     carryPrivateToRelays, reconnectNetwork,

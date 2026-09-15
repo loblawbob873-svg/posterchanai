@@ -1558,6 +1558,78 @@
    *
    * The name is escaped: an invite is written by whoever sent it, and a community name is their
    * text. */
+  function mergeDirectInviteRoom(existing,incoming){
+    const old=existing?.cord?.bundle,fresh=incoming?.cord?.bundle;
+    if(!old||!fresh||old.community_id!==fresh.community_id)throw new Error('Invitation does not match this community');
+    if(BigInt(old.root_epoch)!==BigInt(fresh.root_epoch)||old.community_root!==fresh.community_root||
+       (fresh.control_pk!==undefined&&fresh.control_pk!==old.control_pk))
+      throw new Error('Refresh this community before accepting an invitation from a different key epoch');
+    const channels=new Map((old.channels||[]).map(channel=>[channel.id,{...channel}]));
+    for(const grant of fresh.channels||[]){
+      const held=channels.get(grant.id);
+      if(!held){channels.set(grant.id,{...grant});continue;}
+      const oldEpoch=BigInt(held.epoch),newEpoch=BigInt(grant.epoch);
+      if(oldEpoch===newEpoch){if(held.key!==grant.key)throw new Error('Conflicting channel key at the same epoch');continue;}
+      if(newEpoch<oldEpoch)throw new Error('Invitation carries an older channel key');
+      const current={...held,...grant};
+      const prior=newEpoch>oldEpoch?held:grant;
+      current.held_keys=[...(held.held_keys||[]).filter(key=>BigInt(key.epoch)!==BigInt(prior.epoch)),{epoch:prior.epoch,key:prior.key}];
+      channels.set(grant.id,current);
+    }
+    const merged=mergeRoom(existing,incoming);
+    merged.cord={...(merged.cord||{}),bundle:{...old,channels:[...channels.values()]}};
+    return merged;
+  }
+
+  async function showDirectInvitations(){
+    const p=PC(),context=p.cordDirectContext(),api=await p.cordDirectModule();
+    if(!context.isCurrent())return;
+    const wraps=api.pending(context);
+    p.modal('<h3>Concord invitations</h3><p class="muted">Review an invitation before joining. No community is contacted until you accept.</p><div id="cc-direct-list"></div>',root=>{
+      const list=root.querySelector('#cc-direct-list');
+      if(!wraps.length){list.textContent='No pending invitations';return;}
+      for(const wrap of wraps){
+        const button=document.createElement('button');button.className='btn full';button.textContent='Review invitation';
+        button.onclick=async()=>{
+          button.disabled=true;
+          try{
+            const invite=await api.open(wrap,context);
+            if(!context.isCurrent()||!root.isConnected)return;
+            const bundle=invite.bundle;
+            pendingInvite={directId:invite.id,account:context.pubkey,by:invite.inviter,
+              room:{communityId:bundle.community_id,name:bundle.name||'Concord community',description:'',channels:[{name:'general',private:false}],local:false,cord:{bundle}}};
+            p.closeModal();render();
+          }catch(e){button.disabled=false;p.toast('Could not read invitation: '+(e.message||e));}
+        };
+        list.appendChild(button);
+      }
+    });
+  }
+  function showDirectInviteSender(room){
+    const p=PC(),source=room?.cord?.bundle;if(!source){p.toast('Open a Concord community first');return;}
+    const account=p.viewer()?.pubkey;
+    // A member can grant only the keys already held; never include staff/vault material.
+    const bundle={};
+    for(const key of ['community_id','owner','owner_salt','community_root','root_epoch','control_pk','channels','relays','name','icon','expires_at','creator_npub','label'])
+      if(source[key]!==undefined)bundle[key]=source[key];
+    if(Array.isArray(bundle.channels))bundle.channels=bundle.channels.map(ch=>({id:ch.id,key:ch.key,epoch:ch.epoch,...(ch.name!==undefined?{name:ch.name}:{})}));
+    p.modal('<h3>Invite someone to '+p.enc(room.name||'this community')+'</h3><p class="muted">Sends the community and channel keys you hold to this account.</p><label for="cc-direct-recipient">Recipient</label><input class="input" id="cc-direct-recipient" autocomplete="off" placeholder="Search name or paste npub"><button class="btn btn-neon" id="cc-direct-send-confirm">Send invitation</button>',root=>{
+      const input=root.querySelector('#cc-direct-recipient'),button=root.querySelector('#cc-direct-send-confirm');
+      const cleanup=p.attachUserAutocomplete?.(input);
+      const observer=new MutationObserver(()=>{if(!root.isConnected){cleanup?.();observer.disconnect();}});
+      observer.observe(document.documentElement,{childList:true,subtree:true});
+      button.onclick=async()=>{
+        if(p.viewer()?.pubkey!==account)return;
+        button.disabled=true;
+        try{
+          await p.sendCordDirectInvite(bundle,input.value);
+          if(p.viewer()?.pubkey!==account||!root.isConnected)return;
+          p.closeModal();p.toast('Concord invitation sent');
+        }catch(e){if(p.viewer()?.pubkey===account&&root.isConnected){button.disabled=false;p.toast(e.message||String(e));}}
+      };
+    });
+  }
+
   function invitePreviewHtml(p,inv){
     const room=inv&&inv.room||{};
     const name=String(room.name||'Concord community');
@@ -1566,6 +1638,7 @@
     return '<div class="cc-invite-card" id="cc-invite-preview">'
       + '<div class="concord-mark">'+p.enc(name.slice(0,1).toUpperCase()||'C')+'</div>'
       + '<h3>'+p.enc(name)+'</h3>'
+      + (inv?.directId?'<p class="muted">Invited by '+p.enc(inv.by||'')+'</p>':'')
       + (desc?'<p class="muted">'+p.enc(desc.slice(0,240))+'</p>':'')
       + '<p class="cc-invite-note">'+(known
           ? 'You are already in this community — joining again just opens it.'
@@ -2376,7 +2449,7 @@
     const viewer=p.viewer?p.viewer():{};
     if(!viewer.pubkey||!p.nip44enc)return false;
     const wanted=(Array.isArray(rooms)?rooms:[rooms])
-      .filter(room=>room&&roomIdentity(room)&&room.url);
+      .filter(room=>room&&roomIdentity(room)&&(room.url||room.cord?.bundle?.community_id));
     if(!wanted.length)return false;
     await cordWriteMembership(p,list=>{
       const now=Date.now(),changed=[];
@@ -3270,6 +3343,7 @@
     // the old workspace may still fire, but it observes false and cannot paint twice.
     backgroundRenderPending=false;backgroundFocusHost=null;
     const p=PC();
+    if(pendingInvite?.directId&&pendingInvite.account!==p?.viewer?.()?.pubkey)pendingInvite=null;
     /* Every async Concord path eventually calls render(). The feed belongs to the CURRENT app, not
      * to whichever request finished last. This guard protects Code and every other shared-feed view
      * from relay/discovery/deferred Concord work completing after navigation. */
@@ -3353,7 +3427,7 @@
         <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
-      <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
+      <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations">Invites</button><button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
         <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="Message #${p.enc(state.channel||'general')}" ${state.community==null?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?'':'<div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div>'}${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
@@ -3450,7 +3524,7 @@
       dlg.classList.remove('hidden'); setTimeout(()=>{const n=$('#cc-community-name'); if(n)n.focus();},20); };
     ['#cc-create','#cc-join-create'].forEach(sel=>{ const b=$(sel); if(b)b.onclick=openCreate; });
     const createCancel=$('#cc-create-cancel'); if(createCancel)createCancel.onclick=()=>$('#cc-create-dialog').classList.add('hidden');
-    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const room=await mintPublicRoom(p,name,normalizeIcon($('#cc-community-icon').value)); const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general'; render(); await persistArmadaMembership(p,room); p.copyValue(room.url); p.toast('public community created — invite link copied'); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
+    const createGo=$('#cc-create-go'); if(createGo)createGo.onclick=async()=>{ const name=String($('#cc-community-name').value||'').trim(); if(!name){ p.toast('name your community'); return; } createGo.disabled=true; try{ p.toast('creating encrypted community…'); const room=await mintPublicRoom(p,name,normalizeIcon($('#cc-community-icon').value)); const a=saved(); a.push(room); save(a);/* The creator already has the freshly generated control/channel state. Treat this renderer as hydrated so the first paint is not delayed by reading the just-published room back from relays. */hydratedRoomViews.add(roomIdentity(room));state.community=a.length-1; state.channel='general';room=a[state.community];render(); await persistArmadaMembership(p,room); p.copyValue(room.url); p.toast('public community created — invite link copied'); }catch(e){ createGo.disabled=false; p.toast('community creation failed: '+(e&&e.message||e)); } };
     const editIcon=$('#cc-edit-icon'); if(editIcon)editIcon.onclick=()=>{ $('#cc-settings-dialog').classList.remove('hidden'); setTimeout(()=>$('#cc-description-value').focus(),20); };
     const iconCancel=$('#cc-icon-cancel'); if(iconCancel)iconCancel.onclick=()=>$('#cc-icon-dialog').classList.add('hidden');
     /* The compact icon dialog used to mutate only this renderer's localStorage and immediately say
@@ -3639,8 +3713,10 @@
     /* PREVIEW, THEN ANSWER. The button said "Preview invite" and joined outright; now it fetches
      * the community, shows what it is, and waits. `acceptInvite` below is the join half, unchanged
      * except that it is reached by a deliberate press. */
+    const directInbox=$('#cc-direct-inbox');if(directInbox)directInbox.onclick=()=>showDirectInvitations().catch(e=>p.toast(e.message||String(e)));
+    const directSend=$('#cc-direct-send');if(directSend)directSend.onclick=()=>showDirectInviteSender(current);
     const go=$('#cc-join-go'); if(go) go.onclick=async()=>{ const raw=String($('#cc-invite-url').value||'').trim(),v=inviteParts(raw); if(!v){ p.toast('that is not a Concord invite link'); return; } go.disabled=true; try{ p.toast('fetching and decrypting community…'); const room=await hydrateInvite(p,raw); pendingInvite={url:raw,room}; render(); }catch(e){ go.disabled=false; p.toast('could not read that invite: '+(e&&e.message||e)); } };
-    const acceptInvite=async(raw,room)=>{ if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
+    const acceptInvite=async(raw,room,direct=false)=>{ if(room.cord?.bundle&&window.PosterCordReader?.validateInviteBundle)window.PosterCordReader.validateInviteBundle(room.cord.bundle,{forJoin:true});const a=saved(),i=a.findIndex(x=>sameRoom(x,room)); if(i<0)a.push(room);else a[i]=direct?mergeDirectInviteRoom(a[i],room):mergeRoom(a[i],room); save(a); state.community=a.findIndex(x=>sameRoom(x,room)); state.channel='general'; render(); await persistArmadaMembership(p,room);
       /* Joining is already the user's request to enter this room.  Waiting for a later channel click
        * left the placeholder #general on screen with no id, icon or history, so a successful Armada
        * invite looked like an empty broken community until somebody switched away and back. */
@@ -3648,13 +3724,19 @@
     /* The two answers to the invitation on screen. `pendingInvite` is cleared BEFORE either one
      * acts, so the repaint each of them causes cannot draw the card again over its own result. */
     const accept=$('#cc-invite-accept'); if(accept) accept.onclick=async()=>{ const inv=pendingInvite; if(!inv)return; accept.disabled=true;
-      try{ forgetDeclinedInvite(inv.url); pendingInvite=null; await acceptInvite(inv.url,inv.room); }
+      try{
+        if(inv.directId&&inv.account!==p.viewer()?.pubkey)throw new Error('The signed-in account changed');
+        if(inv.room?.cord?.bundle)window.PosterCordReader.validateInviteBundle(inv.room.cord.bundle,{forJoin:true});
+        forgetDeclinedInvite(inv.url);pendingInvite=null;await acceptInvite(inv.url,inv.room,!!inv.directId);
+        if(inv.directId&&inv.account===p.viewer()?.pubkey)window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext());
+      }
       catch(e){ accept.disabled=false; p.toast('could not join: '+(e&&e.message||e)); } };
     const decline=$('#cc-invite-decline'); if(decline) decline.onclick=()=>{ const inv=pendingInvite; pendingInvite=null;
-      if(inv)declineInvite(inv.url);
+      if(inv?.directId){if(inv.account===p.viewer()?.pubkey)window.PCCordDirectInvites.dismiss(inv.directId,p.cordDirectContext());}
+      else if(inv)declineInvite(inv.url);
       render();
       const panel=$('#cc-join'); if(panel)panel.classList.add('hidden');
-      p.toast('invitation declined — the link still works if you change your mind'); };
+      p.toast(inv?.directId?'Invitation declined':'invitation declined — the link still works if you change your mind'); };
 
     $$('[data-cc-server]').forEach(b=>b.onclick=()=>{const i=+b.dataset.ccServer,inDrawer=mobileChatOpen&&mobileDrawerOpen;void activateJoinedRoom(p,i,inDrawer);});
     $$('[data-cc-discover]').forEach(b=>b.onclick=async()=>{
@@ -3902,7 +3984,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,render,backgroundRender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
