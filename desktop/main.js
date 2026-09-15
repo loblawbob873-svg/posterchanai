@@ -1356,10 +1356,14 @@ function wirePermissions() {
     let source = null;
     try { source = await pickScreenSource(); } catch (e) { screenLog('request failed: ' + ((e && (e.stack || e.message)) || e)); }
     if (!source) return cb({});   // cancelled → the page sees a plain NotAllowedError, as in a browser
+    // Electron 44 / Chromium 152 supports PulseAudio loopback on Linux, including
+    // PipeWire's PulseAudio server. This is the output monitor, never a microphone.
+    // The old PulseaudioLoopbackForScreenShare feature flag is no longer required.
+    // A page may navigate while the picker is open; recheck before granting either stream.
+    try { if (!isOurs((req && req.frame && req.frame.url) || (req && req.securityOrigin) || '')) return cb({}); }
+    catch (_) { return cb({}); }
     if(source.display_id){ remoteControlDisplayId=String(source.display_id);remoteControlDisplayExplicit=true; }
-    // 'loopback' = share the system audio too, which only Windows supports. The client asks for
-    // video-only today; this costs nothing and is right the day it asks for audio.
-    cb(req && req.audioRequested && process.platform === 'win32'
+    cb(req && req.audioRequested && (process.platform === 'win32' || process.platform === 'linux')
       ? { video: source, audio: 'loopback' }
       : { video: source });
   // The native portal picker is reliable on current macOS. Electron's native-picker path cancels
