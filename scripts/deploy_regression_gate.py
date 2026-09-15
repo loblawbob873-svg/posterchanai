@@ -49,6 +49,8 @@ TESTS = (
     'tests/test_livecd_build_artifact_excludes.py',
     'tests/test_installed_welcome_observer.py',
     'tests/test_stats_monero_zaps.py',
+    'tests/test_media_cached_admission.py',
+    'tests/test_media_transcode_stays_on_the_gpu.py',
     'tests/test_monero_user_history.py',
     'tests/client/test_monero_user_history_render.py',
     'tests/client/test_monero_history_full_app.py',
