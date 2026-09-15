@@ -148,3 +148,40 @@ class IconSprite(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_every_runtime_catalogue_tile_resolves_to_a_packaged_drawable(tmp_path):
+    """Compile actual catalogue and lookup; R contains only checked-in drawable resources."""
+    from pathlib import Path
+    root = Path(ROOT)
+    home = root / 'mobile/android/app/src/main/java/place/poster/app/home'
+    resources = sorted(Path(DRAWABLE).glob('*.xml'))
+    fields = ''.join('public static final int %s=%d;' % (f.stem, i + 1)
+                     for i, f in enumerate(resources))
+    r = tmp_path / 'R.java'
+    r.write_text('package place.poster.app; public class R { public static class drawable {'
+                 + fields + '}}')
+    shelf = tmp_path / 'AppShelf.java'
+    shelf.write_text('''package place.poster.app.home;
+public class AppShelf { public static class Entry {
+ public String key(){return "";}
+ public static Entry ours(String view,String label,boolean essential){return new Entry();}
+}}''')
+    runner = tmp_path / 'CheckIcons.java'
+    runner.write_text('''import place.poster.app.home.*;
+public class CheckIcons { public static void main(String[] args) {
+ int count=0;
+ for(HomeTiles.Tile tile:HomeTiles.catalogue()) {
+  if(TileIcons.of(tile.icon)==0)throw new AssertionError("No drawable: "+tile.view+" ("+tile.icon+")");
+  count++;
+ }
+ if(count==0)throw new AssertionError("Empty catalogue");
+ if(TileIcons.of(null)!=0 || TileIcons.of("unknown-test-icon")!=0)throw new AssertionError("Unknown icon fallback");
+}}''')
+    compiled = subprocess.run(['javac', '-d', str(tmp_path), str(r), str(shelf),
+                    str(home / 'HomeTiles.java'), str(home / 'TileIcons.java'), str(runner)],
+                   capture_output=True, text=True, timeout=30)
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    checked = subprocess.run(['java', '-cp', str(tmp_path), 'CheckIcons'],
+                   capture_output=True, text=True, timeout=10)
+    assert checked.returncode == 0, checked.stdout + checked.stderr

@@ -36,6 +36,7 @@ TESTS = (
     'tests/client/test_sms_image_paste_full_app.py',
     'tests/test_desktop_clipboard_async.py',
     'tests/test_desktop_clipboard_electron.py',
+    'tests/test_android_icon_sprite.py',
     'tests/test_android_launcher_touch.py',
     'tests/test_android_sms_image_paste.py',
     'tests/test_android_mms_draft_copy_ownership.py',

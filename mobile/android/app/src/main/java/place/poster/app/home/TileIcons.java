@@ -55,6 +55,7 @@ public final class TileIcons {
         if ("mail".equals(icon)) return R.drawable.ic_pc_mail;
         if ("menu".equals(icon)) return R.drawable.ic_pc_menu;
         if ("mic".equals(icon)) return R.drawable.ic_pc_mic;
+        if ("monitor".equals(icon)) return R.drawable.ic_pc_monitor;
         if ("music".equals(icon)) return R.drawable.ic_pc_music;
         if ("news".equals(icon)) return R.drawable.ic_pc_news;
         if ("note".equals(icon)) return R.drawable.ic_pc_note;
