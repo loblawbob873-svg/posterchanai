@@ -13,7 +13,10 @@ Exit code 0 means nothing failed. Run it **before** `./sync.sh`, and again after
 `sync.sh` runs `scripts/deploy_regression_gate.py` before committing, pushing, updating the
 overlay, or restarting services. The Linux desktop build runs the same gate before packaging.
 It covers native window reloads, PDF/image controls, the Office-to-Files round trip, and
-Folder Sync ownership, cancellation, and request timeouts. Each test uses isolated profiles
+Folder Sync ownership, cancellation, and request timeouts. Files checks cover all nine
+themes, readable controls, and saved theme changes reaching an already-open Files window
+without losing its directory. Deployment harnesses reject failed commits or production pushes
+before the mirror or nodes can advance. Each test uses isolated profiles
 and test filesystem/network adapters.
 
 Failures, collection errors, skipped tests, missing reports, and empty runs all block release.

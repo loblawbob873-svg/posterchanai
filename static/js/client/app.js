@@ -89,6 +89,13 @@
        the picker showed the new one would read as the preview not working. */
     try{ if(window.PCPhone && PCPhone.mirrorTheme) PCPhone.mirrorTheme(slug); }catch(_){}
   }
+  // Native app windows share saved settings but have separate documents. Update
+  // their palette in place when Settings saves elsewhere, preserving open files.
+  // Preview changes never write pc_theme, and received changes must not write it back.
+  window.addEventListener('storage', event => {
+    if(event.storageArea === localStorage && event.key === 'pc_theme')
+      applyTheme(event.newValue, false);
+  });
   // Sync the account/Nostr theme on login — it's authoritative and follows you across devices. The
   // cached pc_theme already painted pre-load, so this only corrects an out-of-date device. Safe to
   // always apply (pc_theme only ever holds SAVED themes; preview never persists). MUST establish the
