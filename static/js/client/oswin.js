@@ -198,8 +198,10 @@
     /* Harmless when no window exists, essential when main rejects this request because another
      * monitor (or a click one frame earlier) already created the singleton. It also returns a
      * navigated Social window before the compositor snapshot catches up. */
-    routeExisting(view);
     const o = Object.assign({}, opts || {});
+    const arg = view==='texts' ? String(o.arg||'').trim() : '';
+    if(arg && (arg.length>80 || /[\x00-\x1f\x7f]/.test(arg)))return null;
+    routeExisting(view, arg);
     // Direct opens use the same measured app size as icon/Start launches.
     // Explicit pop-out dimensions remain authoritative.
     if(!o.width || !o.height){
@@ -211,7 +213,8 @@
         }
       }catch(_){}
     }
-    const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''));
+    const url = root.location.pathname + '?' + PARAM + '=' + encodeURIComponent(String(view || ''))
+      + (arg ? '&pcsms='+encodeURIComponent(arg) : '');
     /* The size is a HINT to the compositor, passed as window features because a frameless Electron
      * child takes its geometry from them. sway may place it elsewhere and that is fine: it is the
      * window manager now, which is the entire point of this change. */
@@ -259,6 +262,8 @@
           /* A named conversation is what the click was ABOUT — opening the list instead is the bug
              this exists for. `openDMWith` validates the key itself; a malformed one falls through to
              the ordinary view switch rather than being trusted. */
+          else if(arg && v==='texts' && root.PCOpenNotificationRoute)
+            root.PCOpenNotificationRoute('texts:'+encodeURIComponent(arg));
           else if(arg && v==='messages' && root.__PC && typeof root.__PC.openDMWith==='function')
             root.__PC.openDMWith(arg);
           /* An EXTRA is drawn by the desktop's own renderer, never by switchView — which does not

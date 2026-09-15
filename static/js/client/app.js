@@ -3604,6 +3604,14 @@
      * `applyInstanceGating` can switchView during boot and the guard then skipped its own landing. */
     if(_inWin()){
       const v = PCOSWin.viewOf();
+      if(v==='texts'){
+        const uri=new URL(location.href),address=uri.searchParams.get('pcsms');
+        if(address!==null){
+          uri.searchParams.delete('pcsms');history.replaceState(history.state,'',uri.pathname+uri.search+uri.hash);
+          if(address.trim() && address.length<=80 && !/[\x00-\x1f\x7f]/.test(address))
+            window.__PC_SMS_OPEN_ADDRESS=address.trim();
+        }
+      }
       /* AN EXTRA IS NOT A VIEW. System Settings and the other screens the desktop BUILDS have no
        * nav entry and nothing routes their name — and `switchView` does not validate its argument,
        * so it would set VIEW and fall through to the timeline under the right window title. That
@@ -33136,6 +33144,22 @@
    * system notification that does nothing is worse than not having sent it. */
   function openOsNotificationRoute(route){
     const value=String(route||'');
+    if(value==='texts'){switchView('texts');return true;}
+    if(value.startsWith('texts:')){
+      let address;try{address=decodeURIComponent(value.slice(6)).trim();}catch(_){return false;}
+      if(!address || address.length>80 || /[\x00-\x1f\x7f]/.test(address))return false;
+      // Native Texts owns a different renderer. Carry the recipient through its
+      // existing window route instead of painting the desktop shell's hidden feed.
+      try{
+        if(window.PCOSWin && PCOSWin.enabled() && !PCOSWin.isWindow()){
+          PCOSWin.open('texts','Texts',{arg:address});
+          return true; // Electron may return null after focusing the existing singleton.
+        }
+      }catch(_){}
+      switchView('texts');
+      _withSms(mod=>{if(VIEW==='texts' && mod.openNotification)mod.openNotification({address});});
+      return true;
+    }
     if(value==='calendar'){switchView('calendar');return true;}
     if(value.startsWith('post:')){openThread(value.slice(5));return true;}
     if(value.startsWith('concord:')){
