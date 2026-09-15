@@ -10,3 +10,4 @@ def test_concord_rekey_runtime():
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "authenticated rekey lifecycle passed" in result.stdout
+    assert "actual creator retirement to durable CORD06 resume and bookkeeping passed" in result.stdout

@@ -143,3 +143,31 @@ const retirementTransport={...transport,relayPublishRoom:async(urls,e,auth)=>{if
 await assert.rejects(()=>ctx.refoundRoom(retirementTransport,stored[0],retirementOptions),/prerequisite publication/);assert.equal(stored[0].cord.refounding.phase,0);assert.equal(stored[0].cord.refounding.beforeEvent,0);
 denySecond=false;await ctx.refoundRoom(retirementTransport,stored[0],{});assert.deepEqual(beforeCalls,beforeRelays.concat(beforeRelays).map(url=>[url]));assert(!stored[0].cord.refounding);assert.notEqual(stored[0].cord.bundle.community_root,bundle.community_root);
 console.log('CORD06 durable invitation prerequisites survive plain resume and require every bootstrap ACK');
+// Integrated CORD05 -> CORD06 path: the actual creator controller supplies the
+// tombstone, a failed ACK checkpoints it, and ordinary resume reconciles13303.
+vm.runInThisContext(fs.readFileSync('static/js/client/cord-protocol.js','utf8'));
+vm.runInThisContext(fs.readFileSync('static/js/client/cord-invite-links.js','utf8'));
+const links=globalThis.PCCordInviteLinks,creatorKey=NT.nip44.getConversationKey(sk,owner),creatorContext={pubkey:owner,isCurrent:()=>activeOwner===owner,verify:async es=>es.filter(e=>NT.verifyEvent(structuredClone(e))),encrypt:async(_p,t)=>NT.nip44.encrypt(t,creatorKey),decrypt:async(_p,t)=>NT.nip44.decrypt(t,creatorKey),sign:async e=>NT.finalizeEvent(e,sk)};
+activeOwner=owner;
+const link=await links.create(bundle,creatorContext,{base:'https://fixture.example'}),registry=await reader.createInviteRegistryWrap(bundle,refoundControls,[links.details(link.entry).pubkey],owner,creatorContext.sign);
+let integratedControls=[...refoundControls,registry.wrap],listEnvelope=await creatorContext.sign({kind:13303,created_at:Math.floor(Date.now()/1000),tags:[],content:await creatorContext.encrypt(owner,JSON.stringify({entries:[link.entry],tombstones:[]}))}),latestLink=link.event,denyPrerequisite=true,integratedSent=[];
+stored=[{id:'room',communityId:cid,cord:{bundle:structuredClone(bundle)}}];ctx.roomControls.set(cid,integratedControls);ctx.CORD_RELAYS=[];ctx.cachedEnvelopes=async()=>integratedControls;ctx.roomRelays=()=>['wss://relay.example'];ctx.mergeEnvelopes=(...sets)=>[...new Map(sets.flat().map(e=>[e.id,e])).values()];
+vm.runInContext(source.slice(source.indexOf('  async function ownedInviteContext('),source.indexOf('  async function saveCommunitySettings(')),ctx);
+ctx.window.PCConcord={refoundingBeforeEvents:true,reviewRefoundingRecipients:async()=>options,refoundRoom:ctx.refoundRoom,refreshOwnedInviteLinks:ctx.refreshOwnedInviteLinks};
+ctx.cordQuery=async(_p,relays,filters,opts)=>{opts.report.ok=relays;return integratedControls.filter(e=>filters.some(f=>f.authors.includes(e.pubkey)));};
+const integratedTransport={...transport,cordDirectContext:()=>creatorContext,cordInviteLinksModule:async()=>links,relayQueryFrom:async(relays,filters,opts)=>{opts.report.ok=relays;const kind=filters[0].kinds[0];if(kind===13303)return [listEnvelope];if(kind===33301)return [latestLink];return integratedControls.filter(e=>filters[0].authors.includes(e.pubkey));},relayPublishRoom:async(relays,e,auth)=>{
+ integratedSent.push([e.kind,e.id]);
+ if(e.kind===33301){assert(stored[0].cord.refounding,'checkpoint must exist before retiring link');assert.equal(stored[0].cord.refounding.beforeEvents[0].id,e.id);assert(!auth?.pubkey);if(denyPrerequisite)return {ok:false};latestLink=e;return {ok:true};}
+ if(e.kind===13303){listEnvelope=e;return {ok:true};}
+ assert(!denyPrerequisite,'no root publication before tombstone ACK');assert(auth.current());integratedControls.push(e);return {ok:true};
+}};
+await assert.rejects(()=>ctx.changeOwnedInviteLink(integratedTransport,stored[0],link.entry),/prerequisite publication/);
+assert.equal(integratedSent.length,1);const checkpointedId=stored[0].cord.refounding.beforeEvents[0].id;assert.equal(stored[0].cord.refounding.phase,0);assert.equal(stored[0].cord.refounding.beforeEvent,0);
+// Serialize and reload membership exactly as an application restart would.
+stored=JSON.parse(JSON.stringify(stored));denyPrerequisite=false;await ctx.refoundRoom(integratedTransport,stored[0],{});
+assert.equal(integratedSent[1][1],checkpointedId);assert(!stored[0].cord.refounding);assert.notEqual(stored[0].cord.bundle.community_root,bundle.community_root);
+assert.equal(reader.inspectControl(stored[0].cord.bundle,integratedControls).liveInviteLinks.length,0);
+assert(latestLink.tags.some(t=>t[0]==='vsk'&&t[1]==='9'));
+const reconciled=JSON.parse(NT.nip44.decrypt(listEnvelope.content,creatorKey));assert(!reconciled.entries.some(e=>e.token===link.entry.token));assert(reconciled.tombstones.some(e=>e.token===link.entry.token));
+assert.equal(integratedSent.filter(([kind])=>kind===13303).length,1,'plain resume performs eventual creator-list cleanup');
+console.log('CORD05 actual creator retirement to durable CORD06 resume and bookkeeping passed');
