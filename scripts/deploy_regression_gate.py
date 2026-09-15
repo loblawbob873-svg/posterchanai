@@ -34,6 +34,8 @@ TESTS = (
     'tests/test_sync_nas_fetch_retry.py',
     'tests/test_wayfire_pointer_confinement_runtime.py::test_the_option_is_declared_on_and_the_package_that_carries_it_is_required',
     'tests/client/test_sms_image_paste_full_app.py',
+    'tests/test_desktop_clipboard_async.py',
+    'tests/test_desktop_clipboard_electron.py',
     'tests/test_android_launcher_touch.py',
     'tests/test_android_sms_image_paste.py',
     'tests/test_android_mms_draft_copy_ownership.py',

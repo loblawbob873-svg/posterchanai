@@ -921,7 +921,7 @@ function createWindow(assignment) {
     }
     if (params.linkURL) {
       items.push({ label: 'Open link in browser', click: () => shell.openExternal(params.linkURL) });
-      items.push({ label: 'Copy link address', click: () => clipboard.writeText(params.linkURL) });
+      items.push({ label: 'Copy link address', click: async () => { try { await clipboard.writeText(params.linkURL); } catch (_) {} } });
       items.push({ type: 'separator' });
     }
     /* AN IMAGE HAD NO ENTRIES AT ALL, so right-clicking one built a menu of cut/copy/paste with
@@ -937,7 +937,7 @@ function createWindow(assignment) {
       // A data: or blob: source is this page's own memory: there is no address another program
       // could open, so offering one would put a string on the clipboard that resolves nowhere.
       if (/^https?:/i.test(params.srcURL)) {
-        items.push({ label: 'Copy image address', click: () => clipboard.writeText(params.srcURL) });
+        items.push({ label: 'Copy image address', click: async () => { try { await clipboard.writeText(params.srcURL); } catch (_) {} } });
         items.push({ label: 'Open image in browser', click: () => shell.openExternal(params.srcURL) });
       }
       items.push({ type: 'separator' });
@@ -3609,7 +3609,8 @@ ipcMain.handle('pc:shot:take', async (e, opts) => {
     const { nativeImage } = require('electron');
     const img = nativeImage.createFromPath(r.path);
     if (!img.isEmpty()) {
-      clipboard.writeImage(img);
+      const { ClipboardItem } = require('electron');
+      await clipboard.write([new ClipboardItem({'image/png': new Blob([img.toPNG()], {type:'image/png'})})]);
       /* CHECKED BY SOMEBODY ELSE, because the write can be accepted and do nothing.
        *
        * MEASURED on the test machine: `clipboard.writeImage()` returned without error and
@@ -3622,12 +3623,12 @@ ipcMain.handle('pc:shot:take', async (e, opts) => {
        * So the claim is made by a real Wayland client or not at all, and when it is not the toast
        * says "saved" and stops there — true, and still the useful half.
        *
-       * On Windows and macOS there is no wl-paste and none of this applies; `writeImage` is simply
-       * how the clipboard works there, so the claim is taken at face value. */
+       * On Windows and macOS there is no wl-paste; await the native write and check
+       * the advertised image type before reporting success. */
       if (process.platform === 'linux') {
         copied = await require('./screenshot.js').clipboardHasImage();
       } else {
-        copied = !clipboard.readImage().isEmpty();
+        copied = await clipboard.has('image/png');
       }
     }
   } catch (err) { console.warn('[shot] clipboard:', (err && err.message) || err); }
@@ -3814,13 +3815,15 @@ ipcMain.handle('pc:clip:write', async (e, text) => {
   if (!fromOurPage(e)) { console.warn('[clip] denied'); return false; }
   const s = String(text == null ? '' : text);
   if (!s || s.length > 8192) return false;    // a stream key/url is short; refuse to be a bulk channel
-  clipboard.writeText(s);
+  let cached = false;
+  try { await clipboard.writeText(s); cached = true; } catch (_) {}
+  if (!fromOurPage(e)) return false;
   /* Chromium's internal cache is not proof that another Wayland client can paste it.  Publish the
    * compositor selection too; the helper has bounded input/time and cannot inherit shell sockets. */
   if (require('./clipboard.js').isWayland()) {
     return require('./clipboard.js').writeWaylandText(s);
   }
-  return true;
+  return cached;
 });
 /* COPYING AN IMAGE, which until now could not be done on this desktop at all.
  *
@@ -3836,7 +3839,7 @@ ipcMain.handle('pc:clip:write', async (e, text) => {
 ipcMain.handle('pc:clip:write-image', async (e, bytes) => {
   if (!fromOurPage(e)) { console.warn('[clip] image denied'); return false; }
   let png;
-  try { png = Buffer.from(bytes && bytes.buffer ? bytes.buffer : (bytes || [])); }
+  try { png = ArrayBuffer.isView(bytes) ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) : Buffer.from(bytes || []); }
   catch (_) { return false; }
   // 32 MiB is far above any pasted screenshot and far below a channel worth abusing. The renderer
   // has already re-encoded to PNG, so anything else here is a caller that got it wrong: publish it
@@ -3847,10 +3850,13 @@ ipcMain.handle('pc:clip:write-image', async (e, bytes) => {
    * Windows) gets the copy at all -- the same order the text write above uses. */
   let cached = false;
   try {
-    const { nativeImage } = require('electron');
+    const { nativeImage, ClipboardItem } = require('electron');
     const image = nativeImage.createFromBuffer(png);
-    if (!image.isEmpty()) { clipboard.writeImage(image); cached = true; }
+    if (image.isEmpty()) return false;
+    await clipboard.write([new ClipboardItem({'image/png': new Blob([png], {type:'image/png'})})]);
+    cached = true;
   } catch (_) {}
+  if (!fromOurPage(e)) return false;
   if (require('./clipboard.js').isWayland()) {
     return require('./clipboard.js').writeWaylandImage(png);
   }
@@ -3868,9 +3874,12 @@ ipcMain.handle('pc:clip:write-image', async (e, bytes) => {
  * than a channel worth abusing. */
 ipcMain.handle('pc:clip:read', async (e) => {
   if (!fromOurPage(e)) { console.warn('[clip] read denied'); return ''; }
-  const native = await require('./clipboard.js').readWaylandText();
-  if (native !== null) return native;
-  try { return String(clipboard.readText() || '').slice(0, 65536); } catch (_) { return ''; }
+  try {
+    const native = await require('./clipboard.js').readWaylandText();
+    if (!fromOurPage(e)) return '';
+    const text = native !== null ? native : await clipboard.readText();
+    return fromOurPage(e) ? String(text || '').slice(0, 65536) : '';
+  } catch (_) { return ''; }
 });
 
 // Screen picker: thumbnails as data URLs so the page stays a plain, network-free document.
