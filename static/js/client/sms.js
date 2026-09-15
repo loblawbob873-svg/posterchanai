@@ -257,7 +257,7 @@
        whole history through the subscription, and every one of those is "new" to this device — a
        thousand notifications for messages read weeks ago. Only something that arrived AFTER this
        page did is an event; everything older is history. */
-    since: Date.now() - 120000,
+    since: Date.now(),
   };
   let blossomLaunch=false;
   function draftFor(k){ return S.draft[String(k||'')] || {text:'', file:null}; }
@@ -1050,15 +1050,27 @@
     try{ if(_paintSoon && _paintSoon.unref) _paintSoon.unref(); }catch(_){ }
   }
 
-  let _sub = null;
+  let _sub = null, _subAccount = '';
+  const _announced = new Set();
   function watch(){
-    if(_sub || !Relay().subscribe) return;
+    const owner = ME().pubkey || '';
+    if(_subAccount !== owner){
+      if(_sub) try{ Relay().close(_sub); }catch(_){}
+      S.since = Date.now();
+      _sub = null; _subAccount = owner; _announced.clear();
+    }
+    if(!owner || _sub || !Relay() || !Relay().subscribe) return;
     try{
-      const f = Object.assign(FILTER(), { since: now() - 120 });
+      const f = Object.assign(FILTER(), { since: Math.floor(S.since / 1000) });
       delete f.limit;
       _sub = Relay().subscribe([f], { live:true, onEvent: async (ev) => {
-        const before = S.msgs.size;
+        if(ME().pubkey !== owner || ev.pubkey !== owner) return;
+        const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
+        // A reconnect catch-up query may populate the archive before the live socket resumes.
+        // The notification ledger, not cache membership, decides whether this occurrence rang.
+        const fresh = d.startsWith(D_MSG) && !_announced.has(d);
         await absorbResilient([ev]);
+        if(ME().pubkey !== owner) return;
         /* ONE REPAINT PER BURST, NOT PER EVENT — and on this screen a burst is the ordinary case.
          *
          * A sweep publishes its own messages to the user's own relay, and this subscription
@@ -1072,9 +1084,7 @@
          * without changing the map size, and the old code repainted unconditionally for exactly
          * that reason — it just does not do so sixty times. */
         paintSoon();
-        if(S.msgs.size !== before){
-          notifyNew(ev);
-        }
+        if(fresh) await notifyNew(ev, owner);
       }});
     }catch(_){ _sub = null; }
   }
@@ -1085,17 +1095,44 @@
    * Never for a message this device published (the phone already showed it), never for one we sent,
    * and never for anything older than the page — a first sync of a thousand messages must not fire a
    * thousand notifications. */
-  async function notifyNew(ev){
+  // Coordinate independent same-origin windows and retain claims across reloads. Web Locks
+  // serializes the read/write across renderer processes; the bounded ledger stores only document
+  // identifiers, never message contents. Restricted-storage browsers retain the in-memory guard.
+  async function claimNotification(owner, d){
+    const claim = () => {
+      if(owner !== ME().pubkey) return false;
+      try{
+        const name = 'pc_sms_notified:' + owner;
+        let rows = JSON.parse(localStorage.getItem(name) || '[]');
+        if(!Array.isArray(rows)) rows = [];
+        if(rows.includes(d)) return false;
+        rows.push(d);
+        localStorage.setItem(name, JSON.stringify(rows.slice(-256)));
+      }catch(_){ }
+      return true;
+    };
+    if(navigator.locks && navigator.locks.request)
+      return navigator.locks.request('pc-sms-notification:' + owner, claim);
+    return claim();
+  }
+
+  async function notifyNew(ev, owner){
     try{
-      if(await isPhone()) return;
       const d = ((ev.tags||[]).find(t => t[0]==='d') || [])[1] || '';
       const m = S.msgs.get(d);
-      if(!m || m.gone || !m.incoming) return;
-      // The message's own timestamp against the floor, NOT "have I notified recently" — the latter
-      // suppresses the second message of a conversation, which is the one people are waiting for.
+      if(!m || m.gone || !m.incoming || _announced.has(d)) return;
       if((m.date || 0) < S.since) return;
+      if(owner !== ME().pubkey || (window.pcShell && pcShell.backgroundOwner === false)) return;
+      // Reserve before asynchronous phone detection: concurrent duplicate relay deliveries may
+      // both begin before either has inserted the message into the archive map.
+      _announced.add(d);
+      if(!await claimNotification(owner, d)) return;
+      if(PC.notificationAllowed && !PC.notificationAllowed('sms')) return;
+      if(document.hidden !== true && document.visibilityState !== 'hidden'
+          && (!document.hasFocus || document.hasFocus()) && textsOnScreen() && S.open === key(m.address)) return;
+      if(await isPhone() || owner !== ME().pubkey) return;
       const who = whoIs(m.name, m.address) || 'a message';
-      const preview = String(m.body || '').slice(0, 140);
+      const preview = String(m.body || (m.parts && m.parts.length ? 'Picture message' : 'New text message')).slice(0, 140);
       /* ONE TAG FOR EVERY TEXT IS WHY THEY WERE EASY TO MISS. A notification tag REPLACES the card
        * already showing under it — that is the whole point of a tag — so a literal `sms` meant the
        * second person to text you silently overwrote the first, and a burst of three conversations
@@ -1107,7 +1144,13 @@
        * toast needs no permission and is the only half that shows while somebody is looking at
        * another screen of this app with OS notifications denied or ignored. Texts raised the OS one
        * alone, so on a laptop with notifications off they arrived completely silently. */
-      try{ if(PC.notifToast) PC.notifToast('✉ <b>' + PC.enc(who) + '</b> ' + PC.enc(preview), ''); }catch(_){ }
+      const route = 'texts:' + encodeURIComponent(m.address || '');
+      const land = () => {
+        if(owner !== ME().pubkey) return;
+        if(window.PCOpenNotificationRoute) window.PCOpenNotificationRoute(route);
+        else { if(PC.switchView) PC.switchView('texts'); openNotification({address:m.address}); }
+      };
+      try{ if(PC.notifToast) PC.notifToast('✉ <b>' + PC.enc(who) + '</b> ' + PC.enc(preview), '', land, 'sms'); }catch(_){ }
       // Through the app's ONE notification path — it knows that Android's WebView implements the
       // Notifications API by doing nothing, and routes to the native builder there instead.
       // `route` is what makes the card openable: without it a click focuses the app and leaves the
@@ -1116,8 +1159,7 @@
       /* AND OPEN THE CONVERSATION IT IS ABOUT, not merely the app. `key(address)` is the same
        * identity the thread list is built from (see the `by` map above), so this lands on the
        * thread rather than the room list — the rule the DM route had to be taught this week. */
-      const land = () => { try{ S.open = key(m.address); paint(); }catch(_){ } };
-      if(PC.osNotify) PC.osNotify(who, preview, { tag, route:'texts', notificationType:'sms',
+      if(PC.osNotify) PC.osNotify(who, preview, { tag, route, notificationType:'sms',
                                                   onClick: land });
       else PC.toast(who + ': ' + preview.slice(0, 60));
     }catch(_){ }
@@ -4274,6 +4316,9 @@
   function init(){
     PC = window.__PC;
     if(!PC){ return setTimeout(init, 50); }
+    // Only the live filter starts here. No archive query, provider read or permission prompt:
+    // desktop notifications must work before the first visit to Texts without warming history.
+    watch();
     /* The handset publishes and drains WITHOUT the screen being open — that is the whole point of an
      * archive. Behind `load` so it never runs before the client has a key, and on visibility rather
      * than a timer: a poll here would run for the life of the battery on a device that already holds
@@ -4334,6 +4379,7 @@
      * device with telephony; this costs nothing on web/desktop and gives a newly queued MMS a
      * bounded pickup time. drainOutbox() coalesces slow queries and sends. */
     const outboxPoll = setInterval(async () => {
+      watch(); // Credentials can arrive after module startup; also retire a previous account's filter.
       if(document.visibilityState !== 'visible') return;
       const st = await phoneState();
       if(st.telephony) drainOutbox();
@@ -4344,7 +4390,14 @@
   }
   init();
 
-  window.PCSms = { render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
+  function openNotification(payload){
+    const address = String(payload && payload.address || '').trim();
+    if(!address) return;
+    S.open = key(address);
+    render();
+  }
+
+  window.PCSms = { openNotification, render, mirror, importAll, loadFromPhone, emptyWhy, ensureRead, phoneState,
                    openBlossom: address => { const to=String(address||'').trim();if(!to)return;S.open=key(to);if(!S.threads.some(t=>t.key===S.open))S.threads.unshift({key:S.open,address:to,msgs:[],date:0,unread:0});blossomLaunch=true;paint(); },
                    // Clear the archive's latches and walk the whole phone again -- see rescan().
                    rescan, resetArchiveMarkers,

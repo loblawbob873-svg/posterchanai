@@ -37,7 +37,7 @@ def test_live_subscription_adds_old_media_without_reopening_texts():
              "incoming": True,
              "att": [{"ct": "image/jpeg", "name": "old.jpg", "bytes": 42,
                       "sha": "d" * 64, "thumb": "e" * 64}]}
-    event = {"created_at": 20, "tags": [["d", doc]], "content": "enc:" + json.dumps(media)}
+    event = {"pubkey": "me", "created_at": 20, "tags": [["d", doc]], "content": "enc:" + json.dumps(media)}
     payload = {"isPhone": False, "telephony": False,
                "steps": ["render", "liveEvent"], "rawEvents": [event]}
     run = subprocess.run(["node", str(SIM), json.dumps(payload)], cwd=ROOT, text=True,

@@ -417,9 +417,9 @@ class SendingFromAnotherDevice(unittest.TestCase):
         # back through this subscription, so one repaint per event meant sixty full rebuilds of an
         # open conversation. The rule this test protects is the ORDER, not the call: a tombstone
         # mutates an entry without changing the map size, so the repaint must be reached before the
-        # size gate, not inside it.
+        # notification novelty gate, not inside it.
         repaint = watch.index("paintSoon()")
-        size_gate = watch.index("if(S.msgs.size !== before)")
+        size_gate = watch.index("if(fresh)")
         self.assertLess(repaint, size_gate)
 
     def test_desktop_live_repaint_requires_the_texts_window_to_own_the_feed(self):
