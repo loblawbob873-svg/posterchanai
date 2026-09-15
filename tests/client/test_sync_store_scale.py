@@ -7,6 +7,7 @@ Each scenario is a rule that once cost a folder: the old per-document ceiling th
 ghosts the era exists to kill, and a journal whose failure to persist was an infinite resync.
 """
 import json
+from tests.client.simulation_results import require_successful_scenarios
 import os
 import shutil
 import subprocess
@@ -30,7 +31,7 @@ class TestSyncStoreScale(unittest.TestCase):
             rows = json.loads(r.stdout)
         except json.JSONDecodeError:
             raise AssertionError("simulation crashed:\n" + r.stdout[-1500:] + "\n" + r.stderr[-1500:])
-        cls._rows = {row["name"]: row for row in rows}
+        cls._rows = require_successful_scenarios(rows, r)
 
     def check(self, name):
         self.assertIn(name, self._rows,

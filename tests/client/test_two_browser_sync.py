@@ -21,6 +21,7 @@ maps, items and listeners — against one shared relay, and drives the scenarios
                             are indistinguishable, and one of them must not delete everywhere.
 """
 import json
+from tests.client.simulation_results import require_successful_scenarios
 import os
 import shutil
 import subprocess
@@ -41,7 +42,7 @@ def results():
         rows = json.loads(r.stdout)
     except json.JSONDecodeError:
         raise AssertionError(f"simulation crashed:\n{r.stdout[-1500:]}\n{r.stderr[-1500:]}")
-    return {row["name"]: row for row in rows}
+    return require_successful_scenarios(rows, r)
 
 
 def _check(results, name):
