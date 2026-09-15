@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import subprocess
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,11 +20,17 @@ def test_lifecycle_and_instrumented_device_checks_have_independent_bounds():
 
 
 def test_device_diagnostics_still_upload_after_a_timeout():
-    tail = WORKFLOW.split("timeout --kill-after=30s 15m", 1)[1]
-    assert tail.count("if: always()") >= 3
-    assert "Upload logcat" in tail
-    assert "Upload instrumented test report" in tail
-    assert "Upload screenshots" in tail
+    steps = yaml.safe_load(WORKFLOW)['jobs']['emulator']['steps']
+    by_name = {step.get('name'): step for step in steps}
+    for name in ('Upload logcat', 'Upload instrumented test report', 'Upload screenshots'):
+        step = by_name[name]
+        assert step['if'] == 'always()', name
+        assert step['uses'].startswith('actions/upload-artifact@'), name
+        assert step['with']['path'], name
+    names = [step.get('name') for step in steps]
+    assert names.index('Run instrumented checks on a fresh emulator') < names.index('Upload instrumented test report')
+    assert names.index('Upload instrumented test report') < names.index('Run the device checks'), \
+        'instrumentation failures must be available before the separate lifecycle boot'
 
 
 def test_first_activity_launch_cannot_hang_the_entire_device_gate():
