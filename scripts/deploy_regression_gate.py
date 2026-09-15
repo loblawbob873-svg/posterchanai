@@ -26,6 +26,7 @@ TESTS = (
     'tests/test_deploy_regression_gate.py',
     'tests/test_deploy_process_cleanup.py',
     'tests/test_sync_publish_failures.py',
+    'tests/test_sync_nas_fetch_retry.py',
     'tests/test_android_mms_draft_copy_ownership.py',
     'tests/test_android_mms_receiver_lifecycle.py',
     'tests/test_android_mms_result_mapping.py',

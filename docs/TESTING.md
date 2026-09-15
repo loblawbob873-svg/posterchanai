@@ -25,7 +25,7 @@ are cleared so the tests exercise the checkout being deployed. Install its Pytho
 from `scripts/deploy-regression-requirements.txt`; Node, a JDK, Chrome, Electron, and Xvfb are also
 required. The gate is a fast minimum; continue running the broader suites appropriate to a change.
 
-The gate fingerprints the tested client, desktop, Android app, templates, scripts, tests and release workflows
+The gate fingerprints the tested backend, client, desktop, Android app, templates, scripts, tests and release workflows
 before and after running. `sync.sh` checks that receipt again immediately before committing.
 Edits or a concurrent commit invalidate it; new source files must be staged so `git commit -a`
 cannot silently omit them. The overlay package pin can still update after tests because it does
@@ -376,6 +376,29 @@ authentication, request and persistence boundaries. An account switch must prese
 owner's pending appointments and leave the new account's queue and badge alone. Flushes stop before
 sending another account's data; interrupted writes remain retryable. Runtime controls verify edit
 replacement, permanent refusal reporting, temporary failure retention and structured HTTP errors.
+
+## Calendar defaults and moves
+
+`tests/client/test_calendar_default_and_move_full_app.py` uses the bundled app in Chrome. It
+checks saved defaults across page reloads and accounts, read-only or removed defaults, event
+creation, moving a recurring event without losing its raw ICS, and refusing moves with pending
+offline edits. An edited move retry advances the clock two minutes so a regenerated timestamp
+cannot accidentally pass as the same payload.
+
+`tests/test_calendar_move_api.py` registers the real FastAPI router with isolated authentication
+and storage boundaries. Destination failures must retain the source; collisions and stale edits
+must be refused. Partial copies remain visible to CalDAV, and an identical retry can finish
+removing the source. Strict-read outages must not look like missing events. The storage API has
+no atomic compare-and-delete, so these cases do not prove safety against every simultaneous
+write from another node.
+
+## Start-menu keyboard and browser cleanup
+
+The required bundled-browser cases type Firefox, use Tab to select it, release delayed local
+search results, and press Enter. The same action must retain focus and launch once. Focus rings
+must stay inside the scrolling results and follow the theme accent. Browser setup and assertion
+failures must still close Chrome before deleting its private profile; cleanup errors remain
+failures rather than being ignored.
 
 ## Known standing state
 
