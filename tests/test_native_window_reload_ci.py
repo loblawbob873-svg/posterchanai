@@ -31,7 +31,8 @@ def test_desktop_linux_runs_required_real_ipc_gate_before_build():
     assert 'scripts/deploy_regression_gate.py' in gate
     assert 'scripts/deploy-regression-requirements.txt' in gate
     assert 'tests/test_native_window_reload_electron.py' in (ROOT/'scripts/deploy_regression_gate.py').read_text()
-    assert "      - 'tests/test_native_window_reload_electron.py'" in workflow
+    from tests.test_desktop_workflow_test_triggers import _included, _paths
+    assert _included('tests/test_native_window_reload_electron.py', _paths())
 
 
 @pytest.mark.parametrize('installer_status', [0, 17])
