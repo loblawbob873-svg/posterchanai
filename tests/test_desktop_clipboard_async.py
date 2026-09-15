@@ -46,7 +46,7 @@ let release,reject=false,has=true,external=false,platform='win32';
 const ctx={Blob,console:{warn(){}},r:{ok:true,path:'/saved.png'},process:{platform},clipboard:{write:()=>new Promise((yes,no)=>{release=()=>reject?no(Error('denied')):yes()}),has:async()=>has},require:p=>p==='electron'?{nativeImage:{createFromPath:()=>({isEmpty:()=>false,toPNG:()=>Buffer.from([1])})},ClipboardItem:class{}}:{clipboardHasImage:async()=>external}};
 const run=()=>vm.runInNewContext('(async()=>{'+body+'})()',ctx);
 (async()=>{
- let done=false,p=run().then(v=>{done=true;return v});await Promise.resolve();assert.equal(done,false);release();assert.equal((await p).copied,true);
+ let done=false,p=run().then(v=>{done=true;return v});await new Promise(r=>setImmediate(r));assert.equal(done,false);release();assert.equal((await p).copied,true);
  reject=true;p=run();release();assert.deepEqual(JSON.parse(JSON.stringify(await p)),{ok:true,path:'/saved.png',copied:false});
  reject=false;has=false;p=run();release();assert.equal((await p).copied,false);
  ctx.process.platform='linux';has=true;p=run();release();assert.equal((await p).copied,false);
