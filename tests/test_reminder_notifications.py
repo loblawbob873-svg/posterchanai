@@ -1,16 +1,24 @@
 """Private durable reminder history and live payload share occurrence identities."""
 from datetime import datetime, timedelta
+import pytest
 from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
-from app.models import Reminder
-from app.routers.auth import router
-from app.auth import get_current_user
-from app.database import get_db
-from app.services.reminder_service import notification_record
+from tests.reminder_api_harness import reminder_modules
+
+
+@pytest.fixture(autouse=True)
+def isolated_reminder_modules():
+    global Reminder, User, router, get_current_user, get_db, notification_record
+    with reminder_modules() as harness:
+        Reminder, User = harness.models.Reminder, harness.models.User
+        router, get_current_user, get_db = harness.router, harness.get_current_user, harness.get_db
+        notification_record = harness.service.notification_record
+        yield harness
+
 
 
 def test_reminder_history_authenticated_owner_status_limit_and_repeat_identity():
@@ -71,3 +79,23 @@ def test_live_delivery_keeps_ai_archive_and_push_uses_calendar_view(monkeypatch)
         assert live[0][1]['route']=='calendar' and live[0][1]['reminder_id']==reminder.id
         assert pushed[0]['view']=='calendar' and pushed[0]['due_at']==live[0][1]['due_at']
     engine.dispose()
+
+
+def test_isolated_modules_restore_existing_imports_and_model_registry(isolated_reminder_modules):
+    import sys
+    import app
+    from app.services import settings_store
+    before = {name: sys.modules[name] for name in (
+        'app.database', 'app.models', 'app.routers.auth', 'app.services.settings_store')}
+    outer_models = isolated_reminder_modules.models
+    with reminder_modules() as nested:
+        assert nested.models.Base.metadata is not outer_models.Base.metadata
+        assert nested.models.User.registry is not outer_models.User.registry
+        assert app.models is nested.models
+        assert nested.settings is not settings_store
+        nested.settings.get = lambda *args: 365
+    assert all(sys.modules[name] is module for name, module in before.items())
+    assert app.models is outer_models
+    from app.services import settings_store as restored_settings
+    assert restored_settings is settings_store
+    assert restored_settings.get('reminder_history_days') == 7

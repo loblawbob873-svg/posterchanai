@@ -17,16 +17,19 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
-from app.models import Reminder, User
-from app.routers.auth import router
-from app.auth import get_current_user
-from app.database import get_db
+from tests.reminder_api_harness import reminder_modules
 
 
 @pytest.fixture(autouse=True)
-def default_history_window(monkeypatch):
-    from app.services import settings_store
-    monkeypatch.setattr(settings_store, 'get', lambda *args: 7)
+def isolated_reminder_modules():
+    global Reminder, User, router, get_current_user, get_db, notification_record
+    with reminder_modules() as harness:
+        Reminder, User = harness.models.Reminder, harness.models.User
+        router, get_current_user, get_db = harness.router, harness.get_current_user, harness.get_db
+        notification_record = harness.service.notification_record
+        yield harness
+
+
 
 
 def _client(db, user_id=1):
