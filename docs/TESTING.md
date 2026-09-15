@@ -464,3 +464,16 @@ can retain the transport result while
 [SendConf processing](https://android.googlesource.com/platform/packages/services/Mms/+/refs/tags/android-mainline-11.0.0_r13/src/com/android/mms/service/SendRequest.java)
 marks the provider row failed. Regression cases preserve that failure and reject bare HTTP 2xx
 as proof of acceptance when the callback itself is unconfirmed.
+
+## Fullscreen game mouse input
+
+`tests/test_wayfire_pointer_confinement_runtime.py` compiles the shipped plugin and starts a
+private headless Wayfire session. Its separate Wayland client receives real relative-pointer
+protocol events at both monitor edges, with different accelerated and raw deltas. Repeated raw
+movement must remain unchanged; a native pointer lock must also preserve accelerated movement.
+These tests require the Wayfire SDK, compiler, foot, and Wayland protocols. Run them before
+publishing compositor changes; ordinary desktop CI does not have that SDK.
+
+The custom cursor guard confines accelerated cursor displacement. It preserves raw input used
+by XWayland raw-motion consumers. This does not prove every game's camera behavior or measure
+frame rate; the affected game still needs validation on its desktop.

@@ -186,12 +186,15 @@ exit 99
     assert not sentinel.exists(), 'stale test results reached a commit or push'
 
 
-def test_backend_edit_invalidates_test_receipt(source_gate):
+@pytest.mark.parametrize('relative', ['app/routers/calendar.py',
+    'os/overlay/gui-libs/posterchan-wayfire-shell/files/posterchan-shell.cpp',
+    'os/overlay/app-misc/posterchanos-shell/posterchanos-shell-1.0.0.ebuild'])
+def test_backend_or_compositor_edit_invalidates_test_receipt(source_gate, relative):
     gate, repo, receipt, git = source_gate
-    backend = repo / 'app/routers/calendar.py'
+    backend = repo / relative
     backend.parent.mkdir(parents=True)
     backend.write_text('original calendar handler')
-    git('add', 'app')
+    git('add', relative)
     git('commit', '-qm', 'calendar fixture')
     assert gate.run_gate(repo, receipt) == 0
     backend.write_text('changed after calendar tests passed')

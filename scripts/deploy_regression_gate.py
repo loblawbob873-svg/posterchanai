@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # Inputs exercised by this gate. The overlay updater may legitimately change its
 # package pin after testing; it does not change any of these client/test inputs.
 INPUTS = ('app', 'static', 'desktop', 'mobile', 'templates', 'scripts', 'tests',
+          'os/overlay/gui-libs/posterchan-wayfire-shell',
+          'os/overlay/app-misc/posterchanos-shell',
           '.github/workflows/desktop.yml', '.github/workflows/android.yml',
           '.github/workflows/android-emulator.yml', 'sync.sh')
 TESTS = (
@@ -27,6 +29,7 @@ TESTS = (
     'tests/test_deploy_process_cleanup.py',
     'tests/test_sync_publish_failures.py',
     'tests/test_sync_nas_fetch_retry.py',
+    'tests/test_wayfire_pointer_confinement_runtime.py::test_the_option_is_declared_on_and_the_package_that_carries_it_is_required',
     'tests/test_android_mms_draft_copy_ownership.py',
     'tests/test_android_mms_receiver_lifecycle.py',
     'tests/test_android_mms_result_mapping.py',
