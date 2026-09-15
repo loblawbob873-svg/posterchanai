@@ -357,6 +357,7 @@ def test_shared_work_and_transcode_concurrency(monkeypatch):
             with lock:
                 active -= 1
             return b"encoded"
+        monkeypatch.setattr(media, "cached_segment", lambda *args: None)
         monkeypatch.setattr(media, "transcode", encode)
         library = {"folder": "/media", "encoder": "cpu"}
         config = {**media.DEFAULT_LIMITS, "max_transcodes": 2}
@@ -846,6 +847,7 @@ def test_disconnect_keeps_shared_encode_and_releases_slots(monkeypatch):
             started.set()
             assert release.wait(5)
             return b'complete'
+        monkeypatch.setattr(media, 'cached_segment', lambda *args: None)
         monkeypatch.setattr(media, 'transcode', encode)
         library = {'folder': '/media', 'encoder': 'cpu'}
         config = {**media.DEFAULT_LIMITS, 'max_transcodes': 1}
@@ -905,6 +907,7 @@ def test_repeated_multi_viewer_streams_remain_bounded(monkeypatch):
             with lock:
                 active -= 1
             return b'x' * 32768
+        monkeypatch.setattr(media, 'cached_segment', lambda *args: None)
         monkeypatch.setattr(media, 'transcode', encode)
         config = {**media.DEFAULT_LIMITS, 'max_transcodes': 2}
         library = {'folder': '/media', 'encoder': 'cpu'}

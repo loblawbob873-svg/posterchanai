@@ -596,6 +596,9 @@ def command(path, item, profile, number, encoder, output):
 
 async def segment(library, item, profile, number, config):
     """Coalesce concurrent viewers before reserving a transcoder slot."""
+    cached = await asyncio.to_thread(cached_segment, library, item, profile, number)
+    if cached is not None:
+        return cached
     key = json.dumps([library["folder"], item, profile, number, library["encoder"]], sort_keys=True)
     job = _segment_jobs.get(key)
     if job is None:
@@ -616,8 +619,8 @@ async def segment(library, item, profile, number, config):
     return await asyncio.shield(job)
 
 
-def transcode(library, item, profile, number, config=None):
-    import fcntl
+def segment_cache_location(library, item, profile, number):
+    """One validated source identity for both admission and encoder cache reads."""
     path = source_path(library, item)
     cache = Path(os.environ.get("POSTERCHANAI_MEDIA_CACHE", "/tmp/posterchan-media-center")).resolve()
     if Path("/tmp") not in cache.parents:
@@ -625,6 +628,24 @@ def transcode(library, item, profile, number, config=None):
     cache.mkdir(mode=0o700, parents=True, exist_ok=True)
     key = hashlib.sha256(json.dumps([str(path), item, profile, number, library["encoder"], 1], sort_keys=True).encode()).hexdigest()
     target = cache / (key + ".ts")
+    return path, cache, key, target
+
+
+def cached_segment(library, item, profile, number):
+    """Read completed data without waiting for an encoder or its striped lock."""
+    import fcntl
+    _, cache, _, target = segment_cache_location(library, item, profile, number)
+    with (cache / ".cache-lock").open("a") as cache_lock:
+        fcntl.flock(cache_lock, fcntl.LOCK_EX)
+        if target.exists():
+            os.utime(target, None)
+            return target.read_bytes()
+    return None
+
+
+def transcode(library, item, profile, number, config=None):
+    import fcntl
+    path, cache, key, target = segment_cache_location(library, item, profile, number)
     config = config or DEFAULT_LIMITS
     # Fixed striped locks bound lock-file count. Different media encode concurrently;
     # identical segment requests wait and reuse the first result across processes.
