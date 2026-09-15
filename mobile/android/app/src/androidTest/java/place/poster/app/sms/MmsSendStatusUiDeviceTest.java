@@ -3,6 +3,9 @@ package place.poster.app.sms;
 import static org.junit.Assert.*;
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static androidx.test.espresso.matcher.RootMatchers.isDialog;
+import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 
@@ -38,9 +41,12 @@ public class MmsSendStatusUiDeviceTest {
                     TextView status = activity.findViewById(R.id.pc_th_attachment_status);
                     assertEquals("photo.png · Send status unconfirmed\nTap for details", status.getText().toString());
                     assertFalse(status.getText().toString().contains("I/O"));
-                    assertTrue(status.performClick());
                 });
-                onView(withText(detail)).check(matches(isDisplayed()));
+                // Drive the real tap through Espresso, then select the newly opened dialog root.
+                // A direct performClick inside onActivity let the next lookup choose the underlying
+                // conversation window before the dialog gained focus on the emulator.
+                onView(withId(R.id.pc_th_attachment_status)).perform(click());
+                onView(withText(detail)).inRoot(isDialog()).check(matches(isDisplayed()));
             }
         } finally { MmsDraft.remove(context, address); }
     }
