@@ -28941,7 +28941,8 @@
       if(this.q || !this._next || this._paging) return;
       const seq=this._listSeq, root=this.root, account=this.acct, folder=this.folder, cursor=this._next;
       const current=()=>seq===this._listSeq&&root===this.root&&account===this.acct&&folder===this.folder&&!this.q;
-      this._paging = true;
+      const paging = {};
+      this._paging = paging;
       const btn=$('#mail-more-btn', this.root);
       if(btn){ btn.disabled=true; btn.textContent='Loading…'; }
       try{
@@ -28954,11 +28955,13 @@
         this._next = r.next_until || 0;
         this.drawList();
       }catch(_){ if(current()&&btn){ btn.disabled=false; btn.textContent='Load older'; } }
-      finally{this._paging = false;}
+      finally{if(this._paging===paging)this._paging = false;}
     },
     async loadList(){
       const box=$('#mail-items', this.root); if(!box) return;
       const seq=++this._listSeq, root=this.root, account=this.acct, folder=this.folder, query=this.q;
+      // Retire the previous list's page even when its request never finishes.
+      this._paging = false; this._next = 0;
       // Only spin when there is nothing to look at. Opening the screen runs draw → loadList → sync →
       // loadList, and blanking to a spinner each time made the whole list flash and jump twice
       // before settling. A refresh over an existing list swaps the rows in place instead.
