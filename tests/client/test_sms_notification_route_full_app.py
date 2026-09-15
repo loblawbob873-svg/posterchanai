@@ -20,6 +20,7 @@ def test_notification_opens_recipient_in_actual_texts_renderer(native_window):
             url=await browser.js("location.origin+'/index.html?pcwin=texts&pcsms=%2B15550100'")
             await browser.call('Page.navigate', {'url':url})
             await browser.until("!!window.PCSms && PCSms._state().open===PCSms._key('+15550100')")
+            await browser.until("!!document.querySelector('.sms-wrap') && document.querySelector('.sms-wrap').textContent.includes('+15550100')")
             assert await browser.js("new URL(location.href).searchParams.has('pcsms')") is False
         await browser.js("window.__notificationDocument=document;PCOpenNotificationRoute('texts:%2B15550200')")
         await asyncio.sleep(1)

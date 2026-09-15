@@ -62,7 +62,7 @@ def test_sync_cannot_push_or_restart_after_a_failed_gate(tmp_path):
 def test_gate_clears_filters_and_alternate_source_overrides(tmp_path):
     overrides = ('PYTEST_ADDOPTS', 'PYTEST_PLUGINS', 'PC_SYNC_TEST_SOURCE',
                  'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE',
-                 'PC_MMS_SOURCE_ROOT')
+                 'PC_MMS_SOURCE_ROOT', 'PC_SMS_TEST_SOURCE')
     (tmp_path / 'pytest.py').write_text(
         'import os,sys\nfrom pathlib import Path\n'
         + f'assert not any(name in os.environ for name in {overrides!r})\n'
@@ -184,3 +184,15 @@ exit 99
     assert result.returncode == 1, result.stdout + result.stderr
     assert 'source changed after testing' in result.stdout
     assert not sentinel.exists(), 'stale test results reached a commit or push'
+
+
+def test_backend_edit_invalidates_test_receipt(source_gate):
+    gate, repo, receipt, git = source_gate
+    backend = repo / 'app/routers/calendar.py'
+    backend.parent.mkdir(parents=True)
+    backend.write_text('original calendar handler')
+    git('add', 'app')
+    git('commit', '-qm', 'calendar fixture')
+    assert gate.run_gate(repo, receipt) == 0
+    backend.write_text('changed after calendar tests passed')
+    assert gate.verify_receipt(receipt, repo) == 1

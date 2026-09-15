@@ -19,13 +19,14 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 # Inputs exercised by this gate. The overlay updater may legitimately change its
 # package pin after testing; it does not change any of these client/test inputs.
-INPUTS = ('static', 'desktop', 'mobile', 'templates', 'scripts', 'tests',
+INPUTS = ('app', 'static', 'desktop', 'mobile', 'templates', 'scripts', 'tests',
           '.github/workflows/desktop.yml', '.github/workflows/android.yml',
           '.github/workflows/android-emulator.yml', 'sync.sh')
 TESTS = (
     'tests/test_deploy_regression_gate.py',
     'tests/test_deploy_process_cleanup.py',
     'tests/test_sync_publish_failures.py',
+    'tests/test_android_mms_draft_copy_ownership.py',
     'tests/test_android_mms_receiver_lifecycle.py',
     'tests/test_android_mms_result_mapping.py',
     'tests/test_android_mms_retry_runtime.py',
@@ -38,6 +39,9 @@ TESTS = (
     'tests/client/test_browser_startup_diagnostics.py',
     'tests/client/test_saved_theme_reaches_open_files.py',
     'tests/client/test_dm_delivery.py',
+    'tests/client/test_sms_live_notifications.py',
+    'tests/client/test_sms_notification_routes.py',
+    'tests/client/test_sms_notification_route_full_app.py',
     'tests/test_desktop_tag_readback.py',
     'tests/test_native_window_reload_ci.py',
     'tests/client/test_preview_native_controls.py',
@@ -112,7 +116,7 @@ def run_gate(root=ROOT, receipt=None):
         # Developer filters and mutation-test overrides must not change what a release tests.
         for name in ('PYTEST_ADDOPTS', 'PYTEST_PLUGINS', 'PC_SYNC_TEST_SOURCE',
                      'PC_OFFICE_TEST_SOURCE', 'PC_OFFLINE_APP_ROOT', 'PC_NATIVE_MAIN_SOURCE',
-                     'PC_MMS_SOURCE_ROOT'):
+                     'PC_MMS_SOURCE_ROOT', 'PC_SMS_TEST_SOURCE'):
             env.pop(name, None)
         command = [sys.executable, '-m', 'pytest', '--noconftest', '-o', 'addopts=',
                    '-q', '-ra', '--junitxml=' + str(report), *TESTS]
