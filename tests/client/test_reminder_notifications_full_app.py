@@ -1,6 +1,7 @@
 """Actual client document, login, settings controls and reload; network boundaries are private."""
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
 import tempfile
@@ -42,7 +43,7 @@ async def run(width):
                 await b.js("__PC.switchView('ai')")
                 await b.until("__sockets.some(s=>s.url.includes('/api/ws/chat/'))")
                 await b.js("__PC.setNotificationPreference('reminders',false)")
-                await b.js("window.__reminder={type:'reminder',reminder_id:7,due_at:'2026-09-08T12:00:00Z',delivered_at:'2026-09-08T12:00:01Z',content:'Fixture calendar appointment',route:'calendar'};__sockets.findLast(s=>s.url.includes('/api/ws/chat/')).fire('message',__reminder)")
+                await b.js("window.__reminder={type:'reminder',reminder_id:7,due_at:new Date(Date.now()-86400000).toISOString(),delivered_at:new Date(Date.now()-86399000).toISOString(),content:'Fixture calendar appointment',route:'calendar'};__sockets.findLast(s=>s.url.includes('/api/ws/chat/')).fire('message',__reminder)")
                 assert await b.js("!document.querySelector('#reminderOverlay')")
                 await b.js("__PC.switchView('notifications')")
                 await b.until("document.querySelectorAll('#feed .reminder-notif').length===1")
@@ -78,7 +79,8 @@ async def run(width):
                 assert await b.js("!document.querySelector('#reminderOverlay')")
                 # Actual logout reloads the document. A newly fetched reminder from before the next
                 # login belongs in history, even though that account never saw its live frame.
-                old={'reminder_id':11,'due_at':'2026-09-08T10:00:00Z','delivered_at':'2026-09-08T10:00:01Z','content':'While signed out','route':'calendar'}
+                old_time=(datetime.now(timezone.utc)-timedelta(days=2)).isoformat()
+                old={'reminder_id':11,'due_at':old_time,'delivered_at':old_time,'content':'While signed out','route':'calendar'}
                 await b.call('Page.addScriptToEvaluateOnNewDocument',{'source':'window.__historyOK=true;window.__history='+json.dumps([old])+';'})
                 await b.js("document.querySelector('#btn-logout').click()")
                 await b.until("document.body?.classList.contains('guest') && document.querySelector('#btn-logout')?.textContent==='Log in'")
