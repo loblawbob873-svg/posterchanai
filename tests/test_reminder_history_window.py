@@ -87,3 +87,16 @@ def test_another_account_is_still_invisible():
         db.commit()
         got = _texts(_client(db, user_id=1))
     assert got == [], got
+
+
+def test_history_reports_the_configured_window_to_offline_clients(monkeypatch):
+    from app.services import settings_store
+    monkeypatch.setattr(settings_store, 'get', lambda *args: 30)
+    now = datetime.utcnow()
+    with _db() as db:
+        db.add(Reminder(user_id=1, text='inside configured window', due_at=now-timedelta(days=20),
+                        delivered_at=now-timedelta(days=20), status='done'))
+        db.commit()
+        result = _client(db).get('/api/auth/reminder-notifications').json()
+        assert result['history_days'] == 30
+        assert len(result['items']) == 1

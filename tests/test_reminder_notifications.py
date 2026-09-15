@@ -17,7 +17,7 @@ def test_reminder_history_authenticated_owner_status_limit_and_repeat_identity()
     engine=create_engine('sqlite://',connect_args={'check_same_thread':False},poolclass=StaticPool)
     Reminder.__table__.create(engine)
     with Session(engine) as db:
-        now=datetime(2026,9,8,12)
+        now=datetime.utcnow()-timedelta(days=1)
         for i in range(205):
             db.add(Reminder(user_id=1,text='📅 Event '+str(i),due_at=now+timedelta(minutes=i),
                             delivered_at=now+timedelta(minutes=i),status='done'))

@@ -9,6 +9,7 @@ const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const s=fs.readFileSync(process.argv[1],'utf8');
 const block=s.slice(s.indexOf('  // Reminder history is not a Nostr event.'),s.indexOf('  function notifList(){'));
 const alert=s.slice(s.indexOf('  function reminderAlert(text,data={})'),s.indexOf('  // Markdown + the backend',s.indexOf('  function reminderAlert(text,data={})')));
+const NativeDate=Date; Date=class extends NativeDate {static now(){return NativeDate.parse('2026-09-09T13:00:00Z')}};
 const storage=new Map(),row={reminder_id:7,due_at:'2026-09-08T12:00:00+00:00',delivered_at:'2026-09-08T12:00:01+00:00',content:'Calendar event',route:'calendar'};
 function make(){
  const c={ME:{pubkey:'a'},GUEST:false,Date,Map,JSON,Number,String,_aiToken:'token',_instanceBase:()=>c.base,_standalone:()=>false,base:'https://one',

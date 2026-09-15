@@ -23,7 +23,9 @@ Failures, collection errors, skipped tests, missing reports, and empty runs all 
 `SKIP_LINT` does not bypass this gate. Developer pytest filters and alternate-source overrides
 are cleared so the tests exercise the checkout being deployed. Install its Python dependencies
 from `scripts/deploy-regression-requirements.txt`; Node, a JDK, Chrome, Electron, and Xvfb are also
-required. The gate is a fast minimum; continue running the broader suites appropriate to a change.
+required. The gate also checks reminder history retention in the API and client cache, including offline
+startup, account isolation, stale deliveries and changes to the configured history window.
+The gate is a fast minimum; continue running the broader suites appropriate to a change.
 
 The gate fingerprints the tested backend, client, desktop, Android app, templates, scripts, tests and release workflows
 before and after running. `sync.sh` checks that receipt again immediately before committing.

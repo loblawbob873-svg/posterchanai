@@ -1170,4 +1170,4 @@ def reminder_notifications(user: User = Depends(get_current_user), db: Session =
             .filter(Reminder.user_id == user.id, Reminder.status == "done",
                     func.coalesce(Reminder.delivered_at, Reminder.due_at) >= cutoff)
             .order_by(Reminder.delivered_at.desc(), Reminder.id.desc()).limit(200).all())
-    return {"items": [notification_record(row) for row in rows]}
+    return {"items": [notification_record(row) for row in rows], "history_days": days}

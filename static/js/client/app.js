@@ -26535,10 +26535,19 @@
   const _reminderLoads=new Map();
   let _reminderEpochOwner='', _reminderEpochAt=0;
   function _reminderOwner(){ return ME&&ME.pubkey ? _instanceBase()+':'+ME.pubkey : ''; }
+  function _reminderHistoryDays(owner=_reminderOwner()){
+    try{const days=Number(localStorage.getItem('pc_reminder_history_days:'+owner));
+      if(Number.isInteger(days)&&days>=1&&days<=365)return days;
+    }catch(_){}
+    return 7;
+  }
   function _reminderRows(owner=_reminderOwner()){
     if(!owner)return [];
     try{const rows=JSON.parse(localStorage.getItem('pc_reminder_history:'+owner)||'[]');
-      return Array.isArray(rows)?rows.filter(x=>x&&x.type==='reminder'&&typeof x.id==='string'&&Number.isFinite(x.created_at)).slice(0,200):[];
+      // Apply retention on every read, including offline startup and a long-lived desktop.
+      // A server-side history limit cannot expire rows already stored by an older client.
+      const cutoff=Date.now()/1000-_reminderHistoryDays(owner)*86400;
+      return Array.isArray(rows)?rows.filter(x=>x&&x.type==='reminder'&&typeof x.id==='string'&&Number.isFinite(x.created_at)&&x.created_at>=cutoff).slice(0,200):[];
     }catch(_){return [];}
   }
   function _rememberReminder(data,owner=_reminderOwner(),live=false){
@@ -26552,7 +26561,7 @@
     const rows=_reminderRows(owner), previous=rows.find(x=>x.id===id);
     const row={type:'reminder',id,alerted:live||!!(previous&&previous.alerted),created_at:Math.floor(Date.parse(data.delivered_at||due)/1000),
       content:String(data.content||'Reminder').slice(0,10000),route:data.route==='calendar'?'calendar':'notifications'};
-    if(!Number.isFinite(row.created_at))return false;
+    if(!Number.isFinite(row.created_at)||row.created_at<Date.now()/1000-_reminderHistoryDays(owner)*86400)return false;
     const next=[row,...rows.filter(x=>x.id!==id)].sort((a,b)=>b.created_at-a.created_at).slice(0,200);
     try{localStorage.setItem('pc_reminder_history:'+owner,JSON.stringify(next));}catch(_){}
     return live ? !(previous&&previous.alerted) : !previous;
@@ -26575,13 +26584,17 @@
       if(!r.ok)throw new Error('reminder history unavailable');
       const data=await r.json();if(!current())return;
       if(!data||!Array.isArray(data.items))throw new Error('invalid reminder history');
-      let changed=false;for(const row of data.items.slice(0,200)){
-        changed=_rememberReminder(row,owner)||changed;
+      const days=Number(data.history_days);
+      if(Number.isInteger(days)&&days>=1&&days<=365){
+        try{localStorage.setItem('pc_reminder_history_days:'+owner,String(days));}catch(_){}
+      }
+      for(const row of data.items.slice(0,200)){
+        _rememberReminder(row,owner);
         // The AI conversation socket closes outside AI. Polling is the quiet fallback: alert only
         // occurrences delivered while this account was active, never old startup history imports.
         if(Date.parse(row.delivered_at||row.due_at)>=epoch)reminderAlert(row.content,row);
       }
-      if(changed)_remindersChanged();
+      _remindersChanged(); // Retention changes can remove rows even when nothing arrived.
     }catch(_){/* Keep cached history; the next poll/open retries without discarding it. */}
     finally{state.pending=false;}
   }
