@@ -47,6 +47,12 @@ const privateVoice=R.voiceMaterial(privateBundle,copy(privateEditions),channel);
 assert.equal(privateVoice.room,NT.getPublicKey(secret(derive('concord/voice-signer','77'.repeat(32),channel,3))));
 assert.notEqual(privateVoice.room,material.room);
 assert.throws(()=>R.voiceMaterial(member,copy(privateEditions),channel),/cannot call/);
+// Authenticated cached public history keeps this converted channel readable, without call keys.
+const historyOnly=copy({...member,public_channel_history:[channel]});
+assert.equal(R.inspectControl(historyOnly,copy(privateEditions)).channels[0].readOnly,true);
+assert.throws(()=>R.voiceMaterial(historyOnly,copy(privateEditions),channel),/cannot call/);
+await assert.rejects(()=>R.createVoicePresence(historyOnly,copy(privateEditions),channel,'joined',owner,
+  ()=>assert.fail('history-only channel reached signer'),'identity','https://broker.example'),/cannot call/);
 const identity='independent-broker-identity';
 const expectedSender=derive('concord/voice-sender',Buffer.from(material.mediaRoot).toString('hex'),createHash('sha256').update(identity).digest('hex'));
 assert.equal(Buffer.from(await V.senderKey(material.mediaRoot,identity)).toString('hex'),expectedSender);

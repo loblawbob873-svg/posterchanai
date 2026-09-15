@@ -27546,7 +27546,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     requireActiveMembership(bundle, channelId);
     const { channels } = control(bundle, controlWraps);
     const channel = channels.find(ch => ch.idHex === channelId);
-    if (!channel) throw new Error("This membership cannot call the channel");
+    if (!channel?.current || !channel?.voice) throw new Error("This membership cannot call the channel");
     return { room: channel.voice.room.pk, signingKey: new Uint8Array(channel.voice.room.sk),
       mediaRoot: new Uint8Array(channel.voice.mediaKey), epoch: String(channel.current.epoch),
       channelId, stream: channel.current.group.pk };
@@ -27556,7 +27556,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     if (verb !== "joined" && verb !== "left") throw new Error("Invalid call presence");
     const { channels } = control(bundle, controlWraps);
     const channel = channels.find(ch => ch.idHex === channelId);
-    if (!channel) throw new Error("This membership cannot call the channel");
+    if (!channel?.current || !channel?.voice) throw new Error("This membership cannot call the channel");
     const tags = channelBindingTags(channel.idHex, channel.current.epoch);
     if (verb === "joined") {
       const url = new URL(broker);
