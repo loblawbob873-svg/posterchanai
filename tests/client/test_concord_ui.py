@@ -745,7 +745,8 @@ def test_background_repaints_never_replace_a_focused_workspace_control():
     assert "active.addEventListener('focusout'" in helper
     assert 'if(backgroundRenderPending)backgroundRender()' in helper
     assert 'backgroundRenderPending=false;backgroundFocusHost=null;render();return true' in helper
-    assert 'window.PCConcord={render,backgroundRender,' in CONCORD
+    exports = CONCORD.split('window.PCConcord={', 1)[1].split('};', 1)[0]
+    assert 'render' in exports.split(',') and 'backgroundRender' in exports.split(',')
 
     # These are the async paths that used to rebuild #feed underneath Android's keyboard.
     # The channel's merge-and-paint moved into absorbChatWraps when the live subscription was

@@ -126,6 +126,8 @@ window.PosterCord={
   openInvite:()=>({bundle:JOIN_BUNDLE,parsed:{linkSigner:'5'.repeat(64)}}),
 };
 window.PosterCordReader={
+  // Wire validation is exercised by the independent CORD crypto suites.
+  validateInviteBundle:bundle=>bundle,
   inspectControl:(bundle,wraps)=>wraps.length
     ? {name:'Joined Armada Room',description:'Loaded immediately',icon:bundle&&bundle.slowIcon||'🛸',channels:bundle&&bundle.noGeneral?[
         {id:'joined-lounge',name:'lounge',private:false,streamPubkeys:['9'.repeat(64)]},
