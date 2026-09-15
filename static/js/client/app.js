@@ -1479,6 +1479,8 @@
       nip04enc: (peer, txt) => Relay.worker.call('nip04enc', { peer, text: txt }).then(r=>r.ct),
       nip04dec: (peer, ct) => Relay.worker.call('nip04dec', { peer, ct }).then(r=>r.pt),
       nip44dec: (peer, ct) => Relay.worker.call('nip44dec', { peer, ct }).then(r=>r.pt),
+      cordRekeyDecrypt: (peer, ct) => Relay.worker.call('cordRekeyDecrypt', { peer, ct, owner: pubkey }).then(r=>r.bytes),
+      cordRekeyEncrypt: (peer, bytes) => Relay.worker.call('cordRekeyEncrypt', { peer, bytes, owner: pubkey }).then(r=>r.ct),
       nip44enc: (peer, text) => Relay.worker.call('nip44enc', { peer, text }).then(r=>r.ct),
       // NIP-17 gift-wrapped DMs (local-key only — needs the secret key the extension never exposes)
       nip17wrap: (peer, text) => Relay.worker.call('nip17wrap', { peer, text, tags: InstEmoji.tagsFor(text, [['p', peer]]) }),
@@ -40126,6 +40128,20 @@
     // NIP-44 decrypt with the current signer (any login type) — games use it to read their own
     // encrypted hole cards from a public game-state doc.
     nip44dec: (peer, ct) => (signer && signer.nip44dec) ? signer.nip44dec(peer, ct) : Promise.reject(new Error('no nip44')),
+    cordRekeyDecrypt: async (peer, ct) => {
+      const active=signer,owner=ME&&ME.pubkey;
+      if(!active||!active.cordRekeyDecrypt)throw new Error('this signer does not support binary Concord rekeys');
+      const bytes=await active.cordRekeyDecrypt(peer,ct);
+      if(signer!==active||!ME||ME.pubkey!==owner)throw new Error('Concord rekey account changed');
+      return bytes;
+    },
+    cordRekeyEncrypt: async (peer, bytes) => {
+      const active=signer,owner=ME&&ME.pubkey;
+      if(!active||!active.cordRekeyEncrypt)throw new Error('this signer does not support binary Concord rekeys');
+      const ct=await active.cordRekeyEncrypt(peer,bytes);
+      if(signer!==active||!ME||ME.pubkey!==owner)throw new Error('Concord rekey account changed');
+      return ct;
+    },
     // NIP-51 kind-10009 may keep private NIP-29 memberships in NIP-04 ciphertext to SELF.
     // Expose only decryption through the current signer; the module never receives key material.
     nip04dec: (peer, ct) => (signer && signer.nip04dec) ? signer.nip04dec(peer, ct) : Promise.reject(new Error('no nip04')),

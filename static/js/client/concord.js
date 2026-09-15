@@ -3022,6 +3022,8 @@
   }
   function chatLiveKey(p,room,channel){if(room&&room.protocol==='nip29')return roomIdentity(room)+'\n'+String(channel&&channel.id||'');return JSON.stringify([roomIdentity(room),String(channel&&channel.id||''),deliveryOwner(p),room&&room.cord&&room.cord.bundle,cordControlStamp(roomControls.get(room&&(room.communityId||room.naddr)))]);}
   function startChatLive(p,room,channel){
+    const membership=room&&room.cord&&room.cord.bundle;
+    if(membership&&(membership.removed||membership.dissolved||(membership.removed_channels||[]).includes(channel&&channel.id))){stopChatLive();return;}
     const key=chatLiveKey(p,room,channel);
     if(chatSub&&chatSubKey===key)return;
     stopChatLive();
@@ -3228,6 +3230,50 @@
       if(liveWarned!==_seen){ liveWarned=_seen; console.warn('Concord live sync failed',e); }
     }finally{liveBusy=false;}
   }
+  // CORD06 subscriptions are owned by an account AND an exact membership snapshot.
+  // Decryption and persistence may outlive navigation; neither may cross that boundary.
+  const rekeySubscriptions=new Map();
+  function stopRekeyLive(){for(const entry of rekeySubscriptions.values())entry.close();rekeySubscriptions.clear();}
+  function startRekeyLive(p,room,controls){
+    const reader=window.PosterCordReader,R=window.Relay,bundle=room&&room.cord&&room.cord.bundle,owner=deliveryOwner(p);
+    if(!reader||!reader.inspectRekeyStreams||!bundle||!owner||!R||!R.subscribeFrom||bundle.dissolved||bundle.removed)return;
+    const identity=roomIdentity(room),snapshot=JSON.stringify(bundle),key=owner+'\n'+identity;
+    for(const [oldKey,old] of rekeySubscriptions)if(old.owner!==owner){old.close();rekeySubscriptions.delete(oldKey);}
+    const prior=rekeySubscriptions.get(key);if(prior&&prior.snapshot===snapshot)return;
+    if(prior)prior.close();
+    const authors=reader.inspectRekeyStreams(bundle);if(!authors.length)return;
+    let closed=false,pooled=null,external=null,chain=Promise.resolve();const wraps=new Map(),relays=roomRelays(bundle);
+    const current=()=>!closed&&deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity&&JSON.stringify(r.cord&&r.cord.bundle)===snapshot);
+    const close=()=>{closed=true;try{R.close(pooled);}catch(_){}try{if(external)external();}catch(_){}};
+    const entry={owner,snapshot,close};rekeySubscriptions.set(key,entry);
+    const apply=async()=>{
+      if(!current())return;
+      const result=await reader.inspectRekeys(bundle,roomControls.get(room.communityId||room.naddr)||controls||[],[...wraps.values()],owner,p.cordRekeyDecrypt);
+      if(!current())return;
+      let next=reader.applyRekeyUpdates(bundle,result.updates);
+      // Missing chunks never enter this list; keep archived keys for reading history.
+      for(const removal of result.removed){if(result.updates.some(u=>u.scope===removal.scope&&u.epoch===removal.epoch))continue;
+        if(removal.scope==='0'.repeat(64))next.removed=true;
+        else{next.removed_channels=[...new Set([...(next.removed_channels||[]),removal.scope])];}}
+      if(JSON.stringify(next)===snapshot)return;
+      const rooms=saved(),at=rooms.findIndex(r=>roomIdentity(r)===identity);if(at<0||!current())return;
+      const updated={...rooms[at],cord:{...rooms[at].cord,bundle:next}};rooms[at]=updated;save(rooms);
+      if(roomIdentity(saved()[state.community])===identity)stopChatLive();
+      close();if(rekeySubscriptions.get(key)===entry)rekeySubscriptions.delete(key);
+      if(deliveryOwner(p)!==owner)return;
+      // Membership publication owns its own account checks; local adoption is durable
+      // even if a relay is temporarily unavailable.
+      await persistArmadaMembership(p,updated);
+      if(deliveryOwner(p)!==owner)return;
+      startRekeyLive(p,updated,controls);backgroundRender();
+    };
+    const onEvent=ev=>{if(!current()||!ev||Number(ev.kind)!==1059||!authors.includes(ev.pubkey)||wraps.has(ev.id))return;
+      if(wraps.size>=10000)return;wraps.set(ev.id,ev);chain=chain.then(apply).catch(e=>{if(current())console.warn('Concord rekey was not applied',e);});};
+    const filters=[{kinds:[1059],authors}],plane=cordPlaneContext(p,bundle,controls||[],room);
+    try{pooled=plane?null:R.subscribe(filters,{onEvent,live:true});external=plane?cordPlaneSubscribe(p,R,relays,filters,{onEvent,timeout:0,live:true},plane):R.subscribeFrom(relays,filters,{onEvent,timeout:0,live:true});}
+    catch(e){close();rekeySubscriptions.delete(key);console.warn('Concord rekey subscription failed',e);}
+  }
+
   async function refreshRoomMetadata(p){
     if(metadataBusy||!document.body.classList.contains('concord-view')||!window.PosterCordReader)return;
     const rooms=saved(),eligible=rooms.map((room,index)=>({room,index})).filter(x=>x.room&&!x.room.local&&x.room.cord&&x.room.cord.bundle);
@@ -3244,6 +3290,7 @@
       if(!context.current())return;
       await cacheEnvelopes(envelopeCacheKey(loadKey,'control'),freshWraps);if(!context.current())return;roomControls.set(loadKey,wraps||[]);
       void refreshGuestbookMembers(p,room,wraps||[]);
+      startRekeyLive(p,room,wraps||[]);
       let changed=false;
       const assign=(key,value)=>{if(value!==undefined&&JSON.stringify(room[key])!==JSON.stringify(value)){room[key]=value;changed=true;}};
       assign('name',info.name||room.name); assign('description',info.description===undefined?room.description:info.description);
@@ -3260,7 +3307,7 @@
       if(roomIdentity(active)===roomIdentity(room)&&activeChannel)startChatLive(p,active,activeChannel);
     }catch(e){console.warn('Concord metadata sync failed',e);}finally{metadataBusy=false;}
   }
-  function stopLiveSync(){ if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
+  function stopLiveSync(){ stopRekeyLive(); if(liveTimer)clearTimeout(liveTimer); liveTimer=null; stopChatLive(); }
   function startLiveSync(p){ if(liveTimer||!document.body.classList.contains)return; liveTimer=setInterval(()=>{refreshRoomMetadata(p);refreshActiveChannel(p);let changed=false;for(const [id,rows] of remoteMessages){const clean=uniqueMessages(rows);if(clean.length!==rows.length||clean.some((m,i)=>m!==rows[i])){remoteMessages.set(id,clean);changed=true;}}if(changed&&document.body.classList.contains('concord-view'))preserveChatScroll(()=>backgroundRender());if(window.PosterCordReader?.sweepExpiredChat)window.PosterCordReader.sweepExpiredChat();for(const [id,d] of deliveries)if(messageExpired(d.made))deliveries.delete(id);if(window.PCConcordCache?.sweepExpired)window.PCConcordCache.sweepExpired().catch(()=>{});},4000); }
   async function mintPublicRoom(p,name,icon){
     const viewer=p.viewer?p.viewer():{}; if(!viewer.pubkey||!window.PosterCord)throw new Error('sign in before creating a relay community');

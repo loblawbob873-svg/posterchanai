@@ -9347,6 +9347,12 @@ var PosterCordReader = (() => {
   // pc-cord-reader.ts
   var pc_cord_reader_exports = {};
   __export(pc_cord_reader_exports, {
+    encryptRekeyBytes: () => encryptRekeyBytes,
+    decryptRekeyBytes: () => decryptRekeyBytes,
+    createRekeyWraps: () => createRekeyWraps,
+    inspectRekeyStreams: () => inspectRekeyStreams,
+    inspectRekeys: () => inspectRekeys,
+    applyRekeyUpdates: () => applyRekeyUpdates,
     createBanWrap: () => createBanWrap,
     createCommunity: () => createCommunity,
     validateInviteBundle: () => validateInviteBundle,
@@ -24948,7 +24954,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       for (const hr of jm.held_roots ?? []) {
         try {
           const epoch = BigInt(hr.epoch);
-          if (epoch === rootEpoch) continue;
+          if (epoch === rootEpoch && hr.key === jm.community_root) continue;
           heldRoots.push({ epoch, key: hex32(hr.key), controlPk: hr.control_pk, controlRoot: hr.control_root });
         } catch {
         }
@@ -24970,6 +24976,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
             id: hex32(ch.id),
             key: hex32(ch.key),
             epoch: BigInt(ch.epoch),
+            heldKeys: (ch.held_keys || []).map(k => ({epoch: rekeyEpoch(k.epoch), key: hex32(k.key)})),
             name: typeof ch.name === "string" ? ch.name : ""
           });
         } catch {
@@ -26005,7 +26012,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         name: def.name,
         isPrivate: true,
         voice: voiceKeys(held.key, id, held.epoch),
-        streams: [stream],
+        streams: [stream, ...(held.heldKeys || []).map(k => ({epoch:k.epoch,group:channelGroupKey(k.key,held.id,k.epoch)}))],
         current: stream
       });
     }
@@ -26019,7 +26026,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
         name: held.name || idHex.slice(0, 8),
         isPrivate: true,
         voice: voiceKeys(held.key, held.id, held.epoch),
-        streams: [stream],
+        streams: [stream, ...(held.heldKeys || []).map(k => ({epoch:k.epoch,group:channelGroupKey(k.key,held.id,k.epoch)}))],
         current: stream
       });
     }
@@ -26879,12 +26886,172 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       channels: channels.map((ch) => ({ id: ch.idHex, name: ch.name, private: ch.isPrivate, streamPubkeys: ch.streams.map((s) => s.group.pk) }))
     };
   }
+  // CORD-06. Binary key material must never pass through TextDecoder: NIP-44's
+  // string interface destroys non-UTF8 bytes. Signer adapters explicitly provide
+  // encryptBytes/decryptBytes; unsupported remote signers fail without adopting.
+  function encryptRekeyBytes(plaintext,conversationKey) {
+    if(!(plaintext instanceof Uint8Array)||![72,104,136].includes(plaintext.length))throw new Error('invalid binary rekey width');
+    const nonce=randomBytes3(32),{chacha_key,chacha_nonce,hmac_key}=getMessageKeys(conversationKey,nonce),padded=concatBytes3(writeU16BE(plaintext.length),plaintext,new Uint8Array(calcPaddedLen(plaintext.length)-plaintext.length)),ciphertext=chacha20(chacha_key,chacha_nonce,padded);
+    return base64.encode(concatBytes3(new Uint8Array([2]),nonce,ciphertext,hmacAad(hmac_key,ciphertext,nonce)));
+  }
+  function decryptRekeyBytes(payload,conversationKey) {
+    if(typeof payload!=='string'||payload.length>1024)throw new Error('invalid binary rekey payload');
+    const {nonce,ciphertext,mac}=decodePayload(payload),{chacha_key,chacha_nonce,hmac_key}=getMessageKeys(conversationKey,nonce);
+    if(!equalBytes(hmacAad(hmac_key,ciphertext,nonce),mac))throw new Error('invalid MAC');
+    const padded=chacha20(chacha_key,chacha_nonce,ciphertext),size=new DataView(padded.buffer,padded.byteOffset,padded.byteLength).getUint16(0);
+    if(![72,104,136].includes(size)||padded.length!==2+calcPaddedLen(size))throw new Error('invalid binary rekey padding');
+    return padded.slice(2,2+size);
+  }
+
+  function rekeyEpoch(value) {
+    if (!/^(0|[1-9][0-9]*)$/.test(String(value))) throw new Error('invalid rekey epoch');
+    const epoch=BigInt(value); if(epoch>0xffffffffffffffffn)throw new Error('rekey epoch overflow');
+    return epoch;
+  }
+  function epochBytes(epoch) { const out=new Uint8Array(8);new DataView(out.buffer).setBigUint64(0,rekeyEpoch(epoch));return out; }
+  function epochKeyCommitment(epoch,key) {
+    return bytesToHex2(sha2562(concatBytes3(ASCII.encode('concord/epoch-key-commitment'),epochBytes(epoch),hex32(key))));
+  }
+  function rekeyLocator(rotator,recipient,scope,epoch) {
+    return bytesToHex2(hkdf32(concatBytes3(hex32(rotator),hex32(recipient)),buildInfo('concord/recipient-pseudonym',hex32(scope),rekeyEpoch(epoch))));
+  }
+  function decodeRekeyBlob(bytes,scope,epoch,communityId) {
+    if(!(bytes instanceof Uint8Array)||![72,104,136].includes(bytes.length))throw new Error('invalid binary rekey blob');
+    if(bytesToHex2(bytes.subarray(0,32))!==scope||new DataView(bytes.buffer,bytes.byteOffset+32,8).getBigUint64(0)!==rekeyEpoch(epoch))throw new Error('rekey blob binding mismatch');
+    const base=scope==='0'.repeat(64);
+    if(!base&&bytes.length!==72)throw new Error('channel rekey has base material');
+    const result={key:bytesToHex2(bytes.subarray(40,72))};
+    if(bytes.length>=104)result.control_pk=bytesToHex2(bytes.subarray(72,104));
+    if(bytes.length===136){result.control_root=bytesToHex2(bytes.subarray(104));
+      if(groupKeyCached('concord/control-signer',hex32(result.control_root),hex32(communityId),rekeyEpoch(epoch)).pk!==result.control_pk)throw new Error('rekey control signer mismatch');}
+    return result;
+  }
+  function encodeRekeyBlob(scope,epoch,key,controlPk,controlRoot,communityId) {
+    const base=scope==='0'.repeat(64);
+    if(base&&!controlPk)throw new Error('new base rekeys require split control keys');
+    const out=concatBytes3(hex32(scope),epochBytes(epoch),hex32(key),...(controlPk?[hex32(controlPk)]:[]),...(controlRoot?[hex32(controlRoot)]:[]));
+    decodeRekeyBlob(out,scope,epoch,communityId);return out;
+  }
+  function rekeyGroups(bundle) {
+    const community=runtime(bundle),out=[];
+    // Include the current epoch's previous addresses to converge same-epoch forks,
+    // and all held roots so channel rotations sealed before refounding stay readable.
+    for(const root of community.heldRoots){
+      if(root.epoch<0xffffffffffffffffn)out.push({...groupKeyCached('concord/base-rekey-pseudonym',root.key,community.id,root.epoch+1n),scope:'0'.repeat(64),epoch:root.epoch+1n});
+      for(const channel of bundle.channels||[]){
+        for(const old of [channel,...(channel.held_keys||[])]){
+          const epoch=rekeyEpoch(old.epoch)+1n;if(epoch>0xffffffffffffffffn)continue;
+          out.push({...groupKeyCached('concord/rekey-pseudonym',root.key,hex32(channel.id),epoch),scope:channel.id,epoch});
+        }
+      }
+    }
+    return [...new Map(out.map(g=>[g.pk,g])).values()];
+  }
+  function inspectRekeyStreams(bundle) {return rekeyGroups(bundle).map(g=>g.pk);}
+  function rekeyAuthority(community,folded,opened,scope) {
+    if(folded.banned.has(opened.author))return false;
+    if(opened.author===community.owner)return true;
+    if(!citationSatisfied(folded,community.id,opened.author,citationFromTags(opened.tags)))return false;
+    const permission=scope==='0'.repeat(64)?Permissions.BAN:Permissions.MANAGE_CHANNELS;
+    // Channel-scoped grants must not grant authority over a different channel.
+    return rolesOf(folded.roster,opened.author).some(r=>permsContain(r.permissions,permission)&&
+      (r.scope.kind==='server'||scope!=='0'.repeat(64)&&r.scope.channelId===scope));
+  }
+  function rekeyHeld(bundle,scope) {
+    if(scope==='0'.repeat(64))return [{epoch:String(bundle.root_epoch),key:bundle.community_root},...(bundle.held_roots||[])];
+    const channel=(bundle.channels||[]).find(c=>c.id===scope);return channel?[channel,...(channel.held_keys||[])]:[];
+  }
+  async function inspectRekeys(bundle,controlWraps,wraps,recipient,decryptBytes) {
+    hex32(recipient);const {community,folded}=control(bundle,controlWraps),groups=new Map(rekeyGroups(bundle).map(g=>[g.pk,g])),sets=new Map(),gaps=[];
+    if(bundle.dissolved)return {updates:[],removed:[],gaps:[]};
+    for(const wrap of (wraps||[]).slice(0,10000))try{
+      const group=groups.get(wrap.pubkey);if(!group||wrap.kind!==1059)continue;
+      const opened=openWrap(wrap,group);if(opened.kind!==3303||opened.sealKind!==20013)continue;
+      const scope=uniqueTag(opened.tags,'scope'),epoch=rekeyEpoch(uniqueTag(opened.tags,'newepoch')),previous=rekeyEpoch(uniqueTag(opened.tags,'prevepoch')),commit=uniqueTag(opened.tags,'prevcommit');
+      if(scope!==group.scope||epoch!==group.epoch||epoch!==previous+1n||!HEX64.test(commit||'')||!rekeyAuthority(community,folded,opened,scope))continue;
+      if(opened.tags.filter(t=>t[0]==='vac').length>1)continue;
+      const chunks=opened.tags.filter(t=>t[0]==='chunk');if(chunks.length!==1||chunks[0].length!==3)continue;
+      const i=Number(rekeyEpoch(chunks[0][1])),n=Number(rekeyEpoch(chunks[0][2]));
+      if(n<1||n>10000||i<1||i>n)continue;
+      const held=rekeyHeld(bundle,scope),match=held.find(k=>rekeyEpoch(k.epoch)===previous&&epochKeyCommitment(previous,k.key)===commit);
+      if(!match){if(held.length&&previous>rekeyEpoch(held[0].epoch))gaps.push({scope,epoch:previous.toString()});continue;}
+      const rows=JSON.parse(opened.content);if(!Array.isArray(rows)||rows.length>120||rows.some(r=>!r||!HEX64.test(r.locator||'')||typeof r.wrapped!=='string')||new Set(rows.map(r=>r.locator)).size!==rows.length)continue;
+      const key=[opened.author,scope,epoch,previous,commit].join(':'),set=sets.get(key)||{scope,epoch:epoch.toString(),prevepoch:previous.toString(),prevcommit:commit,author:opened.author,n,chunks:new Map(),invalid:false};
+      if(set.n!==n||set.chunks.has(i)&&set.chunks.get(i).content!==opened.content)set.invalid=true;
+      set.chunks.set(i,{content:opened.content,rows});sets.set(key,set);
+    }catch(_){}
+    const updates=[],removed=[];
+    for(const set of sets.values()){
+      if(set.invalid)continue;
+      const locator=rekeyLocator(set.author,recipient,set.scope,set.epoch),rows=[...set.chunks.values()].flatMap(c=>c.rows),mine=rows.filter(r=>r.locator===locator);
+      if(mine.length){
+        // A corrupt addressed blob is NOT evidence of removal. Never try a text
+        // decoder or a different account's keys as a fallback.
+        if(typeof decryptBytes!=='function')continue;
+        const decoded=[];let invalid=false;
+        for(const row of mine)try{decoded.push(decodeRekeyBlob(await decryptBytes(set.author,row.wrapped),set.scope,set.epoch,bundle.community_id));}catch(_){invalid=true;}
+        if(invalid||!decoded.length||decoded.some(x=>JSON.stringify(x)!==JSON.stringify(decoded[0])))continue;
+        updates.push({scope:set.scope,epoch:set.epoch,prevepoch:set.prevepoch,prevcommit:set.prevcommit,author:set.author,...decoded[0]});
+      }else if(set.chunks.size===set.n){
+        // Removal is an authority action against this recipient, not merely a
+        // missing locator. Nonowners may never remove an equal/higher rank.
+        const actor=highestPosition(folded.roster,set.author),target=highestPosition(folded.roster,recipient);
+        if(recipient!==community.owner&&(set.author===community.owner||actor!==undefined&&(target===undefined||actor<target)))removed.push({scope:set.scope,epoch:set.epoch,author:set.author});
+      }
+    }
+    return {updates,removed,gaps};
+  }
+  function applyRekeyUpdates(bundle,updates) {
+    const next=JSON.parse(JSON.stringify(bundle));if(next.dissolved)return next;
+    for(const update of [...updates].sort((a,b)=>rekeyEpoch(a.epoch)<rekeyEpoch(b.epoch)?-1:rekeyEpoch(a.epoch)>rekeyEpoch(b.epoch)?1:a.key.localeCompare(b.key))){
+      const base=update.scope==='0'.repeat(64),current=base?{epoch:next.root_epoch,key:next.community_root}:next.channels?.find(c=>c.id===update.scope);
+      if(!current)continue;
+      const epoch=rekeyEpoch(update.epoch),oldEpoch=rekeyEpoch(current.epoch);
+      if(epoch<oldEpoch||epoch>oldEpoch+1n)continue;
+      if(!rekeyHeld(next,update.scope).some(k=>rekeyEpoch(k.epoch)===rekeyEpoch(update.prevepoch)&&epochKeyCommitment(k.epoch,k.key)===update.prevcommit))continue;
+      const archive=base?(next.held_roots||=[]):(current.held_keys||=[]),record=base?{epoch:String(oldEpoch),key:current.key,...(next.control_pk?{control_pk:next.control_pk}:{}),...(next.control_root?{control_root:next.control_root}:{})}:{epoch:String(oldEpoch),key:current.key};
+      const add=r=>{if(!archive.some(k=>String(k.epoch)===String(r.epoch)&&k.key===r.key))archive.push(r);};
+      if(epoch===oldEpoch&&update.key>=current.key){if(update.key!==current.key)add({epoch:update.epoch,key:update.key,...(update.control_pk?{control_pk:update.control_pk}:{}),...(update.control_root?{control_root:update.control_root}:{})});continue;}
+      add(record);
+      if(base){next.root_epoch=update.epoch;next.community_root=update.key;delete next.control_pk;delete next.control_root;if(update.control_pk)next.control_pk=update.control_pk;if(update.control_root)next.control_root=update.control_root;}
+      else{current.epoch=update.epoch;current.key=update.key;}
+    }
+    return next;
+  }
+
+  function requireActiveMembership(bundle,channelId) {
+    if(bundle.dissolved||bundle.removed||(bundle.removed_channels||[]).includes(channelId))throw new Error("Concord membership is read-only");
+  }
+  async function createRekeyWraps(bundle,controlWraps,options,pubkey,signEvent,encryptBytes) {
+    requireActiveMembership(bundle,options.scope);
+    if(bundle.dissolved)throw new Error('community is dissolved');
+    const {community,folded}=control(bundle,controlWraps),scope=options.scope,base=scope==='0'.repeat(64),held=rekeyHeld(bundle,scope);
+    if(!held.length)throw new Error('no key held for rekey scope');
+    const previous=rekeyEpoch(held[0].epoch),epoch=previous+1n,recipients=options.recipients;
+    if(!Array.isArray(recipients)||!recipients.length||recipients.length>120000||new Set(recipients.map(r=>r.pubkey)).size!==recipients.length)throw new Error('invalid rekey recipients');
+    const tags=[['scope',scope],['newepoch',epoch.toString()],['prevepoch',previous.toString()],['prevcommit',epochKeyCommitment(previous,held[0].key)]];
+    if(pubkey!==community.owner){const grant=folded.heads.get(bytesToHex2(grantLocator(community.id,hex32(pubkey))));if(grant)tags.push(['vac',bytesToHex2(grantLocator(community.id,hex32(pubkey))),grant.version.toString(),bytesToHex2(grant.hash)]);}
+    if(!rekeyAuthority(community,folded,{author:pubkey,tags},scope))throw new Error('rekey is not authorized');
+    const actor=highestPosition(folded.roster,pubkey);
+    const recipientSet=new Set(recipients.map(r=>r.pubkey)),excluded=new Set([...(options.removed||[]),...folded.roster.grants.filter(g=>g.roleIds.length&&!recipientSet.has(g.member)).map(g=>g.member)]);
+    if(base&&!recipientSet.has(community.owner))throw new Error('base rekey must retain the owner');
+    for(const target of excluded){const rank=highestPosition(folded.roster,target);if(target===community.owner||pubkey!==community.owner&&(actor===undefined||rank!==undefined&&actor>=rank))throw new Error('cannot rekey against equal or higher rank');}
+    if(typeof encryptBytes!=='function')throw new Error('signer does not support binary rekey encryption');
+    const root=hex32(bundle.community_root),group=base?groupKeyCached('concord/base-rekey-pseudonym',root,community.id,epoch):groupKeyCached('concord/rekey-pseudonym',root,hex32(scope),epoch);
+    const key=options.key||bytesToHex2(randomBytes3(32)),controlRoot=base?(options.controlRoot||bytesToHex2(randomBytes3(32))):undefined,controlPk=base?groupKeyCached('concord/control-signer',hex32(controlRoot),community.id,epoch).pk:undefined;
+    const rows=[];for(const recipient of recipients){hex32(recipient.pubkey);const blob=encodeRekeyBlob(scope,epoch,key,controlPk,base&&(recipient.pubkey===community.owner||rolesOf(folded.roster,recipient.pubkey).some(r=>(r.permissions & (Permissions.MANAGE_ROLES|Permissions.MANAGE_CHANNELS|Permissions.MANAGE_METADATA|Permissions.BAN|Permissions.CREATE_INVITE|(1n<<11n)))!==0n))?controlRoot:undefined,bundle.community_id);rows.push({locator:rekeyLocator(pubkey,recipient.pubkey,scope,epoch),wrapped:await encryptBytes(recipient.pubkey,blob)});}
+    const wraps=[],n=Math.ceil(rows.length/120);
+    for(let i=0;i<n;i++){const rumor=buildRumor({kind:3303,pubkey,content:JSON.stringify(rows.slice(i*120,(i+1)*120)),ms:Date.now(),tags:[...tags,['chunk',String(i+1),String(n)]]}),seal=await sealRumor(rumor,20013,group,{signEvent});wraps.push(wrapSeal(seal,group));}
+    return {wraps,key,epoch:epoch.toString(),...(base?{control_pk:controlPk,control_root:controlRoot}:{})};
+  }
+
   function writableControlGroup(groups) {
     const group = groups[0]; // held roots are current-first, never publish into an archived epoch.
     if (!group?.sk) throw new Error("the current control plane requires a staff signing key");
     return group;
   }
   async function createBanWrap(bundle, controlWraps, targetPubkey, pubkey, signEvent) {
+    requireActiveMembership(bundle);
     if (!/^[0-9a-f]{64}$/i.test(targetPubkey) || !/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
     const { community, groups, folded } = control(bundle, controlWraps);
     if (pubkey.toLowerCase() !== community.owner.toLowerCase()) throw new Error("only the community owner can ban members");
@@ -26906,6 +27073,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return [["vac",eid,head.version.toString(),bytesToHex2(head.hash)]];
   }
   async function createMetadataWrap(bundle, controlWraps, metadata, pubkey, signEvent) {
+    requireActiveMembership(bundle);
     if (!/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
     const { community, groups, folded } = control(bundle, controlWraps);
     const authority=controlWriteAuthority(community,folded,pubkey.toLowerCase(),Permissions.MANAGE_METADATA,"edit its profile");
@@ -26939,6 +27107,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
    * Delegated MANAGE_CHANNELS writes cite the current Grant, exactly as the fold requires.
    * Possessing a split control signing key alone never grants authority. */
   async function createChannelWrap(bundle, controlWraps, channel, pubkey, signEvent) {
+    requireActiveMembership(bundle);
     if (!/^[0-9a-f]{64}$/i.test(pubkey)) throw new Error("invalid member pubkey");
     const { community, groups, folded } = control(bundle, controlWraps);
     const authority=controlWriteAuthority(community,folded,pubkey.toLowerCase(),Permissions.MANAGE_CHANNELS,"create channels");
@@ -27067,6 +27236,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     };
   }
   async function createChatWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], kind = KIND_MESSAGE) {
+    requireActiveMembership(bundle,channelId);
     const { channels, folded } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not writable with this membership");
@@ -27079,6 +27249,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
    * traffic. Keep this primitive explicit so callers cannot accidentally make kind-3310 visible as
    * a message, and so realtime can select Armada's ephemeral 21059 outer wrap. */
   async function createWebxdcWrap(bundle, controlWraps, channelId, content, pubkey, signEvent, extraTags = [], ephemeral = false) {
+    requireActiveMembership(bundle,channelId);
     const { channels, folded } = control(bundle, controlWraps);
     const channel = channels.find((ch) => ch.idHex === channelId);
     if (!channel) throw new Error("channel is not writable with this membership");

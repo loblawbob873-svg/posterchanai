@@ -83,6 +83,16 @@ self.onmessage = async (e) => {
         if (!SK) return reply(id, false, null, 'no local key');
         return reply(id, true, { ct: NT.nip44.encrypt(args.text, convKey(args.peer)) });
       }
+      // CORD06's fixed-width binary plaintext cannot use NIP44's UTF-8 API.
+      // Only a local key supports this capability; never expose the ECDH key.
+      case 'cordRekeyEncrypt':
+      case 'cordRekeyDecrypt': {
+        if (!SK || args.owner !== PK) return reply(id, false, null, 'rekey signer account changed');
+        if (typeof PosterCordReader === 'undefined') importScripts('/static/js/client/cord-reader.js');
+        const key = convKey(args.peer);
+        if (op === 'cordRekeyEncrypt') return reply(id, true, {ct: PosterCordReader.encryptRekeyBytes(args.bytes, key)});
+        return reply(id, true, {bytes: PosterCordReader.decryptRekeyBytes(args.ct, key)});
+      }
       case 'nip44dec': {                       // args.peer, args.ct
         if (!SK) return reply(id, false, null, 'no local key');
         return reply(id, true, { pt: NT.nip44.decrypt(args.ct, convKey(args.peer)) });
