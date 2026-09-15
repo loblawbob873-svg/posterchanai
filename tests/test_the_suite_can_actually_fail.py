@@ -73,6 +73,14 @@ def _current_active_color():
 
 MUTATIONS = [
     (
+        "deleting an account mid-publish aborts other users' scheduled posts",
+        "app/services/scheduled_posts_service.py",
+        "jobs = [(r.id, r.event_json) for r in due]",
+        "jobs = ((r.id, r.event_json) for r in due)",
+        "tests/test_a_scheduled_post_goes_out_once.py::AScheduledPostGoesOutOnce::"
+        "test_account_deletion_mid_publish_skips_its_queue_and_keeps_other_users_moving",
+    ),
+    (
         "a frozen relay spends the permanent missing-event retry budget",
         "static/js/client/app.js",
         "const answered = live && !threw && evs.complete !== false;",
