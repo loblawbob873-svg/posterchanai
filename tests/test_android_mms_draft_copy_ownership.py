@@ -49,6 +49,24 @@ public class Probe {
  }
  public static void main(String[] args)throws Exception {
   android.content.Context ctx=new android.content.Context(new File(args[0]));String who="recipient";
+  File drafts=new File(ctx.getFilesDir(),"mms-drafts");
+  File[] abandoned=drafts.listFiles((d,n)->n.endsWith(".tmp"));
+  check(abandoned!=null&&abandoned.length==1,"previous process did not leave its partial copy");
+  File durable=new File(drafts,"preserved.media");
+  Blocked firstStream=new Blocked();AtomicReference<Throwable> firstFailure=new AtomicReference<>();
+  Thread first=new Thread(()->{try{MmsDraft.save(ctx,"first",firstStream,"image/jpeg","active");}
+    catch(Throwable e){firstFailure.set(e);}});first.start();
+  check(firstStream.entered.await(2,TimeUnit.SECONDS),"first process copy did not start");
+  check(!abandoned[0].exists(),"previous process partial copy was not cleaned");
+  File[] active=drafts.listFiles((d,n)->n.endsWith(".tmp"));
+  check(active.length==1,"first active copy missing");
+  MmsDraft.save(ctx,"second",new byte[]{22},"image/png","parallel");
+  check(active[0].isFile(),"a later copy deleted this process's blocked active copy");
+  firstStream.release.countDown();first.join(2000);
+  check(!first.isAlive()&&firstFailure.get()==null,"active first copy did not finish");
+  expect(ctx,"first","active",11);
+  check(java.util.Arrays.equals(Files.readAllBytes(durable.toPath()),new byte[]{9,8,7}),
+    "startup cleanup changed a durable media file");
   for(String mode:new String[]{"newer","removed","failed-newer","sending"}){
    MmsDraft.save(ctx,who,new byte[]{7},"image/jpeg","previous");
    Blocked stream=new Blocked();AtomicReference<Throwable> failure=new AtomicReference<>();
@@ -79,6 +97,21 @@ public class Probe {
   catch(IOException expected){}
   expect(ctx,who,"latest-open",44);
   ThreadActivity.checkCallbacks(new File(args[0]));
+ }
+}
+class CrashCopy {
+ public static void main(String[] args)throws Exception {
+  android.content.Context ctx=new android.content.Context(new File(args[0]));
+  MmsDraft.save(ctx,"abandoned",new InputStream(){
+   int reads;
+   public int read(){throw new AssertionError("bulk copy expected");}
+   public int read(byte[] bytes){
+    if(reads++==0){bytes[0]=99;return 1;}
+    // Simulate process death during provider reading: no finally/close/delete can execute.
+    Runtime.getRuntime().halt(0);return -1;
+   }
+  },"image/jpeg","interrupted");
+  throw new AssertionError("copy unexpectedly completed");
  }
 }''',
     }
@@ -122,6 +155,28 @@ class R {static class string {static final int sms_attachment_ready=1;}}
                             *[str(tmp_path / name) for name in sources]], capture_output=True, text=True, timeout=20)
     assert built.returncode == 0, built.stderr
     data = tmp_path / 'data'; data.mkdir()
+    abandoned = subprocess.run(['java', '-cp', str(tmp_path), 'place.poster.app.sms.CrashCopy', str(data)],
+                               capture_output=True, text=True, timeout=10)
+    assert abandoned.returncode == 0, abandoned.stdout + abandoned.stderr
+    drafts = data / 'mms-drafts'
+    assert len(list(drafts.glob('*.tmp'))) == 1, 'crashed process must leave a real partial file'
+    (drafts / 'preserved.media').write_bytes(bytes([9, 8, 7]))
     ran = subprocess.run(['java', '-cp', str(tmp_path), 'place.poster.app.sms.Probe', str(data)],
                          capture_output=True, text=True, timeout=15)
     assert ran.returncode == 0, ran.stdout + ran.stderr
+
+
+def test_mms_draft_owners_share_the_application_process():
+    # Once-per-process cleanup requires all draft owners to share the default process.
+    import xml.etree.ElementTree as ET
+    android = '{http://schemas.android.com/apk/res/android}'
+    process = android + 'process'
+    for manifest in (ROOT / 'mobile/android/app/src').glob('*/AndroidManifest.xml'):
+        app = ET.parse(manifest).getroot().find('application')
+        if app is not None:
+            default_process = app.get(process) or 'place.poster.app'
+            for component in app:
+                if '.sms.' in component.get(android + 'name', ''):
+                    assert component.get(process, default_process) == default_process, (
+                        str(manifest) + ': MMS draft owners must share one application process: '
+                        + str(component.attrib))

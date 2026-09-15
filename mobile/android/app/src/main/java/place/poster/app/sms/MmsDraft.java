@@ -76,6 +76,18 @@ final class MmsDraft {
 
     private static File dir(Context ctx) { return new File(ctx.getFilesDir(), "mms-drafts"); }
     private static File media(Context ctx, String key) { return new File(dir(ctx), key + ".media"); }
+    private static boolean staleTempsCleaned;
+    private static synchronized File temporary(File directory, String key) throws java.io.IOException {
+        // All MMS components share the app process. Before its first copy exists, every .tmp
+        // belongs to a previous process that died before finally could delete it. Never sweep
+        // again: another recipient may have a provider read in progress outside this lock.
+        if (!staleTempsCleaned) {
+            File[] stale = directory.listFiles(file -> file.isFile() && file.getName().endsWith(".tmp"));
+            if (stale != null) for (File file : stale) file.delete();
+            staleTempsCleaned = true;
+        }
+        return File.createTempFile(key + "-", ".tmp", directory);
+    }
     private static android.content.SharedPreferences prefs(Context ctx) {
         return ctx.getSharedPreferences("poster_mms_drafts", Context.MODE_PRIVATE);
     }
@@ -93,7 +105,7 @@ final class MmsDraft {
         String key = key(address); File d = dir(ctx);
         if (!key.equals(copy.key)) throw new IllegalArgumentException("draft copy recipient changed");
         if (!d.isDirectory() && !d.mkdirs() && !d.isDirectory()) throw new Exception("could not save picture draft");
-        File tmp = File.createTempFile(key + "-", ".tmp", d);
+        File tmp = temporary(d, key);
         try (FileOutputStream out = new FileOutputStream(tmp)) {
             byte[] buffer = new byte[64 * 1024]; int n;
             while ((n = input.read(buffer)) != -1) out.write(buffer, 0, n);
