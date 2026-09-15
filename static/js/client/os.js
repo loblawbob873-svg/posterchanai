@@ -8406,12 +8406,15 @@
     panel.querySelectorAll('.notif:not(.upd-notif)').forEach(n => {
       n.onclick = (ev) => {
         if(ev.target.closest('.os-noti-act')) return;
+        // The author name inside a post notification is its own profile target.
+        const author = ev.target.closest('[data-prof]');
+        const profile = (author && author.dataset.prof) || n.dataset.prof;
         /* THE POST OPENS IN THE DESKTOP, NOT IN THE MENU. Calling openThread here would render a
            thread inside a 380px popup that closes on blur — the shell is where a post is read. */
         if(inPopup){
           if(n.dataset.route==='calendar') send('view:calendar');
           else if(n.dataset.route) send('view:notifications');
-          else if(n.dataset.prof) send('profile:' + n.dataset.prof);
+          else if(profile) send('profile:' + profile);
           else if(n.dataset.open) send('thread:' + n.dataset.open);
           else shut();
           return;
@@ -8419,7 +8422,7 @@
         hideNoti();
         try{
           if(n.dataset.route) window.PCOpenNotificationRoute(n.dataset.route);
-          else if(n.dataset.prof) PC().openProfile(n.dataset.prof);
+          else if(profile) PC().openProfile(profile);
           else if(n.dataset.open) PC().openThread(n.dataset.open);
         }catch(_){}
       };
