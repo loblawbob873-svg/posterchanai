@@ -73,6 +73,18 @@
     /* A SUBSCRIBED calendar mirrors somebody else's published .ics (see caldav_subscribe.py). Up
      * here because both the editor's guard and the manager's rows ask. */
     const subOf = (c) => (c && c.subscribe && c.subscribe.url) ? c.subscribe : null;
+    const writable = c => c && !subOf(c);
+    const defaultKey = () => 'pc_cal_default:' + owner();
+    function newEventCalendar(){
+      let saved = ''; try{ saved = localStorage.getItem(defaultKey()) || ''; }catch(_){}
+      return (S.cals.find(c => c.id===saved && writable(c))
+        || S.cals.find(writable) || {}).id || '';
+    }
+    function saveDefaultCalendar(id){
+      if(!owner() || !S.cals.some(c => c.id===id && writable(c)))return false;
+      try{ localStorage.setItem(defaultKey(), id); return true; }
+      catch(_){ toast('Could not remember the default calendar on this device'); return false; }
+    }
     const jpost = (p, o) => api(p, { method:'POST', headers:{'Content-Type':'application/json'},
                                      body: JSON.stringify(o||{}) });
     const jput = (p, o, expectedOwner) => api(p, { method:'PUT', headers:{'Content-Type':'application/json'},
@@ -822,7 +834,8 @@
     function editEvent(ev){
       const isNew = !ev;
       const key = (ev && ev.key) || S.sel || todayKey();
-      const cal = (ev && ev.cal) || S.cal || (S.cals[0] || {}).id || '';
+      const cal = (ev && ev.cal) || newEventCalendar();
+      const mine = owner();
       if(!cal){ makeCalendar(); return; }          // no calendar yet — make one first
       /* A SUBSCRIBED calendar is a MIRROR, so an edit here is not saved-then-lost, it is saved and
        * then silently replaced by the next refresh — which is worse, because it looks like it
@@ -837,8 +850,12 @@
         } }
       const e = ev || { title:'', date:key, start:'09:00', end:'10:00', allDay:false, location:'', notes:'' };
       const dateVal = e.key || e.date || key;
+      const original = !isNew && (S.items[cal] || []).find(r => r.uid===e.uid);
+
       modal(`<h3>${isNew ? 'New event' : 'Event'}</h3>
         <div class="cal-form">
+        <label class="fld">Calendar<select class="input" id="cev-cal">${S.cals.filter(writable).map(c =>
+          `<option value="${enc(c.id)}"${c.id===cal?' selected':''}>${enc(c.displayname||c.id)}</option>`).join('')}</select></label>
         <label class="fld">Title<input class="input" id="cev-title" value="${enc(e.title||'')}" placeholder="What is it?"></label>
         <label class="fld">Day<input class="input" id="cev-date" type="date" value="${enc(dateVal)}"></label>
         <label class="fld cal-allday"><input type="checkbox" id="cev-allday"${e.allDay?' checked':''}> All day</label>
@@ -857,31 +874,54 @@
         </div>`, root => {
         const ad = $('#cev-allday', root), times = $('#cev-times', root);
         if(ad) ad.onchange = ()=>{ times.style.display = ad.checked ? 'none' : ''; };
-        $('#cev-save', root).onclick = async ()=>{
-          const body = {
+        const readBody = () => ({
             uid: e.uid || '', title: $('#cev-title', root).value.trim(),
             date: $('#cev-date', root).value || dateVal,
             allDay: !!(ad && ad.checked),
             start: $('#cev-start', root).value, end: $('#cev-end', root).value,
             location: $('#cev-loc', root).value.trim(), notes: $('#cev-notes', root).value.trim(),
             raw: e.raw || null,          // repeat rule, exceptions and edited occurrences, verbatim
-          };
+          });
+        const initialBody = JSON.stringify(readBody());
+        const save = $('#cev-save', root);
+        let retryMove = null;
+        save.onclick = async ()=>{
+          if(save.disabled || mine!==owner())return;
+          const body = readBody();
+          const target = $('#cev-cal', root).value;
+          if(!S.cals.some(c => c.id===target && writable(c))){ toast('Choose an editable calendar'); return; }
+          const moving = !isNew && target!==cal;
+          if(moving && !original){ toast('Reload this event before moving it'); return; }
           if(!body.title){ toast('give it a title'); return; }
-          const built = buildIcs(body);
+          const signature = JSON.stringify({target, body});
+          const built = moving && retryMove && retryMove.signature===signature ? retryMove.built
+            : moving && JSON.stringify(body)===initialBody ? {uid:e.uid, ics:original.ics} : buildIcs(body);
+          if(moving)retryMove = {signature, built};
+          save.disabled = true;
           try{
-            await jput('/api/calendar/items', { cal, uid: built.uid, ics: built.ics });
+            if(moving){
+              const pending = await CalQueue.read(mine);
+              if(pending.some(op => op.uid===e.uid && (op.cal===cal || op.cal===target)))
+                throw new Error('This event has pending offline changes. Sync them before moving it.');
+              await api('/api/calendar/items/move', {method:'POST', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({cal, target, uid:built.uid, ics:built.ics, original_ics:original.ics})}, mine);
+            }else await jput('/api/calendar/items', { cal:target, uid: built.uid, ics: built.ics }, mine);
+            if(mine!==owner())return;
             closeModal(); toast('saved'); await load();
           }catch(err){
+            if(mine!==owner())return;
+            if(moving){ toast('Could not finish the move: ' + ((err && err.message) || 'check both calendars and retry')); return; }
             // A REFUSAL is not a network failure. A 4xx means the server read it and said no, and
             // queueing that would retry a rejection for ever while telling the user it was saved.
             if(err && err.status && err.status < 500){
               toast('could not save: ' + ((err && err.message) || 'error')); return;
             }
-            await CalQueue.add({ op:'put', cal, uid: built.uid, ics: built.ics, at: Date.now() });
-            _applyLocal(cal, { uid: built.uid, ics: built.ics, component: built.component || 'VEVENT' });
+            await CalQueue.add({ op:'put', cal:target, uid: built.uid, ics: built.ics, at: Date.now() });
+            if(mine!==owner())return;
+            _applyLocal(target, { uid: built.uid, ics: built.ics, component: built.component || 'VEVENT' });
             closeModal(); toast('saved on this device — it will sync when you are back online');
             paint();
-          }
+          }finally{ save.disabled = false; }
         };
         const del = $('#cev-del', root);
         if(del) del.onclick = async ()=>{
@@ -905,7 +945,12 @@
 
     // ---- calendars, import/export, phone ------------------------------------------------------
     function openMenu(){
+      const menuOwner = owner();
       modal(`<h3>Calendars</h3>
+        <label class="fld">Default calendar for new events on this device
+          <select class="input" id="cal-default">${S.cals.filter(writable).map(c =>
+            `<option value="${enc(c.id)}"${c.id===newEventCalendar()?' selected':''}>${enc(c.displayname||c.id)}</option>`).join('')}</select>
+        </label>
         <div class="cal-list">${S.cals.map(c => `<div class="cal-row">
             <i class="cal-dot" style="background:${enc(colorOf(c.id))}"></i>
             <span class="cal-name">${enc(c.displayname || c.id)}${subOf(c) ? ' <span class="cal-sub-tag">subscribed</span>' : ''}</span>
@@ -929,6 +974,7 @@
           <button class="btn btn-ghost small" id="cal-phone"><svg class="ic b-ic" aria-hidden="true"><use href="#i-android"></use></svg>Sync to a device</button>
         </div>
         <input type="file" id="cal-file" accept=".ics,text/calendar" hidden>`, root => {
+        $('#cal-default', root).onchange = ev => { if(menuOwner===owner() && saveDefaultCalendar(ev.target.value))toast('Default calendar saved'); };
         $('#cal-add', root).onclick = ()=>{ closeModal(); makeCalendar(); };
         { const nr = root.querySelector('#cal-nostr-on');
           if(nr) nr.onchange = ()=> setNostrOn(nr.checked);

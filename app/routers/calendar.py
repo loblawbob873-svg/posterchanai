@@ -291,6 +291,65 @@ async def put_item(body: ItemIn, current_user: User = Depends(get_current_user),
     return {"ok": True, "uid": uid}
 
 
+class ItemMoveIn(BaseModel):
+    cal: str
+    target: str
+    uid: str
+    ics: str
+    original_ics: str
+
+
+@router.post("/items/move")
+async def move_item(body: ItemMoveIn, current_user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Copy durably before deleting. A refused/uncertain copy must never remove the source.
+
+    The encrypted relay store has no multi-document transaction. Identical destination content
+    makes retries safe after a lost response; a different destination is a conflict, never overwrite.
+    These checks are optimistic: independent CalDAV/relay writers have no shared compare-and-swap,
+    so a writer changing a record after the final read cannot be excluded by this endpoint.
+    """
+    _require_enabled()
+    if not body.uid or body.cal == body.target or caldav_store.uid_of(body.ics) != body.uid:
+        raise HTTPException(400, "Choose a different calendar and a valid event.")
+    try:
+        calendars = {c["id"]: c for c in await caldav_store.list_calendars(db, current_user, strict=True)}
+        for cid in (body.cal, body.target):
+            if cid not in calendars:
+                raise HTTPException(404, "That calendar no longer exists.")
+            if (calendars[cid].get("subscribe") or {}).get("url"):
+                raise HTTPException(409, "Subscribed calendars cannot be edited.")
+        source = next((r for r in await caldav_store.get_items(db, current_user, body.cal, strict=True)
+                       if r.get("uid") == body.uid), None)
+        target = next((r for r in await caldav_store.get_items(db, current_user, body.target, strict=True)
+                       if r.get("uid") == body.uid), None)
+        if target and target.get("ics") != body.ics:
+            raise HTTPException(409, "An event with this UID already exists in the destination calendar.")
+        if not source:
+            if target:
+                return {"ok": True, "uid": body.uid}
+            raise HTTPException(404, "The event no longer exists. Reload the calendar.")
+        if source.get("ics") != body.original_ics:
+            raise HTTPException(409, "The event changed on another device. Reload before moving it.")
+        if not target and not await caldav_store.put_item(
+                db, current_user, body.target, body.uid, body.ics, caldav_store.component_of(body.ics)):
+            raise HTTPException(502, "Could not copy the event. The original was kept.")
+        _forget(current_user.username)  # The destination exists even if source removal fails.
+        # Another client can write while the relay acknowledges the copy. Do not delete its edit.
+        current = next((r for r in await caldav_store.get_items(db, current_user, body.cal, strict=True)
+                        if r.get("uid") == body.uid), None)
+        if current and current.get("ics") != body.original_ics:
+            raise HTTPException(409, "The original changed during the move. Both copies were kept; reload to review them.")
+        if current and not await caldav_store.delete_item(db, current_user, body.cal, body.uid):
+            raise HTTPException(502, "Copied to the destination, but the original could not be removed. Retry to finish the move.")
+        _forget(current_user.username)
+        return {"ok": True, "uid": body.uid}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, "Could not finish the move. Reload to check both calendars before retrying.") from exc
+
+
 @router.delete("/items")
 async def delete_item(cal: str = Query(...), uid: str = Query(...),
                       current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):

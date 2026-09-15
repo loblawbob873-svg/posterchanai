@@ -27,6 +27,16 @@ If you want a calendar nobody but you can read, don't turn this on.
 Sidebar → **Calendar** (☰ More on a phone, or `y`). A month grid, a day panel under it, and an event
 editor — plus **⋯ → Calendars** for creating calendars, import/export and the device panel.
 
+In **Calendars**, choose **Default calendar for new events on this device**. The choice is saved
+separately for each signed-in account. Subscribed calendars are read-only; if the saved calendar is
+removed, new events use the first editable calendar. The event editor's **Calendar** selector can
+override the default for an individual event.
+
+To move an existing event, open **Edit**, select another calendar, and **Save**. Moving a repeating
+event moves the whole series. Changing only the calendar preserves the original ICS verbatim.
+Pending offline edits must sync before moving. A move saves the destination first; if removing the
+original fails, the dialog explains that both copies exist and lets you retry the same move.
+
 Two things about it match the rest of the client. The month lives in MODULE state, not the DOM:
 `#feed` is one element every view shares and app.js blanks it on entry, so leaving and coming back
 returns you to the month you were on rather than to today. And **the ICS is generated in the client
