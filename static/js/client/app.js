@@ -23512,6 +23512,9 @@
     return true;
   }
   async function _officeSession(file, saveBack){
+    // Capture the launcher before opening the editor changes VIEW. Files keeps its
+    // selected source and folder in memory, so returning through switchView restores it.
+    const returnToFiles = typeof VIEW !== 'undefined' && VIEW === 'blossom';
     let session=null;
     /* THE INSTANCE, EXPLICITLY. A bundled app (desktop `app://posterchan`, the APK's
      * `https://localhost`) has no server on its own origin, so a bare `/client/office/...` resolves
@@ -23706,9 +23709,10 @@
           host.className = 'office-win office-view';
           host.innerHTML = bodyHTML;
           feed.appendChild(host);
-          /* Closing returns to the document list rather than an empty screen — the view is still
-           * `office`, so leaving it blank would look like the editor had crashed. */
-          wire(host, () => { drop(); try{ renderOfficeHome(); }catch(_){ } });
+          wire(host, () => {
+            if(returnToFiles) switchView('blossom');
+            else renderOfficeHome();
+          });
           return;
         }
       }
