@@ -26,6 +26,7 @@ INPUTS = ('app', 'static', 'desktop', 'mobile', 'templates', 'scripts', 'tests',
           '.github/workflows/android-emulator.yml', 'sync.sh')
 TESTS = (
     'tests/test_deploy_regression_gate.py',
+    'tests/test_desktop_workflow_test_triggers.py',
     'tests/test_deploy_process_cleanup.py',
     'tests/test_sync_publish_failures.py',
     'tests/test_sync_nas_fetch_retry.py',

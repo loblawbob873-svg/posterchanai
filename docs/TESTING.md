@@ -11,7 +11,9 @@ Exit code 0 means nothing failed. Run it **before** `./sync.sh`, and again after
 ## Required deployment regressions
 
 `sync.sh` runs `scripts/deploy_regression_gate.py` before committing, pushing, updating the
-overlay, or restarting services. The Linux desktop build runs the same gate before packaging.
+overlay, or restarting services. The Linux desktop build runs the same gate before packaging. Changes anywhere under `tests/`
+trigger that build; a regression check verifies that every required test remains covered by
+the workflow trigger.
 It covers native window reloads, PDF/image controls, the Office-to-Files round trip, and
 Folder Sync ownership, cancellation, and request timeouts. Files checks cover all nine
 themes, readable controls, and saved theme changes reaching an already-open Files window
