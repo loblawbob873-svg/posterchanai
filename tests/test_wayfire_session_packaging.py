@@ -373,3 +373,34 @@ def test_a_failed_start_still_says_which_it_was():
     session = (ROOT / "os/bin/pc-compositor-session").read_text(encoding="utf-8")
     assert "the shell never signalled ready" in session
     assert "no ready signal and no launcher" in session
+
+
+def test_virtual_gpu_fallback_exports_legacy_drm_only_for_virtio(tmp_path):
+    """Execute the shipped fallback against virtual and physical sysfs fixtures.
+
+    Only the sysfs path is redirected; real shell/grep evaluate the production condition
+    and exports. This catches an accidentally unconditional legacy-KMS workaround.
+    """
+    import os
+    import shlex
+    import subprocess
+
+    source = LAUNCHER.read_text(encoding="utf-8")
+    start = source.index("if grep -qs '^0x1af4$'")
+    end = source.index("\n\tfi", start) + len("\n\tfi")
+    sysfs = tmp_path / "drm"
+    vendor = sysfs / "card0" / "device" / "vendor"
+    vendor.parent.mkdir(parents=True)
+    fallback = source[start:end].replace("/sys/class/drm", shlex.quote(str(sysfs)))
+    selected = ("LIBGL_ALWAYS_SOFTWARE", "WLR_RENDERER_ALLOW_SOFTWARE",
+                "WLR_DRM_NO_ATOMIC", "PC_SHELL_EXTRA_ARGS")
+    env = {key: value for key, value in os.environ.items() if key not in selected}
+    env["PC_SHELL_EXTRA_ARGS"] = "--existing-flag"
+    inspect = "\n" + "\n".join("printf '%s\\n' \"${" + key + "-unset}\"" for key in selected)
+    for value in ("0x1af4", "0x8086", "0x1002", "0x10de"):
+        vendor.write_text(value + "\n")
+        result = subprocess.run(["sh", "-c", fallback + inspect], env=env,
+                                capture_output=True, text=True, timeout=5, check=True)
+        expected = (["1", "1", "1", "--existing-flag --use-angle=swiftshader --enable-unsafe-swiftshader"]
+                    if value == "0x1af4" else ["unset", "unset", "unset", "--existing-flag"])
+        assert result.stdout.splitlines() == expected, (value, result.stdout, result.stderr)

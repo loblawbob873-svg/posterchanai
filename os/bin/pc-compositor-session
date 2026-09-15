@@ -211,6 +211,10 @@ if true; then
 	if grep -qs '^0x1af4$' /sys/class/drm/card*/device/vendor 2>/dev/null; then
 		export LIBGL_ALWAYS_SOFTWARE=1
 		export WLR_RENDERER_ALLOW_SOFTWARE=1
+		# On software virtio scanout, atomic modesetting can leave the displayed frame at its
+		# initial size even though compositor screenshots show the complete current desktop.
+		# Use legacy DRM updates only in this existing virtual GPU software fallback.
+		export WLR_DRM_NO_ATOMIC=1
 		PC_SHELL_EXTRA_ARGS="${PC_SHELL_EXTRA_ARGS:+$PC_SHELL_EXTRA_ARGS }--use-angle=swiftshader --enable-unsafe-swiftshader"
 		export PC_SHELL_EXTRA_ARGS
 	fi
