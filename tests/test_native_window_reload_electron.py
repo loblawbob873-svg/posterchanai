@@ -28,13 +28,21 @@ def test_real_electron_sync_reply_survives_native_child_reload(tmp_path):
     preload = tmp_path/'preload.cjs'
     preload.write_text("const {ipcRenderer,contextBridge}=require('electron');const isOurPage=location.protocol==='app:'&&location.hostname==='posterchan';\n" + role + "\ncontextBridge.exposeInMainWorld('roleProbe',{windowContext,backgroundOwner});contextBridge.exposeInMainWorld('nativeIPCProbe',{readContext:()=>ipcRenderer.sendSync('pc:window:context')});")
     (tmp_path/'profile').mkdir()
+    # Use the shipped primary and native app window preferences and full preload for detached app windows.
+    # The existing child lifecycle fixture intentionally exposes only the context IPC under test.
+    primary_start = main.index('    webPreferences: {', main.index('function createWindow('))
+    primary_preferences = main[primary_start:main.index('\n    },\n  });', primary_start) + len('\n    }')]
+    native_start = main.index('overrideBrowserWindowOptions: {', main.index('if (isOurs(url) && /[?&]pcwin=/'))
+    native_options = main[native_start + len('overrideBrowserWindowOptions: '):main.index('\n      } };', native_start) + len('\n      }')]
+    scheme_start = main.index('protocol.registerSchemesAsPrivileged(')
+    scheme = main[scheme_start:main.index(']);', scheme_start) + 3]
     script = r'''
 console.log('ELECTRON_VERSION='+process.versions.electron);
 process.on('uncaughtException',error=>{console.error(error);process.exit(3)});
 const {app,BrowserWindow,ipcMain,protocol}=require('electron');
 const assert=require('node:assert/strict');
 app.setPath('userData',USERDATA);
-protocol.registerSchemesAsPrivileged([{scheme:'app',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
+SHIPPED_SCHEME
 const pcAppWindows=new Map();
 const {isTrustedPage}=require(TRUST);
 const fsGuard=e=>{if(!isTrustedPage(e.senderFrame.url,LOCALDIR))throw Error('denied')};
@@ -59,6 +67,43 @@ app.whenReady().then(async()=>{
  assert.equal(child.webContents.getURL(),'app://posterchan/');
  assert.deepEqual(await child.webContents.executeJavaScript('window.nativeIPCProbe.readContext()'),{role:'app',view:'settings'});
  console.log('RELOADED_CHILD_PASS');
+ // Recreate a detached Sync app window: it has no opener to delegate to.
+ // Test Chromium's actual origin/session routing with the FULL shipped sandboxed preload.
+ ipcMain.on('pc:instance:sync', e=>{e.returnValue='https://example.invalid'});
+ ipcMain.on('pc:instance:chosen', e=>{e.returnValue=true});
+ const path=require('node:path'), SHELL_MODE=false, primary=true;
+ const shippedDir=SHIPPED_DIR;
+ const primaryWindow=new BrowserWindow({show:false,SHIPPED_PRIMARY_PREFERENCES});
+ const num=(_name,fallback)=>fallback;
+ const p=new BrowserWindow({show:false,...SHIPPED_NATIVE_OPTIONS});
+ pcAppWindows.set('sync',p);
+ await primaryWindow.loadURL('app://posterchan/index.html');
+ await p.loadURL('app://posterchan/index.html?pcwin=sync');
+ assert.equal(p.webContents.session,primaryWindow.webContents.session,'popup shares shipped primary session');
+ assert.deepEqual(await primaryWindow.webContents.executeJavaScript('({owner:pcShell.backgroundOwner,fs:!!pcFs,opener:!!window.opener,origin:location.origin})'),
+   {owner:true,fs:true,opener:false,origin:'app://posterchan'});
+ assert.deepEqual(await p.webContents.executeJavaScript('({owner:pcShell.backgroundOwner,fs:!!pcFs,opener:!!window.opener,origin:location.origin})'),
+   {owner:false,fs:true,opener:false,origin:'app://posterchan'});
+ await primaryWindow.webContents.executeJavaScript(`window.nativeSyncRequests=[];
+   window.nativeSyncChannel=new BroadcastChannel('pc-native-sync-regression');
+   nativeSyncChannel.onmessage=e=>{nativeSyncRequests.push(e.data);nativeSyncChannel.postMessage({id:e.data.id,result:'owner-complete'})};void 0`);
+ async function roundTrip(id){
+   assert.deepEqual(await p.webContents.executeJavaScript(`new Promise((resolve,reject)=>{
+     const channel=new BroadcastChannel('pc-native-sync-regression');
+     const timer=setTimeout(()=>{channel.close();reject(Error('detached Sync popup could not reach primary'))},3000);
+     channel.onmessage=e=>{clearTimeout(timer);channel.close();resolve(e.data)};
+     channel.postMessage({id:${id},action:'sweep'});
+   })`),{id,result:'owner-complete'});
+ }
+ await roundTrip(1);
+ await p.loadURL('app://posterchan/index.html?pcwin=sync');
+ assert.deepEqual(await p.webContents.executeJavaScript('pcShell.windowContext'),{role:'app',view:'sync'});
+ assert.equal(await p.webContents.executeJavaScript('pcShell.backgroundOwner'),false);
+ await roundTrip(2);
+ assert.deepEqual(await primaryWindow.webContents.executeJavaScript('nativeSyncRequests'),
+   [{id:1,action:'sweep'},{id:2,action:'sweep'}],'one message per popup request, including reopen');
+ console.log('DETACHED_SYNC_BROADCAST_PASS');
+ primaryWindow.destroy();p.destroy();
  await child.loadURL('app://untrusted/index.html');
  assert.equal(await child.webContents.executeJavaScript('window.nativeIPCProbe.readContext()'),null,'untrusted frame in registered child');
  console.log('REAL_NATIVE_RELOAD_PASS');clearTimeout(watchdog);app.exit(0);
@@ -67,6 +112,11 @@ app.whenReady().then(async()=>{
     for name,value in {'USERDATA':str(tmp_path/'profile'),'TRUST':str(ROOT/'desktop/page-trust.js'), 'LOCALDIR':str(ROOT/'desktop'),'PRELOAD':str(preload)}.items():
         script=script.replace(name,json.dumps(value))
     script=script.replace('HANDLER',handler)
+    script=script.replace('SHIPPED_SCHEME',scheme)
+    script=script.replace('SHIPPED_PRIMARY_PREFERENCES',primary_preferences.replace('__dirname','shippedDir'))
+    script=script.replace('SHIPPED_NATIVE_OPTIONS',native_options.replace('__dirname','shippedDir'))
+    script=script.replace('SHIPPED_DIR',json.dumps(str(ROOT/'desktop')))
+
     entry=tmp_path/'main.js';entry.write_text(script)
     xvfb=shutil.which('Xvfb')
     if not xvfb and not all(shutil.which(binary) for binary in ('wayfire','Xwayland')):
@@ -115,6 +165,7 @@ app.whenReady().then(async()=>{
             (tmp_path/'electron.log').write_text(stdout+'\n'+stderr)
             assert native.returncode==0,stdout+'\n'+stderr
             assert 'REAL_NATIVE_RELOAD_PASS' in stdout
+            assert 'DETACHED_SYNC_BROADCAST_PASS' in stdout
         finally:
             for proc in (native,xserver,compositor):
                 if proc is not None:
