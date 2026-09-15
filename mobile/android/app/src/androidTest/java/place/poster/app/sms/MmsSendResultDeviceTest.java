@@ -44,6 +44,10 @@ public class MmsSendResultDeviceTest {
         checkResult(0, Telephony.Mms.MESSAGE_BOX_OUTBOX);
     }
 
+    @Test public void attachmentIoResultRemainsUnconfirmed() throws Exception {
+        checkResult(5, Telephony.Mms.MESSAGE_BOX_OUTBOX);
+    }
+
     @Test public void providerHonorsFailedToOutboxCompareAndSet() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         String previous = Telephony.Sms.getDefaultSmsPackage(context);

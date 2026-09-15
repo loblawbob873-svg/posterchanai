@@ -93,6 +93,7 @@ public class ReceiverProbe {
  public static void main(String[] args)throws Exception {
   int code=Integer.parseInt(args[0]);String mode=args[1];
   Context ctx=new Context();ctx.resolver.throwUpdate=mode.equals("denied");
+  if(mode.equals("previous-failure"))ctx.resolver.box=5;
   MmsSendReceiver receiver=new MmsSendReceiver();
   BroadcastReceiver.PendingResult pending=new BroadcastReceiver.PendingResult(code);
   receiver.setPendingResult(pending);
@@ -133,6 +134,7 @@ def receiver_classes(tmp_path_factory):
     (2,'5,1,failed,0,1,2,1,false,2,1,false'),
     (8,'5,1,failed,0,1,8,1,false,8,1,false'),
     (0,'4,0,unknown,0,1,0,0,false,0,1,false'),
+    (5,'4,0,unknown,0,1,5,0,false,0,1,false'),
 ])
 def test_real_mms_receiver_keeps_carrier_result_after_go_async(receiver_classes,code,expected):
     result=subprocess.run(['java','-cp',str(receiver_classes),'place.poster.app.sms.ReceiverProbe',str(code),'normal'],capture_output=True,text=True,timeout=5)
@@ -145,3 +147,9 @@ def test_real_mms_receiver_finishes_and_releases_on_exception(receiver_classes,m
     result=subprocess.run(['java','-cp',str(receiver_classes),'place.poster.app.sms.ReceiverProbe','-1',mode],capture_output=True,text=True,timeout=5)
     assert result.returncode==0,result.stderr
     assert result.stdout.strip()=='4,0,,0,0,0,0,false,0,0,true'
+
+
+def test_late_success_recovers_failed_row_and_clears_durable_error(receiver_classes):
+    result=subprocess.run(['java','-cp',str(receiver_classes),'place.poster.app.sms.ReceiverProbe','-1','previous-failure'],capture_output=True,text=True,timeout=5)
+    assert result.returncode==0,result.stderr
+    assert result.stdout.strip()=='2,1,sent,1,0,0,1,true,-1,1,false'

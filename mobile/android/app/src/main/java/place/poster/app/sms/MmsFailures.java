@@ -15,8 +15,10 @@ final class MmsFailures {
 
     static String get(Context ctx, long id) {
         if (ctx == null || id <= 0) return "";
-        return ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        String error = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
                 .getString(String.valueOf(id), "");
+        // Older builds called every IO_ERROR definitively unsent. Read those rows conservatively.
+        return error.startsWith("could not read or send the attachment") ? reason(5, 0) : error;
     }
 
     static void clear(Context ctx, long id) {
@@ -26,7 +28,8 @@ final class MmsFailures {
 
     static boolean indeterminate(String error) {
         return error != null && (error.startsWith("carrier send status is pending")
-                || error.startsWith("delivery unknown")); // rows written by older builds
+                || error.startsWith("delivery unknown")
+                || error.startsWith("could not read or send the attachment")); // rows written by older builds
     }
 
     /* SmsManager's MMS result values. Kept numeric so this remains installable on API 26, where
@@ -37,7 +40,7 @@ final class MmsFailures {
             case 2: why = "invalid carrier APN"; break;
             case 3: why = "could not connect to the MMS network"; break;
             case 4: why = "carrier server rejected it"; break;
-            case 5: why = "could not read or send the attachment"; break;
+            case 5: why = "carrier send status is pending — Android reported an attachment I/O error, which does not confirm whether it was sent. Check with the recipient before sending it again"; break;
             case 6: why = "carrier requested a retry"; break;
             case 7: why = "carrier MMS configuration is invalid"; break;
             case 8: why = "mobile data is unavailable"; break;

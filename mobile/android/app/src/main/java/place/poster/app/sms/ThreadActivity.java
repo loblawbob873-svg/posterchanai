@@ -509,11 +509,20 @@ public class ThreadActivity extends PcActivity {
         options.inJustDecodeBounds = false;
         attachmentPreview.setImageBitmap(BitmapFactory.decodeFile(attachmentDraft.file.getAbsolutePath(), options));
         String state = attachmentDraft.state;
-        String line = attachmentDraft.name + " · " + state;
-        if (!attachmentDraft.error.isEmpty()) line += "\n" + attachmentDraft.error;
-        attachmentStatus.setText(line);
-        attachmentStatus.setTextColor(MmsDraft.FAILED.equals(state) ? pal.danger
-                : MmsDraft.SENT.equals(state) ? pal.accent : pal.amber);
+        boolean uncertain = MmsDraft.UNKNOWN.equals(state) || MmsFailures.indeterminate(attachmentDraft.error);
+        String label = uncertain ? "Send status unconfirmed"
+                : MmsDraft.SENDING.equals(state) ? "Sending…"
+                : MmsDraft.SENT.equals(state) ? "Sent"
+                : MmsDraft.FAILED.equals(state) ? "Not sent" : "Ready to send";
+        String detail = attachmentDraft.error.startsWith("could not read or send the attachment")
+                ? MmsFailures.reason(5, 0) : attachmentDraft.error;
+        attachmentStatus.setText(attachmentDraft.name + " · " + label
+                + (detail.isEmpty() ? "" : "\nTap for details"));
+        attachmentStatus.setTextColor(uncertain ? pal.muted : MmsDraft.FAILED.equals(state) ? pal.danger
+                : MmsDraft.SENT.equals(state) ? pal.accent : pal.muted);
+        attachmentStatus.setOnClickListener(detail.isEmpty() ? null : view ->
+                new AlertDialog.Builder(this).setTitle(label).setMessage(detail)
+                        .setPositiveButton(android.R.string.ok, null).show());
     }
 
     /** A compact carrier-safe Unicode picker. Strings are built from code points so joined emoji
@@ -1085,7 +1094,11 @@ public class ThreadActivity extends PcActivity {
                     ? DateUtils.getRelativeTimeSpanString(m.date, System.currentTimeMillis(),
                             DateUtils.MINUTE_IN_MILLIS).toString()
                     : "";
-            if (m.failed()) {
+            boolean uncertain = MmsFailures.indeterminate(m.error);
+            if (uncertain) {
+                meta.setText("Send status unconfirmed · Tap for details  ·  " + when);
+                meta.setTextColor(pal.muted);
+            } else if (m.failed()) {
                 meta.setText(getString(R.string.sms_failed)
                         + (m.error.isEmpty() ? "" : ": " + m.error) + "  ·  " + when);
                 meta.setTextColor(pal.danger);
@@ -1103,6 +1116,9 @@ public class ThreadActivity extends PcActivity {
                 meta.setText(when);
                 meta.setTextColor(pal.muted);
             }
+            meta.setOnClickListener(uncertain ? view -> new AlertDialog.Builder(ThreadActivity.this)
+                    .setTitle("Send status unconfirmed").setMessage(m.error)
+                    .setPositiveButton(android.R.string.ok, null).show() : null);
             /* Long-press remains the full copy/delete menu, but it is not discoverable. A stuck
              * outgoing carrier row is urgent and common enough to expose directly. Rebind on every
              * recycled view so an incoming row can never inherit the previous row's listener. */

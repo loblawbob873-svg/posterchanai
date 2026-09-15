@@ -43,7 +43,7 @@ public class RetryHarness {
   for(int type:new int[]{1,2,3,4,6})for(String error:new String[]{"","delivery unknown","carrier send status is pending"}){
    reset();row=msg(type,error);check(!retryableMms(row),"policy must reject pending/nonfailed rows");new RetryHarness().retryMms(row);check(sends==0&&claims==0&&deletes==0,"nonfailed must never retry");
   }
-  for(String error:new String[]{"delivery unknown","carrier send status is pending — may have sent"}){
+  for(String error:new String[]{"delivery unknown","carrier send status is pending — may have sent","could not read or send the attachment"}){
    reset();row.error=error;new RetryHarness().retryMms(row);check(sends==0,"unknown failed row must not retry");
   }
   reset();SmsMsg stale=msg(5,"");row.type=4;new RetryHarness().retryMms(stale);check(sends==0,"stale failed UI / live pending");

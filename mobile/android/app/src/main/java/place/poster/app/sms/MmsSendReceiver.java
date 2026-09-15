@@ -37,7 +37,7 @@ public final class MmsSendReceiver extends BroadcastReceiver {
                 boolean ok = status == MmsResult.SENT;
                 boolean unknown = status == MmsResult.UNKNOWN;
                 String draftKey = intent.getStringExtra("draft_key");
-                /* Code 0 is not a failure on several OEM carrier stacks: the same callback has
+                /* Codes 0 and 5 are not definitive failures on affected carrier stacks: the same callback has
                  * been observed for delivered and undelivered MMS. Keep its provider row in the
                  * outbox and label it delivery-unknown. Marking it FAILED caused the UI to lie and
                  * encouraged a retry that could send the same photo repeatedly. */
