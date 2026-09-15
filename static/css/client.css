@@ -10574,3 +10574,8 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 
 .pc-user-options{max-width:100%;min-width:0}
 .pc-user-options .mention-opt>span{min-width:0;overflow-wrap:anywhere}
+
+/* Remote viewing works without a screen-capture API, including phone WebViews. */
+.pcrd-share{display:flex;flex-direction:column;gap:18px}.pcrd-share[hidden]{display:none!important}
+.feed-remote .pcrd{height:auto;min-height:100%;overflow:auto}
+@media(max-width:600px){.feed-remote .pcrd{padding:12px;gap:12px}.pcrd-hero{padding:12px;gap:10px}.pcrd-hero b{font-size:18px}}

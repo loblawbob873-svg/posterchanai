@@ -75,6 +75,7 @@ public final class HomeTiles {
         new Tile("mail",          "Email",         "mail",     false),
         new Tile("bookmarks",     "Bookmarks",     "bookmark", false),
         new Tile("calls",         "Calls",         "phone",    false),
+        new Tile("__remote",      "Remote Desktop","monitor",  false),
         new Tile("vault",         "Passwords",     "key",      false),
         new Tile("wallet",        "Monero Wallet", "coin",     false),
         new Tile("signer",        "Signer",        "key",      false),

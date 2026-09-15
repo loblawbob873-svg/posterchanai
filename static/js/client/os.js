@@ -2992,6 +2992,7 @@
   }
 
   function openRemoteDesktop(){
+    if(!on){if(!document.querySelector('#feed.feed-remote [data-rd-session]'))PC().switchView('__remote');return null;}
     const old=wins.find(x=>x.view==='__remote');if(old){focusWin(old,false);return old;}
     const w=openApp('__remote','Remote Desktop','#i-monitor',null,true,true);if(!w)return null;
     w.el.classList.add('osw-remote');
@@ -3008,12 +3009,15 @@
    * disarms it. */
   function paintRemoteDesktop(slot){
     try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true);}catch(_){}
-    slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>Share this desktop</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
+    const canShare=typeof navigator.mediaDevices?.getDisplayMedia==='function';
+    slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>${canShare?'Share or view a desktop':'View a desktop'}</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
+      <div class="pcrd-note" data-rd-viewer-ready role="status">Ready to receive a desktop. On your laptop or desktop, open Remote Desktop and choose “Share to my other signed-in device” using the same account, or enter this account’s username. Keep this screen open. Tap or drag the shared screen after control is granted.</div>
+      <div class="pcrd-share" ${canShare?'':'hidden'}>
       <label class="pcrd-label">Viewer’s username, npub or address<input class="input" data-rd-peer placeholder="Search username · npub1… · 192.168.1.20 · name@host" autocomplete="off" spellcheck="false"></label>
       <div class="pcrd-label" data-rd-choose hidden><label>User at this address<select class="input" data-rd-choice></select></label><button class="btn" type="button" data-rd-continue>Share with this user</button></div>
       <button class="btn" type="button" data-rd-self>Share to my other signed-in device</button>
       <button class="btn btn-neon" data-rd-share><svg class="ic b-ic"><use href="#i-share"></use></svg>Choose screen and share</button>
-      <div class="pcrd-status" data-rd-status role="status" aria-live="polite"></div>
+      </div><div class="pcrd-status" data-rd-status role="status" aria-live="polite"></div>
       <div class="pcrd-note"><b>The viewer must accept.</b> Media uses a direct WebRTC path when possible and your configured TURN service when it is not.</div>
       <div class="pcrd-cap"><span>✓ PosterChanOS, browser, and phone viewers</span><span>✓ npub, IP address, or name@host</span><span>✓ Authenticated, encrypted Nostr signaling</span></div></div><div class="pcrd-session" data-rd-session></div>`;
     try{PC().setRemoteDesktopHost&&PC().setRemoteDesktopHost($('[data-rd-session]',slot));}catch(_){}

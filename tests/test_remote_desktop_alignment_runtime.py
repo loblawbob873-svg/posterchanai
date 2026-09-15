@@ -119,3 +119,26 @@ def test_viewer_capture_scales_motion_and_releases_input(tmp_path,remote_width,r
         page.evaluate('_rdViewerCleanup()')
         page.evaluate("v.dispatchEvent(new PointerEvent('pointermove',{clientX:350,clientY:400}))")
         assert page.evaluate('sent') == []
+
+
+def test_phone_touch_requires_grant_and_releases_on_cancel(tmp_path):
+    app = (ROOT / 'static/js/client/app.js').read_text()
+    code = app[app.index('  function _rdVideoPoint('):app.index('  // getUserMedia failures')]
+    with browser_page(tmp_path) as page:
+        page.resize(390, 844)
+        page.evaluate("document.body.innerHTML='<video id=\"v\" style=\"width:390px;height:220px;touch-action:none\"></video>'")
+        page.evaluate('''window._call={remoteDesktop:true,caller:false,controlGranted:false,remoteGeometry:{width:1920,height:1080}};
+window._rdViewerCleanup=null;window._RD_KEYS={};window.sent=[];window._rdSend=m=>sent.push(m.e);
+window.lockRequests=0;v.requestPointerLock=()=>{lockRequests++;};
+window.touch=(name)=>v.dispatchEvent(new PointerEvent(name,{pointerType:'touch',pointerId:8,button:0,clientX:195,clientY:110,bubbles:true,cancelable:true}));''')
+        page.evaluate(code + '\n_rdBindViewer(document.getElementById("v"));')
+        page.evaluate("touch('pointerdown');touch('pointermove')")
+        assert page.evaluate('sent.length') == 0
+        page.evaluate("_call.controlGranted=true;touch('pointerdown');touch('pointermove');touch('pointercancel')")
+        sent=page.evaluate('sent')
+        assert [e['type'] for e in sent] == ['button','absolute','button']
+        assert sent[0]['down'] is True and sent[-1]['down'] is False
+        assert all(0<=e['x']<=1 and 0<=e['y']<=1 for e in sent)
+        assert page.evaluate('lockRequests') == 0
+        page.evaluate("_rdViewerCleanup();touch('pointerdown')")
+        assert page.evaluate('sent.length') == 3
