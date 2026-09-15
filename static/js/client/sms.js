@@ -1022,6 +1022,83 @@
     finally{ if(currentAccount()){ S.loading=false; _loadingArchive=null; } }
   }
 
+  // REQ limits are page sizes, not archive sizes. The bundled relay caps them at 5,000.
+  // Keep the boundary second inclusive; only its deterministic local cursor can disambiguate
+  // documents signed in that same second regardless of the relay's page cap. A relay ignoring that extension must
+  // leave this pass incomplete, never silently jump over the rest of the second.
+  const historyFailures={label:false,legacy:false};
+  function historyResult(part,complete){
+    historyFailures[part]=!complete;
+    S.historyIncomplete=historyFailures.label||historyFailures.legacy;
+  }
+  async function readArchive(filter, current){
+    let until, cursor, limit=256;
+    const seen=new Set(); let painted=0;
+    while(current()){
+      await new Promise(resolve=>setTimeout(resolve,0));
+      if(!current()) return false;
+      const f={...filter,limit};
+      if(until!==undefined) f.until=until;
+      if(cursor) f._cursor=cursor;
+      const batch=await Relay().query([f],6000,{pages:true});
+      if(!current()) return false;
+      if(!Array.isArray(batch) || batch.complete===false) return false;
+      if(batch.pageCounts!==undefined && (!Array.isArray(batch.pageCounts) ||
+          batch.pageCounts.some(n=>!Number.isSafeInteger(n)||n<0||n>batch.length) ||
+          batch.pageCounts.reduce((a,b)=>a+b,0)<batch.length)) return false;
+      const rows=batch.slice().sort((a,b)=>(b.created_at-a.created_at)||String(b.id).localeCompare(String(a.id)));
+      if(rows.some(e=>!Number.isSafeInteger(e.created_at)||e.created_at<0||!e.id||
+          (e.pubkey && e.pubkey!==filter.authors[0])||(e.kind!==undefined&&e.kind!==KIND)||
+          (until!==undefined&&e.created_at>until)||
+          (cursor&&e.created_at===cursor[0]&&String(e.id)>=cursor[1]))) return false;
+      // The cache may still be opening this exact page in a different tie order. Let its
+      // transaction commit before asking needsOpening again; in-flight-only dedup cannot
+      // protect a body already opened but still waiting for its cache batch to commit.
+      const drain=_cacheDrain;
+      if(drain) await drain;
+      if(!current()) return false;
+      const fresh=archiveRows(rows).filter(e=>!seen.has(e.id));
+      rows.forEach(e=>seen.add(e.id));
+      for(let i=0;i<fresh.length&&current();i+=128){
+        await absorbResilient(fresh.slice(i,i+128));
+        if(!current()) return false;
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+      if(!current()) return false;
+      if(fresh.length && Date.now()-painted>=500){ painted=Date.now(); paint(); }
+      if(!rows.length) return true;
+      // A sparse relay may return one very old row beside a dense relay's recent page.
+      // The newest of their oldest verified tuples is the safe common boundary; taking the
+      // global oldest skips history, while taking the smallest count can cost one REQ per row.
+      let boundary;
+      if(Array.isArray(batch.pageBounds)){
+        if(!Array.isArray(batch.pageCounts)||batch.pageBounds.length!==batch.pageCounts.length) return false;
+        const bounds=[];
+        for(let i=0;i<batch.pageBounds.length;i++){
+          const b=batch.pageBounds[i];
+          if(!batch.pageCounts[i]){if(b!==null)return false;continue;}
+          if(!Array.isArray(b)||b.length!==2||!Number.isSafeInteger(b[0])||typeof b[1]!=='string'||
+              !rows.some(e=>e.created_at===b[0]&&e.id===b[1])) return false;
+          bounds.push(b);
+        }
+        if(!bounds.length)return false;
+        boundary=bounds.sort((a,b)=>b[0]-a[0]||(b[1]>a[1]?1:b[1]<a[1]?-1:0))[0];
+      }else{
+        // Compatibility with an older pool: without provenance only one row is a safe advance.
+        boundary=[rows[0].created_at,String(rows[0].id)];
+      }
+      const oldest=boundary[0];
+      if(until===undefined || oldest<until){ until=oldest; cursor=undefined; limit=256; }
+      else if(cursor || limit===5000){cursor=boundary;}
+      else limit=Math.min(limit*2,5000);
+
+    }
+    return false;
+  }
+  function historyNotice(){
+    return S.historyIncomplete ? '<div class="muted small" role="status">Message history is incomplete. Reopen Texts to retry; saved messages are still available.</div>' : '';
+  }
+
   let _refreshing = false;
   async function refresh(){
     const owner = ME().pubkey || '', epoch = _archiveEpoch;
@@ -1029,13 +1106,10 @@
     if(_refreshing) return;
     _refreshing = true;
     try{
-      const live = archiveRows(await Relay().query(liveFilters()) || []);
+      const complete=await readArchive(FILTER(),currentAccount);
       if(!currentAccount()) return;
-      // FOLDED IN, NEVER OVER. A relay that returns nothing — unreachable, throttled, merely slow —
-      // must leave the archive alone. That asymmetry is the anti-wipe rule this codebase keeps
-      // relearning, and here the local copy may be the only one outside the handset.
-      if(live && live.length){ await absorbResilient(live); paint(); }
-    }catch(_){ }
+      historyResult('label',complete); paint();
+    }catch(_){ if(currentAccount()){ historyResult('label',false); paint(); } }
     finally{ if(currentAccount()) _refreshing = false; }
     if(!currentAccount()) return;
     /* AND THE UNLABELLED TAIL, BEHIND THE PAINTED SCREEN. Detached on purpose: it is a repair for
@@ -1053,7 +1127,7 @@
    * of the whole 30078 datastore on each of those is what made Texts feel like it was downloading
    * the account rather than opening a screen. The archive is addressable, so a document this finds
    * merges by `d` exactly as the labelled path does — running it once is not a weaker guarantee,
-   * only a cheaper schedule. Failure is silent and NOT latched: a sweep that could not run leaves
+   * only a cheaper schedule. Failure is reported and NOT latched: a sweep that could not run leaves
    * the flag clear so the next refresh tries again. */
   let _legacySweeping = false, _legacySwept = false;
   async function legacySweep(){
@@ -1069,11 +1143,12 @@
       const drain = _cacheDrain;
       if(drain) await drain;
       if(!currentAccount()) return;
-      const rows = archiveRows(await Relay().query([BROAD_FILTER()]) || []);
+      const complete=await readArchive(BROAD_FILTER(),currentAccount);
       if(!currentAccount()) return;
-      _legacySwept = true;
-      if(rows.length){ await absorbResilient(rows); paint(); }
-    }catch(_){ }
+      _legacySwept=complete;
+      historyResult('legacy',complete);
+      paint();
+    }catch(_){ if(currentAccount()){ historyResult('legacy',false); paint(); } }
     finally{ if(currentAccount()) _legacySweeping = false; }
   }
 
@@ -1102,7 +1177,7 @@
         S.draft = Object.create(null); S.scroll = Object.create(null); S.sending = new Set();
         S.ready = false; S.loading = false; S.localRead = false; S.lastRead = null;
         S.mmsRefused = false; S.mmsCapped = false; S.mmsAudited = false;
-        S.error = ''; S.emptyWhy = ''; S.archive = {running:false,published:0,error:'',attempted:false,refused:0};
+        S.error = ''; S.emptyWhy = ''; S.historyIncomplete=false; S.archive = {running:false,published:0,error:'',attempted:false,refused:0};
         delete window.__PC_SMS_OPEN_ADDRESS;
         _badArchive.clear(); _cancelledOutboxAt.clear(); _envInFlight.clear(); _openInFlight.clear();
         for(const cache of [ATT, ATT_ENC]){
@@ -1111,6 +1186,7 @@
         }
         _loadingArchive = null; _cacheDrain = null; _refreshing = false;
         _legacySwept = false; _legacySweeping = false;
+        historyFailures.label=false; historyFailures.legacy=false;
       }
       if(_sub) try{ Relay().close(_sub); }catch(_){}
       S.since = Date.now();
@@ -3519,6 +3595,7 @@
           <input class="input" id="sms-q" placeholder="Search messages" value="${enc(_searchDraft === null ? S.q : _searchDraft)}">
           <button class="btn btn-neon small" id="sms-new">${ICO('plus','b-ic')}New</button>
         </div>
+        ${historyNotice()}
         <div class="muted small" id="sms-note"></div>
         <div class="muted small" id="sms-archive" style="display:none;margin-top:6px"></div>
         <!-- THE ROLE IS ASKED FOR HERE, WHERE IT IS ALWAYS REACHABLE.
@@ -3954,6 +4031,7 @@
             <button class="btn small" id="sms-copy-number" aria-label="Copy phone number">Copy</button>
           </div>
         </div>
+        ${historyNotice()}
         ${blankNote(blankCount(t.msgs))}
         <div class="sms-msgs dm-msgs" id="sms-msgs" data-thread-key="${enc(t.key)}">${(()=>{
           const _rx = reactionsFor(t);
@@ -4342,6 +4420,7 @@
      * route already installed a spinner; awaiting the first cache pass makes the first visit behave
      * exactly like the second one instead of requiring the person to close and reopen Texts. */
     if(!S.ready) await load();
+    else if(S.historyIncomplete) await refresh();
     if(renderOwner !== (ME().pubkey || '') || renderEpoch !== _archiveEpoch){
       // Retire only the old account. A newer render may already own a pending recipient.
       watch(); return;

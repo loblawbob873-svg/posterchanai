@@ -104,8 +104,10 @@ class TheRelayIsNotAskedForTheWholeDatastore(unittest.TestCase):
                   steps=["load", "settle", "foreground", "settle"])
         asked = [c[1] for c in calls_of(res, "relayQuery")]
         self.assertEqual(sorted(res["docs"]), sorted(e["tags"][0][1] for e in archive))
-        self.assertEqual(asked.count("broad"), 1,
-                         "the unbounded kind-30078 read went out more than once: %r" % (asked,))
+        starts = [c for c in calls_of(res, "relayQuery") if c[1] == "broad"
+                  and 'until' not in c[2][0] and '_cursor' not in c[2][0]]
+        self.assertEqual(len(starts), 1,
+                         "the broad history traversal restarted instead of paging once: %r" % (asked,))
         self.assertGreaterEqual(asked.count("label"), 1, asked)
         self.assertNotIn("label+broad", asked,
                          "the hot-path relay read still carries the unbounded filter")

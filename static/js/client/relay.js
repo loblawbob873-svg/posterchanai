@@ -100,7 +100,7 @@
         for (const [id, s] of this.pool._subs){
           // NIP-42 authorization belongs to one connection, not the relay URL's lifetime.
           if(s.authTried)s.authTried.delete(this.url);
-          if (s.live || !s.sent.has(this.url)){ this._send(['REQ', id, ...s.filters]); s.sent.add(this.url); }
+          if (s.live || !s.sent.has(this.url)){ this._send(['REQ', id, ...s.filters]); s.sent.add(this.url); if(s.pageAsked){s.pageAsked.add(this.url);s.pageEosed.delete(this.url);} }
         }
         this.pool._connReady(this);
         this._startHeartbeat();
@@ -439,6 +439,7 @@
     // pending sub waits out its timeout for it. Re-check the gate after: this may be the last one.
     _connGone(conn){
       for (const sub of this._subs.values()){
+        if(sub.pageEosed)sub.pageEosed.delete(conn.url);
         if (!sub.sent || !sub.sent.delete(conn.url)) continue;
         if (sub.onEose && this._eoseDone(sub)) this._fireEose(sub);
       }
@@ -486,11 +487,17 @@
           try{ if(window.Outbox && Outbox.has(wireEv.id)){ if(Outbox.acknowledgeDelivery)Outbox.acknowledgeDelivery(wireEv.id);else Outbox.remove(wireEv.id); } }catch(_){}
         }
         const sub = this._subs.get(m[1]); if (!sub || !sub.onEvent) return;
-        const ev = this._normTags(m[2]); if (!ev || sub.seen.has(ev.id)) return;   // dedup across relays
-        if (conn.trusted){ this._seenAdd(sub, ev.id); sub.onEvent(ev); }
-        else { this._vq.push({ ev, sub }); if (!this._vt) this._vt = setTimeout(()=>this._flush(), 40); }
+        const ev = this._normTags(m[2]); if (!ev || (!sub.pageIds && sub.seen.has(ev.id))) return;
+        if (conn.trusted){
+          this._recordPage(sub,conn.url,ev);
+          if(!sub.seen.has(ev.id)){ this._seenAdd(sub, ev.id); sub.onEvent(ev); }
+        } else {
+          if(sub.pageIds) sub.pagePending++;
+          this._vq.push({ ev, sub, url:conn.url }); if (!this._vt) this._vt = setTimeout(()=>this._flush(), 40);
+        }
       } else if (typ === 'EOSE' || typ === 'CLOSED'){
         const sub = this._subs.get(m[1]); if (!sub) return;
+        if(sub.pageIds){if(typ==='EOSE')sub.pageEosed.add(conn.url);else sub.pageEosed.delete(conn.url);}
         if(typ==='CLOSED' && this._authRequired(m[2])){
           // A private owner-bound subscription gets ONE AUTH attempt on this relay. A filter with
           // no owner, several owners, or a repeated refusal can never be satisfied by the active
@@ -512,7 +519,7 @@
           const socket=conn.ws;
           this._authenticate(conn,authOwner).then(ok=>{
             if(conn.ws!==socket||this._subs.get(m[1])!==sub)return;
-            if(ok&&conn._send(['REQ',m[1],...sub.filters]))sub.sent.add(conn.url);
+            if(ok&&conn._send(['REQ',m[1],...sub.filters])){sub.sent.add(conn.url);if(sub.pageAsked){sub.pageAsked.add(conn.url);sub.pageEosed.delete(conn.url);}}
             else finishDenied();
           });
           return;
@@ -600,6 +607,14 @@
         const w = this._negWaiters.get(m[1]); if (w) w.onErr(m[2] || 'error');
       }
     },
+    _recordPage(sub,url,ev){
+      if(!sub.pageIds || sub.pageClosed) return;
+      if(!ev || typeof ev.id!=='string' || !ev.id || !Number.isSafeInteger(ev.created_at) || ev.created_at<0){ sub.pageInvalid=true; return; }
+      if(!sub.pageIds.has(url)) sub.pageIds.set(url,new Set());
+      sub.pageIds.get(url).add(ev.id);
+      const old=sub.pageBounds.get(url), at=[ev.created_at,ev.id];
+      if(!old || at[0]<old[0] || at[0]===old[0]&&at[1]<old[1])sub.pageBounds.set(url,at);
+    },
     async _flush(){
       if (this._vt){ clearTimeout(this._vt); this._vt = null; }
       const batch = this._vq.splice(0, this._vq.length);
@@ -607,8 +622,28 @@
       try {
         const results = await worker.call('verifyBatch', { events: batch.map(b=>b.ev) });
         const valid = new Set(results.filter(r=>r.valid).map(r=>r.id));
-        for (const b of batch){ if (valid.has(b.ev.id) && b.sub.onEvent && !b.sub.seen.has(b.ev.id)){ this._seenAdd(b.sub, b.ev.id); b.sub.onEvent(b.ev); } }
-      } catch(e){ console.warn('verify batch failed', e); }
+        for(let i=0;i<batch.length;i++){
+          const b=batch[i];
+          // The worker returns one verdict per input. An invalid duplicate of a valid ID
+          // must not inflate this relay's page count or influence an archive cursor.
+          const verified=b.sub.pageIds
+            ? !!(results[i]&&results[i].valid&&results[i].id===b.ev.id)
+            : valid.has(b.ev.id);
+          if(b.sub.pageIds && !verified) b.sub.pageInvalid=true;
+          if(verified && !b.sub.pageClosed){
+            this._recordPage(b.sub,b.url,b.ev);
+            if(b.sub.onEvent && !b.sub.seen.has(b.ev.id)){ this._seenAdd(b.sub,b.ev.id); b.sub.onEvent(b.ev); }
+          }
+        }
+      } catch(e){
+        for(const b of batch) if(b.sub.pageIds) b.sub.pageInvalid=true;
+        console.warn('verify batch failed', e);
+      } finally {
+        for(const b of batch) if(b.sub.pageIds){
+          b.sub.pagePending--;
+          if(!b.sub.pagePending && b.sub.pageFinish) b.sub.pageFinish();
+        }
+      }
     },
     // Bound a sub's dedup Set: a live sub stays open for the whole session, so an uncapped `seen` grows
     // without limit (one entry per event ever delivered) → a slow memory leak in the always-open PWA/APK.
@@ -620,12 +655,13 @@
     },
 
     // filters: array of filter objects. Returns subId. live=true keeps it open for new events.
-    subscribe(filters, { onEvent, onEose, live=true } = {}){
+    subscribe(filters, { onEvent, onEose, live=true, collectPages=false } = {}){
       const id = 'sub' + Math.random().toString(36).slice(2,9);
       const sub = { filters, onEvent, onEose, live, seen: new Set(), eosed: new Set(), sent: new Set() };
+      if(collectPages) Object.assign(sub,{pageIds:new Map(),pageBounds:new Map(),pageAsked:new Set(),pageEosed:new Set(),pagePending:0,pageInvalid:false,pageClosed:false});
       this._subs.set(id, sub);
       // Record WHICH sockets took the REQ, not merely that we tried — see _eoseDone.
-      for (const c of this._conns.values()){ if (c.ws && c.ws.readyState === 1){ c._send(['REQ', id, ...filters]); sub.sent.add(c.url); } }
+      for (const c of this._conns.values()){ if (c.ws && c.ws.readyState === 1){ c._send(['REQ', id, ...filters]); sub.sent.add(c.url); if(sub.pageAsked)sub.pageAsked.add(c.url); } }
       // EOSE BACKSTOP. Below, onEose fires once every relay we ASKED has EOSE'd (_eoseDone), and a
       // relay that goes down leaves that count — but one that is UP and simply never answers this
       // filter does not, and callers use EOSE as the backlog→live boundary (`_dmLive`, `_notifReady`,
@@ -707,10 +743,20 @@
       }
     },
     // one-shot query across all relays -> resolves with a deduped array after every relay EOSEs
-    query(filters, timeout=6000){
+    query(filters, timeout=6000, {pages=false}={}){
       return new Promise((res)=>{
         const got = []; let done = false;
         const settle = (viaTimeout) => {
+          const sub=this._subs.get(id);
+          const pageComplete=!pages || !!(sub && sub.pageAsked.size && !sub.pageInvalid && !sub.pagePending &&
+            [...sub.pageAsked].every(url=>sub.pageEosed.has(url)));
+          if(pages){
+            const counts=sub?[...sub.pageAsked].map(url=>(sub.pageIds.get(url)||new Set()).size):[];
+            Object.defineProperty(got,'pageCounts',{value:Object.freeze(counts),enumerable:false});
+            const bounds=sub?[...sub.pageAsked].map(url=>{const b=sub.pageBounds.get(url);return b?Object.freeze(b.slice()):null;}):[];
+            Object.defineProperty(got,'pageBounds',{value:Object.freeze(bounds),enumerable:false});
+            if(sub)sub.pageClosed=true;
+          }
           this.close(id);
           // No EOSE from ANY relay within the window → the socket is likely a zombie (frozen by a
           // proxy/resume). Kick a reconnect so the retry + the next query succeed.
@@ -718,16 +764,19 @@
           // `complete` = every relay EOSE'd, so the set is the whole answer. False means we gave up on the
           // timer instead, and the result may be PARTIAL — a REQ fired at a still-CONNECTING socket is
           // silently dropped by _send and never draws an EOSE. Non-enumerable so spreads/JSON ignore it.
-          try{ Object.defineProperty(got, 'complete', { value: !viaTimeout, enumerable: false, configurable: true }); }catch(_){}
+          try{ Object.defineProperty(got, 'complete', { value: !viaTimeout && pageComplete, enumerable: false, configurable: true }); }catch(_){}
           res(got);
         };
-        const finish = (viaTimeout) => { if (done) return; done = true;
+        const finish = (viaTimeout) => { if (done) return;
+          const sub=this._subs.get(id);
+          if(pages && !viaTimeout && sub && sub.pagePending){ sub.pageFinish=()=>finish(false); return; }
+          done = true;
           // Drain pending signature verifications before resolving, or events already received from an
           // untrusted relay are thrown away on this path (the EOSE path above already drains them).
-          if (viaTimeout && this._vq.length) this._flush().then(() => settle(true), () => settle(true));
+          if (viaTimeout && !pages && this._vq.length) this._flush().then(() => settle(true), () => settle(true));
           else settle(viaTimeout); };
         const id = this.subscribe(filters, {
-          live: false,
+          live: false, collectPages:pages,
           onEvent: ev => got.push(ev),    // pool already deduped by id before delivery
           onEose: () => finish(false)
         });

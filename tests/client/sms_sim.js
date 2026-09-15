@@ -16,10 +16,13 @@
  * Usage:  node sms_sim.js '<json options>'   → prints a JSON transcript on stdout.
  */
 const path = require('path');
-const { webcrypto } = require('crypto');
+const { webcrypto, createHash } = require('crypto');
 const ROOT = path.resolve(__dirname, '..', '..');
 
 const opt = JSON.parse(process.argv[2] || '{}');
+// Real relay/store events always carry IDs; keep shared fixture identities identical in both.
+for(const key of ['cached','relay']) if(opt[key]) opt[key]=opt[key].map(ev=>({...ev,
+  id:ev.id || createHash('sha256').update(JSON.stringify(ev)).digest('hex')}));
 
 const calls = [];        // every plugin call, in order
 const published = [];    // every event handed to publish(), in order
@@ -220,6 +223,19 @@ if(opt.oldApk) delete PLUGIN.listMms;
 // is the property the whole archive design leans on — so the store keeps one per address.
 const relay = new Map();
 if(opt.relay) for(const ev of opt.relay) relay.set(dOf(ev), ev);
+if(opt.generatedArchive) for(let i=0;i<opt.generatedArchive;i++){
+  const d='pcai:sms:page'+String(i).padStart(24,'0');
+  const tags=[['d',d]]; if(!opt.unlabelledArchive) tags.push(['l','pcai-sms']);
+  relay.set(d,{id:createHash('sha256').update(d).digest('hex'),pubkey:'me',kind:30078,
+    created_at:opt.sameSecondArchive?100000:100000-i,tags,
+    content:'enc:'+JSON.stringify({address:'+15550100',date:100000000-i*1000,body:'archive '+i,incoming:true})});
+}
+if(opt.generatedOtherArchive) for(let i=0;i<opt.generatedOtherArchive;i++){
+  const d='pcai:mail:other:'+i;
+  relay.set(d,{id:createHash('sha256').update(d).digest('hex'),pubkey:'me',kind:30078,
+    created_at:200000,tags:[['d',d]],content:'not SMS ciphertext'});
+}
+let archiveQueries=0;
 
 function dOf(ev){ return ((ev.tags || []).find(t => t[0] === 'd') || [])[1] || ''; }
 
@@ -282,7 +298,25 @@ global.Relay = {
      * the broad one is author+kind over the whole kind-30078 datastore (measured on a real node:
      * 19,480 folder-sync records and 17,805 mail rows beside 4,619 texts), so how OFTEN it is sent
      * over the wire is the difference between opening a screen and downloading an account. */
-    calls.push(['relayQuery', (filters || []).map(f => f && f['#l'] ? 'label' : 'broad').join('+')]);
+    calls.push(['relayQuery', (filters || []).map(f => f && f['#l'] ? 'label' : 'broad').join('+'), JSON.parse(JSON.stringify(filters))]);
+    if(opt.generatedArchive){
+      const f=filters[0]; archiveQueries++; calls.push(['archivePage',JSON.parse(JSON.stringify(f))]);
+      if(opt.switchArchiveAt===archiveQueries) global.__PC.ME={pubkey:'other'};
+      if(opt.holdArchiveAfterFailure && archiveQueries>2 && !f['#l']) return new Promise(()=>{});
+      if(opt.failArchiveAt===archiveQueries && !relayBackUp){const partial=[];partial.complete=false;return partial;}
+      let hits=Array.from(relay.values()).filter(e=>f.authors.includes(e.pubkey)&&f.kinds.includes(e.kind)&&
+        (!f['#l']||e.tags.some(t=>t[0]==='l'&&f['#l'].includes(t[1])))&&
+        (f.until===undefined||e.created_at<=f.until)&&
+        (!f._cursor||opt.ignoreArchiveCursor||e.created_at<f._cursor[0]||e.created_at===f._cursor[0]&&e.id<f._cursor[1]));
+      hits.sort((a,b)=>b.created_at-a.created_at||b.id.localeCompare(a.id));
+      const cap=Math.min(f.limit||500,opt.archiveRelayCap||5000);
+      const split=opt.sparseArchiveRelay?opt.generatedArchive-1:4200;
+      const sets=opt.multiRelayArchive
+        ? [hits.filter(e=>Number(dOf(e).slice(-24))<split).slice(0,opt.mixedArchiveCaps?Math.min(cap,100):cap),
+           hits.filter(e=>Number(dOf(e).slice(-24))>=split).slice(0,cap)]
+        : [hits.slice(0,cap)];
+      const out=sets.flat();out.complete=true;out.pageCounts=sets.map(a=>a.length);out.pageBounds=sets.map(a=>a.length?[a.at(-1).created_at,a.at(-1).id]:null);return out;
+    }
     if(opt.relayDown) throw new Error('no relay');
     /* UNREACHABLE, THEN REACHABLE. "I could not ask" and "there is nothing there" are different
      * answers, and the only way to show a client conflating them is to let the relay come back. */
@@ -298,7 +332,11 @@ global.Relay = {
         ? rows.filter(ev => (ev.tags || []).some(t => t[0] === 'l' && t[1] === 'pcai-sms')) : rows;
       for(const ev of hits) if(!ev.id || !out.some(old => old.id === ev.id)) out.push(ev);
     }
-    return out;
+    const f=filters[0]||{};
+    const result=out.filter(e=>(f.until===undefined||e.created_at<=f.until)&&
+      (!f._cursor||e.created_at<f._cursor[0]||e.created_at===f._cursor[0]&&e.id<f._cursor[1]));
+    result.sort((a,b)=>b.created_at-a.created_at||b.id.localeCompare(a.id));
+    result.pageCounts=[result.length]; result.pageBounds=[result.length?[result.at(-1).created_at,result.at(-1).id]:null];return result;
   },
   subscribe(filters, handlers){
     global.__smsLiveEvent = handlers && handlers.onEvent;
@@ -538,6 +576,13 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
       const w = await S.emptyWhy();
       calls.push(['why', w.fix || '', w.why]);
     }
+    else if(step === 'settleArchive'){
+      for(let i=0;i<400;i++){
+        if(S._state().msgs.size>=opt.generatedArchive||(opt.stopIncomplete&&S._state().historyIncomplete))break;
+        await new Promise(r=>setTimeout(r,25));
+      }
+    }
+    else if(step === 'recoverArchive'){ relayBackUp=true; await S.load(true); }
     else if(step === 'settle'){ await new Promise(r => setTimeout(r, 20)); }
     else if(step === 'absorbRaw'){ await S._absorb(opt.rawEvents || []); }
     /* A NEW PAGE ON THE SAME BROWSER. Everything this module holds in memory is gone; the archive
@@ -666,6 +711,7 @@ require(path.join(ROOT, 'static', 'js', 'client', 'sms.js'));
   };
   console.log(JSON.stringify({
     calls, published, notified, uploads, scrollProbe, hydrationProbe, archive, archiveProbe,
+    historyIncomplete:!!st.historyIncomplete,
     // What the phone reported about itself — see publishStatus in sms.js.
     statuses: statuses.map(x => { try{ return JSON.parse(String(x.content).slice(4)); }
                                  catch(_){ return {bad:true}; } }),
