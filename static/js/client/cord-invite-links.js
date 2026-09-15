@@ -57,7 +57,8 @@
       const content=await context.encrypt(context.pubkey,text);active(context);
       const event=await context.sign({kind:13303,created_at:Math.max(Math.floor(Date.now()/1000),read.latest+1),tags:[],content});active(context);
       if(!(await verified([event],context,13303,context.pubkey)).length)throw new Error('Invalid Invite List signature');
-      const acknowledgment=await context.publish(event);active(context);if(acknowledgment===false)throw new Error('Invite List was not accepted by a relay');
+      const latest=await readList(context);if(!latest.complete||latest.latest!==read.latest||canonical(latest.list)!==canonical(read.list))throw new Error('Invite List changed while signing; retry to merge the latest entries');
+      const acknowledgment=await context.publish(event);active(context);if(acknowledgment!==true&&acknowledgment?.ok!==true)throw new Error('Invite List was not accepted by a relay');
       cached.set(context.pubkey,clone(event));try{localStorage.setItem(cacheKey(context.pubkey),JSON.stringify(event));}catch(_){}
       return next;
     });writes.set(context.pubkey,job);return job;

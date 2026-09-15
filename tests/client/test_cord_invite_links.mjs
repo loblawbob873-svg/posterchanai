@@ -10,7 +10,7 @@ const sign=t=>NT.finalizeEvent(copy(t),sk),key=NT.nip44.getConversationKey(sk,pk
 const made=await P.createCommunity({...copy({owner:pk,name:'Links',relays:['wss://relay.example'],base:'https://example.test'}),signEvent:sign});
 const bundle=P.openInvite(made.url,copy(made.events)).bundle,creator=copy({...bundle,control_root:made.secrets.controlRoot});
 let current=true,events=[],published=[],complete=true;
-const context={pubkey:pk,isCurrent:()=>current,verify:async es=>es.filter(e=>NT.verifyEvent(copy(e))),decrypt:async(_,text)=>NT.nip44.decrypt(text,key),encrypt:async(_,text)=>NT.nip44.encrypt(text,key),sign:async t=>sign(t),query:async()=>({events,complete}),publish:async e=>{published.push(e);}};
+const context={pubkey:pk,isCurrent:()=>current,verify:async es=>es.filter(e=>NT.verifyEvent(copy(e))),decrypt:async(_,text)=>NT.nip44.decrypt(text,key),encrypt:async(_,text)=>NT.nip44.encrypt(text,key),sign:async t=>sign(t),query:async()=>({events,complete}),publish:async e=>{published.push(e);return true;}};
 const minted=await A.create(creator,context,{base:'https://example.test'}),entry=minted.entry;
 assert(NT.verifyEvent(copy(minted.event)));
 const derived=bytes(Buffer.from(hkdfSync('sha256',Buffer.from(entry.token,'hex'),Buffer.alloc(0),Buffer.concat([Buffer.from('concord/invite-key'),Buffer.from([0]),Buffer.alloc(32)]),32)));
@@ -52,3 +52,50 @@ wire=[];revoked=true;assert.equal(await ctx.refreshOwnedInviteLinks(host,room),0
 revoked=false;incomplete=true;await assert.rejects(()=>ctx.refreshOwnedInviteLinks(host,room),/incomplete/);assert.equal(wire.length,0);
 incomplete=false;ctx.cordQuery=async(_p,relays,_f,options)=>{options.report.failed=relays;return [];};await assert.rejects(()=>ctx.refreshOwnedInviteLinks(host,room),/registry sync is incomplete/);assert.equal(wire.length,0);
 console.log('creator refresh hook passed');
+ctx.cordPlaneAuth=()=>({});ctx.PCConcord={};host.viewer=()=>({pubkey:pk});
+let controlEvents=copy([...controls,liveRegistry.wrap]);
+ctx.cordQuery=async(_p,relays,_f,options)=>{options.report.ok=relays;return controlEvents;};
+ctx.cordPlaneContext=()=>({current:()=>current});
+let calls=[];host.relayPublishRoom=async(_relays,e)=>{calls.push(e);return {ok:true};};
+const createdLink=await ctx.changeOwnedInviteLink(host,room);assert.equal(createdLink.community_id,bundle.community_id);assert.deepEqual(calls.map(e=>e.kind),[13303,33301,1059]);
+const newRegistry=calls[2];controlEvents=copy([...controlEvents,newRegistry]);assert(R.inspectControl(bundle,controlEvents).liveInviteLinks.includes(A.details(createdLink).pubkey));
+assert.equal(P.openInvite(createdLink.url,copy([calls[1]])).bundle.channels.length,0);
+// Ordinary retirement writes the tombstone before removing the registry, then records terminal bookkeeping.
+calls=[];await ctx.changeOwnedInviteLink(host,room,createdLink);assert.deepEqual(calls.map(e=>e.kind),[33301,1059,13303]);assert(calls[0].tags.some(t=>t[0]==='vsk'&&t[1]==='9'));
+controlEvents=copy([...controlEvents,calls[1]]);
+// Final-link retirement must review recipients and pass the registry update into authenticated refounding.
+ctx.PCConcord.refoundingBeforeEvents=true;ctx.PCConcord.reviewRefoundingRecipients=async()=>({recipients:[]});ctx.PCConcord.refoundRoom=async(_p,_room,options)=>{assert.equal(calls.length,0);assert.equal(options.controlUpdates.length,1);assert.equal(options.beforeEvents.length,1);await host.relayPublishRoom([],options.beforeEvents[0]);assert.equal(calls.length,1);calls.push({kind:'refound'});};
+calls=[];await ctx.changeOwnedInviteLink(host,room,second.entry);assert.deepEqual(calls.map(e=>e.kind),[33301,'refound',13303]);
+console.log('creator link lifecycle passed');
+// Canceling recipient review never publishes a tombstone or claims retirement.
+ctx.PCConcord.reviewRefoundingRecipients=async()=>null;calls=[];assert.equal(await ctx.changeOwnedInviteLink(host,room,second.entry),null);assert.equal(calls.length,0);
+// Backup refusal prevents publication of any usable link or registry change.
+host.relayPublishRoom=async(_relays,e)=>{calls.push(e);return {ok:false};};calls=[];await assert.rejects(()=>ctx.changeOwnedInviteLink(host,room),/No relay accepted/);assert.deepEqual(calls.map(e=>e.kind),[13303]);
+// Rejecting the bare link must not advance the public registry.
+host.relayPublishRoom=async(_relays,e)=>{calls.push(e);return {ok:e.kind!==33301};};calls=[];await assert.rejects(()=>ctx.changeOwnedInviteLink(host,room),/No relay accepted/);assert.deepEqual(calls.map(e=>e.kind),[13303,33301]);
+// Explicit recovery keeps the existing URL and remembers its signing key encrypted.
+host.relayPublishRoom=async(_relays,e)=>{calls.push(e);return {ok:true};};calls=[];
+const original=copy({token:made.secrets.token,signer_sk:made.secrets.linkSignerSk,community_id:bundle.community_id,url:made.url});
+assert.equal((await ctx.changeOwnedInviteLink(host,room,original,{adopt:true})).url,made.url);assert.deepEqual(calls.map(e=>e.kind),[13303,33301,1059]);
+assert.equal(P.openInvite(made.url,copy([calls[1]])).bundle.community_id,bundle.community_id);
+// Signing-account changes during list synchronization stop before all writes.
+host.relayQueryFrom=async()=>{current=false;return [];};calls=[];await assert.rejects(()=>ctx.changeOwnedInviteLink(host,room),/changed/);assert.equal(calls.length,0);current=true;
+console.log('creator cancellation and rejection passed');
+// A second device edit during the signer prompt is observed before a replaceable overwrite.
+events=[];const candidate=await A.create(bundle,context);published=[];
+await assert.rejects(()=>A.remember(candidate.entry,{...context,sign:async template=>{events=[sign({kind:13303,created_at:template.created_at+10,tags:[],content:NT.nip44.encrypt(JSON.stringify({entries:[],tombstones:[],otherDevice:'preserve'}),key)})];return sign(template);}}),/changed while signing/);assert.equal(published.length,0);events=[];
+await assert.rejects(()=>A.remember(candidate.entry,{...context,publish:async()=>undefined}),/not accepted/);
+await assert.rejects(()=>A.remember(candidate.entry,{...context,publish:async()=>({ok:false})}),/not accepted/);
+// A control-generation change while reading a link blocks release of fresh keys.
+let generation=0;ctx.cordPlaneContext=()=>{const own=generation;return {current:()=>current&&generation===own};};
+ctx.cordQuery=async(_p,relays,_f,options)=>{options.report.ok=relays;return copy([liveRegistry.wrap]);};
+const racingHost={...host,relayQueryFrom:async(relays,filters,options)=>{options.report.ok=relays;if(filters[0].kinds[0]===13303)return [listEvent];generation++;return [second.event];}};
+calls=[];await assert.rejects(()=>ctx.refreshOwnedInviteLinks(racingHost,room),/changed/);assert.equal(calls.length,0);
+console.log('creator concurrent edit and permission guards passed');
+// The whole community lifecycle is serialized, so concurrent clicks cannot fork one registry head.
+ctx.cordPlaneContext=()=>({current:()=>current});ctx.cordQuery=async(_p,relays,_f,options)=>{options.report.ok=relays;return copy(controls);};ctx.roomControls.set(room.communityId,copy(controls));
+const concurrentHost={...host,relayQueryFrom:async(relays,filters,options)=>{options.report.ok=relays;return filters[0].kinds[0]===13303?[listEvent]:[];}};
+calls=[];const twins=await Promise.all([ctx.changeOwnedInviteLink(concurrentHost,room),ctx.changeOwnedInviteLink(concurrentHost,room)]);
+const paired=R.inspectControl(bundle,copy([...controls,...calls.filter(e=>e.kind===1059)]));for(const twin of twins)assert(paired.liveInviteLinks.includes(A.details(twin).pubkey));assert.equal(paired.liveInviteLinks.length,2);
+await ctx.changeOwnedInviteLink(concurrentHost,room,twins[0]);
+console.log('concurrent creator mint serialization passed');

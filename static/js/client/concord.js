@@ -1099,9 +1099,9 @@
         if(!current())throw new Error('Concord membership changed');
         return {events,complete:targets.length>0&&targets.every(url=>report.ok?.includes(url))};
       },
-      publish:async event=>{
+      publish:async(event,bootstrap=[])=>{
         if(!current())throw new Error('Concord membership changed');
-        const ack=await p.relayPublishRoom(relays,event);
+        const ack=await p.relayPublishRoom([...new Set([...bootstrap,...relays])].slice(0,8),event);
         if(!current())throw new Error('Concord membership changed');
         if(!ack?.ok)throw new Error('No relay accepted the invitation update');
         return true;
@@ -1116,18 +1116,90 @@
     if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!relays.every(url=>report.ok?.includes(url)))throw new Error('Current invitation registry sync is incomplete');
     if(!context.isCurrent())throw new Error('Concord membership changed');
     const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
-    const list=await api.readList(context);if(!list.complete)throw new Error('Invite List sync is incomplete');
+    roomControls.set(loadKey,wraps);const plane=cordPlaneContext(p,bundle,wraps,room),guarded={...context,isCurrent:()=>context.isCurrent()&&plane.current()};
+    const list=await api.readList(guarded);if(!list.complete)throw new Error('Invite List sync is incomplete');
     const live=new Set(info.registriesByCreator?.[context.pubkey]||[]);let refreshed=0;
     for(const entry of list.list.entries.filter(e=>e.community_id===bundle.community_id)){
       if(!context.isCurrent())throw new Error('Concord membership changed');
       if(!live.has(api.details(entry).pubkey))continue;
-      const status=await api.linkState(entry,context);
+      const status=await api.linkState(entry,guarded);
       if(!status.complete)throw new Error('Invitation relay sync is incomplete');
       if(status.retired)continue;
-      const event=await api.refreshEvent(entry,{...bundle,channels:[]},status.events,context);
-      await context.publish(event);refreshed++;
+      const event=await api.refreshEvent(entry,{...bundle,channels:[]},status.events,guarded);
+      if(!guarded.isCurrent())throw new Error('Concord invitation permission changed');
+      await context.publish(event,api.details(entry).relays);refreshed++;
     }
     return refreshed;
+  }
+  async function ownedInviteRegistry(p,room,scope){
+    const reader=window.PosterCordReader,bundle=room.cord.bundle,key=room.communityId||room.naddr;
+    const known=roomControls.get(key)||[],seed=reader.inspectControl(bundle,known),report={};
+    const fresh=await cordQuery(p,scope.relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report});
+    if(!scope.context.isCurrent())throw new Error('Concord membership changed');
+    if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!scope.relays.every(url=>report.ok?.includes(url)))throw new Error('Current invitation registry sync is incomplete');
+    const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
+    if(!info.inviteCreators.includes(scope.context.pubkey))throw new Error('Your account cannot manage invite links');
+    roomControls.set(key,wraps);
+    return {wraps,info,key,plane:cordPlaneContext(p,bundle,wraps,room)};
+  }
+  const ownedInviteWrites=new Map();
+  function changeOwnedInviteLink(p,room,entry=null,options={}){
+    const owner=p.viewer?.().pubkey,key=JSON.stringify([owner,roomIdentity(room)]),prior=ownedInviteWrites.get(key)||Promise.resolve();
+    const job=prior.catch(()=>{}).then(()=>{if(p.viewer?.().pubkey!==owner)throw new Error('Concord account changed');return changeOwnedInviteLinkNow(p,room,entry,options);});
+    ownedInviteWrites.set(key,job);job.finally(()=>{if(ownedInviteWrites.get(key)===job)ownedInviteWrites.delete(key);}).catch(()=>{});return job;
+  }
+  async function changeOwnedInviteLinkNow(p,room,entry=null,{adopt=false}={}){
+    const scope=await ownedInviteContext(p,room),{api,context,relays}=scope,reader=window.PosterCordReader;
+    const registry=await ownedInviteRegistry(p,room,scope),links=new Set(registry.info.registriesByCreator[context.pubkey]||[]);
+    const assertCurrent=()=>{if(!context.isCurrent()||!registry.plane.current())throw new Error('Concord invitation permission changed');};
+    const guarded={...context,isCurrent:()=>context.isCurrent()&&registry.plane.current()};
+    let made,retirement=null;
+    if(entry&&!adopt){
+      if(entry.community_id!==room.cord.bundle.community_id||!links.has(api.details(entry).pubkey))throw new Error('This account does not own an active registry entry');
+      const state=await api.linkState(entry,guarded);if(!state.complete)throw new Error('Invitation relay sync is incomplete');
+      made={entry,event:api.revokeEvent(entry,state.events,guarded)};links.delete(api.details(entry).pubkey);
+      if(registry.info.liveInviteLinks.every(pk=>pk===api.details(entry).pubkey)){
+        if(!window.PCConcord.reviewRefoundingRecipients||!window.PCConcord.refoundRoom||window.PCConcord.refoundingBeforeEvents!==true)throw new Error('Retiring the final link requires community refounding support');
+        retirement=await window.PCConcord.reviewRefoundingRecipients(p,room);assertCurrent();if(!retirement)return null;
+      }
+    }else{
+      if(adopt){
+        if(entry.community_id!==room.cord.bundle.community_id||context.pubkey!==room.cord.bundle.owner)throw new Error('Only the original creator can recover this link');
+        const status=await api.linkState(entry,guarded);if(!status.complete||status.retired)throw new Error('Existing link is retired or has not finished syncing');
+        made={entry,event:await api.refreshEvent(entry,{...room.cord.bundle,channels:[]},status.events,guarded)};
+      }else made=await api.create({...room.cord.bundle,channels:[]},guarded,{base:location.origin});
+      // Preserve the signing key before publishing a usable link, so failed registry delivery is recoverable.
+      await api.remember(made.entry,guarded);links.add(api.details(made.entry).pubkey);
+    }
+    assertCurrent();const update=await reader.createInviteRegistryWrap(room.cord.bundle,registry.wraps,[...links],context.pubkey,context.sign);assertCurrent();
+    if(retirement){await window.PCConcord.refoundRoom(p,room,{...retirement,controlUpdates:[update.wrap],beforeEvents:[made.event],beforeRelays:[...new Set([...api.details(made.entry).relays,...relays])].slice(0,8)});}
+    else{
+      await guarded.publish(made.event,api.details(made.entry).relays);assertCurrent();
+      const ack=await p.relayPublishRoom(relays,update.wrap,cordPlaneAuth(p,registry.plane,update.wrap.pubkey,relays));
+      assertCurrent();if(!ack?.ok)throw new Error('Link event was published but its registry update needs retry');
+      roomControls.set(registry.key,mergeEnvelopes(registry.wraps,[update.wrap]));
+    }
+    // Refounding changes the root; use a fresh captured context for terminal list cleanup.
+    if(entry&&!adopt){const latest=saved().find(r=>roomIdentity(r)===roomIdentity(room));if(!latest||p.viewer?.().pubkey!==context.pubkey)throw new Error('Concord account changed');await api.forget(entry,(await ownedInviteContext(p,latest)).context);}
+    return made.entry;
+  }
+  async function showOwnedInviteLinks(p,room){
+    const scope=await ownedInviteContext(p,room),read=await scope.api.readList(scope.context);
+    if(!scope.context.isCurrent())return;
+    p.modal('<h3>Community invite links</h3><p>Links let anyone with the URL join. Retiring the last active link also rotates community keys.</p><div id="cc-owned-links"></div><button class="btn" id="cc-mint-link">Create invite link</button>',root=>{
+      const list=root.querySelector('#cc-owned-links');
+      const entries=read.list.entries.filter(e=>e.community_id===room.cord.bundle.community_id);
+      if(!entries.length)list.textContent='No links created by this account.';
+      if(room.url){const copy=document.createElement('button');copy.className='btn';copy.textContent='Copy current community link';copy.onclick=()=>p.copyValue(room.url);list.appendChild(copy);}
+      const secrets=room.cord?.secrets;
+      if(secrets?.token&&secrets?.linkSignerSk&&room.url&&room.cord.bundle.owner===scope.context.pubkey&&!entries.some(e=>e.token===secrets.token)&&!read.list.tombstones.some(e=>e.token===secrets.token)){
+        const recover=document.createElement('button');recover.className='btn';recover.textContent='Manage original link';recover.onclick=async()=>{recover.disabled=true;try{await changeOwnedInviteLink(p,room,{token:secrets.token,signer_sk:secrets.linkSignerSk,community_id:room.cord.bundle.community_id,url:room.url},{adopt:true});p.closeModal();await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));recover.disabled=false;}};list.appendChild(recover);
+      }
+      for(const entry of entries){const row=document.createElement('div'),label=document.createElement('span');label.textContent=entry.label||'Invite link';row.appendChild(label);
+        for(const [text,action] of [['Copy',()=>p.copyValue(entry.url)],['Retire',()=>changeOwnedInviteLink(p,room,entry)]]){const button=document.createElement('button');button.className='btn';button.textContent=text;button.onclick=async()=>{button.disabled=true;try{const result=await action();if(text==='Retire'&&result){p.closeModal();p.toast('Invitation retired');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};row.appendChild(button);}list.appendChild(row);}
+      const mintButton=root.querySelector('#cc-mint-link');mintButton.disabled=!communityPermission(p,room,'inviteCreators');if(mintButton.disabled)mintButton.title='Only authorized community staff can create links';
+      mintButton.onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{const entry=await changeOwnedInviteLink(p,room);if(entry){p.copyValue(entry.url);p.closeModal();p.toast('Invitation created and copied');}}catch(e){p.toast(e.message||String(e));}finally{button.disabled=false;}};
+    });
   }
   async function saveCommunitySettings(p,room,values){
     const owner=p.viewer?.().pubkey,identity=roomIdentity(room),loadKey=room.communityId||room.naddr;
@@ -3672,7 +3744,7 @@
         <div class="cc-channel-list">${state.community==null?'<div class="cc-empty-side">Choose or join a community</div>':channelSectionsHtml(p,current,visibleChannels)}</div>
         <footer class="cc-identity"><span class="cc-status"></span><div><b>${p.enc(me)}</b><small>You</small></div><button class="cc-head-btn" id="cc-notify" title="Notification settings"><svg class="ic"><use href="#i-bell"></use></svg></button></footer>
       </aside>
-      <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations">Invites</button><button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
+      <main class="cc-conversation"><header><button class="cc-mobile-back" id="cc-back-channels" aria-label="${state.community==null?'Back to rooms':'Rooms and channels'}">${state.community==null?'‹':'☰'}</button><span class="cc-hash">#</span><b>${p.enc(state.community==null?'Communities':state.channel||'general')}</b><span class="cc-visibility ${channelPrivate?'private':'public'}">${channelPrivate?'Private':'Public'}</span><span class="cc-topic">${p.enc((current&&current.description)||(channelPrivate?'Invite-only channel':'Visible to all community members'))}</span><span class="cc-spacer"></span>${current?'<button class="cc-head-btn" id="cc-publish-listing" title="Publish to Armada Discover" aria-label="Publish to Armada Discover"><svg class="ic"><use href="#i-share"></use></svg></button><button class="cc-head-btn" id="cc-direct-send" title="Invite an account" aria-label="Invite an account">Invite</button><button class="cc-head-btn" id="cc-manage-links" title="Manage invitation links" aria-label="Manage invitation links">Links</button><button class="cc-head-btn" id="cc-copy-link" title="Copy room invite link" aria-label="Copy room invite link"><svg class="ic"><use href="#i-link"></use></svg></button><button class="cc-head-btn danger" id="cc-leave-shortcut" title="Leave community" aria-label="Leave community"><svg class="ic"><use href="#i-logout"></use></svg></button><button class="cc-head-btn" id="cc-call" title="Start voice call"><svg class="ic"><use href="#i-phone"></use></svg></button>':''}<button class="cc-head-btn" id="cc-direct-inbox" title="Review direct invitations" aria-label="Review direct invitations">Invites</button><button class="cc-head-btn" id="cc-members" title="Members"><svg class="ic"><use href="#i-users"></use></svg></button></header>
         <div class="cc-messages">${messagesPaneHtml(p,messages,current,viewer,me)}</div>
         <div class="cc-reply${replyTarget?'':' hidden'}" id="cc-reply">${replyTarget?`<span>Replying to <b>${p.enc(replyTarget.by||'member')}</b>: ${p.enc(String(replyTarget.text||'').slice(0,90))}</span><button id="cc-reply-cancel" aria-label="Cancel reply">×</button>`:''}</div><div class="cc-compose"><button class="cc-compose-btn" id="cc-attach" title="Attach file"><svg class="ic"><use href="#i-paperclip"></use></svg></button><input type="file" id="cc-file" multiple hidden><textarea id="cc-input" data-cc-draft-key="${p.enc(draftKey)}" rows="1" placeholder="Message #${p.enc(state.channel||'general')}" ${state.community==null?'disabled':''}>${p.enc(draft&&draft.value||'')}</textarea><button class="cc-compose-btn" id="cc-emoji" title="Emoji"><svg class="ic"><use href="#i-smile"></use></svg></button><button class="btn btn-neon" id="cc-send" ${state.community==null?'disabled':''}>Send</button></div>
       </main></div><div class="cc-join${pendingInvite?'':' hidden'}" id="cc-join"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Join or create a community</h2><p class="muted">Paste an Armada or other CORD-05 invite. Its # secret stays in this browser.</p><input class="input" id="cc-invite-url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://…/invite/naddr1…#…" value="${p.enc((pendingInvite&&pendingInvite.url)||'')}"><div class="cc-join-actions${pendingInvite?' hidden':''}"><button class="btn btn-ghost" id="cc-join-cancel">Cancel</button><button class="btn btn-neon" id="cc-join-go">Preview invite</button></div>${pendingInvite?'':'<div class="cc-join-alt"><span>or start your own</span><button type="button" class="btn btn-ghost" id="cc-join-create">Create a community</button></div>'}${pendingInvite?invitePreviewHtml(p,pendingInvite):''}</div></div><div class="cc-join hidden" id="cc-create-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Create a public community</h2><p class="muted">Publishes an Armada-compatible CORD community and public #general channel to your relays.</p><label class="cc-label" for="cc-community-name">Community name</label><input class="input" id="cc-community-name" maxlength="64" autocomplete="off" placeholder="My community"><label class="cc-label" for="cc-community-icon">Icon <span class="muted">(emoji or image URL)</span></label><input class="input" id="cc-community-icon" maxlength="2048" autocomplete="off" placeholder="🚀 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-create-cancel">Cancel</button><button class="btn btn-neon" id="cc-create-go">Create on relays</button></div></div></div><div class="cc-join hidden" id="cc-icon-dialog"><div class="cc-join-card"><div class="concord-mark">C</div><h2>Community icon</h2><p class="muted">Use an emoji or a direct HTTP(S) image URL. Leave blank to restore the initials.</p><label class="cc-label" for="cc-icon-value">Icon</label><input class="input" id="cc-icon-value" maxlength="2048" autocomplete="off" placeholder="🌌 or https://…/icon.png"><div class="cc-join-actions"><button class="btn btn-ghost" id="cc-icon-cancel">Cancel</button><button class="btn btn-neon" id="cc-icon-save">Save icon</button></div></div></div>`;
@@ -3950,7 +4022,8 @@
       }catch(error){privateChannel.disabled=false;p.toast('Private channel setup stopped: '+(error?.message||error));}
     };
     const membersInvite=$('#cc-members-invite'); if(membersInvite)membersInvite.onclick=()=>{ $('#cc-members-dialog').classList.add('hidden'); $('#cc-join').classList.remove('hidden'); };
-    const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
+    const manageLinks=$('#cc-manage-links');if(manageLinks)manageLinks.onclick=async()=>{const room=saved()[state.community];if(!room?.cord?.bundle)return;try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}};
+    const copyLink=$('#cc-copy-link'); if(copyLink)copyLink.onclick=async()=>{ const a=saved(),room=a[state.community]; if(!room)return; if(room.url){p.copyValue(room.url);return;} if(room.cord?.bundle){try{await showOwnedInviteLinks(p,room);}catch(e){p.toast(e.message||String(e));}return;} if(room.url){ p.copyValue(room.url); return; } copyLink.disabled=true; try{ p.toast('upgrading this room to a public relay community…'); const priorMessages=testMessages(room.naddr), upgraded=await mintPublicRoom(p,room.name,room.icon); upgraded.description=room.description||''; a[state.community]=upgraded; save(a); if(priorMessages.length)saveTestMessages(upgraded.naddr,priorMessages); render(); p.copyValue(upgraded.url); p.toast('room upgraded — invite link copied'); }catch(e){ copyLink.disabled=false; p.toast('could not create invite: '+(e&&e.message||e)); } };
     const publishListing=$('#cc-publish-listing'); if(publishListing)publishListing.onclick=async()=>{ const room=saved()[state.community]; if(!room||!room.url||!room.cord||!Array.isArray(room.cord.events)){ p.toast('This is an old local sandbox; create a relay community to list it'); return; } publishListing.disabled=true; try{ p.toast('publishing to Armada relays…'); for(const ev of room.cord.events)await p.relayPublishTo(CORD_RELAYS,ev); const announcement=await p.publish(1,`${room.name}\n\n${room.url}`,[['t','concord'],['t','community']]); const accepted=await p.relayPublishTo(DISCOVER_RELAYS,announcement.ev); if(!accepted)throw new Error('Armada discovery relays rejected the listing'); p.toast('published to Armada Discover'); }catch(e){ p.toast('could not publish listing: '+(e&&e.message||e)); }finally{ publishListing.disabled=false; } };
     const settingsCancel=$('#cc-settings-cancel'); if(settingsCancel)settingsCancel.onclick=()=>{$('#cc-settings-dialog').classList.add('hidden');if(backgroundRenderPending)backgroundRender();};
     const leave=$('#cc-leave-community');if(leave)leave.onclick=async()=>{const initial=saved(),index=state.community,room=initial[index],leavingId=roomIdentity(room);if(!room||!leavingId)return;/* NEVER A NATIVE DIALOG. In the desktop shell `window.confirm` opens a real OS window and leaves the renderer unfocusable; in the APK's WebView it can be suppressed outright, and this confirm was the ONLY gate on Leave — suppressed, it answers false and the button silently does nothing, which is exactly "mobile has no way to leave concord communities". */if(p.uiConfirm&&!await p.uiConfirm('Leave '+roomName(room,index)+'?',{ok:'Leave',danger:true}))return;leave.disabled=true;try{await leaveArmadaMembership(p,room);/* Signing and relay publication can take long enough for membership sync or navigation to change the list. Reload it and remove by durable identity, never by the stale numeric index captured above. */const latest=saved(),activeBefore=latest[state.community],activeId=roomIdentity(activeBefore),removed=removeCommunityByIdentity(latest,leavingId),rooms=removed.rooms;save(rooms);await clearRoomCache(room);if(activeId===leavingId||!activeId){state.community=rooms.length?Math.min(Math.max(removed.index,0),rooms.length-1):null;state.channel=state.community==null?null:'general';mobileChatOpen=false;}else{const activeIndex=rooms.findIndex(item=>roomIdentity(item)===activeId);state.community=activeIndex>=0?activeIndex:(rooms.length?0:null);}if(state.community!=null)localStorage.setItem('pc.concord.active',String(state.community));else localStorage.removeItem('pc.concord.active');render();p.toast('community left');}catch(e){leave.disabled=false;p.toast('could not leave community: '+(e&&e.message||e));}};
@@ -4250,7 +4323,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks};
+  window.PCConcord={render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks,changeOwnedInviteLink,showOwnedInviteLinks};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
