@@ -35,6 +35,11 @@ final class MmsDraft {
         String key = key(address); Slot slot = slot(key);
         synchronized (slot) { return new Copy(key, slot, ++slot.generation); }
     }
+    /** Observe ownership for a confirmation dialog without invalidating an active copy. */
+    static Copy snapshot(String address) {
+        String key = key(address); Slot slot = slot(key);
+        synchronized (slot) { return new Copy(key, slot, slot.generation); }
+    }
     static boolean isCurrent(Copy copy) {
         synchronized (copy.slot) { return copy.slot.generation == copy.generation; }
     }

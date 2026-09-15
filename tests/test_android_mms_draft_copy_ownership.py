@@ -57,6 +57,8 @@ public class Probe {
   Thread first=new Thread(()->{try{MmsDraft.save(ctx,"first",firstStream,"image/jpeg","active");}
     catch(Throwable e){firstFailure.set(e);}});first.start();
   check(firstStream.entered.await(2,TimeUnit.SECONDS),"first process copy did not start");
+  MmsDraft.Copy observed=MmsDraft.snapshot("first");
+  check(MmsDraft.isCurrent(observed),"snapshot changed active owner");
   check(!abandoned[0].exists(),"previous process partial copy was not cleaned");
   File[] active=drafts.listFiles((d,n)->n.endsWith(".tmp"));
   check(active.length==1,"first active copy missing");
@@ -65,6 +67,9 @@ public class Probe {
   firstStream.release.countDown();first.join(2000);
   check(!first.isAlive()&&firstFailure.get()==null,"active first copy did not finish");
   expect(ctx,"first","active",11);
+  check(MmsDraft.isCurrent(observed),"observing a dialog cancelled an active copy");
+  MmsDraft.save(ctx,"first",new byte[]{12},"image/png","newer");
+  check(!MmsDraft.isCurrent(observed),"snapshot accepted a newer draft at the same file path");
   check(java.util.Arrays.equals(Files.readAllBytes(durable.toPath()),new byte[]{9,8,7}),
     "startup cleanup changed a durable media file");
   for(String mode:new String[]{"newer","removed","failed-newer","sending"}){
@@ -116,12 +121,12 @@ class CrashCopy {
 }''',
     }
     thread = (ROOT / 'mobile/android/app/src/main/java/place/poster/app/sms/ThreadActivity.java').read_text()
-    method = _method(thread, '    private void stageAttachment(final Uri uri, final String mime, final String name, final Runnable onReady)')
+    method = _method(thread, '    private void stageAttachment(final Uri uri, final String mime, final String name, final Runnable onReady, final Runnable onFinished)')
     sources['place/poster/app/sms/ThreadActivity.java'] = r'''package place.poster.app.sms;
 import java.io.*;import java.util.concurrent.*;
 class ThreadActivity extends android.content.Context {
  String address="callback-recipient";boolean stagingAttachment,destroyed,finishing;Object attachment;
- int painted,notified,accepted;final Main main=new Main();
+ int painted,notified,accepted,released;final Main main=new Main();
  ThreadActivity(File directory){super(directory);}
  boolean attachmentBusy(){return stagingAttachment;}boolean isDestroyed(){return destroyed;}boolean isFinishing(){return finishing;}
  void say(String text){notified++;}String getString(int id){return "ready";}void restoreAttachmentDraft(){painted++;}
@@ -132,11 +137,12 @@ class ThreadActivity extends android.content.Context {
  static void checkCallbacks(File directory)throws Exception {
   for(String mode:new String[]{"destroyed","finishing","superseded","different-recipient","current"}){
    ThreadActivity activity=new ThreadActivity(directory);
-   activity.stageAttachment(new Uri(),"image/jpeg","callback",()->activity.accepted++);
+   activity.stageAttachment(new Uri(),"image/jpeg","callback",()->activity.accepted++,()->activity.released++);
    if(!activity.main.ready.await(2,TimeUnit.SECONDS))throw new AssertionError("callback missing");
    activity.destroyed=mode.equals("destroyed");activity.finishing=mode.equals("finishing");
    if(mode.equals("superseded"))MmsDraft.beginCopy(activity.address);
    if(mode.equals("different-recipient"))activity.address="somebody-else";
+   if(activity.released!=1)throw new AssertionError("permission release did not follow durable copy");
    activity.main.callback.run();boolean current=mode.equals("current");
    if(activity.accepted!=(current?1:0)||activity.painted!=(current?1:0)||activity.notified!=(current?2:1))
     throw new AssertionError(mode+": stale Activity changed caption/UI");

@@ -81,7 +81,7 @@ def test_picker_stages_a_private_draft_before_uri_grant_can_expire():
         encoding="utf-8").read()
     result = thread[thread.index("if (request != PICK_MMS_IMAGE"):
                     thread.index("private byte[] readAttachment")]
-    assert "stageAttachment(picked, attachmentMime, attachmentName, onReady)" in result
+    assert "stageAttachment(picked, attachmentMime, attachmentName, onReady, onFinished)" in result
     assert result.index("openInputStream(uri)") < result.index("MmsDraft.save(ThreadActivity.this, who, in")
     assert result.index("MmsDraft.save(ThreadActivity.this, who, in") < result.index("main.post(")
     assert "static Value save" in open(os.path.join(ROOT,

@@ -98,6 +98,7 @@ public class ThreadActivity extends PcActivity {
     private ListView list;
     private EditText input;
     private Uri attachment;
+    private AlertDialog pasteDialog;
     private String attachmentMime = "image/jpeg";
     private String attachmentName = "attachment";
     private byte[] capturedAttachment;
@@ -136,6 +137,10 @@ public class ThreadActivity extends PcActivity {
         // text was silently dropped and the screen opened empty. That is the whole point of the
         // `?body=` parameter, and it would have looked like the link not working.
         readIntent(getIntent());
+        ((SmsComposeInput) input).setImageReceiver(new SmsComposeInput.Receiver() {
+            @Override public void image(Uri uri, Runnable release) { importPastedAttachment(uri, release); }
+            @Override public void error(String message) { say(message); }
+        });
 
         adapter = new Msgs();
         list.setAdapter(adapter);
@@ -182,6 +187,7 @@ public class ThreadActivity extends PcActivity {
 
     @Override
     protected void onNewIntent(Intent intent) {
+        if (pasteDialog != null) pasteDialog.dismiss();
         super.onNewIntent(intent);
         setIntent(intent);
         readIntent(intent);
@@ -597,7 +603,9 @@ public class ThreadActivity extends PcActivity {
 
     private void prepareAttachment(Uri picked) { prepareAttachment(picked, null); }
 
-    private void prepareAttachment(Uri picked, Runnable onReady) {
+    private void prepareAttachment(Uri picked, Runnable onReady) { prepareAttachment(picked, onReady, null); }
+
+    private void prepareAttachment(Uri picked, Runnable onReady, Runnable onFinished) {
         attachment = picked;
         attachmentMime = getContentResolver().getType(picked);
         if (attachmentMime == null) attachmentMime = "application/octet-stream";
@@ -612,7 +620,7 @@ public class ThreadActivity extends PcActivity {
             }
         } catch (Throwable ignored) { }
         attachmentMime = MmsSender.normalizedMime(attachmentMime, attachmentName);
-        stageAttachment(picked, attachmentMime, attachmentName, onReady);
+        stageAttachment(picked, attachmentMime, attachmentName, onReady, onFinished);
     }
 
     private void importSharedAttachment(Intent intent) {
@@ -648,13 +656,56 @@ public class ThreadActivity extends PcActivity {
                 .setOnCancelListener(dialog -> SmsShare.consumed(intent)).show();
     }
 
+    @Override protected void onDestroy() {
+        if (pasteDialog != null) pasteDialog.dismiss();
+        super.onDestroy();
+    }
+
+    private void importPastedAttachment(final Uri uri, final Runnable release) {
+        if (pasteDialog != null) pasteDialog.dismiss();
+        if (address.isEmpty()) { release.run(); say("Choose a recipient before pasting an image."); return; }
+        if (attachmentBusy()) {
+            release.run(); say("Wait for the current attachment before pasting another."); return;
+        }
+        final String recipient = address;
+        final Intent intent = getIntent();
+        final MmsDraft.Copy owner = MmsDraft.snapshot(recipient);
+        final MmsDraft.Value previous = MmsDraft.load(this, recipient);
+        final boolean[] accepted = {false};
+        Runnable accept = () -> {
+            if (isDestroyed() || isFinishing() || getIntent() != intent || !recipient.equals(address)
+                    || attachmentBusy()) { release.run(); return; }
+            if (!MmsDraft.isCurrent(owner)) { release.run(); return; }
+            accepted[0] = true;
+            try {
+                String mime = getContentResolver().getType(uri);
+                if (mime == null || !mime.startsWith("image/")) {
+                    release.run(); say("The clipboard does not contain a readable image."); return;
+                }
+                prepareAttachment(uri, null, release);
+            } catch (RuntimeException denied) {
+                release.run(); restoreAttachmentDraft(); say(getString(R.string.sms_attachment_bad));
+            }
+        };
+        if (previous == null) accept.run();
+        else pasteDialog = new AlertDialog.Builder(this).setTitle("Replace attachment?")
+                .setMessage("Replace the current attachment with the pasted image? Nothing is sent until you press Send.")
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> accept.run())
+                .setNegativeButton(android.R.string.cancel, null)
+                .setOnDismissListener(dialog -> { if (!accepted[0]) release.run(); if (pasteDialog == dialog) pasteDialog = null; }).show();
+    }
+
     /** Copy to durable private storage off the UI thread, without an in-memory file-size ceiling. */
     private void stageAttachment(final Uri uri, final String mime, final String name) {
         stageAttachment(uri, mime, name, null);
     }
 
     private void stageAttachment(final Uri uri, final String mime, final String name, final Runnable onReady) {
-        if (attachmentBusy()) return;
+        stageAttachment(uri, mime, name, onReady, null);
+    }
+
+    private void stageAttachment(final Uri uri, final String mime, final String name, final Runnable onReady, final Runnable onFinished) {
+        if (attachmentBusy()) { if (onFinished != null) onFinished.run(); return; }
         stagingAttachment = true;
         attachment = null;
         final String who = address;
@@ -666,6 +717,7 @@ public class ThreadActivity extends PcActivity {
                 if (in == null) throw new java.io.IOException("could not open attachment");
                 MmsDraft.save(ThreadActivity.this, who, in, mime, name, copy);
             } catch (Exception e) { error = "Could not prepare attachment: " + e.getMessage(); }
+            finally { if (onFinished != null) onFinished.run(); }
             final String failure = error;
             main.post(() -> {
                 stagingAttachment = false;

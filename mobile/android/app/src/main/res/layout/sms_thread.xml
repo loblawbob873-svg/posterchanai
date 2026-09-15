@@ -156,7 +156,7 @@
             android:contentDescription="@string/sms_add_emoji"
             android:src="@drawable/ic_pc_smile" />
 
-        <EditText
+        <place.poster.app.sms.SmsComposeInput
             android:id="@+id/pc_th_input"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
