@@ -37,3 +37,18 @@ const empty=await R.createInviteRegistryWrap(creator,copy([...controls,registry.
 await assert.rejects(()=>R.createInviteRegistryWrap(creator,copy(controls),copy([entry.url]),pk,sign),/invalid/);
 const other=NT.getPublicKey(NT.generateSecretKey());await assert.rejects(()=>R.createInviteRegistryWrap(creator,copy(controls),copy([]),other,sign),/authorized/);
 console.log('creator invite links passed');
+// Exercise the shipped adoption hook with real signed lists, registry folds and links.
+const fs=await import('node:fs');const source=fs.readFileSync(new URL('static/js/client/concord.js',root),'utf8');
+vm.runInContext(source.slice(source.indexOf('  async function ownedInviteContext('),source.indexOf('  async function saveCommunitySettings(')),ctx);
+const second=await A.create(creator,context,{base:'https://example.test'}),secondPk=A.details(second.entry).pubkey;
+const liveRegistry=await R.createInviteRegistryWrap(creator,copy(controls),copy([secondPk]),pk,sign);
+const room=copy({communityId:bundle.community_id,cord:{bundle:{...creator,channels:[{id:'aa'.repeat(32),key:'bb'.repeat(32),epoch:0}]}}});let rooms=[room],wire=[],incomplete=false,revoked=false;
+ctx.saved=()=>rooms;ctx.roomIdentity=r=>r.communityId;ctx.roomRelays=b=>b.relays;ctx.CORD_RELAYS=copy([]);ctx.roomControls=new Map([[room.communityId,controls]]);ctx.cordPlaneContext=()=>({current:()=>current});ctx.mergeEnvelopes=(...sets)=>sets.flat();
+ctx.cordQuery=async(_p,relays,_filters,options)=>{options.report.ok=relays;return copy([liveRegistry.wrap]);};
+const listEvent=sign({kind:13303,created_at:Math.floor(Date.now()/1000)+10,tags:[],content:NT.nip44.encrypt(JSON.stringify({entries:[second.entry],tombstones:[]}),key)});
+const host={cordDirectContext:()=>context,cordInviteLinksModule:async()=>A,relayQueryFrom:async(relays,filters,options)=>{options.report.ok=incomplete?[]:relays;return filters[0].kinds[0]===13303?[listEvent]:[revoked?A.revokeEvent(second.entry,copy([second.event]),context):second.event];},relayPublishRoom:async(_relays,e)=>{wire.push(e);return {ok:true};}};
+assert.equal(await ctx.refreshOwnedInviteLinks(host,room),1);assert.equal(P.openInvite(second.entry.url,copy(wire)).bundle.channels.length,0,'public link must not acquire privately granted channel keys');
+wire=[];revoked=true;assert.equal(await ctx.refreshOwnedInviteLinks(host,room),0);assert.equal(wire.length,0,'lagging creator list cannot revive a signed tombstone');
+revoked=false;incomplete=true;await assert.rejects(()=>ctx.refreshOwnedInviteLinks(host,room),/incomplete/);assert.equal(wire.length,0);
+incomplete=false;ctx.cordQuery=async(_p,relays,_f,options)=>{options.report.failed=relays;return [];};await assert.rejects(()=>ctx.refreshOwnedInviteLinks(host,room),/registry sync is incomplete/);assert.equal(wire.length,0);
+console.log('creator refresh hook passed');

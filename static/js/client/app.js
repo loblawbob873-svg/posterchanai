@@ -27737,6 +27737,13 @@
     if(!api) throw new Error('Concord invitations could not load');
     return api;
   }
+  async function cordInviteLinksModule(){
+    await _withModule('cord-reader.js','PosterCordReader');
+    await _withModule('cord-protocol.js','PosterCord');
+    const api=await _withModule('cord-invite-links.js','PCCordInviteLinks');
+    if(!api)throw new Error('Concord link management could not load');
+    return api;
+  }
   async function sendCordDirectInvite(bundle,recipientRef,options){
     const base=cordDirectContext(),context={...base,isCurrent:()=>base.isCurrent()&&(!options?.isCurrent||options.isCurrent())},recipient=refToPk(String(recipientRef||'').trim());
     if(!context.isCurrent())throw new Error('Invitation permission changed');
@@ -39830,7 +39837,7 @@
 
   window.__PC = {
     attachUserAutocomplete,
-    cordDirectContext, cordDirectModule, sendCordDirectInvite,
+    cordDirectContext, cordDirectModule, cordInviteLinksModule, sendCordDirectInvite,
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and
     // automatically after a relay change). Exposed for the sub-modules and for the console.
     carryPrivateToRelays, reconnectNetwork,

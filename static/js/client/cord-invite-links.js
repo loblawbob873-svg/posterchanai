@@ -76,7 +76,7 @@
   }
   async function linkState(entry,context){const info=details(entry),query=await context.query(33301,info.pubkey,info.relays);active(context);const events=(await verified(query.events,context,33301,info.pubkey)).filter(event=>event.tags.filter(t=>t[0]==='d').length===1&&event.tags.some(t=>t[0]==='d'&&t[1]===''));return {events,complete:query.complete===true,retired:events.some(event=>event.tags.some(t=>t[0]==='vsk'&&t[1]==='9'))};}
   async function refreshEvent(entry,input,observed,context){
-    active(context);details(entry);const bundle=publicBundle(input);if(bundle.community_id!==entry.community_id)throw new Error('Invitation belongs to a different community');
+    active(context);details(entry);const bundle=publicBundle({...input,...(entry.expires_at!==undefined?{expires_at:entry.expires_at}:{})});if(bundle.community_id!==entry.community_id)throw new Error('Invitation belongs to a different community');
     if(observed.some(event=>event.tags?.some(t=>t[0]==='vsk'&&t[1]==='9')))throw new Error('A retired link cannot be refreshed');
     const key=await bundleKey(entry.token);active(context);
     return NT().finalizeEvent({kind:33301,created_at:Math.max(Math.floor(Date.now()/1000),...observed.map(event=>event.created_at+1)),tags:[['d',''],['vsk','6']],content:NT().nip44.encrypt(JSON.stringify(bundle),key)},fromHex(entry.signer_sk));

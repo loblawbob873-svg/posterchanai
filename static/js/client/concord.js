@@ -1086,6 +1086,49 @@
     if(timer&&!options.some(([value])=>value===timer))options.push([timer,timer+' seconds (current)']);
     return '<label class="cc-label" for="cc-message-expiration">Disappearing messages</label><select class="input" id="cc-message-expiration"'+(communityPermission(p,room,'metadataManagers')?'':' disabled')+'>'+options.map(([value,label])=>'<option value="'+value+'"'+(value===timer?' selected':'')+'>'+p.enc(label)+'</option>').join('')+'</select><p class="cc-member-help">Applies to new messages in every channel. Existing messages keep their original timer.</p>';
   }
+  async function ownedInviteContext(p,room){
+    const base=p.cordDirectContext(),identity=roomIdentity(room),root=room.cord?.bundle?.community_root;
+    const current=()=>base.isCurrent()&&saved().some(r=>roomIdentity(r)===identity&&r.cord?.bundle?.community_root===root);
+    const api=await p.cordInviteLinksModule();if(!current())throw new Error('Concord membership changed');
+    const relays=[...new Set([...roomRelays(room.cord.bundle),...CORD_RELAYS])].slice(0,8);
+    const context={...base,isCurrent:current,
+      query:async(kind,author,bootstrap=[])=>{
+        if(!current())throw new Error('Concord membership changed');
+        const targets=[...new Set([...bootstrap,...relays])].slice(0,8),report={};
+        const events=await p.relayQueryFrom(targets,[{kinds:[kind],authors:[author],...(kind===33301?{'#d':['']}:{}),limit:65}],{timeout:10000,max:8,exact:true,allowBlocked:true,purpose:'concord owned invitation',report});
+        if(!current())throw new Error('Concord membership changed');
+        return {events,complete:targets.length>0&&targets.every(url=>report.ok?.includes(url))};
+      },
+      publish:async event=>{
+        if(!current())throw new Error('Concord membership changed');
+        const ack=await p.relayPublishRoom(relays,event);
+        if(!current())throw new Error('Concord membership changed');
+        if(!ack?.ok)throw new Error('No relay accepted the invitation update');
+        return true;
+      }};
+    return {api,context,relays};
+  }
+  async function refreshOwnedInviteLinks(p,room){
+    const {api,context,relays}=await ownedInviteContext(p,room),reader=window.PosterCordReader,bundle=room.cord.bundle;
+    const loadKey=room.communityId||room.naddr,known=roomControls.get(loadKey)||[],seed=reader.inspectControl(bundle,known);
+    const report={};
+    const fresh=await cordQuery(p,relays,[{kinds:[1059],authors:seed.controlPubkeys,limit:1000}],{timeout:10000,max:8,plane:cordPlaneContext(p,bundle,known,room),report});
+    if(fresh.length>=1000||report.failed?.length||report.held?.length||report.cooled?.length||report.unheld?.length||!relays.every(url=>report.ok?.includes(url)))throw new Error('Current invitation registry sync is incomplete');
+    if(!context.isCurrent())throw new Error('Concord membership changed');
+    const wraps=mergeEnvelopes(known,fresh),info=reader.inspectControl(bundle,wraps);
+    const list=await api.readList(context);if(!list.complete)throw new Error('Invite List sync is incomplete');
+    const live=new Set(info.registriesByCreator?.[context.pubkey]||[]);let refreshed=0;
+    for(const entry of list.list.entries.filter(e=>e.community_id===bundle.community_id)){
+      if(!context.isCurrent())throw new Error('Concord membership changed');
+      if(!live.has(api.details(entry).pubkey))continue;
+      const status=await api.linkState(entry,context);
+      if(!status.complete)throw new Error('Invitation relay sync is incomplete');
+      if(status.retired)continue;
+      const event=await api.refreshEvent(entry,{...bundle,channels:[]},status.events,context);
+      await context.publish(event);refreshed++;
+    }
+    return refreshed;
+  }
   async function saveCommunitySettings(p,room,values){
     const owner=p.viewer?.().pubkey,identity=roomIdentity(room),loadKey=room.communityId||room.naddr;
     const stillHere=()=>p.viewer?.().pubkey===owner&&saved().some(r=>roomIdentity(r)===identity);
@@ -4207,7 +4250,7 @@
     close.publish=event=>(!plane&&R.publishFastTo&&R.publishFastTo(x.relays,event)?1:0)+(external.publish?external.publish(event):0);
     return close;
   }
-  window.PCConcord={render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,hydrateRoomStreams,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe};
+  window.PCConcord={render,backgroundRender,refoundingBeforeEvents:true,reviewRefoundingRecipients,refoundRoom,acquireRefoundingControls,createPrivateRoomChannel,mergeDirectInviteRoom,showDirectInvitations,showDirectInviteSender,saveCommunitySettings,timerSettingsHtml,unreadRooms,paintUnreadBadge,emptyChannelHtml,channelUnread,noteChannelReach,invitePreviewHtml,declineInvite,inviteWasDeclined,forgetDeclinedInvite,declinedInvites,sameRoom,uniqueRooms,wake,iconRef,readChat,reconcileChannels,startChatLive,stopChatLive,pollOf,pollHtml,refreshActiveChannel,warmRoomIcons,hydrateRoomStreams,replyParentId,threadRootId,threadIndex,threadView,openInvite:openInviteLink,openNotification,notificationRoute,inviteParts,normalizeIcon,roomIcon,roomRelays,reactionSummary,reactionPickerPosition,notifyMentions,discoverInvites,recoverOwnedInvite,membershipEvents,decodeMembershipLists,mergeArmadaBundle,syncArmadaMemberships,nip29MembershipTags,nip29Memberships,nip29Metadata,nip29History,foldNip29History,nip29PreviousTags,publishNip29Message,syncNip29Memberships,hydrateNip29Room,activateJoinedRoom,resumeActiveRoom,threadParticipants,roomParticipants,typedMentionRecipients,textMentionsViewer,paintMentions,messageMentionsViewer,conversationIsVisible,repaintScrollTop,pendingEchoMatch,applyRoomIconMetadata,channelSectionsHtml,removeCommunityByIdentity,persistArmadaMembership,persistArmadaMemberships,leaveArmadaMembership,leftCommunities,rememberLeftCommunity,forgetLeftCommunity,wasLocallyLeft,memberTapAction,memberViewportIsNarrow,encryptedAttachments,publicAttachments,messageContentHtml,wireRoomMedia,handoffState,acceptHandoff,beginComposerSend,restoreFailedComposer,webxdcOf,resolveWebxdcCard,deriveWebxdcUrlTopic,hydrateWebxdcCards,webxdcQuery,webxdcPublish,webxdcSubscribe,webxdcPeerQuery,webxdcPeerPublish,webxdcPeerSubscribe,refreshOwnedInviteLinks};
   /* A monitor destination may load this module only after its frame-handoff callback has returned.
    * Adopt the one-shot room/channel before app.js invokes render(), then remove it so an ordinary
    * later Communities open cannot replay an old monitor move. */
