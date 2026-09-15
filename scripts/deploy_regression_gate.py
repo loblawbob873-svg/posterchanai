@@ -46,6 +46,8 @@ TESTS = (
     'tests/test_remote_desktop_start_races.py',
     'tests/test_livecd_kernel_selection_runtime.py',
     'tests/test_livecd_build_artifact_excludes.py',
+    'tests/test_stats_monero_zaps.py',
+    'tests/client/test_stats_monero_full_app.py',
     'tests/test_reminder_history_window.py',
     'tests/test_reminder_notifications.py',
     'tests/client/test_reminder_notifications_runtime.py',
