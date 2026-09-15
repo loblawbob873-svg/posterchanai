@@ -31,6 +31,7 @@ on:
     branches: [ main, master ]
     paths:
       - 'static/js/client/**'
+      - 'static/vendor/**'
       - 'static/css/**'
       - 'static/i18n/**'
       - 'templates/client.html'
@@ -46,6 +47,7 @@ on:
     branches: [ main, master ]
     paths:
       - 'static/js/client/**'
+      - 'static/vendor/**'
       - 'static/css/**'
       - 'static/i18n/**'
       - 'templates/client.html'

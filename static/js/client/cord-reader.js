@@ -27370,6 +27370,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     };
   }
   function voiceMaterial(bundle, controlWraps, channelId) {
+    requireActiveMembership(bundle, channelId);
     const { channels } = control(bundle, controlWraps);
     const channel = channels.find(ch => ch.idHex === channelId);
     if (!channel) throw new Error("This membership cannot call the channel");
@@ -27378,6 +27379,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       channelId, stream: channel.current.group.pk };
   }
   async function createVoicePresence(bundle, controlWraps, channelId, verb, pubkey, signEvent, identity, broker) {
+    requireActiveMembership(bundle, channelId);
     if (verb !== "joined" && verb !== "left") throw new Error("Invalid call presence");
     const { channels } = control(bundle, controlWraps);
     const channel = channels.find(ch => ch.idHex === channelId);

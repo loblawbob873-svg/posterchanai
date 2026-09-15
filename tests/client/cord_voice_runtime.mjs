@@ -33,6 +33,12 @@ const editions=[wrapRumor({kind:3308,tags:[['vsk','0'],['eid',communityId],['ev'
 ctx.crypto.subtle=webcrypto.subtle;ctx.AbortController=AbortController;ctx.URL=URL;
 loadInto(ctx,new URL('static/js/client/cord-voice.js',root));const V=ctx.PCCordVoice;
 const material=R.voiceMaterial(member,copy(editions),channel);
+for (const denied of [{removed:true},{dissolved:true},{refounding_pending:true},{removed_channels:[channel]}]) {
+  const revoked=copy({...member,...denied});
+  assert.throws(()=>R.voiceMaterial(revoked,copy(editions),channel),/read-only/);
+  await assert.rejects(()=>R.createVoicePresence(revoked,copy(editions),channel,'joined',owner,
+    ()=>assert.fail('revoked membership reached signer'),'identity','https://broker.example'),/read-only/);
+}
 assert.equal(material.room,NT.getPublicKey(secret(derive('concord/voice-signer',communityRoot,channel,epoch))));
 assert.equal(Buffer.from(material.mediaRoot).toString('hex'),derive('concord/voice-media',communityRoot,channel,epoch));
 const privateBundle=copy({...member,channels:[{id:channel,key:'77'.repeat(32),epoch:3}]});

@@ -10,3 +10,7 @@ fastapi==0.141.1
 pydantic==2.13.4
 SQLAlchemy==2.0.50
 python-multipart==0.0.32
+
+# Media cache/GPU checks import the real media service and its encrypted store.
+cryptography==50.0.1
+Pillow==12.3.0

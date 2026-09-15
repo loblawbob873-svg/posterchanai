@@ -20,6 +20,7 @@ on:
     paths:
       - 'desktop/**'
       - 'static/js/client/**'
+      - 'static/vendor/**'
       # EVERY STYLESHEET, not just client.css. `desktop/build-www.sh` derives the bundle's
       # stylesheets from `templates/client.html`, so concord.css (and monero-wallet.css, and the
       # next one) are COPIED IN — but a change to one of them did not trigger this build, which is
@@ -227,7 +228,7 @@ jobs:
       # cannot detect a premature null reply that turns an app reload into a desktop.
       - name: Verify required desktop regressions
         if: matrix.name == 'linux'
-        timeout-minutes: 5
+        timeout-minutes: 10
         shell: bash
         env:
           PC_REQUIRE_NATIVE_IPC_TEST: '1'

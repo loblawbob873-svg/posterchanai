@@ -96,6 +96,14 @@ TESTS = (
     'tests/test_native_window_reload_electron.py',
 )
 
+# Protocol and UI changes ship together. Include every Concord regression so new
+# membership, invitation, call and recovery tests cannot miss the release gate.
+TESTS = tuple(dict.fromkeys((*TESTS, *(
+    str(path.relative_to(ROOT))
+    for pattern in ('test_cord*.py', 'test_concord*.py')
+    for path in sorted((ROOT / 'tests' / 'client').glob(pattern))
+))))
+
 
 def source_fingerprint(root):
     def git(*args):

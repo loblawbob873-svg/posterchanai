@@ -1,5 +1,5 @@
 """A change to required deployment tests must schedule Desktop release validation."""
-import ast
+import runpy
 import fnmatch
 from pathlib import Path
 
@@ -9,8 +9,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _paths():
-    workflow = yaml.safe_load((ROOT / '.github/workflows/desktop.yml').read_text())
+def _paths(name='desktop'):
+    workflow = yaml.safe_load((ROOT / f'.github/workflows/{name}.yml').read_text())
     # PyYAML's YAML 1.1 loader interprets the unquoted GitHub Actions key `on` as True.
     trigger = workflow['on'] if 'on' in workflow else workflow[True]
     return trigger['push']['paths']
@@ -38,11 +38,7 @@ def _included(path, patterns):
 
 
 def test_every_required_gate_test_schedules_desktop_ci():
-    tree = ast.parse((ROOT / 'scripts/deploy_regression_gate.py').read_text())
-    definitions = [node.value for node in tree.body if isinstance(node, ast.Assign)
-                   and any(isinstance(t, ast.Name) and t.id == 'TESTS' for t in node.targets)]
-    assert len(definitions) == 1, 'could not read the actual required gate TESTS'
-    cases = ast.literal_eval(definitions[0])
+    cases = runpy.run_path(str(ROOT / 'scripts/deploy_regression_gate.py'))['TESTS']
     assert cases, 'required gate has no tests'
     files = sorted({case.split('::', 1)[0] for case in cases})
     missing = [file for file in files if not _included(file, _paths())]
@@ -65,3 +61,9 @@ def test_path_matcher_respects_directory_depth_and_ordered_exclusions():
     assert not _included('tests/client/example.py', ['tests/**', '!tests/client/**'])
     assert _included('tests/client/example.py', ['tests/**', '!tests/client/**', 'tests/client/example.py'])
     assert not _included('app/example.py', ['tests/**'])
+
+
+@pytest.mark.parametrize('workflow', ['desktop', 'android', 'android-emulator'])
+def test_vendored_call_runtime_updates_rebuild_native_apps(workflow):
+    assert _included('static/vendor/livekit/livekit-client.umd.js', _paths(workflow))
+    assert _included('static/vendor/livekit/livekit-client.e2ee.worker.js', _paths(workflow))
