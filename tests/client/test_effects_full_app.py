@@ -6,6 +6,7 @@ outbound publish/upload is intercepted; Chrome also blocks external network URLs
 """
 import asyncio
 import json
+import re
 import threading
 import tempfile
 import subprocess
@@ -24,6 +25,7 @@ class Browser:
     async def call(self,method,params=None):
         self.sequence+=1
         await self.ws.send(json.dumps({'id':self.sequence,'method':method,'params':params or {}}))
+        recent_events=[]
         while True:
             # 15s was too tight, and the way it failed was misleading. These suites run CONCURRENTLY
             # with the browser checks on a node that is also serving live traffic, so a single
@@ -32,7 +34,17 @@ class Browser:
             # the short straw — test_concord_pending_delivery_cache went red in the full suite and
             # passed alone, which is the signature of a budget, not a bug. Raising it cannot turn a
             # passing test red; it only stops a slow answer being reported as no answer.
-            message=json.loads(await asyncio.wait_for(self.ws.recv(),60))
+            try:
+                message=json.loads(await asyncio.wait_for(self.ws.recv(),60))
+            except TimeoutError as error:
+                # Keep command identity without exposing JavaScript string literals (login
+                # expressions can contain credentials). Never dump protocol payloads.
+                expression=str((params or {}).get('expression',''))
+                expression=re.sub('"(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\'|`(?:\\\\.|[^`\\\\])*`', "'<redacted>'", expression)[:300]
+                raise AssertionError(f'CDP command timed out after 60s: method={method}, '
+                                     f'expression={expression!r}, recent_events={recent_events}') from error
+            if message.get('method'):
+                recent_events=(recent_events+[str(message['method'])])[-8:]
             if message.get('id')==self.sequence:
                 assert 'error' not in message,message
                 return message.get('result',{})

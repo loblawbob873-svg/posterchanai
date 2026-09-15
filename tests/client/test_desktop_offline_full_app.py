@@ -140,6 +140,11 @@ async def with_browser(mode,route,check,extra_init=""):
                     await b.call('Page.navigate',{'url':f'http://127.0.0.1:{server.server_port}/index.html'+route})
                     await b.until('!!window.__PC && !!window.PCOS')
                     await check(b)
+                except Exception as error:
+                    # Do not publish stderr text: Chromium can include credential-bearing URLs.
+                    chrome_log.flush()
+                    error.add_note(f'Chrome process exit={proc.poll()}, stderr_bytes={chrome_log.tell()}')
+                    raise
                 finally:
                     # Chrome must flush and stop its profile writers before TemporaryDirectory
                     # removes the profile. SIGTERM of the parent alone races its descendants.
