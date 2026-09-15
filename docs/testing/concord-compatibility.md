@@ -8,16 +8,80 @@ interoperability with every revision or client.
 
 ## Coverage and gaps
 
-| Spec | Implemented / verified | Remaining compatibility work at this audit |
+This matrix includes the reviewed core, membership, expiry, private-channel,
+direct-invite, rekey/refounding, creator-link and CORD-07 integration series.
+It describes the implementation under release review, not confirmation of a
+production deployment. Remaining normative gaps below prevent a claim of full
+CORD-01 through CORD-08 compatibility.
+
+| Spec | Implemented and covered by regression tests | Remaining work |
 | --- | --- | --- |
-| [CORD-01](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/01.md) streams | NIP-44 self-ECDH, signed 1059/21059 wraps, encrypted 20013 and plaintext 20014 seals, rumor hashes and author matching, channel binding, plaintext publishing cap. This patch verifies outer signatures and scopes memo verdicts to wire bytes and read capability. | Broader independent malformed-event/encoding/receive-size corpus. No claim that every library acceptance rule exactly matches normative encoding. |
-| [CORD-02](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/02.md) communities | Self-certifying owner commitment, legacy control, chat and guestbook planes, member coalescing, unknown metadata preservation. This patch adds split control read/write key support and current-epoch writes. | New-community writer now emits split-control genesis and a member invite containing only its signer pubkey; owner membership retains the staff root. Membership writer now emits canonical self-encrypted kind 33302 fragments; actual signed-event size limits, partial writes, opaque fields, monotonic timestamps and interrupted/stale/account-changing writes have independent runtime coverage. Exact-coordinate bounded recovery now continues past the initial relay page and tolerates holes/late arrivals. Dissolution tombstone discovery/enforcement absent. Snapshot authority and all removed-member/refounding cases require independent audit. |
-| [CORD-03](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/03.md) channels | Public/private channel reading when keys held, public creation, signed channel/epoch binding, messages/replies/reactions/deletes/edits. Independent external chat event verified by new test. | Owner private creation now issues an independent key and channel-scoped Role/Grants, verifies the resulting fold, backs up the key before channel publication, and delivers only minimal current-key CORD-05 invitations after all access records are accepted. Existing-channel private grant editing, conversion and delegated creation remain unavailable. Private historical `priors` read handling and removal/rekey convergence need completion. |
-| [CORD-04](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/04.md) roles | Edition chain folding, role/grant ranks, citations, owner and ranked moderator deletion, bans. Actual-crypto regression tests cover grants and moderation. Delegated metadata/channel writers now cite the exact current Grant and reject revoked/banned staff. | Role/grant management UI/write paths restricted; staff `control_root` grant distribution, canonical pin-list vsk 11 proof bundles, and full independent fork/rehydration/hard-cap vectors still need implementation or verification. |
-| [CORD-05](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/05.md) invites | Public 33301 bundle links, v4 relay dictionary, invite preview/accept separation, join attribution. | Direct 3313 NIP-59 invites and Invite List 13303 sync not implemented in public writer API. Independent tests now cover expiry preview versus acceptance, signed newest-coordinate revocation without rollback, owner commitment, channel/relay bounds and signer-secret retention. Link refresh after rekey remains. |
-| [CORD-06](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/06.md) rekeys | Reading explicitly held root epochs and public-channel history; retained legacy plane compatibility. | No adapter 3303 rekey discovery/decryption/application flow found. Mandatory 72/104/136-byte blob forms, commitment verification, recipient exclusion, base split upgrade, and refounding compaction must be implemented/tested. A ban alone does not rotate secrets. |
-| [CORD-07](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/07.md) A/V | Voice signer and media root derivations exist inside bundle. | No interoperable blind broker token flow, per-sender frame keys, signed presence/rendezvous implementation found. Existing application calls are not evidence of CORD-07 support. |
-| [CORD-08](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/08.md) expiry | Signed expiration tagging, receive/display enforcement, memo invalidation, authenticated ciphertext/pending-send purge, exempt control/delete/notice events, timer settings, and accepted-metadata-first kind1740 fanout to held channels. | Notice delivery can fail independently of accepted metadata and is reported. Live relay interoperability is not established by local fixtures. |
+| [CORD-01](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/01.md) streams | NIP-44 self-ECDH, signed persistent/ephemeral wraps, encrypted/plaintext seals, rumor hashes, author/channel binding, layer-size caps, wire/capability-scoped memoization; independent external wire vectors. | Broader malformed-event corpus and cross-client traces are verification limits. |
+| [CORD-02](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/02.md) communities | Split-control genesis/read/write, legacy read, exact root history, opaque metadata, self-encrypted 33302 fragmentation, bounded missing-fragment recovery, partial-list scoped writes, dissolution discovery and sealed-history enforcement. | Authoritative relay migration, strict-shrink exception and lossless full-u64 JSON encoding: gaps 3–5 below. |
+| [CORD-03](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/03.md) channels | Public/private read with held keys; owner private creation with independent keys, scoped Role/Grants, durable key backup and proof-checked minimal direct invitations; channel rekey history; messages/replies/reactions/deletes/edits. | Receiving visibility changes must preserve all readable prior streams; terminal deletion needs explicit enforcement/negative vectors. Existing-channel conversion UI remains disabled. See gap 6. |
+| [CORD-04](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/04.md) roles | Edition/rank/citation folding, bans/moderation, delegated settings writers with current Grant proofs, creator-bound invite registry writer, revoked-author rejection. | Staff promotion key capsules and canonical Pin List folding/compaction are gaps 1–2. General role editing is additionally a product UI limitation. |
+| [CORD-05](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/05.md) invites | Public 33301 links, standard NIP-59 direct 3313 invitations/inbox, expiry preview versus acceptance, same-root private-key grants, encrypted 13303 creator list, serialized create/refresh/retire management, signed tombstones, original-link registration, final-link durable refounding prerequisites. | Interrupted new-community creation can retain creator-link recovery material without having saved the owner membership/control root; see durability limitation below. Cross-client relay interoperability remains unverified. |
+| [CORD-06](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/06.md) rekeys | 3303 discovery/decryption/application; 72/104/136-byte payloads and commitments; retained roots/private keys; explicit recipient review/exclusion; base split upgrade; refounding plan/checkpoint/resume; authenticated compacted snapshots; dissolution and sealed-history admission. | Valid Pin List editions currently cause safe refusal of unsupported compaction, rather than complete refounding support. General recipient-management UX is limited; the explicit reviewed-recipient workflow is available. |
+| [CORD-07](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/07.md) A/V | Blind-broker token flow, independent sender-key derivation, signed ephemeral presence/rendezvous, per-sender LiveKit frame encryption, authenticated media attachment, occupied-broker priority, generation-bound migration/rotation, mic/camera/screen sharing and capture cleanup. | No live cross-client broker/SFU call has been validated. This is a verification limit, not a demonstrated wire defect. |
+| [CORD-08](https://github.com/concord-protocol/concord/blob/b84554ea5dd47510057a580fa2f8587b4399ad17/08.md) expiry | Signed expiration tagging, receive/display enforcement, memo invalidation, authenticated ciphertext/pending-send purge, exempt control/delete/notice events, timer settings and accepted-metadata-first 1740 notice fanout. | Notice delivery can fail after accepted metadata; the UI reports it. Live relay interoperability remains unverified. |
+
+## Remaining normative interoperability gaps
+
+These are specific source-review findings against the pinned specification.
+They are not waived by the passing tests. A finding without an adversarial
+runtime vector still needs that vector before it can be marked resolved.
+
+1. **Staff promotion key delivery (CORD-04 §3).** A first staff-making Grant
+   must carry the granter-to-recipient encrypted 40-byte `control_wrap`
+   (`epoch_be8 || control_root32`); the recipient must check the derived
+   control signer. There is no receiving/adoption implementation for this
+   capsule. Existing 72/104/136-byte rekey handling does not substitute for it.
+   Permission folding alone cannot give newly promoted staff the signing key.
+2. **Pin List (CORD-04 §11).** `PIN_MESSAGES` bit 11 and vsk 11 editions are not
+   implemented throughout permission/fold/refounding handling. Valid proof
+   bundles need channel/author validation; invalid or oversized content must
+   fold as an empty list without breaking its edition chain. Current refounding
+   safely refuses unsupported editions. Missing a pin button is optional UI;
+   missing received pin state and compaction is a protocol gap.
+3. **Authoritative relay updates (CORD-02 §6).** Metadata relay lists are folded,
+   but inspection/subscription still uses the invite/membership relay snapshot.
+   A valid metadata migration must update the authoritative relay set while
+   retaining bootstrap behavior needed to obtain the first fold.
+4. **Strictly smaller oversized fragments (CORD-02 §8).** The membership writer
+   always applies its local event-size ceiling. It lacks the required exception
+   for a strictly smaller rewrite of an already oversized fragment, needed for
+   leave/repair. This must compare actual encoded event sizes; relay rejection
+   remains possible even when local validation permits the shrink.
+5. **Entire u64 range on JSON wire (CORD-02 §8).** Internal comparisons preserve
+   decimal u64 values, but unsafe JavaScript numeric inputs are rejected and
+   exact large internal strings serialize quoted. The normative numeric wire
+   type requires a lossless JSON parser/serializer. Ordinary safe-integer epochs
+   are covered; full-range interoperability is not.
+6. **Visibility-transition history and deletion (CORD-03 §2).** Channel views
+   choose either held public-root streams or held private-key streams based on
+   current visibility. They do not combine both histories after a valid peer
+   conversion, despite retained decryption material. The latest-metadata fold
+   also needs an adversarial test and explicit rule preventing resurrection
+   after a terminal channel deletion. Disabling our conversion control avoids
+   publishing an unsafe local flag change but does not resolve received events.
+
+## Optional UI and validation limits
+
+General role/promotion editing, existing-channel private grant editing and
+conversion management are incomplete product workflows. They do not excuse
+required receive/fold behavior listed above. Interrupted private creation keeps
+its key but may require manual completion of partially published access records.
+
+New-community creation backs up the original link signer in encrypted 13303
+before publishing genesis and keeps announcements bound to the captured account.
+The owner membership, including its independent control root, is saved after
+successful creation. A late failure or page loss before that save can therefore
+leave incomplete owner recovery; creator-link backup alone is insufficient.
+
+Wire vectors, real cryptography and browser lifecycle tests do not replace a
+live cross-client exercise. No live CORD-07 SFU call or broad malformed-event
+fuzz corpus is claimed. Automatic timer notices are best effort after accepted
+metadata and failures are surfaced.
 
 ## Independent regression test
 
@@ -40,12 +104,19 @@ using the community read key as the signer would create the wrong identity.
 
 ## Release interpretation
 
-Core and bot regression tests passed before edits (29 cases); the expanded
-focused suite passed after edits (47 cases). These results establish the listed
-paths, **not full CORD-01 through CORD-08 support**. Remaining rows are concrete
-work, not waived requirements. Keep this matrix alongside subsequent feature
-patches so deployment reports do not confuse legacy compatibility with complete
-current-protocol compatibility.
+The combined core/membership/expiry/private/rekey suite passed **309 tests** in
+its integration worktree. The final voice suite, including screen-share capture
+races, passed **18 tests**. Creator lifecycle tests use real signatures and
+cover signed-list races, explicit relay acknowledgements, concurrent operations,
+account changes and durable final-link retirement. These suites overlap other
+reported focused runs; their counts must not be added as unique coverage.
+
+Independent final review reran `test_cord_invite_links.mjs` after the default
+creation announcement fix (`118fb5340`): all eight runtime groups passed. The
+actual adapter refounding runtime also passed with a failed prerequisite relay
+acknowledgement, serialized checkpoint reload and plain resume. The final
+combined release gate remains the integrator's responsibility. Passing these
+paths does **not** establish full protocol support while the gaps above remain.
 
 ## Membership writer validation
 
