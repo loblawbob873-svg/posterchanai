@@ -40,6 +40,12 @@ const c=client();assert.deepEqual(ids(c),['near','fresh']);now+=day;
 assert.deepEqual(ids(c),['fresh'],'already-open client retained expired cache');
 now+=7*day;assert.deepEqual(ids(c),[]);
 ''',
+    'offline_poll_repaints_expired_rows': r'''
+storage.set(key(),JSON.stringify([cached('near',6.99)]));
+const c=client();let painted=null;c.bumpNotif=()=>{painted=ids(c);};
+now+=day;await c.hydrateReminderNotifications();
+assert.deepEqual(painted,[],'failed network poll left expired notifications painted');
+''',
     'stale_history_and_live': r'''
 const c=client();c._fetchTimeout=async()=>reply([record('old',75),record('recent',1)]);
 await c.hydrateReminderNotifications();assert.deepEqual(ids(c),['recent']);

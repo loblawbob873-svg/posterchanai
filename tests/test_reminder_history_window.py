@@ -11,6 +11,7 @@ Nothing is lost by bounding it: reminder_service.deliver also persists every rem
 "⏰ Reminders" conversation, which is the durable history and is not age-bounded.
 """
 from datetime import datetime, timedelta
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -20,6 +21,12 @@ from app.models import Reminder, User
 from app.routers.auth import router
 from app.auth import get_current_user
 from app.database import get_db
+
+
+@pytest.fixture(autouse=True)
+def default_history_window(monkeypatch):
+    from app.services import settings_store
+    monkeypatch.setattr(settings_store, 'get', lambda *args: 7)
 
 
 def _client(db, user_id=1):

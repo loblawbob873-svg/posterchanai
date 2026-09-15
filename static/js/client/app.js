@@ -26594,9 +26594,13 @@
         // occurrences delivered while this account was active, never old startup history imports.
         if(Date.parse(row.delivered_at||row.due_at)>=epoch)reminderAlert(row.content,row);
       }
-      _remindersChanged(); // Retention changes can remove rows even when nothing arrived.
     }catch(_){/* Keep cached history; the next poll/open retries without discarding it. */}
-    finally{state.pending=false;}
+    finally{
+      // Cached reminders also age out while offline. Repaint while this load remains pending
+      // so a notification view asking for its rows cannot start a recursive request.
+      if(current())_remindersChanged();
+      state.pending=false;
+    }
   }
   function notifList(){
     // THIS list is the gate that decides what a notification even is — subscribing to a kind and giving it
