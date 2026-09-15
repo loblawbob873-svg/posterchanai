@@ -225,6 +225,7 @@ public class ThreadActivity extends PcActivity {
         if (many != null && many.length > 0) threadIds = many;
         else if (!address.isEmpty()) threadIds = SmsStore.idsFor(this, address, threadId);
         else if (threadId > 0) threadIds = new long[]{ threadId };
+        importSharedAttachment(i);
     }
 
     @Override
@@ -591,6 +592,10 @@ public class ThreadActivity extends PcActivity {
                                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
             }
         } catch (Throwable ignored) { }
+        prepareAttachment(picked);
+    }
+
+    private void prepareAttachment(Uri picked) {
         attachment = picked;
         attachmentMime = getContentResolver().getType(picked);
         if (attachmentMime == null) attachmentMime = "application/octet-stream";
@@ -606,6 +611,30 @@ public class ThreadActivity extends PcActivity {
         } catch (Throwable ignored) { }
         attachmentMime = MmsSender.normalizedMime(attachmentMime, attachmentName);
         stageAttachment(picked, attachmentMime, attachmentName);
+    }
+
+    private void importSharedAttachment(Intent intent) {
+        final Uri shared = SmsShare.stream(intent);
+        if (shared == null || address.isEmpty()) return;
+        if (attachmentBusy()) {
+            SmsShare.consumed(intent);
+            say("Wait for the current attachment before sharing another.");
+            return;
+        }
+        final String recipient = address;
+        Runnable accept = () -> {
+            SmsShare.consumed(intent);
+            if (getIntent() != intent || !recipient.equals(address) || attachmentBusy()) return;
+            try { prepareAttachment(shared); }
+            catch (RuntimeException denied) { attachment = null; say(getString(R.string.sms_attachment_bad)); }
+        };
+        MmsDraft.Value existing = MmsDraft.load(this, address);
+        if (existing == null) accept.run();
+        else new AlertDialog.Builder(this).setTitle("Replace attachment?")
+                .setMessage("The existing attachment will be replaced. Nothing is sent until you press Send.")
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> accept.run())
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> SmsShare.consumed(intent))
+                .setOnCancelListener(dialog -> SmsShare.consumed(intent)).show();
     }
 
     /** Copy to durable private storage off the UI thread, without an in-memory file-size ceiling. */

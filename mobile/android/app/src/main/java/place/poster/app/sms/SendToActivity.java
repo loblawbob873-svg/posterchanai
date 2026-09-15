@@ -27,18 +27,49 @@ public class SendToActivity extends Activity {
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         Intent in = getIntent();
-        String to = SendTo.numberFrom(in == null ? null : in.getData());
-        String body = SendTo.bodyFrom(in == null ? null : in.getData());
+        String type = in == null ? null : in.getType();
+        if (in != null && Intent.ACTION_SEND.equals(in.getAction()) && type != null
+                && (type.startsWith("image/") || type.startsWith("video/")) && SmsShare.stream(in) == null) {
+            android.widget.Toast.makeText(this, place.poster.app.R.string.sms_attachment_bad,
+                    android.widget.Toast.LENGTH_LONG).show();
+            finish(); return;
+        }
+        boolean messageUri = in != null && SendTo.isMessageUri(in.getData());
+        String to = messageUri ? SendTo.numberFrom(in.getData()) : "";
+        String body = messageUri ? SendTo.bodyFrom(in.getData()) : "";
         if (body.isEmpty() && in != null) {
             // A share sheet sends the text as an extra rather than in the URI.
             CharSequence extra = in.getCharSequenceExtra(Intent.EXTRA_TEXT);
             if (extra != null) body = extra.toString();
         }
+        if (to.isEmpty()) {
+            final android.widget.EditText number = new android.widget.EditText(this);
+            number.setHint(place.poster.app.R.string.sms_number_hint);
+            number.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+            final String caption = body;
+            android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                    .setTitle(place.poster.app.R.string.sms_to).setView(number)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .setNegativeButton(android.R.string.cancel, (d, which) -> finish())
+                    .setOnCancelListener(d -> finish()).create();
+            dialog.setOnShowListener(d -> dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+                    .setOnClickListener(v -> {
+                        String recipient = SmsKeys.normalize(number.getText().toString());
+                        if (recipient.isEmpty() || "+".equals(recipient)) { number.setError(getString(place.poster.app.R.string.sms_number_hint)); return; }
+                        openThread(in, recipient, caption);
+                        dialog.dismiss();
+                    }));
+            dialog.show();
+        } else openThread(in, to, body);
+    }
+
+    private void openThread(Intent in, String to, String body) {
         Intent open = new Intent(this, ThreadActivity.class)
                 .putExtra(ThreadActivity.EXTRA_ADDRESS, to)
-                .putExtra(ThreadActivity.EXTRA_THREAD, to.isEmpty() ? 0 : SmsStore.threadIdFor(this, to));
+                .putExtra(ThreadActivity.EXTRA_THREAD, SmsStore.threadIdFor(this, to));
         if (!body.isEmpty()) open.putExtra(Intent.EXTRA_TEXT, body);
-        if (in != null && in.getData() != null) open.setData(in.getData());
+        if (in != null && SendTo.isMessageUri(in.getData())) open.setData(in.getData());
+        SmsShare.forward(in, open);
         try { startActivity(open); } catch (Throwable ignored) { }
         finish();
     }
