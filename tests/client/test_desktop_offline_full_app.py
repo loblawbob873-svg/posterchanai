@@ -69,16 +69,30 @@ def bundle():
         BUNDLE_ROOT=None
 
 
+async def wait_browser_port(proc, port_file, log, timeout=30):
+    """Bound cold Chrome startup separately from app behavior and retain its diagnostics."""
+    deadline=asyncio.get_running_loop().time()+timeout
+    while proc.poll() is None:
+        try:
+            lines=port_file.read_text().splitlines()
+            if lines and lines[0].isdigit() and 0<int(lines[0])<65536:
+                return lines[0]
+        except FileNotFoundError:
+            pass
+        if asyncio.get_running_loop().time()>=deadline:break
+        await asyncio.sleep(.1)
+    log.flush();log.seek(0)
+    detail=log.read().decode(errors='replace')[-4000:]
+    raise AssertionError(f'Chrome startup failed (exit={proc.poll()}, timeout={timeout}s): {detail}')
+
+
 async def with_browser(mode,route,check,extra_init=""):
     server=ThreadingHTTPServer(('127.0.0.1',0),BundleHandler)
     threading.Thread(target=server.serve_forever,daemon=True).start()
-    with tempfile.TemporaryDirectory(prefix='pc-offline-desktop-') as profile:
-        proc=subprocess.Popen(['/opt/google/chrome/chrome','--headless=new','--no-sandbox','--disable-gpu','--window-size=1440,1000','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    with tempfile.TemporaryDirectory(prefix='pc-offline-desktop-') as profile, tempfile.TemporaryFile(mode='w+b') as chrome_log:
+        proc=subprocess.Popen(['/opt/google/chrome/chrome','--headless=new','--no-sandbox','--disable-gpu','--window-size=1440,1000','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],stdout=chrome_log,stderr=chrome_log)
         try:
-            for _ in range(100):
-                if Path(profile,'DevToolsActivePort').exists():break
-                await asyncio.sleep(.1)
-            port=Path(profile,'DevToolsActivePort').read_text().splitlines()[0]
+            port=await wait_browser_port(proc,Path(profile,'DevToolsActivePort'),chrome_log)
             async with httpx.AsyncClient() as h:pages=(await h.get(f'http://127.0.0.1:{port}/json')).json()
             async with websockets.connect(next(p for p in pages if p.get('type')=='page')['webSocketDebuggerUrl'],max_size=20_000_000) as ws:
                 b=Browser(ws)
@@ -89,7 +103,14 @@ async def with_browser(mode,route,check,extra_init=""):
                 await b.until('!!window.__PC && !!window.PCOS')
                 await check(b)
         finally:
-            proc.terminate();proc.wait(timeout=10);server.shutdown();server.server_close()
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill();proc.wait(timeout=5)
+            finally:
+                server.shutdown();server.server_close()
 
 
 async def cold_popup(mode,kind):
