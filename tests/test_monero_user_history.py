@@ -109,3 +109,32 @@ def test_the_endpoint_takes_no_account_parameter():
     route = body[body.index('@router.get("/history")'):body.index("@router.post(\"/pay\")")]
     assert "account_index" not in route, "the route accepts an account index from the client"
     assert "_pubkey(user)" in route, "the account is not derived from the authenticated caller"
+
+
+@pytest.mark.parametrize("bucket", ["in", "out", "pending", "failed", "pool"])
+@pytest.mark.parametrize("include_foreign", [False, True])
+def test_newest_fifty_survive_unordered_rpc_history_and_foreign_rows(bucket, include_foreign):
+    """Recent payments must remain visible even when the RPC returns old rows last."""
+    own = []
+    for i in range(60):
+        row = _rows(1, format(i, "064x"), amount=70000000000 if i == 59 else 1000000000)
+        row["timestamp"] += i
+        own.append(row)
+    # Newest transfers at the beginning, middle and end of a nonchronological response.
+    unordered = [own[59], *own[:30], own[58], *own[30:57], own[57]]
+    foreign = _rows(2, "f" * 64)
+    foreign["timestamp"] += 1000
+    if include_foreign:
+        unordered.extend([foreign] * 55)
+    got = asyncio.run(wallet_with_transfers({bucket: unordered}).history(NPUB))[bucket]
+    assert [row["txid"] for row in got] == [format(i, "064x") for i in range(59, 9, -1)]
+    assert got[0]["amount"] == "0.07"
+    assert got[0]["fee"] == "0.00000000001"
+
+
+def test_history_timestamp_ties_have_stable_order_across_rpc_responses():
+    rows = [_rows(1, format(i, "064x")) for i in range(8)]
+    first = asyncio.run(wallet_with_transfers({"out": rows}).history(NPUB, limit=3))
+    second = asyncio.run(wallet_with_transfers({"out": rows[::-1]}).history(NPUB, limit=3))
+    assert first == second
+    assert [row["txid"] for row in first["out"]] == [format(i, "064x") for i in range(3)]

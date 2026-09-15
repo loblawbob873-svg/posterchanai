@@ -253,7 +253,7 @@ class UserWallets:
             if not isinstance(rows, list):
                 continue
             kept = []
-            for row in rows[-limit:]:
+            for row in rows:
                 # Belt and braces: the RPC was asked for one account, but a wallet that ever
                 # answered with another account's row must not have it forwarded to this user.
                 if int(row.get("subaddr_index", {}).get("major", index)) != index:
@@ -269,7 +269,10 @@ class UserWallets:
                     "double_spend_seen": bool(row.get("double_spend_seen")),
                 })
             if kept:
-                out[key] = kept
+                # RPC buckets are not necessarily chronological. Filter ownership first,
+                # then choose the newest rows so recent payments cannot disappear.
+                kept.sort(key=lambda row: (-row["timestamp"], row["txid"]))
+                out[key] = kept[:limit]
         return out
 
     async def maintain_account_outputs(self, account: dict[str, Any]) -> dict[str, Any]:
