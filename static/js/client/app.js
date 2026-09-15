@@ -27189,7 +27189,7 @@
     }
   }
   async function ensureDMs(){
-    if(_dmLoaded) return; _dmLoaded=true;
+    if(_dmLoaded || !ME?.pubkey) return; _dmLoaded=true;
     const modern = !!(signer && signer.nip17unwrap);   // gift wraps need the local secret key
     _watchDMs(modern); // Live delivery must not wait for cache downloads or historical decryption.
     /* Replayed history waits for the shared cache. Post-EOSE arrivals remain live throughout

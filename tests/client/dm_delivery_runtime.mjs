@@ -21,6 +21,22 @@ function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date
   vm.runInContext(shipped+';globalThis.api={ensureDMs,_queueDmHistory};',ctx);
   return {ctx,subs,received,timers,...ctx.api};
 }
+// A launcher may open Messages before account hydration, or while browsing as a guest.
+// That must neither crash nor mark history loaded and prevent a later authenticated retry.
+{
+  const x=setup();
+  for(const account of [null,{mode:'guest',pubkey:''}]){
+    x.ctx.ME=account;
+    await x.ensureDMs();
+    assert.equal(x.subs.length,0,'no subscription without an account');
+    assert.equal(x.timers.length,0,'no accountless retry timer');
+    assert.equal(x.ctx._dmLoaded,false,'accountless startup must remain retryable');
+  }
+  x.ctx.ME={pubkey:'self'};
+  await x.ensureDMs();
+  assert.equal(x.subs.length,2,'login starts both DM subscriptions');
+  assert.equal(x.ctx._dmLoaded,true);
+}
 // A slow shared-cache download must not prevent live, self-addressed server notifications.
 {
   let release;const x=setup({pull:()=>new Promise(r=>release=r)});
