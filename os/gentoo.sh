@@ -4148,14 +4148,28 @@ DESKTOP
 	#
 	# Both layouts are searched, newest last so `tail -1` prefers it, and the RUNNING version wins
 	# when it is present — the squashfs was made from this filesystem, so its modules are the ones
-	# under /lib/modules and a different kernel would boot without them.
+	# under /lib/modules. An explicit override below still requires its own modules in the image.
 	local KVER KERNEL
-	KVER="$(uname -r)"
+	# PC_ISO_KERNEL selects an installed kernel without rebooting the build host. An explicit
+	# selection must never silently produce an ISO for a different kernel.
+	if [[ ${PC_ISO_KERNEL+x} ]]; then
+		if [[ ! "$PC_ISO_KERNEL" =~ ^[0-9][a-zA-Z0-9._+-]*$ ]]; then
+			_lcd_fail "Invalid PC_ISO_KERNEL: use an installed kernel version, not a path or pattern."
+			return 1
+		fi
+		KVER="$PC_ISO_KERNEL"
+	else
+		KVER="$(uname -r)"
+	fi
 	KERNEL=""
 	# 1. Boot Loader Spec, this exact kernel.
 	KERNEL="$(ls -1 /boot/*/"$KVER"/linux 2>/dev/null | head -1)"
 	# 2. The classic layout, this exact kernel.
-	[[ -z "$KERNEL" ]] && KERNEL="$(ls -1 /boot/vmlinuz-"$KVER"* /boot/linux-"$KVER"* 2>/dev/null | head -1)"
+	if [[ ${PC_ISO_KERNEL+x} ]]; then
+		[[ -z "$KERNEL" ]] && KERNEL="$(ls -1 /boot/vmlinuz-"$KVER" /boot/linux-"$KVER" 2>/dev/null | head -1)"
+	else
+		[[ -z "$KERNEL" ]] && KERNEL="$(ls -1 /boot/vmlinuz-"$KVER"* /boot/linux-"$KVER"* 2>/dev/null | head -1)"
+	fi
 	# 3. Where a Gentoo dist-kernel also keeps a copy.
 	[[ -z "$KERNEL" && -f "/lib/modules/$KVER/vmlinuz" ]] && KERNEL="/lib/modules/$KVER/vmlinuz"
 	[[ -z "$KERNEL" && -f "/usr/lib/modules/$KVER/vmlinuz" ]] && KERNEL="/usr/lib/modules/$KVER/vmlinuz"
@@ -4163,7 +4177,7 @@ DESKTOP
 	#    /boot but left KVER set to `uname -r`; dracut then built for one kernel while GRUB booted
 	#    another. Generic graphics could still reach Welcome, but every loadable network driver was
 	#    rejected as the wrong module version: "cannot see its network hardware".
-	if [[ -z "$KERNEL" ]]; then
+	if [[ -z "$KERNEL" && ! ${PC_ISO_KERNEL+x} ]]; then
 		local RUNNING_KVER="$KVER" CANDIDATE CANDIDATE_KERNEL
 		while IFS= read -r CANDIDATE; do
 			[[ -n "$CANDIDATE" ]] || continue
@@ -4175,27 +4189,32 @@ DESKTOP
 		done < <(find /lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -Vr)
 		[[ -n "$KERNEL" ]] && echo -e "${COLOR_YELLOW}The running kernel ($RUNNING_KVER) is not under /boot; using matched kernel/modules $KVER instead.${COLOR_RESET}"
 	fi
-	if [[ -z "$KERNEL" ]]; then
+	if [[ -z "$KERNEL" || ( ${PC_ISO_KERNEL+x} && ! -f "$KERNEL" ) ]]; then
 		{ echo "no kernel; /boot holds:"; ls -1 /boot 2>/dev/null | head -40; } >>"$LOG" 2>/dev/null
 		ls -1 /boot 2>/dev/null | head -20
 		_lcd_fail "No kernel found under /boot — looked for /boot/<machine-id>/$KVER/linux, /boot/vmlinuz-$KVER* and /lib/modules/$KVER/vmlinuz."
-		return
+		return 1
 	fi
 	if [[ ! -d "/lib/modules/$KVER" ]]; then
 		_lcd_fail "Kernel $KVER has no matching /lib/modules/$KVER tree. Booting it would hide network hardware."
-		return
+		return 1
 	fi
 	# The squashfs was already packed, so prove the selected modules actually landed in the image.
 	# A source directory existing is insufficient when an exclude or a subordinate mount removed it.
 	if command -v unsquashfs >/dev/null 2>&1 \
-		&& ! printf '%s\n' "$LS" | grep -qE "^squashfs-root/(usr/)?lib/modules/$KVER(/|$)"; then
+		&& ! printf '%s\n' "$LS" | awk -v version="$KVER" '
+			$0 == "squashfs-root/lib/modules/" version ||
+			$0 == "squashfs-root/usr/lib/modules/" version ||
+			index($0, "squashfs-root/lib/modules/" version "/") == 1 ||
+			index($0, "squashfs-root/usr/lib/modules/" version "/") == 1 { found=1 }
+			END { exit !found }'; then
 		_lcd_fail "The image does not contain /lib/modules/$KVER for its kernel. Network and GPU drivers would not load."
-		return
+		return 1
 	fi
 	if command -v unsquashfs >/dev/null 2>&1 \
 		&& ! printf '%s\n' "$LS" | grep -qE '^squashfs-root/(usr/)?lib/firmware(/|$)'; then
 		_lcd_fail "The image contains no Linux firmware tree. Common Wi-Fi adapters would be invisible."
-		return
+		return 1
 	fi
 	echo -e "${COLOR_YELLOW}Kernel: $KERNEL${COLOR_RESET}"
 	echo "kernel=$KERNEL" >>"$LOG" 2>/dev/null
@@ -4943,7 +4962,8 @@ elif [ "$1" = "fstab" ]; then
 elif [ "$1" = "install-live" ]; then
 	liveISOinstall
 elif [ "$1" = "livecd" ]; then
-	# Scriptable: PC_ISO_OUT / PC_ISO_HOME / PC_ISO_CLEAN answer the three questions, and an
+	# Scriptable: PC_ISO_KERNEL optionally selects an installed kernel version.
+	# PC_ISO_OUT / PC_ISO_HOME / PC_ISO_CLEAN answer the three questions, and an
 	# unanswered PC_ISO_CLEAN means CLEAN -- see liveCD.
 	liveCD
 elif [ "$1" = "help" ]; then
