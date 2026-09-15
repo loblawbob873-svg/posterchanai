@@ -2147,8 +2147,17 @@
   // Preserve integer tokens before JavaScript rounds them. Raw JSON values keep
   // opaque extension numbers numeric too; only named membership fields normalize.
   function cordJsonParse(text){
+    // Compare decimal values without converting the source through Number. A
+    // token such as 1.0000000000000000001 otherwise rounds to a 'safe' integer.
+    const decimal=token=>{
+      const m=/^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(token);
+      if(!m)return null;
+      let digits=(m[2]+(m[3]||'')).replace(/^0+/,'');if(!digits)return '0';
+      const trimmed=digits.replace(/0+$/,'');
+      return m[1]+trimmed+'e'+String(BigInt(m[4]||0)-BigInt((m[3]||'').length)+BigInt(digits.length-trimmed.length));
+    };
     return JSON.parse(text,(_key,value,context)=>{
-      if(typeof value==='number'&&(!Number.isFinite(value)||Number.isInteger(value)&&!Number.isSafeInteger(value))){
+      if(typeof value==='number'&&(!Number.isFinite(value)||Number.isInteger(value)&&!Number.isSafeInteger(value)||context?.source&&decimal(context.source)!==decimal(String(value)))){
         if(!context?.source||!JSON.rawJSON)throw new Error('lossless membership numbers require a newer browser');
         return JSON.rawJSON(context.source);
       }
