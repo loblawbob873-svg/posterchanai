@@ -214,7 +214,7 @@ public class ThreadActivity extends PcActivity {
          * after it, the prefill from an `sms:?body=` link is swallowed by the previous
          * conversation's draft. */
         if (a != null && !a.isEmpty() && !a.equals(address)) handOverComposer(a);
-        if (input != null && !body.isEmpty() && input.getText().length() == 0) input.setText(body);
+        if (SmsShare.stream(i) == null && input != null && !body.isEmpty() && input.getText().length() == 0) input.setText(body);
         if (a != null && !a.isEmpty()) address = a;
         if (t > 0) threadId = t;
         else if (!address.isEmpty()) threadId = SmsStore.threadIdFor(this, address);
@@ -595,7 +595,9 @@ public class ThreadActivity extends PcActivity {
         prepareAttachment(picked);
     }
 
-    private void prepareAttachment(Uri picked) {
+    private void prepareAttachment(Uri picked) { prepareAttachment(picked, null); }
+
+    private void prepareAttachment(Uri picked, Runnable onReady) {
         attachment = picked;
         attachmentMime = getContentResolver().getType(picked);
         if (attachmentMime == null) attachmentMime = "application/octet-stream";
@@ -610,7 +612,7 @@ public class ThreadActivity extends PcActivity {
             }
         } catch (Throwable ignored) { }
         attachmentMime = MmsSender.normalizedMime(attachmentMime, attachmentName);
-        stageAttachment(picked, attachmentMime, attachmentName);
+        stageAttachment(picked, attachmentMime, attachmentName, onReady);
     }
 
     private void importSharedAttachment(Intent intent) {
@@ -622,10 +624,19 @@ public class ThreadActivity extends PcActivity {
             return;
         }
         final String recipient = address;
+        CharSequence sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        final String caption = sharedText == null ? "" : sharedText.toString();
         Runnable accept = () -> {
             SmsShare.consumed(intent);
             if (getIntent() != intent || !recipient.equals(address) || attachmentBusy()) return;
-            try { prepareAttachment(shared); }
+            try { prepareAttachment(shared, () -> {
+                // Caption and photo are one draft. Cancellation, failed copy and a superseding
+                // intent must not attach this caption to somebody else's or the previous photo.
+                if (getIntent() != intent || !recipient.equals(address) || input == null
+                        || input.getText().length() != 0 || caption.isEmpty()) return;
+                input.setText(caption);
+                MmsDraft.setText(this, recipient, caption);
+            }); }
             catch (RuntimeException denied) { attachment = null; say(getString(R.string.sms_attachment_bad)); }
         };
         MmsDraft.Value existing = MmsDraft.load(this, address);
@@ -639,6 +650,10 @@ public class ThreadActivity extends PcActivity {
 
     /** Copy to durable private storage off the UI thread, without an in-memory file-size ceiling. */
     private void stageAttachment(final Uri uri, final String mime, final String name) {
+        stageAttachment(uri, mime, name, null);
+    }
+
+    private void stageAttachment(final Uri uri, final String mime, final String name, final Runnable onReady) {
         if (attachmentBusy()) return;
         stagingAttachment = true;
         attachment = null;
@@ -655,6 +670,7 @@ public class ThreadActivity extends PcActivity {
                 stagingAttachment = false;
                 if (!who.equals(address)) return;
                 restoreAttachmentDraft();
+                if (failure.isEmpty() && onReady != null) onReady.run();
                 say(failure.isEmpty() ? getString(R.string.sms_attachment_ready) : failure);
             });
         }, "pc-sms-stage").start();

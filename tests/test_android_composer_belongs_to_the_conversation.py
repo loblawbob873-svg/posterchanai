@@ -172,7 +172,7 @@ public class ComposerHandOver {
     u.readIntent(Intent.forThread("+15550111", 11));
     check(u.input.getText().equals("mid-word"), "the same conversation reset its own box");
 
-    /* 6. A SHARED PHOTO'S CAPTION AND RECIPIENT MUST BE READY BEFORE ATTACHMENT IO.
+    /* 6. A TEXT SHARE'S CAPTION AND RECIPIENT STILL PREFILL IMMEDIATELY.
           The picker/grant/staging implementation has its own runtime/device tests. */
     Intent share = Intent.forThread("+15550444", 44);
     share.body = "photo caption";
@@ -205,6 +205,7 @@ class SendTo {
   static String numberFrom(String u){ return u == null ? "" : u.substring(4); }
   static String bodyFrom(String u){ return ComposerHandOver.LINK_BODY == null ? "" : ComposerHandOver.LINK_BODY; }
 }
+class SmsShare {static Object stream(Intent i){return null;} }
 class SmsStore {
   static long threadIdFor(Object c, String a){ return 1; }
   static long[] idsFor(Object c, String a, long t){ return new long[]{ t }; }

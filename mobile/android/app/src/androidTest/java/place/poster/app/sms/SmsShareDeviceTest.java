@@ -84,6 +84,26 @@ public class SmsShareDeviceTest {
         }
     }
 
+    @Test public void cancelledReplacementKeepsOriginalPhotoAndEmptyCaption() throws Exception {
+        MmsDraft.remove(ctx, who); MmsDraft.setText(ctx, who, "");
+        MmsDraft.save(ctx, who, new byte[]{1, 2, 3}, "image/jpeg", "original.jpg");
+        Intent open = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who);
+        try (ActivityScenario<ThreadActivity> scenario = ActivityScenario.launch(open)) {
+            Intent replacement = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who)
+                    .putExtra(Intent.EXTRA_TEXT, "caption for a different photo");
+            SmsShare.forward(picture("cancelled.jpg", ""), replacement);
+            scenario.onActivity(activity -> {
+                activity.onNewIntent(replacement);
+                assertEquals("", ((EditText)activity.findViewById(place.poster.app.R.id.pc_th_input)).getText().toString());
+            });
+            onView(withId(android.R.id.button2)).perform(click());
+            scenario.recreate();
+            assertEquals("original.jpg", MmsDraft.load(ctx, who).name);
+            scenario.onActivity(activity -> assertEquals("", ((EditText)activity.findViewById(place.poster.app.R.id.pc_th_input)).getText().toString()));
+            assertEquals("", MmsDraft.text(ctx, who));
+        } finally { MmsDraft.remove(ctx, who); MmsDraft.setText(ctx, who, ""); }
+    }
+
     @Test public void realRecreationKeepsDraftAndWarmShareRequiresReplacementConfirmation() throws Exception {
         MmsDraft.remove(ctx, who); MmsDraft.setText(ctx, who, "");
         Intent first = new Intent(ctx, ThreadActivity.class).putExtra(ThreadActivity.EXTRA_ADDRESS, who);
