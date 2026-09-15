@@ -65,16 +65,24 @@ public final class SmsSweep {
         /** NIP-44 to self, signed, kind 30078 at `d=doc` — SmsOutbox's shape exactly. */
         JSONObject seal(String doc, String bodyJson) throws Exception;
 
+        default String contactName(String address) { return ""; }
+
+        default long smsAtMark() { return -1L; }
+        default long mmsAtMark() { return -1L; }
         long mark();
         void mark(long dateMs);
     }
 
     /** What one pass did, in the phone's own words. */
     public static final class Report {
+        public int skipped;              // provider rows with no address cannot form an archive document
         public int rows;                 // provider rows read
         public int published;            // documents built (the caller sends them)
         public int attachments;          // attachments stored in the encrypted drive
         public int refused;              // attachments the provider would not hand over
+        public String owner = "";
+        public long revision;
+        public long smsAtMark = -1L, mmsAtMark = -1L;
         public long mark;                // the mark this pass EARNED — see commit()
         public String error = "";
         public final List<JSONObject> events = new ArrayList<JSONObject>();
@@ -93,7 +101,7 @@ public final class SmsSweep {
     public static Report run(Io io, int maxRows) {
         Report rep = new Report();
         long mark = io.mark();
-        rep.mark = mark;
+        rep.mark = mark; rep.smsAtMark = io.smsAtMark(); rep.mmsAtMark = io.mmsAtMark();
         List<SmsMsg> rows;
         try {
             rows = io.since(mark, maxRows);
@@ -117,18 +125,23 @@ public final class SmsSweep {
                 rep.error = why(t);
                 break;
             }
-            if (ev == null) continue;
-            rep.events.add(ev);
-            rep.published++;
+            if (ev == null) rep.skipped++;
+            else { rep.events.add(ev); rep.published++; }
             /* The mark is a DATE, and it only ever moves forward. Rows arrive oldest-first, but a
              * provider that hands them back out of order must not be able to strand the newest. */
-            if (m.date > rep.mark) rep.mark = m.date;
+            if (m.date > rep.mark) {
+                rep.mark = m.date; rep.smsAtMark = -1L; rep.mmsAtMark = -1L;
+            }
+            if (m.date == rep.mark) {
+                if (m.mms) rep.mmsAtMark = Math.max(rep.mmsAtMark, m.id);
+                else rep.smsAtMark = Math.max(rep.smsAtMark, m.id);
+            }
         }
         return rep;
     }
 
     /**
-     * Move the mark, once the caller has actually put the events on a socket.
+     * Move the mark after the caller has obtained relay acceptance for the whole batch.
      *
      * Two-phase on purpose: a sweep that advanced its own mark while no relay was connected would
      * throw away the only copy of that window's work, silently, and the next pass would start after
@@ -149,7 +162,9 @@ public final class SmsSweep {
         body.put("body", m.body == null ? "" : m.body);
         body.put("date", m.date);
         body.put("incoming", m.incoming());
-        body.put("name", "");
+        String name = "";
+        try { name = io.contactName(addr); } catch (Throwable ignored) { }
+        body.put("name", name == null ? "" : name);
         /* Carried rather than inferred from the attachment list: a picture message whose pictures
          * could not be read is still a picture message, and every reader counts on saying so. */
         if (m.mms) body.put("mms", Boolean.TRUE);

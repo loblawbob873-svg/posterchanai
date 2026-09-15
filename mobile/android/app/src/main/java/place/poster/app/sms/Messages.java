@@ -62,6 +62,17 @@ public final class Messages {
         return out.size() > want ? new ArrayList<SmsMsg>(out.subList(0, want)) : out;
     }
 
+    /** The archive cannot advance past a provider that failed while the other provider answered. */
+    public static List<SmsMsg> archiveSince(Context ctx, long dateMs, long smsId, long mmsId, int limit) {
+        List<SmsMsg> sms = SmsStore.archiveSince(ctx, dateMs, smsId, limit);
+        if (SmsStore.archiveReadFailed()) throw new IllegalStateException("SMS provider unavailable");
+        List<SmsMsg> mms = MmsStore.archiveSince(ctx, dateMs, mmsId, limit);
+        if (MmsStore.archiveReadFailed()) throw new IllegalStateException("MMS provider unavailable");
+        List<SmsMsg> rows = new ArrayList<SmsMsg>(); rows.addAll(sms); rows.addAll(mms);
+        Collections.sort(rows, OLDEST_FIRST);
+        return rows.size() > limit ? new ArrayList<SmsMsg>(rows.subList(0, limit)) : rows;
+    }
+
     /** One strict page older than `dateMs`, newest first across SMS and MMS providers. */
     public static List<SmsMsg> before(Context ctx, long dateMs, int limit) {
         return merge(SmsStore.before(ctx, dateMs, limit),

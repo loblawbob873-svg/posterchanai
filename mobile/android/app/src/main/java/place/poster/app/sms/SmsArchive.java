@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.util.Log;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -25,13 +26,13 @@ import place.poster.app.sync.SyncStore;
  * three things only a phone can answer are the three things not under test.
  *
  * NOTHING HERE PUBLISHES. `sweep()` hands back signed events and SignerRelayService — the only
- * thing that knows whether a relay is actually connected — sends them and then commits the mark.
+ * thing that knows whether a relay is actually connected — waits for every relay receipt before committing the mark.
  */
 public final class SmsArchive {
     private static final String TAG = "PCSmsArchive";
     private static final String PREFS = "pcsms_archive";
-    private static final String K_MARK = "mark";
     private static final String K_LAST = "last";
+    private static final Object CHECKPOINT_LOCK = new Object();
 
     /** One pass, bounded: this runs while somebody is holding the phone. */
     public static final int ROWS_PER_PASS = 25;
@@ -46,7 +47,15 @@ public final class SmsArchive {
     }
 
     /** How far the archive has got, in provider milliseconds. */
-    public static long mark(Context ctx) { return prefs(ctx).getLong(K_MARK, 0L); }
+    private static String owner(Context ctx) {
+        try { byte[] key = SignerKey.load(ctx); return key == null ? "" : Nostr.hex(Nostr.pubkey(key)); }
+        catch (Throwable ignored) { return ""; }
+    }
+    // v3 starts a repair pass: the old global cursor could advance past rejected socket writes.
+    // Account-specific cursors never hide one account's history after switching signing keys.
+    private static String markKey(String owner) { return "mark.v3:" + owner; }
+    private static String pendingKey(String owner) { return "pending.v3:" + owner; }
+    public static long mark(Context ctx) { return prefs(ctx).getLong(markKey(owner(ctx)), 0L); }
 
     /** What the last pass did, for the panel that has to explain a phone nobody can query. */
     public static String last(Context ctx) { return prefs(ctx).getString(K_LAST, ""); }
@@ -60,7 +69,12 @@ public final class SmsArchive {
      * therefore a deliberate act, never something a sweep decides for itself.
      */
     public static void rescan(Context ctx) {
-        prefs(ctx).edit().putLong(K_MARK, 0L).apply();
+        synchronized (CHECKPOINT_LOCK) {
+            String owner = owner(ctx);
+            prefs(ctx).edit().putLong("revision.v3:" + owner, prefs(ctx).getLong("revision.v3:" + owner, 0L) + 1L)
+                    .putLong(markKey(owner), 0L).remove("sms.v3:" + owner).remove("mms.v3:" + owner)
+                    .remove(pendingKey(owner)).commit();
+        }
     }
 
     /**
@@ -96,6 +110,25 @@ public final class SmsArchive {
             return null;
         }
 
+        final long revision;
+        synchronized (CHECKPOINT_LOCK) {
+            revision = prefs(ctx).getLong("revision.v3:" + pubHex, 0L);
+            String pending = prefs(ctx).getString(pendingKey(pubHex), "");
+            if (!pending.isEmpty()) {
+                try {
+                    SmsSweep.Report restored = restore(pending, pubHex);
+                    if (restored.revision == revision) {
+                        // SharedPreferences updates memory even when commit() fails. Reaffirm disk
+                        // durability before treating a memory-visible retry as publishable.
+                        SmsSweep.Report durable = durableRestore(ctx, pubHex, pending);
+                        note(ctx, "retrying " + durable.events.size() + " history records; waiting for relay acceptance");
+                        return durable;
+                    }
+                    if (!prefs(ctx).edit().remove(pendingKey(pubHex)).commit()) return null;
+                } catch (Throwable invalid) { note(ctx, "archive recovery record is unreadable; rescan required"); return null; }
+            }
+        }
+
         final SyncNet net = new SyncNet(store.apiBase(), store.mediaBase(), sec);
         /* THE DRIVE KEY IS RESOLVED ONCE, BEFORE ANY ATTACHMENT IS TOUCHED. Doing it per photo is
          * the same shape as the browser bug this feature shipped alongside: sixteen concurrent
@@ -105,7 +138,7 @@ public final class SmsArchive {
 
         SmsSweep.Io io = new SmsSweep.Io() {
             public List<SmsMsg> since(long dateMs, int limit) {
-                List<SmsMsg> rows = Messages.since(ctx, dateMs, limit);
+                List<SmsMsg> rows = Messages.archiveSince(ctx, dateMs, smsAtMark(), mmsAtMark(), limit);
                 return rows == null ? new ArrayList<SmsMsg>() : rows;
             }
 
@@ -134,22 +167,101 @@ public final class SmsArchive {
                         KIND, tags, ct);
             }
 
-            public long mark() { return SmsArchive.mark(ctx); }
+            public String contactName(String address) { return PhoneBook.nameOf(ctx, address); }
+            public long smsAtMark() { return prefs(ctx).getLong("sms.v3:" + pubHex, -1L); }
+            public long mmsAtMark() { return prefs(ctx).getLong("mms.v3:" + pubHex, -1L); }
+            public long mark() { return prefs(ctx).getLong(markKey(pubHex), 0L); }
 
             public void mark(long dateMs) {
-                prefs(ctx).edit().putLong(K_MARK, dateMs).apply();
+                prefs(ctx).edit().putLong(markKey(pubHex), dateMs).apply();
             }
         };
 
         SmsSweep.Report rep = SmsSweep.run(io, maxRows <= 0 ? ROWS_PER_PASS : maxRows);
+        rep.owner = pubHex; rep.revision = revision;
+        synchronized (CHECKPOINT_LOCK) {
+            if (!pubHex.equals(owner(ctx)) || revision != prefs(ctx).getLong("revision.v3:" + pubHex, 0L)) return null;
+            if (!rep.events.isEmpty()) {
+                try {
+                    // Persist exact signed events BEFORE touching any socket. Retry after process death
+                    // uses the same ids and never repeats a radio send (this is archive-only).
+                    if (!prefs(ctx).edit().putString(pendingKey(pubHex), encode(rep)).commit()) {
+                        note(ctx, "archive pending batch could not be saved"); return null;
+                    }
+                } catch (Throwable failed) { note(ctx, "archive pending batch could not be saved"); return null; }
+            } else if (rep.skipped > 0 && rep.error.isEmpty()) {
+                // No-address provider rows have no document to ACK. Record only scan progress,
+                // without calling them published, so a full page cannot hide later valid messages.
+                if (!prefs(ctx).edit().putLong(markKey(pubHex), rep.mark)
+                        .putLong("sms.v3:" + pubHex, rep.smsAtMark).putLong("mms.v3:" + pubHex, rep.mmsAtMark).commit()) {
+                    note(ctx, "archive scan position could not be saved"); return null;
+                }
+            }
+        }
         record(ctx, rep);
         return rep;
     }
 
-    /** Move the mark, once the caller has actually put these events on a socket. */
+    private static SmsSweep.Report durableRestore(Context ctx, String owner, String raw) throws Exception {
+        SmsSweep.Report rep = restore(raw, owner);
+        if (!prefs(ctx).edit().putString(pendingKey(owner), raw).commit())
+            throw new IllegalStateException("archive pending batch is not durable");
+        return rep;
+    }
+
+    private static String encode(SmsSweep.Report rep) throws Exception {
+        JSONArray events = new JSONArray();
+        for (JSONObject event : rep.events) events.put(event);
+        return new JSONObject().put("owner", rep.owner).put("revision", rep.revision).put("mark", rep.mark)
+                .put("sms", rep.smsAtMark).put("mms", rep.mmsAtMark)
+                .put("more", rep.more).put("events", events).toString();
+    }
+
+    private static SmsSweep.Report restore(String raw, String owner) throws Exception {
+        JSONObject saved = new JSONObject(raw);
+        if (!owner.equals(saved.optString("owner", ""))) throw new Exception("wrong owner");
+        SmsSweep.Report rep = new SmsSweep.Report();
+        rep.owner = owner; rep.revision = saved.optLong("revision", 0L); rep.mark = saved.optLong("mark", 0L);
+        rep.smsAtMark = saved.optLong("sms", -1L); rep.mmsAtMark = saved.optLong("mms", -1L);
+        rep.more = saved.optBoolean("more", false);
+        JSONArray events = saved.getJSONArray("events");
+        if (events.length() == 0 || events.length() > ROWS_PER_PASS) throw new Exception("invalid batch");
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.getJSONObject(i);
+            if (!owner.equals(event.optString("pubkey", "")) || !event.optString("id", "").matches("[0-9a-f]{64}"))
+                throw new Exception("invalid event");
+            rep.events.add(event);
+        }
+        return rep;
+    }
+
+    /** A rescan invalidates in-flight delivery as well as the persistent checkpoint. */
+    public static boolean current(Context ctx, SmsSweep.Report rep) {
+        synchronized (CHECKPOINT_LOCK) {
+            if (rep == null || !rep.owner.equals(owner(ctx)) || rep.events.isEmpty()
+                    || rep.revision != prefs(ctx).getLong("revision.v3:" + rep.owner, 0L)) return false;
+            try {
+                SmsSweep.Report saved = restore(prefs(ctx).getString(pendingKey(rep.owner), ""), rep.owner);
+                return saved.revision == rep.revision && saved.events.get(0).optString("id")
+                        .equals(rep.events.get(0).optString("id"));
+            } catch (Throwable ignored) { return false; }
+        }
+    }
+
+    /** Called only after every event received a positive relay OK, never after WebSocket.send. */
     public static void commit(Context ctx, SmsSweep.Report rep) {
-        if (rep != null && rep.mark > mark(ctx)) {
-            prefs(ctx).edit().putLong(K_MARK, rep.mark).apply();
+        synchronized (CHECKPOINT_LOCK) {
+            if (rep == null || rep.events.isEmpty() || !rep.owner.equals(owner(ctx))
+                    || rep.revision != prefs(ctx).getLong("revision.v3:" + rep.owner, 0L)) return;
+            try {
+                SmsSweep.Report pending = restore(prefs(ctx).getString(pendingKey(rep.owner), ""), rep.owner);
+                // A user rescan cancels the previous batch; a delayed ACK cannot advance its new cursor.
+                if (!pending.events.get(0).optString("id").equals(rep.events.get(0).optString("id"))) return;
+                if (!prefs(ctx).edit().putLong(markKey(rep.owner), Math.max(rep.mark, mark(ctx)))
+                        .putLong("sms.v3:" + rep.owner, rep.smsAtMark).putLong("mms.v3:" + rep.owner, rep.mmsAtMark)
+                        .remove(pendingKey(rep.owner)).commit()) note(ctx, "relay accepted history; checkpoint save failed, retrying");
+                else note(ctx, "relay accepted " + rep.events.size() + " history records");
+            } catch (Throwable ignored) { }
         }
     }
 
@@ -162,8 +274,10 @@ public final class SmsArchive {
      */
     private static void record(Context ctx, SmsSweep.Report rep) {
         if (rep == null) return;
-        String line = "rows=" + rep.rows + " published=" + rep.published
+        String line = "rows=" + rep.rows + " prepared=" + rep.published
+                + " skipped-no-address=" + rep.skipped
                 + " attachments=" + rep.attachments + " refused=" + rep.refused
+                + (!rep.events.isEmpty() ? " waiting for relay acceptance; retrying if needed" : "")
                 + (rep.more ? " more" : "")
                 + (rep.error.isEmpty() ? "" : " error=" + rep.error);
         prefs(ctx).edit().putString(K_LAST, line).apply();

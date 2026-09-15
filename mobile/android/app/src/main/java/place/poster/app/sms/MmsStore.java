@@ -107,6 +107,8 @@ public final class MmsStore {
     }
 
     private static volatile boolean refused = false;
+    private static final ThreadLocal<Boolean> archiveReadFailure = new ThreadLocal<Boolean>();
+    static boolean archiveReadFailed() { return Boolean.TRUE.equals(archiveReadFailure.get()); }
     // Reaction matching requires a complete snapshot from THIS calling thread. A concurrent
     // archive read must not turn this read's provider failure into apparently empty history.
     private static final ThreadLocal<Boolean> reactionReadComplete = new ThreadLocal<Boolean>();
@@ -158,6 +160,12 @@ public final class MmsStore {
      * mark can only land on the newest of what it was given. An archive pinned to the oldest corner
      * of the store, with every picture message behind it unreachable and nothing logged.
      */
+    /** Stable archive pagination, including every provider row sharing the last timestamp. */
+    public static List<SmsMsg> archiveSince(Context ctx, long dateMs, long id, int limit) {
+        return query(ctx, SmsArchiveCursor.where(true), SmsArchiveCursor.args(dateMs, id),
+                     SmsArchiveCursor.order(true), limit);
+    }
+
     public static List<SmsMsg> since(Context ctx, long dateMs, int limit) {
         // See SmsStore.since: paginate from the oldest pending row. Selecting the newest limited
         // slice first permanently strands the older part of a busy backlog behind the cursor.
@@ -185,8 +193,9 @@ public final class MmsStore {
     private static List<SmsMsg> query(Context ctx, String where, String[] args,
                                       String order, int limit) {
         reactionReadComplete.set(false);
+        archiveReadFailure.set(false);
         List<SmsMsg> out = new ArrayList<SmsMsg>();
-        if (ctx == null) return out;
+        if (ctx == null) { archiveReadFailure.set(true); return out; }
         refused = false;
         capped = false;
         int want = Math.max(1, Math.min(limit, MAX_ROWS));
@@ -206,13 +215,13 @@ public final class MmsStore {
                 // several OEM providers guard the MMS tables differently from the SMS ones, so this
                 // can be refused on a phone where texts read perfectly. Reported separately for
                 // exactly that reason.
-                refused = true;
+                refused = true; archiveReadFailure.set(true);
                 Log.w(TAG, "mms: could not read the picture-message store", t2);
                 return out;
             }
         }
         try {
-            if (c == null) return out;
+            if (c == null) { archiveReadFailure.set(true); return out; }
             while (c.moveToNext() && out.size() < want) {
                 SmsMsg m = new SmsMsg();
                 m.mms = true;
@@ -244,6 +253,7 @@ public final class MmsStore {
             }
             reactionReadComplete.set(out.size() < want);
         } catch (Throwable t) {
+            archiveReadFailure.set(true);
             Log.w(TAG, "mms: cursor went bad part-way", t);
         } finally {
             if (c != null) try { c.close(); } catch (Throwable ignored) { }
@@ -351,7 +361,7 @@ public final class MmsStore {
                         Telephony.Mms.Part.MSG_ID + " IN (" + ids + ")", null,
                         Telephony.Mms.Part.MSG_ID);
             }
-            if (c == null) return;
+            if (c == null) { archiveReadFailure.set(true); return; }
             // Column indexes are read by NAME here, not by position: the fallback projection is
             // shorter, so a hard-coded index reads the text column as a filename on exactly the
             // phones the fallback exists for.
@@ -362,13 +372,15 @@ public final class MmsStore {
             final int iFn = col(c, Telephony.Mms.Part.FILENAME);
             final int iCl = col(c, Telephony.Mms.Part.CONTENT_LOCATION);
             final int iText = col(c, Telephony.Mms.Part.TEXT);
+            if (iId < 0 || iMid < 0 || iCt < 0) throw new IllegalStateException("MMS part identity missing");
             while (c.moveToNext()) {
                 long mid = iMid < 0 ? 0 : c.getLong(iMid);
                 SmsMsg m = byId.get(mid);
                 if (m == null) continue;
                 SmsPart p = new SmsPart();
                 p.id = iId < 0 ? 0 : c.getLong(iId);
-                p.ct = str(c, iCt);
+                p.ct = c.getString(iCt);
+                if (p.ct == null) p.ct = "";
                 // THREE COLUMNS FOR ONE NAME, and which one is filled depends on the sending phone.
                 // Falling back through them is what keeps a photo from being called "attachment" on
                 // half the messages — and the name is part of the archive address, so an empty one
@@ -392,6 +404,7 @@ public final class MmsStore {
         } catch (Throwable t) {
             // NOT `refused`. The messages themselves were read; their contents were not, and that is
             // a picture message with an unreadable attachment rather than a store that said no.
+            archiveReadFailure.set(true);
             Log.w(TAG, "mms: could not read message parts", t);
         } finally {
             if (c != null) try { c.close(); } catch (Throwable ignored) { }
@@ -414,7 +427,7 @@ public final class MmsStore {
                         Uri.withAppendedPath(Telephony.Mms.CONTENT_URI, m.id + "/addr"),
                         new String[]{ Telephony.Mms.Addr.ADDRESS, Telephony.Mms.Addr.TYPE },
                         null, null, null);
-                if (c == null) continue;
+                if (c == null) { archiveReadFailure.set(true); continue; }
                 String from = "", to = "", any = "";
                 // ONLY THE `TO` ADDRESSES ARE COUNTED, and the phone's own number is among them on
                 // an incoming message. Counting every address instead made a perfectly ordinary
@@ -427,7 +440,8 @@ public final class MmsStore {
                 // BOTH directions -- me, or them -- and more only when somebody else is really there.
                 java.util.HashSet<String> people = new java.util.HashSet<String>();
                 while (c.moveToNext()) {
-                    String a = str(c, 0);
+                    String a = c.getString(0);
+                    if (a == null) a = "";
                     if (a.isEmpty() || SELF.equals(a)) continue;
                     int type = 0;
                     try { type = c.getInt(1); } catch (Throwable ignored) { }
@@ -441,6 +455,7 @@ public final class MmsStore {
                 m.address = firstNonEmpty(m.incoming() ? from : to, m.incoming() ? any : any, from);
                 if (!people.isEmpty()) m.people = people.size();
             } catch (Throwable t) {
+                archiveReadFailure.set(true);
                 Log.w(TAG, "mms: could not read a message's addresses", t);
             } finally {
                 if (c != null) try { c.close(); } catch (Throwable ignored) { }

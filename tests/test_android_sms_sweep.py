@@ -93,6 +93,8 @@ class Drv {
     final List<String> docs = new ArrayList<String>();
     final List<String> bodies = new ArrayList<String>();
 
+    public String contactName(String address) { return "Archived Contact"; }
+
     public List<SmsMsg> since(long dateMs, int limit) {
       List<SmsMsg> out = new ArrayList<SmsMsg>();
       for (SmsMsg m : rows) if (m.date > dateMs) out.add(m);
@@ -164,6 +166,7 @@ class Drv {
       SmsSweep.commit(w, r);
       out.put("A_mark", w.mark);
       // The address is the one the JavaScript computes for the same row.
+      out.put("A_contact_name", Json.str(bodyOf(w, 0).get("name"), ""));
       out.put("A_doc0", w.docs.get(0));
       out.put("A_doc0_expected",
           SmsKeys.docId("+15551234567", 1000, "hello", true, ""));
@@ -283,6 +286,14 @@ class Drv {
       out.put("H_mark", w.mark);
     }
 
+    {
+      World w = new World();
+      for(int i=1;i<=25;i++) w.rows.add(text("", i*1000L, "no address", true));
+      w.rows.add(text("+1555",26000L,"later valid row",true));
+      SmsSweep.Report first=SmsSweep.run(w,25);SmsSweep.commit(w,first);
+      SmsSweep.Report next=SmsSweep.run(w,25);
+      out.put("I_skipped",first.skipped);out.put("I_later_published",next.published);
+    }
     System.out.println(Json.write(out));
   }
 }
@@ -428,3 +439,12 @@ def test_an_unaddressed_row_is_skipped_without_stopping_the_pass():
     assert r["H_rows"] == 2, r
     assert r["H_published"] == 1, r
     assert r["H_mark"] == 2000, "one bad row stranded everything behind it: %r" % r
+
+
+def test_native_history_preserves_the_phone_contact_label():
+    assert result()["A_contact_name"] == "Archived Contact"
+
+
+def test_addressless_provider_page_does_not_hide_later_history():
+    assert result()["I_skipped"] == 25
+    assert result()["I_later_published"] == 1

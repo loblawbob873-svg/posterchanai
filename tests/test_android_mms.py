@@ -184,6 +184,8 @@ import android.content.Context; import java.util.*;
 final class SmsStore { static class Thread { String address,label; }
  static List<SmsMsg> recent(Context c,int n){return new ArrayList<>();}
  static List<SmsMsg> since(Context c,long d,int n){return new ArrayList<>();}
+ static List<SmsMsg> archiveSince(Context c,long d,long id,int n){return new ArrayList<>();}
+ static boolean archiveReadFailed(){return false;}
  static List<SmsMsg> before(Context c,long d,int n){return new ArrayList<>();}
  static List<SmsMsg> thread(Context c,long[] ids,int n){return new ArrayList<>();}
  static List<Thread> platformThreads(Context c,int n,boolean w){return new ArrayList<>();}
@@ -193,6 +195,8 @@ import android.content.Context; import java.util.*;
 final class MmsStore {
  static List<SmsMsg> recent(Context c,int n){return new ArrayList<>();}
  static List<SmsMsg> since(Context c,long d,int n){return new ArrayList<>();}
+ static List<SmsMsg> archiveSince(Context c,long d,long id,int n){return new ArrayList<>();}
+ static boolean archiveReadFailed(){return false;}
  static List<SmsMsg> before(Context c,long d,int n){return new ArrayList<>();}
  static List<SmsMsg> thread(Context c,long[] ids,int n){return new ArrayList<>();} }""",
     }

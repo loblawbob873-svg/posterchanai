@@ -334,6 +334,12 @@ public final class SmsStore {
      * row id, because a row id is local to one phone: a restored backup renumbers every message and
      * would re-publish the lot.
      */
+    /** Stable archive pagination, including every provider row sharing the last timestamp. */
+    public static List<SmsMsg> archiveSince(Context ctx, long dateMs, long id, int limit) {
+        return query(ctx, SmsArchiveCursor.where(false), SmsArchiveCursor.args(dateMs, id),
+                     SmsArchiveCursor.order(false), limit);
+    }
+
     public static List<SmsMsg> since(Context ctx, long dateMs, int limit) {
         // OLDEST pending rows, not the newest slice of the backlog. Asking DESC here and reversing
         // afterwards looks oldest-first, but a backlog larger than `limit` has already lost its
@@ -356,6 +362,8 @@ public final class SmsStore {
      * Every read sets it, so it always describes the read that just happened.
      */
     private static volatile boolean refused = false;
+    private static final ThreadLocal<Boolean> archiveReadFailure = new ThreadLocal<Boolean>();
+    static boolean archiveReadFailed() { return Boolean.TRUE.equals(archiveReadFailure.get()); }
     // Reaction matching requires a complete snapshot from THIS calling thread. A concurrent
     // archive read must not turn this read's provider failure into apparently empty history.
     private static final ThreadLocal<Boolean> reactionReadComplete = new ThreadLocal<Boolean>();
@@ -367,8 +375,9 @@ public final class SmsStore {
     private static List<SmsMsg> query(Context ctx, String where, String[] args,
                                       String order, int limit) {
         reactionReadComplete.set(false);
+        archiveReadFailure.set(false);
         List<SmsMsg> out = new ArrayList<SmsMsg>();
-        if (ctx == null) return out;
+        if (ctx == null) { archiveReadFailure.set(true); return out; }
         refused = false;
         Cursor c = null;
         try {
@@ -385,18 +394,19 @@ public final class SmsStore {
                 // empty list is exactly what a phone with no texts returns — so a missing READ_SMS
                 // grant drew the same screen as an empty inbox, which is how "i see 0 of my sms
                 // messages in Text" survived. The screen asks `refused()` and says which.
-                refused = true;
+                refused = true; archiveReadFailure.set(true);
                 Log.w(TAG, "sms: could not read the message store", t2);
                 return out;
             }
         }
         try {
-            if (c == null) return out;
+            if (c == null) { archiveReadFailure.set(true); return out; }
             while (c.moveToNext() && out.size() < limit) {
                 SmsMsg m = new SmsMsg();
                 m.id = c.getLong(0);
                 m.threadId = c.getLong(1);
-                m.address = str(c, 2);
+                m.address = c.getString(2);
+                if (m.address == null) m.address = "";
                 // A missing body could hide a duplicate reaction target. Treat read errors as partial.
                 m.body = c.getString(3);
                 if (m.body == null) m.body = "";
@@ -407,6 +417,7 @@ public final class SmsStore {
             }
             reactionReadComplete.set(out.size() < limit);
         } catch (Throwable t) {
+            archiveReadFailure.set(true);
             Log.w(TAG, "sms: cursor went bad part-way", t);
         } finally {
             if (c != null) try { c.close(); } catch (Throwable ignored) { }

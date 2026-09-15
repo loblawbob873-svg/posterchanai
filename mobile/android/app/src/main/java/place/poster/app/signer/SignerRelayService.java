@@ -160,6 +160,10 @@ public class SignerRelayService extends Service {
     private String subId;
     /** The SMS outbox's own subscription id, so its events are told apart from signer traffic. */
     private String smsSubId;
+    private SmsSweep.Report smsHistoryBatch;
+    private place.poster.app.sms.SmsArchiveDelivery smsHistoryDelivery;
+    private boolean smsHistoryBuilding, smsHistoryRetryScheduled;
+    private Object smsHistoryGeneration = new Object();
     private boolean stopping = false;
     private final SignerReplyQueue<ReplyAuthority> replies = new SignerReplyQueue<>();
     private final Map<String,Object> replyAuthority = new HashMap<>();
@@ -289,7 +293,7 @@ public class SignerRelayService extends Service {
          * maps `recv` owns. `startForeground` above stays on this thread, where the 5s deadline is. */
         handler.post(this::reload);
         handler.post(this::publishSmsArchive);
-        if (ACTION_SMS_SWEEP.equals(action)) handler.post(this::sweepSmsHistory);
+        handler.post(this::sweepSmsHistory);
         return START_STICKY;   // a signer that stops answering because of memory pressure is the bug
     }
 
@@ -298,7 +302,11 @@ public class SignerRelayService extends Service {
         byte[] previousKey = sec();
         sec = null;                       // re-read: the key may have just been armed or cleared
         myPubHex = null;
-        if (!java.util.Arrays.equals(previousKey, sec())) { replies.clear(); replyAuthority.clear(); }
+        if (!java.util.Arrays.equals(previousKey, sec())) {
+            replies.clear(); replyAuthority.clear();
+            smsHistoryGeneration = new Object(); smsHistoryBuilding = false;
+            smsHistoryBatch = null; smsHistoryDelivery = null;
+        }
         if (sec() == null) {
             // No key on this phone: there is nothing to sign with, so holding sockets open would be
             // pure battery for a service that must refuse every request anyway.
@@ -476,7 +484,7 @@ public class SignerRelayService extends Service {
                     flushSmsReceipts(s);
                 } catch (Throwable ignored) { }
                 lastRx.put(url, System.currentTimeMillis());
-                connected = socks.size(); note(); publishSmsArchive(); flushReplies();
+                connected = socks.size(); note(); publishSmsArchive(); flushReplies(); sweepSmsHistory();
                 });
             }
             @Override public void onMessage(WebSocket s, String text) {
@@ -632,6 +640,11 @@ public class SignerRelayService extends Service {
     private void recv(String url, String raw) {
         JSONArray m;
         try { m = new JSONArray(raw); } catch (Throwable t) { return; }
+        if (m.length() >= 3 && "OK".equals(m.optString(0, ""))) {
+            // Strict boolean: strings such as "false" are not successful relay receipts.
+            acceptSmsHistoryAck(m.optString(1, ""), Boolean.TRUE.equals(m.opt(2)));
+            return;
+        }
         if (m.length() >= 2 && "AUTH".equals(m.optString(0, ""))) {
             /* NIP-78 (2026-09-03): the SMS archive is private app data, so this connection must
              * authenticate as the same key before its kind-30078 REQ/EVENT traffic is accepted.
@@ -650,6 +663,7 @@ public class SignerRelayService extends Service {
                 socket.send(new JSONArray().put("REQ").put(smsSubId)
                         .put(SmsOutbox.filter(pubHex)).toString());
                 publishSmsArchive();
+                sweepSmsHistory();
             } catch (Throwable t) { lastError = "relay AUTH failed"; }
             return;
         }
@@ -798,42 +812,68 @@ public class SignerRelayService extends Service {
         });
     }
 
-    /**
-     * One bounded back-fill pass, published on the sockets this service already owns.
-     *
-     * THE MARK MOVES LAST, AND ONLY IF SOMETHING CARRIED THE EVENTS. A sweep that advanced its own
-     * mark with no relay connected would throw that window of history away silently, and the next
-     * pass would start after messages nobody ever archived — which is the shape of every "it says
-     * it synced and the messages are not there" report this feature has had.
-     */
+    /** One durable, owner-bound archive batch at a time. Socket enqueue never advances history. */
     private void sweepSmsHistory() {
-        if (socks.isEmpty()) return;                 // onOpen calls us again once a relay exists
-        final java.util.List<WebSocket> targets = new java.util.ArrayList<>(socks.values());
+        if (stopping || socks.isEmpty()) return;
+        if (smsHistoryBatch != null) { flushSmsHistory(); return; }
+        if (smsHistoryBuilding) return;
+        smsHistoryBuilding = true;
+        final Object generation = smsHistoryGeneration;
         pool().execute(() -> {
-            final SmsSweep.Report rep;
-            try {
-                rep = SmsArchive.sweep(SignerRelayService.this, SmsArchive.ROWS_PER_PASS);
-            } catch (Throwable t) {
-                /* The reason is kept where a phone nobody can query will still say it: SmsArchive
-                 * records every pass under its own prefs, which is what Texts → Details reads. */
-                lastError = "sms archive: " + t;
-                return;
-            }
-            if (rep == null || rep.events.isEmpty()) return;
+            SmsSweep.Report built = null;
+            try { built = SmsArchive.sweep(SignerRelayService.this, SmsArchive.ROWS_PER_PASS); }
+            catch (Throwable t) { lastError = "sms archive could not prepare history"; }
+            final SmsSweep.Report rep = built;
             handler.post(() -> {
-                int sent = 0;
-                for (JSONObject ev : rep.events) {
-                    String wire = new JSONArray().put("EVENT").put(ev).toString();
-                    for (WebSocket ws : targets) if (ws != null && ws.send(wire)) sent++;
+                if (stopping || generation != smsHistoryGeneration) return;
+                smsHistoryBuilding = false;
+                if (rep == null || rep.events.isEmpty()) {
+                    if (rep == null || !rep.error.isEmpty() || rep.skipped > 0) scheduleSmsHistoryRetry();
+                    return;
                 }
-                if (sent > 0) SmsArchive.commit(SignerRelayService.this, rep);
-                /* MORE HISTORY BEHIND THIS ONE, so come back for it — but through the service door,
-                 * not a loop: the pass is bounded because this phone is in somebody's hand, and
-                 * "encrypting and copying messages to blossom makes it glitchy" is what an
-                 * unbounded one feels like. */
-                if (sent > 0 && rep.more) handler.postDelayed(this::sweepSmsHistory, 4000L);
+                if (!rep.owner.equals(myPub(sec()))) return;
+                java.util.List<String> ids = new java.util.ArrayList<>();
+                for (JSONObject event : rep.events) ids.add(event.optString("id", ""));
+                smsHistoryBatch = rep;
+                smsHistoryDelivery = new place.poster.app.sms.SmsArchiveDelivery(ids);
+                flushSmsHistory();
             });
         });
+    }
+
+    private void flushSmsHistory() {
+        if (stopping || smsHistoryBatch == null || smsHistoryDelivery == null) return;
+        if (!smsHistoryBatch.owner.equals(myPub(sec())) || !SmsArchive.current(this, smsHistoryBatch)) {
+            smsHistoryBatch = null; smsHistoryDelivery = null; handler.post(this::sweepSmsHistory); return;
+        }
+        for (JSONObject event : smsHistoryBatch.events) {
+            if (!smsHistoryDelivery.needs(event.optString("id", ""))) continue;
+            String wire = new JSONArray().put("EVENT").put(event).toString();
+            for (WebSocket socket : socks.values()) {
+                try { if (socket != null) socket.send(wire); } catch (Throwable ignored) { }
+            }
+        }
+        scheduleSmsHistoryRetry();
+    }
+
+    private void scheduleSmsHistoryRetry() {
+        if (smsHistoryRetryScheduled || stopping) return;
+        smsHistoryRetryScheduled = true;
+        handler.postDelayed(() -> {
+            smsHistoryRetryScheduled = false;
+            if (!stopping) sweepSmsHistory();
+        }, 10000L);
+    }
+
+    private void acceptSmsHistoryAck(String id, boolean accepted) {
+        if (stopping || smsHistoryBatch == null || smsHistoryDelivery == null
+                || !smsHistoryBatch.owner.equals(myPub(sec()))) return;
+        if (!smsHistoryDelivery.accept(id, accepted) || !smsHistoryDelivery.complete()) return;
+        SmsSweep.Report completed = smsHistoryBatch;
+        smsHistoryBatch = null; smsHistoryDelivery = null;
+        SmsArchive.commit(this, completed);
+        // Query once after every accepted batch, including rows that arrived during a short pass.
+        handler.postDelayed(this::sweepSmsHistory, 4000L);
     }
 
     /** Try both schemes, ordered by the payload's own marker, and remember which one worked. */
