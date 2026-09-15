@@ -3237,15 +3237,15 @@
   function startRekeyLive(p,room,controls){
     const reader=window.PosterCordReader,R=window.Relay,bundle=room&&room.cord&&room.cord.bundle,owner=deliveryOwner(p);
     if(!reader||!reader.inspectRekeyStreams||!bundle||!owner||!R||!R.subscribeFrom||bundle.dissolved||bundle.removed)return;
-    const identity=roomIdentity(room),snapshot=JSON.stringify(bundle),key=owner+'\n'+identity;
+    const identity=roomIdentity(room),snapshot=JSON.stringify(bundle),controlStamp=JSON.stringify(cordControlStamp(controls)),key=owner+'\n'+identity;
     for(const [oldKey,old] of rekeySubscriptions)if(old.owner!==owner){old.close();rekeySubscriptions.delete(oldKey);}
-    const prior=rekeySubscriptions.get(key);if(prior&&prior.snapshot===snapshot)return;
+    const prior=rekeySubscriptions.get(key);if(prior&&prior.snapshot===snapshot&&prior.controlStamp===controlStamp){if(prior.refresh)prior.refresh();return;}
     if(prior)prior.close();
     const authors=reader.inspectRekeyStreams(bundle);if(!authors.length)return;
     let closed=false,warned=false,pooled=null,external=null,chain=Promise.resolve();const wraps=new Map(),relays=roomRelays(bundle);
     const current=()=>!closed&&deliveryOwner(p)===owner&&saved().some(r=>roomIdentity(r)===identity&&JSON.stringify(r.cord&&r.cord.bundle)===snapshot);
     const close=()=>{closed=true;try{R.close(pooled);}catch(_){}try{if(external)external();}catch(_){}};
-    const entry={owner,snapshot,close};rekeySubscriptions.set(key,entry);
+    const entry={owner,snapshot,controlStamp,close};rekeySubscriptions.set(key,entry);
     const apply=async()=>{
       if(!current())return;
       const result=await reader.inspectRekeys(bundle,roomControls.get(room.communityId||room.naddr)||controls||[],[...wraps.values()],owner,p.cordRekeyDecrypt);
@@ -3273,8 +3273,12 @@
     const onEvent=ev=>{if(!current()||!ev||Number(ev.kind)!==1059||!authors.includes(ev.pubkey)||wraps.has(ev.id))return;
       if(wraps.size>=10000)return;wraps.set(ev.id,ev);chain=chain.then(apply).catch(e=>{if(current())console.warn('Concord rekey was not applied',e);});};
     const filters=[{kinds:[1059],authors}],plane=cordPlaneContext(p,bundle,controls||[],room);
-    try{pooled=plane?null:R.subscribe(filters,{onEvent,live:true});external=plane?cordPlaneSubscribe(p,R,relays,filters,{onEvent,timeout:0,live:true},plane):R.subscribeFrom(relays,filters,{onEvent,timeout:0,live:true});}
+    let refreshing=false,lastRefresh=0;
+    entry.refresh=()=>{if(refreshing||!current()||lastRefresh&&Date.now()-lastRefresh<60000)return;refreshing=true;lastRefresh=Date.now();
+      void queryEnvelopeHistory(p,relays,authors,[...wraps.values()],{plane,purpose:'concord rekeys '+key,minInterval:60000}).then(events=>{if(current())for(const ev of events||[])onEvent(ev);}).catch(e=>{if(current())console.warn('Concord rekey history unavailable',e);}).finally(()=>{refreshing=false;});};
+    try{pooled=plane?null:R.subscribe(filters,{onEvent,live:true});external=plane?cordPlaneSubscribe(p,R,relays,filters,{onEvent,timeout:0,live:true,max:1},plane):R.subscribeFrom(relays,filters,{onEvent,timeout:0,live:true});}
     catch(e){close();rekeySubscriptions.delete(key);console.warn('Concord rekey subscription failed',e);}
+    if(!closed)entry.refresh();
   }
 
   async function refreshRoomMetadata(p){

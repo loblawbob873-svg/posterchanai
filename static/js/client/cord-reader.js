@@ -26844,7 +26844,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
   function createPlaneAuth(bundle, wraps, author, relays) {
     const { groups, channels } = control(bundle, wraps);
     const held = [...groups, ...channels.flatMap(ch => ch.streams.map(s => s.group)),
-      ...(typeof guestbookGroups === "function" ? guestbookGroups(bundle) : [])];
+      ...(typeof guestbookGroups === "function" ? guestbookGroups(bundle) : []),
+      ...rekeyGroups(bundle), dissolutionGroup(bundle)];
     const group = held.find(g => g.pk === author);
     if (!group) throw new Error("Concord plane key is not held by this membership");
     // A split-plane reader can fetch ciphertext but cannot authenticate as its staff signer.
@@ -26970,7 +26971,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
     return {rumorId:rumor.id,wrap:wrapSeal(seal,group)};
   }
 
-  function inspectRekeyStreams(bundle) {return [...rekeyGroups(bundle).map(g=>g.pk),dissolutionGroup(bundle).pk];}
+  function inspectRekeyStreams(bundle) {return [dissolutionGroup(bundle).pk,...rekeyGroups(bundle).map(g=>g.pk)];}
   function rekeyAuthority(community,folded,opened,scope) {
     if(folded.banned.has(opened.author))return false;
     if(opened.author===community.owner)return true;
