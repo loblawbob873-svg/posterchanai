@@ -90,7 +90,7 @@ window.removeEventListener=(name,fn)=>{if(windowListeners.get(name)===fn)windowL
 window.__PC = {
   $:dollar, $$:dollars, enc:s=>String(s), niceNip05:s=>s,
   isView:view=>view===activeView,
-  cordDirectContext:()=>({pubkey:'a'.repeat(64),isCurrent:()=>true,sign:async template=>template}),
+  cordDirectContext:()=>({pubkey:'a'.repeat(64),isCurrent:()=>true,encrypt:async(_p,text)=>text,decrypt:async(_p,text)=>text,sign:async template=>template}),
   // This DOM fixture mocks crypto; creator wire/ACK ordering has its own real-crypto suite.
   cordInviteLinksModule:async()=>({remember:async()=>{},details:()=>({pubkey:'5'.repeat(64)})}),
   viewer:()=>({pubkey:'a'.repeat(64),npub:'npub1testidentity',profile:{name:'tester',display_name:'Test User'}}),

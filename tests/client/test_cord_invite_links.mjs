@@ -101,17 +101,26 @@ calls=[];const twins=await Promise.all([ctx.changeOwnedInviteLink(concurrentHost
 const paired=R.inspectControl(bundle,copy([...controls,...calls.filter(e=>e.kind===1059)]));for(const twin of twins)assert(paired.liveInviteLinks.includes(A.details(twin).pubkey));assert.equal(paired.liveInviteLinks.length,2);
 await ctx.changeOwnedInviteLink(concurrentHost,room,twins[0]);
 console.log('concurrent creator mint serialization passed');
+// Use the real encrypted membership writer for owner-key durability.
+ctx.membershipEvents=async()=>copy([]);ctx.forgetLeftCommunity=()=>{};ctx.rememberLeftCommunity=()=>{};
+vm.runInContext(source.slice(source.indexOf('  function cordListHex('),source.indexOf('  function cordListMaterial('))+source.slice(source.indexOf('  // CORD-02 §8: canonical'),source.indexOf('  // Only encrypted, signed envelopes cross')),ctx);
 // Ordinary new-community creation must register its original URL immediately.
 vm.runInContext(source.slice(source.indexOf('  async function mintPublicRoom('),source.indexOf('  async function activateJoinedRoom(')),ctx);
 ctx.inviteParts=url=>({naddr:url.split('/invite/')[1].split('#')[0]});ctx.DISCOVER_RELAYS=copy(['wss://discover.fixture']);
-const mintHost={...concurrentHost,relayUrls:()=>['wss://mint.fixture'],publish:async()=>({ev:{kind:1}}),relayPublishTo:async()=>1};
-calls=[];const newRoom=await ctx.mintPublicRoom(mintHost,'Ordinary creation','');assert.deepEqual(calls.map(e=>e.kind),[13303,1059,1059,1059,33301,1]);
+const mintHost={...concurrentHost,relayUrls:()=>['wss://mint.fixture'],publish:async()=>({ev:{kind:1}}),relayPublishTo:async(_relays,e)=>{calls.push(e);return true;}};
+calls=[];const newRoom=await ctx.mintPublicRoom(mintHost,'Ordinary creation','');assert.deepEqual(calls.map(e=>e.kind),[33302,13303,1059,1059,1059,33301,1]);
 assert.equal(R.inspectControl(newRoom.cord.bundle,newRoom.cord.events).liveInviteLinks[0],P.inviteDetails(newRoom.url).linkSigner);
-assert(JSON.parse(NT.nip44.decrypt(calls[0].content,key)).entries.some(e=>e.url===newRoom.url));
-calls=[];await assert.rejects(()=>ctx.mintPublicRoom({...mintHost,relayPublishRoom:async(_relays,e)=>{calls.push(e);return {ok:false};}},'Rejected backup',''),/No relay accepted/);assert.deepEqual(calls.map(e=>e.kind),[13303]);
+assert(JSON.parse(NT.nip44.decrypt(calls[1].content,key)).entries.some(e=>e.url===newRoom.url));
+calls=[];await assert.rejects(()=>ctx.mintPublicRoom({...mintHost,relayPublishRoom:async(_relays,e)=>{calls.push(e);return {ok:false};}},'Rejected backup',''),/No relay accepted/);assert.deepEqual(calls.map(e=>e.kind),[33302,13303]);
 console.log('ordinary community creation tracks original link passed');
 
 // Captured signer cancellation applies to the final discovery announcement too.
 calls=[];await assert.rejects(()=>ctx.mintPublicRoom({...mintHost,cordDirectContext:()=>({...context,sign:async t=>{const event=sign(t);if(t.kind===1)current=false;return event;}})},'Signer switch',''),/account changed/);assert(!calls.some(e=>e.kind===1));current=true;
 calls=[];await assert.rejects(()=>ctx.mintPublicRoom({...mintHost,relayPublishRoom:async(_relays,e)=>{calls.push(e);if(e.kind===1)current=false;return {ok:true};}},'Discovery switch',''),/account changed/);assert.equal(calls.filter(e=>e.kind===1).length,1);current=true;
 console.log('creation announcement account guards passed');
+
+const vault=JSON.parse(NT.nip44.decrypt((await (async()=>{calls=[];await ctx.mintPublicRoom(mintHost,'Owner backup','');return calls.find(e=>e.kind===33302);})()).content,key));
+assert(vault.entries.some(e=>e.current.control_root),'owner control root missing from encrypted membership');
+calls=[];await assert.rejects(()=>ctx.mintPublicRoom({...mintHost,relayPublishTo:async(_r,e)=>{calls.push(e);return false;}},'Denied owner backup',''),/membership relays rejected/);assert.deepEqual(calls.map(e=>e.kind),[33302]);
+calls=[];await assert.rejects(()=>ctx.mintPublicRoom({...mintHost,relayPublishRoom:async(_r,e)=>{calls.push(e);if(e.kind===1059)throw Error('genesis disconnected');return {ok:true};}},'Late disconnect',''),/genesis disconnected/);assert.equal(calls[0].kind,33302);assert(JSON.parse(NT.nip44.decrypt(calls[0].content,key)).entries.some(e=>e.current.control_root));
+console.log('owner control root durable before public genesis passed');

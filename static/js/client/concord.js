@@ -3560,7 +3560,10 @@
     const made=await window.PosterCord.createCommunity({name,icon,owner:viewer.pubkey,relays,base:location.origin,signEvent:creator.sign});
     if(!creator.isCurrent())throw new Error('creating account changed');
     const bundle={community_id:made.communityId,owner:viewer.pubkey,owner_salt:made.secrets.ownerSalt,community_root:made.secrets.root,control_pk:made.secrets.controlPk,control_root:made.secrets.controlRoot,root_epoch:0,channels:[],relays,name,creator_npub:viewer.pubkey};
-    const controls=made.events.filter(ev=>ev.kind===1059),draft={communityId:made.communityId,cord:{bundle}};
+    const controls=made.events.filter(ev=>ev.kind===1059),draft={communityId:made.communityId,name,url:made.url,cord:{bundle}};
+    const guardedCall=async(fn,...args)=>{if(!creator.isCurrent())throw new Error('creating account changed');const result=await fn(...args);if(!creator.isCurrent())throw new Error('creating account changed');return result;};
+    const backup={...p,nip44enc:(...args)=>guardedCall(creator.encrypt,...args),nip44dec:(...args)=>guardedCall(creator.decrypt,...args),signTemplate:(...args)=>guardedCall(creator.sign,...args),relayPublishTo:(...args)=>guardedCall(p.relayPublishTo,...args)};
+    if(!await persistArmadaMembership(backup,draft))throw new Error('Owner membership backup was not accepted');
     const {api,context}=await ownedInviteContext(p,draft,creator.isCurrent);
     const entry={token:made.secrets.token,signer_sk:made.secrets.linkSignerSk,community_id:made.communityId,url:made.url,created_at:Math.floor(Date.now()/1000)};
     await api.remember(entry,context);
