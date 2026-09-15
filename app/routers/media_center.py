@@ -102,6 +102,31 @@ class ProxiedResponse(Exception):
         self.response = response
 
 
+def _segment_diagnostic(path):
+    """Only fixed profile names and a bounded integer may enter proxy diagnostics."""
+    parts = path.split("/")
+    if len(parts) != 7 or parts[:3] != ["", "api", "media-center"] or parts[4] != "hls":
+        return None
+    asset = parts[-1]
+    profile, sep, raw_number = asset.removesuffix(".ts").rpartition("-")
+    if (not asset.endswith(".ts") or not sep or profile not in media.PROFILES
+            or not raw_number.isascii() or not raw_number.isdigit() or len(raw_number) > 10):
+        return None
+    return profile, int(raw_number)
+
+
+def _log_segment_delivery(segment, started, headers_elapsed, status, size, completed, outcome):
+    if segment is None:
+        return
+    elapsed = max(0.0, time.monotonic() - started)
+    if completed and outcome == "complete" and status < 400 and elapsed <= media.SEGMENT:
+        return
+    logging.getLogger(__name__).warning(
+        "[media-proxy] asset=segment profile=%s number=%d outcome=%s status=%s "
+        "headers_s=%.3f elapsed_s=%.3f upstream_bytes=%d completed=%s",
+        segment[0], segment[1], outcome, status, headers_elapsed, elapsed, size, completed)
+
+
 async def proxy_request(request: Request, user=Depends(media_user_optional), db=Depends(get_db)):
     global _proxy_client
     base = (settings_store.get("media_center_server_url", "") or "").strip().rstrip("/")
@@ -142,16 +167,45 @@ async def proxy_request(request: Request, user=Depends(media_user_optional), db=
     url = base + request.url.path
     if request.url.query:
         url += "?" + request.url.query
+    segment = _segment_diagnostic(request.url.path)
+    # This interval starts after edge authentication/body intake, immediately before NAS send.
+    started = time.monotonic()
     try:
         upstream = await _proxy_client.send(_proxy_client.build_request(request.method, url, headers=headers, content=bytes(body)), stream=True)
     except httpx.HTTPError as error:
+        _log_segment_delivery(segment, started, -1.0, None, 0, False, "send_error")
         raise HTTPException(502, "Media Center NAS is unavailable") from error
+    except asyncio.CancelledError:
+        _log_segment_delivery(segment, started, -1.0, None, 0, False, "cancelled")
+        raise
+    headers_elapsed = max(0.0, time.monotonic() - started)
     async def chunks():
+        size, completed, outcome = 0, False, "interrupted"
         try:
             async for chunk in upstream.aiter_raw():
+                # Read/yielded bytes, not proof of delivery to the client socket.
+                size += len(chunk)
                 yield chunk
+            completed = True  # The upstream iterator exhausted, not a client delivery receipt.
+            outcome = "upstream_status" if upstream.status_code >= 400 else "complete"
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except Exception:
+            outcome = "stream_error"
+            raise
         finally:
-            await upstream.aclose()
+            try:
+                await upstream.aclose()
+            except BaseException:
+                if completed:
+                    outcome = "close_error"
+                raise
+            finally:
+                # One bounded record per slow/failed segment. Never include the URL, ticket,
+                # viewer, library/item identity, response body, or exception text/traceback.
+                _log_segment_delivery(segment, started, headers_elapsed, upstream.status_code,
+                                      size, completed, outcome)
     # Relative playlist/segment URLs keep every byte on the public proxy path.
     response_headers = {key: value for key, value in upstream.headers.items()
                         if key.lower() in ("content-type", "content-length", "retry-after")}
