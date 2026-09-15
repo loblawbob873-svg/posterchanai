@@ -8380,7 +8380,7 @@
       if(pb && pb.tagName === 'BUTTON') pb.onclick = async (e) => {
         e.stopPropagation();
         try{ await PC().askOsNotify(); }catch(_){}
-        toggleNoti(true);                 // repaint: the row goes away once it is granted
+        refreshNotiPanel();                // repaint this host after permission changes
       }; }
     if(mail > 0) $('#os-noti-mail', panel).onclick = () => {
       if(inPopup){ send('view:mail'); return; }
@@ -8397,8 +8397,7 @@
       if(PC().setNotificationPreference)PC().setNotificationPreference('sound',nowOn?'chime':'off');
       else settings().set('osDing', nowOn);
       if(nowOn) ding();                    // hear what you just switched on
-      if(inPopup){ const h = popupHost(); h.innerHTML = ''; h.appendChild(buildNotiPanel(true)); return; }
-      toggleNoti(true);                    // repaint the header
+      refreshNotiPanel();                  // preserve focus and scroll in this host
     };
 
     // Same wiring the Notifications view uses: the row opens the post, the avatar opens the sender.
@@ -8452,7 +8451,6 @@
     // Looking at the centre IS reading them — and it is recorded where the whole app can see it
     // (seenNotif.last), never as a private count in this file. The popup host marks them read in
     // the SHELL before opening, because that is the process whose bell and badge are painted from it.
-    if(inPopup){ try{ PC().notifsRead && PC().notifsRead(); }catch(_){} }
     return panel;
   }
 
@@ -8473,10 +8471,39 @@
    * DEBOUNCED because it is called once per event, and the opening flood is hundreds — one repaint
    * after the burst says exactly what a repaint per event would. */
   let _bellT = null;
+  function refreshNotiPanel(){
+    const old = document.getElementById('os-noti');
+    if(!old) return;
+    // Refresh this renderer's existing panel; toggling can close a native popup instead.
+    // The builder must not acknowledge notifications while comparing an unchanged view.
+    const next = buildNotiPanel(popupKind() === 'noti');
+    if(next.innerHTML === old.innerHTML) return;
+    const active = document.activeElement;
+    const ownedFocus = active && old.contains(active);
+    const focusId = ownedFocus && active.id;
+    const focusRow = ownedFocus && active.closest('.notif');
+    const action = ownedFocus && active.dataset.a;
+    const scroll = old.querySelector('.os-noti-list')?.scrollTop || 0;
+    old.replaceWith(next);
+    let target = focusId && next.querySelector('#' + CSS.escape(focusId));
+    if(!target && focusRow && action){
+      target = Array.from(next.querySelectorAll('.notif')).find(n =>
+        n.dataset.open === focusRow.dataset.open && n.dataset.prof === focusRow.dataset.prof
+      )?.querySelector('[data-a="' + CSS.escape(action) + '"]');
+    }
+    if(!target && ownedFocus) target = next.querySelector('#os-noti-all');
+    if(target) target.focus({preventScroll:true});
+    const list = next.querySelector('.os-noti-list');
+    if(list) list.scrollTop = scroll;
+  }
   function notifChanged(){
-    if(!on) return;
+    if(!on && !document.getElementById('os-noti')) return;
     clearTimeout(_bellT);
-    _bellT = setTimeout(() => { _bellT = null; if(on) paintBell(); }, 200);
+    _bellT = setTimeout(() => {
+      _bellT = null;
+      if(on) paintBell();
+      refreshNotiPanel();
+    }, 200);
   }
 
   // ---- network status --------------------------------------------------------------------------
@@ -10363,6 +10390,7 @@
     const host = popupHost();
     host.innerHTML = '';
     host.appendChild(buildNotiPanel(true));
+    try{ PC().notifsRead && PC().notifsRead(); }catch(_){}
     document.addEventListener('keydown', (e) => {
       if(e.key === 'Escape') try{ window.close(); }catch(_){ }
     });
