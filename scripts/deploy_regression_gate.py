@@ -44,6 +44,7 @@ TESTS = (
     'tests/test_android_instrumented_evidence.py',
     'tests/test_android_publish_gate.py',
     'tests/test_remote_control_native.py',
+    'tests/client/test_remote_desktop_mobile_full_app.py',
     'tests/test_remote_desktop_configuration_runtime.py',
     'tests/test_remote_desktop_alignment_runtime.py',
     'tests/test_remote_desktop_start_races.py',
@@ -142,10 +143,10 @@ def verify_receipt(path, root=ROOT):
 
 
 
-# The expanded suite previously exceeded 180s on GitHub before timer cleanup.
-# Keep a finite suite deadline with room for cold CI and additional coverage;
+# The 780-case gate passed locally in 210s, but GitHub completed 768 cases
+# before the former 360s suite deadline. Budget for the full cold-runner suite;
 # individual browser/network tests retain their own shorter deadlines.
-def _run_required_tests(command, root, env, log, timeout=360):
+def _run_required_tests(command, root, env, log, timeout=600):
     # Share the suite runner's owned process-group cleanup and file capture. Pipes
     # can stay open in orphaned browsers after pytest exits or is interrupted.
     captured = runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_captured']
@@ -176,7 +177,7 @@ def run_gate(root=ROOT, receipt=None):
                      'PC_MMS_SOURCE_ROOT', 'PC_SMS_TEST_SOURCE'):
             env.pop(name, None)
         command = [sys.executable, '-m', 'pytest', '--noconftest', '-o', 'addopts=',
-                   '-q', '-ra', '--junitxml=' + str(report), *TESTS]
+                   '-q', '-ra', '--durations=20', '--junitxml=' + str(report), *TESTS]
         try:
             code, output = _run_required_tests(command, root, env, Path(directory) / 'pytest.log')
         except (OSError, subprocess.TimeoutExpired) as error:

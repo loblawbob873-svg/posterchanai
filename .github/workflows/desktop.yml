@@ -228,7 +228,7 @@ jobs:
       # cannot detect a premature null reply that turns an app reload into a desktop.
       - name: Verify required desktop regressions
         if: matrix.name == 'linux'
-        timeout-minutes: 10
+        timeout-minutes: 15
         shell: bash
         env:
           PC_REQUIRE_NATIVE_IPC_TEST: '1'
