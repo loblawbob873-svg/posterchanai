@@ -2,9 +2,22 @@ const assert=require('node:assert/strict');
 const {boot}=require('./sync_owner_fixture.cjs');
 const scenario=process.argv[2];
 const buses=new Map();
+let disconnected=false;
+let clock;
+if(['owner_unavailable','heartbeat_lost'].includes(scenario)){
+  const fs=require('node:fs'),path=require('node:path');
+  clock=new Function('setImmediate',fs.readFileSync(path.join(__dirname,'virtual_timeout_clock.js'),'utf8')
+    +'\nreturn {setTimeout,clearTimeout,advance,now:()=>clockNow};')(setImmediate);
+  const intervals=new Map();let next=1;
+  clock.setInterval=(fn,ms)=>{const id=next++;const tick=()=>{
+    fn();if(intervals.has(id))intervals.set(id,clock.setTimeout(tick,ms));
+  };intervals.set(id,clock.setTimeout(tick,ms));return id;};
+  clock.clearInterval=id=>{clock.clearTimeout(intervals.get(id));intervals.delete(id);};
+}
 class BroadcastChannel {
   constructor(name){this.name=name;this.listeners=[];if(!buses.has(name))buses.set(name,new Set());buses.get(name).add(this);}
   postMessage(message){
+    if(disconnected)return;
     for(const peer of buses.get(this.name)||[]){
       if(peer===this)continue;
       const data=JSON.parse(JSON.stringify(message));
@@ -42,17 +55,17 @@ const started=deferred(),release=deferred(),prompted=deferred(),answer=deferred(
 const drain=()=>new Promise(resolve=>setImmediate(resolve));
 let active=0,peak=0,executions=0,lastStopped=false;
 const report=stopped=>({ok:true,scanned:60,uploaded:[],downloaded:[],failed:[],trashed:[],conflicted:[],skipped:[],stopped});
-const options={hidden:false,BroadcastChannel,storage,indexedDB,source:process.env.PC_SYNC_TEST_SOURCE,
+const options={hidden:false,BroadcastChannel,storage,indexedDB,clock,source:process.env.PC_SYNC_TEST_SOURCE,
   location:{protocol:'app:',href:'app://posterchan/index.html?pcwin=sync',search:'?pcwin=sync'}};
 const primary=boot({...options,shell:{backgroundOwner:true},uiConfirm:async()=>{primaryPrompts++;return true;},
   ...(scenario==='verify'?{executor:{verify:async(fs,docs,opts)=>{
     await fs.scan(opts.id);assert.equal(opts.key,'Pictures','owner used popup-supplied pair mapping');
     return {checked:1,corrupt:[],missingHere:[],extra:[],unverified:[],missingBytes:[],unaddressed:[]};
   }}}:{}),
-  ...(['cancel','changed_account','stop','concurrent','background','completed_then_automatic'].includes(scenario)?{executor:{sweep:async(fs,docs,opts)=>{
+  ...(['cancel','changed_account','stop','concurrent','background','completed_then_automatic','owner_unavailable','heartbeat_lost'].includes(scenario)?{executor:{sweep:async(fs,docs,opts)=>{
     await fs.scan(opts.id);
     assert.equal(opts.key,'Pictures','owner used popup-supplied pair mapping');
-    if(['stop','concurrent','background','completed_then_automatic'].includes(scenario)){
+    if(['stop','concurrent','background','completed_then_automatic','owner_unavailable','heartbeat_lost'].includes(scenario)){
       opts.onProgress({phase:'hashing',i:2,n:5,path:'photo.jpg'});
       active++;peak=Math.max(peak,active);executions++;started.resolve();
       if(executions===1)await release.promise;
@@ -84,7 +97,30 @@ let popup=scenario==='background'?null:makePopup();
   const original=popup.ctx.PCSync.folders()[0];
   const folder={...original,key:'untrusted-popup-key',dir:'/untrusted-popup-directory'};
   if(scenario==='unknown_folder')folder.id='not-paired-on-owner';
-  if(['unknown_folder','wrong_account'].includes(scenario)){
+  if(scenario==='owner_unavailable'){
+    disconnected=true;
+    let failure;
+    const pending=popup.ctx.PCSync.sweep(folder,{manual:true}).catch(error=>{failure=error;});
+    await clock.advance(5001);
+    assert(failure,'unavailable primary left the popup request pending');
+    assert.match(failure.message,/not responding/);await pending;
+    assert.equal(primary.seen.scans,0);assert.equal(popup.ctx.PCSync.busyNow(),false);
+    disconnected=false;release.resolve();
+    await popup.ctx.PCSync.sweep(folder,{manual:true});
+    assert.equal(executions,1,'retry after reconnect never reached the primary');
+    assert.equal(lastStopped,false,'expired earlier request cancelled the new request');
+  }else if(scenario==='heartbeat_lost'){
+    let failure;
+    const pending=popup.ctx.PCSync.sweep(folder,{manual:true}).catch(error=>{failure=error;});
+    await started.promise;
+    disconnected=true;await clock.advance(35001);
+    assert(failure,'lost owner heartbeats left popup request pending');
+    assert.match(failure.message,/not responding/);await pending;
+    release.resolve();await drain();
+    assert.equal(lastStopped,true,'lost requester heartbeats did not stop its primary job');
+    assert.equal(active,0);assert.equal(primary.ctx.PCSync.busyNow(),false);
+    assert.equal(executions,1);
+  }else if(['unknown_folder','wrong_account'].includes(scenario)){
     await assert.rejects(popup.ctx.PCSync.sweep(folder,{manual:true}),error=>{
       assert.doesNotMatch(error.message,/filesystem access/,'request never reached primary validation');return true;
     });

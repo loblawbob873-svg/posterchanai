@@ -67,6 +67,10 @@ function boot(opts){
         : { ok: true, manifest: {} } }; },
     btoa: s => Buffer.from(String(s), 'binary').toString('base64'),
   };
+  if(o.clock){
+    for(const key of ["setTimeout", "clearTimeout", "setInterval", "clearInterval"]) ctx[key] = o.clock[key];
+    ctx.Date = class extends Date { static now(){ return o.clock.now(); } };
+  }
   ctx.window = ctx; ctx.globalThis = ctx; ctx.self = ctx;
   if(o.storage) ctx.localStorage = o.storage;
   if(o.indexedDB) ctx.indexedDB = o.indexedDB;
