@@ -1,0 +1,6 @@
+# Minimal dependencies for the isolated deploy/browser gate; no running app or database needed.
+pytest==8.3.5
+httpx==0.28.1
+websockets==16.0
+Jinja2==3.1.6
+PyYAML==6.0.3

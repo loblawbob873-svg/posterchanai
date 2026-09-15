@@ -18,7 +18,7 @@ def test_required_electron_gate_fails_when_binary_is_missing(monkeypatch, tmp_pa
 
 def test_desktop_linux_runs_required_real_ipc_gate_before_build():
     workflow = (ROOT/'.github/workflows/desktop.yml').read_text()
-    start = workflow.index('      - name: Verify real native window reload IPC')
+    start = workflow.index('      - name: Verify required desktop regressions')
     end = workflow.index('      - name: Build', start)
     gate = workflow[start:end]
     assert workflow.index('      - name: Install deps') < start < end
@@ -28,18 +28,21 @@ def test_desktop_linux_runs_required_real_ipc_gate_before_build():
     assert 'continue-on-error' not in gate
     assert 'set -euo pipefail' in gate
     assert 'xvfb libgtk-3-0t64' in gate
-    assert '-m pytest --noconftest -o addopts= tests/test_native_window_reload_electron.py -q -rA' in gate
+    assert 'scripts/deploy_regression_gate.py' in gate
+    assert 'scripts/deploy-regression-requirements.txt' in gate
+    assert 'tests/test_native_window_reload_electron.py' in (ROOT/'scripts/deploy_regression_gate.py').read_text()
     assert "      - 'tests/test_native_window_reload_electron.py'" in workflow
 
 
 @pytest.mark.parametrize('installer_status', [0, 17])
-def test_clean_ci_bootstraps_binary_and_never_runs_gate_after_download_failure(tmp_path, installer_status):
+@pytest.mark.parametrize('gate_status', [0, 29])
+def test_clean_ci_bootstraps_binary_and_never_runs_gate_after_download_failure(tmp_path, installer_status, gate_status):
     """Run the shipped shell step with fresh npm metadata and controlled OS/bootstrap boundaries."""
     import os
     import subprocess
     import textwrap
     workflow = (ROOT/'.github/workflows/desktop.yml').read_text()
-    gate = workflow.split('      - name: Verify real native window reload IPC',1)[1].split('      - name: Build',1)[0]
+    gate = workflow.split('      - name: Verify required desktop regressions',1)[1].split('      - name: Build',1)[0]
     run = textwrap.dedent(gate.split('        run: |\n',1)[1])
     bindir=tmp_path/'bin';bindir.mkdir()
     package=tmp_path/'desktop/node_modules/electron';package.mkdir(parents=True)
@@ -62,11 +65,14 @@ cat > "$3/bin/python" <<'SH'
 set -eu
 test -x desktop/node_modules/electron/dist/electron
 : > pytest-ran
+exit "$GATE_STATUS"
 SH
 chmod +x "$3/bin/pip" "$3/bin/python"
 ''')
-    result=subprocess.run(['bash','-c',run],cwd=tmp_path,env={**os.environ,'PATH':str(bindir)+os.pathsep+os.environ['PATH'],'RUNNER_TEMP':str(tmp_path/'runner')},text=True,capture_output=True,timeout=10)
-    assert result.returncode==installer_status, result.stdout+result.stderr
+    # Chrome is a controlled OS prerequisite in this bootstrap-only fixture.
+    run = 'test(){ if [ "$*" = "-x /opt/google/chrome/chrome" ]; then return 0; else builtin test "$@"; fi; };\n' + run
+    result=subprocess.run(['bash','-c',run],cwd=tmp_path,env={**os.environ,'PATH':str(bindir)+os.pathsep+os.environ['PATH'],'RUNNER_TEMP':str(tmp_path/'runner'),'GATE_STATUS':str(gate_status)},text=True,capture_output=True,timeout=10)
+    assert result.returncode==(installer_status or gate_status), result.stdout+result.stderr
     assert (tmp_path/'pytest-ran').exists() == (installer_status==0)
     assert "timeout --kill-after=5s 120s node desktop/node_modules/electron/install.js" in run
     assert "node-version: '22'" in workflow

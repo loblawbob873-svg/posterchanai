@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# Exercise the user flows before any commit, push, overlay update or service restart.
+# Syntax checks cannot catch occluded controls, lost navigation or a detached sync worker.
+if [ ! -x venv-unified/bin/python ]; then
+    echo "[sync] ABORT: venv-unified/bin/python is required for deployment regression checks"
+    exit 1
+fi
+if ! venv-unified/bin/python scripts/deploy_regression_gate.py; then
+    echo "[sync] ABORT: required regression checks did not pass; nothing was deployed"
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------------------------
 # Pre-push lint gate: UNDEFINED NAMES ONLY.
 #

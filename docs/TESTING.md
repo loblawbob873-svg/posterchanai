@@ -8,6 +8,20 @@
 
 Exit code 0 means nothing failed. Run it **before** `./sync.sh`, and again after, on the node.
 
+## Required deployment regressions
+
+`sync.sh` runs `scripts/deploy_regression_gate.py` before committing, pushing, updating the
+overlay, or restarting services. The Linux desktop build runs the same gate before packaging.
+It covers native window reloads, PDF/image controls, the Office-to-Files round trip, and
+Folder Sync ownership, cancellation, and request timeouts. Each test uses isolated profiles
+and test filesystem/network adapters.
+
+Failures, collection errors, skipped tests, missing reports, and empty runs all block release.
+`SKIP_LINT` does not bypass this gate. Developer pytest filters and alternate-source overrides
+are cleared so the tests exercise the checkout being deployed. Install its Python dependencies
+from `scripts/deploy-regression-requirements.txt`; Node, Chrome, Electron, and Xvfb are also
+required. The gate is a fast minimum; continue running the broader suites appropriate to a change.
+
 ---
 
 ## Why this exists
