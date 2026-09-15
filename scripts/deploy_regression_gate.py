@@ -35,6 +35,8 @@ TESTS = (
     'tests/test_android_composer_belongs_to_the_conversation.py',
     'tests/test_android_instrumented_evidence.py',
     'tests/test_android_publish_gate.py',
+    'tests/test_calendar_move_api.py',
+    'tests/client/test_calendar_default_and_move_full_app.py',
     'tests/client/test_files_follow_theme.py',
     'tests/client/test_browser_startup_diagnostics.py',
     'tests/client/test_desktop_offline_full_app.py::test_start_keyboard_result_survives_refresh_and_has_visible_focus',
