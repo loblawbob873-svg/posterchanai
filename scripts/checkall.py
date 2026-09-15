@@ -604,7 +604,10 @@ def verdict(res):
         return "LINT", summarise(res)
     # Exit 2 is this repo's convention for "could not run": no Chrome, no site, nothing to test
     # against. It is NOT a failure of the code, and calling it one trains people to ignore red.
-    if res["code"] == 2:
+    # Pytest uses exit 2 for interrupted/failed collection. Its suites must fail
+    # the release gate when imports break, even though standalone checks use 2
+    # to signal unavailable browser fixtures.
+    if res["code"] == 2 and res["group"] not in {"unit", "client"}:
         return "SKIP", summarise(res)
     if res["code"] == 124:
         return "FAIL", f"timed out after {res['secs']}s"
