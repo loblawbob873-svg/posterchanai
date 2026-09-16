@@ -69,7 +69,7 @@ def build_reply(node_sk: bytes, req_event_id: str, requester: str, payload: dict
 def build_announcement(node_sk: bytes, cfg, now: Optional[int] = None) -> dict:
     relays = [r for r in [cfg.public_relay] if r]
     content = {"v": 1, "name": cfg.display_name or "PosterChan VM host", "https": cfg.public_url,
-               "relays": relays, "proto": [PROTO_VERSION], "features": ["novnc"]}
+               "relays": relays, "proto": [PROTO_VERSION], "features": ["novnc", "cold-migrate"]}
     tags = [["d", kinds.ANNOUNCE_D], ["alt", "PosterChan VM host"]] + [["relay", r] for r in relays]
     return nostr_event.build_event(node_sk, kinds.ANNOUNCE_KIND, json.dumps(content), tags,
                                    created_at=int(now if now is not None else time.time()))
@@ -274,6 +274,15 @@ async def _run(cfg, stop: asyncio.Event) -> None:
 
     tr = Transport(svc, sk, publish)
     _state["transport"] = tr
+    # Phase 3: cold migration (peers from vmhost_peer_hosts; resumes unfinished migrations from the journal).
+    try:
+        from app.services import settings_store
+        from . import migrate
+        migrator = migrate.attach(svc, sk, publish, settings_store.all_settings())
+        await migrator.resume()
+    except Exception as e:
+        migrator = None
+        logger.warning("[vmhost] migration support not started: %s", e)
     _state["error"] = ""
     logger.info("[vmhost] VM host listening on %s as %s (libvirt %s, storage %s)",
                 relay, tr.node_pk[:16], cfg.libvirt_uri, cfg.storage_dir)
@@ -285,6 +294,11 @@ async def _run(cfg, stop: asyncio.Event) -> None:
                 await svc.refresh_index()
             except Exception as e:
                 logger.warning("[vmhost] could not read libvirt domains: %s", e)
+            if migrator is not None:
+                try:
+                    await migrator.housekeeping()
+                except Exception as e:
+                    logger.warning("[vmhost] migration housekeeping failed: %s", e)
             if cfg.announce and time.time() - last_announce > ANNOUNCE_EVERY:
                 try:
                     await publish(build_announcement(sk, cfg))
@@ -312,6 +326,13 @@ async def stop() -> None:
     ev = _state.get("stop")
     if ev is not None:
         ev.set()
+    t = _state.get("transport")
+    m = getattr(t.service, "migrator", None) if t else None
+    if m is not None:
+        try:
+            await m.close()
+        except Exception:
+            pass
     for t in list(_state.get("tasks") or []):
         t.cancel()
         try:

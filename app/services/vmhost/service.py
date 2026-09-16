@@ -182,6 +182,8 @@ class VmHostService:
             return "user"
         if any(pk in s for s in self._assign.values()):
             return "user"
+        if self.migrator is not None and self.migrator.is_peer(pk):
+            return "peer"                                 # phase 3: a paired host, for peer.migrate.* only
         return None
 
     def _visible(self, d: DomainInfo, role: str, pk: str) -> bool:
@@ -220,6 +222,10 @@ class VmHostService:
         need, mutating = OPS[op]
         if need == "admin" and role != "admin":
             return err("forbidden", "only a host admin can do that")
+        if need == "peer" and not (self.migrator is not None and self.migrator.is_peer(pk)):
+            return err("forbidden", "only a paired VM host can do that")
+        if role == "peer" and need != "peer":
+            return err("forbidden", "a paired host can only take part in migrations")
 
         async def run():
             try:
@@ -249,7 +255,8 @@ class VmHostService:
              "disk_gib": m.disk_gib if m else 0, "managed": bool(m and self.storage.is_managed_dir(d.uuid)),
              "guest": m.guest if m else "", "firmware": m.firmware if m else "",
              "autostart": d.autostart, "labels": list(m.labels) if m else [],
-             "created": m.created if m else 0}
+             "created": m.created if m else 0,
+             "migration": dict(m.migration) if (m and m.migration) else {}}
         if role == "admin":
             v["assigned"] = sorted(m.assigned) if m else []
             v["owner"] = m.owner if m else ""
@@ -331,6 +338,7 @@ class VmHostService:
             if d is None or not self._visible(d, role, pk):
                 raise VmHostError("not_found", "no such VM")
             if action == "start":
+                self._migration_guard(d)
                 if d.state in ("running", "paused", "stopping"):
                     raise VmHostError("conflict", f"the VM is already {d.state}")
                 await self.backend.start(d.uuid)
@@ -450,6 +458,7 @@ class VmHostService:
                 d = await self.backend.get(d.uuid)
                 if d is None:
                     raise VmHostError("not_found", "no such VM")
+                self._migration_guard(d)
                 if d.state != "shutoff":
                     raise VmHostError("conflict", "shut the VM down before deleting it")
                 delete_disks = bool(args.get("delete_disks"))
@@ -482,6 +491,7 @@ class VmHostService:
             d = await self.backend.get(d.uuid)
             if d is None:
                 raise VmHostError("not_found", "no such VM")
+            self._migration_guard(d)
             meta = d.meta or domainxml.VmMeta(owner=pk, created=int(self.now()))
             assigned = list(meta.assigned)
             if add and target not in assigned:
@@ -555,3 +565,58 @@ def current() -> Optional[VmHostService]:
 def set_current(svc: Optional[VmHostService]) -> None:
     global _current
     _current = svc
+
+
+# ======================================================================================================
+# PHASE 3 — cold migration. The state machine lives in migrate.py; this block only registers its ops,
+# the peer role and the start/delete/assign guard, so phase-2 edits above never touch these lines.
+# ======================================================================================================
+ERROR_CODES = ERROR_CODES + ("migrating", "aborted")
+
+MIGRATION_OPS = {
+    # client ops (an admin of THIS host; the target independently checks the same person is its admin)
+    "vm.migrate.precheck":      ("admin", False),
+    "vm.migrate":               ("admin", True),
+    "vm.migrate.status":        ("admin", False),
+    "vm.migrate.cancel":        ("admin", True),
+    "vm.migrate.force_reclaim": ("admin", True),
+    # host ↔ host (only the keys in vmhost_peer_hosts). Not journaled: each is idempotent by state.
+    "peer.migrate.precheck":    ("peer", False),
+    "peer.migrate.begin":       ("peer", False),
+    "peer.migrate.status":      ("peer", False),
+    "peer.migrate.commit":      ("peer", False),
+    "peer.migrate.ack":         ("peer", False),
+    "peer.migrate.abort":       ("peer", False),
+}
+OPS.update(MIGRATION_OPS)
+FEATURES.append("cold-migrate")
+
+
+def _migration_guard(self, d) -> None:
+    """Refuse start/delete/assign while a migration holds the VM — from the journal (authoritative,
+    survives a restart) and from the `pc:migration` metadata (survives a lost journal)."""
+    why = self.migrator.blocks_start(d.uuid) if self.migrator is not None else None
+    if not why and d.meta is not None and d.meta.migration.get("id"):
+        mig = self.migrator.store.get(d.meta.migration["id"]) if self.migrator is not None else None
+        if mig is None or mig.get("state") not in ("done", "aborted", "reclaimed", "released"):
+            why = "this VM is marked as migrating (" + str(d.meta.migration.get("state") or "?") + ")"
+    if why:
+        raise VmHostError("migrating", why)
+
+
+def _migration_delegate(op: str):
+    async def run(self, pk, role, args, progress):
+        if self.migrator is None:
+            raise VmHostError("unsupported", "migration is not available on this host")
+        from .migrate import MigrationError
+        try:
+            return await self.migrator.handle_op(op, pk, role, args, progress)
+        except MigrationError as e:
+            raise VmHostError(e.code, e.message)
+    return run
+
+
+VmHostService.migrator = None
+VmHostService._migration_guard = _migration_guard
+for _op in MIGRATION_OPS:
+    setattr(VmHostService, "_op_" + _op.replace(".", "_"), _migration_delegate(_op))

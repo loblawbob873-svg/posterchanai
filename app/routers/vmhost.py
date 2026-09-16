@@ -23,7 +23,7 @@ import json
 import logging
 import time
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 
 from app.auth import get_admin_user
 
@@ -183,3 +183,23 @@ async def vmhost_status(admin=Depends(get_admin_user)):
         except Exception as e:
             out["libvirt"] = {"ok": False, "error": str(e)[:300]}
     return out
+
+
+# ======================================================================================================
+# PHASE 3 — the cold-migration transfer. The TARGET host pulls each exported file from here with Range
+# requests, authenticated by a NIP-98 header signed by the target's node key and bound to this exact
+# URL. Served ONLY for a migration this host is the source of, ONLY to its target, ONLY while it is
+# exporting/transferring (app/services/vmhost/migrate.py:serve_transfer). No DB session: a multi-GB
+# transfer must not hold a pool connection, and nothing here needs one. File reads go through
+# asyncio.to_thread in 1 MiB chunks so the single uvicorn worker keeps serving everything else.
+# ======================================================================================================
+@router.get("/api/vmhost/transfer/{mig}/{index}")
+async def vmhost_transfer(mig: str, index: str, request: Request):
+    from starlette.responses import PlainTextResponse
+    from app.services.vmhost import service as vmsvc
+    svc = vmsvc.current()
+    migrator = getattr(svc, "migrator", None) if svc is not None else None
+    if migrator is None:
+        return PlainTextResponse("VM hosting is not running on this node", status_code=404)
+    return await migrator.serve_transfer(mig, index, request.headers.get("authorization"),
+                                         request.headers.get("range"), request.url.path)

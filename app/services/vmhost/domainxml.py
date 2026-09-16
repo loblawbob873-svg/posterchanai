@@ -41,6 +41,9 @@ class VmMeta:
     iso: str = ""
     assigned: list = field(default_factory=list)
     labels: list = field(default_factory=list)
+    # Phase 3 (cold migration): {"id","state","peer"} while a migration holds this VM — "outgoing" on
+    # the source, "incoming" (pending commit) on the target. Empty = not migrating. Start refuses both.
+    migration: dict = field(default_factory=dict)
 
     def to_xml(self, *, prefixed: bool = True) -> str:
         """The metadata element. `prefixed` writes `pc:vm xmlns:pc=…` (inside a domain definition);
@@ -52,6 +55,10 @@ class VmMeta:
                  f" iso={_a(self.iso)}")
         kids = "".join(f"<{p}assign pk={_a(pk)}/>" for pk in self.assigned)
         kids += "".join(f"<{p}label>{escape(str(lb))}</{p}label>" for lb in self.labels)
+        if self.migration and self.migration.get("id"):
+            mg = self.migration
+            kids += (f"<{p}migration id={_a(mg.get('id', ''))} state={_a(mg.get('state', ''))}"
+                     f" peer={_a(mg.get('peer', ''))}/>")
         return f"<{p}vm{ns}{attrs}>{kids}</{p}vm>"
 
 
@@ -76,7 +83,7 @@ def parse_meta(xml_text) -> VmMeta | None:
             break
     if node is None:
         return None
-    pks, labels = [], []
+    pks, labels, migration = [], [], {}
     for ch in node:
         name = _local(ch.tag)
         if name == "assign":
@@ -85,6 +92,9 @@ def parse_meta(xml_text) -> VmMeta | None:
                 pks.append(pk)
         elif name == "label" and (ch.text or "").strip():
             labels.append(ch.text.strip())
+        elif name == "migration" and ch.get("id"):
+            migration = {"id": str(ch.get("id")), "state": str(ch.get("state") or ""),
+                         "peer": str(ch.get("peer") or "")}
 
     def _i(v):
         try:
@@ -94,7 +104,7 @@ def parse_meta(xml_text) -> VmMeta | None:
     return VmMeta(owner=str(node.get("owner") or ""), created=_i(node.get("created")),
                   guest=str(node.get("guest") or "linux"), firmware=str(node.get("firmware") or "efi"),
                   disk_gib=_i(node.get("disk_gib")), iso=str(node.get("iso") or ""),
-                  assigned=pks, labels=labels)
+                  assigned=pks, labels=labels, migration=migration)
 
 
 @dataclass

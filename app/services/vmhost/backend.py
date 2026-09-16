@@ -309,6 +309,67 @@ class VirshBackend:
             raise BackendError((err or out).strip()[:300] or "qemu-img create failed")
 
 
+    # ==================================================================================================
+    # PHASE 3 — cold-migration primitives (app/services/vmhost/migrate.py is the only caller).
+    # Kept in one block, below everything else, so the phase-2 edits above this line never collide.
+    # ==================================================================================================
+    async def dumpxml_inactive(self, vm_uuid: str) -> str:
+        """The persistent definition in the form another host can define: `--migratable` drops the
+        host-specific runtime bits (live device aliases, seclabels libvirt generated here)."""
+        return await self._v("dumpxml", vm_uuid, "--inactive", "--migratable", timeout=20)
+
+    async def snapshot_names(self, vm_uuid: str) -> tuple:
+        """(names parents-first, current name or ""). Parents first because a redefine of a child whose
+        parent is not yet known is refused."""
+        out = await self._v("snapshot-list", vm_uuid, "--name", "--topological", timeout=20)
+        names = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        for n in names:
+            if not valid_snapshot_name(n):
+                raise BackendError(f"unsupported snapshot name {n[:40]!r}", "unsupported")
+        code, cur, _ = await self._run([self.virsh, "--connect", self.uri, "snapshot-current", vm_uuid,
+                                        "--name"], 15)
+        return names, (cur.strip() if code == 0 and cur.strip() in names else "")
+
+    async def snapshot_dumpxml(self, vm_uuid: str, name: str) -> str:
+        if not valid_snapshot_name(name):
+            raise BackendError("invalid snapshot name", "bad_request")
+        return await self._v("snapshot-dumpxml", vm_uuid, "--snapshotname", name, timeout=20)
+
+    async def snapshot_redefine(self, vm_uuid: str, xml: str, workdir: str, current: bool = False) -> None:
+        """Re-create a snapshot's METADATA from its XML. Internal qcow2 snapshots travel inside the disk
+        file itself; this is the half libvirt keeps outside it."""
+        path = os.path.join(workdir, ".snapshot-redefine.xml")
+
+        def _write():
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(xml)
+        await asyncio.to_thread(_write)
+        try:
+            args = ["snapshot-create", vm_uuid, path, "--redefine"] + (["--current"] if current else [])
+            await self._v(*args, timeout=30)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    async def undefine_for_migration(self, vm_uuid: str, keep_nvram: bool) -> None:
+        """Undefine without touching the disks. `--snapshots-metadata` because libvirt refuses to
+        undefine a domain that still has snapshots, and their data lives on inside the qcow2 file."""
+        flag = "--keep-nvram" if keep_nvram else "--nvram"
+        code, out, err = await self._run([self.virsh, "--connect", self.uri, "undefine", vm_uuid,
+                                          "--snapshots-metadata", flag], 30)
+        if code != 0 and re.search(r"nvram", err, re.I):
+            await self._v("undefine", vm_uuid, "--snapshots-metadata", timeout=30)
+        elif code != 0 and not re.search(r"failed to get domain|domain not found|no domain", err + out, re.I):
+            raise BackendError((err or out).strip()[:300] or "undefine failed")
+
+
+def valid_snapshot_name(name) -> bool:
+    s = str(name or "")
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._:+-]{0,127}", s))
+
 def make_backend(cfg) -> Backend:
     """`vmhost_backend`: auto | virsh. (libvirt-python is a phase-2 option; auto = virsh today.)"""
     if cfg.backend not in ("auto", "virsh"):
