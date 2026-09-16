@@ -138,7 +138,12 @@ THEN publish. A result counts only if it verifies, is authored by the host, e-ta
 carries the same `id`.
 
 **Replay and retries.** The host drops an event older than 120 s, more than 30 s in the future,
-without an expiration, expired, or already seen. A client that heard nothing retries with a NEW event
+without an expiration, expired, or already seen. "Seen" is kept by TIME for the whole clock window
+(never evicted by count, so a flood cannot push a victim's id out — at its hard cap new requests are
+refused instead), for the life of the process across host-service restarts, and in
+`.state/seen.log` across process restarts; the subscription itself asks only for the last 120 s. So
+the requests a relay replays to a restarted host (it stores them until they expire) are not handled a
+second time — no re-issued console ticket, no re-run of a refused operation. A client that heard nothing retries with a NEW event
 carrying the SAME `id`; for mutating ops the host's journal (`.state/journal/ops.jsonl`, 15 min)
 returns the stored result instead of powering the VM twice. Only successes are journaled — a refusal
 (busy, capacity) lets the retry actually retry.

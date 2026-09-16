@@ -76,15 +76,31 @@ def build_announcement(node_sk: bytes, cfg, now: Optional[int] = None) -> dict:
 
 
 # ------------------------------------------------------------------------------------ transport
+# One seen-set per storage directory, for the life of the PROCESS — not per Transport. A settings Save
+# stops the host and starts a new Transport, and the relay replays every stored request to the new
+# subscription; a fresh seen-set would handle the last two minutes of requests a second time.
+_SEEN: dict = {}
+
+
+def seen_for(service: VmHostService) -> SeenIds:
+    path = service.storage.state_dir / "seen.log"
+    key = str(path)
+    s = _SEEN.get(key)
+    if s is None:
+        s = _SEEN[key] = SeenIds(ttl=REQ_MAX_AGE + REQ_MAX_FUTURE, path=path)
+    return s
+
+
 class Transport:
-    def __init__(self, service: VmHostService, node_sk: bytes, publish, now=time.time):
+    def __init__(self, service: VmHostService, node_sk: bytes, publish, now=time.time,
+                 seen: SeenIds | None = None):
         from app.services.nostr import bip340
         self.service = service
         self.node_sk = node_sk
         self.node_pk = bip340.pubkey_from_seckey(node_sk).hex()
         self.publish = publish                    # async (event) -> bool
         self.now = now
-        self.seen = SeenIds()
+        self.seen = seen if seen is not None else seen_for(service)
         self._pending = 0
 
     def _drop(self, why: str, ev: dict) -> None:
@@ -109,7 +125,6 @@ class Transport:
             return self._drop("not on this host's lists", ev)        # a stranger: no reply at all
         if not nostr_event.verify_event(ev):
             return self._drop("bad signature", ev)
-        self.seen.add(eid)
         now = int(self.now())
         try:
             created = int(ev.get("created_at", 0))
@@ -120,6 +135,14 @@ class Transport:
         exp = kinds.expiration_of(ev)
         if exp is None or exp < now or exp > created + kinds.REQ_MAX_EXPIRATION:
             return self._drop("expiration", ev)
+        # Recorded only once it is inside the window (outside it the window itself refuses a replay),
+        # and atomically with the check: two deliveries of one event racing through the awaits above
+        # must not both get here.
+        marked = self.seen.add(eid)
+        if marked != "ok":
+            return self._drop("already handled" if marked == "dup" else "replay table full", ev)
+        if self.seen.path is not None:
+            await asyncio.to_thread(self.seen.flush)
 
         async def reply(payload: dict, kind: int = kinds.RES_KIND) -> Optional[dict]:
             out = build_reply(self.node_sk, eid, requester, payload, kind=kind, now=int(self.now()))
@@ -296,7 +319,10 @@ async def _run(cfg, stop: asyncio.Event) -> None:
             except asyncio.TimeoutError:
                 pass
 
-    filters = [{"kinds": [kinds.REQ_KIND], "#p": [tr.node_pk]}]
+    # `since`: the relay stores requests until they expire and replays every stored match to a new
+    # subscription. Anything older than the clock window is refused anyway, so asking for it only costs
+    # the relay; what IS inside the window is caught by the process-wide seen-set.
+    filters = [{"kinds": [kinds.REQ_KIND], "#p": [tr.node_pk], "since": int(time.time()) - REQ_MAX_AGE}]
 
     async def _handler(ev):
         tr.spawn(ev)

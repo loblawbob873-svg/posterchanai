@@ -2,7 +2,8 @@
 
 TWO DIFFERENT QUESTIONS, and conflating them is how a retry turns into a second VM:
 
-  * "Have I seen this EVENT?" — `SeenIds`, an LRU of event ids. A relay redelivers on reconnect and
+  * "Have I seen this EVENT?" — `SeenIds`, event ids kept for the clock window (by time, never evicted
+    by count). A relay redelivers on reconnect and
     the firehose can hand the same event over twice; either way it is dropped without an answer,
     because the first delivery already produced one.
   * "Have I done this OPERATION?" — `OpJournal`, keyed on (requester, the request's own `id`). A
@@ -18,9 +19,9 @@ on load and on write; a request can only be retried inside its own short expirat
 from __future__ import annotations
 
 import asyncio
-import collections
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -28,18 +29,106 @@ JOURNAL_TTL = 15 * 60
 
 
 class SeenIds:
-    def __init__(self, cap: int = 2000):
+    """Event ids already handled, kept by TIME, not by count.
+
+    An id is kept for `ttl` seconds after it was first handled — the transport passes the width of its
+    clock window, so an id lives exactly as long as a replay of its event could still get past the
+    window. Evicting by COUNT let a flood of cheap valid requests push a victim's id out, after which a
+    replay of the victim's captured request was "new". At `cap` live ids a NEW id is refused ("full")
+    rather than an old one forgotten: dropping a request under a flood is recoverable, re-running one
+    is not.
+
+    With a `path` the ids are also appended to a small log (`flush`, meant for a worker thread) and
+    re-read on start, so a PROCESS restart does not re-run what the relay replays to the new
+    subscription either."""
+
+    def __init__(self, ttl: float = 150, cap: int = 50_000, path: Path | None = None, now=time.time):
+        self.ttl = ttl
         self.cap = cap
-        self._d: "collections.OrderedDict[str, float]" = collections.OrderedDict()
+        self.now = now
+        self.path = Path(path) if path else None
+        self._d: dict = {}             # eid -> expiry; insertion order == expiry order
+        self._unflushed: list = []
+        self._io = threading.Lock()
+        self._lines = 0
+        self._load()
+
+    def _purge(self) -> None:
+        t = self.now()
+        while self._d:
+            k = next(iter(self._d))
+            if self._d[k] > t:
+                break
+            del self._d[k]
 
     def __contains__(self, eid) -> bool:
-        return eid in self._d
+        exp = self._d.get(eid)
+        return exp is not None and exp > self.now()
 
-    def add(self, eid: str) -> None:
-        self._d[eid] = time.time()
-        self._d.move_to_end(eid)
-        while len(self._d) > self.cap:
-            self._d.popitem(last=False)
+    def __len__(self) -> int:
+        self._purge()
+        return len(self._d)
+
+    def clear(self) -> None:
+        self._d.clear()
+        self._unflushed.clear()
+
+    def add(self, eid: str) -> str:
+        """'ok' (recorded), 'dup' (already handled) or 'full' (refuse this request)."""
+        self._purge()
+        if eid in self._d:
+            return "dup"
+        if len(self._d) >= self.cap:
+            return "full"
+        exp = self.now() + self.ttl
+        self._d[eid] = exp
+        if self.path is not None:
+            self._unflushed.append((exp, eid))
+        return "ok"
+
+    def _load(self) -> None:
+        if self.path is None or not self.path.exists():
+            return
+        t = self.now()
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                for line in f:
+                    self._lines += 1
+                    parts = line.split()
+                    try:
+                        exp, eid = float(parts[0]), parts[1]
+                    except (IndexError, ValueError):
+                        continue
+                    if exp > t and len(self._d) < self.cap:
+                        self._d[eid] = exp
+        except OSError:
+            pass
+        self._d = dict(sorted(self._d.items(), key=lambda kv: kv[1]))
+
+    def flush(self) -> None:
+        """Append what was added since the last flush; compact once the log is mostly expired. Blocking
+        file I/O — call it from a worker thread."""
+        if self.path is None:
+            return
+        with self._io:
+            pending, self._unflushed = self._unflushed, []
+            if not pending:
+                return
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                if self._lines + len(pending) > 2 * len(self._d) + 1000:
+                    tmp = self.path.with_suffix(".tmp")
+                    live = list(self._d.items())
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        f.writelines(f"{exp:.0f} {eid}\n" for eid, exp in live)
+                    os.replace(tmp, self.path)
+                    self._lines = len(live)
+                else:
+                    with open(self.path, "a", encoding="utf-8") as f:
+                        f.writelines(f"{exp:.0f} {eid}\n" for exp, eid in pending)
+                    self._lines += len(pending)
+            except OSError:
+                pass
 
 
 class OpJournal:
