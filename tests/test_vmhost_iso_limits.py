@@ -224,3 +224,32 @@ def test_nginx_streams_the_vmhost_routes(rel, prefix, need):
     assert not any(name == "proxy_set_header" for name, _, _ in match[0][1]), \
         "an array directive here drops every server-level header"
     assert order.index(f"^~ {prefix}") < order.index("^~ /api/"), rel
+
+
+# ------------------------------------------------------------------------------------------ iso.delete race
+def test_iso_delete_cannot_race_an_attach(tmp_path):
+    """vm.update attaches under the HOST lock; iso.delete used to check attachments without it, so a delete that
+    ran while an attach was mid-define found nothing attached and removed the ISO the VM was being given."""
+    svc, be, root = make(tmp_path)
+    (root / "isos" / "debian.iso").write_bytes(b"ISO")
+
+    async def go():
+        gate = asyncio.Event()
+        be.gate["define"] = gate
+        upd = asyncio.create_task(svc.handle(ADMIN, "vm.update",
+                                             {"vm": "11111111-1111-4111-8111-111111111111", "media": {"iso": "debian.iso"}},
+                                             "u1"))
+        for _ in range(200):
+            if any(call[0] == "define" for call in be.calls):
+                break
+            await asyncio.sleep(0.005)
+        dele = asyncio.create_task(svc.handle(ADMIN, "iso.delete", {"iso": "debian.iso"}, "d1"))
+        await asyncio.sleep(0.05)
+        assert (root / "isos" / "debian.iso").exists(), "deleted while an attach of it was in progress"
+        gate.set()
+        be.gate.pop("define", None)
+        assert (await upd)["ok"]
+        res = await dele
+        assert not res["ok"] and res["error"]["code"] in ("conflict", "busy"), res
+        assert (root / "isos" / "debian.iso").exists()
+    run(go())

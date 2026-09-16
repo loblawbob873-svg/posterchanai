@@ -575,15 +575,21 @@ class IsoOps:
             raise _err("bad_request", "that is not an ISO from this host's library")
         except FileNotFoundError:
             raise _err("not_found", "no such ISO in this host's library")
-        for d in await self.backend.list_domains():
-            srcs = {str(x.get("source", "")) for x in (d.disks or [])}
-            if (d.meta and d.meta.iso == iso_id) or str(p) in srcs:
-                raise _err("conflict", f"{d.name} still uses this ISO — eject it first")
-            # The metadata can lag a hand edit; the definition is the authority on what is attached.
-            if hasattr(self.backend, "dumpxml"):
-                hw = await self._hardware(d.uuid)
-                if hw.get("media") == iso_id:
+        # Under the HOST lock, like vm.create and vm.update — the only ops that attach an ISO. Checked outside it, an
+        # attach that was mid-define looked like "nothing uses this" and the ISO went out from under it.
+        await self._acquire(self._host_lock, "this host")
+        try:
+            for d in await self.backend.list_domains():
+                srcs = {str(x.get("source", "")) for x in (d.disks or [])}
+                if (d.meta and d.meta.iso == iso_id) or str(p) in srcs:
                     raise _err("conflict", f"{d.name} still uses this ISO — eject it first")
-        await asyncio.to_thread(os.unlink, p)
+                # The metadata can lag a hand edit; the definition is the authority on what is attached.
+                if hasattr(self.backend, "dumpxml"):
+                    hw = await self._hardware(d.uuid)
+                    if hw.get("media") == iso_id:
+                        raise _err("conflict", f"{d.name} still uses this ISO — eject it first")
+            await asyncio.to_thread(os.unlink, p)
+        finally:
+            self._host_lock.release()
         logger.info("[vmhost] ISO %s deleted by %s", iso_id, pk[:12])
         return {"deleted": iso_id}
