@@ -835,9 +835,23 @@ class Migrator:
                 return r
         return None
 
+    def migrated_away(self, vm_uuid: str) -> Optional[dict]:
+        """The LATEST migration of this VM, when it says the VM left this host: a source record that reached the
+        commit point and was not taken back. A VM that moved away and later came back has a newer TARGET record,
+        which is what makes it startable here again."""
+        recs = [r for r in self.store.all() if r.get("vm") == vm_uuid]
+        if not recs:
+            return None
+        latest = max(recs, key=lambda r: (r.get("created", 0), r.get("updated", 0)))
+        if latest["role"] == "source" and latest["state"] in ("handed_off", "locked", "done", "released"):
+            return latest
+        return None
+
     def blocks_start(self, vm_uuid: str) -> Optional[str]:
         r = self.active_for(vm_uuid)
         if r is None:
+            if self.migrated_away(vm_uuid):
+                return "this VM was migrated to another host — it cannot be started here"
             return None
         if r["role"] == "source":
             return "this VM is being migrated to another host — it cannot be started here"
@@ -910,9 +924,10 @@ class Migrator:
         if peer is None:
             raise MigrationError("forbidden", "that host is not paired with this one (vmhost_peer_hosts on both hosts)")
         d = await self.svc._domain(pk, "admin", args)
-        why = self.blocks_start(d.uuid)
-        if why:
+        if self.active_for(d.uuid):
             raise MigrationError("migrating", "this VM already has a migration in progress")
+        if self.migrated_away(d.uuid):
+            raise MigrationError("migrating", "this VM was migrated to another host")
         if d.meta is None or not self.storage.is_managed_dir(d.uuid):
             raise MigrationError("unsupported", "only VMs created by PosterChan can be migrated")
         authz = args.get("authz")
@@ -1228,6 +1243,8 @@ class Migrator:
                     await self._abort_source(mig, "the target host abandoned the migration", tell_target=False)
                     return
             elif st in ("handed_off", "locked"):
+                if not rec.get("handoff_complete"):
+                    await self._retry_handoff(mig)
                 if tstate == "done":
                     await self._mark_acked(mig)
                     return
@@ -1280,14 +1297,19 @@ class Migrator:
                                         retries=1))
 
     async def _complete_handoff(self, rec: dict) -> None:
-        """Idempotent: whatever of it already happened (before a crash) is skipped."""
+        """Idempotent: whatever of it already happened (before a crash) is skipped. Finished only when libvirt
+        CONFIRMS the domain is gone — an undefine that failed, or answered ok and left it, raises, and the commit,
+        the ack and every watch tick try again. Until then start is refused here (migrated_away) and the source
+        does not enter `done`."""
         vm = rec["vm"]
+        self.svc.consoles.revoke(vm)
         d = await self.backend.get(vm)
         if d is not None:
             if d.state != "shutoff":
                 await self.backend.destroy(vm)
             await self.backend.undefine_for_migration(vm, keep_nvram=True)
-        self.svc.consoles.revoke(vm)
+            if await self.backend.get(vm) is not None:
+                raise BackendError("the VM is still defined on the source after undefine")
         self.svc._assign.pop(vm, None)
         if not rec.get("retained"):
             rec["retained"] = f"{vm}-{_now_i()}"
@@ -1300,6 +1322,21 @@ class Migrator:
                 dst.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
                 os.rename(src, dst)
         await asyncio.to_thread(move)
+        if not rec.get("handoff_complete"):
+            rec["handoff_complete"] = True
+            await self._save(rec)
+
+    async def _retry_handoff(self, mig: str) -> bool:
+        async with self._lock(mig):
+            rec = self.store.get(mig)
+            if rec is None or rec["state"] not in ("handed_off", "locked") or rec.get("handoff_complete"):
+                return bool(rec and rec.get("handoff_complete"))
+            try:
+                await self._complete_handoff(rec)
+                return True
+            except Exception as e:
+                logger.warning("[vmhost] migration %s: completing the handoff failed (will retry): %s", mig, e)
+                return False
 
     async def _reclaim_on_source(self, rec: dict) -> None:
         """Put a handed-off VM back on this host from the retained copy. Caller holds the lock."""
@@ -1323,10 +1360,13 @@ class Migrator:
             self.svc._set_index(d)
 
     async def _mark_acked(self, mig: str) -> None:
+        await self._retry_handoff(mig)
         async with self._lock(mig):
             rec = self.store.get(mig)
             if rec is None or rec["state"] not in ("handed_off", "locked"):
                 return
+            if not rec.get("handoff_complete"):
+                return                        # never `done` while the VM may still be defined here
             rec.update(state="done", acked_at=_now_i(), error="")
             rec.setdefault("history", []).append([_now_i(), "done"])
             await self._save(rec)
@@ -1355,6 +1395,8 @@ class Migrator:
         async with self._lock(rec["id"]):
             rec = self.store.get(rec["id"])
             st = rec["state"]
+            if st in ("handed_off", "locked") and not rec.get("handoff_complete"):
+                await self._complete_handoff(rec)          # a failure answers an error: the target asks again
             if st in ("handed_off", "locked", "done", "released"):
                 return {"state": "handed_off"}
             if st in ("aborted", "reclaimed"):
@@ -1374,7 +1416,10 @@ class Migrator:
         if rec is None:
             raise MigrationError("not_found", "no such migration")
         await self._mark_acked(rec["id"])
-        return {"state": self.store.get(rec["id"])["state"]}
+        rec = self.store.get(rec["id"])
+        if rec["state"] in ("handed_off", "locked") and not rec.get("handoff_complete"):
+            raise MigrationError("busy", "the source is still removing its copy of the VM — ask again")
+        return {"state": rec["state"]}
 
     async def _op_peer_migrate_abort(self, pk, args):
         rec = self._peer_rec(pk, args, "source")
@@ -1992,8 +2037,7 @@ class Migrator:
                     elif st == "transferring":
                         self._spawn(self._watch_source(mig))
                     elif st == "handed_off":
-                        async with self._lock(mig):
-                            await self._complete_handoff(self.store.get(mig))
+                        await self._retry_handoff(mig)
                         self._spawn(self._watch_source(mig))
                     elif st == "locked":
                         self._spawn(self._watch_source(mig))

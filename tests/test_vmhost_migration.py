@@ -158,13 +158,19 @@ def test_the_source_crashing_after_the_commit_point_finishes_from_its_journal(tm
         try:
             seed_vm(w.S)
             await w.S.svc.refresh_index()
-            w.S.backend.fail["undefine_for_migration"] = SimulatedCrash()
+            dead = {"on": True}
+
+            async def die(u):
+                if dead["on"]:                    # every attempt dies at this line until the process restarts
+                    raise SimulatedCrash()
+            w.S.backend.hooks["undefine_for_migration"] = die
             mig = await start_migration(w)
             await until(lambda: any(c[0] == "undefine_for_migration" for c in w.S.backend.calls), what="crash")
             await asyncio.sleep(0.05)
             assert state(w.S, mig) == "handed_off", "journaled BEFORE the side effect"
             assert VM in w.S.backend.domains, "the crash happened before the undefine"
             await w.S.crash()
+            dead["on"] = False
             await w.S.restart()
             await until(lambda: state(w.S, mig) == "done" and state(w.T, mig) == "done", what="recovered")
             assert VM not in w.S.backend.domains and VM in w.T.backend.domains
