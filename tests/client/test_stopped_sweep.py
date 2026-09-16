@@ -295,7 +295,11 @@ class VerifyRepairsTests(unittest.TestCase):
 
     def test_it_asks_first_and_says_nothing_is_deleted(self):
         seg = self.body[self.body.index("const gone = (v.missingBytes || [])"):]
-        self.assertIn("await confirm(", seg)
+        # `ask` is verifyFolder's in-app dialog (ctx.confirm || PC.uiConfirm). It is deliberately
+        # not named `confirm`: that name is the NATIVE dialog, and shadowing it is one deleted line
+        # away from a real window in the desktop shell (tests/test_no_native_dialogs_anywhere.py).
+        self.assertIn("(ctx.confirm || PC.uiConfirm)", self.body[:self.body.index("const gone = ")])
+        self.assertIn("await ask(", seg[:seg.index("resend: gone")])
         self.assertIn("Nothing is deleted", seg)
 
     def test_the_three_controls_do_not_all_say_check(self):

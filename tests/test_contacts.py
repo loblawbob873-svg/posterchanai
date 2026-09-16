@@ -162,15 +162,44 @@ class RouterIdChecksTests(unittest.TestCase):
     def _src(self, name):
         return (ROOT / "app" / "routers" / name).read_text()
 
+    def _id_minting_functions(self, name):
+        """Every route/helper that picks a collection id with `free_id`, with the calls it makes.
+
+        That is the collision check. Reading ONE kind is allowed elsewhere and sometimes required —
+        moving an event (a514272c5) must confirm both ends are CALENDARS, or an event could be moved
+        into an addressbook — so the rule is scoped to the functions that mint an id, not the file.
+        """
+        import ast
+        tree = ast.parse(self._src(name))
+        helpers = {f.name for f in ast.walk(tree)
+                   if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and any(isinstance(c, ast.Attribute) and c.attr == "collection_kinds"
+                           for c in ast.walk(f))}
+        out = {}
+        for f in ast.walk(tree):
+            if not isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            called = {(c.func.attr if isinstance(c.func, ast.Attribute) else getattr(c.func, "id", ""))
+                      for c in ast.walk(f) if isinstance(c, ast.Call)}
+            if "free_id" in called:
+                out[f.name] = called | ({"collection_kinds"} if called & helpers else set())
+        return out
+
+    def _assert_both_kinds(self, name):
+        minting = self._id_minting_functions(name)
+        self.assertTrue(minting, "%s no longer mints collection ids — this check is now vacuous" % name)
+        for fn, called in minting.items():
+            self.assertIn("collection_kinds", called,
+                          "%s.%s picks an id without reading both kinds" % (name, fn))
+            self.assertFalse(called & {"list_calendars", "list_addressbooks"},
+                             "%s.%s checks ids against ONE kind; an addressbook and a calendar share "
+                             "the id space" % (name, fn))
+
     def test_the_calendar_router_checks_both_kinds(self):
-        src = self._src("calendar.py")
-        self.assertIn("collection_kinds", src)
-        self.assertNotIn("list_calendars(db, current_user, strict=True)", src)
+        self._assert_both_kinds("calendar.py")
 
     def test_the_contacts_router_checks_both_kinds(self):
-        src = self._src("contacts.py")
-        self.assertIn("collection_kinds", src)
-        self.assertNotIn("list_addressbooks(db, user, strict=True)", src)
+        self._assert_both_kinds("contacts.py")
 
     def test_the_storage_hydrate_reconciles_both_kinds(self):
         # list_calendars here meant no addressbook was ever written to disk (CardDAV discovery

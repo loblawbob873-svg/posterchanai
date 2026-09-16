@@ -263,6 +263,102 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual([f["key"] for f in d["folders"]], ["u1"])
 
 
+# What PosterChanOS's scan returns for installed programs (osshell.js machineApps rows).
+MACHINE = [
+    {"id": "app:firefox-bin", "name": "Firefox", "iconUri": "data:image/png;base64,AAAA", "machine": True},
+    {"id": "app:steam", "name": "Steam", "iconUri": "", "machine": True},
+]
+
+
+def native_layout(doc, machine, apps=None):
+    """computeLayout with a machine scan (a list) or with no machine at all (None)."""
+    return _node(f"""
+      const lay = PCOS.__layout({json.dumps(apps if apps is not None else APPS)},
+                                {json.dumps(doc)}, {json.dumps(machine)});
+      console.log(JSON.stringify({{
+        items: lay.items.map(i => i.view),
+        byView: Object.fromEntries(lay.items.map(i => [i.view, {{label: i.label, native: !!i.native,
+                                   missing: !!i.missing, iconUri: i.iconUri || ''}}])),
+        folders: lay.folders.map(f => [f.key, f.label, f.members.map(m => m.view)]),
+        order: PCOS.__orderNow(lay),
+        native: lay.native,
+      }}));
+    """)
+
+
+@unittest.skipIf(shutil.which("node") is None, "node not installed")
+class NativeProgramTests(unittest.TestCase):
+    """Installed programs (Steam, Firefox) put on the PosterChanOS desktop.
+
+    The document holds the DECISION (`native: [{key, name}]`); what the program is and how to start it
+    comes from the live scan. A device with no machine (a browser, the APK) draws none of them and must
+    carry every one of them through its own saves -- the account's document is shared."""
+
+    DOC = {"native": [{"key": "app:firefox-bin", "name": "Firefox"}, {"key": "app:steam", "name": "Steam"}],
+           "order": ["home", "app:steam", "notes", "app:firefox-bin", "global"]}
+
+    def test_a_program_is_an_icon_where_the_order_puts_it(self):
+        lay = native_layout(self.DOC, MACHINE)
+        self.assertEqual(lay["items"][:5], ["home", "app:steam", "notes", "app:firefox-bin", "global"])
+        ff = lay["byView"]["app:firefox-bin"]
+        self.assertEqual((ff["label"], ff["native"], ff["missing"]), ("Firefox", True, False))
+        self.assertTrue(ff["iconUri"].startswith("data:"), "the program's own picture is used")
+
+    def test_a_program_added_later_goes_to_the_end(self):
+        lay = native_layout({"native": [{"key": "app:steam", "name": "Steam"}]}, MACHINE)
+        self.assertEqual(lay["items"][-1], "app:steam")
+
+    def test_an_uninstalled_program_stays_as_missing_rather_than_vanishing(self):
+        lay = native_layout(self.DOC, [MACHINE[0]])
+        steam = lay["byView"]["app:steam"]
+        self.assertEqual((steam["label"], steam["missing"]), ("Steam", True))
+        self.assertIn("app:steam", lay["order"])
+
+    def test_a_device_with_no_machine_draws_none_and_forgets_none(self):
+        lay = native_layout(self.DOC, None)
+        self.assertNotIn("app:steam", lay["items"])
+        self.assertNotIn("app:firefox-bin", lay["items"])
+        # The order a rearrangement would write keeps both, each beside the icon it followed.
+        order = lay["order"]
+        self.assertLess(order.index("home"), order.index("app:steam"))
+        self.assertLess(order.index("app:steam"), order.index("notes"))
+        self.assertLess(order.index("notes"), order.index("app:firefox-bin"))
+        self.assertLess(order.index("app:firefox-bin"), order.index("global"))
+        self.assertEqual([n["key"] for n in lay["native"]], ["app:firefox-bin", "app:steam"])
+
+    def test_a_folder_of_only_programs_survives_a_browser(self):
+        doc = {"native": [{"key": "app:steam", "name": "Steam"}, {"key": "app:firefox-bin", "name": "Firefox"}],
+               "folders": [{"key": "play", "label": "Play", "views": ["app:steam", "app:firefox-bin"]}],
+               "order": ["home", "folder:play", "notes"]}
+        on_os = native_layout(doc, MACHINE)
+        self.assertIn("folder:play", on_os["items"])
+        self.assertEqual(members(on_os, "play"), ["app:steam", "app:firefox-bin"])
+        browser = native_layout(doc, None)
+        self.assertNotIn("folder:play", browser["items"])
+        self.assertEqual(browser["order"][:3], ["home", "folder:play", "notes"])
+
+    def test_a_mixed_folder_keeps_its_program_in_the_document(self):
+        doc = {"native": [{"key": "app:steam", "name": "Steam"}],
+               "folders": [{"key": "play", "label": "Play", "views": ["chess", "app:steam"]}]}
+        self.assertEqual(members(native_layout(doc, None), "play"), ["chess"])
+        self.assertEqual(norm(doc)["folders"][0]["views"], ["chess", "app:steam"])
+
+    def test_the_document_is_bounded_and_validated(self):
+        d = norm({"native": [{"key": "app:ok", "name": "N" * 500}, {"key": "notes"}, {"key": "app:bad key"},
+                             {"key": "app:ok", "name": "dup"}, "junk", None]
+                            + [{"key": f"app:p{i}"} for i in range(100)]})
+        self.assertEqual(d["native"][0], {"key": "app:ok", "name": "N" * 80})
+        keys = [n["key"] for n in d["native"]]
+        self.assertNotIn("notes", keys, "a view is never a program")
+        self.assertNotIn("app:bad key", keys)
+        self.assertEqual(keys.count("app:ok"), 1)
+        self.assertEqual(len(keys), 48)
+
+    def test_a_document_without_programs_is_unchanged(self):
+        self.assertEqual(norm({})["native"], [])
+        self.assertEqual(native_layout({"order": ["notes", "home"]}, MACHINE)["items"][:2], ["notes", "home"])
+
+
 class ShadowTests(unittest.TestCase):
     """os.js must not declare a local `Relay` or `Store` — it reaches both as GLOBALS.
 

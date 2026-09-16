@@ -149,6 +149,10 @@ def compositor(tmp_path):
     subprocess.run(['wayland-scanner', 'server-header', str(xml),
                     str(tmp_path / 'pointer-constraints-unstable-v1-protocol.h')],
                    check=True, capture_output=True, timeout=30)
+    # And xdg-shell, as the ebuild does: the window border reads a client-decorated window's geometry.
+    subprocess.run(['wayland-scanner', 'server-header', str(xml.parents[2] / 'stable/xdg-shell/xdg-shell.xml'),
+                    str(tmp_path / 'xdg-shell-protocol.h')],
+                   check=True, capture_output=True, timeout=30)
     probe = tmp_path / 'probe.cpp'
     probe.write_text(PROBE)
     _build(tmp_path, PLUGIN, 'posterchan-shell', extra=('-I', str(tmp_path)))
@@ -412,6 +416,10 @@ def test_a_missing_metadata_file_does_not_take_the_whole_desktop_down(tmp_path):
         pytest.skip('wayland-protocols is not installed')
     subprocess.run(['wayland-scanner', 'server-header', str(xml),
                     str(tmp_path / 'pointer-constraints-unstable-v1-protocol.h')],
+                   check=True, capture_output=True, timeout=30)
+    # And xdg-shell, as the ebuild does: the window border reads a client-decorated window's geometry.
+    subprocess.run(['wayland-scanner', 'server-header', str(xml.parents[2] / 'stable/xdg-shell/xdg-shell.xml'),
+                    str(tmp_path / 'xdg-shell-protocol.h')],
                    check=True, capture_output=True, timeout=30)
     _build(tmp_path, PLUGIN, 'posterchan-shell', extra=('-I', str(tmp_path)))
     # A metadata directory carrying every OTHER plugin's XML and not ours -- which is what an

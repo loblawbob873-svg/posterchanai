@@ -218,6 +218,19 @@
     });
   }
   const fits = () => window.innerWidth >= MIN_WIDTH;
+  /* DESKTOP OR CLASSIC IS ONE QUESTION WITH ONE ANSWER. Reported on an Android tablet as "it gets
+   * confused whether it should open launcher apps in classic or desktop" — and measured, it had two
+   * answers: the app's own icon restored the remembered desktop (`restore()`), while every launcher
+   * tile left it (`mobileLanding` exited unconditionally), so the SAME device in the SAME
+   * orientation opened Notes full-screen from a tile, Messages in a window from the icon, and flipped
+   * back to the desktop the next time the renderer was recreated. The remembered choice decides,
+   * whenever the screen can hold a desktop; a desktop already on screen is never torn down by a
+   * launch. `restore()` keeps its own copy of the size half (it must not treat `on` as a wish). */
+  const wantsDesktop = () => {
+    if(on || isSystemShell()) return true;
+    try{ return !!settings().get(KEY, false) && fits(); }catch(_){ return false; }
+  };
+  const _authGateUp = () => !!document.querySelector('#auth-gate:not(.hidden)');
 
   /* The launcher list is READ FROM THE SIDEBAR, not written out again here.
    *
@@ -369,7 +382,15 @@
    * opens the same account, not 1500px into the middle of it. Fractions reflow; a name lets the
    * actual size come from the screen, so a panel that is comfortable on a desktop does not cover a
    * tablet. Both are properties of the ARRANGEMENT, which is what this document holds. */
-  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '', widgets: [], pins: [] });
+  /* `native` — programs installed on THIS MACHINE that somebody put on the desktop, as
+   *            `{key:'app:<desktop id>', name}`. Only the DECISION: what to run is resolved from a
+   *            fresh `.desktop` scan at the moment of the click (a stored command line is how a stale
+   *            cache launches "no such app"), and `name` exists only so an uninstalled program can
+   *            still say what it was. A device with no machine to launch on (a browser, the APK)
+   *            draws none of them and CARRIES them — see `ghosts` in computeLayout. */
+  const BLANK = () => ({ v: 1, folders: [], order: [], hidden: [], pos: {}, bg: '', widgets: [], pins: [], native: [] });
+  const NATIVE_RE = /^app:[A-Za-z0-9_.:+@/-]+$/;
+  const NATIVE_MAX = 48;
 
   let _doc = null;        // the layout as last read/written; null = nothing read yet (draw defaults)
   let _docPk = '';        // …whose. An account switch must not paint the previous account's desktop.
@@ -450,6 +471,13 @@
       seenPin.add(s); out.pins.push(s);
       if(out.pins.length >= 24) break;
     }
+    const seenNat = new Set();
+    for(const n of (Array.isArray(o && o.native) ? o.native : [])){
+      const key = str(n && n.key, 120);
+      if(!NATIVE_RE.test(key) || seenNat.has(key)) continue;
+      seenNat.add(key); out.native.push({ key, name: str(n.name, 80) });
+      if(out.native.length >= NATIVE_MAX) break;
+    }
     /* Widgets. Bounded in every direction, because this document is the one thing here that a future
      * client version — or a half-finished write — could put anything in, and it is read on every draw
      * of the desktop. An unknown TYPE is dropped rather than kept: it would draw an empty frame that
@@ -503,9 +531,21 @@
    * the DOM so tests/test_desktop_layout.py can run the shipped code against a list of apps — the
    * parts that can be wrong here are wrong in ways nothing on screen announces: an app that quietly
    * stops appearing, a folder that eats an icon twice, a new feature that never shows up. */
-  function computeLayout(list, doc){
-    const byView = new Map((list || []).map(a => [a.view, a]));
+  /* `machine` is the installed-program scan (`PCOSShell.allApps()` rows), or null where there is no
+   * machine to ask — a browser, the APK, or PosterChanOS before its first scan has answered. */
+  function computeLayout(list, doc, machine){
     const d = _normDoc(doc || {});
+    /* PROGRAMS PUT ON THE DESKTOP join the app list as ordinary items keyed `app:<id>`, so order,
+     * folders, free positions and dragging treat Steam exactly like Notes. One that the scan no longer
+     * finds is drawn as MISSING rather than dropped: the decision is the person's, an uninstall may be
+     * temporary, and dropping it here would delete it from the document at the next save. */
+    const natives = !Array.isArray(machine) ? [] : d.native.map(n => {
+      const a = machine.find(x => x && x.id === n.key);
+      return { view: n.key, label: (a && a.name) || n.name || n.key.slice(4), icon: 'i-grid',
+               iconUri: (a && a.iconUri) || '', native: true, missing: !a };
+    });
+    list = (list || []).concat(natives);
+    const byView = new Map(list.map(a => [a.view, a]));
     const hidden = new Set(d.hidden.filter(v => byView.has(v)));
     const placed = new Set();          // views the DOCUMENT has an opinion about
     const folders = [];
@@ -554,8 +594,21 @@
     // retired view would otherwise keep a place in the arithmetic that decides where windows open.
     const pos = {};
     for(const it of items) if(d.pos[it.view]) pos[it.view] = d.pos[it.view];
+    /* GHOSTS: order entries this device cannot draw but must not forget. Every rearrangement writes
+     * the order AS SEEN (`_orderNow`), so on a browser — which can draw no program — moving one icon
+     * would silently strip Steam's place (and a folder holding only programs) from the desktop that
+     * PosterChanOS draws. Each ghost remembers the drawn key it followed, to go back in beside it. */
+    const nat = new Set(d.native.map(n => n.key));
+    const ghosts = [];
+    let prev = null;
+    for(const key of d.order){
+      if(used.has(key)){ prev = key; continue; }
+      const f = key.indexOf('folder:') === 0 ? d.folders.find(x => 'folder:' + x.key === key) : null;
+      if(nat.has(key) || (f && f.views.some(v => nat.has(v)))) ghosts.push([key, prev]);
+    }
     return { items, folders, hidden: [...hidden].map(v => byView.get(v)), pos, bg: d.bg,
-             widgets: Array.isArray(d.widgets) ? d.widgets : [], pins: d.pins || [] };
+             widgets: Array.isArray(d.widgets) ? d.widgets : [], pins: d.pins || [],
+             native: d.native, ghosts };
   }
 
   let _lay = null;
@@ -567,8 +620,26 @@
     // different key to decrypt a different document, and that deserves its own second chance.
     if(pk !== _docPk){ _doc = null; _docAt = 0; _wr = false; _layWhy = ''; _signerRetried = 0;
                        _noticeSaid = ''; _docPk = pk; unwatchLayout(); }
-    _lay = computeLayout(launchApps(), _doc);
+    _lay = computeLayout(launchApps(), _doc, _machineList());
     return _lay;
+  }
+
+  /* THE INSTALLED PROGRAMS, for drawing the ones on the desktop — or null, meaning "do not draw them
+   * yet, and do not decide anything about them". Null off PosterChanOS, and null until this window's
+   * first scan answers: the desktop is its own renderer and does not share the start menu popup's
+   * scan. An EMPTY scan is also null — a disk read that failed and "every program was uninstalled"
+   * look identical, and only the second one would justify drawing every icon as missing. */
+  let _machineScan = null;
+  function _machineList(){
+    try{ if(!(window.PCOSShell && PCOSShell.available() && PCOSShell.allApps)) return null; }
+    catch(_){ return null; }
+    if(Array.isArray(_machineApps) && _machineApps.length) return _machineApps;
+    if(!_machineScan){
+      _machineScan = Promise.resolve(PCOSShell.allApps()).then(list => {
+        if(Array.isArray(list) && list.length){ _machineApps = list; refreshIcons(); if(on && bar) drawBar(); }
+      }, () => {}).then(() => { _machineScan = null; });
+    }
+    return null;
   }
 
   /* What the desktop and start menu SHOW: the flat list with each folder's members collapsed into
@@ -789,7 +860,17 @@
   // Every mutation is expressed against the layout ON SCREEN, so what gets written is what the user
   // is looking at — the document is sparse (it holds decisions, not the app list), and a reorder has
   // to materialise the visible order or it would be describing a desktop nobody has seen.
-  const _orderNow = lay => lay.items.map(a => a.view);
+  const _orderNow = lay => {
+    const out = lay.items.map(a => a.view);
+    // …plus what this device cannot draw but the document holds (installed programs, on a browser),
+    // each back beside the icon it followed. See `ghosts` in computeLayout.
+    for(const [key, after] of (lay.ghosts || [])){
+      if(out.indexOf(key) >= 0) continue;
+      const i = after == null ? -1 : out.indexOf(after);
+      out.splice(i + 1, 0, key);
+    }
+    return out;
+  };
   const _pluck = (doc, view) => { for(const f of doc.folders) f.views = f.views.filter(v => v !== view); };
 
   // A built-in folder exists only as a default until you change it; the moment you do, it becomes a
@@ -914,7 +995,10 @@
       if(!f) return false;
       const order = _orderNow(lay);
       const at = order.indexOf('folder:' + key);
-      const views = f.members.map(m => m.view);
+      // The DOCUMENT's members, not the drawn ones: a browser draws no installed program, and taking
+      // the folder apart there must not delete the Steam inside it.
+      const own = doc.folders.find(x => x.key === key);
+      const views = own ? own.views.slice() : f.members.map(m => m.view);
       doc.folders = doc.folders.filter(x => x.key !== key);
       const rest = order.filter(k => k !== 'folder:' + key);
       rest.splice(at < 0 ? rest.length : at, 0, ...views);
@@ -925,6 +1009,7 @@
   // Hidden from the DESKTOP, not from the app: it stays in the start menu, which is where every
   // desktop puts the things that are not on the desktop, and is the way back.
   function hideItem(view){
+    if(NATIVE_RE.test(String(view || ''))) return removeNative(view);   // nothing to hide it INTO
     return _apply((doc, lay) => {
       if(!view || view.indexOf('folder:') === 0) return false;
       _pluck(doc, view);
@@ -945,6 +1030,47 @@
     return _apply((doc) => {
       doc.pins = Array.isArray(doc.pins) ? doc.pins.filter(x => x !== key) : [];
       if(on) doc.pins.push(key);
+    });
+  }
+
+  /* AN INSTALLED PROGRAM ON THE DESKTOP. `id` is the scan's own id (`app:<desktop id>`), which is
+   * also the icon's key — views never contain a colon, so it cannot collide with one. Added at the
+   * end, like a feature that just appeared. Removing it is the whole of "hide": a program that is
+   * not on the desktop is still in the start menu, under This computer. */
+  function addNative(id, name){
+    const key = String(id || '');
+    if(!NATIVE_RE.test(key)) return Promise.resolve(false);
+    return _apply((doc, lay) => {
+      if(doc.native.some(n => n.key === key)){
+        try{ PC().toast((name || key.slice(4)) + ' is already on the desktop'); }catch(_){}
+        return false;
+      }
+      if(doc.native.length >= NATIVE_MAX){
+        try{ PC().toast('the desktop holds ' + NATIVE_MAX + ' programs at most — remove one first'); }catch(_){}
+        return false;
+      }
+      doc.native.push({ key, name: String(name || '').slice(0, 80) });
+      doc.hidden = doc.hidden.filter(v => v !== key);
+      doc.order = _orderNow(lay).filter(k => k !== key).concat([key]);
+    }).then(ok => {
+      /* The start menu popup scans on every opening; THIS window scanned once. A program installed
+       * since then would be drawn as "not installed" the moment it was added, so ask the disk again. */
+      if(ok && Array.isArray(_machineApps) && !_machineApps.some(a => a.id === key)
+         && window.PCOSShell && PCOSShell.allApps){
+        Promise.resolve(PCOSShell.allApps(true)).then(list => {
+          if(Array.isArray(list) && list.length){ _machineApps = list; refreshIcons(); }
+        }, () => {});
+      }
+      return ok;
+    });
+  }
+  function removeNative(key){
+    return _apply((doc, lay) => {
+      if(!doc.native.some(n => n.key === key)) return false;
+      doc.native = doc.native.filter(n => n.key !== key);
+      _pluck(doc, key);
+      doc.order = _orderNow(lay).filter(k => k !== key);
+      if(doc.pos && doc.pos[key]){ doc.pos = Object.assign({}, doc.pos); delete doc.pos[key]; }
     });
   }
 
@@ -2196,7 +2322,30 @@
    * configured landing timeline.  Phone navigation already resolves that alias in activateNavView;
    * keep every desktop LAUNCHER surface on the same contract without changing explicit Home or
    * Nostrverse tab navigation inside an open Social window. */
+  /* STARTING AN INSTALLED PROGRAM — the one path the start menu, a shell action and a desktop icon
+   * all take, so they cannot disagree about what a press does. `PCOSShell.launch` resolves the id
+   * against a fresh scan on a miss, so a program installed since this window scanned still starts. */
+  function launchMachineApp(id, label){
+    if(_menuAct('app', id)) return;
+    const say = (m) => { try{ PC().toast(m); }catch(_){} };
+    try{
+      if(!(window.PCOSShell && PCOSShell.launch)){ say('programs can only be started on PosterChanOS'); return; }
+      Promise.resolve(PCOSShell.launch(id)).then(
+        (r) => { if(r && r.why) say(r.why); },
+        (e) => {
+          const m = String((e && e.message) || e);
+          say(m === 'no such app' && label ? label + ' is not installed on this computer' : m);
+        });
+    }catch(e){ say(String((e && e.message) || e)); }
+  }
+
   function openLauncherApp(view){
+    /* A program put on the desktop is STARTED, never opened as a view. `app:` is its namespace. */
+    if(NATIVE_RE.test(String(view || ''))){
+      const it = (_lay || layout()).items.concat(...(_lay || layout()).folders.map(f => f.members))
+        .find(a => a.view === view);
+      return launchMachineApp(view, it && it.label);
+    }
     if(_menuAct('view', view)) return;      // the app opens on the desktop, not in the menu
     let target=view;
     if(view==='global' && PC().socialTimeline){
@@ -3009,7 +3158,7 @@
    * disarms it. */
   function paintRemoteDesktop(slot){
     try{PC().setRemoteDesktopArmed&&PC().setRemoteDesktopArmed(true);}catch(_){}
-    const canShare=typeof navigator.mediaDevices?.getDisplayMedia==='function';
+    const canShare=typeof globalThis.navigator?.mediaDevices?.getDisplayMedia==='function';
     slot.innerHTML=`<div class="pcrd"><div class="pcrd-hero"><svg class="ic"><use href="#i-monitor"></use></svg><div><b>${canShare?'Share or view a desktop':'View a desktop'}</b><span>Encrypted peer-to-peer screen sharing, signaled over Nostr.</span></div></div>
       <div class="pcrd-note" data-rd-viewer-ready role="status">Ready to receive a desktop. On your laptop or desktop, open Remote Desktop and choose “Share to my other signed-in device” using the same account, or enter this account’s username. Keep this screen open. Tap or drag the shared screen after control is granted.</div>
       <div class="pcrd-share" ${canShare?'':'hidden'}>
@@ -5427,7 +5576,7 @@
    * without a label having to. Its own <use> ids come from the sidebar, so they are always symbols
    * that exist (the check harness fails on one that does not). */
   const folderGlyph = f =>
-    `<span class="os-fold">${f.members.slice(0, 4).map(m => iconSvg(m.icon)).join('')}</span>`;
+    `<span class="os-fold">${f.members.slice(0, 4).map(m => m.native ? appIcon(m) : iconSvg(m.icon)).join('')}</span>`;
 
   /* A FOLDER TILE SAYS WHAT IS INSIDE IT, in `data-apps`.
    *
@@ -5437,10 +5586,11 @@
    * comparing the desktop against the sidebar sees apps "missing" the moment any built-in folder
    * claims one, which is exactly what happened when Office claimed Calendar and Contacts. */
   const iconHtml = a =>
-    `<button class="os-icon${a.folder ? ' is-folder' : ''}" data-view="${enc(a.view)}"${
+    `<button class="os-icon${a.folder ? ' is-folder' : ''}${a.native ? ' is-native' : ''}${
+        a.missing ? ' is-missing' : ''}" data-view="${enc(a.view)}"${
         a.folder ? ` data-apps="${enc(a.folder.members.map(m => m.view).join(' '))}"` : ''
-      }${tint(a.view)} title="${enc(a.label)}">
-       ${a.folder ? folderGlyph(a.folder) : iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
+      }${tint(a.view)} title="${enc(a.missing ? a.label + ' — not installed on this computer' : a.label)}">
+       ${a.folder ? folderGlyph(a.folder) : a.native ? appIcon(a) : iconSvg(a.icon)}<span>${enc(a.label)}</span></button>`;
 
   /* Fit sparse saved coordinates to THIS usable desktop without rewriting the synced document.
    * Valid user positions stay exact; only an out-of-bounds/colliding/new icon takes the next free
@@ -7365,6 +7515,52 @@
     $$('.os-wgt-pick', m).forEach(b => b.onclick = () => { m.remove(); addWidget(b.dataset.t); });
   }
 
+  /* PUT AN INSTALLED PROGRAM ON THE DESKTOP — the desktop's own way in, beside "Add a widget…"; the
+   * start menu's right-click on a program under This computer is the other. A FRESH scan, because
+   * the program somebody reaches for here is very often the one they just installed. */
+  function programPicker(){
+    hideCtx();
+    if(!root) return;
+    root.querySelectorAll('.os-apppick').forEach(n => n.remove());
+    const m = document.createElement('div');
+    m.className = 'os-bgpick os-apppick';
+    m.innerHTML = `<div class="os-bg-head"><b>Add a program to the desktop</b>
+        <button class="os-bg-x" id="os-app-x" aria-label="Close">✕</button></div>
+      <input class="os-qin os-apppick-q" type="search" autocomplete="off" placeholder="Find a program"
+             aria-label="Find a program">
+      <div class="os-applist os-apppick-list"><div class="os-bg-empty"><p>Looking at this computer…</p></div></div>`;
+    root.appendChild(m);
+    { const x = $('#os-app-x', m); if(x) x.onclick = () => m.remove(); }
+    const listEl = $('.os-apppick-list', m), q = $('.os-apppick-q', m);
+    let all = [];
+    const paint = () => {
+      const want = String(q.value || '').toLowerCase();
+      const onDesk = new Set((layout().native || []).map(n => n.key));
+      const rows = all.filter(a => NATIVE_RE.test(String(a.id || ''))
+                                && (!want || String(a.name || '').toLowerCase().includes(want)));
+      listEl.innerHTML = rows.length
+        ? rows.map(a => `<button class="os-app" data-app="${enc(a.id)}"${tint(a.id)}
+              ${onDesk.has(a.id) ? ' disabled' : ''}>${appIcon(a)}<span>${enc(a.name)}${
+              onDesk.has(a.id) ? ' <i class="muted">· on the desktop</i>' : ''}</span></button>`).join('')
+        : `<div class="os-bg-empty"><p>${all.length ? 'Nothing matches.' : 'No programs found on this computer.'}</p></div>`;
+      $$('.os-app[data-app]', listEl).forEach(b => b.onclick = () => {
+        const a = all.find(x => x.id === b.dataset.app);
+        m.remove();
+        addNative(b.dataset.app, a && a.name);
+      });
+    };
+    q.oninput = paint;
+    Promise.resolve(PCOSShell.allApps(true)).then(list => {
+      if(!m.isConnected) return;
+      all = Array.isArray(list) ? list : [];
+      if(all.length) _machineApps = all;
+      paint();
+      try{ q.focus(); }catch(_){}
+    }, () => {
+      if(m.isConnected) listEl.innerHTML = '<div class="os-bg-empty"><p>Could not read the programs on this computer.</p></div>';
+    });
+  }
+
   // ---- dragging icons ---------------------------------------------------------------------------
 
   /* Where a drop would land — arithmetic over rectangles MEASURED ONCE, at the start of the drag.
@@ -7621,17 +7817,22 @@
     m.className = 'os-ctx';
     m.innerHTML = rows.map((r, i) => r.sep ? '<hr>'
       : `<button class="os-ctx-b" data-i="${i}">${enc(r.label)}</button>`).join('');
-    desk.appendChild(m);
+    /* THE START MENU POPUP HAS NO DESK. It is its own window holding only the menu, so `desk` is null
+     * there and every right-click in it — Pin to taskbar, Add to desktop — threw before drawing
+     * anything: a menu row that looked right-clickable and did nothing. Its host is the surface. */
+    const host = desk || root;
+    if(!host) return;
+    host.appendChild(m);
     /* `clientX/Y` are VIEWPORT coordinates while this menu is absolutely positioned inside the
      * logical desktop. Body zoom and a shell embedded on a secondary display mean its origin is not
      * necessarily (0,0); dividing by zoom alone put taskbar menus tens or hundreds of pixels away
      * from the app that was clicked. Derive both origin and scale from the actual desktop rect.
      * Taskbar menus anchor above the button, as a real taskbar does; other context menus stay at the
      * pointer. */
-    const dr=desk.getBoundingClientRect();
+    const dr=host.getBoundingClientRect();
     const w = m.offsetWidth || 200, h = m.offsetHeight || 80;
     const ar=anchor&&anchor.getBoundingClientRect?anchor.getBoundingClientRect():null;
-    const pos=ctxPosition(dr,desk.offsetWidth,desk.offsetHeight,w,h,ar,x,y);
+    const pos=ctxPosition(dr,host.offsetWidth,host.offsetHeight,w,h,ar,x,y);
     m.style.left=pos.left+'px';m.style.top=pos.top+'px';
     $$('.os-ctx-b', m).forEach(b => b.onclick = () => {
       const r = rows[b.dataset.i | 0];
@@ -7659,7 +7860,8 @@
     }else{
       rows.push({ sep: true });
       if(srcFolder) rows.push({ label: 'Move to desktop', run: () => toDesk(key, null, false) });
-      else rows.push({ label: 'Hide from desktop', run: () => hideItem(key) });
+      if(NATIVE_RE.test(key)) rows.push({ label: 'Remove from desktop', run: () => removeNative(key) });
+      else if(!srcFolder) rows.push({ label: 'Hide from desktop', run: () => hideItem(key) });
     }
     showCtx(x, y, rows);
   }
@@ -7789,6 +7991,9 @@
     if(Object.keys(lay.pos || {}).length)
       rows.push({ label: 'Line the icons up', run: () => lineUp() });
     rows.push({ label: 'Add a widget…', run: () => widgetPicker() });
+    // Only where there are programs to start: a browser opening the same account has none.
+    try{ if(window.PCOSShell && PCOSShell.available() && PCOSShell.allApps)
+      rows.push({ label: 'Add a program…', run: () => programPicker() }); }catch(_){}
     rows.push({ label: 'Change background…', run: () => wallpaperPicker() });
     /* THE DESKTOP STYLE SHIPPED AND COULD NOT BE TURNED ON FROM A BROWSER.
      * Its only control is System Settings → Appearance, whose start-menu entry is gated on
@@ -9131,7 +9336,7 @@
       // Search searches the LAUNCHER, not every view that exists: typing "torrents" after switching
       // Torrents off must not hand back the icon the switch just removed.
       const list = q ? launchApps().filter(a => a.label.toLowerCase().includes(q.toLowerCase()))
-                     : lay.items.concat(lay.hidden);
+                     : lay.items.concat(lay.hidden).filter(a => !a.native);   // programs list under This computer
       /* Typing here searches NOSTR — that row is FIRST, so it is what Enter runs, and it opens in
        * its own window like every other result on this desktop. The app list stays underneath
        * because the start menu is also how you find an app, and Windows puts both in one box. */
@@ -9226,8 +9431,19 @@
         const pinned = (lay.pins || []).indexOf(pinKey) >= 0;
         if(app){
           const a = (_machineApps || []).find(x => x.id === app);
+          const name = (a && a.name) || app.replace(/^app:/, '');
+          const onDesk = (lay.native || []).some(n => n.key === app);
+          const deskRow = NATIVE_RE.test(app) ? [{
+            label: onDesk ? 'Remove from desktop' : 'Add to desktop',
+            run: () => {
+              // In the popup this travels to the desktop window, which owns the layout and its write.
+              if(_menuAct(onDesk ? 'desk-remove' : 'desk-add', onDesk ? app : app + '\n' + name)) return;
+              (onDesk ? removeNative(app) : addNative(app, name));
+              toggleStart(false);
+            } }] : [];
           showCtx(ev.clientX, ev.clientY,
-            [{ label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
+            [...deskRow,
+             { label: pinned ? 'Unpin from taskbar' : 'Pin to taskbar',
                run: () => { setPinned('app', app, !pinned); toggleStart(false); } },
              { sep: true },
              { label: 'Open ' + ((a && a.name) || app), run: () => b.click() }]);
@@ -9255,11 +9471,7 @@
            * the same exact-one popup action route as PosterChan views. */
           if(_menuAct('app', b.dataset.app)) return;
           toggleStart(false);
-          try{
-            PCOSShell.launch(b.dataset.app).then(
-              (r) => { if(r && r.why) PC().toast(r.why); },
-              (e) => PC().toast(String((e && e.message) || e)));
-          }catch(e){ PC().toast(String((e && e.message) || e)); }
+          launchMachineApp(b.dataset.app);
           return;
         }
         toggleStart(false); openLauncherApp(b.dataset.view);
@@ -9608,12 +9820,15 @@
               try{ val = decodeURIComponent(rest); }catch(_){ }
               try{
                 if(kind === 'view') openLauncherApp(val);
-                else if(kind === 'app'){
-                  if(window.PCOSShell && PCOSShell.launch)
-                    Promise.resolve(PCOSShell.launch(val)).then(
-                      r=>{if(r&&r.why)PC().toast(r.why);},
-                      e=>PC().toast(String(e&&e.message||e)));
+                else if(kind === 'app') launchMachineApp(val);
+                /* Put on / taken off the desktop from the start menu. Performed HERE, in the window
+                   that has read the layout and holds the write gate: the menu is a popup that closes
+                   the moment this is sent, and a save begun in it would die with it. */
+                else if(kind === 'desk-add'){
+                  const at = val.indexOf('\n');
+                  addNative(at < 0 ? val : val.slice(0, at), at < 0 ? '' : val.slice(at + 1));
                 }
+                else if(kind === 'desk-remove') removeNative(val);
                 else if(kind === 'profile') PC().openProfile(val);
                 else if(kind === 'thread') PC().openThread(val);
                 else if(kind === 'reply'){
@@ -10282,6 +10497,24 @@
      * So the event is fetched first, and BOUNDED: the reply is correctly tagged either way (the id
      * and the author travelled in the argument), so a slow relay must cost the preview, never the
      * composer. */
+    /* CLOSING THE MODAL CLOSES THE WINDOW — installed BEFORE either way of drawing, or a composer
+       drawn straight away (a post already in the Store, a plain new post) never closed its window. Without this, cancelling a reply leaves an empty
+       floating rectangle on the desktop — the modal is gone and the window it lived in is not.
+       BUT NOT UNTIL THE REPLY HAS GONE. Send closes the modal first and publishes after, and closing
+       this window ends its renderer: every reply written here was lost before it was signed, with
+       nothing on screen and nothing in any log. So the close waits for the publish to settle. */
+    const root = document.getElementById('modal-root');
+    if(root){
+      let closing = false;
+      new MutationObserver(() => {
+        if(closing || root.querySelector('.modal-bg')) return;
+        closing = true;
+        setTimeout(async () => {
+          try{ const pc = PC(); if(pc && pc.publishesSettled) await pc.publishesSettled(); }catch(_){ }
+          try{ window.close(); }catch(_){ }
+        }, 0);
+      }).observe(root, { childList: true });
+    }
     const need = opts.reply || opts.quote || '';
     const draw = () => { try{ PC().compose(opts); }catch(_){ } };
     if(!need || (window.Store && Store.get(need))){ draw(); return; }
@@ -10301,14 +10534,6 @@
       }catch(_){ }
       once();
     })();
-    /* CLOSING THE MODAL CLOSES THE WINDOW. Without this, cancelling a reply leaves an empty
-       floating rectangle on the desktop — the modal is gone and the window it lived in is not. */
-    const root = document.getElementById('modal-root');
-    if(root){
-      new MutationObserver(() => {
-        if(!root.querySelector('.modal-bg')) try{ window.close(); }catch(_){ }
-      }).observe(root, { childList: true });
-    }
   }
 
   /* WHERE A POPUP DRAWS — AN ADDED ELEMENT, NEVER A REPLACED BODY.
@@ -10435,6 +10660,28 @@
       if(e.key === 'Escape') try{ window.close(); }catch(_){ }
     });
   }
+
+  /* A TABLET TURNED SIDEWAYS GETS THE DESKTOP IT WAS REFUSED IN PORTRAIT. Boot decides once, from
+   * the width at that moment, and nothing re-asked: booted upright (800 wide, under MIN_WIDTH) the
+   * app stayed classic in landscape for the rest of the session, while one booted in landscape kept
+   * its desktop through every rotation — the mode depended on how the tablet was held at launch.
+   * The other direction is deliberately untouched (onResize: rotation is not a request to close).
+   * Android only: a browser window dragged wider is not a device rotating, and a login gate or an
+   * unfinished boot is never covered by a desktop. */
+  let _widenT = 0;
+  window.addEventListener('resize', () => {
+    if(on || popupKind()) return;
+    try{ if(!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform())) return; }catch(_){ return; }
+    clearTimeout(_widenT);
+    _widenT = setTimeout(() => {
+      if(on || !window.__PC_BOOTED || _authGateUp() || !wantsDesktop()) return;
+      /* The screen that was open comes along as a window, or turning the tablet hides it. */
+      let v = '';
+      try{ v = String(PC().VIEW || ''); }catch(_){ }
+      enter();
+      try{ if(on && v && v !== 'home' && v !== 'global' && PC().switchView) PC().switchView(v); }catch(_){ }
+    }, 250);
+  });
 
   function restore(){
     /* A POPUP WINDOW IS A MENU. It loads the whole client because it is the same bundle, but the
@@ -10664,10 +10911,11 @@
 
   window.PCOS = { enter, exit, suspend, toggle, restore, refresh, renderExtra,
                   metrics, applyUiScale, setUiScale, uiScaleEffective,
-                  /* Android launcher tiles are MOBILE destinations even on a landscape tablet.
-                   * Leave the windowed desktop for this session without changing the user's saved
-                   * desktop preference; an ordinary later launch may restore it. */
-                  mobileLanding: () => { if(on) exit(false); },
+                  /* An Android launcher tile lands in the mode the device is in — see wantsDesktop.
+                   * Entering here (rather than leaving the choice to boot) is what makes a warm tile
+                   * agree with a cold one: boot already restored the desktop before this runs. */
+                  mobileLanding: () => { if(!on && !popupKind() && !_authGateUp() && wantsDesktop()) enter(); },
+                  wantsDesktop,
                   isOn: () => on, openDoc, focusDoc, closeDoc, captureReturnTarget, windowOpenHint: _windowOpenHint, routeView, routeApp, snapTo, documentWindow,
                   openSystemSettings, osToast,
                   // app.js calls this when the player's state changes — the Now-playing widget has
@@ -10702,7 +10950,8 @@
                    * silently on screen — an app that stops appearing, a folder that swallows an icon
                    * twice, a feature added next month that never shows up — so it is tested directly
                    * rather than inferred from a rendered desktop. */
-                  __layout: (list, doc) => computeLayout(list, doc), __normDoc: (d) => _normDoc(d),
+                  __layout: (list, doc, machine) => computeLayout(list, doc, machine),
+                  __normDoc: (d) => _normDoc(d), __orderNow: (lay) => _orderNow(lay),
                   __fitIcons: (items,pos,maxX,maxY) => fitIconPositions(items,pos,maxX,maxY),
                   /* WHERE AND HOW BIG A WINDOW OPENS, and the compositor rectangle the size
                      hint is derived against. Both are exposed for the same reason as __layout: a

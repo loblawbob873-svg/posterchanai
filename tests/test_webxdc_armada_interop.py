@@ -1,4 +1,5 @@
 """Wire-contract guards for Webxdc launched inside Armada chat scopes."""
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,8 +37,14 @@ def test_nip29_webxdc_uses_group_scoped_armada_kinds():
 
 
 def test_concord_v2_webxdc_uses_3310_in_durable_and_ephemeral_wraps():
-    assert "kind: 3310" in READER
-    assert "wrapSeal(seal, channel.current.group, { ephemeral })" in READER
+    body = READER.split("async function createWebxdcWrap(", 1)[1].split("\n  }", 1)[0]
+    assert "buildRumor({ kind: 3310," in body
+    # The caller's `ephemeral` flag must reach the outer wrap (75afd2c4d added CORD-08's
+    # `expiration` beside it, which is why this is a pattern and not the literal call).
+    assert re.search(r"wrapSeal\(seal, channel\.current\.group, \{ ephemeral[,\s}]", body), \
+        "realtime webxdc must select the ephemeral 21059 wrap"
+    assert "kind: opts?.ephemeral ? KIND_WRAP_EPHEMERAL : KIND_WRAP," in READER
+    assert "var KIND_WRAP = 1059;" in READER and "var KIND_WRAP_EPHEMERAL = 21059;" in READER
 
 
 def test_peer_ads_use_the_open_room_sockets_not_an_unrelated_pool():

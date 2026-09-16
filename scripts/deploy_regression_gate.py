@@ -3,9 +3,16 @@
 
 Uses isolated browser profiles, Electron sessions and fake filesystem/network adapters.
 A skipped test is missing coverage, so it blocks this gate just like a failed test.
+
+`--full` (what sync.sh runs) then runs EVERY discovered test under tests/, sharded across parallel
+pytest processes. The required list alone let tests nobody had listed rot: four were found failing
+for days against shipped code (a notification pin since Sep 14 among them) while every deploy
+passed. Skips are allowed in the full pass (hardware- and tool-dependent tests skip honestly);
+failures, errors and collection errors are not.
 """
 from pathlib import Path
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -14,6 +21,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -187,7 +195,156 @@ def _run_required_tests(command, root, env, log, timeout=600):
         signal.signal(signal.SIGTERM, previous)
 
 
-def run_gate(root=ROOT, receipt=None):
+# Per-test durations from previous full runs, used only to balance shards. A cache, not a record:
+# losing it costs balance, never coverage.
+DURATIONS = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'posterchanai' / 'test-durations.json'
+
+
+def discover_test_files(root):
+    tests = Path(root) / 'tests'
+    return sorted(str(p.relative_to(root)) for p in tests.rglob('test_*.py')
+                  if not any(part in ('data', 'node_modules', '__pycache__') for part in p.parts))
+
+
+def plan_shards(files, jobs, durations=None, root=ROOT):
+    """Greedy balance: longest file first onto the least-loaded shard. Unknown files cost their size."""
+    durations = durations or {}
+    def cost(name):
+        if name in durations:
+            return float(durations[name])
+        try:
+            return (Path(root) / name).stat().st_size / 2000.0
+        except OSError:
+            return 1.0
+    shards = [[] for _ in range(max(1, jobs))]
+    load = [0.0] * len(shards)
+    for name in sorted(files, key=cost, reverse=True):
+        i = load.index(min(load))
+        shards[i].append(name)
+        load[i] += cost(name)
+    return [sorted(shard) for shard in shards if shard]
+
+
+def _file_of(case, root=ROOT):
+    name = case.get('file') or ''
+    if name:
+        return name
+    classname = case.get('classname') or ''
+    parts = classname.split('.')
+    for n in range(len(parts), 0, -1):
+        candidate = '/'.join(parts[:n]) + '.py'
+        if (Path(root) / candidate).exists():
+            return candidate
+    return classname
+
+
+def _node_id(case, root=ROOT):
+    """pytest node id from a junit testcase: tests/x/test_y.py::Class::test_z[param]."""
+    path = _file_of(case, root)
+    module = path[:-3].replace('/', '.') if path.endswith('.py') else ''
+    classname = case.get('classname') or ''
+    rest = classname[len(module):].lstrip('.') if module and classname.startswith(module) else ''
+    return '::'.join(part for part in (path, *(rest.split('.') if rest else []), case.get('name') or '?') if part)
+
+
+def run_full_suite(root, env, directory, jobs=None):
+    """Every test file, in parallel shards. Returns (ok, message)."""
+    files = discover_test_files(root)
+    if not files:
+        return False, 'no test files discovered'
+    try:
+        durations = json.loads(DURATIONS.read_text())
+    except (OSError, ValueError):
+        durations = {}
+    if not jobs:
+        jobs = runpy.run_path(str(Path(__file__).with_name('checkall.py')))['_default_jobs']()
+    shards = plan_shards(files, jobs, durations, root)
+    checkall = runpy.run_path(str(Path(__file__).with_name('checkall.py')))
+    captured = checkall['_captured']
+    # One suite at a time per checkout (shared with ./test.sh): two would fight over the same CPU,
+    # ports and browser profiles and report each other's timeouts as failures.
+    # A gate started FROM a gate shard (this file's own tests) runs under the lock its parent holds.
+    if os.environ.get('PC_GATE_MANAGED_PROCESSES') == '1':
+        return _run_shards(root, env, directory, files, shards, durations, captured)
+    try:
+        with checkall['_runner_lock']():
+            return _run_shards(root, env, directory, files, shards, durations, captured)
+    except checkall['RunnerBusy'] as busy:
+        return False, str(busy)
+
+
+def _run_shards(root, env, directory, files, shards, durations, captured):
+    print(f'[regressions] full suite: {len(files)} files in {len(shards)} parallel shards')
+    started = time.monotonic()
+    # The required pass disables plugin autoload for a minimal environment; the full suite needs the
+    # plugins the repo's tests use (anyio runs every `@pytest.mark.anyio` test — without it each one
+    # fails with "async def functions are not natively supported").
+    env = {k: v for k, v in env.items() if k != 'PYTEST_DISABLE_PLUGIN_AUTOLOAD'}
+    def run(index):
+        report = Path(directory) / f'full-{index}.xml'
+        command = [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '-o', 'addopts=',
+                   '--junitxml=' + str(report), *shards[index]]
+        code, output = captured(command, root, dict(env, PC_GATE_MANAGED_PROCESSES='1'), 3600,
+                                Path(directory) / f'full-{index}.log')
+        return index, code, output, report
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(shards)) as pool:
+        for index, code, output, report in pool.map(run, range(len(shards))):
+            results.append((index, code, output, report))
+    bad, cases, times = [], 0, {}
+    for index, code, output, report in results:
+        try:
+            parsed = list(ET.parse(report).getroot().iter('testcase'))
+        except (OSError, ET.ParseError):
+            parsed = []
+        if not parsed or code not in (0, 1):
+            tail = '\n'.join(output.strip().splitlines()[-15:])
+            bad.append(f'shard {index} did not complete (pytest exit {code}):\n{tail}')
+            continue
+        cases += len(parsed)
+        for case in parsed:
+            name = _file_of(case, root)
+            times[name] = times.get(name, 0.0) + float(case.get('time') or 0)
+            if case.find('failure') is not None or case.find('error') is not None:
+                bad.append(_node_id(case, root))
+        if code == 1 and not any(c.find('failure') is not None or c.find('error') is not None for c in parsed):
+            bad.append(f'shard {index} exited 1 with no failing case recorded')
+    if times:
+        try:
+            DURATIONS.parent.mkdir(parents=True, exist_ok=True)
+            DURATIONS.write_text(json.dumps({**durations, **times}, sort_keys=True))
+        except OSError:
+            pass
+    # A test that fails with six browsers competing for the CPU and passes on its own is timing-
+    # sensitive, not broken — measured: the tablet launcher, repost-undo and remote-desktop browser
+    # tests. Re-run the FAILING TESTS ONCE, SERIALLY; only what still fails blocks, and what passed is
+    # printed so it stays visible. A shard that did not complete is never re-run away.
+    flaky = []
+    retry = [b for b in bad if '::' in b and not b.startswith('shard ')]
+    if retry and len(retry) == len(bad):
+        report = Path(directory) / 'full-retry.xml'
+        code, output = captured([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '-o', 'addopts=',
+                                  '--junitxml=' + str(report), *retry], root,
+                                 dict(env, PC_GATE_MANAGED_PROCESSES='1'), 1800, Path(directory) / 'full-retry.log')
+        try:
+            again = list(ET.parse(report).getroot().iter('testcase'))
+        except (OSError, ET.ParseError):
+            again = []
+        if again and code in (0, 1):
+            still = {_node_id(c, root) for c in again
+                     if c.find('failure') is not None or c.find('error') is not None}
+            ran = {_node_id(c, root) for c in again}
+            flaky = [b for b in retry if b in ran and b not in still]
+            bad = [b for b in retry if b not in flaky]
+    elapsed = time.monotonic() - started
+    if flaky:
+        print('[regressions] FLAKY UNDER LOAD (failed in parallel, passed alone): ' + ', '.join(flaky))
+    if bad:
+        return False, f'{len(bad)} failing in the full suite ({elapsed:.0f}s):\n  ' + '\n  '.join(bad[:60])
+    return True, f'{cases} cases across the full suite in {elapsed:.0f}s'
+
+
+def run_gate(root=ROOT, receipt=None, full=False):
     try:
         before = source_fingerprint(root)
     except (OSError, subprocess.SubprocessError) as error:
@@ -235,6 +392,22 @@ def run_gate(root=ROOT, receipt=None):
             print('[regressions] ABORT: ' + str(error))
             return 1
         print('[regressions] PASS: ' + str(len(cases)) + ' required cases, none skipped')
+        if full:
+            ok, message = run_full_suite(root, env, directory)
+            if not ok:
+                if receipt:
+                    Path(receipt).unlink(missing_ok=True)   # the required pass wrote it; this run failed
+                print('[regressions] ABORT: ' + message)
+                return 1
+            try:
+                if before != source_fingerprint(root):
+                    raise ValueError('source changed while the full suite was running; rerun deployment checks')
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                if receipt:
+                    Path(receipt).unlink(missing_ok=True)
+                print('[regressions] ABORT: ' + str(error))
+                return 1
+            print('[regressions] PASS: ' + message)
         return 0
 
 
@@ -243,5 +416,7 @@ if __name__ == '__main__':
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--receipt', help='write a successful source fingerprint for this deploy')
     action.add_argument('--verify', help='check a receipt immediately before committing')
+    parser.add_argument('--full', action='store_true',
+                        help='also run every discovered test under tests/ in parallel shards (sync.sh does)')
     args = parser.parse_args()
-    raise SystemExit(verify_receipt(args.verify) if args.verify else run_gate(receipt=args.receipt))
+    raise SystemExit(verify_receipt(args.verify) if args.verify else run_gate(receipt=args.receipt, full=args.full))

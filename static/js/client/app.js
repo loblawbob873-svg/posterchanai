@@ -1612,7 +1612,20 @@
     }catch(e){ return {ok:false,noQueue:_fediOnly()||_fediOnlyEvent(ev),msg:e.message||'Could not check your posting mode'}; }
   };
 
+  /* EVERY PUBLISH IS COUNTED WHILE IT IS IN FLIGHT, because the composer closes its modal BEFORE it
+   * publishes (a slow relay must not hold the dialog open) — and on the desktop a reply's modal is its
+   * own compositor window that closes WITH the modal. Closing a window ends its renderer, so the reply
+   * was never signed or never reached a socket: "none of my replies are being sent from the desktop",
+   * while new posts (the inline timeline composer, in the page) went out fine. os.js waits on
+   * `publishesSettled()` before it closes that window. */
   async function publish(kind, content, tags, opts){
+    _publishInflight++;
+    try{ return await _publishNow(kind, content, tags, opts); }
+    /* The waiters hear about it a TASK later: the caller's own lines after `await publish()` (dropping
+     * the draft of a sent reply) are microtasks, and a window closed ahead of them keeps a stale draft. */
+    finally{ if(--_publishInflight===0) setTimeout(()=>{ if(!_publishInflight) _publishIdle.splice(0).forEach(f=>{ try{ f(); }catch(_){ } }); }, 0); }
+  }
+  async function _publishNow(kind, content, tags, opts){
     if(GUEST || !signer){ _guestPrompt(); throw new Error('login required'); }   // read-only guest → nudge to log in
     const postingAuthor=ME && ME.pubkey;
     // Replaceable-list wipe guard (kind-3 follows / kind-10000 mutes): NEVER publish a member list that's
@@ -1753,6 +1766,8 @@
     }
     return { ev, ...r };
   }
+  let _publishInflight=0; const _publishIdle=[];
+  function publishesSettled(){ return _publishInflight ? new Promise(r=>_publishIdle.push(r)) : Promise.resolve(); }
   // A guest tried to do something that needs an account → drop the guest chrome and show login.
   function _guestPrompt(){ toast('Log in to interact'); _leaveGuest(); }
 
@@ -2452,9 +2467,9 @@
        * The cost is a longer pairing URI and therefore a denser QR (384 → 777 encoded characters).
        * That is the right trade: a QR that pairs quickly and then refuses half the app is worse than
        * one that takes a moment longer to scan. */
-      const kinds=[0,1,3,4,5,6,7,1018,1059,1068,1111,1311,1621,2003,9734,10000,10002,10003,10050,
-                   10063,10096,10133,13302,22242,24242,27235,30003,30023,30024,30078,30311,30388,
-                   30617,30618,31923];
+      const kinds=[0,1,3,4,5,6,7,13,1018,1059,1068,1111,1311,1621,2003,9734,10000,10002,10003,
+                   10050,10063,10096,10133,13303,20013,20014,22242,24242,27235,30003,30023,30024,
+                   30078,30311,30388,30617,30618,31923,33302];
       const perms=['get_public_key','nip04_encrypt','nip04_decrypt','nip44_encrypt','nip44_decrypt']
         .concat(kinds.map(k=>'sign_event:'+k)).join(',');
       /* `url` goes in ONLY if it is an http(s) origin, and is omitted otherwise.
@@ -27195,27 +27210,51 @@
     el.textContent=_dmProg;
   }
   let _dmWatching=false, _dmHistoryDrain=null, _dmHistoryReady=false, _dmHistoryPauseUntil=0;
-  const _dmHistoryQueue=new Map(), _dmHistoryFailures=new Map();
+  /* _dmHistoryHeld: wraps already looked up in DmCache and missed, waiting for a signer that may be
+   * called. Kept OUT of the queue until it may — re-queued with every burst of arrivals, each one
+   * paid another IndexedDB read per pass, so a 2000-wrap replay against a remote signer re-scanned
+   * the whole held set again and again (review finding). */
+  const _dmHistoryQueue=new Map(), _dmHistoryFailures=new Map(), _dmHistoryHeld=new Map();
+  let _dmHistoryWake=null;
+  // The shared-cache wait spares a REMOTE signer; a local key decrypts a miss in the worker for free.
+  const _dmSignerOk=()=>(_dmHistoryReady || signer?.mode==='local') && Date.now()>=_dmHistoryPauseUntil;
   function _queueDmHistory(wraps){
     for(const ev of wraps){
-      if(!ev?.id || _wrapTried.has(ev.id)) continue;
+      if(!ev?.id || _wrapTried.has(ev.id) || _dmHistoryHeld.has(ev.id)) continue;
       if((_dmHistoryFailures.get(ev.id)?.at || 0)>Date.now()) continue;
       _dmHistoryQueue.set(ev.id,ev);
     }
-    // Register live delivery immediately, but never decrypt its history replay before the cache.
-    if(!_dmHistoryReady || Date.now()<_dmHistoryPauseUntil) return Promise.resolve();
-    if(!_dmHistoryDrain){
+    if(!_dmHistoryDrain && _dmHistoryHeld.size && _dmSignerOk()){
+      // The signer may be asked now: held wraps go back IN FRONT, in their order.
+      const rest=[..._dmHistoryQueue]; _dmHistoryQueue.clear();
+      for(const [id,ev] of [..._dmHistoryHeld, ...rest]) _dmHistoryQueue.set(id,ev);
+      _dmHistoryHeld.clear();
+    }
+    if(!_dmHistoryDrain && _dmHistoryQueue.size){
       // External signers may be the same phone serving several clients. Leave room for live work.
       const slots=signer?.mode==='local'?6:2;
+      /* WHAT WAITS IS THE SIGNER, NEVER THE CACHE.
+       *
+       * Reported as "Messages quickly loads a batch of old messages and takes forever to load the
+       * latest". Two gates used to stop the WHOLE queue: history waited for pullShared (two relay
+       * reads, a blob and a re-write of every record), and one wrap that did not come back as tried
+       * paused everything for 30s — with nothing to resume it until the 60s watcher. A cache hit costs
+       * no signer call, so neither gate has a reason to hold it. And a Concord invite (`k 3313`) never
+       * enters `_wrapTried` at all, so the drain read every one as a failed signer: MEASURED, one
+       * invite at the head of the queue held a 2002-message history at 7 for over 40 seconds, while
+       * the same history without it painted in under 2. */
       const drain=async()=>{
-        while(_dmHistoryQueue.size && Date.now()>=_dmHistoryPauseUntil){
+        while(_dmHistoryQueue.size){
           const [id,ev]=_dmHistoryQueue.entries().next().value;
           _dmHistoryQueue.delete(id);
+          const cord=ev.tags?.some(t=>t[0]==='k'&&t[1]==='3313');
+          if(!cord && !_dmSignerOk() && !(await DmCache.get(id))){ _dmHistoryHeld.set(id,ev); continue; }
           try{ await ingestWrap(ev,false); }catch(_){}
-          if(_wrapTried.has(id)) _dmHistoryFailures.delete(id);
+          if(cord || _wrapTried.has(id)) _dmHistoryFailures.delete(id);
           else{
-            // A failed signer must not be asked to try every remaining historical message.
-            _dmHistoryPauseUntil=Date.now()+30000;
+            // A failed signer must not be asked to try every remaining historical message. A local
+            // key is not a signer that can be down: its throw is about that one wrap.
+            if(signer?.mode!=='local') _dmHistoryPauseUntil=Date.now()+30000;
             const attempts=(_dmHistoryFailures.get(id)?.attempts || 0)+1;
             _dmHistoryFailures.set(id,{attempts,at:Date.now()+Math.min(300000,60000*2**Math.min(attempts-1,3))});
           }
@@ -27224,7 +27263,13 @@
       // Each worker advances independently; one stalled decrypt must not hold up the entire batch.
       _dmHistoryDrain=Promise.all(Array.from({length:slots},drain)).finally(()=>{
         _dmHistoryDrain=null;
-        if(_dmHistoryQueue.size && Date.now()>=_dmHistoryPauseUntil) _queueDmHistory([]);
+        // Arrivals after the workers stopped have not been looked at; held wraps wait for the signer.
+        if(_dmHistoryQueue.size || (_dmHistoryHeld.size && _dmSignerOk())) _queueDmHistory([]);
+        else if(_dmHistoryHeld.size && _dmHistoryReady && !_dmHistoryWake){
+          // One wake-up for the end of the pause — not one per call made during it.
+          _dmHistoryWake=setTimeout(()=>{ _dmHistoryWake=null; _queueDmHistory([]); },
+                                    Math.max(0,_dmHistoryPauseUntil-Date.now())+50);
+        }
       });
     }
     return _dmHistoryDrain;
@@ -27273,8 +27318,10 @@
     if(_dmLoaded || !ME?.pubkey) return; _dmLoaded=true;
     const modern = !!(signer && signer.nip17unwrap);   // gift wraps need the local secret key
     _watchDMs(modern); // Live delivery must not wait for cache downloads or historical decryption.
-    /* Replayed history waits for the shared cache. Post-EOSE arrivals remain live throughout
-     * that download, so fixing signer pressure does not bring back the missing-DM startup gap. */
+    /* Replayed history's SIGNER work waits for the shared cache; what this device has already read
+     * does not (see _queueDmHistory). Post-EOSE arrivals remain live throughout that download, so
+     * fixing signer pressure does not bring back the missing-DM startup gap. */
+    if(modern) _queueDmHistory(Store.byKind(1059));
     if(modern) try{ const n = await DmCache.pullShared();
                     if(n) console.info('[dm] ' + n + ' messages from the shared cache'); }catch(_){}
     _dmHistoryReady=true;
@@ -27565,11 +27612,25 @@
                                                key, buf.slice(12));
         const map = JSON.parse(new TextDecoder().decode(pt));
         const db = await this._idb();
+        /* SKIP WHAT THIS DEVICE ALREADY HOLDS. Every session re-wrote the WHOLE shared history, one
+         * encrypt and one transaction per record, and every message this device had not read yet
+         * waited behind it — measured, the newest DM painted 2.2s after the cached ones over a slow
+         * relay. A record keyed by a gift-wrap id is immutable, so a held key is already the answer. */
+        let have = new Set();
+        try{
+          const pre = this._k('');
+          const keys = await new Promise((res, rej) => {
+            const q = db.transaction('msgs', 'readonly').objectStore('msgs')
+                        .getAllKeys(IDBKeyRange.bound(pre, pre + '\uffff'));
+            q.onsuccess = () => res(q.result || []); q.onerror = () => rej(q.error);
+          });
+          have = new Set(keys.map(k => String(k).slice(pre.length)));
+        }catch(_){}
         let n = 0;
         for(const id in map){
           const rumor = map[id];
           if(!rumor || (rumor.kind !== 14 && rumor.kind !== 15)) continue;
-          await this.put(id, rumor);              // re-encrypted per record, same key
+          if(!have.has(id)) await this.put(id, rumor);   // re-encrypted per record, same key
           n++;
         }
         return n;
@@ -39891,6 +39952,8 @@
   }
 
   window.__PC = {
+    // os.js: the desktop's compose window must not close while its reply is still being sent.
+    publishesSettled,
     attachUserAutocomplete,
     cordDirectContext, cordDirectModule, cordInviteLinksModule, sendCordDirectInvite,
     // Republish the encrypted libraries to the current relay pool (Settings → relays, and

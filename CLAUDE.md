@@ -34,7 +34,7 @@ that **publishes no ports**, so it is safe on a node already serving 3051. `--br
 report between markers for the node agent to paste verbatim — the format is rendered in Python, for
 the same reason `/logs` is: a small model gathers reliably and retells badly.
 
-**The list of checks is DISCOVERED, not typed** — a new `scripts/check_*.py` joins the suite the
+**`sync.sh` gates on the WHOLE pytest suite** (`deploy_regression_gate.py --full`: the required list, then every `tests/**/test_*.py` in parallel shards; any failure blocks the deploy). A hand-typed list let unlisted tests fail for days against shipped code while deploys passed. **The list of checks is DISCOVERED, not typed** — a new `scripts/check_*.py` joins the suite the
 moment it is written, and one that is unregistered runs anyway and says so. **Exit 2 means "could
 not run"** and is reported as a SKIP with its reason, never as a pass. Two rules for a new check,
 both because they run concurrently: read the chrome port from `PC_CHECK_PORT` and the profile from

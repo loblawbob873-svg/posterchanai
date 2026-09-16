@@ -22,7 +22,9 @@ def test_wrapper_uses_foots_flicker_coalescing_controls():
     assert "exec /usr/bin/foot" in src
     assert "tweak.delayed-render-lower=2000000" in src
     assert "tweak.delayed-render-upper=12000000" in src
-    assert src.index("tweak.delayed-render-upper") < src.index('"$@"'), (
+    # rindex: the colour defaults are PREPENDED to "$@" above the exec; what matters is that the
+    # arguments the person typed are still the last thing foot reads.
+    assert src.index("tweak.delayed-render-upper") < src.rindex('"$@"'), (
         "user arguments must come last so an explicit -o remains authoritative")
 
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.services.instance_membership import MembershipChecker
+from app.services.instance_membership import DENIAL_TTL, GRANT_FRESH, GRANT_REMEMBER, RECHECK_BACKOFF, MembershipChecker
 from app.services.nostr.event import build_event
 
 @pytest.fixture
@@ -107,15 +107,67 @@ async def test_admin_has_no_exception():
 
 
 @pytest.mark.anyio
-async def test_transient_failure_is_503_not_revocation_or_stale_grant():
+async def test_a_member_is_remembered_and_not_re_proven_per_request():
+    """Reported: the app check "ruins the user experience ... so it don't have to check every time".
+    Within GRANT_FRESH a verified member costs no relay read at all."""
     f = Fixture()
     assert (await f.checker.status(PK))['qualified']
-    f.time = 31
+    for moment in (1, 31, 300, GRANT_FRESH - 1):
+        f.time = moment
+        assert (await f.checker.status(PK))['qualified']
+    assert f.calls == 1
+
+
+@pytest.mark.anyio
+async def test_a_stale_grant_answers_immediately_and_rechecks_behind_the_answer():
+    f = Fixture()
+    assert (await f.checker.status(PK))['qualified']
+    f.time = GRANT_FRESH + 1
+    f.hold = asyncio.Event()                      # the relay is slow
+    answer = await asyncio.wait_for(f.checker.status(PK), .5)
+    assert answer['qualified'], 'a remembered member waited on a relay'
+    assert len(f.checker.jobs) == 1
+    f.hold.set()
+    await asyncio.gather(*list(f.checker.jobs))
+    assert f.calls == 2 and (await f.checker.status(PK))['qualified'] and f.calls == 2
+
+
+@pytest.mark.anyio
+async def test_an_unreachable_relay_keeps_a_remembered_grant_until_it_expires():
+    f = Fixture()
+    assert (await f.checker.status(PK))['qualified']
+    f.time = GRANT_FRESH + 1
     f.error = True
+    for moment in (GRANT_FRESH + 1, GRANT_REMEMBER - 1):
+        f.time = moment
+        assert (await f.checker.status(PK))['qualified']
+        await asyncio.gather(*list(f.checker.jobs), return_exceptions=True)
+    f.time = GRANT_REMEMBER + 1
     with pytest.raises(HTTPException) as error:
         await f.checker.status(PK)
     assert error.value.status_code == 503
     f.error = False
+    assert (await f.checker.status(PK))['qualified']
+
+
+@pytest.mark.anyio
+async def test_a_removed_address_is_revoked_by_the_background_recheck():
+    f = Fixture()
+    assert (await f.checker.status(PK))['qualified']
+    f.rows = [profile('', 101)]
+    f.time = GRANT_FRESH + 1
+    assert (await f.checker.status(PK))['qualified']
+    await asyncio.gather(*list(f.checker.jobs))
+    assert not (await f.checker.status(PK))['qualified']
+
+
+@pytest.mark.anyio
+async def test_a_denial_is_not_remembered():
+    """Somebody fixing their profile must not wait out a long cache to be let in."""
+    f = Fixture([profile('', 100)])
+    assert not (await f.checker.status(PK))['qualified']
+    f.rows = [profile(timestamp=101)]
+    f.time = DENIAL_TTL + 1
     assert (await f.checker.status(PK))['qualified']
 
 
@@ -459,3 +511,19 @@ async def test_bounded_http_proxy_closes_socket_on_timeout_or_cancellation(cance
     finally:
         server.close()
         await server.wait_closed()
+
+
+@pytest.mark.anyio
+async def test_an_unreachable_relay_is_not_asked_again_on_every_request():
+    f = Fixture()
+    assert (await f.checker.status(PK))['qualified']
+    f.error = True
+    f.time = GRANT_FRESH + 1
+    for _ in range(5):
+        assert (await f.checker.status(PK))['qualified']
+        await asyncio.gather(*list(f.checker.jobs), return_exceptions=True)
+    assert f.calls == 2, 'one failed re-check, then a pause — not one relay read per request'
+    f.time += RECHECK_BACKOFF + 1
+    assert (await f.checker.status(PK))['qualified']
+    await asyncio.gather(*list(f.checker.jobs), return_exceptions=True)
+    assert f.calls == 3

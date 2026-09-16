@@ -258,8 +258,13 @@ def test_window_focus_and_minimize_do_not_recreate_or_end_remote_session():
     assert "document.createElement('div')" in ui
 
 
-def test_launcher_tiles_leave_desktop_without_forgetting_the_preference():
-    assert "mobileLanding: () => { if(on) exit(false); }" in OS
+def test_launcher_tiles_land_in_the_mode_the_device_is_in():
+    """A tile used to exit the desktop unconditionally while the app icon restored it, so one tablet
+    opened the same app two ways. The rule now: never tear a desktop down, never forget osMode, and
+    enter only through wantsDesktop (tests/client/test_tablet_launcher_mode_full_app.py runs it)."""
+    land = OS[OS.index("mobileLanding:"):OS.index("\n", OS.index("mobileLanding:"))]
+    assert "wantsDesktop()" in land and "enter()" in land, land
+    assert "exit(" not in land and "settings().set" not in land, land
     # Both cold/resume paths go through the one boot-ordered landing function.
     assert PHONE.count("PCOS.mobileLanding()") == 1
     assert PHONE.count("landView(v)") == 2  # declaration + the one serialized call site

@@ -179,6 +179,15 @@
   // Drain when connectivity plausibly returned. Both signals are needed: 'online' fires on a LAN that may
   // still not reach the relay, and the relay can recover without the browser ever reporting a transition.
   try{ window.addEventListener('online', ()=>{ setTimeout(()=>Outbox.flush(), 1200); }); }catch(_){}
+  /* ANOTHER WINDOW OF THIS ORIGIN CAN QUEUE A POST, and `items` is this window's memory of the queue.
+   * The desktop's reply window queues a reply the relay did not take and then closes; without this the
+   * desktop never learns of it (no Pending badge, nothing sends it), and its next _save() writes its
+   * own stale list over the reply. */
+  try{ window.addEventListener('storage', e=>{
+    if(e.key !== KEY) return;
+    items = _load(); _changed();
+    if(window.Relay && Relay.status === 'ok') _retrySoon(1500);
+  }); }catch(_){}
   /* Android freezes the WebView in the background. If `_retrySoon` expires during that freeze (or runs
    * just as Chromium marks the document hidden), it deliberately declines to publish — but used to
    * consume its one timer without arranging another attempt. A warm resume can keep Relay.status='ok',

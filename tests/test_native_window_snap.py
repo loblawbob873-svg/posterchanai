@@ -248,10 +248,12 @@ def _client_token(name):
 
 
 def test_native_titlebars_use_the_posterchan_palette():
+    # The title bar is the raised surface; the focused ACCENT is the posterchan-shell ring (see
+    # tests/test_native_windows_match_the_desktop.py) -- Wayfire paints title and border one colour.
     """Sway had five colours per state; Wayfire's decoration plugin has two. The one that matters is
     the focused titlebar, which is what somebody sees next to PosterChan's own chrome."""
     decoration = sections()["decoration"]
-    assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("frame-focus"))
+    assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("bg2"))
     assert decoration["inactive_color"].lower().lstrip("\\").startswith(_client_token("bg"))
 
 
@@ -332,7 +334,7 @@ def test_compositor_snap_api_supports_all_four_corner_zones():
 def test_the_native_chrome_is_package_owned_rather_than_migrated():
     """Same reason as above: the palette lives in the shipped config, not in a copy per account."""
     decoration = sections()["decoration"]
-    assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("frame-focus"))
+    assert decoration["active_color"].lower().lstrip("\\").startswith(_client_token("bg2"))
     assert int(decoration["border_size"]) == _client_border_px()
 
 
@@ -400,7 +402,7 @@ def test_there_is_only_one_copy_of_the_native_palette():
         "palette in wayfire.ini and they will drift")
     assert "client.focused" not in wayfire_backend
     # And the one remaining copy is the shipped config.
-    assert sections()["decoration"]["active_color"].lower().lstrip("\\").startswith(_client_token("frame-focus"))
+    assert sections()["decoration"]["active_color"].lower().lstrip("\\").startswith(_client_token("bg2"))
 
 
 

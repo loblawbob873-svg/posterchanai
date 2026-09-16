@@ -37,7 +37,10 @@ def test_every_open_routes_an_existing_app_before_requesting_a_child():
     body = OSWIN.split("function open(view, label, opts){", 1)[1].split(
         "function routeExisting", 1
     )[0]
-    assert body.index("routeExisting(view)") < body.index("root.open(")
+    # The call carries more arguments since the handoff learned `arg`; the rule is the ORDER.
+    routed = re.search(r"routeExisting\(view\b", body)
+    assert routed, body[:400]
+    assert routed.start() < body.index("root.open(")
 
 
 def test_every_registered_app_is_deduplicated_by_the_shipped_claim_logic():

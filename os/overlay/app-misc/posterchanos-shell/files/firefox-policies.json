@@ -1,7 +1,8 @@
 {
   "policies": {
     "Preferences": {
-      "browser.tabs.inTitlebar": { "Value": 0, "Status": "default" }
+      "browser.tabs.inTitlebar": { "Value": 0, "Status": "default" },
+      "browser.theme.toolbar-theme": { "Value": 0, "Status": "default" }
     }
   }
 }

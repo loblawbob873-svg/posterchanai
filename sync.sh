@@ -8,7 +8,7 @@ if [ ! -x venv-unified/bin/python ]; then
 fi
 _regression_receipt=$(mktemp) || exit 1
 trap 'rm -f "$_regression_receipt"' EXIT
-if ! venv-unified/bin/python scripts/deploy_regression_gate.py --receipt "$_regression_receipt"; then
+if ! venv-unified/bin/python scripts/deploy_regression_gate.py --full --receipt "$_regression_receipt"; then
     echo "[sync] ABORT: required regression checks did not pass; nothing was deployed"
     exit 1
 fi

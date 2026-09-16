@@ -1,4 +1,5 @@
 """Actual scoped HTTP routes keep their auth and enforce signed instance membership."""
+import asyncio
 import json
 import time
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ def setup(monkeypatch):
     async def query(pk, port): return state['rows']
     checker = membership.MembershipChecker(query=query, configuration=lambda:(f'alice {PK}','example.test','','3052'), clock=lambda:state['clock'])
     monkeypatch.setattr(membership, '_checker', checker)
+    state['checker'] = checker
     user = SimpleNamespace(id=7, nostr_npub=PK, is_admin=False, can_media=True, can_torrent=True, news_sources='')
     app = FastAPI()
     for module in [news, mail, git, torrent, office, media_center, websearch]:
@@ -58,6 +60,17 @@ def setup(monkeypatch):
     return app, state, user
 
 
+async def remove_address(state):
+    """The member removes the address from their profile, and the remembered grant goes stale.
+
+    A remembered member is answered from memory and re-checked BEHIND the answer, so revocation
+    lands on the request after that re-check — never on a request that had to wait for a relay."""
+    state['rows'] = [build_event(SECRET, 0, '{}', created_at=101)]
+    state['clock'] = membership.GRANT_FRESH + 1
+    assert (await state['checker'].status(PK))['qualified'], 'a remembered grant must answer without waiting'
+    await asyncio.gather(*list(state['checker'].jobs))
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize('path',['/api/news/sources','/api/mail/accounts','/api/torrent/catalog','/api/git/status','/client/office/blank/text','/api/media-center','/api/websearch/search?q=hello','/api/test-user-wallet/balance'])
 async def test_route_allows_matching_profile_and_rejects_latest_removed_address(setup,path):
@@ -65,8 +78,7 @@ async def test_route_allows_matching_profile_and_rejects_latest_removed_address(
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
         response=await client.get(path)
         assert response.status_code==200,response.text
-        state['rows']=[build_event(SECRET,0,'{}',created_at=101)]
-        state['clock']=31
+        await remove_address(state)
         response=await client.get(path)
         assert response.status_code==403,response.text
 
@@ -85,7 +97,7 @@ async def test_office_capability_binds_owner_and_rechecks_membership(setup,monke
         result=await client.get(f'/wopi/files/{ident}',params={'access_token':token})
         assert result.status_code==200,result.text
         assert (await client.get(f'/wopi/files/{ident}',params={'access_token':'bad'})).status_code==401
-        state['rows']=[build_event(SECRET,0,'{}',created_at=101)];state['clock']=31
+        await remove_address(state)
         assert (await client.get(f'/wopi/files/{ident}',params={'access_token':token})).status_code==403
 
 
@@ -126,7 +138,7 @@ async def test_signed_sync_and_meme_requests_require_profile_and_valid_ownership
         r=await client.post('/client/meme/generate-image',json={**body,'prompt':'test'})
         assert r.status_code==503 and 'storage' in r.json()['detail']
         assert reached==[True]
-        state['rows']=[build_event(SECRET,0,'{}',created_at=101)];state['clock']=31
+        await remove_address(state)
         assert (await client.post('/client/sync-folders',json=body)).status_code==403
         assert (await client.post('/client/meme/generate-image',json={**body,'prompt':'test'})).status_code==403
         assert reached==[True]
@@ -147,7 +159,7 @@ async def test_raw_search_api_rejects_anonymous_and_nonmembers_but_keeps_trusted
     monkeypatch.setattr(search_service,'get_search_service',lambda db:Search())
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test') as client:
         assert (await client.post('/api/search',json={'query':'test'})).status_code==200
-        state['rows']=[build_event(SECRET,0,'{}',created_at=101)];state['clock']=31
+        await remove_address(state)
         assert (await client.post('/api/search',json={'query':'test'})).status_code==403
         caller['user']=None
         assert (await client.post('/api/search',json={'query':'test'})).status_code==401

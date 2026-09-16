@@ -2,7 +2,7 @@
 # Distributed under the terms of the GNU General Public License v3
 EAPI=8
 inherit multilib toolchain-funcs
-DESCRIPTION="Per-surface movement protection and fullscreen pointer confinement for the PosterChan Wayfire desktop"
+DESCRIPTION="Per-surface movement protection, fullscreen pointer confinement and the accent window border for the PosterChan Wayfire desktop"
 HOMEPAGE="https://poster.place"
 S="${WORKDIR}"
 LICENSE="GPL-3"
@@ -26,6 +26,12 @@ src_compile() {
     wayland-scanner server-header \
         "$($(tc-getPKG_CONFIG) --variable=pkgdatadir wayland-protocols)/unstable/pointer-constraints/pointer-constraints-unstable-v1.xml" \
         pointer-constraints-unstable-v1-protocol.h || die
+    # The same trap for xdg-shell: wlroots-full.hpp includes wlr_xdg_shell.h only when the generated
+    # header is on the path, and the window border reads a client-decorated window's geometry from
+    # it. The plugin #errors without it rather than quietly framing the wrong rectangle.
+    wayland-scanner server-header \
+        "$($(tc-getPKG_CONFIG) --variable=pkgdatadir wayland-protocols)/stable/xdg-shell/xdg-shell.xml" \
+        xdg-shell-protocol.h || die
     "$(tc-getCXX)" ${CXXFLAGS} -std=c++17 -fPIC -shared -I"${S}" \
         $($(tc-getPKG_CONFIG) --cflags wayfire) \
         "${FILESDIR}/posterchan-shell.cpp" -o libposterchan-shell.so \

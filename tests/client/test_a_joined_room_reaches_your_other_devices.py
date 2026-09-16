@@ -27,7 +27,9 @@ Two halves, both asserted here:
     would put back every community the person ever left.
 """
 from pathlib import Path
+import json
 import re
+import subprocess
 import unittest
 
 
@@ -41,38 +43,71 @@ def _fn(header):
     return re.sub(r"/\*.*?\*/", "", CONCORD[at:end], flags=re.S)
 
 
+def _filter_admits(rooms):
+    """RUN the shipped `wanted` filter of persistArmadaMemberships under node, per room."""
+    body = _fn("  async function persistArmadaMemberships(p,rooms){")
+    m = re.search(r"\.filter\((room=>.*?)\);\n", body, re.S)
+    assert m, "persistArmadaMemberships no longer filters the rooms it is given"
+    js = ("function roomIdentity(room){ return String(room&&(room.communityId||room.naddr||room.url)||''); }\n"
+          "const f=(%s);\nprocess.stdout.write(JSON.stringify(%s.map(r=>!!f(r))));" % (m.group(1), json.dumps(rooms)))
+    return json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+
+
+def _key_expr(src):
+    """The expression a membership vault key is derived from, spelled one way."""
+    return src.replace("room.cord?.bundle?.", "bundle.").replace("room.cord&&room.cord.bundle.", "bundle.")
+
+
 class TestTheVaultKeyIsTheRoomsIdentity(unittest.TestCase):
+    """Since 2bf5cd4e7 (canonical CORD-02 33302 fragments) the WIRE key is the community's 32-byte
+    commitment -- `cordListB64(bundle.community_id||room.communityId)` -- and an old invite-address
+    key is migrated to it on read (`cordMergeLists`). The rules below are the same ones this file
+    was written for; only the spelling of the key moved."""
+
     def test_persist_no_longer_demands_a_community_id(self):
-        body = _fn("  async function persistArmadaMembership(p,room){")
-        self.assertIn("const cid=roomIdentity(room);", body)
+        body = _fn("  async function persistArmadaMemberships(p,rooms){")
         self.assertNotIn("!room.communityId", body,
                          "a room joined by invite link has none, and refusing it is the bug")
+        # A room carrying its bundle (every invite join does) is admitted without a communityId.
+        self.assertEqual(_filter_admits([{"url": "https://x/invite/a#k",
+                                          "cord": {"bundle": {"community_id": "ab" * 32}}}]), [True])
         self.assertIn("community_id:cid", body)
+        self.assertRegex(body, r"cid=cordListB64\(bundle\.community_id\|\|room\.communityId\)",
+                         "the entry must be keyed on the community commitment the bundle carries")
 
     def test_it_still_needs_an_invite_url(self):
         """The url carries the `#fragment`, which is the key. Without it another device can list
-        the room and never open it, which is worse than not listing it."""
+        the room and never open it, which is worse than not listing it. 1adc591c5 (direct invites)
+        deliberately also admits a room whose BUNDLE is held -- the bundle itself carries the keys."""
+        self.assertEqual(_filter_admits([
+            {"communityId": "abc"},                                   # no url, no bundle: refused
+            {"communityId": "abc", "url": "https://x/invite/a#k"},    # invite url: kept
+            {"communityId": "abc", "cord": {"bundle": {"community_id": "ab" * 32}}},  # keys held
+            None,
+        ]), [False, True, True, False],
+            "a room with no invite url and no key material must be filtered out, not written keyless")
         body = _fn("  async function persistArmadaMemberships(p,rooms){")
-        self.assertIn("roomIdentity(room)&&room.url", body,
-                      "a room with no invite url must be filtered out, not written keyless")
         self.assertIn("invite_ref:room.url", body)
 
     def test_leaving_uses_the_same_identity(self):
         body = _fn("  async function leaveArmadaMembership(p,room){")
         self.assertIn("const cid=roomIdentity(room);", body)
-        self.assertIn("tombs.set(cid,", body)
-        self.assertIn("entries.delete(cid)", body)
         self.assertNotIn("if(!room||!room.communityId)return true;", body,
                          "leaving such a room used to succeed silently, writing no tombstone")
-
-    def test_roomIdentity_is_what_it_has_always_been(self):
-        """The whole fix rests on this precedence; if it changes, the vault keys change with it."""
-        self.assertIn("function roomIdentity(room){ return String(room&&"
-                      "(room.communityId||room.naddr||room.url)||''); }", CONCORD)
+        m = re.search(r"const (\w+)=cordListB64\(([^;]*?)\);", body)
+        self.assertTrue(m, "leave no longer derives a wire key")
+        var, leave_key = m.group(1), _key_expr(m.group(2))
+        self.assertIn("tombs.set(%s," % var, body)
+        self.assertIn("entries.delete(%s)" % var, body)
+        persist = _fn("  async function persistArmadaMemberships(p,rooms){")
+        join_key = _key_expr(re.search(r"cid=cordListB64\(([^;]*?)\);", persist).group(1))
+        self.assertTrue(leave_key.startswith(join_key),
+                        "leave keys its tombstone on %r but join keys the entry on %r -- a left room "
+                        "comes straight back from the vault" % (leave_key, join_key))
 
 
 class TestOneWritePerPass(unittest.TestCase):
-    """13302 IS REPLACEABLE, SO EVERY WRITE REWRITES THE WHOLE DOCUMENT.
+    """13302/33302 ARE REPLACEABLE, SO EVERY WRITE REWRITES THE WHOLE DOCUMENT.
 
     Called once per room, persist reads the prior document, adds one entry and publishes the lot.
     In a loop it races itself: the second call's READ can be answered before the first call's
@@ -81,16 +116,26 @@ class TestOneWritePerPass(unittest.TestCase):
 
     Measured on a real account: the backfill ran over three rooms and the vault afterwards held the
     last two, written 18:20:09 and 18:20:17, with the first missing entirely.
+
+    Since 2bf5cd4e7 the read-modify-write lives in `cordWriteMembership`, which is serialised per
+    account; persist hands it ONE change that folds in every room.
     """
 
     def test_the_list_is_the_unit_of_work(self):
         body = _fn("  async function persistArmadaMemberships(p,rooms){")
-        self.assertEqual(body.count("await p.publish(13302"), 1,
-                         "more than one publish per call is the race again")
-        self.assertEqual(body.count("membershipEvents(p,viewer.pubkey)"), 1,
-                         "one read, or two calls can read the same stale document")
-        self.assertIn("for(const room of wanted)", body,
+        self.assertEqual(body.count("cordWriteMembership("), 1,
+                         "more than one write per call is the race again")
+        self.assertNotRegex(body, r"p\.publish\(|membershipEvents\(",
+                            "persist must not read or publish around the serialised writer")
+        cb = body[body.index("cordWriteMembership("):body.index("return {list,changed};")]
+        self.assertIn("for(const room of wanted)", cb,
                       "every room must be folded into the one document before it is published")
+        writer = CONCORD[CONCORD.index("  async function cordWriteMembership(p,change){"):]
+        writer = writer[:writer.index("\n  async function ")]
+        self.assertIn("const prior=membershipWrites.get(owner)", writer)
+        self.assertIn("prior.catch(()=>{}).then(", writer,
+                      "two writes for one account must queue, or their reads overlap")
+        self.assertIn("membershipWrites.set(owner,job)", writer)
 
     def test_the_single_room_entry_point_delegates(self):
         self.assertIn("async function persistArmadaMembership(p,room){ return "

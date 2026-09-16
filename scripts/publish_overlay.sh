@@ -119,6 +119,13 @@ done
 # The ebuild owns /usr/bin/gentoo.sh, so every ordinary update now refreshes the LiveUSB/repair tool.
 install -m 0755 "$(dirname "$SRC")/gentoo.sh" \
   "$TMP/app-misc/posterchanos-shell/files/gentoo.sh"
+# THE BOOT SPLASH HAS ONE SOURCE TOO. The ebuild installs FILESDIR/plymouth, and a hand-kept copy
+# there sat at the Aug 19 theme while os/plymouth moved on — so every overlay update re-installed the
+# OLD splash (and its invisible password prompt) and rebuilt the initramfs around it. Inject it.
+rm -rf "$TMP/app-misc/posterchanos-shell/files/plymouth"
+install -d "$TMP/app-misc/posterchanos-shell/files/plymouth"
+install -m 0644 "$(dirname "$SRC")/plymouth/posterchanos/"* \
+  "$TMP/app-misc/posterchanos-shell/files/plymouth/"
 # The installed gentoo.sh publishes a verified clean image after all build/content checks.  It must
 # not depend on a repository checkout existing on an installed machine; inject the one canonical
 # publisher beside the canonical installer into every timestamped shell package.

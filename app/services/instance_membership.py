@@ -25,6 +25,18 @@ KEY = re.compile(r'^[0-9a-f]{64}$')
 MAX_CACHE = 1024
 MAX_PENDING = 32
 QUERY_TIMEOUT = 4
+# A MEMBER IS REMEMBERED, NOT RE-PROVEN ON EVERY REQUEST. Every app route asks this question, and
+# answering it from the relays each time put a relay round trip (and a 503 whenever a relay was slow)
+# in front of Mail, Files, Git... for people this node had already verified — "ruins the user
+# experience". A verified grant is served straight from memory; once it is GRANT_FRESH old the next
+# request re-checks in the BACKGROUND without waiting on it, and while that re-check cannot reach a
+# relay the grant stands for up to GRANT_REMEMBER. What revokes access immediately is unchanged:
+# the node's own registry (a config change clears the cache) and an explicit forced refresh.
+GRANT_FRESH = 600
+GRANT_REMEMBER = 12 * 3600
+DENIAL_TTL = 5
+# A background re-check that could not reach a relay is not retried on the very next request.
+RECHECK_BACKOFF = 60
 
 
 def _configuration():
@@ -217,31 +229,46 @@ class MembershipChecker:
         cached = self.cache.get(key)
         pending = self.pending.get(key)
         if force and cached:
-            self.cache[key] = (0, cached[1], cached[2])
-        if not force and not pending and cached and cached[0] > self.clock():
+            self.cache[key] = (0, cached[1], cached[2], 0)
+        now = self.clock()
+        if not force and cached and cached[0] > now and not pending:
             self.cache.move_to_end(key)
+            return dict(cached[1])
+        if not force and cached and cached[1]['qualified'] and cached[3] > now:
+            # Remembered member: answer now, re-check behind the answer.
+            self.cache.move_to_end(key)
+            if not pending and len(self.jobs) < MAX_PENDING:
+                self._start(key, aliases, base, cached, False)
             return dict(cached[1])
         if pending and (not force or pending[1]):
             job = pending[0]
         else:
             if len(self.jobs) >= MAX_PENDING:
                 raise HTTPException(503, 'Instance membership check is busy')
-            ticket = object()
-            job = asyncio.create_task(self._check(key, aliases, base, cached, ticket, force))
-            self.pending[key] = (job, bool(force), ticket)
-            self.jobs.add(job)
-            def finished(done):
-                self.jobs.discard(done)
-                if self.pending.get(key, (None,))[0] is done:
-                    self.pending.pop(key, None)
-                if not done.cancelled():
-                    done.exception()  # Consume errors even when all waiting clients disconnected.
-            job.add_done_callback(finished)
+            job = self._start(key, aliases, base, cached, force)
         # A disconnected caller must not cancel a check shared with other requests.
         result = await asyncio.shield(job)
         if tuple(self.configuration()) != config:
             raise HTTPException(503, 'Instance membership configuration changed; retry')
         return dict(result)
+
+    def _start(self, key, aliases, base, cached, force):
+        ticket = object()
+        job = asyncio.create_task(self._check(key, aliases, base, cached, ticket, force))
+        self.pending[key] = (job, bool(force), ticket)
+        self.jobs.add(job)
+        def finished(done):
+            self.jobs.discard(done)
+            if self.pending.get(key, (None,))[0] is done:
+                self.pending.pop(key, None)
+            if not done.cancelled() and done.exception() is not None and not force:
+                # Consumed above even when all waiting clients disconnected.
+                held = self.cache.get(key)
+                now = self.clock()
+                if held and held[1]['qualified'] and held[3] > now:
+                    self.cache[key] = (min(now + RECHECK_BACKOFF, held[3]), held[1], held[2], held[3])
+        job.add_done_callback(finished)
+        return job
 
     async def _check(self, key, aliases, base, cached, ticket, force):
         pk, config = key
@@ -291,7 +318,9 @@ class MembershipChecker:
             self.watermarks.move_to_end(pk)
             while len(self.watermarks) > MAX_CACHE:
                 self.watermarks.popitem(last=False)
-        self.cache[key] = (self.clock() + (30 if result['qualified'] else 5), result, watermark)
+        now = self.clock()
+        self.cache[key] = (now + (GRANT_FRESH if result['qualified'] else DENIAL_TTL), result, watermark,
+                           now + GRANT_REMEMBER if result['qualified'] else 0)
         self.cache.move_to_end(key)
         while len(self.cache) > MAX_CACHE:
             self.cache.popitem(last=False)

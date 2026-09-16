@@ -385,7 +385,9 @@ class DesktopWiringTests(unittest.TestCase):
         """`apps()` stays COMPLETE on purpose: openApp and routeView use it to look up a view's
         label and icon, so filtering there would stop a hidden view opening from a link — the one
         thing this preference must never do."""
-        self.assertIn("computeLayout(launchApps(), _doc)", self.os_js)
+        # The third argument is the installed-program scan (PosterChanOS desktop icons), not a list
+        # of the client's screens, so the rule is still: the launcher draws from launchApps().
+        self.assertRegex(self.os_js, r"computeLayout\(launchApps\(\), _doc[,)]")
         self.assertIn("launchApps().filter(a => a.label.toLowerCase()", self.os_js)
         self.assertIn("const app = apps().find(a => a.view === view)", self.os_js)
         self.assertIn("if(!apps().some(a => a.view === view)) return false;", self.os_js)

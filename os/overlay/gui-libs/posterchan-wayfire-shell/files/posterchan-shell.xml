@@ -8,5 +8,27 @@
       <_long>While a fullscreen window is focused, the pointer cannot leave the monitor it is on. ON by default: a cursor sliding off a fullscreen game onto a second monitor is the failure, and no other desktop asks first. Turn it off in System Settings -&gt; Displays, or with `pc-pointer-confine off`. A client that takes a pointer-constraints-v1 grab of its own is left alone, and a single-monitor machine is never affected.</_long>
       <default>true</default>
     </option>
+    <option name="window_border" type="bool">
+      <_short>Draw an accent border around every application window</_short>
+      <_long>A ring around each native window, drawn by the compositor whether the application decorates itself (Firefox, GTK) or Wayfire does (foot, Qt), so every window on the desktop carries the same frame as a PosterChan window. PosterChan's own windows draw theirs and are skipped, as is anything fullscreen.</_long>
+      <default>true</default>
+    </option>
+    <option name="window_border_size" type="int">
+      <_short>Window border width</_short>
+      <_long>Pixels. Keep equal to [decoration] border_size, so on a Wayfire-decorated window the ring covers the decoration's own border band and leaves its title bar alone.</_long>
+      <default>4</default>
+      <min>0</min>
+      <max>32</max>
+    </option>
+    <option name="window_border_active_color" type="color">
+      <_short>Focused window border</_short>
+      <_long>The client's accent at the opacity #pc-oswin-frame.focused draws it, over the desktop colour.</_long>
+      <default>#38D6ECFF</default>
+    </option>
+    <option name="window_border_inactive_color" type="color">
+      <_short>Unfocused window border</_short>
+      <_long>The client's accent at the opacity #pc-oswin-frame draws an unfocused frame, over the desktop colour.</_long>
+      <default>#1D5E6AFF</default>
+    </option>
   </plugin>
 </wayfire>

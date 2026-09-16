@@ -942,6 +942,18 @@ svg.ic{flex:none;width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .conn.off{color:#ff4d6d}
 .conn.off .dot{background:#ff4d6d;box-shadow:0 0 12px #ff4d6d,0 0 22px #ff4d6d}
 @keyframes conn-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.35);opacity:.55}}
+/* THE DESKTOP WAS PAYING FOR TWO THINGS NOBODY COULD SEE, reported on an Android tablet as "desktop
+   performance is very slow" and measured in the shipped bundle at 6x CPU throttle, 240-post timeline:
+   (1) this pulse runs for ever on the classic sidebar's dot, which `#os-desk` covers completely —
+       60 style recalcs a second at rest, 0.93s of main-thread work per 3s idle vs 0.07s without it;
+   (2) the sticky bars paint `--canvas` with `background-attachment:fixed`, which forces the bar to
+       repaint on EVERY scroll frame and takes the scroller off the compositor — scrolling a timeline
+       window cost 4.5s of work vs 1.7s with it off. That trick only exists to line the bar's wash up
+       with the VIEWPORT's body background; inside a window there is no such background to line up
+       with. tests/client/test_tablet_desktop_perf_full_app.py measures both. */
+html.os-on .conn .dot,html.os-on .usercount .live-ico{animation:none}
+html.os-on .tl-tabs,html.os-on .notif-tabs,html.os-on .ws-bar,html.os-on .ws-rbar,
+html.os-on .cal-bar,html.os-on .ct-bar{background-attachment:scroll}
 
 .main{display:flex;flex-direction:column;height:100vh;overflow:hidden;position:relative}
 /* "↑ N new posts" pill — floats below the topbar so live posts don't shift the feed while reading */
@@ -7046,6 +7058,12 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
 .os-icons .os-icon{touch-action:none}
 .os-icon:hover,.os-icon:focus-visible{background:rgba(255,255,255,.09);border-color:var(--line)}
 .os-icon .ic{width:40px;height:40px;color:var(--neon);flex:0 0 auto}
+/* An installed program's own picture sits where the sprite glyph would, at the glyph's size. */
+.os-icon>.os-app-ic{width:40px;height:40px}
+.os-icon .os-fold .os-app-ic{width:100%;height:100%;min-width:0}
+/* Put on the desktop, then uninstalled: still there, still removable, visibly not runnable. */
+.os-icon.is-missing>.ic,.os-icon.is-missing>.os-app-ic{opacity:.35;filter:grayscale(1)}
+.os-icon.is-missing span{opacity:.6}
 .os-icon span{font-size:15px;line-height:1.2;text-align:center;max-width:114px;
   overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 
@@ -7129,6 +7147,12 @@ body.os-on .osw-body > .feed::-webkit-scrollbar-thumb:hover{background:var(--mut
   color:var(--warn,#f3b34a)}
 .os-bg-empty{padding:16px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .os-bg-empty p{margin:0}
+/* "Add a program…": the picker shell above around the start menu's own program rows. */
+.os-apppick .os-apppick-q{flex:0 0 auto;margin:10px 12px 4px;padding:9px 12px;font-size:15px;
+  border:1px solid var(--line);border-radius:9px;background:var(--panel2)}
+.os-apppick .os-apppick-q:focus,.os-apppick .os-apppick-q:focus-visible{border:1px solid var(--neon)}
+.os-apppick-list{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));padding:6px 8px 10px}
+.os-apppick-list .os-app:disabled{cursor:default;opacity:.55}
 
 /* ---- the SSH terminal --------------------------------------------------------------------------
    A full-height screen: the emulator sizes itself to its box, so the box has to be a real height and
@@ -9754,7 +9778,19 @@ audio.sms-att-img{min-width:220px}
 .sms-att-open:hover,.sms-att-open:focus-visible{background:var(--hover);color:var(--text)}
 .sms-compose{display:flex;gap:8px;align-items:center;flex:none}
 .sms-compose .input{flex:1;min-width:0}
+/* The paperclip/emoji buttons were 32px against a 41px Send and a 45px input: a ragged row, and a
+   touch target under 40px on a phone. Stretch them to the row. */
+.sms-compose{align-items:stretch}.sms-compose .input{margin:0}.sms-compose>.btn.small{min-width:40px;min-height:40px;padding-inline:10px}
+/* Add an attachment: one full-width row per source (see sms.js attachBtn). */
+.sms-attach-sources{display:grid;gap:8px}
+.sms-src{display:flex;align-items:center;gap:14px;width:100%;min-height:60px;padding:10px 14px;text-align:start;font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:12px;cursor:pointer}
+.sms-src:hover,.sms-src:focus-visible{outline:none;border-color:var(--cyan);background:color-mix(in srgb,var(--cyan) 10%,var(--panel2))}
+.sms-src>svg.ic{flex:none;box-sizing:content-box;width:20px;height:20px;padding:10px;border-radius:10px;color:var(--cyan);background:color-mix(in srgb,var(--cyan) 14%,transparent)}
+.sms-src>span{display:grid;gap:2px;min-width:0}
+.sms-src small{color:var(--muted);font-size:12px}
 .sms-attachment-draft{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 8px;padding:8px 10px;border:1px solid color-mix(in srgb,var(--cyan) 45%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--cyan) 8%,var(--panel))}.sms-attachment-draft>span{display:grid;grid-template-columns:24px minmax(0,1fr);align-items:center;min-width:0}.sms-attachment-draft svg{grid-row:1/3;width:18px;height:18px}.sms-attachment-draft b,.sms-attachment-draft small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sms-attachment-draft small{color:var(--muted);font-size:11px}.sms-attachment-draft button{flex:0 0 32px;width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:20px}.sms-attachment-draft button:hover{background:var(--hover);color:var(--text)}
+/* After the base rule: equal specificity, so the touch size must come LATER to win. */
+@media (pointer:coarse){.sms-attachment-draft button{flex-basis:40px;width:40px;height:40px}}
 /* Texts is full-height like Messages: the thread list and the conversation scroll inside themselves,
    so #feed must stop being the timeline's scroll container or the compose box scrolls away with the
    conversation. */
@@ -10577,7 +10613,11 @@ html.os-idle #os-root *{animation:none!important;transition:none!important}
 
 /* Remote viewing works without a screen-capture API, including phone WebViews. */
 .pcrd-share{display:flex;flex-direction:column;gap:18px}.pcrd-share[hidden]{display:none!important}
-.feed-remote .pcrd{height:auto;min-height:100%;overflow:auto}
+/* THE PANEL IS THE SCROLLER, so it must be exactly as tall as its host. `#feed.feed-remote` is
+   `overflow:hidden`; `height:auto` let `.pcrd` grow to its content and there was nothing left that
+   could scroll. MEASURED at 360x640: #feed 574px, .pcrd 894px, the last control at y=948 and a
+   wheel moved nothing. Children keep their size (`flex-shrink:0`) so they overflow, not squash. */
+.feed-remote .pcrd{height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}.feed-remote .pcrd>*{flex-shrink:0}
 @media(max-width:600px){.feed-remote .pcrd{padding:12px;gap:12px}.pcrd-hero{padding:12px;gap:10px}.pcrd-hero b{font-size:18px}}
 
 .sms-attachment-draft .sms-draft-preview{width:56px;height:56px;object-fit:contain;border-radius:6px;flex:none}.sms-attachment-draft>span{flex:1}

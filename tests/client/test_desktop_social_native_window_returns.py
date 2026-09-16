@@ -53,6 +53,8 @@ def test_in_page_social_launcher_resolves_preference_and_resets_existing_window(
 const assert=require('node:assert/strict');const calls=[],windowObject={view:'home'},wins=[windowObject];
 const sameAppWindow=(a,b)=>a===b;let target='home';
 const _menuAct=()=>false,apps=()=>[{view:'global',label:'Social',icon:'social'}];
+const NATIVE_RE=/^app:[A-Za-z0-9_.:+@/-]+$/,_lay={items:[],folders:[]},layout=()=>_lay;
+const launchMachineApp=(id)=>calls.push('launch:'+id);
 const PC=()=>({socialTimeline:()=> target,timelineTop:v=>calls.push('top:'+v)});
 const openApp=(v)=>{calls.push('open:'+v);return windowObject};
 '''+body+'''
@@ -63,6 +65,8 @@ calls.length=0;wins.length=0;openLauncherApp('global');
 assert.deepEqual(calls,['open:home'],'new Home already resets in openApp');
 calls.length=0;target='trending';openLauncherApp('global');
 assert.deepEqual(calls,['open:trending','top:trending']);
+// A program put on the PosterChanOS desktop is STARTED, never opened as a client screen.
+calls.length=0;openLauncherApp('app:steam');assert.deepEqual(calls,['launch:app:steam']);
 '''
     result=subprocess.run(['node','-e',script],capture_output=True,text=True,timeout=15)
     assert result.returncode==0,result.stderr

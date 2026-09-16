@@ -161,7 +161,10 @@ def test_machine_program_is_routed_before_the_popup_closes():
     assert "_menuAct('app', b.dataset.app)" in machine
     assert machine.index("_menuAct('app', b.dataset.app)") < machine.index("toggleStart(false)")
     actions = OS_JS.split("else if(p.indexOf('pc:act:') === 0)",1)[1].split("else if(p === 'pc:tasks')",1)[0]
-    assert "kind === 'app'" in actions and "PCOSShell.launch(val)" in actions
+    # One launch path for the menu, a shell action and a desktop icon: launchMachineApp.
+    assert "kind === 'app') launchMachineApp(val)" in actions
+    launcher = _fn(OS_JS, "  function launchMachineApp(id, label){")
+    assert "PCOSShell.launch(id)" in launcher
 
 
 def test_scanned_program_launch_matrix_runs_end_to_end():

@@ -16,6 +16,9 @@ record saying otherwise is stale and is cleared. Without that, a device already 
 poisoned no matter what the fix does.
 """
 from pathlib import Path
+import json
+import re
+import subprocess
 import unittest
 
 
@@ -30,11 +33,33 @@ def sync_body():
 
 class TestOnlyARealLeaveTeachesTheLedger(unittest.TestCase):
     def test_a_tombstone_with_no_entry_is_skipped(self):
+        """RUN the loop's own skip condition. A tombstone with no entry and nothing identifying the
+        invite it retired is the bare tombstone this file is about, and must teach nothing.
+
+        2bf5cd4e7 (canonical CORD-02 fragments) deliberately narrowed that: a CORD-02 leave REMOVES
+        the entry from its fragment and writes the tombstone with the `invite_ref`/`naddr` it
+        retired, so an entry-less tombstone carrying one of those is a genuine leave, not a bare one.
+        """
         body = sync_body()
         loop = body[body.index("for(const id of dead){"):]
         loop = loop[: loop.index("\n      }")]
-        self.assertIn("if(!entries.has(id)) continue;", loop,
-                      "a bare tombstone can still write a permanent local 'left' record")
+        loop = re.sub(r"/\*.*?\*/", "", loop, flags=re.S)
+        m = re.search(r"\n\s*if\((.*?)\)\s*continue;", loop)
+        self.assertTrue(m, "nothing in the dead loop can skip a tombstone any more")
+        cases = [
+            ({}, {}),                                           # bare tombstone: skipped
+            ({"id": {"x": 1}}, {}),                             # a real entry beside it
+            ({}, {"id": {"invite_ref": "https://x/i#k"}}),       # CORD-02 leave, invite named
+            ({}, {"id": {"naddr": "naddr1xyz"}}),                # CORD-02 leave, naddr named
+            ({}, {"id": {"invite_ref": "", "naddr": ""}}),       # names nothing: still bare
+        ]
+        js = ("const cases=%s;process.stdout.write(JSON.stringify(cases.map(([e,r])=>{"
+              "const id='id',entries=new Map(Object.entries(e)),tombRefs=new Map(Object.entries(r));"
+              "return !!(%s);})));" % (json.dumps(cases), m.group(1)))
+        skipped = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True,
+                                            check=True).stdout)
+        self.assertEqual(skipped, [True, False, False, False, True],
+                         "a bare tombstone can still write a permanent local 'left' record")
 
     def test_it_still_records_a_genuine_leave(self):
         """Both halves present is what a real leave looks like; that is the bug this fixes."""

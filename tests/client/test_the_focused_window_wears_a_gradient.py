@@ -139,26 +139,24 @@ class ItLooksTheSameEverywhere(unittest.TestCase):
                       "the desktop mounts without applying the effects class")
 
     def test_the_compositor_and_the_css_come_from_one_palette(self):
-        """A native app and a PosterChan window must agree on what "focused" looks like — but they
-        are drawing DIFFERENT THINGS, so they cannot be the same literal.
+        """A native app and a PosterChan window must agree on what "focused" looks like, and every
+        colour the compositor uses must come from client.css rather than a hex nobody chose.
 
-        The client ring is a thin gradient outline and keeps the full accent. Wayfire's
-        `active_color` fills the whole TITLEBAR, so the same accent there is a bright cyan bar —
-        reported the moment it shipped ("firefox is now a bright cyan window title?"). The frame
-        takes `--frame-focus`, which is that accent blended towards the surface.
-
-        What must hold is that BOTH come from client.css, so the compositor cannot drift onto a
-        hand-typed hex nobody chose — which is the bug this whole file was written for."""
+        Wayfire's `active_color` fills a decorated window's TITLE BAR and border band in one colour,
+        so the accent there was a bright cyan bar ("firefox is now a bright cyan window title?") and
+        its blend `--frame-focus` was a teal slab with no visible edge. The title bar is now the raised
+        surface `--bg2` (unfocused `--bg`), and the accent went to the posterchan-shell plugin's RING,
+        which frames every native window — including Firefox, which decorates itself and so was never
+        reached by `[decoration]` at all. tests/test_native_windows_match_the_desktop.py pins the ring."""
         ini = (ROOT / "os/overlay/app-misc/posterchanos-shell/files/wayfire.ini").read_text(encoding="utf-8")
-        frame = re.search(r"--frame-focus:(#[0-9a-fA-F]{6})", CSS).group(1).lower()
-        neon = re.search(r"--neon:(#[0-9a-fA-F]{6})", CSS).group(1).lower()
+        tokens = dict(re.findall(r"--(bg2?|neon):(#[0-9a-fA-F]{6})", CSS)[:3])
         active = re.search(r"^active_color\s*=\s*\\?#([0-9a-fA-F]{6})", ini, re.M).group(1).lower()
-        self.assertEqual("#" + active, frame,
-                         "the compositor frame is not the client's frame token — a hex has drifted in")
-        self.assertNotEqual(frame, neon,
-                            "the frame token is the raw accent again, i.e. a cyan titlebar")
+        inactive = re.search(r"^inactive_color\s*=\s*\\?#([0-9a-fA-F]{6})", ini, re.M).group(1).lower()
+        self.assertEqual("#" + active, tokens["bg2"].lower(), "the title bar is not the client's raised surface")
+        self.assertEqual("#" + inactive, tokens["bg"].lower(), "the unfocused title bar is not the client's ground")
+        self.assertNotEqual("#" + active, tokens["neon"].lower(), "the raw accent is a cyan title bar again")
+        self.assertRegex(ini, r"(?m)^window_border_active_color\s*=", "the accent ring is not configured")
         self.assertIn("var(--neon)", rule(".os-root.os-fx .osw.focused:not(.osw-document)::after{"))
-
 
 if __name__ == "__main__":
     unittest.main()

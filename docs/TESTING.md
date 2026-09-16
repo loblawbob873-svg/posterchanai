@@ -35,7 +35,14 @@ Browser startup checks cover delayed DevTools discovery with a bounded retry; UI
 assertions are never retried to hide a failure.
 The API checks load the shipped router and models with isolated database metadata and deny
 production connections, so the same coverage runs in the minimal desktop build environment.
-The gate is a fast minimum; continue running the broader suites appropriate to a change.
+The required list is a fast minimum that also runs in the desktop CI build. **`sync.sh` runs the
+gate with `--full`**, which then runs EVERY discovered `tests/**/test_*.py` file in parallel pytest
+shards (as many as `checkall.py` would run browsers at once — fewer on a node serving live traffic),
+balanced by per-file durations cached in `~/.cache/posterchanai/test-durations.json`. In the full pass
+skips are allowed (hardware/tool-dependent tests skip honestly) but any failure, error, collection
+error or shard that does not finish blocks the deploy, names the failing tests, and removes the
+receipt. There is no flag to skip it: the required list alone let unlisted tests fail for days against
+shipped code while every deploy passed. A full serial run was 36 minutes (2026-09-16).
 
 The gate fingerprints the tested backend, client, desktop, Android app, templates, scripts, tests and release workflows
 before and after running. `sync.sh` checks that receipt again immediately before committing.

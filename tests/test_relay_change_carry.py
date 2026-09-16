@@ -61,7 +61,16 @@ class TopLevelBindings(unittest.TestCase):
         self.assertEqual(hits, [], "`ME` is an object in app.js — ME() is the sub-module idiom")
 
     def test_the_export_hangs_off_the_bridge_that_exists(self):
-        self.assertIn("window.__PC = {\n    // Republish the encrypted libraries", _src())
+        """`carryPrivateToRelays` is a member of the `window.__PC = {…}` literal.
+
+        The rule, not the position: other exports legitimately join the top of that literal (the
+        Concord direct-invite helpers did), so the block is located and searched as a whole.
+        """
+        s = _src()
+        i = s.index("window.__PC = {")
+        blk = s[i:s.index("\n  };", i)]
+        self.assertRegex(blk, r"(?m)^\s*(?:[\w$]+,\s*)*carryPrivateToRelays\s*,",
+                         "carryPrivateToRelays must be exported on window.__PC")
 
 
 class CarryOnRelayChange(unittest.TestCase):

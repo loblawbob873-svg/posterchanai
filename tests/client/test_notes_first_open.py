@@ -78,7 +78,8 @@ class CoreAppsOpenReliably(unittest.TestCase):
         load = self.sms[self.sms.index("async function load(force)"):]
         load = load[:load.index("let _refreshing")]
         self.assertIn("cached.splice(0, 32)", load)
-        self.assertLess(load.index("S.ready = true"), load.index("while(cached.length)"))
+        # The drain loop also stops on an account switch now; the rule is paint BEFORE drain.
+        self.assertLess(load.index("S.ready = true"), load.index("while(cached.length"))
         self.assertIn("cached.splice(0, 128)", load)
 
 

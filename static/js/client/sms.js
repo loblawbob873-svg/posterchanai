@@ -4194,8 +4194,18 @@
        * account-scoped Files client, and hiding that source made web Texts offer Blossom while the
        * installed app only offered the local disk. `Device` still uses the reliable host dialog. */
       if(PC.blossomPicker && PC.modal){
-        PC.modal('<h3>Add an attachment</h3><div class="sms-attach-sources"><button class="btn" id="sms-src-camera">Camera photo</button><button class="btn" id="sms-src-device">Device</button><button class="btn" id="sms-src-blossom">📁 Files</button></div>', root=>{
-          root.querySelector('#sms-src-camera').onclick=()=>{PC.closeModal();camera.click();};
+        /* A SOURCE LIST, NOT A ROW OF BARE BUTTONS. It was three unrelated `.btn`s butted together
+         * ("Camera photo", "Device", "📁 Files" -- one emoji, two words, no gap), which read as a
+         * toolbar somebody forgot to style. Each source is a full-width row with its icon and a line
+         * saying where the file comes from. Camera only where a camera can answer: on a desktop
+         * browser `capture` is ignored and the item opened the same file dialog as Device. */
+        const hasCamera=!!(window.Capacitor || (window.matchMedia && matchMedia('(pointer:coarse)').matches));
+        const src=(id,icon,title,sub)=>'<button class="sms-src" '+id+'>'+ICO(icon)+'<span><b>'+title+'</b><small>'+sub+'</small></span></button>';
+        PC.modal('<h3>Add an attachment</h3><div class="sms-attach-sources">'
+          +(hasCamera?src('id="sms-src-camera"','camera','Camera','Take a photo now'):'')
+          +src('id="sms-src-device"','image','This device','Photos, videos and documents')
+          +src('id="sms-src-blossom"','folder','My Files','From your encrypted drive')+'</div>', root=>{
+          const cam=root.querySelector('#sms-src-camera');if(cam)cam.onclick=()=>{PC.closeModal();camera.click();};
           root.querySelector('#sms-src-device').onclick=()=>{PC.closeModal();fromDevice();};
           root.querySelector('#sms-src-blossom').onclick=()=>{PC.closeModal();fromBlossom();};
         });

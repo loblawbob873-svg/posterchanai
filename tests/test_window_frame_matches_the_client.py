@@ -36,7 +36,10 @@ def _frame(option):
 
 class TestTheFrameUsesThePalette(unittest.TestCase):
     def test_the_focused_frame_is_the_raised_surface(self):
-        self.assertEqual(_frame("active_color"), _token("frame-focus") + "ff",
+        # The TITLE BAR, now that the accent is the posterchan-shell ring's job
+        # (tests/test_native_windows_match_the_desktop.py): Wayfire paints title and border band in
+        # one colour, so the colour here is the surface a PosterChan title bar is drawn on.
+        self.assertEqual(_frame("active_color"), _token("bg2") + "ff",
                          "the focused window frame is not the client's raised-surface colour")
 
     def test_the_unfocused_frame_is_the_page(self):

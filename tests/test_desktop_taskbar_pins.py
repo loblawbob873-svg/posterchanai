@@ -73,8 +73,11 @@ def test_taskbar_context_menu_is_anchored_in_the_desktops_scaled_coordinate_spac
     start = SRC.index("function showCtx(")
     body = SRC[start:SRC.index("function iconMenu(", start)]
     helper = SRC[SRC.index("function ctxPosition("):start]
-    assert "desk.getBoundingClientRect()" in body
-    assert "desk.offsetWidth" in body and "desk.offsetHeight" in body
+    # Measured against the surface the menu is drawn in: the desk, or — in the start menu popup,
+    # which has no desk — the popup's own host.
+    assert "const host = desk || root;" in body
+    assert "host.getBoundingClientRect()" in body
+    assert "host.offsetWidth" in body and "host.offsetHeight" in body
     assert "ar.left-dr.left" in helper and "ar.top-dr.top" in helper
     # Both native and PosterChan task buttons pass the button, not just viewport pointer coordinates.
     # A fixed span from the handler, not an end-anchor: this slice has to cover BOTH branches (the

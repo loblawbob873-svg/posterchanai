@@ -12,17 +12,263 @@
 #include <wayfire/config/option.hpp>
 #include <wayfire/signal-definitions.hpp>
 #include <wayfire/nonstd/wlroots-full.hpp>
+/* wlroots-full.hpp includes wlr_xdg_shell.h only if the GENERATED xdg-shell-protocol.h is on the
+ * include path (wlroots does not install it), and silently skips it otherwise. The window border needs
+ * it to find a client-decorated window's geometry, so a build without it must fail here, loudly --
+ * the ebuild generates it next to the pointer-constraints header. */
+#if !__has_include(<xdg-shell-protocol.h>)
+#error "xdg-shell-protocol.h was not generated (wayland-scanner server-header stable/xdg-shell/xdg-shell.xml)"
+#endif
+#include <wayfire/scene.hpp>
+#include <wayfire/scene-render.hpp>
+#include <wayfire/scene-operations.hpp>
+#include <wayfire/view.hpp>
 #include <wayland-server-core.h>
 #include <algorithm>
 #include <map>
 #include <set>
 #include <limits>
 #include <cmath>
+#include <memory>
+#include <string>
+
+/* ------------------------------------------------------------------ the frame around every window
+ *
+ * REPORTED AS "Firefox, foot, maybe others ... no border around window like we do to mimic hyprland's
+ * border", after two rounds of tuning [decoration] that could not answer it, for two reasons:
+ *
+ *  * Wayfire's decoration plugin only frames a client that asks for SERVER-side decoration, and
+ *    Firefox never can: there is not one occurrence of zxdg_decoration_manager_v1 in its libxul
+ *    (measured, see the firefox-policies note in posterchanos-shell). GTK apps draw their own title
+ *    bar and get no compositor frame at all -- no border whatever [decoration] says.
+ *  * where it DOES frame a window, `active_color` paints the title bar and the border in ONE colour,
+ *    so a bright accent edge is also a bright accent title bar ("firefox is now a bright cyan window
+ *    title?"). Measured on foot in a headless session with the shipped wayfire.ini: 29,266 pixels of
+ *    one teal (#257281) -- title and edge the same, neither reading as a PosterChan window.
+ *
+ * Hyprland draws its border itself, around every window, whoever draws the title. So does this: a
+ * scene node in each toplevel's surface tree, a ring of `border_size` in the accent. On a window
+ * Wayfire decorates it covers the decoration's own border band exactly (keep [decoration] border_size
+ * equal), so the title bar keeps its quiet surface colour; on one that decorates itself it sits just
+ * outside the client geometry. PosterChan's own surfaces are skipped -- the desktop and every
+ * popped-out window (one app_id) draw `#pc-oswin-frame` themselves -- and so is anything fullscreen.
+ *
+ * Options are LOOKED UP, not wrapped, for the reason given at `CONFINE_OPTION` below: an undeclared
+ * option wrapped segfaults Wayfire 0.10.1 at startup. Absent, there is simply no border. */
+namespace pc_border
+{
+static bool is_posterchan(wayfire_view view)
+{
+    const auto app = view->get_app_id();
+    return app == "place.poster.desktop" || app == "posterchan-desktop" || app == "PosterChan" ||
+           view->get_title() == "PosterChan Desktop" ||
+           view->get_title().find("PosterChan Window") != std::string::npos;
+}
+
+struct options_t
+{
+    std::shared_ptr<wf::config::option_t<bool>> enabled;
+    std::shared_ptr<wf::config::option_t<int>> size;
+    std::shared_ptr<wf::config::option_t<wf::color_t>> active, inactive;
+    int width() const
+    {
+        return (enabled && enabled->get_value() && size) ? std::clamp(size->get_value(), 0, 32) : 0;
+    }
+};
+
+class ring_node_t : public wf::scene::node_t
+{
+    std::weak_ptr<wf::toplevel_view_interface_t> view;
+    const options_t& opts;
+
+  public:
+    wf::geometry_t last = {0, 0, 0, 0};
+
+    ring_node_t(wayfire_toplevel_view v, const options_t& o) : node_t(false), view(v->weak_from_this()), opts(o) {}
+
+    /* The ring's OUTER box, in the surface tree's coordinates.
+     *
+     * THAT ORIGIN IS THE MAIN SURFACE'S CORNER, NOT THE WINDOW'S. A client that decorates itself puts
+     * its window geometry somewhere inside its surfaces -- GTK inside a margin of drop shadow, foot
+     * ABOVE its main surface, in a title-bar subsurface. Measured with a client-decorated foot: a ring
+     * placed at the surface origin started under the title bar, framing the text area and leaving
+     * the bar outside. xdg-shell reports where the geometry is (`wlr_xdg_surface.geometry`), and a
+     * server-decorated or XWayland window has none, so its offset is simply zero -- the space the
+     * decoration node draws in, at (-left, -top). */
+    wf::geometry_t outer()
+    {
+        auto v = view.lock();
+        const int b = opts.width();
+        if (!v || !b || !v->is_mapped()) return {0, 0, 0, 0};
+        const auto& st = v->toplevel()->current();
+        if (st.fullscreen || st.geometry.width <= 0 || st.geometry.height <= 0) return {0, 0, 0, 0};
+        const auto m = st.margins;
+        wf::point_t at{0, 0};
+        if (auto surface = v->get_wlr_surface())
+        {
+            if (auto xdg = wlr_xdg_surface_try_from_wlr_surface(surface))
+            {
+                at = wf::point_t{xdg->geometry.x, xdg->geometry.y};
+            }
+        }
+        wf::geometry_t box{at.x - m.left, at.y - m.top, st.geometry.width, st.geometry.height};
+        if (m.left >= b && m.right >= b && m.bottom >= b && m.top >= b) return box;  // over the band
+        return {box.x - b, box.y - b, box.width + 2 * b, box.height + 2 * b};
+    }
+
+    wf::region_t ring()
+    {
+        auto o = outer();
+        const int b = opts.width();
+        if (o.width <= 2 * b || o.height <= 2 * b) return {};
+        wf::region_t r{o};
+        r ^= wf::geometry_t{o.x + b, o.y + b, o.width - 2 * b, o.height - 2 * b};
+        return r;
+    }
+
+    wf::geometry_t get_bounding_box() override { return outer(); }
+
+    /* Damage where the ring WAS as well as where it is: a moved window leaves its old edge behind. */
+    void refresh()
+    {
+        auto self = shared_from_this();
+        if (last.width > 0) wf::scene::damage_node(self, last);
+        last = outer();
+        if (last.width > 0) wf::scene::damage_node(self, last);
+    }
+
+    void render(const wf::scene::render_instruction_t& data)
+    {
+        auto v = view.lock();
+        if (!v || !opts.active || !opts.inactive) return;
+        const auto color = v->activated ? opts.active->get_value() : opts.inactive->get_value();
+        for (const auto& box : data.damage & ring())
+        {
+            data.pass->add_rect(color, data.target, wlr_box_from_pixman_box(box), data.damage);
+        }
+    }
+
+    class instance_t : public wf::scene::render_instance_t
+    {
+        std::shared_ptr<ring_node_t> self;
+        wf::scene::damage_callback push_damage;
+        wf::signal::connection_t<wf::scene::node_damage_signal> on_damage = [=] (wf::scene::node_damage_signal *ev)
+        {
+            push_damage(ev->region);
+        };
+
+      public:
+        instance_t(ring_node_t *node, wf::scene::damage_callback damage) :
+            self(std::dynamic_pointer_cast<ring_node_t>(node->shared_from_this())), push_damage(damage)
+        {
+            node->connect(&on_damage);
+        }
+
+        void schedule_instructions(std::vector<wf::scene::render_instruction_t>& instructions,
+            const wf::render_target_t& target, wf::region_t& damage) override
+        {
+            wf::region_t ours = damage & self->ring();
+            if (!ours.empty())
+            {
+                instructions.push_back(wf::scene::render_instruction_t{
+                    .instance = this, .target = target, .damage = std::move(ours)});
+            }
+        }
+
+        void render(const wf::scene::render_instruction_t& data) override { self->render(data); }
+    };
+
+    void gen_render_instances(std::vector<wf::scene::render_instance_uptr>& instances,
+        wf::scene::damage_callback push_damage, wf::output_t *output = nullptr) override
+    {
+        instances.push_back(std::make_unique<instance_t>(this, push_damage));
+    }
+};
+
+/* One per framed window. Owns the node and the three signals that move or recolour it. */
+struct framed_t
+{
+    std::shared_ptr<ring_node_t> node;
+    wf::signal::connection_t<wf::view_geometry_changed_signal> on_geometry = [=] (auto) { node->refresh(); };
+    wf::signal::connection_t<wf::view_activated_state_signal> on_activated = [=] (auto) { node->refresh(); };
+    wf::signal::connection_t<wf::view_fullscreen_signal> on_fullscreen = [=] (auto) { node->refresh(); };
+};
+
+class manager_t
+{
+    options_t opts;
+    std::map<wf::view_interface_t*, std::unique_ptr<framed_t>> framed;
+
+    void detach(wf::view_interface_t *view)
+    {
+        auto it = framed.find(view);
+        if (it == framed.end()) return;
+        it->second->node->refresh();
+        wf::scene::remove_child(it->second->node);
+        framed.erase(it);
+    }
+
+    /* Decided again whenever the app_id changes: Proton and Electron name a window after mapping it. */
+    void evaluate(wayfire_view any)
+    {
+        auto view = wf::toplevel_cast(any);
+        const bool wanted = view && view->is_mapped() && view->role == wf::VIEW_ROLE_TOPLEVEL && !is_posterchan(any);
+        if (!wanted)
+        {
+            detach(any.get());
+            return;
+        }
+        if (framed.count(any.get())) return;
+        auto entry = std::make_unique<framed_t>();
+        entry->node = std::make_shared<ring_node_t>(view, opts);
+        view->connect(&entry->on_geometry);
+        view->connect(&entry->on_activated);
+        view->connect(&entry->on_fullscreen);
+        // FRONT, not back: the decoration node paints its whole band with the title-bar colour, and a
+        // ring added behind it was measured invisible on every Wayfire-decorated window. The ring
+        // never covers client content -- it is the decoration's band or outside the geometry.
+        wf::scene::add_front(view->get_surface_root_node(), entry->node);
+        entry->node->refresh();
+        framed.emplace(any.get(), std::move(entry));
+    }
+
+    wf::signal::connection_t<wf::view_mapped_signal> on_mapped = [=] (wf::view_mapped_signal *ev) { evaluate(ev->view); };
+    wf::signal::connection_t<wf::view_unmapped_signal> on_unmapped = [=] (wf::view_unmapped_signal *ev) { detach(ev->view.get()); };
+    wf::signal::connection_t<wf::view_app_id_changed_signal> on_app_id = [=] (wf::view_app_id_changed_signal *ev) { evaluate(ev->view); };
+    wf::signal::connection_t<wf::view_title_changed_signal> on_title = [=] (wf::view_title_changed_signal *ev) { evaluate(ev->view); };
+    /* A live `wayfire/set-config-options` (or an edited ini) recolours or resizes every ring now. */
+    wf::signal::connection_t<wf::reload_config_signal> on_reload = [=] (auto) { for (auto& [_, f] : framed) f->node->refresh(); };
+
+  public:
+    void init()
+    {
+        auto& config = wf::get_core().config;
+        opts.enabled = config->get_option<bool>("posterchan-shell/window_border");
+        opts.size = config->get_option<int>("posterchan-shell/window_border_size");
+        opts.active = config->get_option<wf::color_t>("posterchan-shell/window_border_active_color");
+        opts.inactive = config->get_option<wf::color_t>("posterchan-shell/window_border_inactive_color");
+        wf::get_core().connect(&on_mapped);
+        wf::get_core().connect(&on_unmapped);
+        wf::get_core().connect(&on_app_id);
+        wf::get_core().connect(&on_title);
+        wf::get_core().connect(&on_reload);
+        for (auto& view : wf::get_core().get_all_views()) evaluate(view);
+    }
+
+    void fini()
+    {
+        on_mapped.disconnect(); on_unmapped.disconnect(); on_app_id.disconnect();
+        on_title.disconnect(); on_reload.disconnect();
+        while (!framed.empty()) detach(framed.begin()->first);
+    }
+};
+}
 
 class posterchan_shell_t : public wf::plugin_interface_t
 {
     static constexpr uint32_t owned = wf::VIEW_ALLOW_MOVE | wf::VIEW_ALLOW_RESIZE;
     std::map<uint32_t, uint32_t> saved;
+    pc_border::manager_t borders;
     wf::shared_data::ref_ptr_t<wf::ipc::method_repository_t> methods;
 
     void restore(uint32_t id, uint32_t previous)
@@ -267,10 +513,12 @@ class posterchan_shell_t : public wf::plugin_interface_t
             return pointer_confinement();
         });
         wf::get_core().connect(&on_pointer_motion);
+        borders.init();
     }
     void fini() override
     {
         on_pointer_motion.disconnect();
+        borders.fini();
         methods->unregister_method("posterchan-shell/set-cursor");
         methods->unregister_method("posterchan-shell/pointer-confinement");
         methods->unregister_method("posterchan-shell/set-views");

@@ -84,6 +84,10 @@ def compositor(tmp_path):
     subprocess.run(['wayland-scanner','server-header',str(xml),
                     str(tmp_path/'pointer-constraints-unstable-v1-protocol.h')],
                    check=True, capture_output=True, timeout=30)
+    # And xdg-shell, as the ebuild does: the window border reads a client-decorated window's geometry.
+    subprocess.run(['wayland-scanner','server-header',str(xml.parents[2]/'stable/xdg-shell/xdg-shell.xml'),
+                    str(tmp_path/'xdg-shell-protocol.h')],
+                   check=True, capture_output=True, timeout=30)
     for source, name in ((PLUGIN, 'posterchan-shell'), (probe, 'test-probe')):
         subprocess.run(['g++','-std=c++17','-fPIC','-shared','-I',str(tmp_path),str(source),
                         '-o',str(tmp_path/f'lib{name}.so'),

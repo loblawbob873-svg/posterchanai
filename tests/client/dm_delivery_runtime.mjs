@@ -3,10 +3,10 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const src=fs.readFileSync(process.argv[2] || new URL('../../static/js/client/app.js',import.meta.url),'utf8');
 const shipped=src.slice(src.indexOf('  let _dmWatching='),src.indexOf('  // Unwrap a NIP-17 gift wrap'));
-function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date,ready=true}={}){
-  const subs=[],received=[],tried=new Set(),timers=[];
+function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date,ready=true,cached=new Set()}={}){
+  const subs=[],received=[],tried=new Set(),timers=[],timeouts=[];
   const ctx=vm.createContext({console:{warn(){},info(){}},Map,Set,Date:clock,Promise,
-    setInterval(fn){timers.push(fn);}, ME:{pubkey:'self'},signer:{nip17unwrap:true,mode},_dmLoaded:false,_dmUnread:0,
+    setInterval(fn){timers.push(fn);}, setTimeout(fn,ms){timeouts.push({fn,ms});}, ME:{pubkey:'self'},signer:{nip17unwrap:true,mode},_dmLoaded:false,_dmUnread:0,
     _wrapTried:tried,MUTED:new Set(),VIEW:'home',
     /* `ready` is what the HISTORY read waits for. A REQ written to a CONNECTING socket is dropped
        by relay.js `_send`, and Messages is the view most often opened into that window (a launcher
@@ -14,12 +14,13 @@ function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date
        live subscriptions above deliberately do NOT wait — they re-arm themselves on connect. */
     Relay:{subscribe(filters,handlers){subs.push({filters,...handlers});},query,
            ready:async()=>ready},
-    DmCache:{pullShared:pull,pushShared:async()=>{}},Store:{byKind:()=>[],saveEvent:()=>false},
+    /* `get` answers from THIS device's decrypted cache: a hit costs no signer call. */
+    DmCache:{pullShared:pull,pushShared:async()=>{},get:async id=>cached.has(id)?{kind:14}:null},Store:{byKind:()=>[],saveEvent:()=>false},
     ingestDM:()=>false,ingestWrap:ingest|| (async(ev,live)=>{received.push({ev,live});tried.add(ev.id);}),
     bumpDm(){},_dmNotify(){},_scheduleDmRefresh(){},renderMessages(){},recountDmUnread(){}
   });
   vm.runInContext(shipped+';globalThis.api={ensureDMs,_queueDmHistory};',ctx);
-  return {ctx,subs,received,timers,...ctx.api};
+  return {ctx,subs,received,timers,timeouts,...ctx.api};
 }
 // A launcher may open Messages before account hydration, or while browsing as a guest.
 // That must neither crash nor mark history loaded and prevent a later authenticated retry.
@@ -153,5 +154,57 @@ function setup({pull=async()=>0,query=async()=>[],ingest,mode="local",clock=Date
   await x._queueDmHistory(history);assert.equal(attempts,2);
   await x._queueDmHistory([]);assert.equal(attempts,2,'failed signer spun through the inbox');
   now+=30000;await x._queueDmHistory([]);assert.equal(attempts,4);
+}
+// WHAT WAITS IS THE SIGNER, NEVER THE CACHE. A wrap this device already decrypted paints before the
+// shared download, and neither a failed decrypt nor a Concord invite may pause those.
+{
+  let release;const x=setup({mode:'nip46',pull:()=>new Promise(r=>release=r),cached:new Set(['read-yesterday'])});
+  const pending=x.ensureDMs();
+  await x._queueDmHistory([{id:'read-yesterday'},{id:'sent-overnight'}]);
+  assert.deepEqual(x.received.map(r=>r.ev.id),['read-yesterday'],'a cache hit waited on the shared download');
+  release(0);await pending;await new Promise(r=>setImmediate(r));
+  assert(x.received.some(r=>r.ev.id==='sent-overnight'),'a held miss was never decrypted');
+}
+{
+  let now=3000000;class Clock extends Date{static now(){return now;}}
+  const hits=new Set(['cached-1','cached-2']);
+  const x=setup({mode:'nip46',clock:Clock,cached:hits,ingest:async ev=>{
+    x.received.push({ev});if(ev.id!=='phone-refused')x.ctx._wrapTried.add(ev.id);}});
+  await x.ensureDMs();
+  await x._queueDmHistory([{id:'phone-refused'},{id:'cached-1'},{id:'miss'},{id:'cached-2'}]);
+  assert.deepEqual(x.received.map(r=>r.ev.id),['phone-refused','cached-1','cached-2'],'the pause held cache hits too');
+  assert(x.timeouts.some(t=>t.ms>=30000),'nothing resumes the history when the pause ends');
+  now+=30001;x.timeouts.at(-1).fn();await new Promise(r=>setImmediate(r));
+  assert.equal(x.received.at(-1).ev.id,'miss','the held miss did not resume after the pause');
+}
+{
+  // A Concord invite is parked by its own inbox and never joins _wrapTried: it is not a failed signer.
+  let now=4000000;class Clock extends Date{static now(){return now;}}
+  const x=setup({mode:'nip46',clock:Clock});
+  await x.ensureDMs();
+  await x._queueDmHistory([{id:'invite',tags:[['k','3313']]},...Array.from({length:6},(_,i)=>({id:'m'+i}))]);
+  x.ctx._wrapTried.delete('invite');
+  assert.equal(x.received.length,7,'a Concord invite paused the DM history');
+}
+{
+  // On a LOCAL key a throw is about that wrap; the rest of the history carries on.
+  const x=setup({ingest:async ev=>{x.received.push({ev});if(ev.id!=='junk')x.ctx._wrapTried.add(ev.id);}});
+  await x.ensureDMs();
+  await x._queueDmHistory([{id:'junk'},{id:'a'},{id:'b'},{id:'c'},{id:'d'},{id:'e'},{id:'f'},{id:'g'}]);
+  assert.equal(x.received.length,8,'one undecryptable wrap paused a local key');
+}
+{
+  // A remote signer not ready yet: each waiting wrap is looked up in the cache ONCE, however many
+  // bursts arrive — re-queueing the held set made every burst re-read all of it from IndexedDB.
+  let release;const x=setup({mode:'nip46',pull:()=>new Promise(r=>release=r)});
+  let lookups=0;const get=x.ctx.DmCache.get;x.ctx.DmCache.get=async id=>{lookups++;return get(id);};
+  const pending=x.ensureDMs();
+  for(let burst=0;burst<10;burst++){
+    await x._queueDmHistory(Array.from({length:20},(_,i)=>({id:'w'+burst+'-'+i})));
+    await new Promise(r=>setImmediate(r));
+  }
+  assert.equal(lookups,200,'held wraps were re-read on every burst ('+lookups+' lookups for 200 wraps)');
+  release(0);await pending;await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
+  assert.equal(x.received.length,200,'held wraps were not decrypted once the signer was ready');
 }
 console.log('ok: live delivery, history failure recovery, bounded history and self-note arrival');

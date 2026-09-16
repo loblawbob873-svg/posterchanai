@@ -24,6 +24,16 @@ function liftRouter() {
     else if (src[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
   }
   const branch = src.slice(at, end);
+  /* The branch now starts programs through the ONE launcher the start menu and desktop icons use,
+   * so that function is lifted verbatim too — a stub here would test the stub. */
+  const fnAt = src.indexOf('function launchMachineApp(');
+  if (fnAt < 0) throw new Error('launchMachineApp is gone');
+  let d = 0, fnEnd = -1;
+  for (let i = src.indexOf('{', fnAt); i < src.length; i++) {
+    if (src[i] === '{') d++;
+    else if (src[i] === '}') { d--; if (d === 0) { fnEnd = i + 1; break; } }
+  }
+  const launcher = src.slice(fnAt, fnEnd);
   return new Function('p', 'ctx', `
     let notiOpen = true;
     const PC = () => ctx.pc;
@@ -31,6 +41,8 @@ function liftRouter() {
     const PCOSShell = ctx.shell;
     const window = { PCOSShell };
     const drawBar = ctx.drawBar;
+    const _menuAct = () => false;          // the shell window, not the menu popup
+    ${launcher}
     if (false) {}
     ${branch}
     return { notiOpen };

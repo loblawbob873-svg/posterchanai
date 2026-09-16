@@ -147,3 +147,46 @@ def test_late_profile_hydration_preserves_verified_offline_membership(chrome):
         assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is False
         chrome.evaluate('profileReady=true')
         assert chrome.evaluate("PCInstanceAccess.allowed('vault')") is True
+
+
+def _reload(chrome):
+    import json
+    code=(ROOT/'static/js/client/instance-access.js').read_text()
+    chrome.evaluate('eval('+json.dumps(code)+')')
+
+
+def test_a_member_reloading_opens_apps_without_waiting_for_a_check(chrome):
+    """Reported: the check "ruins the user experience ... so it don't have to check every time".
+    A reload with a stored yes opens every app at once; the check runs behind it."""
+    with opened(chrome):
+        chrome.evaluate('PCInstanceAccess.refresh()');settle(chrome)
+        chrome.evaluate('calls=0;held=true');_reload(chrome)
+        assert chrome.evaluate("Object.keys(PCInstanceAccess.apps).every(v=>PCInstanceAccess.allowed(v))")
+        assert chrome.evaluate("PCInstanceAccess.gate('mail')") is False
+        assert chrome.evaluate("!document.querySelector('.instance-app-gate')")
+        # require() must not wait on the (held) request either.
+        assert chrome.evaluate("Promise.race([PCInstanceAccess.require('websearch').then(()=>'open'),new Promise(r=>setTimeout(()=>r('waited'),300))])")=='open'
+        assert chrome.evaluate('calls')==1, 'exactly one background check, not one per app'
+
+
+def test_a_remembered_member_who_became_a_non_member_is_gated_after_the_background_check(chrome):
+    with opened(chrome):
+        chrome.evaluate('PCInstanceAccess.refresh()');settle(chrome)
+        chrome.evaluate('qualified=false;renders=[]');_reload(chrome)
+        assert chrome.evaluate("PCInstanceAccess.gate('mail')") is False
+        settle(chrome)
+        assert chrome.evaluate('renders')==['mail']
+        assert chrome.evaluate("PCInstanceAccess.allowed('mail')") is False
+
+
+def test_a_failed_background_check_does_not_lock_a_member_out(chrome):
+    with opened(chrome):
+        chrome.evaluate('PCInstanceAccess.refresh()');settle(chrome)
+        chrome.evaluate("__PC.authFetch=async()=>{throw Error('relay slow')}");_reload(chrome)
+        assert chrome.evaluate("PCInstanceAccess.gate('office')") is False
+        settle(chrome)
+        assert chrome.evaluate("PCInstanceAccess.allowed('office') && PCInstanceAccess.allowed('websearch')")
+        # A check that keeps failing is not retried on every app that opens.
+        chrome.evaluate("window.failures=0;__PC.authFetch=async()=>{failures++;throw Error('relay slow')}")
+        chrome.evaluate("['office','mail','news','websearch','repos'].forEach(v=>PCInstanceAccess.gate(v))");settle(chrome)
+        assert chrome.evaluate('failures')==0, 'a failed background check was retried on every app'

@@ -6,11 +6,27 @@
     'media-center':'Media Center',repos:'Git',texts:'Texts',notes:'Notes',
     wallet:'Monero Wallet',exodus:'Wallet',websearch:'Web Search'});
   const localApps=new Set(['notes','vault','texts','analytics']);
+  /* A VERIFIED MEMBER IS NOT RE-ASKED ON EVERY APP. The server remembers the grant (instance_membership
+     GRANT_FRESH) and so does this page: within FRESH an app opens with no request at all, and after it
+     the app still opens at once while the check runs behind it. */
+  const FRESH=600000;
   const storedKey=()=> 'pc_instance_membership:'+owner;
   function cachedOffline(){
     try{const saved=JSON.parse(localStorage.getItem(storedKey())||'null');
       if(saved?.profile===profile && saved.data?.pubkey===pc()?.viewer()?.pubkey && saved.data?.qualified===true)
         return {...saved.data,offline:true,checkedAt:0};
+    }catch(_){}
+    return null;
+  }
+  /* The stored yes, used ONLINE on a fresh load, so opening an app after a reload is not a
+     "Checking your access…" screen. It is only a UI decision — every route is still gated by the
+     server — and it is checked again behind the app (checkedAt:0), which re-draws the gate if the
+     answer has become no. The profile may not have arrived yet on boot; the server knows it. */
+  function remembered(){
+    try{const saved=JSON.parse(localStorage.getItem(storedKey())||'null'),viewer=pc()?.viewer();
+      const sameProfile=saved?.profile===profile||viewer?.profileKnown===false;
+      if(sameProfile && saved.data?.pubkey===viewer?.pubkey && saved.data?.qualified===true)
+        return {...saved.data,offline:false,remembered:true,checkedAt:0};
     }catch(_){}
     return null;
   }
@@ -46,14 +62,14 @@
     state={...data,offline:false,checkedAt:Date.now()};error='';
     try{if(profileKnown)localStorage.setItem(storedKey(),JSON.stringify({profile,data}));}catch(_){}
   }
-  function allowed(view){scope();if(!state&&navigator.onLine===false)state=cachedOffline();return !(view in apps)||(state?.qualified===true&&(!state.offline||localApps.has(view)));}
+  function allowed(view){scope();if(!state)state=navigator.onLine===false?cachedOffline():remembered();return !(view in apps)||(state?.qualified===true&&(!state.offline||localApps.has(view)));}
   async function refresh(force=false){
     const epoch=scope(),pk=pc()?.viewer()?.pubkey;
     if(!pk)return null;
     if(navigator.onLine===false){state=cachedOffline();error='Offline. Reconnect to verify instance membership.';return state;}
     force=force||forceNeeded;
     if(pending)return pending;
-    if(!force&&state&&!state.offline&&Date.now()-state.checkedAt<30000)return state;
+    if(!force&&state&&!state.offline&&Date.now()-state.checkedAt<FRESH)return state;
     const job=Promise.resolve().then(async()=>{
       try{
         await pc().ensureAiSession();
@@ -63,13 +79,22 @@
         if(data.pubkey!==pk||typeof data.qualified!=='boolean')throw Error('Invalid membership response. Please retry.');
         if(scope()===epoch){accept(data,pk);if(force)forceNeeded=false;}
         return scope()===epoch?state:null;
-      }catch(e){if(scope()===epoch){error=e.message||'Could not verify instance membership. Please retry.';state=cachedOffline();return state;}return null;}
+      }catch(e){if(scope()===epoch){error=e.message||'Could not verify instance membership. Please retry.';
+        // A member whose re-check could not reach the server stays a member, as on the server.
+        // …and is not re-asked on every app it opens: wait a minute before the next attempt.
+        if(!force&&state?.qualified&&!state.offline){state={...state,checkedAt:Date.now()-FRESH+60000};return state;}
+        state=cachedOffline();return state;}return null;}
       finally{if(pending===job)pending=null;}
     });
     pending=job;return job;
   }
   async function requireApp(view){
     if(!(view in apps))return;
+    scope();if(!state&&navigator.onLine!==false)state=remembered();
+    if(state?.qualified&&!state.offline){
+      if(Date.now()-state.checkedAt>=FRESH)void refresh();
+      if(allowed(view))return;
+    }
     const data=await refresh();
     if(!data?.qualified||!allowed(view))throw Error(error||'Save your approved instance NIP-05 address in your profile to use '+apps[view]+'.');
   }
@@ -87,7 +112,7 @@
   function gate(view,host){
     scope();
     if(allowed(view)){
-      if(view in apps && state && Date.now()-state.checkedAt>=30000){
+      if(view in apps && state && Date.now()-state.checkedAt>=FRESH){
         const epoch=generation;refresh().then(result=>{if(result&&!result.qualified&&scope()===epoch&&pc()?.isView(view))pc().retryInstanceView(view);});
       }
       return false;

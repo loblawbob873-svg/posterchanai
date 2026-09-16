@@ -1862,7 +1862,7 @@
           settle(job, 'Could not contact the main desktop.');
       });
     }
-    function confirm(job, args){
+    function confirmRemote(job, args){
       if(!alive(job)) return Promise.resolve(false);
       return new Promise(resolve => {
         const confirmId = uuid();
@@ -1901,7 +1901,7 @@
         _ownerOperation = job.id;
         const opts = Object.assign(options(message.opts), {
           _ownerToken:job.id, shouldStop:() => !alive(job),
-          confirm:(...args) => confirm(job, args),
+          confirm:(...args) => confirmRemote(job, args),
           toast:text => send(envelope(job, 'toast', {text:String(text)})),
         });
         const result = message.action === 'verify' ? await verifyFolder(f, opts)
@@ -2816,7 +2816,7 @@
     }
     const ctx = context || {};
     const checkActive = () => { if(ctx.shouldStop && ctx.shouldStop()) throw new Error('Folder operation cancelled.'); };
-    const confirm = async (...args) => {
+    const ask = async (...args) => {
       checkActive();
       const answer = await (ctx.confirm || PC.uiConfirm)(...args);
       checkActive();
@@ -2881,7 +2881,7 @@
     const here = new Set(v.missingHere || []);
     const gone = (v.missingBytes || []).filter(p => !here.has(p));
     if(gone.length){
-      const ok = await confirm('“' + keyOf(f) + '” — the store no longer has the bytes for '
+      const ok = await ask('“' + keyOf(f) + '” — the store no longer has the bytes for '
         + gone.length + ' file' + (gone.length === 1 ? '' : 's') + ' this device still holds.\n\n'
         + 'Send them again? Nothing is deleted and nothing is overwritten — the copies here are the '
         + 'good ones, and your other devices cannot fetch them until they are back in the store.');
@@ -2921,7 +2921,7 @@
                   + 'this folder keeps, so the store is more likely unreachable than empty',
                   null, true);
       } else {
-      const ok = await confirm('“' + keyOf(f) + '” — ' + phantom.length + ' file'
+      const ok = await ask('“' + keyOf(f) + '” — ' + phantom.length + ' file'
         + (phantom.length === 1 ? '' : 's') + ' cannot be fetched: the store does not have the bytes '
         + 'and this device does not have the file.\n\nRemove them from the folder?\n\nThis '
         + 'publishes a deletion. If another device still has one of these files, it will move its '
@@ -2951,7 +2951,7 @@
      * So it is asked, once, with the count and the consequence — and the SAFE answer is the
      * default: cancelling here does nothing at all, and the second question (fetch fresh copies)
      * still cannot run without its own yes. */
-    const mine = await confirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
+    const mine = await ask('“' + keyOf(f) + '” — ' + bad.length + ' file'
       + (bad.length === 1 ? '' : 's') + ' on this device no longer match what your devices agreed '
       + 'the folder holds.\n\nDid YOU change ' + (bad.length === 1 ? 'it' : 'them') + ' on this '
       + 'device?\n\nYes — send ' + (bad.length === 1 ? 'it' : 'them') + ' to your other devices as '
@@ -2968,7 +2968,7 @@
       await swept(f, Object.assign({}, ctx, { manual: true, resend: bad }));
       return;
     }
-    const ok = await confirm('“' + keyOf(f) + '” — ' + bad.length + ' file'
+    const ok = await ask('“' + keyOf(f) + '” — ' + bad.length + ' file'
       + (bad.length === 1 ? '' : 's') + ' on this device do not match what your devices agreed.\n\n'
       + 'Fetch fresh copies? The copies here move to .pc-trash first — nothing is erased, and '
       + 'nothing damaged is sent to your other devices.');

@@ -21,7 +21,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SMS = (ROOT / "static/js/client/sms.js").read_text(encoding="utf-8")
 APP = (ROOT / "static/js/client/app.js").read_text(encoding="utf-8")
 PREFS = (ROOT / "app/services/push_prefs.py").read_text(encoding="utf-8")
-BODY = SMS.split("async function notifyNew(ev){", 1)[1].split("\n  }", 1)[0]
+# Split on the name, not the parameter list: adding `owner` to the signature broke collection of the whole
+# tests/client run with an IndexError that said nothing about notifications.
+BODY = re.split(r"async function notifyNew\([^)]*\)\s*\{", SMS, maxsplit=1)[1].split("\n  }", 1)[0]
 
 
 def test_each_conversation_gets_its_own_notification():
@@ -36,8 +38,10 @@ def test_it_also_says_so_inside_the_app():
 
 
 def test_the_notification_opens_that_conversation():
-    assert "route:'texts'" in BODY, BODY[:400]
-    assert "onClick: land" in BODY and "S.open = key(m.address)" in BODY, BODY[:400]
+    # Since d491e964e the route names the conversation and ONE route opener lands on it
+    # (tests/client/sms_live_notifications.cjs runs that path).
+    assert "route = 'texts:' + encodeURIComponent(m.address" in BODY, BODY[:400]
+    assert "onClick: land" in BODY and "PCOpenNotificationRoute(route)" in BODY, BODY[:400]
 
 
 def test_a_text_is_a_notification_type_people_can_switch_off():
@@ -56,6 +60,6 @@ def test_the_type_resolves_from_a_per_conversation_tag():
 def test_it_still_refuses_the_cases_it_always_refused():
     """The phone posts its own; a message we sent is not news; and a first sync of a thousand
     messages must not fire a thousand notifications."""
-    assert "if(await isPhone()) return;" in BODY
+    assert re.search(r"if\(await isPhone\(\)[^;]*\) return;", BODY), BODY[:400]
     assert "!m.incoming" in BODY
     assert "< S.since) return;" in BODY

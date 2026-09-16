@@ -41,11 +41,23 @@ def _granted() -> set[int]:
 
 
 def _signed() -> set[int]:
-    """Kinds this client signs, read from its own publish()/sign() calls."""
+    """Kinds this client signs, read from its own calls.
+
+    Three spellings, because the literal `publish(<n>` scan alone went blind as the code moved on:
+    the Concord membership writer (2bf5cd4e7) signs `signTemplate({kind:33302,…})`, direct invites
+    and the invite list sign `context.sign({kind:13…})` / `({kind:13303…})`, and every Concord
+    message is a seal the user signs through `sealRumor(rumor, 20013|KIND_SEAL_PLAINTEXT, …)`.
+    None of those were seen, so none were granted, while the retired 13302 stayed on the list.
+    """
     out: set[int] = set()
     for path in sorted(CLIENT.glob("*.js")):
         src = path.read_text(encoding="utf-8")
+        consts = {name: int(n) for name, n in re.findall(r"\b(KIND_SEAL_\w+)\s*=\s*(\d{1,5})\s*;", src)}
         out |= {int(m) for m in re.findall(r"(?:publish|sign)\(\s*(\d{1,5})\b", src)}
+        out |= {int(m) for m in re.findall(
+            r"\b(?:publish|sign|signEvent|signTemplate)\(\s*\{[^{}]*?\bkind\s*:\s*(\d{1,5})\b", src)}
+        for m in re.findall(r"\bsealRumor\(\s*\w+\s*,\s*(\d{1,5}|KIND_SEAL_\w+)\b", src):
+            out.add(int(m) if m.isdigit() else consts[m])
     return out
 
 

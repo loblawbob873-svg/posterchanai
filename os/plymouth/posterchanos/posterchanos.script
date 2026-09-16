@@ -1,26 +1,54 @@
 # PosterChanOS boot splash.
 #
 # A script theme rather than two-step or spinner, for one reason: this boot asks for a LUKS
-# passphrase, and the password dialog is the part a stock theme gets wrong on a dark background —
-# it inherits colours that leave the prompt invisible, and a person is then typing a disk password
-# at a screen that looks frozen. Everything here is drawn explicitly.
+# passphrase, and the prompt has to be unmistakable. Everything here is drawn explicitly.
+#
+# THE PASSWORD SCREEN IS BUILT FROM PICTURES, NOT FROM Image.Text. Text needs a label plugin and a
+# font inside the initramfs, and Plymouth 22.02 (amd64 stable) puts neither there — measured with
+# lsinitrd: script.so and every theme file, no label.so, no font. So every Image.Text on this screen
+# drew NOTHING at boot: the spinner was hidden for the prompt and nothing replaced it, reported as
+# "I had to press Esc when the laptop booted to even know that it was waiting for a password". The
+# words, the box, the lock and the bullets are PNGs made by ../generate_theme.py; Image.Text is only
+# ever an EXTRA (the disk's own name) and only when it actually produced something.
+
+screen_w = Window.GetWidth();
+screen_h = Window.GetHeight();
+# Every image is drawn for a 1920x1080 canvas and scaled once, here.
+scale = Math.Min(screen_w / 1920, screen_h / 1080);
+
+fun load (name) {
+    img = Image(name);
+    return img.Scale(Math.Int(img.GetWidth() * scale), Math.Int(img.GetHeight() * scale));
+}
+
+fun center_x (img) { return Window.GetX() + (screen_w - img.GetWidth()) / 2; }
 
 Window.SetBackgroundTopColor(0.039, 0.039, 0.059);      # --bg  #0a0a0f
 Window.SetBackgroundBottomColor(0.039, 0.039, 0.059);
 
-logo.image = Image("logo.png");
+bg.image = Image("background.png").Scale(screen_w, screen_h);
+bg.sprite = Sprite(bg.image);
+bg.sprite.SetPosition(Window.GetX(), Window.GetY(), -10);
+
+# ── the mark: the PosterChan avatar in a neon ring, the wordmark under it ──────────────────────
+avatar.image = load("avatar.png");
+avatar.sprite = Sprite(avatar.image);
+avatar.y = Window.GetY() + screen_h * 0.30 - avatar.image.GetHeight() / 2;
+avatar.sprite.SetPosition(center_x(avatar.image), avatar.y, 1);
+
+logo.source = Image("logo.png");
+logo.image = logo.source.Scale(Math.Int(logo.source.GetWidth() * scale * 0.6),
+                               Math.Int(logo.source.GetHeight() * scale * 0.6));
 logo.sprite = Sprite(logo.image);
-logo.x = Window.GetX() + (Window.GetWidth()  - logo.image.GetWidth())  / 2;
-logo.y = Window.GetY() + (Window.GetHeight() * 0.34);
-logo.sprite.SetPosition(logo.x, logo.y, 1);
+logo.sprite.SetPosition(center_x(logo.image), avatar.y + avatar.image.GetHeight() - 10 * scale, 1);
 
 # ── the spinner ────────────────────────────────────────────────────────────────────────────────
 for (i = 0; i < 36; i++)
     spin.images[i] = Image("progress-" + i + ".png");
 
 spin.sprite = Sprite();
-spin.x = Window.GetX() + (Window.GetWidth()  - spin.images[0].GetWidth()) / 2;
-spin.y = Window.GetY() + (Window.GetHeight() * 0.62);
+spin.x = Window.GetX() + (screen_w - spin.images[0].GetWidth()) / 2;
+spin.y = Window.GetY() + screen_h * 0.76;
 spin.sprite.SetPosition(spin.x, spin.y, 1);
 spin.i = 0;
 
@@ -34,47 +62,120 @@ fun refresh () {
 Plymouth.SetRefreshFunction(refresh);
 
 # ── the password prompt ────────────────────────────────────────────────────────────────────────
-# Drawn as text rather than left to the theme's defaults, so it is legible on this background and
-# says which disk it wants. The bullets are counted rather than echoed.
+# Built once, shown and hidden by opacity: display_password runs on EVERY keystroke.
+MAX_DOTS = 24;
+
+ask.panel = Sprite(load("panel.png"));
+ask.title = Sprite(load("prompt-title.png"));
+ask.hint = Sprite(load("prompt-hint.png"));
+ask.error = Sprite(load("prompt-error.png"));
+ask.field_image = load("field.png");
+ask.field_error_image = load("field-error.png");
+ask.field = Sprite(ask.field_image);
+ask.lock = Sprite(load("lock.png"));
+ask.esc = Sprite(load("prompt-esc.png"));
+ask.unlocking = Sprite(load("unlocking.png"));
+ask.dot_image = load("dot.png");
+
+panel_image = load("panel.png");
+panel.x = center_x(panel_image);
+panel.y = Window.GetY() + screen_h * 0.50;
+ask.panel.SetPosition(panel.x, panel.y, 5);
+
+fun place (sprite, img, y) { sprite.SetPosition(center_x(img), y, 6); }
+place(ask.title, load("prompt-title.png"), panel.y + 52 * scale);
+place(ask.hint, load("prompt-hint.png"), panel.y + 116 * scale);
+place(ask.error, load("prompt-error.png"), panel.y + 110 * scale);
+field.x = center_x(ask.field_image);
+field.y = panel.y + 160 * scale;
+ask.field.SetPosition(field.x, field.y, 6);
+ask.lock.SetPosition(field.x + 30 * scale, field.y + 21 * scale, 7);
+place(ask.esc, load("prompt-esc.png"), panel.y + 260 * scale);
+ask.unlocking.SetPosition(center_x(load("unlocking.png")), spin.y - 56 * scale, 6);
+
+for (i = 0; i < MAX_DOTS; i++) {
+    ask.dots[i] = Sprite(ask.dot_image);
+    ask.dots[i].SetPosition(field.x + (92 + i * 20) * scale, field.y + 36 * scale, 7);
+}
+
+fun show_prompt (on) {
+    ask.panel.SetOpacity(on); ask.title.SetOpacity(on); ask.field.SetOpacity(on);
+    ask.lock.SetOpacity(on); ask.esc.SetOpacity(on);
+    if (!on) {
+        ask.hint.SetOpacity(0); ask.error.SetOpacity(0);
+        for (i = 0; i < MAX_DOTS; i++) ask.dots[i].SetOpacity(0);
+        if (global.disk_sprite) global.disk_sprite.SetOpacity(0);
+    }
+}
+show_prompt(0);
+ask.unlocking.SetOpacity(0);
+
+global.asking_for_password = 0;
+global.bullets = 0;
+global.submitted = 0;
+global.last_prompt = "";
+
 fun display_password (prompt, bullets) {
+    # A NEW prompt with the SAME text after one was answered is the disk refusing that passphrase:
+    # systemd-cryptsetup simply asks again, and says nothing else.
+    if (!global.asking_for_password) {
+        global.failed = (global.submitted && prompt == global.last_prompt);
+        global.last_prompt = prompt;
+    }
     global.asking_for_password = 1;
+    global.bullets = bullets;
     spin.sprite.SetOpacity(0);
-
-    ask.image = Image.Text(prompt, 0.85, 0.93, 1.0);
-    ask.sprite = Sprite(ask.image);
-    ask.sprite.SetPosition(Window.GetX() + (Window.GetWidth() - ask.image.GetWidth()) / 2,
-                           Window.GetY() + (Window.GetHeight() * 0.60), 2);
-    global.ask = ask;
-
-    dots = "";
-    for (i = 0; i < bullets; i++) dots += "•";
-    dot.image = Image.Text(dots, 0.24, 0.91, 1.0);
-    dot.sprite = Sprite(dot.image);
-    dot.sprite.SetPosition(Window.GetX() + (Window.GetWidth() - dot.image.GetWidth()) / 2,
-                           Window.GetY() + (Window.GetHeight() * 0.66), 2);
-    global.dot = dot;
+    logo.sprite.SetOpacity(0);
+    ask.unlocking.SetOpacity(0);
+    show_prompt(1);
+    if (global.failed) {
+        ask.error.SetOpacity(1); ask.hint.SetOpacity(0);
+        ask.field.SetImage(ask.field_error_image);
+    } else {
+        ask.error.SetOpacity(0); ask.hint.SetOpacity(1);
+        ask.field.SetImage(ask.field_image);
+    }
+    for (i = 0; i < MAX_DOTS; i++) {
+        if (i < bullets) ask.dots[i].SetOpacity(1); else ask.dots[i].SetOpacity(0);
+    }
+    # The disk's own words, under the card — only if this initramfs can draw text at all, and only
+    # if they fit. Without a label plugin Image.Text gives an empty image, and that is fine.
+    disk = Image.Text(prompt, 0.62, 0.63, 0.78);
+    if (disk && disk.GetWidth() > 0 && disk.GetWidth() < screen_w * 0.9) {
+        global.disk_sprite = Sprite(disk);
+        global.disk_sprite.SetPosition(center_x(disk), panel.y + panel_image.GetHeight() + 8 * scale, 6);
+    }
 }
 Plymouth.SetDisplayPasswordFunction(display_password);
 
 fun display_normal () {
+    if (global.asking_for_password && global.bullets > 0) {
+        global.submitted = 1;
+        ask.unlocking.SetOpacity(1);
+    }
     global.asking_for_password = 0;
-    if (global.ask) { global.ask.sprite = NULL; global.ask = NULL; }
-    if (global.dot) { global.dot.sprite = NULL; global.dot = NULL; }
+    show_prompt(0);
+    logo.sprite.SetOpacity(1);
     spin.sprite.SetOpacity(1);
 }
 Plymouth.SetDisplayNormalFunction(display_normal);
 
 # ── messages ───────────────────────────────────────────────────────────────────────────────────
-# fsck progress and the like. One line, low on the screen, dim — present when it matters and not
-# competing with the mark when it does not.
+# fsck progress and the like. One line, low on the screen, dim. Text only exists where a label
+# plugin does, so this may draw nothing — nothing here depends on it.
 fun message (text) {
-    msg.image = Image.Text(text, 0.45, 0.50, 0.60);
-    msg.sprite = Sprite(msg.image);
-    msg.sprite.SetPosition(Window.GetX() + (Window.GetWidth() - msg.image.GetWidth()) / 2,
-                           Window.GetY() + (Window.GetHeight() * 0.86), 2);
-    global.msg = msg;
+    msg.image = Image.Text(text, 0.62, 0.63, 0.78);
+    if (msg.image && msg.image.GetWidth() > 0) {
+        msg.sprite = Sprite(msg.image);
+        msg.sprite.SetPosition(center_x(msg.image), Window.GetY() + screen_h * 0.90, 2);
+        global.msg = msg;
+    }
 }
 Plymouth.SetMessageFunction(message);
 
-fun quit () { spin.sprite.SetOpacity(0); }
+fun quit () {
+    spin.sprite.SetOpacity(0);
+    ask.unlocking.SetOpacity(0);
+    show_prompt(0);
+}
 Plymouth.SetQuitFunction(quit);
