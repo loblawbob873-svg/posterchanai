@@ -51,7 +51,7 @@ def state(host, mig):
 # ------------------------------------------------------------------------------------------ happy path
 def test_happy_path_moves_the_vm_and_everything_that_makes_it_that_vm(tmp_path):
     async def go():
-        w = World(tmp_path, keep_hours=0)
+        w = World(tmp_path, keep_hours=1)
         try:
             disk = seed_vm(w.S)
             want_disk, want_nvram = sha(disk), sha(disk.parent / "nvram.fd")
@@ -87,7 +87,10 @@ def test_happy_path_moves_the_vm_and_everything_that_makes_it_that_vm(tmp_path):
             # The user it is assigned to reaches it on the target now.
             got = await w.call(w.T, "vm.list", {}, sk=USER_SK)
             assert [v["uuid"] for v in got["result"]["vms"]] == [VM]
-            # Reaped only after the ack, and only after the keep window (0h here).
+            # Reaped only after the ack, and only after the keep window (1h here).
+            await w.S.migrator.housekeeping()
+            assert retained.exists(), "inside the keep window"
+            w.S.migrator.store.get(mig)["acked_at"] -= 2 * 3600
             await w.S.migrator.housekeeping()
             assert not retained.exists()
         finally:

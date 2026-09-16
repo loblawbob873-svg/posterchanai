@@ -41,11 +41,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import math
 import os
 import re
+import secrets
 import shutil
 import time
 import uuid as _uuid
@@ -72,6 +74,9 @@ NIP98_KIND = 27235
 NIP98_SKEW = 60
 
 _MIG_RE = re.compile(r"^[0-9a-f]{32}$")
+CHALLENGE_RANGES = 3            # random ranges per file, plus the file's tail
+CHALLENGE_LEN = 64 * 1024
+SERVED_PERSIST_EVERY = 64 << 20
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -123,6 +128,13 @@ def _cfg_int(s: dict, key: str, default: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, n))
 
 
+def _keep_hours(s: dict) -> int:
+    """0 = KEEP the source's retained copy until an admin deletes it (never "reap immediately": the retained copy
+    is the only fallback if the target's copy turns out bad). Otherwise at least an hour."""
+    n = _cfg_int(s, "vmhost_migration_keep_source_hours", 72, 0, 24 * 365)
+    return 0 if n == 0 else max(1, n)
+
+
 @dataclass
 class MigrateConfig:
     peers: list = field(default_factory=list)
@@ -136,7 +148,7 @@ class MigrateConfig:
         peers, bad = parse_peer_hosts(s.get("vmhost_peer_hosts", ""))
         return cls(peers=peers, peer_errors=bad,
                    shutdown_timeout_sec=_cfg_int(s, "vmhost_shutdown_timeout_sec", 120, 5, 3600),
-                   keep_source_hours=_cfg_int(s, "vmhost_migration_keep_source_hours", 72, 0, 24 * 365),
+                   keep_source_hours=_keep_hours(s),
                    transfer_max_mbps=_cfg_int(s, "vmhost_transfer_max_mbps", 0, 0, 100_000))
 
 
@@ -787,6 +799,7 @@ class Migrator:
         self._tasks: set = set()
         self._live: dict = {}            # mig -> {"phase","msg","bytes","total","at"}
         self._last_notify: dict = {}
+        self._served: dict = {}          # mig -> {file index: [[start, end), …]} bytes served since `transferring`
         self.closed = False
 
     @staticmethod
@@ -1213,7 +1226,8 @@ class Migrator:
         await self._notify(rec, "export", "exported", bytes_done=0, force=True)
 
     async def _begin(self, mig: str) -> None:
-        rec = await self._transition(mig, ("exporting",), "transferring")
+        rec = await self._transition(mig, ("exporting",), "transferring", served={}, challenge=None)
+        self._served[mig] = {}
         res = await self._peer_call(rec["target"], "peer.migrate.begin",
                                     {"migration": mig, "manifest_sha256": rec["manifest_sha256"],
                                      "manifest_sig": rec["manifest_sig"]})
@@ -1392,6 +1406,24 @@ class Migrator:
         rec = self._peer_rec(pk, args, "source")
         if rec is None:
             raise MigrationError("not_found", "no such migration")
+        if rec["state"] == "transferring":
+            # PROOF before the commit point: every byte served, and the target's answer to this host's challenge
+            # matches this host's own copy. Checked outside the lock (reads files); re-checked under it.
+            if not self._fully_served(rec):
+                raise MigrationError("conflict", "the transfer is not complete — this host has not served every file")
+            ch = rec.get("challenge")
+            proofs = args.get("proofs")
+            if not ch:
+                raise MigrationError("conflict", "answer this host's challenge first (peer.migrate.challenge)")
+            if not isinstance(proofs, list) or len(proofs) != len(ch["ranges"]) \
+                    or not all(isinstance(x, str) and _HEX64.match(x) for x in proofs):
+                raise MigrationError("bad_request", "the challenge answer is malformed")
+            want = await asyncio.to_thread(self._expected_proofs, rec, ch)
+            if not all(hmac.compare_digest(a, b) for a, b in zip(want, proofs)):
+                logger.warning("[vmhost] migration %s: the target's copy failed the challenge — aborting", rec["id"])
+                await self._abort_source(rec["id"], "the target host's copy does not match this host's disks",
+                                         tell_target=True)
+                raise MigrationError("aborted", "your copy does not match the source's disks")
         async with self._lock(rec["id"]):
             rec = self.store.get(rec["id"])
             st = rec["state"]
@@ -1401,7 +1433,7 @@ class Migrator:
                 return {"state": "handed_off"}
             if st in ("aborted", "reclaimed"):
                 raise MigrationError("aborted", "the source abandoned this migration")
-            if st != "transferring":
+            if st != "transferring" or not rec.get("challenge") or not self._fully_served(rec):
                 raise MigrationError("conflict", f"not ready to hand off ({st})")
             # THE COMMIT POINT. Journaled before anything is undone here.
             rec.update(state="handed_off", handed_at=time.time())
@@ -1436,6 +1468,78 @@ class Migrator:
                                  tell_source=False, allow_locked=True)
         return {"state": self.store.get(rec["id"])["state"]}
 
+    # ================================================================== source: what the target has PROVEN
+    def _coverage(self, mig: str) -> dict:
+        cov = self._served.get(mig)
+        if cov is None:
+            rec = self.store.get(mig) or {}
+            cov = self._served[mig] = {int(k): [list(x) for x in v] for k, v in (rec.get("served") or {}).items()}
+        return cov
+
+    @staticmethod
+    def _add_interval(ivs: list, a: int, b: int) -> list:
+        out = []
+        for s0, e0 in sorted(ivs + [[a, b]]):
+            if out and s0 <= out[-1][1]:
+                out[-1][1] = max(out[-1][1], e0)
+            else:
+                out.append([s0, e0])
+        return out
+
+    def _fully_served(self, rec: dict) -> bool:
+        cov = self._coverage(rec["id"])
+        return all(int(f["size"]) == 0 or cov.get(f["i"]) == [[0, int(f["size"])]] for f in rec.get("files") or [])
+
+    async def _persist_served(self, mig: str) -> None:
+        rec = self.store.get(mig)
+        if rec is None or rec["state"] != "transferring":
+            return
+        rec["served"] = {str(k): v for k, v in self._coverage(mig).items()}
+        await self._save(rec)
+
+    def _expected_proofs(self, rec: dict, ch: dict) -> list:
+        vm_dir = self.storage.vm_dir(rec["vm"])
+        nonce = bytes.fromhex(ch["nonce"])
+        out = []
+        for r in ch["ranges"]:
+            f = rec["files"][r["i"]]
+            with open(vm_dir / f["name"], "rb") as fh:
+                fh.seek(r["offset"])
+                out.append(hashlib.sha256(nonce + fh.read(r["length"])).hexdigest())
+        return out
+
+    async def _op_peer_migrate_challenge(self, pk, args):
+        """TARGET → SOURCE, before the commit: ranges of every file for the target to hash with a fresh nonce.
+        Issued only once every byte was served, and fixed from then on (journaled), so a target that fetches the
+        challenged ranges afterwards is too late — the transfer route refuses once a challenge exists."""
+        rec = self._peer_rec(pk, args, "source")
+        if rec is None:
+            raise MigrationError("not_found", "no such migration")
+        async with self._lock(rec["id"]):
+            rec = self.store.get(rec["id"])
+            if rec["state"] in ("handed_off", "locked", "done", "released"):
+                return {"state": "handed_off"}
+            if rec["state"] in ("aborted", "reclaimed"):
+                raise MigrationError("aborted", "the source abandoned this migration")
+            if rec["state"] != "transferring":
+                raise MigrationError("conflict", f"not ready to hand off ({rec['state']})")
+            if not self._fully_served(rec):
+                raise MigrationError("conflict", "the transfer is not complete — this host has not served every file")
+            if not rec.get("challenge"):
+                ranges = []
+                for f in rec.get("files") or []:
+                    size = int(f["size"])
+                    if size <= 0:
+                        continue
+                    length = min(CHALLENGE_LEN, size)
+                    offs = [secrets.randbelow(size - length + 1) for _ in range(CHALLENGE_RANGES)] + [size - length]
+                    ranges += [{"i": f["i"], "offset": o, "length": length} for o in offs]
+                rec["challenge"] = {"nonce": secrets.token_hex(32), "ranges": ranges, "at": _now_i()}
+                await self._persist_served(rec["id"])
+                await self._save(rec)
+            return {"state": "challenge", "challenge": {"nonce": rec["challenge"]["nonce"],
+                                                        "ranges": rec["challenge"]["ranges"]}}
+
     # ================================================================== source: serving the transfer
     async def serve_transfer(self, mig: str, index: str, authorization: Optional[str], range_header: Optional[str],
                              path: str):
@@ -1449,6 +1553,8 @@ class Migrator:
             return PlainTextResponse("unauthorized", status_code=401)
         if rec["state"] not in ("exporting", "transferring"):
             return PlainTextResponse("this migration is not transferring", status_code=409)
+        if rec.get("challenge"):
+            return PlainTextResponse("the transfer is closed — the target was challenged", status_code=409)
         mpath = self.store.manifest_path(mig)
         if index == "manifest":
             if not rec.get("manifest_sha256"):
@@ -1460,8 +1566,8 @@ class Migrator:
             return PlainTextResponse("no such file", status_code=404)
         files = rec.get("files") or []
         i = int(index)
-        if i >= len(files):
-            return PlainTextResponse("no such file", status_code=404)
+        if i >= len(files) or rec["state"] != "transferring":
+            return PlainTextResponse("no such file", status_code=404 if i >= len(files) else 409)
         f = files[i]
         try:
             full = self.storage.vm_dir(rec["vm"]) / f["name"]
@@ -1488,6 +1594,8 @@ class Migrator:
 
         async def body():
             fh = await asyncio.to_thread(open, full, "rb")
+            cov = self._coverage(mig)
+            unsaved = 0
             try:
                 await asyncio.to_thread(fh.seek, start)
                 left = end - start + 1
@@ -1495,17 +1603,28 @@ class Migrator:
                 served = start
                 while left > 0:
                     cur = self.store.get(mig)
-                    if cur is None or cur["state"] not in ("exporting", "transferring"):
+                    if cur is None or cur["state"] != "transferring" or cur.get("challenge"):
                         return               # aborted mid-stream: a short body the target will not accept
                     b = await asyncio.to_thread(fh.read, min(chunk, left))
                     if not b:
                         return
                     left -= len(b)
-                    served += len(b)
                     yield b
+                    # Counted only once the chunk was taken by the consumer: served, not merely read.
+                    cov[i] = self._add_interval(cov.get(i, []), served, served + len(b))
+                    served += len(b)
+                    unsaved += len(b)
+                    if unsaved >= SERVED_PERSIST_EVERY:
+                        unsaved = 0
+                        await self._persist_served(mig)
                     await pacer.tick(len(b))
             finally:
                 await asyncio.to_thread(fh.close)
+                if unsaved:
+                    try:
+                        await self._persist_served(mig)
+                    except Exception as e:
+                        logger.debug("[vmhost] migration %s: coverage not saved: %s", mig, e)
 
         headers = {"Content-Length": str(end - start + 1), "Accept-Ranges": "bytes", "Cache-Control": "no-store",
                    "X-Accel-Buffering": "no"}
@@ -1924,7 +2043,17 @@ class Migrator:
             rec = self.store.get(mig)
             if rec["state"] not in ("defined", "locked"):
                 return
-            res = await self._peer_call(rec["source"], "peer.migrate.commit", {"migration": mig}, retries=0)
+            res = await self._peer_call(rec["source"], "peer.migrate.challenge", {"migration": mig}, retries=0)
+            if res is not None and res.get("ok"):
+                ch = (res.get("result") or {}).get("challenge")
+                args = {"migration": mig}
+                if ch is not None:
+                    try:
+                        args["proofs"] = await asyncio.to_thread(self._answer_challenge, rec, ch)
+                    except (MigrationAbort, OSError, ValueError, KeyError, TypeError) as e:
+                        logger.warning("[vmhost] migration %s: cannot answer the source's challenge: %s", mig, e)
+                        args["proofs"] = []
+                res = await self._peer_call(rec["source"], "peer.migrate.commit", args, retries=0)
             if res is not None and res.get("ok"):
                 await self._finalize_target(mig)
                 return
@@ -1942,6 +2071,26 @@ class Migrator:
                         await self._notify(rec, "locked", rec["error"], force=True)
             await asyncio.sleep(delay)
             delay = min(delay * 2, self.t.commit_retry_max)
+
+    def _answer_challenge(self, rec: dict, ch: dict) -> list:
+        """SHA-256(nonce ‖ bytes) over each challenged range of THIS host's placed copy. Every range is validated
+        against the verified manifest — the source cannot use a challenge to read arbitrary host files."""
+        manifest = self._read_manifest(rec)
+        files = manifest["files"]
+        nonce = bytes.fromhex(str(ch.get("nonce", "")))
+        ranges = ch.get("ranges")
+        if len(nonce) != 32 or not isinstance(ranges, list) or len(ranges) > 64 * (CHALLENGE_RANGES + 1):
+            raise MigrationAbort("a malformed challenge")
+        vm_dir = self.storage.root / rec["vm"]
+        out = []
+        for r in ranges:
+            i, off, ln = int(r["i"]), int(r["offset"]), int(r["length"])
+            if not 0 <= i < len(files) or not 0 < ln <= CHALLENGE_LEN or not 0 <= off <= int(files[i]["size"]) - ln:
+                raise MigrationAbort("a malformed challenge")
+            with open(vm_dir / files[i]["name"], "rb") as fh:
+                fh.seek(off)
+                out.append(hashlib.sha256(nonce + fh.read(ln)).hexdigest())
+        return out
 
     async def _finalize_target(self, mig: str) -> None:
         async with self._lock(mig):
@@ -2075,6 +2224,7 @@ class Migrator:
         now = _now_i()
         for rec in list(self.store.all()):
             if rec["role"] == "source" and rec["state"] == "done" and rec.get("acked_at") \
+                    and self.mcfg.keep_source_hours > 0 \
                     and rec.get("retained") and not rec.get("retained_reaped") \
                     and now - int(rec["acked_at"]) >= self.mcfg.keep_source_hours * 3600:
                 path = self.storage.root / ".retained" / rec["retained"]

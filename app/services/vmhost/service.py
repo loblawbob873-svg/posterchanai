@@ -701,6 +701,7 @@ MIGRATION_OPS = {
     "peer.migrate.precheck":    ("peer", False),
     "peer.migrate.begin":       ("peer", False),
     "peer.migrate.status":      ("peer", False),
+    "peer.migrate.challenge":   ("peer", False),
     "peer.migrate.commit":      ("peer", False),
     "peer.migrate.ack":         ("peer", False),
     "peer.migrate.abort":       ("peer", False),
