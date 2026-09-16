@@ -74,7 +74,12 @@ const conflicts=await R.inspectVoicePresence(member,copy(editions),channel,copy(
 assert(V.fold(conflicts,ms).every(p=>p.verified===false),'two identity claimants cannot be attributed');
 const left=await R.inspectVoicePresence(member,copy(editions),channel,copy([externalPresence(ms+1,'left')]));
 assert.equal(V.fold([...opened,...left],ms+1).length,0);
-const tampered=copy(external);tampered.content=tampered.content.slice(0,-1)+'A';
+// Replacing a random base64 suffix with 'A' was occasionally a no-op. Flip a real
+// ciphertext byte while retaining canonical base64 and the original event signature.
+const tampered=copy(external),ciphertext=Buffer.from(tampered.content,'base64');
+ciphertext[Math.floor(ciphertext.length/2)]^=1;
+tampered.content=ciphertext.toString('base64');
+assert.notEqual(tampered.content,external.content,'tamper vector must change signed content');
 assert.equal((await R.inspectVoicePresence(member,copy(editions),channel,[tampered])).length,0);
 assert.equal((await R.inspectVoicePresence(member,copy(editions),channel,copy([{...external,kind:1059}]))).length,0);
 const produced=await R.createVoicePresence(member,copy(editions),channel,'joined',owner,t=>Promise.resolve(sign(t)),identity,'https://broker.example');
