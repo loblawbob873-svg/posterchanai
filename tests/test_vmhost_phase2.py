@@ -290,6 +290,27 @@ def fetch_setup(tmp_path, handler, **cfg):
     return svc, be, root, seen
 
 
+async def fetch_and_wait(svc, args, rid="f", progress=None, who=None):
+    """iso.fetch is a background job: start it and wait for its end, answering in the old synchronous shape
+    ({ok, result: {iso}} | {ok: false, error}) so a test reads what an admin eventually sees."""
+    res = await svc.handle(who or ADMIN, "iso.fetch", args, rid, progress)
+    if not res.get("ok"):
+        return res
+    jid = res["result"]["job"]["id"]
+    for _ in range(2000):
+        job = svc._iso_jobs()[jid]
+        if job["state"] != "running":
+            break
+        await asyncio.sleep(0.005)
+    if job["state"] == "done":
+        return {"ok": True, "result": {"iso": job["iso"], "job": svc._job_view(job)}}
+    return {"ok": False, "error": {"code": job.get("code", "backend_error"), "message": job["error"]}}
+
+
+def fc(svc, args, rid="f", progress=None):
+    return run(fetch_and_wait(svc, args, rid, progress))
+
+
 def no_parts(root):
     inc = root / "isos" / ".incoming"
     return not inc.exists() or not os.listdir(inc)
@@ -302,14 +323,14 @@ def test_fetch_streams_hashes_and_adds_to_the_library(tmp_path):
 
     async def prog(p):
         progress.append(p)
-    res = run(svc.handle(ADMIN, "iso.fetch", {"url": "https://mirror.example/pub/debian-12.iso"}, "f", prog))
+    res = fc(svc, {"url": "https://mirror.example/pub/debian-12.iso"}, "f", prog)
     assert res["ok"], res
     iso = res["result"]["iso"]
     assert iso["id"] == "debian-12.iso" and iso["size"] == len(body)
     assert iso["sha256"] == hashlib.sha256(body).hexdigest()
     assert (root / "isos" / "debian-12.iso").read_bytes() == body and no_parts(root)
     assert [i["id"] for i in c(svc, ADMIN, "iso.list", {}, "l")["result"]["isos"]] == ["debian-12.iso"]
-    again = c(svc, ADMIN, "iso.fetch", {"url": "https://mirror.example/pub/debian-12.iso"}, "f2")
+    again = fc(svc, {"url": "https://mirror.example/pub/debian-12.iso"}, "f2")
     assert again["error"]["code"] == "conflict" and no_parts(root)
 
 
@@ -318,7 +339,7 @@ def test_fetch_streams_hashes_and_adds_to_the_library(tmp_path):
                                  "ftp://mirror.example/x.iso"])
 def test_fetch_refuses_private_and_non_http_targets_without_a_request(tmp_path, url):
     svc, be, root, seen = fetch_setup(tmp_path, lambda r: httpx.Response(200, content=b"x"))
-    res = c(svc, ADMIN, "iso.fetch", {"url": url})
+    res = fc(svc, {"url": url})
     assert res["ok"] is False and res["error"]["code"] == "forbidden", res
     assert seen == [] and no_parts(root)
 
@@ -329,7 +350,7 @@ def test_a_redirect_to_the_metadata_service_is_refused_and_never_requested(tmp_p
             return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/meta-data/x.iso"})
         return httpx.Response(200, content=b"SECRET")
     svc, be, root, seen = fetch_setup(tmp_path, handler)
-    res = c(svc, ADMIN, "iso.fetch", {"url": "https://mirror.example/x.iso"})
+    res = fc(svc, {"url": "https://mirror.example/x.iso"})
     assert res["ok"] is False and res["error"]["code"] == "forbidden"
     assert seen == ["https://mirror.example/x.iso"], "the redirect target must never be requested"
     assert no_parts(root) and os.listdir(root / "isos") in ([], [".incoming"])
@@ -341,7 +362,7 @@ def test_a_public_redirect_is_followed(tmp_path):
             return httpx.Response(301, headers={"location": "https://b.example/real/alpine.iso"})
         return httpx.Response(200, content=b"ISO!")
     svc, be, root, seen = fetch_setup(tmp_path, handler)
-    res = c(svc, ADMIN, "iso.fetch", {"url": "https://a.example/latest"})
+    res = fc(svc, {"url": "https://a.example/latest"})
     assert res["ok"] and res["result"]["iso"]["id"] == "alpine.iso"
 
 
@@ -350,7 +371,7 @@ def test_oversize_is_refused_on_the_header_and_on_the_stream(tmp_path, monkeypat
     big = 2 << 30
     svc, be, root, seen = fetch_setup(tmp_path, lambda r: httpx.Response(200, headers={"content-length": str(big)},
                                                                           content=b""))
-    res = c(svc, ADMIN, "iso.fetch", {"url": "https://mirror.example/big.iso"})
+    res = fc(svc, {"url": "https://mirror.example/big.iso"})
     assert res["error"]["code"] == "insufficient_capacity" and no_parts(root)
 
     def endless(r):
@@ -359,14 +380,14 @@ def test_oversize_is_refused_on_the_header_and_on_the_stream(tmp_path, monkeypat
                 yield b"\x00" * (1 << 20)
         return httpx.Response(200, content=gen())
     svc2, be2, root2, _ = fetch_setup(tmp_path / "two", endless)
-    res2 = c(svc2, ADMIN, "iso.fetch", {"url": "https://mirror.example/liar.iso"})
+    res2 = fc(svc2, {"url": "https://mirror.example/liar.iso"})
     assert res2["error"]["code"] == "insufficient_capacity"
     assert no_parts(root2) and not (root2 / "isos" / "liar.iso").exists()
 
 
 def test_fetch_can_be_turned_off(tmp_path):
     svc, be, root, seen = fetch_setup(tmp_path, lambda r: httpx.Response(200, content=b"x"), iso_fetch_enabled=False)
-    assert c(svc, ADMIN, "iso.fetch", {"url": "https://mirror.example/x.iso"})["error"]["code"] == "forbidden"
+    assert fc(svc, {"url": "https://mirror.example/x.iso"})["error"]["code"] == "forbidden"
     assert seen == []
 
 

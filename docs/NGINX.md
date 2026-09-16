@@ -72,6 +72,12 @@ temp directory before the target sees a byte) and keeps the 3600s timeouts. Like
 location it sets no `proxy_set_header`. A host behind a proxy that cannot stream this (or that
 strips `Authorization` / `Range`) cannot be a migration source.
 
+**VM host ISO upload** (`location ^~ /api/vmhost/iso/`): an admin's `PUT /api/vmhost/iso/<ticket>` carries a
+whole installer image. The location sets `proxy_request_buffering off` (otherwise nginx spools the full
+upload to its temp directory before the app sees a byte, and the app's size and disk checks run only
+after the disk was already filled), `client_max_body_size 0` (the app enforces the size the single-use
+ticket declared, and stops reading past it) and `proxy_read_timeout 3600s`. No `proxy_set_header`.
+
 ## Mini apps (webxdc): a second hostname, `xdc.example.com`
 
 `.xdc` games, polls and shared editors are code somebody else wrote. They run in an iframe, and the

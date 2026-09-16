@@ -843,7 +843,7 @@ class Migrator:
         await asyncio.to_thread(self.store.write, snapshot)
         self.store.put(rec)
 
-    def reserved_bytes(self, exclude: Optional[str] = None) -> int:
+    def reserved_bytes(self, exclude: Optional[str] = None, include_service: bool = True) -> int:
         """Disk this host has PROMISED and not yet written: every incoming migration that is not placed yet, at
         what its precheck reserved minus what already landed (landed bytes already show in the free space), plus
         whatever the service reserves for ISO transfers and thin VM disks."""
@@ -852,7 +852,7 @@ class Migrator:
             if r["role"] == "target" and r["state"] in ("prechecked", "receiving", "defining") and r["id"] != exclude:
                 n += max(0, int(r.get("precheck_bytes") or r.get("bytes_total") or 0) - int(r.get("bytes_done") or 0))
         extra = getattr(self.svc, "other_reserved_bytes", None)
-        if callable(extra):
+        if include_service and callable(extra):
             try:
                 n += int(extra())
             except Exception:
@@ -1720,6 +1720,9 @@ class Migrator:
             raise MigrationError("unsupported", "the target host's VM storage is not writable")
         if total <= 0:
             raise MigrationError("bad_request", "malformed precheck")
+        refresh = getattr(self.svc, "refresh_thin_reservation", None)
+        if callable(refresh):
+            await refresh()
         st = await self.backend.host_stats(str(self.storage.root))
         need_gib = math.ceil(1.1 * total / GIB) + self.svc.cfg.reserve_disk_gib
         free_gib = int(st.get("disk_free_gib") or 0)

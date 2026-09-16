@@ -401,6 +401,10 @@ async def _run(cfg, stop: asyncio.Event) -> None:
 
     tr = Transport(svc, sk, publish)
     _state["transport"] = tr
+    try:
+        await svc.cleanup_incoming(older_than=0)       # nothing can own a half-written transfer at startup
+    except Exception as e:
+        logger.warning("[vmhost] could not clean stale incoming transfers: %s", e)
     # Phase 3: cold migration (peers from vmhost_peer_hosts; resumes unfinished migrations from the journal).
     try:
         from app.services import settings_store
@@ -426,6 +430,10 @@ async def _run(cfg, stop: asyncio.Event) -> None:
                     await migrator.housekeeping()
                 except Exception as e:
                     logger.warning("[vmhost] migration housekeeping failed: %s", e)
+            try:
+                await svc.cleanup_incoming()
+            except Exception as e:
+                logger.warning("[vmhost] cleaning stale incoming transfers failed: %s", e)
             if cfg.announce and time.time() - last_announce > ANNOUNCE_EVERY:
                 try:
                     await publish(build_announcement(sk, cfg))
@@ -474,6 +482,10 @@ async def stop() -> None:
         from . import service as service_mod
         old = service_mod.current()
         if old is not None:
+            try:
+                await old.close_background()           # ISO downloads started under the old configuration
+            except Exception:
+                pass
             # The next start builds a new service with a new console registry; this is the last moment
             # anything can reach the sockets opened under the old configuration (whose access lists
             # the Save may just have narrowed).

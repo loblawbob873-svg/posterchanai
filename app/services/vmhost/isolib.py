@@ -45,6 +45,10 @@ from .storage import PathEscape, clean_iso_name
 logger = logging.getLogger(__name__)
 
 ISO_MAX_GIB = 32
+ISO_MAX_CONCURRENT = 2          # fetches and uploads together, on one host
+JOB_KEEP_SEC = 3600             # a finished fetch job stays readable (iso.fetch.status) this long
+MAX_JOBS_KEPT = 32
+PART_STALE_SEC = 3600
 MAX_REDIRECTS = 5
 PROGRESS_EVERY = 2.0
 UPLOAD_TICKET_TTL = 600
@@ -252,15 +256,120 @@ class UploadTickets:
 
 # ---------------------------------------------------------------------------------------- ops mixin
 class IsoOps:
+    # ---- disk this host has promised and not yet written
+    def _iso_state(self) -> dict:
+        if not hasattr(self, "_iso_state_d"):
+            self._iso_state_d = {"uploads": {}, "tasks": {}, "thin": 0}
+        return self._iso_state_d
+
+    def _iso_reserved_bytes(self) -> int:
+        st = self._iso_state()
+        jobs = sum(int(j.get("reserved") or 0) for j in self._iso_jobs().values() if j["state"] == "running")
+        return jobs + sum(st["uploads"].values())
+
+    def _iso_active(self) -> int:
+        return sum(1 for j in self._iso_jobs().values() if j["state"] == "running") + len(self._iso_state()["uploads"])
+
+    async def refresh_thin_reservation(self) -> int:
+        """Bytes every managed VM's disk may still grow by: its provisioned size (pc:vm disk_gib) minus what its
+        directory has actually allocated. A thin qcow2 promised 100 GiB occupies almost nothing today."""
+        try:
+            domains = await self.backend.list_domains()
+        except Exception:
+            return self._iso_state()["thin"]
+
+        def allocated(vm):
+            total = 0
+            try:
+                with os.scandir(self.storage.vm_dir(vm)) as it:
+                    for e in it:
+                        if e.is_file(follow_symlinks=False):
+                            total += e.stat(follow_symlinks=False).st_blocks * 512
+            except (OSError, PathEscape):
+                pass
+            return total
+        promised = 0
+        for d in domains:
+            if d.meta is not None and d.meta.disk_gib:
+                promised += max(0, int(d.meta.disk_gib) * (1 << 30) - await asyncio.to_thread(allocated, d.uuid))
+        self._iso_state()["thin"] = promised
+        return promised
+
+    def other_reserved_bytes(self) -> int:
+        """For the migrator's free-space checks: ISO transfers in flight plus thin-disk growth (last measured)."""
+        return self._iso_reserved_bytes() + int(self._iso_state()["thin"])
+
     async def _iso_cap(self) -> int:
         st = await self.backend.host_stats(str(self.storage.root))
-        room_gib = int(st.get("disk_free_gib") or 0) - self.cfg.reserve_disk_gib
-        return max(0, min(ISO_MAX_GIB, room_gib)) * (1 << 30)
+        thin = await self.refresh_thin_reservation()
+        incoming = self.migrator.reserved_bytes(include_service=False) if getattr(self, "migrator", None) else 0
+        room = (int(st.get("disk_free_gib") or 0) - self.cfg.reserve_disk_gib) * (1 << 30) \
+            - self._iso_reserved_bytes() - thin - incoming
+        return max(0, min(ISO_MAX_GIB * (1 << 30), room))
 
     def _iso_jobs(self) -> dict:
         if not hasattr(self, "_iso_jobs_d"):
             self._iso_jobs_d = {}
         return self._iso_jobs_d
+
+    def _job_view(self, job: dict) -> dict:
+        return {k: job.get(k) for k in ("id", "url", "bytes", "total", "state", "error", "iso", "started", "ended")}
+
+    def _prune_jobs(self) -> None:
+        jobs = self._iso_jobs()
+        now = time.time()
+        done = sorted((j for j in jobs.values() if j["state"] != "running"), key=lambda j: j.get("ended") or 0)
+        for j in done:
+            if now - (j.get("ended") or now) > JOB_KEEP_SEC or len(jobs) > MAX_JOBS_KEPT:
+                jobs.pop(j["id"], None)
+
+    async def cleanup_incoming(self, older_than: float = PART_STALE_SEC) -> int:
+        """Remove `.part` files no running transfer owns, and migration `.incoming/<id>` directories no unfinished
+        migration owns, once they are `older_than` seconds old (0 at startup, when nothing can own one)."""
+        st = self._iso_state()
+        live = {j.get("part") for j in self._iso_jobs().values() if j["state"] == "running"} | set(st["uploads"])
+        m = getattr(self, "migrator", None)
+        owned = set()
+        if m is not None:
+            from .migrate import FINAL
+            owned = {r["id"] for r in m.store.all() if r["role"] == "target" and r["state"] not in FINAL}
+        cutoff = time.time() - older_than
+
+        def sweep():
+            n = 0
+            inc = self.storage.iso_dir / ".incoming"
+            try:
+                entries = list(os.scandir(inc))
+            except OSError:
+                entries = []
+            for e in entries:
+                if e.name.endswith(".part") and str(inc / e.name) not in live and e.is_file(follow_symlinks=False) \
+                        and e.stat(follow_symlinks=False).st_mtime <= cutoff:
+                    _unlink(inc / e.name)
+                    n += 1
+            import re
+            import shutil
+            minc = self.storage.root / ".incoming"
+            try:
+                entries = list(os.scandir(minc))
+            except OSError:
+                entries = []
+            for e in entries:
+                if re.fullmatch(r"[0-9a-f]{32}", e.name) and e.name not in owned and e.is_dir(follow_symlinks=False) \
+                        and e.stat(follow_symlinks=False).st_mtime <= cutoff:
+                    shutil.rmtree(minc / e.name, ignore_errors=True)
+                    n += 1
+            return n
+        n = await asyncio.to_thread(sweep)
+        if n:
+            logger.info("[vmhost] removed %d stale incoming transfer file(s)", n)
+        return n
+
+    async def close_background(self) -> None:
+        tasks = list(self._iso_state()["tasks"].values())
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _upload_tickets(self) -> UploadTickets:
         if not hasattr(self, "_upload_tickets_o"):
@@ -287,6 +396,9 @@ class IsoOps:
         return {"id": name, "name": name, "size": size, "sha256": sha}
 
     async def _op_iso_fetch(self, pk, role, args, progress):
+        """Start a download and answer AT ONCE with the job: a multi-GB fetch must not hold the admin's busy slot or
+        their request open for its whole length. Progress goes out as 7310 events tagged to this request; the job is
+        read with iso.fetch.status and stopped with iso.fetch.cancel."""
         if not self.cfg.iso_fetch_enabled:
             raise _err("forbidden", "downloading ISOs by URL is turned off on this host")
         url = args.get("url")
@@ -299,18 +411,40 @@ class IsoOps:
         pre = clean_iso_name(want_name) if want_name else ""
         if want_name and not pre:
             raise _err("bad_request", "that is not a usable ISO file name")
+        from app.services import rss_service
+        if not rss_service.looks_fetchable(url):
+            raise _err("forbidden", "that address is not allowed (private, local or not http/https)")
+        if self._iso_active() >= ISO_MAX_CONCURRENT:
+            raise _err("busy", f"this host already runs {ISO_MAX_CONCURRENT} ISO transfers — try again when one ends")
         cap = await self._iso_cap()
         if cap <= 0:
             raise _err("insufficient_capacity", "this host has no free disk for ISOs")
+        if self._iso_active() >= ISO_MAX_CONCURRENT:                 # re-checked after the await above
+            raise _err("busy", f"this host already runs {ISO_MAX_CONCURRENT} ISO transfers — try again when one ends")
         inc = await asyncio.to_thread(self.storage.iso_incoming)
         part = inc / (secrets.token_hex(12) + ".part")
-        job = {"id": part.stem, "url": url[:200], "bytes": 0, "total": 0, "state": "running", "by": pk}
+        job = {"id": part.stem, "url": url[:200], "bytes": 0, "total": 0, "state": "running", "by": pk,
+               "reserved": cap, "part": str(part), "error": "", "iso": None, "started": int(time.time()), "ended": 0}
+        self._prune_jobs()
         self._iso_jobs()[job["id"]] = job
+        task = asyncio.create_task(self._run_fetch_job(job, url, pre, part, cap, progress))
+        self._iso_state()["tasks"][job["id"]] = task
+        task.add_done_callback(lambda t, jid=job["id"]: self._iso_state()["tasks"].pop(jid, None))
+        return {"job": self._job_view(job)}
+
+    async def _run_fetch_job(self, job: dict, url: str, pre: str, part: Path, cap: int, progress) -> None:
+        async def tell(p):
+            if progress:
+                try:
+                    await progress(dict(p, job=job["id"]))
+                except Exception:
+                    pass
 
         async def prog(p):
             job["bytes"], job["total"] = p.get("bytes", 0), p.get("total", 0)
-            if progress:
-                await progress(p)
+            if job["total"]:
+                job["reserved"] = min(cap, int(job["total"]))           # the size is known: reserve only that
+            await tell(p)
         try:
             try:
                 got = await fetch_to_part(url, part, cap, progress=prog,
@@ -320,11 +454,46 @@ class IsoOps:
                 raise _err(e.code, e.message)
             name = pre or clean_iso_name(got["filename"])
             if not name:
-                _unlink(part)
                 raise _err("bad_request", "the URL has no usable file name — give one")
-            return {"iso": await self._finish_iso(part, name, got["size"], got["sha256"])}
+            job["bytes"] = got["size"]
+            job["iso"] = await self._finish_iso(part, name, got["size"], got["sha256"])
+            job["state"] = "done"
+            await tell({"phase": "done", "msg": "added " + name, "iso": job["iso"]})
+        except asyncio.CancelledError:
+            job["state"], job["error"] = "cancelled", "cancelled by an admin"
+            _unlink(part)
+            raise
+        except Exception as e:
+            job["state"] = "failed"
+            job["error"] = getattr(e, "message", None) or type(e).__name__
+            job["code"] = getattr(e, "code", "backend_error")
+            _unlink(part)
+            logger.info("[vmhost] ISO fetch %s failed: %s", job["id"], job["error"])
+            await tell({"phase": "failed", "msg": job["error"], "code": job["code"]})
         finally:
-            self._iso_jobs().pop(job["id"], None)
+            job["ended"] = int(time.time())
+            job["reserved"] = 0
+
+    async def _op_iso_fetch_status(self, pk, role, args, progress):
+        self._prune_jobs()
+        jid = args.get("job")
+        if jid is None:
+            return {"jobs": [self._job_view(j) for j in self._iso_jobs().values()]}
+        job = self._iso_jobs().get(jid) if isinstance(jid, str) else None
+        if job is None:
+            raise _err("not_found", "no such download")
+        return {"job": self._job_view(job)}
+
+    async def _op_iso_fetch_cancel(self, pk, role, args, progress):
+        jid = args.get("job")
+        job = self._iso_jobs().get(jid) if isinstance(jid, str) else None
+        if job is None:
+            raise _err("not_found", "no such download")
+        task = self._iso_state()["tasks"].get(jid)
+        if job["state"] == "running" and task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        return {"job": self._job_view(job)}
 
     async def _op_iso_upload_ticket(self, pk, role, args, progress):
         name = clean_iso_name(args.get("name")) if isinstance(args.get("name"), str) else ""
@@ -353,12 +522,24 @@ class IsoOps:
             raise _err("forbidden", "this upload ticket is invalid, expired or already used")
         if await self.role_of(t.pubkey) != "admin":
             raise _err("forbidden", "only a host admin can upload ISOs")
+        if self._iso_active() >= ISO_MAX_CONCURRENT:
+            raise _err("busy", f"this host already runs {ISO_MAX_CONCURRENT} ISO transfers — try again when one ends")
         cap = await self._iso_cap()
         limit = min(t.size, cap)
         if t.size > cap:
             raise _err("insufficient_capacity", "this host no longer has room for that ISO")
+        if self._iso_active() >= ISO_MAX_CONCURRENT:
+            raise _err("busy", f"this host already runs {ISO_MAX_CONCURRENT} ISO transfers — try again when one ends")
         inc = await asyncio.to_thread(self.storage.iso_incoming)
         part = inc / (secrets.token_hex(12) + ".part")
+        uploads = self._iso_state()["uploads"]
+        uploads[str(part)] = t.size                                  # reserved until this upload ends, either way
+        try:
+            return await self._receive_into(t, part, limit, chunks)
+        finally:
+            uploads.pop(str(part), None)
+
+    async def _receive_into(self, t, part: Path, limit: int, chunks) -> dict:
         h = hashlib.sha256()
         size = 0
         fd = await asyncio.to_thread(os.open, str(part), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)

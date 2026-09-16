@@ -76,6 +76,8 @@ OPS = {
     "vm.snapshot.revert":  ("admin", True),
     "vm.snapshot.delete":  ("admin", True),
     "iso.fetch":           ("admin", True),
+    "iso.fetch.status":    ("admin", False),
+    "iso.fetch.cancel":    ("admin", False),
     "iso.upload_ticket":   ("admin", False),
     "iso.delete":          ("admin", True),
     "host.access.get":     ("admin", False),
@@ -426,7 +428,8 @@ class VmHostService(HardwareOps, IsoOps, AccessOps, SessionOps):
         return {"vm": view}
 
     async def _op_iso_list(self, pk, role, args, progress):
-        jobs = [{k: j[k] for k in ("id", "url", "bytes", "total", "state")} for j in self._iso_jobs().values()]
+        self._prune_jobs()
+        jobs = [self._job_view(j) for j in self._iso_jobs().values()]
         return {"isos": await asyncio.to_thread(self.storage.list_isos), "jobs": jobs,
                 "fetch_enabled": self.cfg.iso_fetch_enabled}
 

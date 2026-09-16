@@ -441,17 +441,4 @@ def test_peer_hosts_parse_and_report_bad_lines():
     assert len(bad) == 4
 
 
-def test_nginx_streams_the_transfer_route_without_setting_headers():
-    """The transfer location must exist in both shipped proxy configs, be unbuffered both ways, and set
-    NO proxy_set_header (an array directive: one here would drop every server-level header)."""
-    import re
-    from pathlib import Path
-    root = Path(__file__).resolve().parents[1]
-    for rel in ("nginx/posterchanai.conf.example", "docker/proxy/posterchanai.conf"):
-        text = (root / rel).read_text()
-        m = re.search(r"location \^~ /api/vmhost/transfer/ \{(.*?)\}", text, re.S)
-        assert m, rel
-        body = m.group(1)
-        assert "proxy_buffering off;" in body and "proxy_request_buffering off;" in body, rel
-        assert "proxy_set_header" not in body, rel
-        assert text.index("location ^~ /api/vmhost/transfer/") < text.index("location ^~ /api/ {"), rel
+# The nginx transfer/upload locations are checked by PARSING both shipped configs: tests/test_vmhost_iso_limits.py.

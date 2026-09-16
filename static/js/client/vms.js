@@ -735,13 +735,45 @@
     const url = await PC.uiPrompt('Download an installer ISO to this host from a URL (http/https, public addresses only)', { placeholder: 'https://cdimage.debian.org/…/debian.iso', ok: 'Download' });
     if(!url || S.iso !== I) return;
     I.busy = true; I.msg = 'Asking the host to download…'; paint();
-    const r = await call(pk, 'iso.fetch', { url: url.trim() }, { timeout: 6 * 3600 * 1000, retries: 0,
-      onProgress: p => { if(S.iso === I){ I.msg = 'Downloading… ' + mib(p.bytes) + (p.total ? ' of ' + mib(p.total) + (p.pct != null ? ' (' + p.pct + '%)' : '') : ''); paintIsoMsg(); } } });
+    const r = await call(pk, 'iso.fetch', { url: url.trim() }, { retries: 0,
+      onProgress: p => { if(S.iso === I && p && p.bytes != null){ I.msg = isoProgressText(p); paintIsoMsg(); } } });
     if(S.iso !== I) return;
     I.busy = false;
-    if(r.ok){ I.msg = 'Added ' + r.result.iso.name + ' (sha256 ' + String(r.result.iso.sha256 || '').slice(0, 16) + '…)'; openIsos(pk); return; }
-    I.msg = r.noAnswer ? 'No answer from the host — the download may still be running; refresh the library.' : (r.error.message || r.error.code);
-    paint();
+    if(!r.ok){ I.msg = r.noAnswer ? 'No answer from the host — the download may still have started; refresh the library.' : (r.error.message || r.error.code); paint(); return; }
+    if(r.result.iso){ isoAdded(pk, I, r.result.iso); return; }          // a host from before background downloads
+    const job = r.result.job || {};
+    I.msg = 'Downloading on the host…'; paint();
+    watchIsoJob(pk, I, job.id);
+  }
+  const isoProgressText = p => 'Downloading… ' + mib(p.bytes) + (p.total ? ' of ' + mib(p.total) + (p.pct != null ? ' (' + p.pct + '%)' : '') : '');
+  function isoAdded(pk, I, iso){ I.msg = 'Added ' + iso.name + ' (sha256 ' + String(iso.sha256 || '').slice(0, 16) + '…)'; openIsos(pk); }
+  // A download is a job on the HOST: this page only watches it (and may go away and come back — iso.list shows it).
+  async function watchIsoJob(pk, I, id){
+    let misses = 0;
+    while(S.iso === I && id){
+      await new Promise(res => setTimeout(res, 2000));
+      if(S.iso !== I) return;
+      const r = await call(pk, 'iso.fetch.status', { job: id }, { retries: 0 });
+      if(S.iso !== I) return;
+      if(!r.ok){
+        if(r.noAnswer && ++misses < 30) continue;
+        I.msg = r.noAnswer ? 'No answer from the host — refresh the library to see the download.' : (r.error.message || r.error.code);
+        paint(); return;
+      }
+      misses = 0;
+      const j = r.result.job || {};
+      if(j.state === 'running'){ I.msg = isoProgressText(j); paintIsoMsg(); continue; }
+      if(j.state === 'done' && j.iso){ isoAdded(pk, I, j.iso); return; }
+      I.msg = j.state === 'cancelled' ? 'The download was cancelled.' : ('The download failed: ' + (j.error || 'unknown error'));
+      paint(); return;
+    }
+  }
+  async function isoCancel(pk, id){
+    const I = S.iso;
+    const r = await call(pk, 'iso.fetch.cancel', { job: id }, { retries: 0 });
+    if(S.iso !== I) return;
+    if(!r.ok){ toast(r.noAnswer ? 'No answer from the host' : (r.error.message || r.error.code)); return; }
+    openIsos(pk);
   }
   function httpBase(h){
     if(h && /^https?:\/\//.test(h.https || '')) return h.https.replace(/\/+$/, '');
@@ -1299,7 +1331,7 @@
     const list = I.list == null ? (I.loading ? '<div class="spinner"></div>' : '')
       : (I.list.length ? `<div class="vms-list">${I.list.map(i => `<div class="vms-iso"><span><b>${esc(i.name)}</b><small class="vms-seen"> ${esc(mib(i.size))}</small></span><button class="btn small btn-red" data-iso-delete="${esc(i.id)}" ${I.busy ? 'disabled' : ''}>Delete</button></div>`).join('')}</div>`
         : '<div class="empty vms-empty">The library is empty.</div>');
-    const jobs = (I.jobs || []).map(j => `<div class="vms-seen"><span class="spinner spinner-inline"></span>Downloading ${esc(j.url)} — ${esc(mib(j.bytes))}${j.total ? ' of ' + esc(mib(j.total)) : ''}</div>`).join('');
+    const jobs = (I.jobs || []).filter(j => !j.state || j.state === 'running').map(j => `<div class="vms-seen"><span class="spinner spinner-inline"></span>Downloading ${esc(j.url)} — ${esc(mib(j.bytes))}${j.total ? ' of ' + esc(mib(j.total)) : ''} <button class="btn btn-sm" data-act="iso-cancel" data-job="${esc(j.id || '')}">Cancel</button></div>`).join('');
     return `<div class="vms-head"><button class="btn small vms-back" data-act="to-host">‹ ${esc(h.name || 'Host')}</button><h2>ISO library</h2><span class="vms-sp"></span>
         <button class="btn small" data-act="isos-refresh" aria-label="Refresh">↻</button></div>
       ${jobs}${list}
@@ -1496,6 +1528,7 @@
     on('[data-act=isos]', () => openIsos(S.host));
     on('[data-act=isos-refresh]', () => openIsos(S.host));
     on('[data-act=iso-fetch]', () => isoFetch(S.host));
+    on('[data-act=iso-cancel]', el => isoCancel(S.host, el.dataset.job));
     on('[data-iso-delete]', el => isoDelete(S.host, el.dataset.isoDelete));
     feed.querySelectorAll('input[data-act=iso-upload]').forEach(el => { el.onchange = () => { const f = el.files && el.files[0]; if(f) isoUpload(S.host, f); }; });
     on('[data-act=to-host]', () => { S.iso = null; S.access = null; S.screen = 'host'; paint(); });

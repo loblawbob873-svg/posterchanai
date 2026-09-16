@@ -184,6 +184,17 @@ server {
         proxy_send_timeout 3600s;
     }
 
+    # ---- VM host ISO upload (PUT /api/vmhost/iso/<ticket>) ----------------
+    # An admin uploads a multi-GB installer. Streamed to the app as it arrives (no request spooling to
+    # nginx's temp dir, no body-size cap here — the app enforces the ticket's declared size), with a long
+    # read timeout for slow links. No proxy_set_header here (see the note above the server-level headers).
+    location ^~ /api/vmhost/iso/ {
+        proxy_pass http://posterchanai_app;
+        proxy_request_buffering off;
+        client_max_body_size 0;
+        proxy_read_timeout 3600s;
+    }
+
     # ---- API (+ websockets used by some endpoints) -------------------------
     location ^~ /api/ {
         proxy_pass http://posterchanai_app;

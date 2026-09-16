@@ -16,7 +16,7 @@ import httpx
 import pytest
 
 from app.services.vmhost import isolib
-from tests.test_vmhost_phase2 import ADMIN, make
+from tests.test_vmhost_phase2 import fetch_and_wait, make
 
 PUBLIC = "93.184.216.34"
 
@@ -57,7 +57,7 @@ def fake_dns(monkeypatch, answers):
 
 
 def fetch(svc, url):
-    return run(svc.handle(ADMIN, "iso.fetch", {"url": url}, "f"))
+    return run(fetch_and_wait(svc, {"url": url}))
 
 
 def test_a_rebinding_dns_answer_never_reaches_the_connection(tmp_path, monkeypatch, wire):
