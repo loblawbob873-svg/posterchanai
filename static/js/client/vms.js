@@ -1198,7 +1198,7 @@
     if(form && !(fresh && formId === 'vms-settings')) form.querySelectorAll('[name]').forEach(el => { keep[el.name] = el.type === 'checkbox' ? el.checked : el.value; });
     const scroll = feed.scrollTop;
     feed.innerHTML = wide
-      ? `<div class="vms vms-wide"><aside class="vms-rail"><div class="vms-head"><h2>VM hosts</h2><span class="vms-sp"></span><button class="btn small" data-act="add">+ Add</button></div>
+      ? `<div class="vms vms-wide"><aside class="vms-rail"><div class="vms-head"><h2>VM hosts</h2><span class="vms-sp"></span><button class="btn small" data-act="find">Find</button><button class="btn small" data-act="add">+ Add</button></div>
            ${S.hosts.length ? S.hosts.map(hostCard).join('') : (S.doc.read ? '<div class="vms-seen">No hosts yet.</div>' : '<div class="spinner"></div>')}</aside>
          <section class="vms-main">${S.hosts.length ? main : hostsScreen()}</section></div>`
       : `<div class="vms">${main}</div>`;
