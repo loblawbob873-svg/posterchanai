@@ -490,6 +490,13 @@ would have handled it fine).
   `store.load()` a LIVE migrator — journal writes happen in a worker thread and a reload swapped records
   under running code (a commit loop then saved a stale `defining` over `defined`); `_save` writes a
   snapshot off-loop and only touches the in-memory map on the loop.
+  **Each host treats the other as hostile** (docs/VM_HOSTING.md §6 "Security model"): the TARGET never
+  defines the source's XML — it REBUILDS the domain from validated fields (uuid/name must equal the
+  precheck's), probes every disk with `qemu-img info` (backing/data-file refused, driver type = probe) and
+  grants only the assignments the target admin SIGNED; the SOURCE hands off only after every byte was served
+  and the target answered `peer.migrate.challenge`, and is not `done` until libvirt confirms the undefine.
+  keep_source_hours 0 = keep. One migrator per journal (`JournalBusy`); `transport.stop()` cancels the old
+  handlers first.
 - **A GRANTED NIP-05 IS THE ENTITLEMENT — one predicate, four gates** (`app/services/nip05_access.py`;
   switch `nip05_grants_access`, Admin → Nostr Relay → NIP-05 identity server, **ON** by default).
   AI chat, image generation (`geni`), music generation (`musicgeni`/`voice`) and Blossom uploads were

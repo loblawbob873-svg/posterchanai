@@ -53,7 +53,7 @@
     <label>Console session limit (minutes) <input type="number" id="vmhost_console_max_minutes" name="vmhost_console_max_minutes" value="240" min="1"></label>
     <label>Guest shutdown timeout (seconds) <input type="number" id="vmhost_shutdown_timeout_sec" name="vmhost_shutdown_timeout_sec" value="120" min="10"></label>
     <label>Session key lifetime for remote signers (hours) <input type="number" id="vmhost_session_max_hours" name="vmhost_session_max_hours" value="12" min="1"></label>
-    <label>Keep a migrated VM's source copy (hours) <input type="number" id="vmhost_migration_keep_source_hours" name="vmhost_migration_keep_source_hours" value="72" min="0"></label>
+    <label>Keep a migrated VM's source copy (hours, 0 = until an admin deletes it) <input type="number" id="vmhost_migration_keep_source_hours" name="vmhost_migration_keep_source_hours" value="72" min="0"></label>
     <label>Migration transfer cap (Mbit/s, 0 = none) <input type="number" id="vmhost_transfer_max_mbps" name="vmhost_transfer_max_mbps" value="0" min="0"></label>
     <label><input type="checkbox" id="vmhost_iso_fetch_enabled" name="vmhost_iso_fetch_enabled"> Let admins download ISOs by URL (public http/https only)</label>
   </fieldset>

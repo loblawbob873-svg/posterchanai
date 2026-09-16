@@ -105,8 +105,19 @@ location ^~ /api/vmhost/transfer/ {
 }
 ```
 
-It must come before `location ^~ /api/`. Don't add a `proxy_set_header` to either — see
-`docs/NGINX.md`.
+Any host that takes ISO uploads needs the upload location too (also shipped in both configs):
+
+```nginx
+location ^~ /api/vmhost/iso/ {
+    proxy_pass http://posterchanai_app;
+    proxy_request_buffering off;
+    client_max_body_size 0;
+    proxy_read_timeout 3600s;
+}
+```
+
+Both must come before `location ^~ /api/`. Don't add a `proxy_set_header` to either — see
+`docs/NGINX.md`. (`tests/test_vmhost_iso_limits.py` parses both shipped configs and checks these directives.)
 
 ---
 
@@ -164,12 +175,14 @@ Phase 2 ops (all admin except the session ops):
 |---|---|---|
 | `vm.update` | `vm`, any of `vcpus`, `ram_mib`, `autostart`, `boot: disk/cdrom`, `add_disk_gib`, `add_nic: true`, `media: {iso} or "eject"`, `input: tablet/mouse` | VM must be **shut off**; validated + capacity-checked before any write; ONE redefine; read back and compared — a field the host did not keep is `backend_error`. A cdrom's source is REPLACED (`change-media --update` semantics), never a second one added. A failed define removes the disk it just created. Result carries `vm.hardware`. |
 | `vm.get` | `vm` | admins also get `hardware {boot, input, nics, disks, media, cdrom}` |
-| `vm.snapshot.list/create/delete` | `vm`, `name` (≤48, `[A-Za-z0-9_.-]`), `description?` | libvirt internal snapshots, ≤32 per VM |
-| `vm.snapshot.revert` | `vm`, `name`, `confirm: true` | without `confirm` → `bad_request`; closes consoles |
-| `iso.list` | — | now also `jobs` (downloads in progress) and `fetch_enabled` |
-| `iso.fetch` | `url`, `name?` | see below; 7310 progress every 2 s; the result arrives when the download is whole |
+| `vm.snapshot.list/create/delete` | `vm`, `name` (≤48, `[A-Za-z0-9_.-]`), `description?` | libvirt internal snapshots, ≤32 per VM. Create refuses an **EFI VM** whose variables are a raw pflash file (`unsupported` — libvirt cannot snapshot it; every VM this host creates is EFI) and a host without ~1 GiB (+ the VM's RAM when it runs) free above the reserve (`insufficient_capacity`) |
+| `vm.snapshot.revert` | `vm`, `name`, `confirm: true` | without `confirm` → `bad_request`; closes consoles; **re-applies the CURRENT `pc:vm` metadata** afterwards — a revert restores the whole captured definition, and would otherwise hand an unassigned user the VM back |
+| `iso.list` | — | now also `jobs` (downloads, with state) and `fetch_enabled` |
+| `iso.fetch` | `url`, `name?` | answers AT ONCE with `{job}` — the download is a background job; 7310 progress (tagged to this request) every 2 s and a final `done`/`failed` |
+| `iso.fetch.status` | `job?` | `{job}` or `{jobs}`: `state` running/done/failed/cancelled, `bytes`, `total`, `iso`, `error`; kept an hour |
+| `iso.fetch.cancel` | `job` | stops the download and removes its `.part` |
 | `iso.upload_ticket` | `name`, `size` (bytes) | → `{ticket, url, name, size, exp}`; 10 min, single use |
-| `iso.delete` | `iso` | `conflict` while any VM's metadata or cdrom still uses it |
+| `iso.delete` | `iso` | `conflict` while any VM's metadata or cdrom still uses it — checked under the HOST lock, which every attach holds |
 | `host.access.get/set` | `set`: `allowed: [npub or hex]` | see §2 |
 | `session.open` | `pk`, `exp`, `scope: "use"`, `proof` | user; must be the REAL key |
 | `session.close` | `pk?` | a session closes itself; a real key closes one or all of its own |
@@ -243,15 +256,33 @@ known list on screen.
 
 ### ISO download (`iso.fetch`) — SSRF by design, so guarded
 
-Downloading a URL on behalf of a client is server-side request forgery unless proven otherwise. The
-host uses the repo's guard (`rss_service.looks_fetchable` + `is_safe_host`: http/https only, no
-localhost / private / link-local / `.lan` / `.local`, the name RESOLVED before it is trusted) and follows
-redirects **by hand, re-checking every hop** — a public URL that 302s to `169.254.169.254` is refused and
-the metadata address is never requested (`search_service.fetch_url_content` once got exactly this wrong).
-It goes direct, never through the Tor fallback transport. Bytes stream to `isos/.incoming/<random>.part`
-with a running SHA-256 and a hard cap of `min(32 GiB, free disk − vmhost_reserve_disk_gib)`, enforced on
-the `Content-Length` before reading AND on the stream (a lying or absent header). Only a whole file is
-linked into the library, never over an existing name. `vmhost_iso_fetch_enabled` turns it off.
+Downloading a URL on behalf of a client is server-side request forgery unless proven otherwise.
+
+* **Syntax** first (`rss_service.looks_fetchable`: http/https only, no localhost / `.lan` / `.local`, no
+  private IP literal).
+* **Resolve ONCE, connect to what was checked** (`isolib.PinnedTransport`). Every address the name resolves
+  to must be public (`isolib.ip_blocked`: private, loopback, link-local, multicast, reserved, unspecified,
+  non-global, plus `0.0.0.0/8`, `100.64.0.0/10`, `192.0.0.0/24`, `198.18.0.0/15`, `240.0.0.0/4`,
+  `64:ff9b::/96`, `64:ff9b:1::/48`, and the IPv4-mapped/-compatible, 6to4 and Teredo forms of any blocked
+  IPv4). The connection goes to that address with the `Host` header and TLS SNI — so certificate
+  verification — still on the name. Checking a name and letting the HTTP client resolve it again is DNS
+  rebinding: public on the first answer, `127.0.0.1` on the second.
+* **Redirects by hand**, each hop resolved, checked and pinned again — a public URL that 302s to
+  `169.254.169.254` is refused and never requested (`search_service.fetch_url_content` once got exactly
+  this wrong).
+* **No proxy**: the client is built with `trust_env=False`, so `HTTP(S)_PROXY` in the service environment
+  is ignored; never the Tor fallback transport either.
+* Bytes stream to `isos/.incoming/<random>.part` with a running SHA-256 and a hard cap of
+  `min(32 GiB, room)`, enforced on the `Content-Length` before reading AND on the stream. Only a whole file
+  is linked into the library, never over an existing name. `vmhost_iso_fetch_enabled` turns it off.
+
+**Limits.** At most **2** ISO transfers (fetches and uploads together) run on a host (`busy` beyond). The
+room a new transfer may use is the free disk minus `vmhost_reserve_disk_gib` minus what is already
+PROMISED: every running transfer's size (a fetch reserves its cap until `Content-Length` is known), every
+incoming migration's outstanding bytes, and the unallocated part of every thin VM disk (provisioned
+`disk_gib` minus the blocks its directory actually uses). The fetch runs as a background job, so it holds
+no admin busy slot; `transport.stop()` cancels running downloads. Stale `.part` files and migration
+`.incoming/<id>` directories nothing owns are removed at startup and hourly.
 
 ### ISO upload
 
@@ -260,8 +291,9 @@ The ticket is consumed BEFORE the body is read (so a copy in a proxy log is alre
 that its npub is STILL an admin, and the body is streamed to a `.part` and cut off the moment it passes
 the declared size; a body shorter or longer than declared is discarded. The route answers CORS `*`
 (`/api/vmhost/iso/` is in `_ScopedCORS._OWN_CORS`) because the client usually lives on another origin
-and the credential is the ticket, never a cookie. nginx: the stock `client_max_body_size 0` already
-allows it; big uploads ride the single uvicorn worker as a stream.
+and the credential is the ticket, never a cookie. An upload counts against the 2-transfer cap and reserves
+its declared size for as long as it runs. nginx: `location ^~ /api/vmhost/iso/` streams the body
+(`proxy_request_buffering off`, `client_max_body_size 0`, 3600 s) — see §1.
 
 ### Session keys (remote signers)
 
@@ -279,8 +311,13 @@ The proof stops anybody registering a key they do not hold (e.g. somebody else's
 its traffic); a key that is already an identity on the host is refused. Requests signed by the session
 key then act as the owner for use ops only (see §2) and are answered TO the session key. An expired or
 closed session is ANSWERED `session_expired` for a day rather than dropped — silence would read as
-"host offline". Sessions persist in `.state/sessions.json`, ≤8 per owner. A local-nsec client never
-opens one. Client side (`vms.js`): polling ops use the session; everything else, and `session.open`
+"host offline" — from a bounded in-memory tombstone set (4096, 16 per owner); the session itself leaves
+`.state/sessions.json` at once. Only LIVE sessions are persisted: ≤8 per owner (the oldest is closed),
+≤4096 per host (`busy` beyond), written off the event loop (tmp + fsync + rename, coalesced). A local-nsec
+client never opens one. Client side (`vms.js`): the session SECRET is kept **in memory only** — never in
+localStorage, where any script on the origin reads it and it outlives a sign-out — and dropped whenever
+the signed-in account changes (a reload costs one `session.open`); secrets an older build stored are
+purged when the screen loads. Polling ops use the session; everything else, and `session.open`
 itself, uses the real key; `session_expired`/`step_up_required` drops the session and retries with the
 real key; silence under a session is re-asked with the real key at most every 2 minutes (a host that
 lost `sessions.json` must not look dead for ever); a host that refuses `session.open` is not asked again
@@ -355,10 +392,63 @@ Move a VM from one PosterChan VM host to another. **Offline**: the VM is shut do
 are copied over HTTPS, the VM is defined on the target with its assignments, owner, labels, snapshots
 and autostart, and the source keeps its copy for a while.
 
+### Security model: each host treats the other as hostile
+
+Pairing two hosts in `vmhost_peer_hosts` lets them run a migration together; it does NOT make either an
+administrator of the other. A domain definition is root on the host that defines it, and a disk image can
+name files on it; the copy the source hands over is the only copy left once the source lets go. So:
+
+**The target never defines the source's XML — it REBUILDS the domain.** From the source's definition it
+takes only validated values: name and uuid (which must equal the precheck's, or the migration is refused —
+a definition wearing another VM's uuid would redefine that VM), vCPUs and memory (within this host's
+limits), `efi|bios`, the chipset family (`q35` or `pc`; x86_64 only), file disks by their MANIFEST name
+and target (`vdX`/`sdX`), unicast MACs and a NIC model from an allowlist, tablet/mouse. It builds the
+definition with this host's own generator (`domainxml.build_domain_xml`): this host's network or bridge,
+ONE VNC display on 127.0.0.1 with an expired password, a virtio video, an EMPTY cdrom, this host's
+emulator and firmware, and `pc:vm` metadata rebuilt from validated fields. Everything else is dropped —
+`qemu:commandline` under any prefix, `<seclabel>`, serial/console/channel/parallel devices on host paths,
+`<kernel>`/`<initrd>`/`<dtb>`/`<cmdline>`, nvram templates, ethernet/direct interfaces and their scripts,
+SPICE and non-loopback or socket displays, custom emulators.
+
+**Refused, not dropped** (a silent drop would change what the machine is): a TPM, host devices, shared
+filesystems, any disk that is not a plain file (block, volume, network — or a file disk that also names a
+`dev`), backing chains and external overlays, a disk the transfer did not carry, a foreign architecture,
+external snapshots (disk or memory), and snapshots with invalid, duplicate or out-of-order names. The
+target runs the source's own refusals (`inspect_domain_xml` + `_refusals`) as well, and validates the
+definition BEFORE pulling any bytes.
+
+**Snapshots** are re-created from name, description, state, creationTime, parent and internal disk names
+only, around the target's own rebuilt definition — never the `<domain>` the source embedded.
+
+**Disks are probed.** After its checksum, every received disk is run through `qemu-img info
+--output=json -U` (argv, timeout): a backing file, an external data file, or a format other than qcow2/raw
+refuses the migration, and `<driver type>` is the PROBED format, not the source's claim.
+
+**Assignments** come from the target admin's signature, not the source: the client signs the VM's current
+assigned list inside `vm.migrate.authorize`, and the target carries only those pubkeys (none when the list
+is absent).
+
+**Resources.** The manifest is read with an 8 MiB cap; its total may not exceed what the precheck reserved
+nor the free space minus the reserve and every other reservation (the precheck counts those too); a body is
+cut at the declared size; retries are bounded in total, not only per stall.
+
+**The source does not take the target's word.** It records the byte ranges it actually SERVED per file and
+refuses a commit until every file was served whole; then it challenges the target (`peer.migrate.challenge`:
+a fresh nonce and random ranges of every file) and compares SHA-256(nonce ‖ bytes) with its own copy — a
+wrong answer aborts the migration and the VM stays. Once challenged, the transfer route is closed. The
+handoff is complete only when libvirt confirms the domain is gone from the source; until then it is retried
+on every commit, ack and watch tick, the source does not reach `done`, and start is refused on the source
+for as long as the VM's latest migration record says it left (also after `done`). The retained copy is kept
+`vmhost_migration_keep_source_hours` after the ack — **0 keeps it until an admin deletes it**.
+
+**Transfer credentials** are single use (the event id is remembered for the freshness window; each header
+carries a nonce), and `vmhost_transfer_max_mbps` holds for the whole migration, however many parallel range
+requests the target makes.
+
 ### Requirements
 
 * **Admin on BOTH hosts.** The client signs an unpublished request, `vm.migrate.authorize {source,
-  target, vm}`, NIP-44-encrypted to the **target**. The source carries it inside
+  target, vm, assigned}`, NIP-44-encrypted to the **target**. The source carries it inside
   `peer.migrate.precheck`; the target decrypts it and checks the signer against ITS OWN admin list.
   The source can neither forge it nor read it. It is valid for 10 minutes and single-use.
 * **Paired hosts.** Each host lists the other in `vmhost_peer_hosts`, one per line:
@@ -373,9 +463,10 @@ and autostart, and the source keeps its copy for a while.
 * **VMs with a TPM** — every Windows VM this app creates has one. swtpm state is root-owned and lives
   outside the VM's directory, so it would not travel.
 * host-device passthrough, shared host filesystems;
-* disks that are not files inside the VM's own directory, qcow2 disks with a backing file, and
-  external snapshots.
-* A cdrom ISO that the target's library does not have (by file name) is **detached**, not refused.
+* disks that are not files inside the VM's own directory, qcow2 disks with a backing file or an external
+  data file, and external snapshots.
+* The target refuses the same things again itself, and more — see *Security model* above.
+* The cdrom arrives **detached** (empty): installer media is the target library's business.
 
 ### The state machine
 
@@ -384,13 +475,14 @@ the side effect it announces.
 
 | Step | Source | Target |
 |---|---|---|
-| PLAN | `vm.migrate`: requester is admin here; target is a peer; VM is ours, not migrating, no TPM | `peer.migrate.precheck`: authorization valid and signer is admin HERE; free disk ≥ 1.1× the files + `vmhost_reserve_disk_gib`; no uuid/name collision; libvirt up; firmware present (when not auto-selected); storage writable → `prechecked` |
+| PLAN | `vm.migrate`: requester is admin here; target is a peer; VM is ours, not migrating, no TPM | `peer.migrate.precheck`: authorization valid and signer is admin HERE (its assigned list kept); free disk ≥ 1.1× the files + `vmhost_reserve_disk_gib` + every other reservation; no uuid/name collision; libvirt up; firmware present (when not auto-selected); storage writable → `prechecked` |
 | QUIESCE | `quiescing`: `pc:migration state=outgoing` on the VM (start refused), autostart off, consoles closed, ACPI shutdown for `vmhost_shutdown_timeout_sec`; if it does not stop: abort, or `virsh destroy` when **force_shutdown** | |
 | EXPORT | `exporting`: inactive `--migratable` XML, `pc:vm` metadata, each snapshot's XML, files + sha256 (in a thread); the manifest is written and its sha256 signed by the source key | |
-| TRANSFER | `transferring`: `peer.migrate.begin {manifest_sha256, manifest_sig}` | `receiving`: fetches the manifest (checks hash, signature, ids, file names), pulls every file with `Range` into `.incoming/<id>/<name>.part`, resuming from the `.part` size |
-| VERIFY + DEFINE | | `defining`: re-hash each file (mismatch → abort), move into `<storage>/<uuid>/`, rewrite disk/nvram paths **by file name only**, define with `pc:migration state=incoming` (start refused), redefine snapshots parents-first → `defined`, then `peer.migrate.commit` |
-| HANDOFF | `handed_off` journaled FIRST, then undefine (`--snapshots-metadata --keep-nvram`) and move the directory to `.retained/<uuid>-<ts>/` → answer | on the answer: `committed`, clear the marker, restore autostart, start if **start_after** → `done`, `peer.migrate.ack` |
-| DONE | ack → `done`; `.retained` reaped `vmhost_migration_keep_source_hours` after the ACK, never before | |
+| TRANSFER | `transferring`: `peer.migrate.begin {manifest_sha256, manifest_sig}`; records the ranges it serves | `receiving`: fetches the manifest (≤ 8 MiB; hash, signature, ids, name, file names `disk-(vd\|sd)X.qcow2`/`nvram.fd`, total ≤ the precheck's, the definition VALIDATED), pulls every file with `Range` into `.incoming/<id>/<name>.part`, resuming from the `.part` size, never writing past the declared size |
+| VERIFY + DEFINE | | each file hashed (mismatch → abort) and each disk PROBED (`qemu-img info`); `defining`: move into `<storage>/<uuid>/`, define the REBUILT domain with `pc:migration state=incoming` (start refused), re-create snapshot metadata parents-first → `defined` |
+| PROOF | `peer.migrate.challenge` (only once every byte was served): journals a nonce + ranges, closes the route | answers SHA-256(nonce ‖ bytes) of its placed copy, then `peer.migrate.commit {proofs}` |
+| HANDOFF | proofs checked against its own files (wrong → abort); `handed_off` journaled FIRST, then undefine (`--snapshots-metadata --keep-nvram`), confirmed gone, and the directory moved to `.retained/<uuid>-<ts>/` → answer | on the answer: `committed`, clear the marker, restore autostart, start if **start_after** → `done`, `peer.migrate.ack` |
+| DONE | ack (only once the undefine is confirmed) → `done`; `.retained` reaped `vmhost_migration_keep_source_hours` after the ACK, never before, never when 0 | |
 
 **The commit point is the source journaling `handed_off`.** Before it the source owns the VM: any
 failure (checksum mismatch, a refused or failed transfer, a cancel, a crash in planned/quiescing/
@@ -408,9 +500,11 @@ migration this host is the SOURCE of, only while `exporting`/`transferring`, onl
 `Authorization: Nostr <base64 kind-27235>` signed by the target's node key, verified with the repo's
 `git_auth.verify_nip98` (signature, `method GET`, ±60 s) PLUS an exact match of the `u` tag's path
 (no query) and, when `vmhost_public_url` is set, its scheme and host — `verify_nip98` alone only checks
-that the path CONTAINS a needle, and `/…/1` is a prefix of `/…/10`. 404 unknown migration, 401 any
-credential problem, 409 wrong state or a file that changed since export, 416 bad range. No DB session;
-1 MiB reads in a worker thread; `vmhost_transfer_max_mbps` caps both the serving and the pulling side.
+that the path CONTAINS a needle, and `/…/1` is a prefix of `/…/10`. Each header is accepted ONCE. Files are
+served only while `transferring` and not after the challenge. 404 unknown migration, 401 any credential
+problem (including a reused header), 409 wrong state or a file that changed since export, 416 bad range.
+No DB session; 1 MiB reads in a worker thread; `vmhost_transfer_max_mbps` caps the serving side per
+migration (across parallel requests) and the pulling side.
 
 **Event-loop cost, measured** (`tests/test_vmhost_transfer_lag.py`, real uvicorn on loopback, the
 target pulling from another thread, a 5 ms sleep probe on the server loop): 1 GiB served at ~930 MiB/s
@@ -436,9 +530,24 @@ read blocks a worker thread, never the loop).
   VM's name, sends the same decision to both hosts, and says which ones answered. **Deciding without
   the other host can split-brain the VM** — two copies with the same identity and diverging disks —
   so make the same choice on both.
-* **The target answers that it does not hold the VM** (`aborted`/`unknown`/`released`) after a
-  handoff: the source takes it back automatically — an answer, unlike silence, cannot split it.
-* **Cancel** (`vm.migrate.cancel`, source only) works until the handoff.
+* **The target answers that it does not hold the VM** (`aborted`/`released`) after a
+  handoff: the source takes it back automatically — an answer, unlike silence, cannot split it. A target
+  that answers `unknown` (its journal forgot the migration) is treated as silence, and a source that
+  answers `not_found` never makes a target drop its copy: a defined target locks, a locked one waits for
+  force_reclaim.
+* **A failed undefine at the handoff** (libvirt busy, a lock) leaves `handed_off` with the VM still
+  defined: the source retries it on every commit, ack and watch tick and cannot reach `done` before it
+  succeeds; start stays refused there throughout.
+* **Cancel** (`vm.migrate.cancel`, source only) works until the handoff. On a `released` migration (the
+  target was force-kept) it answers with the split-brain warning and, with `confirm: "split-brain"`, takes
+  the retained copy back (`reclaimed`).
+* **Retained copies**: a `released` copy is reaped by the same keep rule as an acked one (counted from the
+  forced decision). `vm.retained.list` shows every `.retained/` directory with its migration and state;
+  `vm.retained.delete {name, confirm: "delete"}` removes one — refused while its migration is
+  `handed_off` or `locked`, where it may be the only copy.
+* **A source restart mid-transfer** loses up to 64 MiB of served-range bookkeeping per file (it is journaled
+  in 64 MiB steps and at the end of every response); if that leaves a file short of "served whole", the
+  target's commit is refused until an admin cancels and migrates again.
 
 ### Ops
 
@@ -446,7 +555,8 @@ Client (admin): `vm.migrate.precheck {vm, target, authz, start_after}` (dry run 
 `vm.migrate {vm, target, authz, start_after, force_shutdown}` → `{migration, precheck}` (returns after
 the precheck; the rest runs in the background), `vm.migrate.status {migration?|vm?}` →
 `{migrations, peers}`, `vm.migrate.cancel {migration}`, `vm.migrate.force_reclaim {migration, side,
-confirm}`. Peer: `peer.migrate.precheck/begin/status/commit/ack/abort`. New error codes: `migrating`
+confirm}`, `vm.retained.list`, `vm.retained.delete {name, confirm}`. Peer:
+`peer.migrate.precheck/begin/status/challenge/commit/ack/abort`. New error codes: `migrating`
 (start/delete/assign refused while a migration holds the VM), `aborted` (the other host abandoned it).
 
 ### Not in v1
@@ -488,6 +598,23 @@ the real transport with real signatures), `tests/client/test_vms_phase2.py` +
 `vms_phase2_runtime.mjs` (LocalHost against a `pcVM` stub built from desktop/preload.js, sessions,
 Find hosts), and the session-signer scenario in `vms_rpc_runtime.mjs`. Each rule was verified to fail
 with its code mutated (25 mutations).
+
+Hardening (each written to fail on the code before its fix): `tests/test_vmhost_migration_hostile.py` (a
+hostile source: every dropped construct absent from what the target defines, every dangerous one refused,
+a definition wearing another VM's uuid/name refused with the victim untouched, an ordinary VM round-trips
+vCPUs/RAM/disks/MAC/assignments/snapshots), `test_vmhost_migration_disk_probe.py` (qemu-img JSON shapes
+through the runner seam; backing/data-file/vmdk refused; driver type = probe),
+`test_vmhost_migration_lying_target.py` (commit without download, corrupt copy, guessed challenge, keep=0),
+`test_vmhost_migration_handoff.py` (failed undefine retried, never startable on the source),
+`test_vmhost_migration_target_resources.py` (manifest cap, precheck/reservation totals, truncation, bounded
+retries), `test_vmhost_migration_low.py` (signed assignments, not_found while locked, single-use NIP-98,
+per-migration throttle, retained copies, cancel after release), `test_vmhost_iso_fetch_pinning.py` (DNS
+rebinding, env proxy, every blocked range — through the real httpx transport), `test_vmhost_iso_limits.py`
+(background jobs, concurrency, reservations incl. thin disks, stale parts, iso.delete race, parsed nginx),
+`test_vmhost_sessions_bounded.py` (10k opens: bounded file, no loop stall), `test_vmhost_reload.py` (old
+handlers cancelled by stop, one migrator per journal), `test_vmhost_snapshot_hardening.py` (revert keeps the
+access list, EFI refused, disk check), `test_vmhost_backend_migration.py` (the REAL VirshBackend has the
+migration primitives — a merge had left them unreachable — and their argv).
 
 Migration: `tests/test_vmhost_migration.py` (two hosts with `tests/vmhost_migration_fake.py`, a fake
 relay carrying real signed/encrypted 5310/6310/7310, the real transfer route over ASGI: happy path,
