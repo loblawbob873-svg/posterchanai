@@ -10,7 +10,8 @@ NIP-44-encrypted to the host node's key. The only thing that uses the node's HTT
 (noVNC), and it needs a one-use ticket that was itself issued over Nostr.
 
 **Phase 1** (this document): host info, VM list/get, power, create from a library ISO, delete,
-assign/unassign, console. Not yet: editing hardware, snapshots, ISO download/upload, session keys,
+assign/unassign, console. Settings for later phases are already in Admin → VMs, labelled **(coming soon)**: they
+save and hydrate like any other, but nothing reads them yet. Not yet: editing hardware, snapshots, ISO download/upload, session keys,
 host discovery, cold migration.
 
 ---
@@ -169,6 +170,17 @@ answer would cost a signature per flood event). Executing requests are bounded p
 16 admin), so a user flood of slow operations cannot keep an admin out. Read ops share one libvirt
 listing for 3 s (single-flight; any mutating op invalidates it), and a failed admin-account lookup is
 single-flight and cached for 5 s.
+
+**What the encryption does NOT hide (metadata).** NIP-44 hides the operation and its arguments, not
+the envelope. Every request is a signed event with the requester's real pubkey as author and a `p` tag
+naming the host; every result and progress event names the host as author, the requester in `p` and
+the request in `e`; all of them carry `created_at` and `expiration`, and their sizes are visible. So
+anyone who can read the relays these events pass through — this node's relay, the upstream relays its
+firehose subscribes to, any relay a client publishes to — learns **who uses which VM host, when, how
+often, and roughly how much** (a `vm.create` with its progress events looks different from a
+`vm.list`). The events are short-lived and `nofederate`, which limits how long and how far that trail
+spreads, but does not remove it. Admin npubs and assigned users should treat their use of a host as
+public; phase-2 session keys are the planned mitigation for the author half.
 
 **No answer is not "no VMs".** An offline host and a host that drops strangers look identical to a
 client; the UI says "No answer — the host is offline or you're not on its list" and keeps the last

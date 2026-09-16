@@ -210,3 +210,30 @@ def test_a_failed_durable_save_leaves_the_old_access_in_force_everywhere(monkeyp
     assert settings_store.get("vmhost_admin_npubs") is None, "a key that was absent must be absent again"
     assert vmconfig.current().allowed_pubkeys == ["bb" * 32, "cc" * 32]
     assert vmconfig.current().admin_pubkeys == []
+
+
+# Settings declared now for later phases. Each is shown, saved and hydrated like any other (the
+# coverage tests above), but NOTHING reads it yet — so the form must say so, or an admin sets a
+# migration cap or a shutdown timeout and believes the host enforces it.
+COMING_SOON = ("vmhost_peer_hosts", "vmhost_shutdown_timeout_sec", "vmhost_session_max_hours",
+               "vmhost_migration_keep_source_hours", "vmhost_transfer_max_mbps", "vmhost_iso_fetch_enabled")
+
+
+def _label_of(html, key):
+    for m in re.finditer(r"<label\b[^>]*>(.*?)</label>", html, re.S):
+        if re.search(r'\bname="%s"' % re.escape(key), m.group(1)):
+            return re.sub(r"<[^>]+>", " ", m.group(1))
+    raise AssertionError(f"no <label> wraps {key}")
+
+
+def test_settings_nothing_reads_yet_are_labelled_coming_soon():
+    _, html = _inputs()
+    code = "\n".join(p.read_text() for p in (ROOT / "app" / "services" / "vmhost").glob("*.py")
+                     if p.name != "config.py")
+    for key in vmconfig.DEFAULTS:
+        label = _label_of(html, key)
+        if key in COMING_SOON:
+            assert "(coming soon)" in label, f"{key} does nothing yet and the form does not say so"
+            assert key not in code, f"{key} is used now — drop it from COMING_SOON and its label"
+        else:
+            assert "(coming soon)" not in label, key
