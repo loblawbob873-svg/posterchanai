@@ -17,10 +17,19 @@ the host's side says so. The node-agent transport lost a round of debugging to e
 kinds were missing from three hardcoded lists), so these kinds get an explicit branch in both ingest
 paths and a test that drives the shipped code.
 
-WHAT KEEPS IT FROM BEING AN OPEN PIPE: a stranger's request is accepted only when it is addressed to
-THIS node, is short-lived (expiration present and near), carries `nofederate`, and is small. It is
-stored briefly (the expiration sweep removes it) and never broadcast. The host then decrypts only
-after an allowlist check — a stranger costs one stored row and nothing else.
+WHAT KEEPS IT FROM BEING AN OPEN PIPE. The special rules apply to NON-MEMBERS only; a web-of-trust
+member's event of any of these kinds gets exactly the treatment it had before VM hosting existed (other
+applications use these numbers too). A non-member may write:
+  * 5310 only while THIS node runs a VM host (`vmhost_enabled`, refreshed live on reload), p-tagged to
+    exactly [this node], short-lived (expiration present and near), `nofederate`, small. It is stored
+    briefly (the expiration sweep removes it) and never broadcast; the host then decrypts only after an
+    allowlist check — a stranger costs one stored row and nothing else;
+  * 6310/7310 only when AUTHORED by this node — or by a configured peer host (`peer_hosts`, the hook
+    phase 3 fills; empty today). A result is only ever signed by a host, so a stranger's "result" is
+    just an unsolicited stored event pushed at somebody;
+  * 31310 only from this node, a peer host or an operator.
+The firehose (a READ of upstream relays) applies the same rules, so the relay and the host never
+disagree about what a request looks like.
 """
 from __future__ import annotations
 
@@ -88,63 +97,66 @@ def _shape_refusal(ev: dict, now: float, max_exp: int, max_content: int) -> str 
 
 
 def write_refusal(ev: dict, *, node_pubkey: str | None, is_member, is_operator,
-                  wot_enabled: bool = True, now: float) -> str | None:
+                  wot_enabled: bool = True, vmhost_enabled: bool = False, peer_hosts=(),
+                  now: float) -> str | None:
     """None = accept this event on the WS write path; otherwise the NIP-01 OK reason to refuse it.
 
-    `is_member` / `is_operator` are the relay gate's own predicates."""
+    `is_member` / `is_operator` are the relay gate's own predicates. A member (or any author on a
+    relay with the web of trust switched off) gets None: the ordinary gate already accepts it, which
+    is what it got before these kinds had a branch of their own."""
     try:
         kind = int(ev.get("kind", -1))
     except (TypeError, ValueError):
         return "invalid: bad kind"
     author = ev.get("pubkey", "")
+    if not wot_enabled or is_member(author):
+        return None
+    return _stranger_refusal(ev, kind, author, node_pubkey=node_pubkey, is_operator=is_operator,
+                             vmhost_enabled=vmhost_enabled, peer_hosts=peer_hosts, now=now)
+
+
+def _stranger_refusal(ev: dict, kind: int, author: str, *, node_pubkey, is_operator, vmhost_enabled,
+                      peer_hosts, now) -> str | None:
+    node = node_pubkey or ""
+    peers = set(peer_hosts or ())
     if kind == ANNOUNCE_KIND:
         if tag_values(ev, "d")[:1] != [ANNOUNCE_D]:
-            # Some other application's 31310 is none of our business: it gets the ordinary gate.
-            return None if (not wot_enabled or is_member(author)) else "blocked: not in web of trust"
+            # Some other application's 31310 is none of our business: the ordinary gate refuses it.
+            return "blocked: not in web of trust"
+        if not ((node and author == node) or author in peers or is_operator(author)):
+            return "blocked: vm host announcements are accepted from this node's hosts only"
         if len(str(ev.get("content", ""))) > MAX_ANNOUNCE_CONTENT:
             return "invalid: vm host announcement too large"
         return None
     if kind == REQ_KIND:
+        if not (vmhost_enabled and node):
+            return "blocked: this relay's node does not host VMs"
         why = _shape_refusal(ev, now, REQ_MAX_EXPIRATION, MAX_CONTENT)
         if why:
             return why
-        to_me = bool(node_pubkey) and node_pubkey in tag_values(ev, "p")
-        if to_me or not wot_enabled or is_member(author):
-            return None
-        return "blocked: vm request not addressed to this host"
+        if tag_values(ev, "p") != [node]:
+            return "blocked: vm request not addressed to this host"
+        return None
     if kind in (RES_KIND, PROGRESS_KIND):
-        why = _shape_refusal(ev, now, RES_MAX_EXPIRATION, MAX_CONTENT)
-        if why:
-            return why
-        if not wot_enabled or is_member(author):
-            return None
-        for p in tag_values(ev, "p"):
-            if (node_pubkey and p == node_pubkey) or is_member(p) or is_operator(p):
-                return None
-        return "blocked: vm result not for this relay's users"
+        if not ((node and author == node) or author in peers):
+            return "blocked: vm results are accepted from this node's hosts only"
+        return _shape_refusal(ev, now, RES_MAX_EXPIRATION, MAX_CONTENT)
     return None
 
 
-def firehose_accept(ev: dict, *, node_pubkey: str | None, is_member, is_operator, now: float) -> bool:
-    """The live firehose's version of the same rule: a READ of an upstream relay, so it only keeps
-    what is addressed to this node (or, for results, to one of its users)."""
+def firehose_accept(ev: dict, *, node_pubkey: str | None, is_member, is_operator, now: float,
+                    vmhost_enabled: bool = False, peer_hosts=()) -> bool:
+    """The live firehose's version of the same rule (a READ of an upstream relay). The firehose has no
+    WoT switch: a member keeps the ordinary member path, a stranger must pass the stranger rules."""
     try:
         kind = int(ev.get("kind", -1))
     except (TypeError, ValueError):
         return False
-    if kind == ANNOUNCE_KIND:
-        return tag_values(ev, "d")[:1] == [ANNOUNCE_D] and \
-            len(str(ev.get("content", ""))) <= MAX_ANNOUNCE_CONTENT
-    if kind == REQ_KIND:
-        if _shape_refusal(ev, now, REQ_MAX_EXPIRATION, MAX_CONTENT):
-            return False
-        return bool(node_pubkey) and node_pubkey in tag_values(ev, "p")
-    if kind in (RES_KIND, PROGRESS_KIND):
-        if _shape_refusal(ev, now, RES_MAX_EXPIRATION, MAX_CONTENT):
-            return False
-        return any((node_pubkey and p == node_pubkey) or is_member(p) or is_operator(p)
-                   for p in tag_values(ev, "p"))
-    return False
+    author = ev.get("pubkey", "")
+    if is_member(author):
+        return True
+    return _stranger_refusal(ev, kind, author, node_pubkey=node_pubkey, is_operator=is_operator,
+                             vmhost_enabled=vmhost_enabled, peer_hosts=peer_hosts, now=now) is None
 
 
 def firehose_kinds(enabled: bool) -> list:

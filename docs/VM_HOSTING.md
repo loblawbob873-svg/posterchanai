@@ -144,10 +144,18 @@ returns the stored result instead of powering the VM twice. Only successes are j
 (busy, capacity) lets the retry actually retry.
 
 **Relay carriage.** The requester is usually outside the relay's web of trust. The relay's write gate
-and firehose (`app/services/vmhost/kinds.py`) accept a non-member's 5310 only when it is addressed to
-THIS node, short-lived, `nofederate` and ≤ 70 KB; results are accepted for the node's own users.
-Turning the host on adds a firehose subscription for 5310/6310/7310 `#p`-tagged to the node (applied
-live via reload-upstream).
+and firehose (`app/services/vmhost/kinds.py`) apply special rules to NON-MEMBERS only — a web-of-trust
+member's event of these kinds is treated exactly as it was before VM hosting (other apps use the
+numbers too). A non-member's:
+
+| Kind | Accepted only when |
+|---|---|
+| 5310 | this node runs a VM host (`vmhost_enabled`, applied live), the `p` tags are exactly `[this node]`, expiration ≤ now+600, `nofederate`, ≤ 70 KB |
+| 6310 / 7310 | authored by this node's key (or a configured peer host — an empty hook until phase 3), with an expiration and `nofederate` |
+| 31310 | authored by this node, a peer host or an operator |
+
+Turning the host on adds a firehose subscription for 5310/6310/7310 `#p`-tagged to the node; switching
+it and the rules above on or off is applied live via reload-upstream, no relay restart.
 
 **No answer is not "no VMs".** An offline host and a host that drops strangers look identical to a
 client; the UI says "No answer — the host is offline or you're not on its list" and keeps the last

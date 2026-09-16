@@ -1408,12 +1408,16 @@ class RelayServer:
             # VM HOSTING (5310 request / 6310 result / 7310 progress / 31310 announcement). The requester
             # is an admin's or an assigned user's own npub, which is almost never in this relay's web of
             # trust — left to the WoT gate below, every request is refused and the host never hears it.
-            # The rule (app/services/vmhost/kinds.py) accepts a stranger's request only when it is
-            # addressed to THIS node, short-lived, nofederate and small; the host drops strangers again
-            # before decrypting anything.
+            # The rule (app/services/vmhost/kinds.py) leaves members exactly as the ordinary gate treats
+            # them; a stranger's request is accepted only while this node HOSTS VMs and only when it is
+            # addressed to this node alone, short-lived, nofederate and small (the host drops strangers
+            # again before decrypting anything); a stranger's result/announcement only from this node's
+            # own key or a configured peer host.
             _why = _vmhost_kinds.write_refusal(
                 ev, node_pubkey=self.cfg.get("node_pubkey"), is_member=self.gate.is_member,
-                is_operator=self.gate.is_operator, wot_enabled=_wot, now=time.time())
+                is_operator=self.gate.is_operator, wot_enabled=_wot,
+                vmhost_enabled=bool(self.cfg.get("vmhost_enabled")),
+                peer_hosts=self.cfg.get("vmhost_peer_hosts") or (), now=time.time())
             if _why:
                 self._refuse(conn, eid, ev, _why)
                 return

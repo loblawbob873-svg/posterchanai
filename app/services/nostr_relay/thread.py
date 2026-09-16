@@ -500,9 +500,18 @@ def _read_config() -> dict:
         # cfg["operator"], which is every linked user plus the node — a request p-tagged to any user
         # would then count as "addressed to this host".
         cfg["node_pubkey"] = _node_pubkey()
+        cfg["vmhost_peer_hosts"] = _vmhost_peer_hosts()
         return cfg
     finally:
         db.close()
+
+
+def _vmhost_peer_hosts() -> list:
+    """Hex pubkeys of OTHER VM hosts whose 6310/7310/31310 this relay accepts from outside the web of
+    trust (host-to-host replies for migration). The hook phase 3 fills from `vmhost_peer_hosts`; it is
+    deliberately EMPTY until something in this codebase talks to a peer host, so the setting cannot
+    widen the relay's write gate before there is a feature behind it."""
+    return []
 
 
 def _node_pubkey() -> str:
@@ -852,10 +861,13 @@ async def _main(cfg: dict) -> None:
                     any(len(t) >= 2 and t[0] == "p" and gate.is_operator(t[1]) for t in (ev.get("tags") or []))):
                 return
         elif _vmhost_kinds.is_vmhost_kind(_kind):
-            # VM hosting: keep only what is addressed to THIS node (or, for results, to one of its
-            # users). The requester is normally outside the WoT, so the member gate below would drop it.
+            # VM hosting: a member keeps the ordinary path; a stranger's event is kept only under the
+            # same rules as the write gate (app/services/vmhost/kinds.py) — requests addressed to this
+            # node while it hosts VMs, results/announcements signed by this node or a peer host.
             if not _vmhost_kinds.firehose_accept(ev, node_pubkey=cfg.get("node_pubkey"),
                                                  is_member=gate.is_member, is_operator=gate.is_operator,
+                                                 vmhost_enabled=bool(cfg.get("vmhost_enabled")),
+                                                 peer_hosts=cfg.get("vmhost_peer_hosts") or (),
                                                  now=time.time()):
                 return
         elif _kind in (2003, 2004, 30617, 30618):
@@ -1381,6 +1393,7 @@ async def _main(cfg: dict) -> None:
                             cfg["agent_enabled"] = fresh["agent_enabled"]
                             cfg["vmhost_enabled"] = fresh["vmhost_enabled"]
                             cfg["node_pubkey"] = fresh["node_pubkey"]
+                            cfg["vmhost_peer_hosts"] = fresh["vmhost_peer_hosts"]
                             # Respawn the receive path FIRST; only retarget the send path once it
                             # succeeds, so a respawn failure doesn't leave the outbox publishing to
                             # the new set while the firehose ingests nothing.

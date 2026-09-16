@@ -11,7 +11,14 @@ These drive real signed events through:
   * `_firehose_event` and `_spawn_firehose`, extracted from thread.py's run loop by AST (they are
     closures) and executed against stub stores/gates — the same technique as
     tests/test_relay_live_word_reload.py;
-  * the reload-upstream branch, so turning the host on is picked up without a relay restart.
+  * the reload-upstream branch and `_read_config`, EXECUTED (not read as text), so turning the host on
+    is picked up without a relay restart and turning it off closes the stranger path again.
+
+WHAT A STRANGER MAY WRITE (a WoT member keeps the ordinary pre-VM-hosting treatment for all four kinds —
+other applications use these numbers too):
+  * 5310 only while THIS node runs a VM host, p-tagged to exactly this node, short-lived, nofederate;
+  * 6310/7310 only when authored by this node (or a configured peer host — the phase-3 hook);
+  * 31310 only from this node, a peer host or an operator.
 """
 import ast
 import asyncio
@@ -60,12 +67,13 @@ class Store:
         return False
 
 
-def server(node_pubkey=NODE, wot=True, gate=None):
+def server(node_pubkey=NODE, wot=True, gate=None, vmhost=True, peers=(), cfg=None):
     s = object.__new__(RelayServer)
     s.gate = gate or NobodyGate()
     s.store = Store()
     s.subs = SimpleNamespace(fanout=lambda *a, **k: None)
-    s.cfg = {"wot_enabled": wot, "node_pubkey": node_pubkey}
+    s.cfg = cfg if cfg is not None else {"wot_enabled": wot, "node_pubkey": node_pubkey,
+                                         "vmhost_enabled": vmhost, "vmhost_peer_hosts": list(peers)}
     s.private_cb = None
     s.outbox_cb = None
     s._auth_pubkeys = {}
@@ -99,6 +107,26 @@ def test_a_non_member_request_to_this_host_is_accepted_and_stored():
     assert len(s.store.added) == 1
 
 
+def test_a_non_member_request_is_refused_while_this_node_runs_no_vm_host():
+    s = server(vmhost=False)
+    ok = deliver(s, req())
+    assert ok[2] is False, "with VM hosting off the relay must not store strangers' 5310s"
+    assert s.store.added == []
+
+
+def test_a_non_member_request_must_be_addressed_to_this_node_alone():
+    extra = build_event(REQUESTER_SK, kinds.REQ_KIND, "ct",
+                        [["p", NODE], ["p", OTHER], ["nofederate"],
+                         ["expiration", str(int(time.time()) + 90)]])
+    doubled = build_event(REQUESTER_SK, kinds.REQ_KIND, "ct",
+                          [["p", NODE], ["p", NODE], ["nofederate"],
+                           ["expiration", str(int(time.time()) + 90)]])
+    s = server()
+    assert deliver(s, extra)[2] is False, "a p-tag list is a fan-out list; one extra name is a relay abuse"
+    assert deliver(s, doubled)[2] is False
+    assert s.store.added == []
+
+
 @pytest.mark.parametrize("label,ev,why", [
     ("addressed to another host", lambda: req(to=OTHER), "not addressed"),
     ("no expiration", lambda: req(exp_in=None), "expiration"),
@@ -123,37 +151,70 @@ def test_a_member_may_carry_a_request_for_another_host():
     assert deliver(s, req(to=OTHER))[2] is True
 
 
-def test_results_route_to_the_host_or_its_users_only():
-    to_member = build_event(bytes.fromhex("22" * 32), kinds.RES_KIND, "ct",
-                            [["e", "a" * 64], ["p", MEMBER], ["nofederate"],
-                             ["expiration", str(int(time.time()) + 300)]])
-    to_stranger = build_event(bytes.fromhex("22" * 32), kinds.RES_KIND, "ct",
-                              [["e", "a" * 64], ["p", OTHER], ["nofederate"],
-                               ["expiration", str(int(time.time()) + 300)]])
-    progress_to_node = build_event(bytes.fromhex("22" * 32), kinds.PROGRESS_KIND, "ct",
-                                   [["e", "a" * 64], ["p", NODE], ["nofederate"],
-                                    ["expiration", str(int(time.time()) + 300)]])
-    s = server(gate=NobodyGate(members={MEMBER}))
-    assert deliver(s, to_member)[2] is True
-    assert deliver(s, to_stranger)[2] is False
-    assert deliver(s, progress_to_node)[2] is True
+@pytest.mark.parametrize("kind", [kinds.REQ_KIND, kinds.RES_KIND, kinds.PROGRESS_KIND])
+def test_a_members_events_of_these_kinds_keep_the_ordinary_treatment(kind):
+    """Other applications use 5310/6310/7310 too. Before VM hosting a member's such event was stored
+    like any other; the new shape rules (expiration, nofederate, size) apply to STRANGERS only."""
+    member_sk = bytes.fromhex("44" * 32)
+    ev = build_event(member_sk, kind, "x" * (kinds.MAX_CONTENT + 10), [["p", OTHER]])
+    for vmhost in (True, False):
+        s = server(gate=NobodyGate(members={bip340.pubkey_from_seckey(member_sk).hex()}), vmhost=vmhost)
+        assert deliver(s, ev)[2] is True, (kind, vmhost)
 
 
-def test_the_hosts_own_result_to_a_stranger_client_is_accepted():
-    """The node key is an operator (hence a member), and its answer is p-tagged to the requester —
-    who is NOT a member. Refusing it would make every request unanswerable."""
-    res = build_event(NODE_SK, kinds.RES_KIND, "ct", [["e", "a" * 64], ["p", OTHER], ["nofederate"],
-                                                      ["expiration", str(int(time.time()) + 300)]])
-    s = server(gate=NobodyGate(operators={NODE}))
-    assert deliver(s, res)[2] is True
+def result(sk, kind=kinds.RES_KIND, p=MEMBER):
+    return build_event(sk, kind, "ct", [["e", "a" * 64], ["p", p], ["nofederate"],
+                                        ["expiration", str(int(time.time()) + 300)]])
 
 
-def test_an_announcement_from_anyone_is_accepted_but_only_with_our_d_tag():
-    good = build_event(bytes.fromhex("33" * 32), kinds.ANNOUNCE_KIND, '{"v":1}', [["d", kinds.ANNOUNCE_D]])
-    foreign = build_event(bytes.fromhex("33" * 32), kinds.ANNOUNCE_KIND, '{}', [["d", "something-else"]])
+STRANGER_HOST_SK = bytes.fromhex("22" * 32)
+PEER_SK = bytes.fromhex("23" * 32)
+PEER = bip340.pubkey_from_seckey(PEER_SK).hex()
+
+
+@pytest.mark.parametrize("kind", [kinds.RES_KIND, kinds.PROGRESS_KIND])
+def test_a_strangers_result_is_refused_whoever_it_is_for(kind):
+    """A result is only ever signed by a host. A stranger's 6310 p-tagged to one of our members is a
+    stored, pushed event nobody on this relay asked for — the hole the first version left open."""
+    s = server(gate=NobodyGate(members={MEMBER}, operators={"ab" * 32}))
+    for p in (MEMBER, OTHER, NODE, "ab" * 32):
+        assert deliver(s, result(STRANGER_HOST_SK, kind, p))[2] is False, p
+    assert s.store.added == []
+
+
+@pytest.mark.parametrize("kind", [kinds.RES_KIND, kinds.PROGRESS_KIND])
+def test_this_nodes_own_result_to_a_stranger_client_is_accepted(kind):
+    """The node's answer is p-tagged to the requester, who is NOT a member. Refusing it would make every
+    request unanswerable — accepted here even with a gate that does not know the node key."""
     s = server()
-    assert deliver(s, good)[2] is True
+    assert deliver(s, result(NODE_SK, kind, OTHER))[2] is True
+    s = server(gate=NobodyGate(operators={NODE}))
+    assert deliver(s, result(NODE_SK, kind, OTHER))[2] is True
+
+
+def test_a_configured_peer_hosts_result_is_accepted_and_only_then():
+    assert deliver(server(), result(PEER_SK, p=OTHER))[2] is False
+    assert deliver(server(peers=[PEER]), result(PEER_SK, p=OTHER))[2] is True
+
+
+def test_a_hosts_result_still_obeys_the_shape_rules():
+    s = server()
+    no_exp = build_event(NODE_SK, kinds.RES_KIND, "ct", [["e", "a" * 64], ["p", OTHER], ["nofederate"]])
+    assert deliver(s, no_exp)[2] is False
+
+
+def test_an_announcement_is_accepted_only_from_this_node_a_peer_or_an_operator():
+    body, d = '{"v":1}', [["d", kinds.ANNOUNCE_D]]
+    stranger = build_event(bytes.fromhex("33" * 32), kinds.ANNOUNCE_KIND, body, d)
+    foreign = build_event(bytes.fromhex("33" * 32), kinds.ANNOUNCE_KIND, '{}', [["d", "something-else"]])
+    op_sk = bytes.fromhex("34" * 32)
+    op = build_event(op_sk, kinds.ANNOUNCE_KIND, body, d)
+    s = server(gate=NobodyGate(operators={bip340.pubkey_from_seckey(op_sk).hex()}), peers=[PEER])
+    assert deliver(s, stranger)[2] is False, "anybody's 31310 was accepted: a free public billboard"
     assert deliver(s, foreign)[2] is False, "another app's 31310 gets the ordinary WoT gate"
+    assert deliver(s, build_event(NODE_SK, kinds.ANNOUNCE_KIND, body, d))[2] is True
+    assert deliver(s, build_event(PEER_SK, kinds.ANNOUNCE_KIND, body, d))[2] is True
+    assert deliver(s, op)[2] is True
 
 
 def test_the_ordinary_gate_still_refuses_a_non_member_note():
@@ -177,9 +238,10 @@ def _fn(name):
     return next(n for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef)) and n.name == name)
 
 
-def firehose_env(node_pubkey=NODE, members=()):
+def firehose_env(node_pubkey=NODE, members=(), vmhost=True, peers=()):
     cfg = {"blocked_words": set(), "blocked_langs": set(), "blocked_relays": [], "operator": [],
-           "block_bridged": False, "fetch_ancestors": False, "node_pubkey": node_pubkey}
+           "block_bridged": False, "fetch_ancestors": False, "node_pubkey": node_pubkey,
+           "vmhost_enabled": vmhost, "vmhost_peer_hosts": list(peers)}
     store = SimpleNamespace(has_event=AsyncMock(return_value=False), add_event=AsyncMock(return_value=True))
     gate = NobodyGate(members=members)
     srv = SimpleNamespace(subs=SimpleNamespace(fanout=Mock()), _send=Mock())
@@ -202,6 +264,19 @@ def test_the_firehose_drops_what_is_not_for_this_host(label, ev):
     env, store = firehose_env()
     asyncio.run(env["_firehose_event"](ev()))
     assert store.add_event.await_count == 0, label
+
+
+def test_the_firehose_applies_the_same_stranger_rules_as_the_write_gate():
+    off, off_store = firehose_env(vmhost=False)
+    asyncio.run(off["_firehose_event"](req()))
+    assert off_store.add_event.await_count == 0, "no VM host here: a stranger's request is not ours"
+    env, store = firehose_env(members={MEMBER})
+    asyncio.run(env["_firehose_event"](result(STRANGER_HOST_SK, p=MEMBER)))
+    asyncio.run(env["_firehose_event"](build_event(bytes.fromhex("33" * 32), kinds.ANNOUNCE_KIND, "{}",
+                                                   [["d", kinds.ANNOUNCE_D]])))
+    assert store.add_event.await_count == 0
+    asyncio.run(env["_firehose_event"](result(NODE_SK, p=OTHER)))
+    assert store.add_event.await_count == 1
 
 
 def spawn_env(vmhost_enabled, node_pubkey=NODE):
@@ -245,18 +320,65 @@ def test_the_firehose_subscribes_to_the_vm_kinds_for_this_node_when_enabled():
     assert not [c for c in off if set(c[0]) & set(kinds.TRANSPORT_KINDS)]
 
 
-def test_reload_upstream_refreshes_the_vmhost_switch_and_node_key():
+def _reload_upstream_fn(cfg, fresh):
+    """The SHIPPED `reload-upstream` control branch, lifted out of the relay's run loop (it is inline
+    in a closure) and executed against stubs — the technique tests/test_relay_live_word_reload.py uses."""
     tree = ast.parse(SOURCE)
     branch = next(n for n in ast.walk(tree) if isinstance(n, ast.If)
                   and ast.unparse(n.test) == "cmd.get('cmd') == 'reload-upstream'")
-    body = ast.unparse(branch)
-    assert "cfg['vmhost_enabled'] = fresh['vmhost_enabled']" in body
-    assert "cfg['node_pubkey'] = fresh['node_pubkey']" in body
-    assert body.index("cfg['vmhost_enabled']") < body.index("await _restart_firehose()"), \
-        "the switch must be refreshed BEFORE the firehose is respawned from cfg"
+    fn = ast.AsyncFunctionDef(name="reload_upstream", args=ast.arguments(
+        posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]), body=branch.body,
+        decorator_list=[])
+    order = []
+
+    async def restart_firehose():
+        order.append(("firehose respawned", cfg.get("vmhost_enabled")))
+    env = {**vars(thread), "cfg": cfg, "_read_config": lambda: fresh, "_restart_firehose": restart_firehose,
+           "outbox": SimpleNamespace(upstream=None), "private": None}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[])), thread.__file__, "exec"), env)
+    return env["reload_upstream"], order
 
 
-def test_read_config_reads_the_switch_and_the_node_key():
-    fn = ast.unparse(_fn("_read_config"))
-    assert "'vmhost_enabled': gb('vmhost_enabled', False)" in fn
-    assert "cfg['node_pubkey'] = _node_pubkey()" in fn
+def _fresh(**over):
+    base = {"upstream": [], "private_relays": [], "firehose_max_relays": 0, "ingest_kinds": [1],
+            "operator": [], "dvm_enabled": False, "agent_enabled": False, "vmhost_enabled": False,
+            "node_pubkey": NODE, "vmhost_peer_hosts": []}
+    base.update(over)
+    return base
+
+
+def test_reload_upstream_opens_and_closes_the_stranger_path_on_the_live_server():
+    """The relay server reads `cfg` live; the reload branch must refresh the VM-hosting keys IN that
+    dict, before the firehose is respawned from it. Driven end to end: a stranger's request is refused,
+    the host is turned on (reload) and it is accepted, turned off (reload) and refused again."""
+    cfg = _fresh()
+    cfg.update({"wot_enabled": True})
+    s = server(cfg=cfg)
+    assert deliver(s, req())[2] is False
+    reload, order = _reload_upstream_fn(cfg, _fresh(vmhost_enabled=True, vmhost_peer_hosts=[PEER]))
+    asyncio.run(reload())
+    assert order == [("firehose respawned", True)], "the switch must be refreshed BEFORE the respawn"
+    assert deliver(s, req())[2] is True
+    assert deliver(s, result(PEER_SK, p=OTHER))[2] is True, "peer hosts refresh live too"
+    reload, _ = _reload_upstream_fn(cfg, _fresh(vmhost_enabled=False))
+    asyncio.run(reload())
+    assert deliver(s, req())[2] is False
+
+
+def test_read_config_carries_the_switch_the_node_key_and_the_peer_hook(monkeypatch):
+    """`_read_config` EXECUTED against a stub datastore: what the relay subprocess actually builds."""
+    from app.services import keystore, settings_store
+    import app.database as database
+    monkeypatch.setattr(database, "SessionLocal", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(settings_store, "load_local", lambda: None)
+    monkeypatch.setattr(settings_store, "hydrate_from_db", lambda db: 0)
+    monkeypatch.setattr(thread, "_collect_operator_pubkeys", lambda db: [])
+    monkeypatch.setattr(thread, "_collect_preserve_pubkeys", lambda db: [])
+    monkeypatch.setattr(keystore, "get_operator_nsec", lambda: NODE_SK.hex())
+    monkeypatch.setattr(keystore, "get_bridge_secret", lambda: None, raising=False)
+    for value, expect in (("true", True), ("false", False), ("", False)):
+        monkeypatch.setitem(settings_store._CACHE, "vmhost_enabled", value)
+        cfg = thread._read_config()
+        assert cfg["vmhost_enabled"] is expect, value
+        assert cfg["node_pubkey"] == NODE
+        assert cfg["vmhost_peer_hosts"] == [], "phase 3 fills this hook; until then no peer is trusted"
