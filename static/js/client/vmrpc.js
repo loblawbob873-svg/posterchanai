@@ -19,6 +19,10 @@
  * A RETRY KEEPS THE ID. A silent attempt is re-sent as a NEW event (new created_at, new signature — the
  * host drops a replayed event id) carrying the SAME idempotency id, so the host's journal answers with
  * the stored result instead of powering a VM twice.
+ *
+ * A CALL MAY BE SIGNED BY A SESSION KEY (`opts.signer = {pubkey, sign, enc, dec}`, phase 2). The host
+ * then answers TO that key, so the same signer decrypts the reply. vms.js uses one for polling when the
+ * real key lives in a remote signer; everything that changes a VM still goes out under the real key.
  */
 (function(root){
   const KINDS = { REQ: 5310, RES: 6310, PROGRESS: 7310, ANNOUNCE: 31310 };
@@ -81,10 +85,10 @@
 
     const tagv = (ev, n) => ((ev.tags || []).find(t => t && t[0] === n) || [])[1];
 
-    async function attempt(c, host, me, body, onProgress, timeout){
+    async function attempt(c, host, me, body, onProgress, timeout, sg){
       const ts = Math.floor(d.now() / 1000);
-      const content = await d.enc(host.pubkey, JSON.stringify(Object.assign({}, body, { ts })));
-      const ev = await d.sign({ kind: KINDS.REQ, created_at: ts, content,
+      const content = await sg.enc(host.pubkey, JSON.stringify(Object.assign({}, body, { ts })));
+      const ev = await sg.sign({ kind: KINDS.REQ, created_at: ts, content,
                                 tags: [['p', host.pubkey], ['expiration', String(ts + 120)], ['nofederate']] });
       if(!ev || !ev.id) return { ok: false, error: { code: 'signer', message: 'the request could not be signed' } };
       return await new Promise((resolve) => {
@@ -103,7 +107,7 @@
           if(rev.kind !== KINDS.RES && rev.kind !== KINDS.PROGRESS) return;
           try{ if(d.verify && !(await d.verify(rev))) return; }catch(_){ return; }
           let msg;
-          try{ msg = JSON.parse(await d.dec(host.pubkey, rev.content)); }catch(_){ return; }
+          try{ msg = JSON.parse(await sg.dec(host.pubkey, rev.content)); }catch(_){ return; }
           if(!msg || msg.id !== body.id) return;
           if(rev.kind === KINDS.PROGRESS){ if(onProgress && msg.progress) try{ onProgress(msg.progress); }catch(_){} return; }
           if(msg.ok === true) finish({ ok: true, result: msg.result || {}, id: body.id });
@@ -121,7 +125,8 @@
 
     async function call(host, op, args, opts){
       const o = opts || {};
-      const me = d.me && d.me();
+      const sg = (o.signer && o.signer.pubkey && o.signer.sign) ? o.signer : d;
+      const me = o.signer && o.signer.pubkey ? o.signer.pubkey : (d.me && d.me());
       if(!me) return { ok: false, error: { code: 'signed_out', message: 'sign in first' } };
       if(!host || !/^[0-9a-f]{64}$/.test(String(host.pubkey || '')) || !/^wss?:\/\//.test(String(host.relay || '')))
         return { ok: false, error: { code: 'bad_host', message: 'this host has no usable key or relay' } };
@@ -131,7 +136,7 @@
       for(let i = 0; i < tries; i++){
         const c = await connect(host.relay);
         if(!c){ last = { ok: false, noAnswer: true, reason: 'unreachable', id: body.id }; continue; }
-        last = await attempt(c, host, me, body, o.onProgress, o.timeout || d.timeout);
+        last = await attempt(c, host, me, body, o.onProgress, o.timeout || d.timeout, sg);
         if(!last.noAnswer) return last;
       }
       return last;
